@@ -1,6 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 
-import { heavySegment, isQueued, nameOf, queueBashCall } from "./heavyHook.ts";
+import {
+  HEAVY_JOB_ENV,
+  heavySegment,
+  hookScript,
+  isQueued,
+  nameOf,
+  queueBashCall,
+} from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
 const bash = (toolInput: Record<string, unknown>) => ({
@@ -10,56 +22,60 @@ const bash = (toolInput: Record<string, unknown>) => ({
   tool_use_id: "toolu_1",
 });
 
+const HEAVY: ReadonlyArray<readonly [string, string]> = [
+  ["vp test run", "vp test run"],
+  ["vp test run src/a.test.ts", "vp test run src/a.test.ts"],
+  ["cd apps/server && vp run typecheck", "vp run typecheck"],
+  [
+    "VITEST_MAX_WORKERS=2 vp run check:changed main",
+    "VITEST_MAX_WORKERS=2 vp run check:changed main",
+  ],
+  ["pnpm --filter web run build", "pnpm --filter web run build"],
+  ["npm test", "npm test"],
+  ["npm t", "npm t"],
+  ["yarn build", "yarn build"],
+  ["vpr test:unit", "vpr test:unit"],
+  ["npx vitest run", "npx vitest run"],
+  ["pnpm exec playwright test", "pnpm exec playwright test"],
+  ["bunx tsc --noEmit", "bunx tsc --noEmit"],
+  ["node --test test/*.mjs", "node --test test/*.mjs"],
+  ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
+  ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
+  ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
+  ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
+  ["docker compose up -d", "docker compose up -d"],
+  ["cargo test --locked", "cargo test --locked"],
+  ["(cd web && vp build) | tail -5", "vp build"],
+  ["make test", "make test"],
+];
+
+const LIGHT = [
+  "ls -la",
+  "git status && git log --format=%H -3",
+  "git checkout -b fix-build",
+  "git commit --no-verify -m 'wip'",
+  "git commit -n -m 'wip'",
+  "cat build.md",
+  "rg docker apps/server",
+  "rg 'vp test run' docs",
+  "echo vitest",
+  "test -f package.json && echo yes",
+  "vp run dev",
+  "pnpm install",
+  "node scripts/x.mjs",
+  "npx prettier --check .",
+  "pnpm exec",
+  "cargo",
+  "vpr dev",
+  "",
+];
+
 describe("heavy Bash commands", () => {
-  it.each([
-    ["vp test run", "vp test run"],
-    ["vp test run src/a.test.ts", "vp test run src/a.test.ts"],
-    ["cd apps/server && vp run typecheck", "vp run typecheck"],
-    [
-      "VITEST_MAX_WORKERS=2 vp run check:changed main",
-      "VITEST_MAX_WORKERS=2 vp run check:changed main",
-    ],
-    ["pnpm --filter web run build", "pnpm --filter web run build"],
-    ["npm test", "npm test"],
-    ["npm t", "npm t"],
-    ["yarn build", "yarn build"],
-    ["vpr test:unit", "vpr test:unit"],
-    ["npx vitest run", "npx vitest run"],
-    ["pnpm exec playwright test", "pnpm exec playwright test"],
-    ["bunx tsc --noEmit", "bunx tsc --noEmit"],
-    ["node --test test/*.mjs", "node --test test/*.mjs"],
-    ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
-    ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
-    ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
-    ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
-    ["docker compose up -d", "docker compose up -d"],
-    ["cargo test --locked", "cargo test --locked"],
-    ["(cd web && vp build) | tail -5", "vp build"],
-    ["make test", "make test"],
-  ])("%s is heavy, at %s", (command, segment) => {
+  it.each(HEAVY)("%s is heavy, at %s", (command, segment) => {
     expect(heavySegment(command)).toBe(segment);
   });
 
-  it.each([
-    "ls -la",
-    "git status && git log --format=%H -3",
-    "git checkout -b fix-build",
-    "git commit --no-verify -m 'wip'",
-    "git commit -n -m 'wip'",
-    "cat build.md",
-    "rg docker apps/server",
-    "rg 'vp test run' docs",
-    "echo vitest",
-    "test -f package.json && echo yes",
-    "vp run dev",
-    "pnpm install",
-    "node scripts/x.mjs",
-    "npx prettier --check .",
-    "pnpm exec",
-    "cargo",
-    "vpr dev",
-    "",
-  ])("%s is light", (command) => {
+  it.each(LIGHT)("%s is light", (command) => {
     expect(heavySegment(command)).toBeNull();
   });
 
@@ -138,5 +154,57 @@ describe("the PreToolUse answer", () => {
     ["a non-object tool input", { tool_name: "Bash", tool_input: "vp test" }, {}],
   ])("leaves %s alone", (_why, input, env) => {
     expect(queueBashCall(input, PREFIX, env)).toBeNull();
+  });
+});
+
+describe("the sh pre-filter installed for sessions outside T3", () => {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-hook-"));
+  const script = (hookCommand: string) => {
+    const path = NodePath.join(dir, `${hookCommand.length}-${Math.random()}.sh`);
+    NodeFS.writeFileSync(path, hookScript(hookCommand));
+    return path;
+  };
+  // Stands in for `t3 heavy hook`: says it was reached.
+  const reached = script("printf T3");
+  const run = (path: string, command: unknown, env: NodeJS.ProcessEnv = {}) =>
+    NodeChildProcess.execFileSync("/bin/sh", [path], {
+      // Claude Code's field order: the session's paths come before the tool input.
+      input: JSON.stringify({
+        session_id: "s",
+        transcript_path: "/Users/me/.claude/projects/vp-go/s.jsonl",
+        cwd: "/Users/me/go",
+        ...bash({ command, description: "Run vp tests", timeout: 1000 }),
+      }),
+      encoding: "utf8",
+      env: { PATH: process.env.PATH, ...env },
+    });
+  // Every way the classifier can still find a heavy command: after a cd, on a later line, after a tab.
+  const variants = (command: string) => [
+    command,
+    `cd /tmp && ${command}`,
+    `echo start\n${command}`,
+    `\t${command}`,
+    `NODE_OPTIONS="--max-old-space-size=4096 --x" ${command}`,
+  ];
+
+  it.each(HEAVY.flatMap(([command]) => variants(command)))(
+    "hands %j to T3, as the classifier calls it heavy",
+    (command) => {
+      expect(heavySegment(command)).not.toBeNull();
+      expect(run(reached, command)).toBe("T3");
+    },
+  );
+
+  it.each(["ls -la", "git status && git log --format=%H -3", "cat build.md", "rg TODO apps"])(
+    "answers %j itself with no output",
+    (command) => {
+      expect(run(reached, command)).toBe("");
+    },
+  );
+
+  it("passes the command through when T3 is gone, fails, or the call runs inside a queue job", () => {
+    expect(run(script("/nonexistent/t3 heavy hook"), "vp test run")).toBe("");
+    expect(run(script("printf partial; exit 3"), "vp test run")).toBe("");
+    expect(run(reached, "vp test run", { [HEAVY_JOB_ENV]: "1" })).toBe("");
   });
 });

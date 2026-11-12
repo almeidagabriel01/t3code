@@ -7,7 +7,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-const OURS = /\sheavy hook(\s|$)/;
+/** The `sh` entry the installed hook runs, beside the queue file. */
+export const HOOK_SCRIPT = "t3-heavy-hook.sh";
+const OURS = new RegExp(String.raw`\sheavy hook(\s|$)|${HOOK_SCRIPT.replaceAll(".", "\\.")}`);
 /** Seconds Claude Code gives the hook; it answers in well under one. */
 const HOOK_TIMEOUT_S = 10;
 
@@ -75,6 +77,14 @@ export const readHeavyHookInstalled = (path: string) => {
   } catch {
     return false;
   }
+};
+
+/** Rewritten on install and at startup, so it always names the current T3 executable. */
+export const writeHookScript = (path: string, script: string) => {
+  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+  const temp = `${path}.${process.pid}.tmp`;
+  NodeFS.writeFileSync(temp, script, { mode: 0o755 });
+  NodeFS.renameSync(temp, path);
 };
 
 export const setHeavyHookInstalled = (path: string, command: string, install: boolean) => {

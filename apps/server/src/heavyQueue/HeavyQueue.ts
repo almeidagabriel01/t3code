@@ -17,7 +17,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
-import { queueBashCall, shellQuote } from "./heavyHook.ts";
+import { hookScript, queueBashCall, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
@@ -126,6 +126,17 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
   const settingsPath =
     claudeSettings ?? ClaudeSettingsHook.claudeSettingsPath(yield* HostProcess.Environment);
   const platform = yield* HostProcess.Platform;
+  const scriptPath = `${dir}/${ClaudeSettingsHook.HOOK_SCRIPT}`;
+  // Windows has no /bin/sh, so Claude Code runs T3 there and pays its startup on every Bash call.
+  const settingsCommand = platform === "win32" ? hookCommand : `/bin/sh ${shellQuote(scriptPath)}`;
+  const writeScript = () => {
+    if (platform !== "win32")
+      ClaudeSettingsHook.writeHookScript(scriptPath, hookScript(hookCommand));
+  };
+  // An update moves the executable; the installed hook follows it from the next start.
+  if (ClaudeSettingsHook.readHeavyHookInstalled(settingsPath)) {
+    yield* Effect.try(writeScript).pipe(Effect.ignore);
+  }
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = (program: string, args: ReadonlyArray<string>) =>
     spawner.string(ChildProcess.make(program, args, { stdin: "ignore", stderr: "ignore" }));
@@ -280,7 +291,10 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       yield* announce;
     }),
     setClaudeHook: Effect.fn("HeavyQueue.setClaudeHook")((installed: boolean) =>
-      change(() => ClaudeSettingsHook.setHeavyHookInstalled(settingsPath, hookCommand, installed)),
+      change(() => {
+        if (installed) writeScript();
+        ClaudeSettingsHook.setHeavyHookInstalled(settingsPath, settingsCommand, installed);
+      }),
     ),
     setDeviceIdleMinutes: Effect.fn("HeavyQueue.setDeviceIdleMinutes")((minutes: number) =>
       change(() => QueueFile.setDeviceIdleMinutes(dir, minutes)),

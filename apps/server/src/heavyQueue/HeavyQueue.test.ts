@@ -121,7 +121,11 @@ describe("HeavyQueue", () => {
             NodePath.join(dir, "claude", "settings.json"),
             "utf8",
           );
-          expect(written).toContain(`heavy hook --queue-dir '${dir}'`);
+          // The settings name the sh pre-filter, which hands possible heavy calls to this T3.
+          expect(written).toContain(`"/bin/sh '${dir}/t3-heavy-hook.sh'"`);
+          expect(NodeFS.readFileSync(NodePath.join(dir, "t3-heavy-hook.sh"), "utf8")).toContain(
+            `heavy hook --queue-dir '${dir}'`,
+          );
           yield* queue.setClaudeHook(false);
           yield* queue.setDeviceIdleMinutes(-3);
           expect(yield* queue.state).toMatchObject({

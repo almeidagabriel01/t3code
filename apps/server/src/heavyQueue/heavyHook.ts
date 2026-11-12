@@ -52,7 +52,8 @@ const unquote = (word: string) => word.replace(/^['"]|['"]$/g, "");
 
 /** Program and subcommand words with assignments, wrappers and flags removed. */
 const wordsOf = (segment: string) => {
-  const tokens = segment.trim().split(/\s+/).map(unquote).filter(Boolean);
+  // A quoted word stays one token: `NODE_OPTIONS="--max-old-space-size=4096" vp test`.
+  const tokens = (segment.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map(unquote);
   while (
     tokens.length > 0 &&
     (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]!) || PREFIXES.has(base(tokens[0]!)))
@@ -95,6 +96,48 @@ const heavyWords = (
   const runAt = words.findIndex((word) => word === "run" || word === "run-script");
   return runAt >= 0 && SCRIPT.test(words[runAt + 1] ?? "");
 };
+
+// `case` patterns, so the filter runs on shell builtins alone. A word starts after a non-name
+// character or a JSON escape (the hook reads raw JSON), and ends before a non-name character.
+const STARTS = [
+  "[!A-Za-z0-9_.-]",
+  String.raw`\\[nrtbf]`,
+  String.raw`\\u[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]`,
+];
+const END = "[!A-Za-z0-9_-]";
+const PROGRAMS = [...DIRECT, ...Object.keys(SUBCOMMANDS), ...RUNNERS, "vpr", "make", "just"];
+
+/**
+ * Matches every command `heavySegment` calls heavy, and some it does not: any program heavy work
+ * can start from. Built from the same sets, so the two never drift.
+ */
+const HEAVY_PREFILTER = STARTS.flatMap((start) => [
+  ...PROGRAMS.map((program) => `*${start}${program}${END}*`),
+  `*${start}git${END}*commit*`,
+  `*${start}node${END}*--test*`,
+]).join("|");
+
+/**
+ * The `sh` entry Claude Code runs for sessions outside T3. Light commands answer here without
+ * starting another process; only ones that may be heavy pay for `hookCommand`. Every failure,
+ * a missing T3 included, exits 0 with no output, which leaves the command as it was.
+ */
+export const hookScript = (hookCommand: string) => `#!/bin/sh
+# Written by T3 Code for its Claude Code hook (Settings > Maintenance > Heavy work).
+[ "\${${HEAVY_JOB_ENV}:-}" = 1 ] && exit 0
+input=
+while IFS= read -r line || [ -n "\$line" ]; do input="\$input\$line
+"; done
+# Just the command's JSON text: \`","\` never occurs inside an escaped string, so it ends it.
+rest=\${input#*\\"command\\"}
+case "\${rest%%\\",\\"*}" in
+  ${HEAVY_PREFILTER}) ;;
+  *) exit 0 ;;
+esac
+# Only a complete answer goes back; a T3 that fails halfway says nothing.
+answer=\$(printf '%s' "\$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
+printf '%s' "\$answer"
+`;
 
 /** The first part of a shell command line that is heavy work, or null when none is. */
 export const heavySegment = (command: string): string | null => {
