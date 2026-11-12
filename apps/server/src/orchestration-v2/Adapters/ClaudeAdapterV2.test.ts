@@ -110,6 +110,7 @@ import { packMemoryContext } from "@t3tools/provider-core/server/memoryContext";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { queueBashCall } from "../../heavyQueue/heavyHook.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
@@ -848,6 +849,62 @@ describe("ClaudeAdapterV2 device instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+  });
+});
+
+describe("ClaudeAdapterV2 heavy queue hook", () => {
+  const options = (input: { readonly deviceToolsAvailable: boolean; readonly hook: boolean }) =>
+    ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+      nativeThreadId: "native-thread-claude-heavy",
+      resume: false,
+      cwd: "/workspace",
+      mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } },
+      deviceToolsAvailable: input.deviceToolsAvailable,
+      ...(input.hook
+        ? { bashHook: (hookInput: unknown) => queueBashCall(hookInput, "t3 heavy --queue-dir /q") }
+        : {}),
+      environment: {},
+    });
+  const preToolUse = (command: string) =>
+    Promise.all(
+      (options({ deviceToolsAvailable: true, hook: true }).hooks?.PreToolUse ?? []).flatMap(
+        (matcher) =>
+          matcher.hooks.map((hook) =>
+            hook(
+              {
+                hook_event_name: "PreToolUse",
+                tool_name: "Bash",
+                tool_input: { command, description: "d" },
+                tool_use_id: "toolu_1",
+                session_id: "native-thread-claude-heavy",
+                transcript_path: "/transcript.jsonl",
+                cwd: "/workspace",
+              },
+              "toolu_1",
+              { signal: new AbortController().signal },
+            ),
+          ),
+      ),
+    );
+
+  it("queues a heavy Bash call in process, leaves a light one alone, and keeps the device hook", async () => {
+    const hooks = options({ deviceToolsAvailable: true, hook: true }).hooks;
+    assert.deepEqual(
+      hooks?.PreToolUse?.map((matcher) => matcher.matcher),
+      ["Bash"],
+    );
+    assert.lengthOf(hooks?.SubagentStart ?? [], 1);
+    const [queued] = await preToolUse("vp test run");
+    assert.deepInclude((queued as { hookSpecificOutput: object }).hookSpecificOutput, {
+      hookEventName: "PreToolUse",
+    });
+    assert.include(JSON.stringify(queued), "t3 heavy --queue-dir /q --name 'vp test run'");
+    assert.deepEqual(await preToolUse("ls"), [{}]);
+    assert.isUndefined(options({ deviceToolsAvailable: false, hook: false }).hooks);
   });
 });
 

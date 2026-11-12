@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -37,11 +38,115 @@ const withQueue = <A, E>(
         Queue.tryStart(dir, holder.id);
         const queue = yield* HeavyQueue.HeavyQueue;
         return yield* body(dir, queue);
-      }).pipe(Effect.provide(HeavyQueue.layer(dir).pipe(Layer.provide(NodeServices.layer)))),
+      }).pipe(
+        Effect.provide(
+          // A settings file inside the temp queue dir: the user's own Claude settings stay untouched.
+          HeavyQueue.layer(dir, NodePath.join(dir, "claude", "settings.json")).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      ),
     (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
   );
 
+const priorities = (pids: ReadonlyArray<number>) =>
+  NodeChildProcess.execFileSync("/bin/ps", ["-o", "pri=", "-p", pids.join(",")], {
+    encoding: "utf8",
+  })
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+
 describe("HeavyQueue", () => {
+  it("finds a job's whole process tree from ps rows", () => {
+    const ps = "  1     0\n 10     1\n 11    10\n 12    11\n 13    10\n 20     1\n bad row\n";
+    expect(HeavyQueue.treePids(ps, 10)).toEqual([10, 11, 13, 12]);
+    expect(HeavyQueue.treePids(ps, 99)).toEqual([99]);
+  });
+
+  it.effect("lowers and raises every process of a running job, and high releases a waiter", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        // A job whose command started a child: both must move.
+        const parent = NodeChildProcess.spawn(process.execPath, [
+          "-e",
+          `const c=require("child_process").spawn(process.execPath,["-e","setInterval(()=>{},1e3)"],{stdio:"inherit"});console.log(c.pid);setInterval(()=>{},1e3)`,
+        ]);
+        const childPid = yield* Effect.promise(
+          () =>
+            new Promise<number>((resolve) =>
+              parent.stdout!.once("data", (d) => resolve(Number(d))),
+            ),
+        );
+        try {
+          Queue.remove(dir, holder.id);
+          Queue.enqueue(dir, { ...holder, id: "job", pid: parent.pid! });
+          Queue.tryStart(dir, "job");
+          Queue.enqueue(dir, { ...holder, id: "waiter", priority: "low" });
+          yield* queue.setPriority("job", "low");
+          const darwin = NodeOS.platform() === "darwin"; // oxlint-disable-line t3code/no-global-process-runtime -- taskpolicy exists only on the real macOS host.
+          if (darwin) expect(priorities([parent.pid!, childPid])).toEqual([4, 4]);
+          yield* queue.setPriority("job", "high");
+          if (darwin)
+            expect(priorities([parent.pid!, childPid]).every((pri) => pri > 4)).toBe(true);
+          expect(Queue.read(dir).find((e) => e.id === "job")).toMatchObject({ priority: "high" });
+          yield* queue.setPriority("waiter", "high");
+          expect(Queue.read(dir).find((e) => e.id === "waiter")).toMatchObject({ forced: true });
+          const missing = yield* Effect.flip(queue.setPriority("gone", "high"));
+          expect(missing.reason).toBe("not-found");
+        } finally {
+          process.kill(childPid, "SIGKILL");
+          parent.kill("SIGKILL");
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "installs the Claude hook in the given settings and reports it, and keeps idle minutes",
+    () =>
+      withQueue((dir, queue) =>
+        Effect.gen(function* () {
+          expect(yield* queue.state).toMatchObject({
+            claudeHookInstalled: false,
+            deviceIdleMinutes: 20,
+          });
+          yield* queue.setClaudeHook(true);
+          yield* queue.setDeviceIdleMinutes(45);
+          expect(yield* queue.state).toMatchObject({
+            claudeHookInstalled: true,
+            deviceIdleMinutes: 45,
+          });
+          const written = NodeFS.readFileSync(
+            NodePath.join(dir, "claude", "settings.json"),
+            "utf8",
+          );
+          expect(written).toContain(`heavy hook --queue-dir '${dir}'`);
+          yield* queue.setClaudeHook(false);
+          yield* queue.setDeviceIdleMinutes(-3);
+          expect(yield* queue.state).toMatchObject({
+            claudeHookInstalled: false,
+            deviceIdleMinutes: 0,
+          });
+          NodeFS.writeFileSync(NodePath.join(dir, "claude", "settings.json"), "{ broken");
+          expect((yield* Effect.flip(queue.setClaudeHook(true))).reason).toBe("unavailable");
+        }),
+      ),
+  );
+
+  it.effect("the Bash hook queues heavy calls only while the queue is on", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const command = yield* queue.command;
+        const hook = HeavyQueue.bashHook(command.slice(0, -" --".length), dir);
+        const call = { tool_name: "Bash", tool_input: { command: "vp run build" } };
+        expect(JSON.stringify(hook(call))).toContain(`--queue-dir '${dir}' --name 'vp run build'`);
+        Queue.setEnabled(dir, false);
+        expect(hook(call)).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("withSlot waits behind a running entry, runs once it is free, then leaves", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {

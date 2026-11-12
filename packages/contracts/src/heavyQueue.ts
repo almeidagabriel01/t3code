@@ -76,6 +76,10 @@ export const HeavyQueueState = Schema.Struct({
   machine: Schema.NullOr(HeavyQueueMachine).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** False while pressure, the pause or an exclusive job is what holds waiters back. */
   room: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The user's Claude Code settings send heavy Bash calls through the queue in every session. */
+  claudeHookInstalled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Minutes without use before a simulator or emulator T3 started is shut down; 0 never. */
+  deviceIdleMinutes: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(20))),
 });
 export type HeavyQueueState = typeof HeavyQueueState.Type;
 
@@ -105,6 +109,14 @@ export const HeavyQueueSetPriorityInput = Schema.Struct({
   priority: Schema.Literals(["low", "high"]),
 });
 export type HeavyQueueSetPriorityInput = typeof HeavyQueueSetPriorityInput.Type;
+
+/** Installs or removes the `t3 heavy hook` PreToolUse entry in the user's Claude Code settings. */
+export const HeavyQueueSetClaudeHookInput = Schema.Struct({ installed: Schema.Boolean });
+export type HeavyQueueSetClaudeHookInput = typeof HeavyQueueSetClaudeHookInput.Type;
+
+/** 0 never shuts an idle simulator or emulator down. */
+export const HeavyQueueSetDeviceIdleMinutesInput = Schema.Struct({ minutes: Schema.Int });
+export type HeavyQueueSetDeviceIdleMinutesInput = typeof HeavyQueueSetDeviceIdleMinutesInput.Type;
 
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,

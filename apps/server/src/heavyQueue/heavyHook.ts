@@ -154,3 +154,5 @@ export const queueBashCall = (
     },
   };
 };
+
+export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

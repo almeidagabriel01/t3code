@@ -12,7 +12,14 @@ import * as NodeSea from "node:sea";
 
 import { HEAVY_JOB_ENV, queueBashCall, shellQuote } from "./heavyHook.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
-import { defaultQueueDir, enqueue, recordSampleIfStale, remove, tryStart } from "./queueFile.ts";
+import {
+  defaultQueueDir,
+  enqueue,
+  readDoc,
+  recordSampleIfStale,
+  remove,
+  tryStart,
+} from "./queueFile.ts";
 
 const POLL_MS = 1000;
 /** A server writes readings every 2 s; past this a waiter takes over sampling. */
@@ -136,6 +143,7 @@ const readStdin = async () => {
 /** Fails open: any error prints nothing and exits 0, so Claude runs the command unchanged. */
 const runHook = async (dir: string) => {
   try {
+    if (!readDoc(dir).enabled) return;
     const answer = queueBashCall(JSON.parse(await readStdin()), selfPrefix(dir), process.env);
     if (answer !== null) process.stdout.write(JSON.stringify(answer));
   } catch {

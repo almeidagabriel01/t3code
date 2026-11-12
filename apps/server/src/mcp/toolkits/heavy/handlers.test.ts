@@ -164,6 +164,8 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             maxRunning: 3,
             reasons: {},
             room: false,
+            claudeHookInstalled: false,
+            deviceIdleMinutes: 20,
             machine: null,
           }),
           command: Effect.succeed("t3 heavy --"),

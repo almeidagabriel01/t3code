@@ -16,6 +16,8 @@ const EMPTY: HeavyQueueState = {
   maxRunning: 1,
   reasons: {},
   room: true,
+  claudeHookInstalled: false,
+  deviceIdleMinutes: 20,
   machine: null,
 };
 

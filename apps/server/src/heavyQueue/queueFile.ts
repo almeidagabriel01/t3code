@@ -84,7 +84,11 @@ interface QueueDoc {
   readonly sample: Sample | null;
   readonly lastStartAt: number | null;
   readonly holding: boolean;
+  /** Minutes without use before T3 shuts an idle simulator or emulator down; 0 never. */
+  readonly deviceIdleMinutes: number;
 }
+
+const DEFAULT_DEVICE_IDLE_MINUTES = 20;
 
 const EMPTY_DOC: QueueDoc = {
   entries: [],
@@ -96,6 +100,7 @@ const EMPTY_DOC: QueueDoc = {
   sample: null,
   lastStartAt: null,
   holding: false,
+  deviceIdleMinutes: DEFAULT_DEVICE_IDLE_MINUTES,
 };
 
 const loadDoc = (dir: string): QueueDoc => {
@@ -110,6 +115,7 @@ const loadDoc = (dir: string): QueueDoc => {
       sample?: unknown;
       lastStartAt?: unknown;
       holding?: unknown;
+      deviceIdleMinutes?: unknown;
     } | null;
     return {
       // Keys this version does not know stay in the file for the versions that do.
@@ -132,6 +138,10 @@ const loadDoc = (dir: string): QueueDoc => {
           : null,
       lastStartAt: typeof parsed?.lastStartAt === "number" ? parsed.lastStartAt : null,
       holding: parsed?.holding === true,
+      deviceIdleMinutes:
+        typeof parsed?.deviceIdleMinutes === "number" && parsed.deviceIdleMinutes >= 0
+          ? Math.floor(parsed.deviceIdleMinutes)
+          : DEFAULT_DEVICE_IDLE_MINUTES,
     };
   } catch {
     return EMPTY_DOC;
@@ -471,6 +481,12 @@ export const setPaused = (dir: string, paused: boolean) =>
 /** Off starts every waiter on its next poll; back on, running entries stay and new ones wait as usual. */
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
+
+export const setDeviceIdleMinutes = (dir: string, minutes: number) =>
+  mutate(dir, (doc) => ({
+    doc: { ...doc, deviceIdleMinutes: Math.max(0, Math.min(24 * 60, Math.floor(minutes))) },
+    result: undefined,
+  }));
 
 /** `priority` null clears the rule. */
 export const setRule = (dir: string, root: string, priority: HeavyQueueRule["priority"] | null) =>

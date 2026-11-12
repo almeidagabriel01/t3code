@@ -119,6 +119,8 @@ const setup = (entries: HeavyQueueEntry[], over: Partial<HeavyQueueState> = {}) 
     maxRunning: 3,
     reasons: {},
     room: true,
+    claudeHookInstalled: false,
+    deviceIdleMinutes: 20,
     machine: null,
     ...over,
   };

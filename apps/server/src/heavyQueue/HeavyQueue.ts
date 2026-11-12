@@ -13,14 +13,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
+import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
+import { queueBashCall, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
-
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 const failure = (reason: HeavyQueueError["reason"], message: string) =>
   new HeavyQueueError({ reason, message });
@@ -54,6 +55,14 @@ export class HeavyQueue extends Context.Service<
     readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
     /** Off starts every heavy job at once, waiting ones included; on restores the rules for new arrivals. */
     readonly setEnabled: (enabled: boolean) => Effect.Effect<void, HeavyQueueError>;
+    /** "high" starts a waiter now and lifts a running job's processes out of background QoS; "low" undoes both. */
+    readonly setPriority: (
+      id: string,
+      priority: "low" | "high",
+    ) => Effect.Effect<void, HeavyQueueError>;
+    /** Adds or removes the queue hook in the user's Claude Code settings. */
+    readonly setClaudeHook: (installed: boolean) => Effect.Effect<void, HeavyQueueError>;
+    readonly setDeviceIdleMinutes: (minutes: number) => Effect.Effect<void, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -70,24 +79,76 @@ export class HeavyQueue extends Context.Service<
   }
 >()("t3/heavyQueue/HeavyQueue") {}
 
-const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
+/** `ps -axo pid=,ppid=` rows to `root` and every process beneath it. */
+export const treePids = (ps: string, root: number) => {
+  const children = new Map<number, number[]>();
+  for (const line of ps.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (pid === undefined || ppid === undefined || !(pid > 0) || Number.isNaN(ppid)) continue;
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const pids = [root];
+  for (let index = 0; index < pids.length; index += 1) {
+    pids.push(...(children.get(pids[index]!) ?? []));
+  }
+  return pids;
+};
+
+/** This server's own CLI up to `heavy [sub] --queue-dir <dir>`; options and `-- <command>` follow. */
+export const queuePrefix = Effect.fn("HeavyQueue.queuePrefix")(function* (
+  dir: string,
+  sub: ReadonlyArray<string> = [],
+) {
   const invocation = yield* resolveSelfInvocation();
   const platform = yield* HostProcess.Platform;
-  const command = [
+  return [
     // Packaged desktop's executable is Electron, which opens the app instead of running the CLI without this.
     ...(platform === "win32" ? [] : ["ELECTRON_RUN_AS_NODE=1"]),
     shellQuote(invocation.command),
     ...(invocation.entrypoint === undefined ? [] : [shellQuote(invocation.entrypoint)]),
     "heavy",
+    ...sub,
     "--queue-dir",
     shellQuote(dir),
-    "--",
   ].join(" ");
+});
+
+/** The in-process PreToolUse hook for Claude sessions T3 starts; the queue switched off leaves calls alone. */
+export const bashHook =
+  (prefix: string, dir: string = QueueFile.defaultQueueDir()) =>
+  (hookInput: unknown) =>
+    // readDoc never throws: a missing or corrupt file reads as an empty queue that is on.
+    QueueFile.readDoc(dir).enabled ? queueBashCall(hookInput, prefix) : null;
+
+const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings?: string) {
+  const command = `${yield* queuePrefix(dir)} --`;
+  const hookCommand = yield* queuePrefix(dir, ["hook"]);
+  const settingsPath =
+    claudeSettings ?? ClaudeSettingsHook.claudeSettingsPath(yield* HostProcess.Environment);
+  const platform = yield* HostProcess.Platform;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const output = (program: string, args: ReadonlyArray<string>) =>
+    spawner.string(ChildProcess.make(program, args, { stdin: "ignore", stderr: "ignore" }));
+  /** macOS background QoS on every process of a running job; children started later inherit it. */
+  const setTreePriority = Effect.fn("HeavyQueue.setTreePriority")(function* (
+    root: number,
+    priority: "low" | "high",
+  ) {
+    const pids = treePids(yield* output("/bin/ps", ["-axo", "pid=,ppid="]), root);
+    yield* Effect.forEach(
+      pids,
+      (pid) =>
+        output("/usr/sbin/taskpolicy", [priority === "high" ? "-B" : "-b", "-p", String(pid)]).pipe(
+          Effect.ignore,
+        ),
+      { concurrency: 4, discard: true },
+    );
+  });
 
   const state = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const { doc, plan } = QueueFile.readPlan(dir, now);
-    const { entries, enabled, paused, rules, maxRunning, sample } = doc;
+    const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
     for (const entry of entries) {
@@ -108,6 +169,8 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
       room: plan.room && (!fresh || hasHeadroom(sample)),
+      claudeHookInstalled: ClaudeSettingsHook.readHeavyHookInstalled(settingsPath),
+      deviceIdleMinutes,
       machine: fresh
         ? {
             busyCores: sample.busyCores,
@@ -199,6 +262,29 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
     setEnabled: Effect.fn("HeavyQueue.setEnabled")((enabled: boolean) =>
       change(() => QueueFile.setEnabled(dir, enabled)),
     ),
+    setPriority: Effect.fn("HeavyQueue.setPriority")(function* (
+      id: string,
+      priority: "low" | "high",
+    ) {
+      const { result, entry } = yield* Effect.try({
+        try: () => QueueFile.setPriority(dir, id, priority),
+        catch: unavailable,
+      });
+      yield* moveFailure("changed", result);
+      // A server-held slot's pid is T3 itself, never lowered.
+      if (entry?.startedAt !== null && entry?.server !== true && platform === "darwin") {
+        yield* setTreePriority(entry!.pid, priority).pipe(
+          Effect.mapError((error) => unavailable(error)),
+        );
+      }
+      yield* announce;
+    }),
+    setClaudeHook: Effect.fn("HeavyQueue.setClaudeHook")((installed: boolean) =>
+      change(() => ClaudeSettingsHook.setHeavyHookInstalled(settingsPath, hookCommand, installed)),
+    ),
+    setDeviceIdleMinutes: Effect.fn("HeavyQueue.setDeviceIdleMinutes")((minutes: number) =>
+      change(() => QueueFile.setDeviceIdleMinutes(dir, minutes)),
+    ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),
     ),
@@ -207,5 +293,6 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string) {
   });
 });
 
-export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
-  Layer.effect(HeavyQueue, make(dir));
+/** `claudeSettings` points the hook installer at another file; tests never touch the user's own. */
+export const layer = (dir: string = QueueFile.defaultQueueDir(), claudeSettings?: string) =>
+  Layer.effect(HeavyQueue, make(dir, claudeSettings));

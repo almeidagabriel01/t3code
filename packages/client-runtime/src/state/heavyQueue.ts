@@ -55,5 +55,17 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:set-max-running",
       tag: WS_METHODS.heavyQueueSetMaxRunning,
     }),
+    setPriority: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-priority",
+      tag: WS_METHODS.heavyQueueSetPriority,
+    }),
+    setClaudeHook: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-claude-hook",
+      tag: WS_METHODS.heavyQueueSetClaudeHook,
+    }),
+    setDeviceIdleMinutes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-device-idle-minutes",
+      tag: WS_METHODS.heavyQueueSetDeviceIdleMinutes,
+    }),
   };
 }

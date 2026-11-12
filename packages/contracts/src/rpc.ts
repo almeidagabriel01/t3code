@@ -553,8 +553,11 @@ import {
   HeavyQueueEntryInput,
   HeavyQueueError,
   HeavyQueueMoveInput,
+  HeavyQueueSetClaudeHookInput,
+  HeavyQueueSetDeviceIdleMinutesInput,
   HeavyQueueSetEnabledInput,
   HeavyQueueSetMaxRunningInput,
+  HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
   HeavyQueueState,
@@ -859,6 +862,9 @@ export const WS_METHODS = {
   heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
+  heavyQueueSetPriority: "heavyQueue.setPriority",
+  heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
+  heavyQueueSetDeviceIdleMinutes: "heavyQueue.setDeviceIdleMinutes",
   heavyQueueSubscribeCommands: "heavyQueue.subscribeCommands",
   heavyQueueStopCommand: "heavyQueue.stopCommand",
   telegramChannelGetSettings: "telegramChannel.getSettings",
@@ -2702,6 +2708,21 @@ const WsHeavyQueueSetMaxRunningRpc = Rpc.make(WS_METHODS.heavyQueueSetMaxRunning
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueSetPriorityRpc = Rpc.make(WS_METHODS.heavyQueueSetPriority, {
+  payload: HeavyQueueSetPriorityInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetClaudeHookRpc = Rpc.make(WS_METHODS.heavyQueueSetClaudeHook, {
+  payload: HeavyQueueSetClaudeHookInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
+const WsHeavyQueueSetDeviceIdleMinutesRpc = Rpc.make(WS_METHODS.heavyQueueSetDeviceIdleMinutes, {
+  payload: HeavyQueueSetDeviceIdleMinutesInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSubscribeCommandsRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeCommands, {
   payload: Schema.Struct({}),
   success: HeavyCommandsState,
@@ -3123,6 +3144,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueSetMaxRunningRpc,
+  WsHeavyQueueSetPriorityRpc,
+  WsHeavyQueueSetClaudeHookRpc,
+  WsHeavyQueueSetDeviceIdleMinutesRpc,
   WsHeavyQueueSubscribeCommandsRpc,
   WsHeavyQueueStopCommandRpc,
   WsTelegramChannelGetSettingsRpc,
