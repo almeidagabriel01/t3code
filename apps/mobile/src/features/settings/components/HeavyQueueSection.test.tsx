@@ -1,10 +1,12 @@
-import type {
-  EnvironmentId,
-  HeavyCommand,
-  HeavyCommandsState,
-  HeavyQueueEntry,
-  HeavyQueueState,
-  HeavyRunnerLinux,
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  HEAVY_QUEUE_LIMITS,
+  type EnvironmentId,
+  type HeavyCommand,
+  type HeavyCommandsState,
+  type HeavyQueueEntry,
+  type HeavyQueueState,
+  type HeavyRunnerLinux,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type { ReactNode } from "react";
@@ -25,7 +27,33 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("react-native", () => ({ Alert: { alert: mocks.alert } }));
+vi.mock("react-native", () => ({
+  Alert: { alert: mocks.alert },
+  View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("../../../components/ui/AppText", () => ({
+  AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+}));
+vi.mock("../../../components/ui/NumberField", () => ({
+  NumberField: (props: {
+    label: string;
+    min: number;
+    max: number;
+    value: number;
+    disabled?: boolean;
+    onValueChange: (value: number) => void;
+  }) => (
+    <input
+      type="number"
+      aria-label={props.label}
+      min={props.min}
+      max={props.max}
+      value={props.value}
+      disabled={props.disabled}
+      onChange={(event) => props.onValueChange(Number(event.target.value))}
+    />
+  ),
+}));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.can }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
@@ -55,6 +83,9 @@ vi.mock("../../../state/heavyQueue", () => {
       setPriority: command("setPriority"),
       setClaudeHook: command("setClaudeHook"),
       setDeviceIdleMinutes: command("setDeviceIdleMinutes"),
+      setMacMemoryFloorPercent: command("setMacMemoryFloorPercent"),
+      setMacCpuCeilingPercent: command("setMacCpuCeilingPercent"),
+      setHeavyOverLimitSeconds: command("setHeavyOverLimitSeconds"),
       stopCommand: command("stopCommand"),
       route: command("route"),
     },
@@ -159,6 +190,7 @@ const setup = (entries: HeavyQueueEntry[], over: Partial<HeavyQueueState> = {}) 
     paused: false,
     rules: [],
     maxRunning: 3,
+    ...HEAVY_QUEUE_DEFAULTS,
     reasons: {},
     room: true,
     claudeHookInstalled: false,
@@ -172,7 +204,7 @@ const setup = (entries: HeavyQueueEntry[], over: Partial<HeavyQueueState> = {}) 
   };
 };
 
-const RUNNER_OFF: RunnerMode = { enabled: false, where: "mac", overflow: 3 };
+const RUNNER_OFF: RunnerMode = { enabled: false, where: "mac" };
 const LINUX: HeavyRunnerLinux = {
   host: "remoto",
   online: true,
@@ -381,7 +413,7 @@ describe("HeavyQueueSection", () => {
     await full.unmount();
   });
 
-  it("switches the queue off and on, and locks pause, slots and rules while it is off", async () => {
+  it("switches the queue off and on, and hides pause, slots and rules while it is off", async () => {
     setup([]);
     const on = await mount();
     expect(on.toggle("Heavy work queue").checked).toBe(true);
@@ -402,10 +434,14 @@ describe("HeavyQueueSection", () => {
     const off = await mount();
     expect(off.host.textContent).toContain("Queue off: heavy jobs start right away");
     expect(off.host.textContent).not.toContain("1 of 4 running");
-    expect(off.host.textContent).toContain("Run up to 4 at once");
-    expect(off.toggle("Pause queue")).toMatchObject({ disabled: true, checked: true });
+    expect(off.host.textContent).not.toContain("Run up to 4 at once");
+    expect(off.toggle("Pause queue")).toBeNull();
     for (const name of ["Allow one more", "Allow one fewer", "App Project: Last"]) {
-      expect(off.button(name).disabled).toBe(true);
+      expect(off.button(name)).toBeUndefined();
+    }
+    // With the queue and the Runner off, no limit does anything.
+    for (const name of ["CPU limit", "Keep memory free", "Over the limit for"]) {
+      expect(off.toggle(name)).toBeNull();
     }
     expect(off.button("Stop").disabled).toBe(false);
     expect(off.toggle("Heavy work queue")).toMatchObject({ disabled: false, checked: false });
@@ -415,6 +451,49 @@ describe("HeavyQueueSection", () => {
       input: { enabled: true },
     });
     await off.unmount();
+
+    // Hybrid without the queue still routes on the Mac limits.
+    const hybrid = await mount(undefined, { enabled: true, where: "automatic" });
+    for (const name of ["CPU limit", "Keep memory free", "Over the limit for"]) {
+      expect(hybrid.toggle(name)).not.toBeNull();
+    }
+    await hybrid.unmount();
+    const linux = await mount(undefined, { enabled: true, where: "linux" });
+    expect(linux.toggle("CPU limit")).toBeNull();
+    expect(linux.toggle("Over the limit for")).not.toBeNull();
+    await linux.unmount();
+  });
+
+  it.each([
+    ["CPU limit", "macCpuCeilingPercent", "setMacCpuCeilingPercent", 85],
+    ["Keep memory free", "macMemoryFloorPercent", "setMacMemoryFloorPercent", 30],
+    ["Over the limit for", "heavyOverLimitSeconds", "setHeavyOverLimitSeconds", 45],
+  ] as const)("sets this Mac's %s within its limits", async (label, key, command, next) => {
+    setup([], { [key]: next - 1 });
+    const view = await mount();
+    const field = view.toggle(label);
+    expect(field).toMatchObject({
+      value: String(next - 1),
+      min: String(HEAVY_QUEUE_LIMITS[key].min),
+      max: String(HEAVY_QUEUE_LIMITS[key].max),
+      disabled: false,
+    });
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        field,
+        String(next),
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(mocks.commands[command]).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { [key]: next },
+    });
+    await view.unmount();
+    mocks.can = false;
+    const locked = await mount();
+    expect(locked.toggle(label).disabled).toBe(true);
+    await locked.unmount();
   });
 
   it("installs the Claude hook and picks the idle minutes", async () => {
@@ -494,9 +573,9 @@ describe("HeavyQueueSection", () => {
     const off = await mount();
     expect(off.host.textContent).toContain("Heavy jobs wait their turn on this Mac.");
     await off.unmount();
-    const auto = await mount(undefined, { enabled: true, where: "automatic", overflow: 2 });
+    const auto = await mount(undefined, { enabled: true, where: "automatic" });
     expect(auto.host.textContent).toContain(
-      "Heavy jobs queue on this Mac; past 2 jobs, listed commands go to Linux.",
+      "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.",
     );
     await auto.unmount();
   });

@@ -328,7 +328,7 @@ describe("SettingsServerControlsRouteScreen", () => {
       JSON.parse(
         container.querySelector<HTMLElement>('[aria-label="heavy queue"]')!.dataset.runner!,
       ),
-    ).toEqual({ enabled: false, where: "mac", overflow: 3 });
+    ).toEqual({ enabled: false, where: "mac" });
   });
 
   it("saves Runner settings for the environment, or as project overrides it can reset", async () => {
@@ -346,7 +346,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     project.serverConfig.settings = {
       ...project.serverConfig.settings,
       projectSettingsOverrides: {
-        ["project" as ProjectId]: { runnerWhere: "linux", runnerOverflow: 5 },
+        ["project" as ProjectId]: { runnerWhere: "linux", runnerAskMinutes: 7 },
       },
     };
     mocks.targets = [project];
@@ -362,7 +362,7 @@ describe("SettingsServerControlsRouteScreen", () => {
       input: {
         patch: {
           projectSettingsOverrides: {
-            project: { runnerWhere: "linux", runnerOverflow: 5, runnerEnabled: true },
+            project: { runnerWhere: "linux", runnerAskMinutes: 7, runnerEnabled: true },
           },
         },
       },
@@ -370,7 +370,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     await act(async () => mocks.runner!.reset("runnerWhere"));
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
       environmentId: "local",
-      input: { patch: { projectSettingsOverrides: { project: { runnerOverflow: 5 } } } },
+      input: { patch: { projectSettingsOverrides: { project: { runnerAskMinutes: 7 } } } },
     });
   });
 

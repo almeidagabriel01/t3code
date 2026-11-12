@@ -593,7 +593,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                             runner={{
                               enabled: target.settings.runnerEnabled,
                               where: target.settings.runnerWhere,
-                              overflow: target.settings.runnerOverflow,
                             }}
                           />
                         </Fragment>

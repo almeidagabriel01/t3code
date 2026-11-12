@@ -23,6 +23,7 @@ import {
 import {
   ASK_TITLE,
   askRemaining,
+  heavyLimitIdle,
   heavyModeLine,
   linuxLine,
   RUNNER_POLICY_LABEL,
@@ -42,14 +43,18 @@ import {
   type HeavyCommand,
   type HeavyQueueEntry,
   type HeavyQueueState,
+  HEAVY_QUEUE_LIMITS,
+  type HeavyQueueLimitKey,
   type RunnerWhere,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, View } from "react-native";
 
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
+import { AppText as Text } from "../../../components/ui/AppText";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
+import { NumberField } from "../../../components/ui/NumberField";
 import { RowMenuButton } from "../../../components/ui/RowMenuButton";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../../state/entities";
 import {
@@ -333,8 +338,38 @@ function QueueEntryRows(props: {
 export interface RunnerMode {
   readonly enabled: boolean;
   readonly where: RunnerWhere;
-  readonly overflow: number;
 }
+
+const LIMIT_ROWS = [
+  {
+    key: "macCpuCeilingPercent",
+    icon: "gauge.with.dots.needle.50percent",
+    label: "CPU limit",
+    description: "A new job waits while this Mac's CPU is busier than this.",
+  },
+  {
+    key: "macMemoryFloorPercent",
+    icon: "internaldrive",
+    label: "Keep memory free",
+    description: "A new job waits while less than this share of this Mac's memory is free.",
+  },
+  {
+    key: "heavyOverLimitSeconds",
+    icon: "clock",
+    label: "Over the limit for",
+    description:
+      "A machine counts as over its limits, or back under them, only once its readings stay there this long.",
+  },
+] as const satisfies ReadonlyArray<{
+  key: HeavyQueueLimitKey;
+  icon: AppSymbolName;
+  label: string;
+  description: string;
+}>;
+const UNIT: Record<(typeof HEAVY_QUEUE_LIMITS)[HeavyQueueLimitKey]["unit"], string> = {
+  percent: "%",
+  seconds: "s",
+};
 
 /** The machine's heavy queue; with `projectId`, only that project's jobs and none of the machine-wide controls. */
 export function HeavyQueueSection(props: {
@@ -361,6 +396,28 @@ export function HeavyQueueSection(props: {
   const setPriority = useAtomCommand(heavyQueueEnvironment.setPriority);
   const setClaudeHook = useAtomCommand(heavyQueueEnvironment.setClaudeHook);
   const setDeviceIdleMinutes = useAtomCommand(heavyQueueEnvironment.setDeviceIdleMinutes);
+  const setMacMemoryFloorPercent = useAtomCommand(heavyQueueEnvironment.setMacMemoryFloorPercent);
+  const setMacCpuCeilingPercent = useAtomCommand(heavyQueueEnvironment.setMacCpuCeilingPercent);
+  const setHeavyOverLimitSeconds = useAtomCommand(heavyQueueEnvironment.setHeavyOverLimitSeconds);
+  const setLimit = (key: HeavyQueueLimitKey, value: number) => {
+    switch (key) {
+      case "macMemoryFloorPercent":
+        return void setMacMemoryFloorPercent({
+          environmentId,
+          input: { macMemoryFloorPercent: value },
+        });
+      case "macCpuCeilingPercent":
+        return void setMacCpuCeilingPercent({
+          environmentId,
+          input: { macCpuCeilingPercent: value },
+        });
+      case "heavyOverLimitSeconds":
+        return void setHeavyOverLimitSeconds({
+          environmentId,
+          input: { heavyOverLimitSeconds: value },
+        });
+    }
+  };
   const projects = useProjects().filter((p) => p.environmentId === environmentId);
   const commands: Commands = {
     setPriority: (id, priority) => void setPriority({ environmentId, input: { id, priority } }),
@@ -401,7 +458,6 @@ export function HeavyQueueSection(props: {
       ),
   };
   const { entries } = state;
-  const canTune = canChange && state.enabled;
   const [now, setNow] = useState(() => Date.now());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer for the elapsed times
   useEffect(() => {
@@ -487,49 +543,84 @@ export function HeavyQueueSection(props: {
             queuePaused: state.paused,
             runnerEnabled: runner.enabled,
             where: runner.where,
-            overflow: runner.overflow,
           })}
         />
       )}
-      <SettingsSwitchRow
-        icon="pause"
-        label="Pause queue"
-        subtitle="Nothing new starts while paused. Running jobs continue."
-        value={state.paused}
-        disabled={!canTune}
-        onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
-      />
-      <ListRowLayout
-        icon="checklist.unchecked"
-        label={`Run up to ${state.maxRunning} at once`}
-        disabled={!state.enabled}
-      />
-      <SettingsActionRow
-        icon="plus"
-        label="Allow one more"
-        disabled={!canTune || state.maxRunning >= MAX_LIMIT}
-        onPress={() =>
-          void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
-        }
-      />
-      <SettingsActionRow
-        icon="minus"
-        label="Allow one fewer"
-        disabled={!canTune || state.maxRunning <= 1}
-        onPress={() =>
-          void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
-        }
-      />
-      {state.rules.map((rule) => {
-        const project = projectForCwd(projects, rule.root);
-        return (
+      {/* Pause, slots and rules act only on the queue; the limits follow heavyLimitIdle. */}
+      {state.enabled ? (
+        <>
+          <SettingsSwitchRow
+            icon="pause"
+            label="Pause queue"
+            subtitle="Nothing new starts while paused. Running jobs continue."
+            value={state.paused}
+            disabled={!canChange}
+            onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
+          />
+          <ListRowLayout
+            icon="checklist.unchecked"
+            label={`Run up to ${state.maxRunning} at once`}
+          />
           <SettingsActionRow
-            key={rule.root}
-            icon="xmark"
-            label={`${project?.title ?? rule.root}: ${PRIORITY_LABEL[rule.priority]}`}
-            description="Remove this priority rule"
-            disabled={!canTune}
-            onPress={() => commands.setRule(rule.root, null)}
+            icon="plus"
+            label="Allow one more"
+            disabled={!canChange || state.maxRunning >= MAX_LIMIT}
+            onPress={() =>
+              void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
+            }
+          />
+          <SettingsActionRow
+            icon="minus"
+            label="Allow one fewer"
+            disabled={!canChange || state.maxRunning <= 1}
+            onPress={() =>
+              void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
+            }
+          />
+          {state.rules.map((rule) => {
+            const project = projectForCwd(projects, rule.root);
+            return (
+              <SettingsActionRow
+                key={rule.root}
+                icon="xmark"
+                label={`${project?.title ?? rule.root}: ${PRIORITY_LABEL[rule.priority]}`}
+                description="Remove this priority rule"
+                disabled={!canChange}
+                onPress={() => commands.setRule(rule.root, null)}
+              />
+            );
+          })}
+        </>
+      ) : null}
+      {LIMIT_ROWS.filter(
+        (row) =>
+          heavyLimitIdle(row.key, {
+            queueEnabled: state.enabled,
+            runnerEnabled: runner?.enabled ?? null,
+            runnerWhere: runner?.where ?? null,
+          }) === null,
+      ).map((row) => {
+        const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
+        return (
+          <ListRowLayout
+            key={row.key}
+            icon={row.icon}
+            label={row.label}
+            description={row.description}
+            accessory={
+              <View className="flex-row items-center gap-1">
+                <NumberField
+                  label={row.label}
+                  min={min}
+                  max={max}
+                  value={state[row.key]}
+                  formatValue={(value) => `${value}${UNIT[unit]}`}
+                  disabled={!canChange}
+                  onValueChange={(value) => setLimit(row.key, value)}
+                />
+                <Text className="text-base text-foreground-muted">{UNIT[unit]}</Text>
+              </View>
+            }
           />
         );
       })}
