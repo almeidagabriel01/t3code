@@ -661,6 +661,24 @@ describe("HeavyCommandsGroup", () => {
     expect(mocks.stop.stop).toHaveBeenCalledWith(tests);
   });
 
+  it("shows a detached command's source and why the queue can't route it, with no Stop", async () => {
+    setupCommands([
+      command({
+        source: "detached",
+        threadId: null,
+        stoppable: false,
+        reason: "Started outside an agent, so the queue can't route it",
+      }),
+    ]);
+    await using screen = await render(commandsGroup());
+    await expect.element(screen.getByText("Outside agents", { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByText("Started outside an agent, so the queue can't route it").first())
+      .toBeVisible();
+    expect(screen.getByRole("button", { name: "Stop Tests" }).elements()).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Open thread" }).elements()).toHaveLength(0);
+  });
+
   it("offers no Stop without permission", async () => {
     setupCommands([command({})], false);
     await using screen = await render(commandsGroup());

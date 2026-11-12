@@ -6,7 +6,14 @@ import {
   peakUsageLine,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import type { EnvironmentId, HeavyCommand } from "@t3tools/contracts";
-import { BotIcon, CircleStopIcon, ListOrderedIcon, TerminalIcon } from "lucide-react";
+import {
+  BotIcon,
+  CircleStopIcon,
+  InfoIcon,
+  ListOrderedIcon,
+  TerminalIcon,
+  UnplugIcon,
+} from "lucide-react";
 
 import { useProjects } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -20,6 +27,7 @@ const SOURCE_ICON: Record<HeavyCommand["source"], typeof BotIcon> = {
   queue: ListOrderedIcon,
   agent: BotIcon,
   terminal: TerminalIcon,
+  detached: UnplugIcon,
 };
 
 export interface HeavyCommandThreads {
@@ -97,6 +105,26 @@ function Row({
             <Elapsed since={command.startedAt} prefix="·" />
           </span>
         </div>
+        {command.reason === undefined ? null : (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 text-3xs text-muted-foreground [&>svg]:size-3 [&>svg]:shrink-0">
+            <InfoIcon aria-hidden />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    tabIndex={0}
+                    className="min-w-0 cursor-default truncate rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                  />
+                }
+              >
+                {command.reason}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="max-w-sm">
+                {command.reason}
+              </TooltipPopup>
+            </Tooltip>
+          </div>
+        )}
       </div>
       <Tooltip>
         <TooltipTrigger render={<div className="cursor-default" />}>
@@ -127,7 +155,7 @@ function Row({
   );
 }
 
-/** Every heavy command running now, queued or run directly by agents and terminals. */
+/** Every heavy command running now: queued, run directly by agents and terminals, or detached. */
 export function HeavyCommandRows({
   environmentId,
   commands,
