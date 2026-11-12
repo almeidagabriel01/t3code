@@ -157,6 +157,8 @@ interface FilePreviewPanelProps {
   workspaceMutationId: string | null;
   /** The tree lives in the right panel; a file in the main area has no use for its own copy. */
   hideExplorer?: boolean;
+  /** The main-area file a tree-only panel reveals; see fileTreeRevealTarget. */
+  treeSelection?: { readonly path: string; readonly requestId: number } | null;
 }
 
 const MermaidFilePreview = lazy(() =>
@@ -1023,6 +1025,7 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
   hideExplorer = false,
+  treeSelection = null,
 }: FilePreviewPanelProps) {
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
@@ -1578,10 +1581,12 @@ export default function FilePreviewPanel({
               hostFolder={hostFolderPath !== null}
               selectedPath={
                 hostFolderPath === null
-                  ? relativePath
+                  ? (relativePath ?? treeSelection?.path ?? null)
                   : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
               }
-              selectedPathRevealId={revealRequestId}
+              selectedPathRevealId={
+                relativePath === null ? (treeSelection?.requestId ?? 0) : revealRequestId
+              }
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
               {...(hostFolderPath === null ? { hostActions: explorerHostActions } : {})}
