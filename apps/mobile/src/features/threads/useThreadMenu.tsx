@@ -36,6 +36,7 @@ import { copyThreadMenuReference } from "./copyThreadMenuReference";
 import {
   buildSnoozePresetActions,
   buildThreadMenuActions,
+  canOpenProjectViews,
   canOpenThreadNotes,
   menuActionsToAppBarItems,
   resolveThreadMenuKind,
@@ -117,6 +118,7 @@ export function useThreadMenu(
       linkedCard === null && kanbanActions.canEdit && kanbanEnvironmentIds.includes(environmentId),
     restartSession: true,
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
+    projectViews: !assistantEntry && canOpenProjectViews(thread, projects),
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
     assistantTask: assistantTaskMenuState(assistantTask, thread),
@@ -170,6 +172,14 @@ export function useThreadMenu(
             rootNavigationRef.navigate("SettingsNotes", {
               environmentId,
               project: thread.projectId,
+            }),
+          ),
+        openProjectView: (view) =>
+          whenRootNavigationReady(() =>
+            rootNavigationRef.navigate("ThreadProjectView", {
+              environmentId,
+              threadId: thread.id,
+              view,
             }),
           ),
         turnIntoProject: () => void turnThreadIntoProject(thread),

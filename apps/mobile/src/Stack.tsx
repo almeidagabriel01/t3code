@@ -61,6 +61,7 @@ import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
+import { ProjectViewSheet } from "./features/projectViews/ProjectViewSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import {
   ThreadHandoffAgentRouteScreen,
@@ -859,6 +860,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadPullRequestsSheet,
       linking: `${THREAD_LINKING_PREFIX}/pull-requests`,
       options: sheetRoute({ detent: 0.55 }),
+    }),
+    ThreadProjectView: createNativeStackScreen({
+      screen: ProjectViewSheet,
+      linking: `${THREAD_LINKING_PREFIX}/project/:view`,
+      options: sheetRoute({ detent: 0.7, androidMaxDetent: 0.9 }),
     }),
     GitCommit: createNativeStackScreen({
       screen: GitCommitSheet,

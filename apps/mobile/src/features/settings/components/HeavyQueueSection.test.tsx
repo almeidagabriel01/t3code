@@ -20,6 +20,7 @@ const { mocks } = vi.hoisted(() => ({
     alert: vi.fn(),
     selectDetail: vi.fn(),
     titles: {} as Record<string, string>,
+    shells: [] as Array<{ environmentId: string; id: string; projectId: string }>,
   },
 }));
 
@@ -33,6 +34,7 @@ vi.mock("../../../state/entities", () => ({
     ref === null || mocks.titles[ref.threadId] === undefined
       ? null
       : { title: mocks.titles[ref.threadId], projectId: "p2" },
+  useQuietThreadShells: () => mocks.shells,
   useProjects: () => [
     { id: "p1", environmentId: "env", workspaceRoot: "/work/app", title: "App Project" },
     { id: "p2", environmentId: "env", workspaceRoot: "/work/api", title: "Api Project" },
@@ -141,11 +143,16 @@ const setup = (entries: HeavyQueueEntry[], over: Partial<HeavyQueueState> = {}) 
   };
 };
 
-async function mount() {
+async function mount(projectId?: string) {
   const host = document.createElement("div");
   const root = createRoot(host);
   await act(async () => {
-    root.render(<HeavyQueueSection environmentId={"env" as EnvironmentId} />);
+    root.render(
+      <HeavyQueueSection
+        environmentId={"env" as EnvironmentId}
+        {...(projectId === undefined ? {} : { projectId })}
+      />,
+    );
   });
   const button = (name: string, nth = 0) =>
     [...host.querySelectorAll("button")].filter((b) => b.textContent === name)[nth]!;
@@ -158,6 +165,7 @@ afterEach(() => {
   mocks.can = true;
   mocks.heavy = { commands: [], cpuCount: 8 };
   mocks.titles = {};
+  mocks.shells = [];
   mocks.commands = {};
   vi.clearAllMocks();
 });
@@ -397,6 +405,37 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
   });
 
+  it("shows only a project's jobs, worktree ones included, with machine-wide places", async () => {
+    mocks.shells = [{ environmentId: "env", id: "t9", projectId: "p1" }];
+    setup([
+      entry("a", { startedAt: NOW }),
+      entry("b", { cwd: "/work/api" }),
+      entry("c", { cwd: "/worktrees/app-1", threadId: "t9" }),
+      entry("d", { cwd: "/elsewhere" }),
+    ]);
+    const view = await mount("p1");
+    const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent ?? "");
+    expect(rows[0]).toMatch(/^Whole queue: 1 of 3 running/);
+    expect(rows.filter((row) => row.startsWith("cmd "))).toEqual([
+      expect.stringMatching(/^cmd a\|/),
+      expect.stringMatching(/^cmd c\|.*\|#2$/),
+    ]);
+    expect(view.host.querySelector("section")?.getAttribute("aria-label")).toBe("Queue");
+    expect(view.toggle("Pause queue")).toBeNull();
+    expect(view.button("Allow one more")).toBeUndefined();
+    await act(async () => view.button("Stop").click());
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Stop the running command?",
+      "cmd a",
+      expect.any(Array),
+    );
+    await view.unmount();
+
+    const empty = await mount("p2-missing");
+    expect(empty.host.textContent).toContain("Nothing queued for this project.");
+    await empty.unmount();
+  });
+
   it("disables the actions without permission", async () => {
     mocks.can = false;
     setup([entry("b"), entry("c")]);
@@ -427,12 +466,17 @@ const heavy = (over: Partial<HeavyCommand>): HeavyCommand => ({
   ...over,
 });
 
-async function mountCommands(commands: ReadonlyArray<HeavyCommand>) {
+async function mountCommands(commands: ReadonlyArray<HeavyCommand>, projectId?: string) {
   mocks.heavy = { commands, cpuCount: 8 };
   const host = document.createElement("div");
   const root = createRoot(host);
   await act(async () => {
-    root.render(<HeavyCommandsSection environmentId={"env" as EnvironmentId} />);
+    root.render(
+      <HeavyCommandsSection
+        environmentId={"env" as EnvironmentId}
+        {...(projectId === undefined ? {} : { projectId })}
+      />,
+    );
   });
   const buttons = (name: string) =>
     [...host.querySelectorAll("button")].filter((b) => b.textContent === name);
@@ -524,5 +568,25 @@ describe("HeavyCommandsSection", () => {
     const view = await mountCommands([heavy({})]);
     expect(view.buttons("Stop")[0]!.disabled).toBe(true);
     await view.unmount();
+  });
+
+  it("keeps only the project's commands, matched by cwd or by their thread", async () => {
+    mocks.shells = [{ environmentId: "env", id: "t7", projectId: "p1" }];
+    const view = await mountCommands(
+      [
+        heavy({ name: "Here", threadId: null, cwd: "/work/app" }),
+        heavy({ name: "Worktree", threadId: "t7", cwd: "/worktrees/app-2" }),
+        heavy({ name: "Elsewhere", threadId: null, cwd: "/work/api" }),
+      ],
+      "p1",
+    );
+    expect(view.host.querySelector("section")?.getAttribute("aria-label")).toBe("Running now");
+    const names = [...view.host.querySelectorAll("p")].map((row) => row.textContent?.split("|")[0]);
+    expect(names).toEqual(["Here", "Worktree"]);
+    await view.unmount();
+
+    const none = await mountCommands([heavy({ threadId: null, cwd: "/work/api" })], "p1");
+    expect(none.host.innerHTML).toBe("");
+    await none.unmount();
   });
 });

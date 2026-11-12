@@ -4,6 +4,7 @@ import {
   formatDuration,
   HEAVY_COMMAND_SOURCE_LABEL,
   heavyCommandKey,
+  heavyItemsInProject,
   moveTarget,
   projectForCommand,
   PRIORITY_LABEL,
@@ -32,7 +33,7 @@ import { Alert } from "react-native";
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
-import { useProjects, useThreadShell } from "../../../state/entities";
+import { useProjects, useQuietThreadShells, useThreadShell } from "../../../state/entities";
 import {
   heavyQueueEnvironment,
   useHeavyCommandsState,
@@ -46,6 +47,25 @@ import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 const MAX_LIMIT = 8;
 const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
+
+/** Keeps the items that belong to `projectId`, matched by cwd or by their thread's project. */
+function useProjectItems(environmentId: EnvironmentId, projectId: string | undefined) {
+  const projects = useProjects().filter((p) => p.environmentId === environmentId);
+  const threads = useQuietThreadShells();
+  return <T extends Pick<HeavyCommand, "threadId"> & { readonly cwd?: string | undefined }>(
+    items: ReadonlyArray<T>,
+  ): ReadonlyArray<T> =>
+    projectId === undefined
+      ? items
+      : heavyItemsInProject(items, {
+          projectId,
+          projects,
+          projectIdOfThread: (threadId) =>
+            threads.find(
+              (thread) => thread.environmentId === environmentId && thread.id === threadId,
+            )?.projectId,
+        });
+}
 
 type Commands = {
   readonly move: (id: string, beforeId: string | null) => void;
@@ -69,14 +89,14 @@ function QueueEntryRows(props: {
 }) {
   const { entry, entries, position, commands } = props;
   const projects = useProjects().filter((p) => p.environmentId === props.environmentId);
-  const project = projectForCwd(projects, entry.cwd);
-  const rule = project === undefined ? undefined : ruleForRoot(props.rules, project.workspaceRoot);
   const selectDetail = useSelectWorkspaceDetail();
   const thread = useThreadShell(
     entry.threadId === null
       ? null
       : scopeThreadRef(props.environmentId, ThreadId.make(entry.threadId)),
   );
+  const project = projectForCommand(entry, projects, () => thread?.projectId);
+  const rule = project === undefined ? undefined : ruleForRoot(props.rules, project.workspaceRoot);
   const origin = thread?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
   const running = position === null;
   const description = [
@@ -206,8 +226,13 @@ function QueueEntryRows(props: {
   );
 }
 
-export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId }) {
-  const { environmentId } = props;
+/** The machine's heavy queue; with `projectId`, only that project's jobs and none of the machine-wide controls. */
+export function HeavyQueueSection(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: string;
+}) {
+  const { environmentId, projectId } = props;
+  const inProject = useProjectItems(environmentId, projectId);
   const state = useHeavyQueueState(environmentId);
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const move = useAtomCommand(heavyQueueEnvironment.move);
@@ -255,6 +280,50 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
     const timer = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(timer);
   }, []);
+  const shown = inProject(entries);
+  const rows = (
+    <>
+      {shown.length === 0 ? (
+        <ListRowLayout
+          icon="checkmark"
+          label={projectId === undefined ? "Nothing queued." : "Nothing queued for this project."}
+        />
+      ) : null}
+      {shown.map((entry) => {
+        const index = entries.indexOf(entry);
+        const position =
+          entry.startedAt === null
+            ? entries.slice(0, index + 1).filter((e) => e.startedAt === null).length
+            : null;
+        return (
+          <QueueEntryRows
+            key={entry.id}
+            environmentId={environmentId}
+            entries={entries}
+            entry={entry}
+            position={position}
+            now={now}
+            reason={state.reasons[entry.id]}
+            usage={usageLine(entry, state)}
+            rules={state.rules}
+            canChange={canChange}
+            commands={commands}
+          />
+        );
+      })}
+    </>
+  );
+  if (projectId !== undefined) {
+    return (
+      <SettingsSection
+        title="Queue"
+        footer="Positions count every job on the machine. Pause and limits live in Settings."
+      >
+        <ListRowLayout icon="timer" label={`Whole queue: ${queueSummary(state)}`} />
+        {rows}
+      </SettingsSection>
+    );
+  }
   return (
     <SettingsSection
       title="Heavy work queue"
@@ -337,28 +406,7 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
           onPress={() => void setDeviceIdleMinutes({ environmentId, input: { minutes } })}
         />
       ))}
-      {entries.length === 0 ? <ListRowLayout icon="checkmark" label="Nothing queued." /> : null}
-      {entries.map((entry, index) => {
-        const position =
-          entry.startedAt === null
-            ? entries.slice(0, index + 1).filter((e) => e.startedAt === null).length
-            : null;
-        return (
-          <QueueEntryRows
-            key={entry.id}
-            environmentId={environmentId}
-            entries={entries}
-            entry={entry}
-            position={position}
-            now={now}
-            reason={state.reasons[entry.id]}
-            usage={usageLine(entry, state)}
-            rules={state.rules}
-            canChange={canChange}
-            commands={commands}
-          />
-        );
-      })}
+      {rows}
     </SettingsSection>
   );
 }
@@ -429,9 +477,15 @@ function HeavyCommandRows(props: {
 }
 
 /** Every heavy command running now, queued or run directly; nothing while none runs. */
-export function HeavyCommandsSection(props: { readonly environmentId: EnvironmentId }) {
+export function HeavyCommandsSection(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: string;
+}) {
   const { environmentId } = props;
-  const { commands, cpuCount } = useHeavyCommandsState(environmentId);
+  const inProject = useProjectItems(environmentId, props.projectId);
+  const state = useHeavyCommandsState(environmentId);
+  const commands = inProject(state.commands);
+  const { cpuCount } = state;
   const canStop = useAtomValue(heavyQueueEnvironment.stopCommand.permissionAtom(environmentId));
   const stopCommand = useAtomCommand(heavyQueueEnvironment.stopCommand);
   const cancel = useAtomCommand(heavyQueueEnvironment.cancel);
@@ -468,7 +522,7 @@ export function HeavyCommandsSection(props: { readonly environmentId: Environmen
     ]);
   return (
     <SettingsSection
-      title="Heavy commands"
+      title={props.projectId === undefined ? "Heavy commands" : "Running now"}
       footer="Commands running now that use at least half a core or 1 GB, queued or started directly by agents and terminals."
     >
       {commands.map((command) => (

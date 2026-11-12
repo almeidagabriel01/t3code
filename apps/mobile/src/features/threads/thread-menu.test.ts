@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildSnoozePresetActions,
+  canOpenProjectViews,
   canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
@@ -38,6 +39,35 @@ describe("thread menu", () => {
       now: new Date(0),
     });
     expect(openNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the project's Activity, Memory and Heavy work only when asked, and routes each", () => {
+    expect(ids()).not.toContain("project-views");
+    const project = buildThreadMenuActions({ ...input, projectViews: true }).find(
+      (action) => action.id === "project-views",
+    );
+    expect(project?.subactions?.map((action) => [action.id, action.title])).toEqual([
+      ["project-view:activity", "Activity"],
+      ["project-view:memory", "Memory"],
+      ["project-view:heavy-work", "Heavy work"],
+    ]);
+    const openProjectView = vi.fn();
+    const run = (event: string) =>
+      runThreadMenuEvent(event, { openProjectView } as unknown as ThreadMenuHandlers, {
+        displayedPresets: [],
+        presets: undefined,
+        now: new Date(0),
+      });
+    run("project-view:heavy-work");
+    run("project-view:unknown");
+    expect(openProjectView.mock.calls).toEqual([["heavy-work"]]);
+  });
+
+  it("opens project views for any project the thread's environment knows", () => {
+    const thread = { environmentId: "e", projectId: "p" };
+    expect(canOpenProjectViews(thread, [{ environmentId: "e", id: "p" }])).toBe(true);
+    expect(canOpenProjectViews(thread, [{ environmentId: "other", id: "p" }])).toBe(false);
+    expect(canOpenProjectViews(thread, [])).toBe(false);
   });
 
   it("has thread Notes only in a real project of a notes environment", () => {

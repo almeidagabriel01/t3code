@@ -27,10 +27,11 @@ const { mocks, Children } = vi.hoisted(() => {
       selectDetail: vi.fn(),
       confirm: vi.fn(),
       alert: vi.fn(),
+      dismissKeyboard: vi.fn(),
     },
   };
 });
-vi.mock("react-native", () => ({ View: Children }));
+vi.mock("react-native", () => ({ View: Children, Keyboard: { dismiss: mocks.dismissKeyboard } }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => true }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
@@ -228,6 +229,10 @@ describe("AssistantWorkMemorySection", () => {
     await render();
     act(() => button("Forget memory").click());
     const request = mocks.confirm.mock.lastCall![0];
+    // A prompt over an open keyboard leaves a stale keyboard height behind.
+    expect(mocks.dismissKeyboard.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.confirm.mock.invocationCallOrder[0]!,
+    );
     expect(request).toMatchObject({ destructive: true, confirmText: "Forget" });
     await act(async () => request.onConfirm());
     expect(mocks.forget).toHaveBeenCalledWith({

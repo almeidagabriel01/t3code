@@ -159,6 +159,30 @@ describe("useThreadMenu Notes item", () => {
   });
 });
 
+describe("useThreadMenu Project views", () => {
+  const projectItem = () => seen.mock.lastCall?.[0]?.find((item) => item.id === "project-views");
+
+  it("opens the chosen view of the thread's project in its sheet", async () => {
+    mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha" }];
+    await mount();
+    const memory = (projectItem() as unknown as { items: AppBarMenuItem[] }).items.find(
+      (item) => item.id === "project-view:memory",
+    ) as { onPress: () => void };
+    act(() => memory.onPress());
+    expect(mocks.navigate).toHaveBeenCalledWith("ThreadProjectView", {
+      environmentId: "env",
+      threadId: "t1",
+      view: "memory",
+    });
+  });
+
+  it("is absent when the thread's project is unknown", async () => {
+    mocks.projects = [];
+    await mount();
+    expect(projectItem()).toBeUndefined();
+  });
+});
+
 describe("useThreadMenu Link to board card", () => {
   const linkCard = () => seen.mock.lastCall?.[0]?.find((item) => item.id === "link-card");
 
