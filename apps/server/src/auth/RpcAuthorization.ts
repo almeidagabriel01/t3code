@@ -232,6 +232,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.heavyQueueSetClaudeHook]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetDeviceIdleMinutes]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSubscribeCommands]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueSubscribeNotices]: AuthOrchestrationReadScope,
   [WS_METHODS.heavyQueueStopCommand]: AuthTerminalOperateScope,
   [WS_METHODS.telegramChannelGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.telegramChannelSubscribeStatus]: AuthOrchestrationReadScope,

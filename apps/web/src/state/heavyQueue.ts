@@ -62,3 +62,9 @@ const heavyCommandsAtom = Atom.family((environmentId: EnvironmentId) =>
 export function useHeavyCommands(environmentId: EnvironmentId | null): HeavyCommandsState {
   return useAtomValue(environmentId === null ? NO_COMMANDS_ATOM : heavyCommandsAtom(environmentId));
 }
+
+/** The status bar's Resource Manager popover, so a toast can open it. */
+export const resourceManagerOpenAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-resource-manager-open"),
+);

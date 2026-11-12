@@ -31,6 +31,14 @@ import {
 } from "./admission.ts";
 import { interceptBashCall, lineParts } from "./heavyHook.ts";
 import {
+  deadlineRecord,
+  endedRecord,
+  type HeavyEventRecord,
+  parseLog,
+  requeueRecord,
+  withRecord,
+} from "./heavyNotices.ts";
+import {
   DEFAULT_MACHINE_CONFIG,
   eligibilityOf,
   mayPublish,
@@ -116,6 +124,8 @@ interface QueueDoc {
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
+  /** Recent transitions that may need a notice, newest last. */
+  readonly events: ReadonlyArray<HeavyEventRecord>;
 }
 
 const DEFAULT_DEVICE_IDLE_MINUTES = 20;
@@ -134,6 +144,7 @@ const EMPTY_DOC: QueueDoc = {
   ...HEAVY_QUEUE_DEFAULTS,
   runner: null,
   linux: UNKNOWN_HEALTH,
+  events: [],
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -177,6 +188,7 @@ const loadDoc = (dir: string): QueueDoc => {
       holding?: unknown;
       deviceIdleMinutes?: unknown;
       runner?: unknown;
+      events?: unknown;
       linux?: unknown;
     } | null;
     const record = isObject(parsed) ? parsed : null;
@@ -210,6 +222,7 @@ const loadDoc = (dir: string): QueueDoc => {
       heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
+      events: parseLog(parsed?.events),
     };
   } catch {
     return EMPTY_DOC;
@@ -383,7 +396,11 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
   const canceled = decision.cancels[id];
   if (canceled !== undefined) {
     return {
-      doc: { ...doc, entries: entries.filter((e) => e.id !== id) },
+      doc: {
+        ...doc,
+        entries: entries.filter((e) => e.id !== id),
+        events: withRecord(doc.events, deadlineRecord(entry, now)),
+      },
       result: { status: "canceled", reason: canceled },
     };
   }
@@ -651,6 +668,28 @@ export const remove = (dir: string, id: string) =>
     result: undefined,
   }));
 
+/** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
+export const finish = (dir: string, id: string, code: number, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        entries: doc.entries.filter((entry) => entry.id !== id),
+        events: withRecord(
+          doc.events,
+          endedRecord(
+            doc.entries.find((entry) => entry.id === id),
+            code,
+            now,
+          ),
+        ),
+      },
+      result: undefined,
+    }),
+    now,
+  );
+
 export const move = (dir: string, id: string, beforeId: string | null, note?: string) =>
   mutate(dir, (doc) => decideMove(doc, id, beforeId, note));
 
@@ -849,7 +888,15 @@ export const requeue = (
       ...previous,
       ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
     };
-    return { doc: { ...doc, entries: [...active, again, ...waiters] }, result: true };
+    const record = requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    return {
+      doc: {
+        ...doc,
+        entries: [...active, again, ...waiters],
+        events: withRecord(doc.events, record),
+      },
+      result: true,
+    };
   });
 
 /** The remote run is confirmed stopped: the entry may run again. */

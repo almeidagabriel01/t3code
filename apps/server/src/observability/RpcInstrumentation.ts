@@ -179,6 +179,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.heavyQueueSetClaudeHook]: "heavyQueue",
   [WS_METHODS.heavyQueueSetDeviceIdleMinutes]: "heavyQueue",
   [WS_METHODS.heavyQueueSubscribeCommands]: "heavyQueue",
+  [WS_METHODS.heavyQueueSubscribeNotices]: "heavyQueue",
   [WS_METHODS.heavyQueueStopCommand]: "heavyQueue",
   [WS_METHODS.telegramChannelGetSettings]: "telegramChannel",
   [WS_METHODS.telegramChannelConfigure]: "telegramChannel",

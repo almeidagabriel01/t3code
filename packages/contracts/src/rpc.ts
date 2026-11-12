@@ -566,6 +566,7 @@ import {
   HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
+import { HeavyNoticeBatch } from "./heavyNotices.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -874,6 +875,7 @@ export const WS_METHODS = {
   heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
   heavyQueueSetDeviceIdleMinutes: "heavyQueue.setDeviceIdleMinutes",
   heavyQueueSubscribeCommands: "heavyQueue.subscribeCommands",
+  heavyQueueSubscribeNotices: "heavyQueue.subscribeNotices",
   heavyQueueStopCommand: "heavyQueue.stopCommand",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
@@ -2767,6 +2769,13 @@ const WsHeavyQueueSubscribeCommandsRpc = Rpc.make(WS_METHODS.heavyQueueSubscribe
   stream: true,
 });
 
+const WsHeavyQueueSubscribeNoticesRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeNotices, {
+  payload: Schema.Struct({}),
+  success: HeavyNoticeBatch,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsHeavyQueueStopCommandRpc = Rpc.make(WS_METHODS.heavyQueueStopCommand, {
   payload: HeavyCommandStopInput,
   success: HeavyCommandStopResult,
@@ -3189,6 +3198,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetClaudeHookRpc,
   WsHeavyQueueSetDeviceIdleMinutesRpc,
   WsHeavyQueueSubscribeCommandsRpc,
+  WsHeavyQueueSubscribeNoticesRpc,
   WsHeavyQueueStopCommandRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,

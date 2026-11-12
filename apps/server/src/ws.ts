@@ -279,6 +279,7 @@ import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
+import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
@@ -1539,6 +1540,7 @@ export const layerWsRpc = (
       const keepAwake = yield* KeepAwake.KeepAwake;
       const heavyQueue = yield* HeavyQueue.HeavyQueue;
       const heavyCommands = yield* HeavyCommands.HeavyCommands;
+      const heavyNotices = yield* HeavyQueueNotices.HeavyQueueNotices;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2711,6 +2713,7 @@ export const layerWsRpc = (
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueueSubscribeCommands]: () => heavyCommands.stream,
+        [WS_METHODS.heavyQueueSubscribeNotices]: () => heavyNotices.stream,
         [WS_METHODS.heavyQueueStopCommand]: (input) => heavyCommands.stop(input),
         [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
         [WS_METHODS.heavyQueueStartNow]: ({ id }) => heavyQueue.startNow(id),

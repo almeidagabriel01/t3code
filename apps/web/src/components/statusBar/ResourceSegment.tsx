@@ -1,3 +1,4 @@
+import { useAtom } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
@@ -36,7 +37,7 @@ import { useOrderWhileOpen } from "../../hooks/useOrderWhileOpen";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useDeviceState } from "../../state/device";
-import { useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
+import { resourceManagerOpenAtom, useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
@@ -903,7 +904,7 @@ function QueueCount({ environmentId }: { readonly environmentId: EnvironmentId |
 
 function ResourceSegmentBody() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useAtom(resourceManagerOpenAtom);
   const resources = useEnvironmentResources();
   const terminalCount = resources.reduce(
     (sum, { terminals }) =>
