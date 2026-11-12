@@ -20,6 +20,10 @@ export const HeavyQueueEntry = Schema.Struct({
   note: Schema.optionalKey(Schema.String),
   /** The user released it: it starts at once, even when slots are full, the machine is loaded or the queue is paused. */
   forced: Schema.optionalKey(Schema.Boolean),
+  /** Agents' jobs run "low" (background QoS on macOS) and the user's "normal"; "high" was asked for. Absent on older entries. */
+  priority: Schema.optionalKey(Schema.Literals(["low", "normal", "high"])),
+  /** Worker count its test runners were given when it started: the cores free then. */
+  workers: Schema.optionalKey(Schema.Int),
   /** Held by a T3 server itself rather than a `t3 heavy` command, so it cannot be stopped by signal. */
   server: Schema.optionalKey(Schema.Boolean),
   /** Latest cores and resident bytes of its process tree, refreshed each sample while it runs. */
@@ -95,6 +99,13 @@ export const HeavyQueueSetMaxRunningInput = Schema.Struct({ maxRunning: Schema.I
 export type HeavyQueueSetMaxRunningInput = typeof HeavyQueueSetMaxRunningInput.Type;
 
 /** A null priority clears the rule. */
+/** "high" starts a waiter now and lifts a running job's processes out of background QoS; "low" puts them back. */
+export const HeavyQueueSetPriorityInput = Schema.Struct({
+  id: Schema.String,
+  priority: Schema.Literals(["low", "high"]),
+});
+export type HeavyQueueSetPriorityInput = typeof HeavyQueueSetPriorityInput.Type;
+
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,
   priority: Schema.NullOr(Schema.Literals(["first", "last"])),

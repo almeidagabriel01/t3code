@@ -4,6 +4,8 @@
  */
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
+import { heavySegment } from "./heavyHook.ts";
+
 export interface Sample {
   readonly at: number;
   /** Cores' worth of CPU in use right now, from the host's short-window utilisation, not the load average. */
@@ -13,6 +15,9 @@ export interface Sample {
   readonly totalMemoryBytes: number;
   /** Since when every sample showed headroom without a break; null while under pressure. */
   readonly headroomSince: number | null;
+  /** macOS memory pressure level (2 warning, 4 critical); absent from older readers. */
+  readonly pressureLevel?: number | null;
+  readonly swapInBytesPerSecond?: number | null;
 }
 
 export interface Run {
@@ -21,11 +26,23 @@ export interface Run {
   readonly durationMs: number;
 }
 
-/** Last few finished runs per command signature. */
+/** Why the kernel's own signals say memory is short, or null when they do not. */
+const memoryPressure = (sample: Omit<Sample, "headroomSince">): string | null => {
+  if ((sample.pressureLevel ?? 0) >= 2) return "the system reports memory pressure";
+  const swapIn = sample.swapInBytesPerSecond ?? 0;
+  if (swapIn > SWAP_IN_LIMIT) return `swapping in ${(swapIn / 1024 ** 2).toFixed(0)} MB/s`;
+  return null;
+};
+
 /** The machine is calm enough that admitting something could be considered. */
 export const hasHeadroom = (sample: Omit<Sample, "headroomSince">) =>
+  memoryPressure(sample) === null &&
   sample.availableMemoryBytes >= MEMORY_FLOOR * sample.totalMemoryBytes &&
   sample.busyCores <= CPU_CEILING * sample.cpuCount;
+
+/** Workers a starting job's runners get: the cores free now, all but one on an idle machine. */
+export const workersFor = (cpuCount: number, busyCores: number | null): number =>
+  Math.max(2, Math.min(cpuCount - 1, Math.floor(cpuCount - (busyCores ?? 0))));
 
 export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
 
@@ -41,6 +58,9 @@ const MEMORY_FLOOR = 0.2;
 /** Once blocked, memory has to recover a little past the floor so admission does not flap. */
 const MEMORY_REOPEN = 0.25;
 const CPU_CEILING = 0.7;
+/** Sustained swap-in above this is the machine paging work back in, not a blip. */
+const SWAP_IN_LIMIT = 20 * 1024 ** 2;
+
 /** A head waiting this long stops anything from passing it. */
 const HEAD_PATIENCE_MS = 5 * 60_000;
 const GIB = 1024 ** 3;
@@ -62,9 +82,9 @@ export const kindOf = (entry: Pick<HeavyQueueEntry, "label" | "server">): Kind =
   return "heavy";
 };
 
-/** `vp test run src/a.test.ts --watch` and `vp test run src/b.test.ts` share `vp test run`. */
+/** `vp test run src/a.test.ts --watch` and `cd x && vp test run src/b.test.ts` share `vp test run`. */
 export const signatureOf = (label: string): string =>
-  label
+  (heavySegment(label) ?? label)
     .split(/\s+/)
     .filter((word) => word !== "" && !word.startsWith("-") && !/[\\/]|\.\w{1,5}$/.test(word))
     .slice(0, 4)
@@ -156,6 +176,7 @@ export const plan = (input: PlanInput): Plan => {
   if (running.some((entry) => kindOf(entry) === "exclusive")) {
     return finish(null, "an exclusive job is running alone", false, input.holding);
   }
+  // One job always runs: holding the only one back on pressure from elsewhere would starve agents.
   if (running.length === 0) return finish(head.id, null, true, false);
   if (kindOf(head) === "exclusive") {
     return finish(null, "runs alone: waiting for the running ones to finish", false, input.holding);
@@ -170,6 +191,8 @@ export const plan = (input: PlanInput): Plan => {
   if (sample === null || now - sample.at > SAMPLE_FRESH_MS) {
     return finish(null, "waiting for a load reading", false, input.holding);
   }
+  const pressure = memoryPressure(sample);
+  if (pressure !== null) return finish(null, `waiting for memory: ${pressure}`, false, true);
 
   if (sample.headroomSince === null || now - sample.headroomSince < HEADROOM_MS) {
     return finish(null, "waiting for steady headroom", false, input.holding);

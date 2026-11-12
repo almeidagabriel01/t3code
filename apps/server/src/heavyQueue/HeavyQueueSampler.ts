@@ -58,6 +58,8 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             cpuCount: reading.cpuCount,
             availableMemoryBytes: reading.availableMemoryBytes,
             totalMemoryBytes: reading.totalMemoryBytes,
+            pressureLevel: reading.memoryPressureLevel ?? null,
+            swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
           },
           snapshot === null ? {} : peaksOf(entries, snapshot.processes),
         );

@@ -12,6 +12,10 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  /** macOS kernel memory pressure: 1 normal, 2 warning, 4 critical. Absent elsewhere. */
+  memoryPressureLevel: Schema.optionalKey(Schema.NullOr(Schema.Int)),
+  /** Swap-in rate since the previous reading; absent on the first one and where unknown. */
+  swapInBytesPerSecond: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

@@ -9,6 +9,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import {
+  type MemoryReading,
+  parseDarwinMemory,
+  parseLinuxMemory,
+  swapInRate,
+} from "../heavyQueue/hostReader.ts";
+
 export class HostResources extends Context.Service<
   HostResources,
   { readonly read: Effect.Effect<HostResourcesSnapshot> }
@@ -60,23 +67,19 @@ function readCpu(at: number): CpuReading {
   return { ...cpu, count: cpus.length, at };
 }
 
-function darwinAvailableMemory(output: string): number | null {
-  const pageSize = /page size of (\d+) bytes/.exec(output)?.[1];
-  const free = /^Pages free:\s+(\d+)\./m.exec(output)?.[1];
-  const inactive = /^Pages inactive:\s+(\d+)\./m.exec(output)?.[1];
-  const speculative = /^Pages speculative:\s+(\d+)\./m.exec(output)?.[1];
-  if (!pageSize || !free || !inactive || !speculative) return null;
-  // vm_stat excludes speculative from free; add it once, without overlapping purgeable pages.
-  const available = (Number(free) + Number(inactive) + Number(speculative)) * Number(pageSize);
-  return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
-}
-
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   let cpuBaseline: CpuReading | null = null;
+  let lastSwap: { readonly at: number; readonly swapInBytes: number | null } | null = null;
+  const output = (command: string, args: ReadonlyArray<string>) =>
+    spawner.string(ChildProcess.make(command, args, { stdin: "ignore", stderr: "ignore" })).pipe(
+      Effect.timeout("1 second"),
+      Effect.orElseSucceed(() => ""),
+    );
+  const readText = (file: string) => fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
   const sample = Effect.fn("HostResources.sample")(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     let cpu = readCpu(now);
@@ -90,29 +93,36 @@ const make = Effect.fn("makeHostResources")(function* () {
     cpuBaseline = window.next;
     const cpuUtilization = window.utilization;
     const totalMemoryBytes = NodeOS.totalmem();
-    // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
-    let availableMemoryBytes = NodeOS.freemem();
+    let memory: MemoryReading | null = null;
     if (platform === "linux") {
-      const meminfo = yield* fs
-        .readFileString("/proc/meminfo")
-        .pipe(Effect.orElseSucceed(() => ""));
-      const available = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo)?.[1];
-      if (available) availableMemoryBytes = Number(available) * 1024;
+      memory = parseLinuxMemory(
+        yield* readText("/proc/meminfo"),
+        yield* readText("/proc/vmstat"),
+        totalMemoryBytes,
+      );
     } else if (platform === "darwin") {
-      const output = yield* spawner
-        .string(ChildProcess.make("/usr/bin/vm_stat", [], { stdin: "ignore", stderr: "ignore" }))
-        .pipe(
-          Effect.timeout("1 second"),
-          Effect.orElseSucceed(() => ""),
-        );
-      availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
+      const [vmStat, pressure] = yield* Effect.all(
+        [
+          output("/usr/bin/vm_stat", []),
+          output("/usr/sbin/sysctl", ["-n", "kern.memorystatus_vm_pressure_level"]),
+        ],
+        { concurrency: 2 },
+      );
+      memory = parseDarwinMemory(vmStat, pressure, totalMemoryBytes);
     }
+    // On Windows libuv returns GlobalMemoryStatusEx.ullAvailPhys, including standby memory.
+    const availableMemoryBytes = memory?.availableMemoryBytes ?? NodeOS.freemem();
+    const swap = { at: cpu.at, swapInBytes: memory?.swapInBytes ?? null };
+    const swapInBytesPerSecond = swapInRate(lastSwap, swap);
+    lastSwap = swap;
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount: cpu.count,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
+      ...(memory?.pressureLevel == null ? {} : { memoryPressureLevel: memory.pressureLevel }),
+      ...(swapInBytesPerSecond === null ? {} : { swapInBytesPerSecond }),
     };
   });
 

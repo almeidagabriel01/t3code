@@ -36,15 +36,15 @@ describe("heavy queue file", () => {
     for (const id of ["a", "b", "c"]) Queue.enqueue(dir, entry(id));
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", position: 2 });
     expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "waiting", position: 3 });
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", position: 1 });
     const second = Queue.tryStart(dir, "c");
     expect(second).toMatchObject({ status: "waiting", position: 2, running: { id: "a" } });
     expect(Queue.read(dir).filter((e) => e.startedAt !== null)).toHaveLength(1);
     Queue.remove(dir, "a");
     expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "waiting", position: 2 });
-    expect(Queue.tryStart(dir, "b")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "gone")).toEqual({ status: "removed" });
   });
 
@@ -53,7 +53,7 @@ describe("heavy queue file", () => {
     Queue.enqueue(dir, entry("dead", deadPid()));
     Queue.enqueue(dir, entry("live"));
     expect(Queue.read(dir).map((e) => e.id)).toEqual(["live"]);
-    expect(Queue.tryStart(dir, "live")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "live")).toMatchObject({ status: "started" });
     expect(Queue.isAlive(process.pid)).toBe(true);
     expect(Queue.isAlive(deadPid()!)).toBe(false);
   });
@@ -62,7 +62,7 @@ describe("heavy queue file", () => {
     const dir = tempDir();
     for (const id of ["a", "b", "c", "d"]) Queue.enqueue(dir, entry(id));
     Queue.setMaxRunning(dir, 1);
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
     Queue.setPaused(dir, true);
     expect(Queue.startNow(dir, "d")).toBe("ok");
     expect(Queue.startNow(dir, "c")).toBe("ok");
@@ -70,8 +70,8 @@ describe("heavy queue file", () => {
     expect(Queue.startNow(dir, "nope")).toBe("not-found");
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", paused: true });
     expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "waiting", position: 3 });
-    expect(Queue.tryStart(dir, "c")).toEqual({ status: "started" });
-    expect(Queue.tryStart(dir, "d")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "d")).toMatchObject({ status: "started" });
     expect(Queue.read(dir).filter((e) => e.startedAt !== null)).toHaveLength(3);
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting" });
   });
@@ -133,17 +133,30 @@ describe("heavy queue file", () => {
       expected: ["n1", "n2", "l/a", "l/b"],
     },
     {
+      name: "the user's own jobs and high ones go first, ahead of a project's last rule",
+      cwds: ["/n1", "/l/user", "/n2", "/l/high"],
+      expected: ["l/user", "l/high", "n1", "n2"],
+      priorities: { "l/user": "normal", "l/high": "high", n1: "low", n2: "low" } as const,
+    },
+    {
       name: "the most specific rule wins",
       cwds: ["/n", "/f/sub/x", "/f/other"],
       expected: ["f/other", "n", "f/sub/x"],
       extra: [{ root: "/f/sub", priority: "last" as const }],
     },
-  ])("orders new entries by project priority: $name", ({ cwds, expected, extra = [] }) => {
+  ])("orders new entries by project priority: $name", (row) => {
+    const { cwds, expected, extra = [] } = row;
+    const priorities: Readonly<Record<string, "low" | "normal" | "high">> =
+      "priorities" in row ? row.priorities : {};
     const dir = tempDir();
     Queue.setRule(dir, "/f/", "first");
     Queue.setRule(dir, "/l", "last");
     for (const rule of extra) Queue.setRule(dir, rule.root, rule.priority);
-    for (const cwd of cwds) Queue.enqueue(dir, { ...entry(cwd.slice(1)), cwd });
+    for (const cwd of cwds) {
+      const id = cwd.slice(1);
+      const priority = priorities[id];
+      Queue.enqueue(dir, { ...entry(id), cwd, ...(priority === undefined ? {} : { priority }) });
+    }
     expect(ids(dir)).toEqual(expected);
   });
 
@@ -159,6 +172,44 @@ describe("heavy queue file", () => {
       pinned: true,
       note: "Moved by the user",
     });
+  });
+
+  it("high starts a waiter at once and low takes it back; a running job only records the level", () => {
+    const dir = tempDir();
+    for (const id of ["a", "b"]) Queue.enqueue(dir, { ...entry(id), priority: "low" });
+    Queue.tryStart(dir, "a");
+    Queue.setPaused(dir, true);
+    expect(Queue.setPriority(dir, "b", "high")).toMatchObject({
+      result: "ok",
+      entry: { id: "b", priority: "high", forced: true },
+    });
+    expect(Queue.setPriority(dir, "b", "low").entry).not.toHaveProperty("forced");
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", paused: true });
+    Queue.setPriority(dir, "b", "high");
+    expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "started" });
+    expect(Queue.setPriority(dir, "a", "high")).toMatchObject({
+      result: "ok",
+      entry: { id: "a", priority: "high" },
+    });
+    expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("forced");
+    expect(Queue.setPriority(dir, "gone", "high")).toEqual({ result: "not-found" });
+  });
+
+  it("gives a starting job the cores free now as its worker count, and keeps it", () => {
+    const dir = tempDir();
+    const now = Date.parse("2026-01-01T00:10:00.000Z");
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 6.2, cpuCount: 10, availableMemoryBytes: 8, totalMemoryBytes: 10 },
+      {},
+    );
+    Queue.enqueue(dir, entry("a"));
+    expect(Queue.tryStart(dir, "a", now)).toEqual({ status: "started", workers: 3 });
+    expect(Queue.tryStart(dir, "a", now + 60_000)).toEqual({ status: "started", workers: 3 });
+    expect(Queue.read(dir)[0]).toMatchObject({ workers: 3 });
+    Queue.enqueue(dir, entry("stale"));
+    Queue.setEnabled(dir, false);
+    expect(Queue.tryStart(dir, "stale", now + 60_000)).toEqual({ status: "started", workers: 9 });
   });
 
   it("clears a rule and keeps rules and pause across other mutations", () => {
@@ -189,10 +240,10 @@ describe("heavy queue file", () => {
 
     Queue.setEnabled(dir, false);
     expect(Queue.readPlan(dir).plan.reasons).toEqual({});
-    expect(Queue.tryStart(dir, "c")).toEqual({ status: "started" });
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "c")).toMatchObject({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
     Queue.enqueue(dir, { ...entry("late"), cwd: "/last" });
-    expect(Queue.tryStart(dir, "late")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "late")).toMatchObject({ status: "started" });
     expect(Queue.readDoc(dir)).toMatchObject({ enabled: false, paused: true, maxRunning: 1 });
 
     Queue.setEnabled(dir, true);
@@ -259,9 +310,9 @@ describe("heavy queue file", () => {
       reason: "paused",
     });
     Queue.setPaused(dir, false);
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
     Queue.setPaused(dir, true);
-    expect(Queue.tryStart(dir, "a")).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a")).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", position: 1 });
   });
 
@@ -304,7 +355,7 @@ describe("heavy queue file", () => {
     Queue.recordSample(dir, sample, {});
     for (const id of ["a", "b", "c"])
       Queue.enqueue(dir, { ...entry(id), label: "vp run typecheck" });
-    expect(Queue.tryStart(dir, "a", now)).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "a", now)).toMatchObject({ status: "started" });
     expect(Queue.tryStart(dir, "b", now + 5_000)).toMatchObject({
       status: "waiting",
       position: 1,
@@ -316,7 +367,7 @@ describe("heavy queue file", () => {
       status: "waiting",
       position: 2,
     });
-    expect(Queue.tryStart(dir, "b", now + 20_000)).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "b", now + 20_000)).toMatchObject({ status: "started" });
     expect(Queue.readDoc(dir).entries.map((e) => [e.id, e.startedAt !== null])).toEqual([
       ["a", true],
       ["b", true],
@@ -409,7 +460,7 @@ describe("heavy queue file", () => {
     });
     at(10_000, 1);
     at(12_000, 1);
-    expect(Queue.tryStart(dir, "b", now + 12_000)).toEqual({ status: "started" });
+    expect(Queue.tryStart(dir, "b", now + 12_000)).toMatchObject({ status: "started" });
   });
 
   it("restarts the steady window after a long silence between readings", () => {

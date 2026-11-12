@@ -18,6 +18,8 @@ import {
   type Plan,
   type Run,
   type Sample,
+  SAMPLE_FRESH_MS,
+  workersFor,
 } from "./admission.ts";
 
 const LOCK_RETRY_MS = 25;
@@ -149,7 +151,7 @@ const runningOf = (entries: ReadonlyArray<HeavyQueueEntry>) =>
   entries.filter((entry) => entry.startedAt !== null);
 
 export type StartResult =
-  | { readonly status: "started" }
+  | { readonly status: "started"; readonly workers: number }
   | {
       readonly status: "waiting";
       readonly position: number;
@@ -180,11 +182,20 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
   const { entries } = doc;
   const index = entries.findIndex((entry) => entry.id === id);
   if (index < 0) return { doc, result: { status: "removed" } };
-  if (entries[index]!.startedAt !== null) return { doc, result: { status: "started" } };
+  const { sample } = doc;
+  const cpuCount = sample?.cpuCount ?? NodeOS.availableParallelism();
+  if (entries[index]!.startedAt !== null) {
+    return {
+      doc,
+      result: { status: "started", workers: entries[index]!.workers ?? workersFor(cpuCount, null) },
+    };
+  }
   const decision = planOf(doc, now);
   const active = runningOf(entries);
   if (!doc.enabled || decision.admit === id) {
-    const started = { ...entries[index]!, startedAt: new Date(now).toISOString() };
+    const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+    const workers = workersFor(cpuCount, fresh ? sample.busyCores : null);
+    const started = { ...entries[index]!, startedAt: new Date(now).toISOString(), workers };
     return {
       doc: {
         ...doc,
@@ -196,7 +207,7 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         lastStartAt: now,
         holding: decision.holding,
       },
-      result: { status: "started" },
+      result: { status: "started", workers },
     };
   }
   return {
@@ -229,15 +240,19 @@ const priorityOf = (
   return best?.priority ?? "normal";
 };
 
+/** The user's own jobs and ones asked to run high go first; the project's rule places the rest. */
+const laneOf = (rules: ReadonlyArray<HeavyQueueRule>, entry: HeavyQueueEntry) =>
+  entry.priority === "high" || entry.priority === "normal" ? "first" : priorityOf(rules, entry.cwd);
+
 /** Where a new entry goes: ahead of normal waiters for "first", behind them for "last". */
 const insertNew = (doc: QueueDoc, entry: HeavyQueueEntry): QueueDoc => {
   const { entries, rules } = doc;
-  const lane = priorityOf(rules, entry.cwd);
+  const lane = laneOf(rules, entry);
   // A manually moved waiter keeps its place against newly arrived entries of any priority.
   const ahead = (e: HeavyQueueEntry) =>
-    e.startedAt !== null || e.pinned === true || priorityOf(rules, e.cwd) === "first";
+    e.startedAt !== null || e.pinned === true || laneOf(rules, e) === "first";
   const behind = (e: HeavyQueueEntry) =>
-    e.startedAt === null && e.pinned !== true && priorityOf(rules, e.cwd) === "last";
+    e.startedAt === null && e.pinned !== true && laneOf(rules, e) === "last";
   let at = entries.length;
   if (lane === "first") {
     at = 0;
@@ -422,6 +437,28 @@ export const startNow = (dir: string, id: string) =>
         entries: doc.entries.map((entry) => (entry.id === id ? { ...entry, forced: true } : entry)),
       },
       result: "ok",
+    };
+  });
+
+/**
+ * "high" on a waiter releases it at once, like `startNow`; "low" takes that back. On a running job
+ * it only records the level: the caller changes its processes' QoS.
+ */
+export const setPriority = (dir: string, id: string, priority: "low" | "high") =>
+  mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
+    const target = doc.entries.find((entry) => entry.id === id);
+    if (target === undefined) return { doc, result: { result: "not-found" } };
+    const { forced: _forced, ...rest } = target;
+    const waiting = target.startedAt === null;
+    const updated: HeavyQueueEntry = {
+      ...rest,
+      priority,
+      ...(waiting && priority === "high" ? { forced: true } : {}),
+      ...(!waiting && target.forced === true ? { forced: true } : {}),
+    };
+    return {
+      doc: { ...doc, entries: doc.entries.map((entry) => (entry.id === id ? updated : entry)) },
+      result: { result: "ok", entry: updated },
     };
   });
 

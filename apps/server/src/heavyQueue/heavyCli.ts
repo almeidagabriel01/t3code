@@ -1,9 +1,17 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off
-/** `t3 heavy [--name <title>] [--queue-dir <dir>] -- <program> [args...]`: waits for the machine's heavy slot, then runs the program. */
+/**
+ * `t3 heavy [--name <title>] [--priority high|low] [--queue-dir <dir>] -- <program> [args...]`:
+ * waits for the machine's heavy slot, then runs the program. `t3 heavy hook` is the Claude Code
+ * PreToolUse hook that puts heavy Bash commands behind it.
+ */
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeSea from "node:sea";
 
+import { HEAVY_JOB_ENV, queueBashCall, shellQuote } from "./heavyHook.ts";
+import { readMemorySync, swapInRate } from "./hostReader.ts";
 import { defaultQueueDir, enqueue, recordSampleIfStale, remove, tryStart } from "./queueFile.ts";
 
 const POLL_MS = 1000;
@@ -16,18 +24,59 @@ const WAITING_EXIT: Record<(typeof SIGNALS)[number], number> = {
   SIGTERM: 143,
   SIGHUP: 129,
 };
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
 export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let rest = args;
   let dir = defaultQueueDir();
   let name: string | undefined;
-  while (rest[1] !== undefined && (rest[0] === "--queue-dir" || rest[0] === "--name")) {
+  let priority: "low" | "normal" | "high" | undefined;
+  const options = ["--queue-dir", "--name", "--priority"];
+  while (rest[1] !== undefined && options.includes(rest[0]!)) {
     if (rest[0] === "--name") name = rest[1].trim().slice(0, 60) || undefined;
-    else dir = rest[1];
+    else if (rest[0] === "--priority") {
+      if (rest[1] === "low" || rest[1] === "normal" || rest[1] === "high") priority = rest[1];
+    } else dir = rest[1];
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
-  return { dir, name, program: rest[0], args: rest.slice(1) };
+  return { dir, name, priority, program: rest[0], args: rest.slice(1) };
+};
+
+/** A hook-wrapped `$SHELL -c '<line>'` is labelled by the line itself, so names and history keep it. */
+export const labelOf = (program: string, args: ReadonlyArray<string>) =>
+  (SHELLS.has(NodePath.basename(program)) && args[0] === "-c" && args[1] !== undefined
+    ? args[1]
+    : [program, ...args].join(" ")
+  ).slice(0, LABEL_CHARS);
+
+/**
+ * Runners that size themselves by cores take the admitted count instead: Vitest from the
+ * environment, `node --test` and `playwright test` from a flag when they are the program itself.
+ */
+export const withWorkers = (
+  program: string,
+  args: ReadonlyArray<string>,
+  workers: number,
+  environment: NodeJS.ProcessEnv,
+) => {
+  const name = NodePath.basename(program);
+  const has = (flag: string) => args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+  const extra =
+    name === "node" && has("--test") && !has("--test-concurrency")
+      ? [`--test-concurrency=${workers}`]
+      : name === "playwright" && args[0] === "test" && !has("--workers") && !has("-j")
+        ? [`--workers=${workers}`]
+        : [];
+  return {
+    args: [...args, ...extra],
+    env: {
+      ...environment,
+      [HEAVY_JOB_ENV]: "1",
+      T3_HEAVY_WORKERS: String(workers),
+      VITEST_MAX_WORKERS: environment.VITEST_MAX_WORKERS ?? String(workers),
+    },
+  };
 };
 
 const cpuTimes = () =>
@@ -39,44 +88,104 @@ const cpuTimes = () =>
     { idle: 0, total: 0 },
   );
 
-/** Instantaneous CPU from tick deltas between calls (not the load average). */
+/** Instantaneous CPU from tick deltas between calls (not the load average); memory as the server reads it. */
 const makeHostReader = () => {
   let last = cpuTimes();
+  let lastSwap: { at: number; swapInBytes: number | null } | null = null;
   return () => {
     const now = cpuTimes();
     const total = now.total - last.total;
     const busy = total > 0 ? 1 - (now.idle - last.idle) / total : 0;
     last = now;
     const cpuCount = NodeOS.cpus().length;
+    const memory = readMemorySync();
+    const swap = { at: Date.now(), swapInBytes: memory.swapInBytes };
+    const swapInBytesPerSecond = swapInRate(lastSwap, swap);
+    lastSwap = swap;
     return {
-      at: Date.now(),
+      at: swap.at,
       busyCores: busy * cpuCount,
       cpuCount,
-      availableMemoryBytes: NodeOS.freemem(),
-      totalMemoryBytes: NodeOS.totalmem(),
+      availableMemoryBytes: memory.availableMemoryBytes,
+      totalMemoryBytes: memory.totalMemoryBytes,
+      pressureLevel: memory.pressureLevel,
+      swapInBytesPerSecond,
     };
   };
 };
 
+/** How this same CLI is started again, for the command the hook writes. */
+export const selfPrefix = (dir: string, environment: NodeJS.ProcessEnv = process.env) =>
+  [
+    ...(environment.ELECTRON_RUN_AS_NODE === "1" ? ["ELECTRON_RUN_AS_NODE=1"] : []),
+    shellQuote(process.execPath),
+    ...(NodeSea.isSea() || process.argv[1] === undefined
+      ? []
+      : [shellQuote(NodePath.resolve(process.argv[1]))]),
+    "heavy",
+    "--queue-dir",
+    shellQuote(dir),
+  ].join(" ");
+
+const readStdin = async () => {
+  let text = "";
+  for await (const chunk of process.stdin) text += String(chunk);
+  return text;
+};
+
+/** Fails open: any error prints nothing and exits 0, so Claude runs the command unchanged. */
+const runHook = async (dir: string) => {
+  try {
+    const answer = queueBashCall(JSON.parse(await readStdin()), selfPrefix(dir), process.env);
+    if (answer !== null) process.stdout.write(JSON.stringify(answer));
+  } catch {
+    // Leave the call as Claude wrote it.
+  }
+};
+
+const runDirect = (program: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv) => {
+  const child = NodeChildProcess.spawn(program, args, { stdio: "inherit", env });
+  child.on("error", (error) => {
+    process.stderr.write(`[t3 heavy] cannot run ${program}: ${error.message}\n`);
+    process.exit(127);
+  });
+  child.on("exit", (code, signal) => {
+    process.exit(code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0));
+  });
+  return child;
+};
+
 export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> => {
-  const { dir, name, program, args } = parseHeavyArgs(argv);
+  if (argv[0] === "hook") {
+    await runHook(parseHeavyArgs(argv.slice(1)).dir);
+    return;
+  }
+  const { dir, name, priority, program, args } = parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--queue-dir <dir>] -- <program> [args...]\n",
+      "Usage: t3 heavy [--name <title>] [--priority high|low] [--queue-dir <dir>] -- <program> [args...]\n",
     );
     process.exit(2);
   }
+  // Inside a queue job the slot is already held; queuing again would wait on itself.
+  if (process.env[HEAVY_JOB_ENV] === "1") {
+    runDirect(program, args, process.env);
+    return;
+  }
   const id = NodeCrypto.randomUUID();
-  const label = [program, ...args].join(" ").slice(0, LABEL_CHARS);
+  const threadId = process.env.T3CODE_THREAD_ID ?? null;
+  const agent = threadId !== null || process.env.CLAUDECODE === "1";
   enqueue(dir, {
     id,
     pid: process.pid,
-    threadId: process.env.T3CODE_THREAD_ID ?? null,
-    label,
+    threadId,
+    label: labelOf(program, args),
     ...(name === undefined ? {} : { name }),
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
     startedAt: null,
+    // Agents' jobs wait behind the user's own.
+    priority: priority ?? (agent ? "low" : "normal"),
   });
   process.on("exit", () => remove(dir, id));
 
@@ -91,6 +200,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   const readHost = makeHostReader();
   let lastSampleTry = 0;
   let lastShown = "";
+  let workers: number;
   while (true) {
     if (Date.now() - lastSampleTry >= 2000) {
       lastSampleTry = Date.now();
@@ -101,23 +211,20 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
       process.stderr.write("Removed from the heavy queue by the user.\n");
       process.exit(125);
     }
-    if (start.status === "started") break;
-    const shown = `${start.position}|${start.running?.id ?? ""}|${start.paused ?? ""}`;
+    if (start.status === "started") {
+      workers = start.workers;
+      break;
+    }
+    const shown = `${start.position}|${start.running?.id ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
       lastShown = shown;
       process.stderr.write(
-        `[t3 heavy] waiting: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}${start.paused ? " (queue paused)" : ""}\n`,
+        `[t3 heavy] waiting: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}${start.paused ? " (queue paused)" : ""}${start.reason ? `: ${start.reason}` : ""}\n`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
 
-  child = NodeChildProcess.spawn(program, args, { stdio: "inherit" });
-  child.on("error", (error) => {
-    process.stderr.write(`[t3 heavy] cannot run ${program}: ${error.message}\n`);
-    process.exit(127);
-  });
-  child.on("exit", (code, signal) => {
-    process.exit(code ?? 128 + (signal ? (NodeOS.constants.signals[signal] ?? 0) : 0));
-  });
+  const run = withWorkers(program, args, workers, process.env);
+  child = runDirect(program, run.args, run.env);
 };

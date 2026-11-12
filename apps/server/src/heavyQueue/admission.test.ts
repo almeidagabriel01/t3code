@@ -2,7 +2,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
-import { estimate, kindOf, plan, signatureOf, type PlanInput, type Run } from "./admission.ts";
+import {
+  estimate,
+  kindOf,
+  plan,
+  signatureOf,
+  workersFor,
+  type PlanInput,
+  type Run,
+} from "./admission.ts";
 
 const GIB = 1024 ** 3;
 const NOW = Date.parse("2026-01-01T01:00:00.000Z");
@@ -87,6 +95,18 @@ describe("command kinds and signatures", () => {
   });
 });
 
+describe("workers per job", () => {
+  it.each([
+    { cpuCount: 10, busy: 0.4, workers: 9, why: "idle: all but one core" },
+    { cpuCount: 10, busy: null, workers: 9, why: "no reading: as if idle" },
+    { cpuCount: 10, busy: 5.5, workers: 4, why: "the cores free now" },
+    { cpuCount: 10, busy: 9.8, workers: 2, why: "never below two" },
+    { cpuCount: 2, busy: 0, workers: 2, why: "two-core machine" },
+  ])("$why", ({ cpuCount, busy, workers }) => {
+    expect(workersFor(cpuCount, busy)).toBe(workers);
+  });
+});
+
 describe("admission plan", () => {
   it.each([
     {
@@ -110,6 +130,35 @@ describe("admission plan", () => {
     {
       name: "room on a calm machine: second job joins",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run build")],
+      admit: "a",
+    },
+    {
+      name: "kernel pressure level 2 holds a second job even with 29% free",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 0.29 * 32 * GIB, pressureLevel: 2 },
+      },
+      admit: null,
+      reason: { a: "waiting for memory: the system reports memory pressure" },
+    },
+    {
+      name: "sustained swap-in holds a second job even with 29% free",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: {
+        sample: {
+          ...calm,
+          availableMemoryBytes: 0.29 * 32 * GIB,
+          pressureLevel: 1,
+          swapInBytesPerSecond: 80 * 1024 ** 2,
+        },
+      },
+      admit: null,
+      reason: { a: "waiting for memory: swapping in 80 MB/s" },
+    },
+    {
+      name: "under pressure with nothing running, the head still runs alone",
+      entries: [entry("a", "vp run build"), entry("b", "vp run build")],
+      change: { sample: { ...calm, pressureLevel: 4 } },
       admit: "a",
     },
     {
