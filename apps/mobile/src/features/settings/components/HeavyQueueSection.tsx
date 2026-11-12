@@ -444,11 +444,6 @@ export function HeavyQueueSection(props: {
       })}
     </>
   );
-  // With one machine the Runner section shows this line already.
-  const linuxRow =
-    state.linux === null || props.machine === undefined ? null : (
-      <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
-    );
   if (projectId !== undefined) {
     return (
       <SettingsSection
@@ -456,7 +451,6 @@ export function HeavyQueueSection(props: {
         footer="Positions count every job on the machine. Pause and limits live in Settings."
       >
         <ListRowLayout icon="timer" label={`Whole queue: ${queueSummary(state)}`} />
-        {linuxRow}
         {rows}
       </SettingsSection>
     );
@@ -481,7 +475,10 @@ export function HeavyQueueSection(props: {
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
       />
       <ListRowLayout icon="timer" label={queueSummary(state)} />
-      {linuxRow}
+      {/* With one machine the Runner section shows this line already. */}
+      {state.linux === null || props.machine === undefined ? null : (
+        <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
+      )}
       {runner === undefined ? null : (
         <ListRowLayout
           icon="arrow.left.arrow.right"
