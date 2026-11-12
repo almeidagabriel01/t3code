@@ -1419,18 +1419,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     restrictBelowPins,
     restrictToFirstScrollableAncestor,
   ];
-  const attachListRef = (node: HTMLUListElement) => {
+  // Stable by hand: the compiler leaves this callback unmemoized, and a new ref
+  // identity runs the cleanup below on every render, cancelling the active drag.
+  const attachListRef = useStableCallback((node: HTMLUListElement) => {
     threadListRef.current = node;
     const detachTree = attachSidebarTree(node);
     return () => {
       detachTree?.();
       // Search replaces this list while the Sidebar stays mounted, and a drag
-      // whose rows are gone can never drop. The compiler memoizes this callback
-      // with no deps (it reads only refs), so the cleanup runs only on unmount.
+      // whose rows are gone can never drop.
       dragSensorRef.current?.cancel();
       if (threadListRef.current === node) threadListRef.current = null;
     };
-  };
+  });
   const updateListMotions = useStableCallback((animate: boolean) => {
     for (const motion of listMotionsRef.current.values()) motion.update(animate);
   });
