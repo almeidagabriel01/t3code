@@ -91,6 +91,7 @@ async function mount(
     mixed?: ReadonlyArray<RunnerKey>;
     disabled?: ReadonlyArray<RunnerKey>;
     linux?: HeavyQueueState["linux"];
+    severalMachines?: boolean;
   } = {},
 ) {
   mocks.state = { enabled: true, paused: false, linux: options.linux ?? null };
@@ -110,6 +111,7 @@ async function mount(
         disabledFor={(key) => options.disabled?.includes(key) ?? false}
         write={write}
         reset={reset}
+        severalMachines={options.severalMachines ?? false}
       />,
     );
   });
@@ -272,5 +274,10 @@ describe("RunnerSection", () => {
     const off = await mount();
     expect(off.host.textContent).not.toContain("Linux offline:");
     await off.unmount();
+    // Each machine's queue section says it instead; one machine's status here would mislead.
+    const several = await mount({ linux, severalMachines: true });
+    expect(several.host.textContent).not.toContain("Linux offline:");
+    expect(several.host.textContent).not.toContain("Heavy jobs wait their turn");
+    await several.unmount();
   });
 });

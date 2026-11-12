@@ -20,6 +20,7 @@ const { Children, mocks } = vi.hoisted(() => ({
       disabledFor: (key: string) => boolean;
       write: (patch: ServerSettingsPatch) => void;
       reset: (key: string) => void;
+      severalMachines?: boolean;
     },
     updateSettings: vi.fn(),
     alert: vi.fn(),
@@ -308,6 +309,7 @@ describe("SettingsServerControlsRouteScreen", () => {
         queue.dataset.machine,
       ]);
     expect(queues()).toEqual([["local", undefined]]);
+    expect(mocks.runner!.severalMachines).toBe(false);
     act(() => root.unmount());
 
     mocks.targets = [environment("local", "Local"), environment("remote", "Remote")];
@@ -317,6 +319,7 @@ describe("SettingsServerControlsRouteScreen", () => {
       ["local", "Local"],
       ["remote", "Remote"],
     ]);
+    expect(mocks.runner!.severalMachines).toBe(true);
   });
 
   it("passes the effective Runner mode to the heavy-work queue", () => {

@@ -184,7 +184,7 @@ const LINUX: HeavyRunnerLinux = {
   totalMemoryBytes: 16 * 1024 ** 3,
 };
 
-async function mount(projectId?: string, runner = RUNNER_OFF) {
+async function mount(projectId?: string, runner = RUNNER_OFF, machine?: string) {
   const host = document.createElement("div");
   const root = createRoot(host);
   await act(async () => {
@@ -193,6 +193,7 @@ async function mount(projectId?: string, runner = RUNNER_OFF) {
         environmentId={"env" as EnvironmentId}
         runner={runner}
         {...(projectId === undefined ? {} : { projectId })}
+        {...(machine === undefined ? {} : { machine })}
       />,
     );
   });
@@ -516,7 +517,17 @@ describe("HeavyQueueSection", () => {
       /^cmd b\|Linux · cmd b · .* · Linux has not confirmed the earlier run stopped\.\|#1$/,
     );
     expect(rows.find((row) => row.includes("cmd c"))).toMatch(/^cmd c\|This Mac · /);
+    // One machine: the Runner section carries the Linux line.
+    expect(rows.some((row) => row.startsWith("Linux online"))).toBe(false);
     await view.unmount();
+    const named = await mount(undefined, RUNNER_OFF, "Mac mini");
+    expect(named.host.querySelector('[aria-label="Heavy work queue · Mac mini"]')).not.toBeNull();
+    expect(
+      [...named.host.querySelectorAll("p")].some((row) =>
+        row.textContent?.startsWith("Linux online · 1 of 2 running"),
+      ),
+    ).toBe(true);
+    await named.unmount();
     setup([entry("c")]);
     const off = await mount();
     expect(off.host.textContent).not.toContain("This Mac ·");
@@ -573,9 +584,6 @@ describe("HeavyQueueSection", () => {
         row.textContent?.startsWith("Linux is unavailable"),
       )!.textContent;
     expect(askRow()).toMatch(/\|1:05$/);
-    expect(
-      [...view.host.querySelectorAll("p")].some((row) => row.textContent === "Linux offline"),
-    ).toBe(true);
     await act(async () => vi.advanceTimersByTime(1000));
     expect(askRow()).toMatch(/\|1:04$/);
     expect(view.button("Remove")).toBeUndefined();

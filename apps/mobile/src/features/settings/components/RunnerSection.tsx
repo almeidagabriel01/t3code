@@ -147,6 +147,8 @@ export function RunnerSection(props: {
   readonly write: (patch: ServerSettingsPatch) => void;
   /** Drops the project's own value so it inherits the environment's again. */
   readonly reset: (key: RunnerProjectKey) => void;
+  /** Several machines selected: each machine's queue section carries its own status instead. */
+  readonly severalMachines?: boolean;
 }) {
   const { settings, projectSelected } = props;
   const state = useHeavyQueueState(props.environmentId);
@@ -224,17 +226,19 @@ export function RunnerSection(props: {
   return (
     <>
       <SettingsSection title="Runner">
-        <ListRowLayout
-          icon="arrow.left.arrow.right"
-          label={heavyModeLine({
-            queueEnabled: state.enabled,
-            queuePaused: state.paused,
-            runnerEnabled: settings.runnerEnabled,
-            where: settings.runnerWhere,
-            overflow: settings.runnerOverflow,
-          })}
-        />
-        {state.linux === null ? null : (
+        {props.severalMachines === true ? null : (
+          <ListRowLayout
+            icon="arrow.left.arrow.right"
+            label={heavyModeLine({
+              queueEnabled: state.enabled,
+              queuePaused: state.paused,
+              runnerEnabled: settings.runnerEnabled,
+              where: settings.runnerWhere,
+              overflow: settings.runnerOverflow,
+            })}
+          />
+        )}
+        {props.severalMachines === true || state.linux === null ? null : (
           <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
         )}
         <SettingsSwitchRow

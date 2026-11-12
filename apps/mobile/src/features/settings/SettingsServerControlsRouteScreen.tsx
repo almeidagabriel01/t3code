@@ -617,6 +617,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   disabledFor={disabledFor}
                   write={write}
                   reset={(key) => clearProjectOverrides([key])}
+                  severalMachines={
+                    new Set(displayTargets.map((target) => target.environment.environmentId)).size >
+                    1
+                  }
                 />
                 {!projectSelected ? (
                   <WorktreeSnapshotsSection

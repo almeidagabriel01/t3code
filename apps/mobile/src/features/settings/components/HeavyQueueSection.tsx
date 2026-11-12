@@ -444,8 +444,9 @@ export function HeavyQueueSection(props: {
       })}
     </>
   );
+  // With one machine the Runner section shows this line already.
   const linuxRow =
-    state.linux === null ? null : (
+    state.linux === null || props.machine === undefined ? null : (
       <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
     );
   if (projectId !== undefined) {
