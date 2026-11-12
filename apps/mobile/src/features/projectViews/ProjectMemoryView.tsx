@@ -1,4 +1,4 @@
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   memoryBrowseInput,
   memoryPreview,
@@ -144,13 +144,16 @@ function MemoryPages(props: {
   }
   if (value === null) return <ProjectViewMessage title="Loading memories…" />;
   const items = value.items.filter((item): item is ActiveMemory => item.status === "active");
+  // Memory replaces the sheet, so it opens on top and going back returns to the thread.
   const edit = (item: ActiveMemory) =>
-    navigation.navigate("SettingsMemory", {
-      environmentId,
-      memorySpaceId: item.memorySpaceId,
-      memoryId: item.memoryId,
-      project: { environmentId, projectId: ProjectId.make(props.projectId) },
-    });
+    navigation.dispatch(
+      StackActions.replace("SettingsMemory", {
+        environmentId,
+        memorySpaceId: item.memorySpaceId,
+        memoryId: item.memoryId,
+        project: { environmentId, projectId: ProjectId.make(props.projectId) },
+      }),
+    );
   return (
     <View className="gap-3">
       {items.length === 0 ? (

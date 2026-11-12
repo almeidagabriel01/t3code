@@ -20,7 +20,8 @@ const { mocks, Children } = vi.hoisted(() => ({
 
 vi.mock("react-native", () => ({ View: Children }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ navigate: mocks.navigate }),
+  useNavigation: () => ({ dispatch: mocks.navigate }),
+  StackActions: { replace: (name: string, params: unknown) => ({ replace: name, params }) },
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/RelativeTime", () => ({
@@ -173,11 +174,14 @@ describe("ProjectMemoryView", () => {
     expect(rows[0]).toBe("Uses pnpm|at 2026-03-09T09:00:00.000Z");
     expect(rows[1]).toMatch(/\|Rule · Not synced · at /);
     act(() => view.button("Edit memory: Uses pnpm").click());
-    expect(mocks.navigate).toHaveBeenCalledWith("SettingsMemory", {
-      environmentId: "env",
-      memorySpaceId: "space-1",
-      memoryId: "m1",
-      project: { environmentId: "env", projectId: "p1" },
+    expect(mocks.navigate).toHaveBeenCalledWith({
+      replace: "SettingsMemory",
+      params: {
+        environmentId: "env",
+        memorySpaceId: "space-1",
+        memoryId: "m1",
+        project: { environmentId: "env", projectId: "p1" },
+      },
     });
     act(() => view.button("Forget memory").click());
     expect(mocks.forget).toHaveBeenCalledWith(expect.objectContaining({ memoryId: "m1" }));
