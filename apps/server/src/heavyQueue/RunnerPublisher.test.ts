@@ -163,6 +163,11 @@ describe("the publisher layer", () => {
         let host = yield* Queue.take(checked);
         while (host !== "pc") host = yield* Queue.take(checked);
         expect(host).toBe("pc");
+        // Off forgets the checked host, so turning it on again with the same host checks at once.
+        yield* Queue.clear(checked);
+        yield* change({ ...settings, runnerEnabled: false });
+        yield* change({ ...settings, runnerEnabled: true });
+        expect(yield* Queue.take(checked)).toBe("pc");
       }).pipe(Effect.scoped);
     }),
   );
