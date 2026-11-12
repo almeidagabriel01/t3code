@@ -13,6 +13,7 @@ import { useHeavyQueueActions } from "../statusBar/useKillTarget";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { HeavyNoticesRow } from "./HeavyNoticesRow";
 import { IdleNote, RunnerGroup, UnitStepper, useHeavyModeLine } from "./RunnerSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -257,6 +258,9 @@ export function HeavyWorkSettingsSection() {
       ) : (
         <Controls environmentId={environmentId} />
       )}
+      <SettingsGroup>
+        <HeavyNoticesRow />
+      </SettingsGroup>
     </SettingsSection>
   );
 }

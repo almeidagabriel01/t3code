@@ -1274,6 +1274,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue emulator simulator idle power off shut down minutes"],
   },
   {
+    id: "heavy-work-notices",
+    title: "Heavy job notices",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue runner notices notifications toast alerts failed failure linux offline online moved machine mac",
+    ],
+  },
+  {
     id: "runner-enabled",
     title: RUNNER_SETTING_COPY.runnerEnabled.title,
     to: "/settings/maintenance",
