@@ -136,7 +136,10 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
   // An update moves the executable; the installed hook follows it from the next start.
   if (ClaudeSettingsHook.readHeavyHookInstalled(settingsPath)) {
     // On failure the script the last install wrote stays; a missing one passes every call through.
-    yield* Effect.try({ try: writeScript, catch: (cause) => cause }).pipe(Effect.ignore);
+    yield* Effect.try({
+      try: writeScript,
+      catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+    }).pipe(Effect.ignore);
   }
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = (program: string, args: ReadonlyArray<string>) =>
