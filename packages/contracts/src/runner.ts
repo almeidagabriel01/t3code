@@ -23,6 +23,8 @@ export const RUNNER_LIMITS = {
   runnerOfflineAfterFailures: { min: 1, max: 10, unit: "failures" },
   runnerSshTimeoutSeconds: { min: 1, max: 30, unit: "seconds" },
   runnerStopWaitSeconds: { min: 1, max: 60, unit: "seconds" },
+  runnerLinuxMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
+  runnerLinuxCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
 } as const;
 export type RunnerNumberKey = keyof typeof RUNNER_LIMITS;
 
@@ -71,6 +73,9 @@ export const RUNNER_DEFAULTS = {
   runnerOfflineAfterFailures: 2,
   runnerSshTimeoutSeconds: 3,
   runnerStopWaitSeconds: 5,
+  // A Linux job starts only while the PC keeps this much memory free and stays under this CPU use.
+  runnerLinuxMemoryFloorPercent: 20,
+  runnerLinuxCpuCeilingPercent: 70,
 } as const;
 
 /** Settings a project can override; the rest belong to the machine. */
@@ -92,6 +97,8 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerOfflineAfterFailures",
   "runnerSshTimeoutSeconds",
   "runnerStopWaitSeconds",
+  "runnerLinuxMemoryFloorPercent",
+  "runnerLinuxCpuCeilingPercent",
 ] as const;
 export type RunnerKey = keyof typeof RUNNER_DEFAULTS;
 
@@ -134,6 +141,8 @@ export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
 export const RunnerOfflineAfterFailures = between("runnerOfflineAfterFailures");
 export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
+export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
+export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -162,5 +171,7 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerOfflineAfterFailures: Schema.Int,
   runnerSshTimeoutSeconds: Schema.Int,
   runnerStopWaitSeconds: Schema.Int,
+  runnerLinuxMemoryFloorPercent: Schema.Int,
+  runnerLinuxCpuCeilingPercent: Schema.Int,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

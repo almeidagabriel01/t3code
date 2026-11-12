@@ -52,6 +52,8 @@ import {
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
   RunnerStopWaitSeconds,
+  RunnerLinuxMemoryFloorPercent,
+  RunnerLinuxCpuCeilingPercent,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
@@ -1722,6 +1724,12 @@ export const ServerSettings = Schema.Struct({
   runnerStopWaitSeconds: RunnerStopWaitSeconds.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerStopWaitSeconds)),
   ),
+  runnerLinuxMemoryFloorPercent: RunnerLinuxMemoryFloorPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent)),
+  ),
+  runnerLinuxCpuCeilingPercent: RunnerLinuxCpuCeilingPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent)),
+  ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2221,6 +2229,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerOfflineAfterFailures: Schema.optionalKey(RunnerOfflineAfterFailures),
   runnerSshTimeoutSeconds: Schema.optionalKey(RunnerSshTimeoutSeconds),
   runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
+  runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
+  runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

@@ -7,6 +7,8 @@ import {
   linuxLine,
   routeActions,
   runnerBadge,
+  runnerFieldIdle,
+  type RunnerChoices,
 } from "./runnerModel.ts";
 
 const entry = (extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -153,5 +155,35 @@ describe("a row's runner", () => {
   it("an unconfirmed drop reruns only with a warning and force", () => {
     const [mac] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
+  });
+});
+
+describe("Runner fields that do nothing under the current choices", () => {
+  const on: RunnerChoices = {
+    runnerEnabled: true,
+    runnerWhere: "linux",
+    runnerUnavailable: "ask",
+    runnerDropped: "mac",
+  };
+
+  it.each([
+    ["runnerEnabled", { runnerEnabled: false }, null],
+    ["runnerHost", { runnerEnabled: false }, "Only applies while the Runner is on."],
+    ["runnerHost", {}, null],
+    [
+      "runnerLinuxCommands",
+      { runnerWhere: "mac" },
+      "Only applies when jobs run on Linux or Automatic.",
+    ],
+    ["runnerLinuxCommands", { runnerWhere: null }, null],
+    ["runnerAskMinutes", {}, null],
+    ["runnerDeadlineAction", { runnerUnavailable: null }, null],
+    [
+      "runnerAskMinutes",
+      { runnerUnavailable: "wait" },
+      "Only applies when a choice above is Ask me.",
+    ],
+  ] as const)("%s with %o: %s", (key, choices, idle) => {
+    expect(runnerFieldIdle(key, { ...on, ...choices })).toBe(idle);
   });
 });

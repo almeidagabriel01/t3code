@@ -85,6 +85,14 @@ export const RUNNER_SETTING_COPY: Record<
     title: "Wait for a stopped job",
     description: "How long a stopped Linux job gets to exit before it is killed.",
   },
+  runnerLinuxMemoryFloorPercent: {
+    title: "Keep memory free on Linux",
+    description: "A new job waits while less than this share of the PC's memory is free.",
+  },
+  runnerLinuxCpuCeilingPercent: {
+    title: "Linux CPU limit",
+    description: "A new job waits while the PC's CPU is busier than this.",
+  },
 };
 
 export const RUNNER_WHERE_LABEL: Record<RunnerWhere, string> = {
@@ -242,3 +250,48 @@ export function routeActions(
   }
   return actions;
 }
+
+/** The effective values Runner fields depend on; null where the selected targets disagree. */
+export interface RunnerChoices {
+  readonly runnerEnabled: boolean | null;
+  readonly runnerWhere: RunnerWhere | null;
+  readonly runnerUnavailable: RunnerUnavailablePolicy | null;
+  readonly runnerDropped: RunnerUnavailablePolicy | null;
+}
+
+/**
+ * Why a Runner field does nothing under these choices, or null when it applies. Settings hide such
+ * a field, and show it with this note only when a search lands on it. A mixed choice counts as
+ * applying, so a field never hides while some selected target still uses it.
+ */
+export function runnerFieldIdle(key: RunnerKey, choices: RunnerChoices): string | null {
+  if (key === "runnerEnabled") return null;
+  if (choices.runnerEnabled === false) return "Only applies while the Runner is on.";
+  switch (key) {
+    case "runnerOverflow":
+      return choices.runnerWhere === null || choices.runnerWhere === "automatic"
+        ? null
+        : "Only applies when jobs run Automatic.";
+    case "runnerLinuxCommands":
+      return choices.runnerWhere === "mac"
+        ? "Only applies when jobs run on Linux or Automatic."
+        : null;
+    case "runnerAskMinutes":
+    case "runnerDeadlineAction":
+      return [choices.runnerUnavailable, choices.runnerDropped].some(
+        (policy) => policy === null || policy === "ask",
+      )
+        ? null
+        : "Only applies when a choice above is Ask me.";
+    default:
+      return null;
+  }
+}
+
+/** One line under the "Where heavy work runs" choice, saying what the picked mode does. */
+export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
+  mac: "Everything runs on this Mac. A job's menu can still send it to Linux.",
+  automatic:
+    "Jobs run on this Mac until it reaches its limits, then on Linux until Linux reaches its own. Past both, each job joins the shorter queue.",
+  linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
+};

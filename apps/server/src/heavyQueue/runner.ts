@@ -34,6 +34,8 @@ export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {
   runnerOfflineAfterFailures: RUNNER_DEFAULTS.runnerOfflineAfterFailures,
   runnerSshTimeoutSeconds: RUNNER_DEFAULTS.runnerSshTimeoutSeconds,
   runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
+  runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
+  runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
 };
 
 /** What a T3 server publishes into the queue file from its settings. */
