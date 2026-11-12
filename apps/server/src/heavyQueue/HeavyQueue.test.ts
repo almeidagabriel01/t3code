@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as HeavyQueue from "./HeavyQueue.ts";
 import * as Queue from "./queueFile.ts";
+import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG, parseHeartbeat } from "./runner.ts";
 
 const holder: HeavyQueueEntry = {
   id: "holder",
@@ -352,4 +353,42 @@ describe("HeavyQueue", () => {
       }),
     ),
   );
+});
+
+describe("Linux as clients see it", () => {
+  const block = (enabled: boolean) => ({
+    global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: enabled },
+    machine: { ...DEFAULT_MACHINE_CONFIG, runnerHost: "pc", runnerLinuxSlots: 3 },
+    projects: [],
+    publisher: { pid: process.pid, home: "/h", primary: true },
+  });
+
+  it("is null while the Runner is off everywhere, and sums Linux jobs without timestamps", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-linux-"));
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toBeNull();
+    Queue.publishRunner(dir, block(false));
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toBeNull();
+    Queue.publishRunner(dir, block(true));
+    Queue.recordHealth(dir, { ok: false, error: "refused" });
+    Queue.recordHealth(dir, { ok: false, error: "refused" });
+    Queue.enqueue(dir, { ...holder, startedAt: "2026-01-01T00:00:00.000Z", runner: "linux" });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toEqual({
+      host: "pc",
+      online: false,
+      slots: 3,
+      running: 1,
+      load1: null,
+      cpuCount: null,
+      availableMemoryBytes: null,
+      totalMemoryBytes: null,
+      error: "refused",
+    });
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("1.234 1 1 1/1 1\n6\n") });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toMatchObject({
+      online: true,
+      load1: 1.2,
+      cpuCount: 6,
+    });
+    expect(HeavyQueue.linuxState(Queue.readDoc(dir))).not.toHaveProperty("error");
+  });
 });

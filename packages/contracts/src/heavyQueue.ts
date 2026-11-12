@@ -1,6 +1,15 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { RunnerWhere } from "./runner.ts";
+
+export const HeavyRunner = Schema.Literals(["mac", "linux"]);
+export type HeavyRunner = typeof HeavyRunner.Type;
+export const HeavyRunnerPhase = Schema.Literals(["syncing", "installing", "running"]);
+export type HeavyRunnerPhase = typeof HeavyRunnerPhase.Type;
+export const HeavyRunnerAskReason = Schema.Literals(["unavailable", "dropped"]);
+export type HeavyRunnerAskReason = typeof HeavyRunnerAskReason.Type;
+
 /** One heavy job waiting for, or holding, this machine's single heavy-work slot. */
 export const HeavyQueueEntry = Schema.Struct({
   id: Schema.String,
@@ -32,8 +41,49 @@ export const HeavyQueueEntry = Schema.Struct({
   /** Peak cores and resident bytes of its process tree so far, sampled while it runs. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Where a running entry runs; absent means this Mac. */
+  runner: Schema.optionalKey(HeavyRunner),
+  /** Where the job itself asked to run (`t3 heavy --runner`), over the project's setting. */
+  where: Schema.optionalKey(RunnerWhere),
+  /** A waiter the user or a Linux policy sent to one runner; admission keeps it there. */
+  route: Schema.optionalKey(HeavyRunner),
+  /** Linux jobs: what `remoto` is doing now. */
+  phase: Schema.optionalKey(HeavyRunnerPhase),
+  /** The `~/runs/<id>` folder and process group a Linux job uses there. */
+  remote: Schema.optionalKey(
+    Schema.Struct({ id: Schema.String, pgid: Schema.optionalKey(Schema.Int) }),
+  ),
+  /** A waiter that needs the user's answer, and when its deadline action applies. */
+  ask: Schema.optionalKey(
+    Schema.Struct({ reason: HeavyRunnerAskReason, deadlineAt: Schema.String }),
+  ),
+  /** Back in line after Linux dropped it mid-run, so the "dropped" policy applies. */
+  dropped: Schema.optionalKey(Schema.Boolean),
+  /** Linux dropped it and has not confirmed the run stopped there: nothing reruns it yet. */
+  unconfirmed: Schema.optionalKey(Schema.Boolean),
+  /** When `remoto` last found Linux unavailable for it, in epoch ms. */
+  linuxFailedAt: Schema.optionalKey(Schema.Number),
+  /** The user moved this running entry: it stops and waits again for that runner. */
+  requeue: Schema.optionalKey(HeavyRunner),
+  /** Started with the queue off: no admission gate, worker cap or QoS applies. */
+  ungated: Schema.optionalKey(Schema.Boolean),
 });
 export type HeavyQueueEntry = typeof HeavyQueueEntry.Type;
+
+/** Linux as the heartbeat last saw it; `online` is null until the first check. */
+export const HeavyRunnerLinux = Schema.Struct({
+  host: Schema.String,
+  online: Schema.NullOr(Schema.Boolean),
+  slots: Schema.Int,
+  running: Schema.Int,
+  load1: Schema.NullOr(Schema.Number),
+  cpuCount: Schema.NullOr(Schema.Int),
+  availableMemoryBytes: Schema.NullOr(Schema.Number),
+  totalMemoryBytes: Schema.NullOr(Schema.Number),
+  /** Why the last check failed, for people. */
+  error: Schema.optionalKey(Schema.String),
+});
+export type HeavyRunnerLinux = typeof HeavyRunnerLinux.Type;
 
 /** Entries from this folder (and below) go ahead of ("first") or behind ("last") normal ones. */
 export const HeavyQueueRule = Schema.Struct({
@@ -80,6 +130,12 @@ export const HeavyQueueState = Schema.Struct({
   claudeHookInstalled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Minutes without use before a simulator or emulator T3 started is shut down; 0 never. */
   deviceIdleMinutes: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(20))),
+  /** Null while no project turns the Runner on. */
+  linux: Schema.NullOr(HeavyRunnerLinux).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Where each waiter would go if a slot opened now, by entry id. */
+  routes: Schema.Record(Schema.String, HeavyRunner).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type HeavyQueueState = typeof HeavyQueueState.Type;
 
@@ -117,6 +173,17 @@ export type HeavyQueueSetClaudeHookInput = typeof HeavyQueueSetClaudeHookInput.T
 /** 0 never shuts an idle simulator or emulator down. */
 export const HeavyQueueSetDeviceIdleMinutesInput = Schema.Struct({ minutes: Schema.Int });
 export type HeavyQueueSetDeviceIdleMinutesInput = typeof HeavyQueueSetDeviceIdleMinutesInput.Type;
+
+/**
+ * Sends a waiter to a runner, or answers its question. A running entry stops and waits again;
+ * `force` reruns one whose Linux run could not be confirmed stopped.
+ */
+export const HeavyQueueRouteInput = Schema.Struct({
+  id: Schema.String,
+  runner: HeavyRunner,
+  force: Schema.optionalKey(Schema.Boolean),
+});
+export type HeavyQueueRouteInput = typeof HeavyQueueRouteInput.Type;
 
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,
@@ -166,6 +233,6 @@ export const HeavyCommandStopResult = Schema.Struct({
 export type HeavyCommandStopResult = typeof HeavyCommandStopResult.Type;
 
 export class HeavyQueueError extends Schema.TaggedError<HeavyQueueError>()("HeavyQueueError", {
-  reason: Schema.Literals(["not-found", "running", "unavailable"]),
+  reason: Schema.Literals(["not-found", "running", "unavailable", "not-allowed"]),
   message: Schema.String,
 }) {}

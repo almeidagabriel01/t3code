@@ -40,6 +40,21 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { ForkUpdateChannelSetting } from "./forkUpdates.ts";
+import {
+  RUNNER_DEFAULTS,
+  RunnerAskMinutes,
+  RunnerDeadlineAction,
+  RunnerHeartbeatSeconds,
+  RunnerHost,
+  RunnerLinuxSlots,
+  RunnerOfflineAfterFailures,
+  RunnerOverflow,
+  RunnerPatterns,
+  RunnerSshTimeoutSeconds,
+  RunnerStopWaitSeconds,
+  RunnerUnavailablePolicy,
+  RunnerWhere,
+} from "./runner.ts";
 import { ProviderBudget } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
@@ -1312,6 +1327,15 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
   "speechProjectCustomWords",
+  "runnerEnabled",
+  "runnerWhere",
+  "runnerOverflow",
+  "runnerUnavailable",
+  "runnerAskMinutes",
+  "runnerDeadlineAction",
+  "runnerDropped",
+  "runnerMacOnly",
+  "runnerLinuxCommands",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1372,6 +1396,15 @@ export const ProjectSettingsOverrides = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
+  runnerEnabled: Schema.optionalKey(Schema.Boolean),
+  runnerWhere: Schema.optionalKey(RunnerWhere),
+  runnerOverflow: Schema.optionalKey(RunnerOverflow),
+  runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
+  runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
+  runnerDropped: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerMacOnly: Schema.optionalKey(RunnerPatterns),
+  runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1643,6 +1676,52 @@ export const ServerSettings = Schema.Struct({
   projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
   enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Runner: where heavy work runs (see runner.ts). */
+  runnerEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerEnabled)),
+  ),
+  runnerWhere: RunnerWhere.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerWhere)),
+  ),
+  runnerOverflow: RunnerOverflow.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerOverflow)),
+  ),
+  runnerUnavailable: RunnerUnavailablePolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
+  ),
+  runnerAskMinutes: RunnerAskMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerAskMinutes)),
+  ),
+  runnerDeadlineAction: RunnerDeadlineAction.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerDeadlineAction)),
+  ),
+  runnerDropped: RunnerUnavailablePolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerDropped)),
+  ),
+  runnerMacOnly: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacOnly)),
+  ),
+  runnerLinuxCommands: RunnerPatterns.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCommands)),
+  ),
+  runnerHost: RunnerHost.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
+  ),
+  runnerLinuxSlots: RunnerLinuxSlots.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxSlots)),
+  ),
+  runnerHeartbeatSeconds: RunnerHeartbeatSeconds.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHeartbeatSeconds)),
+  ),
+  runnerOfflineAfterFailures: RunnerOfflineAfterFailures.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerOfflineAfterFailures)),
+  ),
+  runnerSshTimeoutSeconds: RunnerSshTimeoutSeconds.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerSshTimeoutSeconds)),
+  ),
+  runnerStopWaitSeconds: RunnerStopWaitSeconds.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerStopWaitSeconds)),
+  ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2127,6 +2206,21 @@ const ServerSettingsPatchFields = Schema.Struct({
     ),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
+  runnerEnabled: Schema.optionalKey(Schema.Boolean),
+  runnerWhere: Schema.optionalKey(RunnerWhere),
+  runnerOverflow: Schema.optionalKey(RunnerOverflow),
+  runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
+  runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
+  runnerDropped: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerMacOnly: Schema.optionalKey(RunnerPatterns),
+  runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
+  runnerHost: Schema.optionalKey(RunnerHost),
+  runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
+  runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),
+  runnerOfflineAfterFailures: Schema.optionalKey(RunnerOfflineAfterFailures),
+  runnerSshTimeoutSeconds: Schema.optionalKey(RunnerSshTimeoutSeconds),
+  runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

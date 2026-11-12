@@ -50,6 +50,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSetPaused]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetEnabled]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetRule]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueRoute]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMaxRunning]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetPriority]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetClaudeHook]: AuthTerminalOperateScope,

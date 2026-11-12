@@ -12,6 +12,7 @@ import {
   isQueued,
   nameOf,
   queueBashCall,
+  unwrapRemoto,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -157,6 +158,45 @@ describe("the PreToolUse answer", () => {
   });
 });
 
+describe("an agent's own remoto call", () => {
+  it.each([
+    ["remoto vp test run", "vp test run"],
+    [
+      "cd apps/server && remoto vp test run src/a.test.ts",
+      "cd apps/server && vp test run src/a.test.ts",
+    ],
+    ["  remoto ./scripts/check.sh --all", "./scripts/check.sh --all"],
+    ["ls && remoto vp test run", null],
+    ["REMOTO_HOST=pc remoto vp test", null],
+    ["remoto", null],
+  ])("%j unwraps to %j", (command, unwrapped) => {
+    expect(unwrapRemoto(command)).toBe(unwrapped);
+  });
+
+  it("with the Runner on, becomes one job sent to Linux instead of a second wrapper", () => {
+    const answer = queueBashCall(
+      bash({ command: "cd apps/server && remoto vp test run" }),
+      PREFIX,
+      {},
+      { runner: true },
+    );
+    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
+      `${PREFIX} --runner linux --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run'`,
+    );
+    const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
+    expect(script!.hookSpecificOutput.updatedInput.command).toContain(
+      "--runner linux --name 'x.sh'",
+    );
+  });
+
+  it.each([
+    ["the Runner off", "remoto vp test run", false],
+    ["a shape it cannot unwrap", "ls && remoto vp test run", true],
+  ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
+    expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+});
+
 describe("the sh pre-filter installed for sessions outside T3", () => {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-hook-"));
   const script = (hookCommand: string) => {
@@ -194,6 +234,10 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
       expect(run(reached, command)).toBe("T3");
     },
   );
+
+  it("hands a remoto call to T3, which decides whether the Runner takes it", () => {
+    expect(run(reached, "remoto ./scripts/check.sh")).toBe("T3");
+  });
 
   it.each(["ls -la", "git status && git log --format=%H -3", "cat build.md", "rg TODO apps"])(
     "answers %j itself with no output",

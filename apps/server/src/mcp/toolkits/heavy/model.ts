@@ -24,6 +24,10 @@ export const heavyStatus = (input: {
   readonly reasons: Readonly<Record<string, string>>;
   /** The reading the queue last decided on; null when none is fresh. */
   readonly machine: HeavyQueueState["machine"];
+  /** The Linux runner, when on; null otherwise. */
+  readonly linux: HeavyQueueState["linux"];
+  /** Where each waiter would run if a slot opened now. */
+  readonly routes: HeavyQueueState["routes"];
   readonly command: string;
   /** Every heavy command running now, queued or run directly, with its tree's usage. */
   readonly commands: ReadonlyArray<HeavyCommand>;
@@ -43,6 +47,7 @@ export const heavyStatus = (input: {
       name: heavyEntryName(entry),
       position: index + 1,
       ...(input.reasons[entry.id] === undefined ? {} : { reason: input.reasons[entry.id] }),
+      ...(input.routes[entry.id] === undefined ? {} : { runsOn: input.routes[entry.id] }),
     }));
   return {
     // Ask only when work would wait: pressure is high, or others queue and no slot is free soon.
@@ -59,6 +64,7 @@ export const heavyStatus = (input: {
     },
     running: running === null ? null : { ...running, name: heavyEntryName(running) },
     machine: input.machine,
+    linux: input.linux,
     runningCount: active.length,
     maxRunning: input.maxRunning,
     waiting,

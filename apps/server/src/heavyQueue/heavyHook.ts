@@ -105,7 +105,16 @@ const STARTS = [
   String.raw`\\u[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]`,
 ];
 const END = "[!A-Za-z0-9_-]";
-const PROGRAMS = [...DIRECT, ...Object.keys(SUBCOMMANDS), ...RUNNERS, "vpr", "make", "just"];
+// `remoto` too: with the Runner on, the hook takes over an agent's own `remoto` call.
+const PROGRAMS = [
+  ...DIRECT,
+  ...Object.keys(SUBCOMMANDS),
+  ...RUNNERS,
+  "vpr",
+  "make",
+  "just",
+  "remoto",
+];
 
 /**
  * Matches every command `heavySegment` calls heavy, and some it does not: any program heavy work
@@ -139,14 +148,18 @@ answer=$(printf '%s' "$input" | { ${hookCommand}; } 2>/dev/null) || exit 0
 printf '%s' "$answer"
 `;
 
+/** Every part of a shell command line that is heavy work, in order. */
+export const heavySegments = (command: string): ReadonlyArray<string> =>
+  command
+    .split(/&&|\|\||[;|&\n()]/)
+    .filter((segment) => {
+      const { program, words, flags } = wordsOf(segment);
+      return program !== "" && heavyWords(program, words, flags);
+    })
+    .map((segment) => segment.trim());
+
 /** The first part of a shell command line that is heavy work, or null when none is. */
-export const heavySegment = (command: string): string | null => {
-  for (const segment of command.split(/&&|\|\||[;|&\n()]/)) {
-    const { program, words, flags } = wordsOf(segment);
-    if (program !== "" && heavyWords(program, words, flags)) return segment.trim();
-  }
-  return null;
-};
+export const heavySegment = (command: string): string | null => heavySegments(command)[0] ?? null;
 
 /**
  * `t3 heavy …`, the prefix agents copy from `t3_heavy` status (`'<exe>' heavy --queue-dir …`), or
@@ -156,6 +169,12 @@ export const isQueued = (command: string) =>
   /^\s*(cd\s+\S+\s*&&\s*)?remoto(\s|$)/.test(command) ||
   /(^|[\s'"/])t3['"]?\s+heavy\b/.test(command) ||
   /\bheavy['"]?\s+--(queue-dir|name|priority)?(\s|=|$)/.test(command);
+
+/** `[cd <dir> &&] remoto <cmd>` as `[cd <dir> &&] <cmd>`; any other shape stays `remoto`'s own. */
+export const unwrapRemoto = (command: string): string | null => {
+  const match = /^\s*(cd\s+\S+\s*&&\s*)?remoto\s+(\S[\s\S]*)$/.exec(command);
+  return match === null ? null : `${match[1] ?? ""}${match[2]}`;
+};
 
 export const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
@@ -177,13 +196,20 @@ export const queueBashCall = (
   hookInput: unknown,
   queuePrefix: string,
   environment: Readonly<Record<string, string | undefined>> = {},
+  options: {
+    /** The Runner is on: an agent's `remoto <cmd>` becomes a job sent to Linux, run once. */
+    readonly runner?: boolean;
+  } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
   if (hookInput.tool_name !== "Bash" || !isRecord(hookInput.tool_input)) return null;
   const toolInput = hookInput.tool_input;
-  const { command } = toolInput;
-  if (typeof command !== "string" || isQueued(command)) return null;
-  const segment = heavySegment(command);
+  const original = toolInput.command;
+  if (typeof original !== "string") return null;
+  const unwrapped = options.runner === true ? unwrapRemoto(original) : null;
+  if (unwrapped === null && isQueued(original)) return null;
+  const command = unwrapped ?? original;
+  const segment = heavySegment(command) ?? (unwrapped === null ? null : command.trim());
   if (segment === null) return null;
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   return {
@@ -192,7 +218,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${unwrapped === null ? "" : " --runner linux"} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

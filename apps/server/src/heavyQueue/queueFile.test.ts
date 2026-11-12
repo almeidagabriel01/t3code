@@ -7,6 +7,12 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
 import * as Queue from "./queueFile.ts";
+import {
+  DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
+  parseHeartbeat,
+  type RunnerBlock,
+} from "./runner.ts";
 
 const dirs: string[] = [];
 const tempDir = () => {
@@ -209,7 +215,12 @@ describe("heavy queue file", () => {
     expect(Queue.read(dir)[0]).toMatchObject({ workers: 3 });
     Queue.enqueue(dir, entry("stale"));
     Queue.setEnabled(dir, false);
-    expect(Queue.tryStart(dir, "stale", now + 60_000)).toEqual({ status: "started", workers: 9 });
+    // With the queue off nothing caps it: it starts ungated.
+    expect(Queue.tryStart(dir, "stale", now + 60_000)).toEqual({
+      status: "started",
+      workers: null,
+      ungated: true,
+    });
   });
 
   it("clears a rule and keeps rules and pause across other mutations", () => {
@@ -485,5 +496,227 @@ describe("heavy queue file", () => {
     expect(Queue.recordSampleIfStale(dir, reading(3_000), 5_000)).toBe(false);
     expect(Queue.recordSampleIfStale(dir, reading(7_000), 5_000)).toBe(true);
     expect(Queue.readDoc(dir).sample?.at).toBe(7_000);
+  });
+});
+
+describe("Runner in the queue file", () => {
+  const NOW = Date.parse("2026-01-01T00:10:00.000Z");
+  const config = (over: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => ({
+    ...DEFAULT_PROJECT_CONFIG,
+    runnerEnabled: true,
+    ...over,
+  });
+  const block = (
+    global = config(),
+    projects: RunnerBlock["projects"] = [],
+    publisher: RunnerBlock["publisher"] = { pid: process.pid, home: "/home", primary: true },
+  ): RunnerBlock => ({ global, machine: DEFAULT_MACHINE_CONFIG, projects, publisher });
+  const test = (id: string, extra: Partial<HeavyQueueEntry> = {}) => ({
+    ...entry(id),
+    label: "vp test run",
+    cwd: `/w/${id}`,
+    ...extra,
+  });
+  const queueWith = (runner: RunnerBlock, online: boolean | null = true) => {
+    const dir = tempDir();
+    Queue.publishRunner(dir, runner);
+    if (online === true) Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW);
+    if (online === false) {
+      for (let i = 0; i < DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i += 1) {
+        Queue.recordHealth(dir, { ok: false, error: "down" }, NOW);
+      }
+    }
+    return dir;
+  };
+
+  it("starts a Linux-bound job on Linux with no worker cap", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    Queue.enqueue(dir, test("a"));
+    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
+      status: "started",
+      workers: null,
+      runner: "linux",
+    });
+    expect(Queue.read(dir)[0]).toMatchObject({ runner: "linux" });
+    expect(Queue.read(dir)[0]).not.toHaveProperty("workers");
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ runner: "linux", workers: null });
+  });
+
+  it("asks once with the deadline from the setting, then cancels when the action says so", () => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerAskMinutes: 2, runnerDeadlineAction: "cancel" })),
+      false,
+    );
+    Queue.enqueue(dir, test("a"));
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({
+      status: "waiting",
+      reason: "Linux is unavailable: asking you",
+    });
+    expect(Queue.read(dir)[0]!.ask).toEqual({
+      reason: "unavailable",
+      deadlineAt: new Date(NOW + 120_000).toISOString(),
+    });
+    expect(Queue.tryStart(dir, "a", NOW + 60_000)).toMatchObject({
+      reason: "Linux is unavailable: waiting for your answer",
+    });
+    expect(Queue.tryStart(dir, "a", NOW + 120_000)).toEqual({
+      status: "canceled",
+      reason: "Linux is unavailable and nobody answered in time: canceled",
+    });
+    expect(Queue.read(dir)).toEqual([]);
+  });
+
+  it("answering sends the waiter where the user said and clears the question", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })), false);
+    Queue.enqueue(dir, test("a"));
+    Queue.tryStart(dir, "a", NOW);
+    expect(Queue.route(dir, "a", "mac")).toBe("ok");
+    expect(Queue.read(dir)[0]).toMatchObject({ route: "mac" });
+    expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", workers: 9 });
+  });
+
+  it("refuses to send exclusive or Mac-only work to Linux, and unknown entries", () => {
+    const dir = queueWith(block());
+    Queue.enqueue(dir, test("x", { label: "xcodebuild test" }));
+    expect(Queue.route(dir, "x", "linux")).toBe("not-allowed");
+    expect(Queue.route(dir, "gone", "mac")).toBe("not-found");
+  });
+
+  it("a running job moves by stopping and waiting again; a server slot never moves", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    Queue.enqueue(dir, test("a"));
+    Queue.tryStart(dir, "a", NOW);
+    expect(Queue.route(dir, "a", "linux")).toBe("ok");
+    expect(Queue.read(dir)[0]).not.toHaveProperty("requeue");
+    expect(Queue.route(dir, "a", "mac")).toBe("ok");
+    expect(Queue.read(dir)[0]).toMatchObject({ requeue: "mac" });
+    Queue.enqueue(dir, test("s", { server: true, startedAt: "2026-01-01T00:00:00.000Z" }));
+    expect(Queue.route(dir, "s", "mac")).toBe("running");
+  });
+
+  it("a requeued attempt drops its run fields and waits first, with what decides the next one", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    Queue.enqueue(dir, test("a"));
+    Queue.enqueue(dir, test("b"));
+    Queue.tryStart(dir, "a", NOW);
+    Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    expect(Queue.read(dir)[0]).toMatchObject({ phase: "running", remote: { id: "w-1", pgid: 7 } });
+    expect(Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW })).toBe(
+      true,
+    );
+    const again = Queue.read(dir)[0]!;
+    expect(again).toMatchObject({ id: "a", startedAt: null, dropped: true, unconfirmed: true });
+    for (const key of ["runner", "phase", "remote", "requeue", "workers"]) {
+      expect(again).not.toHaveProperty(key);
+    }
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
+    expect(Queue.route(dir, "a", "mac")).toBe("unconfirmed");
+    Queue.confirmStopped(dir, "a");
+    expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
+    expect(Queue.requeue(dir, "gone", {})).toBe(false);
+  });
+
+  it("forcing a rerun clears the unconfirmed hold", () => {
+    const dir = queueWith(block());
+    Queue.enqueue(dir, test("a", { unconfirmed: true }));
+    expect(Queue.route(dir, "a", "mac", true)).toBe("ok");
+    expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
+  });
+
+  it("only the owner or a higher-ranked publisher writes the block", () => {
+    const dir = tempDir();
+    expect(
+      Queue.publishRunner(
+        dir,
+        block(config(), [], { pid: process.pid, home: "/app", primary: true }),
+      ),
+    ).toBe(true);
+    expect(
+      Queue.publishRunner(
+        dir,
+        block(config({ runnerEnabled: false }), [], { pid: 2, home: "/dev", primary: false }),
+      ),
+    ).toBe(false);
+    expect(Queue.readDoc(dir).runner?.global.runnerEnabled).toBe(true);
+  });
+
+  it("health goes offline after the configured failures, and only one waiter checks at a time", () => {
+    const dir = queueWith(block(), null);
+    Queue.recordHealth(dir, { ok: false, error: "x" }, NOW);
+    expect(Queue.readDoc(dir).linux.online).toBeNull();
+    Queue.recordHealth(dir, { ok: false, error: "x" }, NOW);
+    expect(Queue.readDoc(dir).linux.online).toBe(false);
+    expect(Queue.claimHealthCheck(dir, 1000, NOW + 500)).toBe(false);
+    expect(Queue.claimHealthCheck(dir, 1000, NOW + 2000)).toBe(true);
+    expect(Queue.claimHealthCheck(dir, 1000, NOW + 2500)).toBe(false);
+  });
+
+  it("a half-written block reads as the Runner off", () => {
+    const dir = tempDir();
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "queue.json"),
+      JSON.stringify({ runner: { global: {} } }),
+    );
+    expect(Queue.readDoc(dir).runner).toBeNull();
+    expect(Queue.modeFor(Queue.readDoc(dir), "/x")).toEqual({ queue: true, runner: false });
+  });
+
+  it("resolves a worktree's folder through its main checkout, without git", () => {
+    const root = tempDir();
+    const main = NodePath.join(root, "main");
+    const worktree = NodePath.join(root, "worktrees", "wt-1");
+    NodeFS.mkdirSync(NodePath.join(main, ".git", "worktrees", "wt-1"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(worktree, "apps", "server"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(worktree, ".git"),
+      `gitdir: ${NodePath.join(main, ".git", "worktrees", "wt-1")}\n`,
+    );
+    expect(Queue.checkoutOf(NodePath.join(worktree, "apps", "server"))).toEqual({
+      root: worktree,
+      aliases: [NodePath.join(main, "apps", "server")],
+    });
+    expect(Queue.checkoutOf(NodePath.join(main))).toEqual({ root: main, aliases: [] });
+    const doc = {
+      runner: block(config({ runnerOverflow: 3 }), [
+        { root: main, config: config({ runnerOverflow: 9 }) },
+      ]),
+    };
+    expect(Queue.configFor(doc, NodePath.join(worktree, "apps", "server")).runnerOverflow).toBe(9);
+  });
+
+  describe("the one gate every Bash hook goes through", () => {
+    const call = (command: string, cwd = "/w/p") => ({
+      tool_name: "Bash",
+      cwd,
+      tool_input: { command },
+    });
+    const PREFIX = "t3 heavy --queue-dir /q";
+
+    it.each([
+      ["queue on, Runner off", true, false, "vp test run", true],
+      ["queue off, Runner off", false, false, "vp test run", false],
+      ["queue off, Runner on", false, true, "vp test run", true],
+      ["queue on, Runner on", true, true, "vp test run", true],
+      ["Runner on unwraps remoto", false, true, "remoto vp test run", true],
+      ["Runner off leaves remoto alone", true, false, "remoto vp test run", false],
+    ])("%s", (_name, queue, runner, command, answered) => {
+      const dir = queueWith(block(config({ runnerEnabled: runner })));
+      Queue.setEnabled(dir, queue);
+      const answer = Queue.answerBashCall(dir, call(command), PREFIX);
+      expect(answer !== null).toBe(answered);
+      if (command.startsWith("remoto") && answer !== null) {
+        expect(answer.hookSpecificOutput.updatedInput.command).toContain("--runner linux");
+      }
+    });
+
+    it("follows the project of the call's folder", () => {
+      const dir = queueWith(
+        block(config({ runnerEnabled: false }), [{ root: "/w/on", config: config() }]),
+      );
+      Queue.setEnabled(dir, false);
+      expect(Queue.answerBashCall(dir, call("vp test run", "/w/on/src"), PREFIX)).not.toBeNull();
+      expect(Queue.answerBashCall(dir, call("vp test run", "/w/off"), PREFIX)).toBeNull();
+    });
   });
 });

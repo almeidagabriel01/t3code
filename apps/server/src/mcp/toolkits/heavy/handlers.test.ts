@@ -41,6 +41,8 @@ const base = {
   room: true,
   reasons: {},
   machine: null,
+  linux: null,
+  routes: {},
   command: "t3 heavy --",
   commands: [],
 };
@@ -167,6 +169,8 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             claudeHookInstalled: false,
             deviceIdleMinutes: 20,
             machine: null,
+            linux: null,
+            routes: {},
           }),
           command: Effect.succeed("t3 heavy --"),
           promote: (id, note) =>

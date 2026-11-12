@@ -123,6 +123,8 @@ const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    linux: null,
+    routes: {},
   }),
 });
 

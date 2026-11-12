@@ -234,6 +234,7 @@ import * as ImessageChannelRuntime from "./channels/imessage/ImessageChannelRunt
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyQueueSampler from "./heavyQueue/HeavyQueueSampler.ts";
+import * as RunnerPublisher from "./heavyQueue/RunnerPublisher.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
@@ -755,6 +756,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   KeepAwake.layer.pipe(Layer.provide(KeepAwake.layerHost)),
   HeavyQueue.layer(),
   HeavyQueueSampler.layer(),
+  RunnerPublisher.layer(),
   HeavyCommands.layer(),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
