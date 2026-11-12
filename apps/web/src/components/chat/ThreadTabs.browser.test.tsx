@@ -356,7 +356,7 @@ describe("dragging threads onto the thread area", () => {
   });
 
   it("splits with another project's thread, each group keeping its own thread and project", async () => {
-    await setup(undefined, { projects: { x: "q" } });
+    await setup(undefined, { projects: { x: "q", z: "q" } });
     panels().openFile(ref("x"), "x.ts");
     await using screen = await render(
       <>
@@ -396,6 +396,37 @@ describe("dragging threads onto the thread area", () => {
     expect(pane()?.textContent).toContain("Thread a");
     expect(useThreadTabsStore.getState().byProject["env:q"]).toBeUndefined();
     expect(workspace()?.focusedGroupId).toBe(workspace()?.groups[1]?.id);
+
+    // A project-q thread with no tab anywhere opens in project q's own tabs, leaving the split.
+    await screen.rerender(
+      <>
+        <Harness route="z" />
+        <ThreadContextDragGhost />
+      </>,
+    );
+    await vi.waitFor(() =>
+      expect(useThreadTabsStore.getState().byProject["env:q"]?.groups).toEqual([
+        { id: "main", tabs: ["env:z"], active: "env:z" },
+      ]),
+    );
+    expect(document.querySelectorAll("[data-thread-group]")).toHaveLength(1);
+    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a"], ["env:x"]]);
+  });
+
+  it("splits with a thread from another environment", async () => {
+    await setup();
+    await using screen = await render(<Harness route="a" />, { router: "/env/a" });
+    await vi.waitFor(() => expect(workspace()).toBeDefined());
+    const { rect } = center(screen.getByTestId("route-column").element());
+    const remote = { environmentId: "env2", threadId: "w" } as unknown as ScopedThreadRef;
+    await act(() => {
+      dropThreadContext({ x: rect.right - 10, y: rect.top + rect.height / 2 }, [remote], {
+        projectKey: "env2:p",
+      });
+    });
+    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a"], ["env2:w"]]);
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env2/w"));
+    expect(document.querySelector("[data-side-chat-pane]")?.textContent).toContain("Thread w");
   });
 
   it("restores a persisted split across projects, files staying with their thread", async () => {
