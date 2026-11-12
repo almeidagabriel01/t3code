@@ -190,6 +190,16 @@ work queue, and each section says what the two do together.
   installing dependencies or running.
 - A job canceled because nobody answered in time exits with code 75, the code
   `remoto` uses when the PC is down.
+- **Notices.** T3 Code shows a toast when a heavy job fails (on this Mac or
+  Linux, including a failed sync or dependency install), cannot start, is
+  canceled by a deadline, waits far longer than usual because its machine stays
+  over its limits, or when Linux drops a job, goes offline or comes back. Jobs
+  that end up on another machine than the one they were bound for also show,
+  with the reason. Several jobs at once share one toast; tap it to open the
+  job's thread or the Resource Manager. Choose which ones show in Settings →
+  Maintenance → **Heavy job notices**: **Problems and unexpected moves** (the
+  default), **Every machine change** (adds Hybrid sending a job to Linux),
+  **Problems only** or **Off**.
 
 ## Local network access
 
