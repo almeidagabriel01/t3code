@@ -1,6 +1,7 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -11,6 +12,7 @@ import { AppRoot } from "~/AppRoot";
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useAttachmentUploadStore } from "~/lib/attachmentUploadQueue";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
@@ -109,41 +111,107 @@ it("/side shows the message in its tab before the server answers, and returns it
 });
 
 it.each([
-  { name: "is accepted", fails: false, editorText: "" },
-  { name: "is refused", fails: true, editorText: "/side why is it slow" },
-])("/side sends the message once the side chat exists: $name", async ({ fails, editorText }) => {
+  { name: "is accepted", fails: false, editorText: "", images: [] },
+  { name: "is refused", fails: true, editorText: "/side why is it slow", images: ["shot.png"] },
+])(
+  "/side sends the message once the side chat exists: $name",
+  async ({ fails, editorText, images }) => {
+    const { parent, router } = await openSideChat();
+    const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+    using _draft = {
+      [Symbol.dispose]: () => {
+        useComposerDraftStore.getState().clearComposerContent(parentRef);
+        useRightPanelStore.getState().closeAllSurfaces(parentRef);
+        useAttachmentUploadStore.setState({ uploadsByImageId: {} });
+      },
+    };
+    // An image already uploaded to the environment, as the composer's upload leaves it.
+    const file = new File(["png"], "shot.png", { type: "image/png" });
+    useComposerDraftStore.getState().addImages(parentRef, [
+      {
+        type: "image",
+        id: "side-image",
+        name: "shot.png",
+        mimeType: "image/png",
+        sizeBytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+        file,
+      },
+    ]);
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        "side-image": { status: "ready", environmentId: ENVIRONMENT_ID, attachmentId: "upload-1" },
+      },
+    });
+    using _environment = installFakeEnvironment([parent], { sideChats: true });
+    if (fails) fakeCommands.failTypes.add("message.dispatch");
+    await using _app = await render(<AppRoot router={router} />, { router: false });
+    const editor = page.getByTestId("composer-editor").first();
+    await userEvent.type(editor, "/side why is it slow");
+    await page.getByRole("button", { name: "Send to side chat" }).click();
+    // Ids, so a second send shows whether it repeated the command, the message or the thread.
+    const sent = () =>
+      fakeCommands.dispatched
+        .filter((command) => command.type === "message.dispatch")
+        .map((command) => {
+          const { commandId, threadId, messageId } = command as unknown as Record<string, string>;
+          return `${threadId} ${messageId} ${commandId}`;
+        });
+    await vi.waitFor(() => expect(sent()).not.toHaveLength(0));
+    await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
+    await expect.element(editor).toHaveTextContent(editorText);
+    expect(sent()).toHaveLength(1);
+    expect(fakeCommands.dispatched.find((command) => command.type === "message.dispatch")).toEqual(
+      expect.objectContaining({
+        attachments: [expect.objectContaining({ type: "image", name: "shot.png" })],
+        context: { version: 1, records: [expect.objectContaining({ kind: "image" })] },
+      }),
+    );
+    // A side chat that did not start gives the image back with the text.
+    expect(
+      useComposerDraftStore
+        .getState()
+        .getComposerDraft(parentRef)
+        ?.images.map((image) => image.name) ?? [],
+    ).toEqual(images);
+    expect(
+      selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        parentRef,
+      ).surfaces.filter((surface) => surface.kind === "side-chat"),
+    ).toHaveLength(fails ? 0 : 1);
+  },
+);
+
+it("/side refuses added context and keeps the draft", async () => {
   const { parent, router } = await openSideChat();
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
   using _draft = {
-    [Symbol.dispose]: () => {
-      useComposerDraftStore.getState().clearComposerContent(parentRef);
-      useRightPanelStore.getState().closeAllSurfaces(parentRef);
-    },
+    [Symbol.dispose]: () => useComposerDraftStore.getState().clearComposerContent(parentRef),
   };
   using _environment = installFakeEnvironment([parent], { sideChats: true });
-  if (fails) fakeCommands.failTypes.add("message.dispatch");
+  toast.mockClear();
   await using _app = await render(<AppRoot router={router} />, { router: false });
-  const editor = page.getByTestId("composer-editor").first();
+  const editor = page.getByTestId("composer-editor");
   await userEvent.type(editor, "/side why is it slow");
-  await page.getByRole("button", { name: "Send to side chat" }).click();
-  // Ids, so a second send shows whether it repeated the command, the message or the thread.
-  const sent = () =>
-    fakeCommands.dispatched
-      .filter((command) => command.type === "message.dispatch")
-      .map((command) => {
-        const { commandId, threadId, messageId } = command as unknown as Record<string, string>;
-        return `${threadId} ${messageId} ${commandId}`;
-      });
-  await vi.waitFor(() => expect(sent()).not.toHaveLength(0));
-  await expect.element(page.getByText("Starting the side chat…")).not.toBeInTheDocument();
-  await expect.element(editor).toHaveTextContent(editorText);
-  expect(sent()).toHaveLength(1);
-  expect(
-    selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      parentRef,
-    ).surfaces.filter((surface) => surface.kind === "side-chat"),
-  ).toHaveLength(fails ? 0 : 1);
+  useComposerDraftStore
+    .getState()
+    .setThreadContexts(parentRef, [
+      threadContextRecord(scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("thread-other")), "Other"),
+    ]);
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Side chats take text, images and files",
+        description: "Remove the added context, then send it again.",
+      }),
+    ),
+  );
+  expect(useComposerDraftStore.getState().getComposerDraft(parentRef)?.prompt).toContain(
+    "/side why is it slow",
+  );
+  expect(fakeCommands.dispatched.map((command) => command.type)).not.toContain("thread.fork");
 });
 
 it("Send to main chat puts a side chat answer into the parent composer", async () => {

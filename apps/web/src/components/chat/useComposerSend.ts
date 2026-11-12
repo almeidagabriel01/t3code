@@ -7,6 +7,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   boundAttachmentIds,
+  cloneComposerImageForRetry,
   formatOutgoingPrompt,
   optimisticMessageAttachments,
   planComposerTurn,
@@ -81,10 +82,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import {
-  filterTerminalContextsWithText,
-  type TerminalContextDraft,
-} from "../../lib/terminalContext";
+import type { TerminalContextDraft } from "../../lib/terminalContext";
 import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
 import {
   buildMessageContext,
@@ -100,8 +98,10 @@ import {
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
+  sideChatContextBlock,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
+import type { SideChatAttachments } from "./useSideChat";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   awaitAttachmentUploads,
@@ -151,6 +151,48 @@ const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
 function readEnvironmentPresentation(environmentId: EnvironmentId) {
   return appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId);
+}
+
+/** Whether the environment takes uploads, and why `files` cannot go out there. */
+function readAttachmentCapabilities(
+  environmentId: EnvironmentId,
+  files: ReadonlyArray<ComposerFileAttachment>,
+) {
+  const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+  return {
+    supportsAttachmentUploads: config !== null,
+    fileBlockReason: fileAttachmentCapabilityBlockReason({
+      files,
+      attachmentUploadsCapabilityKnown: config !== null,
+      supportsAttachmentUploads: config !== null,
+      maxFileAttachmentBytes:
+        config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+    }),
+  };
+}
+
+/** Starts the uploads a send's attachments need; false when its images go inline instead. */
+function startSendAttachmentUploads(input: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly supportsAttachmentUploads: boolean;
+  readonly draftTarget: ComposerThreadTarget;
+}): boolean {
+  const { environmentId } = input;
+  const usesUploads = input.attachments.some((attachment) => attachment.type === "file")
+    ? input.supportsAttachmentUploads
+    : (readEnvironmentPresentation(environmentId)?.serverConfig ?? null) !== null;
+  // Uploads finish after the message shows as sending; the turn starts once they land.
+  if (usesUploads) {
+    for (const attachment of input.attachments) {
+      const upload =
+        readAttachmentUpload(attachment.id)?.status === "failed"
+          ? retryAttachmentUpload
+          : startAttachmentUpload;
+      upload({ environmentId, image: attachment, draftTarget: input.draftTarget });
+    }
+  }
+  return usesUploads;
 }
 
 function draftHasNonPromptContent(target: ComposerThreadTarget) {
@@ -240,8 +282,10 @@ interface ComposerSendInput {
   readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
-  /** Resolves true once the side chat started and got the prompt. */
-  readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
+  /** Resolves true once the side chat started and got the prompt and attachments. */
+  readonly onSideChat?:
+    | ((prompt: string, attachments: SideChatAttachments) => Promise<boolean>)
+    | undefined;
   /** Refuses `/side` with this reason and keeps the draft. */
   readonly sideChatDisabledReason: string | null;
   readonly handleNewThreadInActiveProject: () => void;
@@ -481,36 +525,68 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
-      if (
-        sendCtx.images.length > 0 ||
-        sendCtx.files.length > 0 ||
-        filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
-        sendCtx.previewAnnotations.length > 0 ||
-        sendCtx.reviewComments.length > 0 ||
-        sendCtx.threadContexts.length > 0 ||
-        sendCtx.environmentContexts.length > 0
-      ) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Side chats take text only",
-            description: "Remove the attachments and context, then send it again.",
-          }),
-        );
+      const contextBlock = sideChatContextBlock(sendCtx);
+      if (contextBlock) {
+        toastManager.add(stackedThreadToast({ type: "warning", ...contextBlock }));
         return;
       }
+      const { images, files } = sendCtx;
+      const items = [...images, ...files];
+      const capabilities = readAttachmentCapabilities(environmentId, files);
+      if (capabilities.fileBlockReason !== null) {
+        setThreadError(activeThread.id, capabilities.fileBlockReason);
+        return;
+      }
+      const usesAttachmentUploads = startSendAttachmentUploads({
+        environmentId,
+        attachments: items,
+        supportsAttachmentUploads: capabilities.supportsAttachmentUploads,
+        draftTarget: composerDraftTarget,
+      });
       // The side chat's tab shows the message at once, so the draft leaves the composer at once.
+      const store = useComposerDraftStore.getState();
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
+      for (const image of images) store.removeImage(composerDraftTarget, image.id);
+      for (const file of files) store.removeFile(composerDraftTarget, file.id);
       composerRef.current?.resetCursorState();
-      if (await onSideChat(sideChatCommand.prompt)) return;
-      // Not started: the text returns, after anything typed meanwhile.
+      const started = await onSideChat(sideChatCommand.prompt, {
+        items,
+        prepare: async () => {
+          const attachments = await prepareTurnAttachments({
+            environmentId,
+            attachments: items,
+            usesAttachmentUploads,
+          });
+          const ids = boundAttachmentIds(attachments, items);
+          return {
+            attachments,
+            context: buildMessageContext({
+              terminalContexts: [],
+              reviewComments: [],
+              previewAnnotations: [],
+              attachments: items.map((attachment, index) => ({
+                attachment,
+                attachmentId: ids[index]!,
+              })),
+            }),
+          };
+        },
+      });
+      if (started) return;
+      // Not started: the text and attachments return, after anything typed meanwhile. Removing
+      // them revoked the image previews, so the images come back with fresh ones.
       const restored = appendToDraftPrompt(
         useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "",
         promptAtSend,
       );
       setComposerDraftPrompt(composerDraftTarget, restored);
+      store.addImages(composerDraftTarget, images.map(cloneComposerImageForRetry));
+      store.addFiles(composerDraftTarget, files);
       if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+        composerImagesRef.current = draft?.images ?? [];
+        composerFilesRef.current = draft?.files ?? [];
         promptRef.current = restored;
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(restored, restored.length),
@@ -820,20 +896,8 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
 
-    const readLiveAttachmentCapabilities = () => {
-      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
-      const liveSupportsAttachmentUploads = config !== null;
-      return {
-        supportsAttachmentUploads: liveSupportsAttachmentUploads,
-        fileBlockReason: fileAttachmentCapabilityBlockReason({
-          files: composerFilesSnapshot,
-          attachmentUploadsCapabilityKnown: config !== null,
-          supportsAttachmentUploads: liveSupportsAttachmentUploads,
-          maxFileAttachmentBytes:
-            config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
-        }),
-      };
-    };
+    const readLiveAttachmentCapabilities = () =>
+      readAttachmentCapabilities(environmentId, composerFilesSnapshot);
 
     const multipleTargets: MultipleModelTarget[] = [];
     for (const resolved of resolveMultipleModelTargets({
@@ -857,24 +921,12 @@ export function useComposerSend(input: ComposerSendInput) {
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
       return;
     }
-    const turnUsesAttachmentUploads =
-      composerFilesSnapshot.length > 0
-        ? attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads
-        : (readEnvironmentPresentation(environmentId)?.serverConfig ?? null) !== null;
-    // Uploads finish after the message shows as sending; the turn starts once they land.
-    if (turnUsesAttachmentUploads) {
-      for (const attachment of composerAttachmentsSnapshot) {
-        const upload =
-          readAttachmentUpload(attachment.id)?.status === "failed"
-            ? retryAttachmentUpload
-            : startAttachmentUpload;
-        upload({
-          environmentId,
-          image: attachment,
-          draftTarget: composerDraftTarget,
-        });
-      }
-    }
+    const turnUsesAttachmentUploads = startSendAttachmentUploads({
+      environmentId,
+      attachments: composerAttachmentsSnapshot,
+      supportsAttachmentUploads: attachmentCapabilitiesBeforeUpload.supportsAttachmentUploads,
+      draftTarget: composerDraftTarget,
+    });
 
     if (
       multipleModelSelections === null &&

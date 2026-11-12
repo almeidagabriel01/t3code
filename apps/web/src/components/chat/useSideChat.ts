@@ -1,4 +1,10 @@
-import type { ModelSelection, RuntimeMode, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  OrchestrationMessageContext,
+  RuntimeMode,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
@@ -6,10 +12,18 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
 import { useRef } from "react";
 
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import {
+  type ComposerFileAttachment,
+  type ComposerImageAttachment,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { setStartingSideChat } from "../../lib/sideChatPane";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
@@ -17,11 +31,27 @@ import { readThreadShell, waitForThreadShell } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import type { prepareTurnAttachments } from "./chatViewSend";
+
+/** The images and files a side chat's first message carries, uploaded by the main send's path. */
+export interface SideChatAttachments {
+  readonly items: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  /** Waits for the uploads; rejects when one cannot go out. */
+  readonly prepare: () => Promise<{
+    readonly attachments: Awaited<ReturnType<typeof prepareTurnAttachments>>;
+    readonly context: OrchestrationMessageContext | undefined;
+  }>;
+}
+
+const NO_ATTACHMENTS: SideChatAttachments = {
+  items: [],
+  prepare: async () => ({ attachments: [], context: undefined }),
+};
 
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
  * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
- * composer's settings, and shows the tab: at once when there is a prompt. It resolves false
+ * composer's settings, and shows the tab: at once when there is a prompt or attachments. It resolves false
  * when the side chat did not start, or another one is still starting.
  */
 export function useSideChat(input: {
@@ -49,11 +79,15 @@ export function useSideChat(input: {
     const error = squashAtomCommandFailure(failure);
     input.onError(error instanceof Error ? error.message : fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (
+    threadRef: ScopedThreadRef,
+    prompt: string | undefined,
+    attachments: SideChatAttachments,
+  ) => {
     const { runtimeMode, modelSelection } = input.readSettings();
-    const text = prompt?.trim();
-    return text
-      ? send(threadRef, text, runtimeMode, modelSelection)
+    const text = prompt?.trim() ?? "";
+    return text || attachments.items.length > 0
+      ? send(threadRef, text, attachments, runtimeMode, modelSelection)
       : openEmpty(threadRef, runtimeMode, modelSelection);
   };
   // Drops the empty side chat a failed start leaves behind; one that got its message stays.
@@ -69,6 +103,7 @@ export function useSideChat(input: {
   const send = async (
     threadRef: ScopedThreadRef,
     text: string,
+    attachments: SideChatAttachments,
     runtimeMode: RuntimeMode,
     modelSelection: ModelSelection | undefined,
   ) => {
@@ -80,7 +115,12 @@ export function useSideChat(input: {
         useRightPanelStore.getState().byThreadKey,
         threadRef,
       ).surfaces.some((surface) => surface.id === surfaceId);
-    setStartingSideChat(targetThreadId, text);
+    // The tab shows inline attachment references by their names, as the sent message does.
+    setStartingSideChat(
+      targetThreadId,
+      replaceComposerContextReferences(text, (reference) => reference.label).trim() ||
+        attachments.items.map((attachment) => attachment.name).join(", "),
+    );
     panel.openSideChat(threadRef, targetThreadId);
     const fail = (created: boolean, report?: () => void) => {
       setStartingSideChat(targetThreadId, null);
@@ -89,6 +129,17 @@ export function useSideChat(input: {
       report?.();
       return false;
     };
+    // Uploads settle first, so one that cannot go out leaves no side chat behind.
+    const prepared = await attachments.prepare().then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    if (!prepared.ok) {
+      const { error } = prepared;
+      return fail(false, () =>
+        input.onError(error instanceof Error ? error.message : "Could not upload the attachments."),
+      );
+    }
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
       input: { sourceThreadId: threadRef.threadId, targetThreadId, title: "Side chat" },
@@ -115,9 +166,15 @@ export function useSideChat(input: {
       environmentId: threadRef.environmentId,
       input: {
         threadId: targetThreadId,
-        message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: text || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          attachments: prepared.value.attachments,
+          ...(prepared.value.context === undefined ? {} : { context: prepared.value.context }),
+        },
         ...(modelSelection === undefined ? {} : { modelSelection }),
-        titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
+        titleSeed: deriveThreadTitleSeed({ text, attachments: attachments.items }),
         runtimeMode,
         interactionMode: "default",
         createdAt: new Date().toISOString(),
@@ -172,11 +229,11 @@ export function useSideChat(input: {
     useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (prompt?: string, attachments: SideChatAttachments = NO_ATTACHMENTS) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, prompt, attachments).finally(() => {
       pendingRef.current = false;
     });
   };
