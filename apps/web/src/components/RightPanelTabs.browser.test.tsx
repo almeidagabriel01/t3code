@@ -169,6 +169,8 @@ it.each([
   await using screen = await render(<Fixture initial={files(1)} onAddTool={onAddTool} />);
   await userEvent.click(screen.getByRole("button", { name: "Add panel surface" }));
   await expect.element(page.getByRole("menuitem", { name: new RegExp(label) })).toBeVisible();
+  // The menu reads its shortcuts from its own keydown, so keys typed before it takes focus miss it.
+  await vi.waitFor(() => expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull());
   await userEvent.keyboard(key);
   expect(onAddTool).toHaveBeenCalledExactlyOnceWith(kind);
 });
