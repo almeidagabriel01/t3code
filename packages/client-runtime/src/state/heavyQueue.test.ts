@@ -11,6 +11,7 @@ it("builds a guarded command for every queue control, including the on/off switc
     "commands",
     "move",
     "promote",
+    "route",
     "setClaudeHook",
     "setDeviceIdleMinutes",
     "setEnabled",

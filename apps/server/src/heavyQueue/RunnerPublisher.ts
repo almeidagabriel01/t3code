@@ -55,7 +55,7 @@ const fingerprint = (block: RunnerBlock) => JSON.stringify(block);
 export const runnerOnAnywhere = (block: RunnerBlock) =>
   block.global.runnerEnabled || block.projects.some((project) => project.config.runnerEnabled);
 
-export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
+export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLinux) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const settingsService = yield* ServerSettingsService;
@@ -104,9 +104,9 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
         );
         const block = current;
         if (block === null || !owner || !runnerOnAnywhere(block)) return;
-        const check = yield* Effect.promise(() => checkLinux(block.machine, process.env));
+        const reading = yield* Effect.promise(() => check(block.machine, process.env));
         yield* Effect.try({
-          try: () => QueueFile.recordHealth(dir, check),
+          try: () => QueueFile.recordHealth(dir, reading),
           catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
         }).pipe(Effect.ignore);
       });
