@@ -6,6 +6,7 @@ import {
   formatDuration,
   heavyCommandKey,
   jobPriority,
+  machineSummaries,
   moveTarget,
   ordinal,
   peakUsageLine,
@@ -240,6 +241,86 @@ describe("summary and formatting", () => {
         hold: "pressure",
       }),
     ).toBe(`1 of 3 running · memory pressure high${reading}`);
+  });
+
+  const LINUX = {
+    host: "remoto",
+    online: true,
+    slots: 2,
+    running: 1,
+    load1: 2,
+    cpuCount: 6,
+    availableMemoryBytes: 8 * 1024 ** 3,
+    totalMemoryBytes: 16 * 1024 ** 3,
+  };
+  const healthyMac = {
+    running: 1,
+    slots: 3,
+    cpuPercent: null,
+    load: null,
+    cpuCount: null,
+    freeBytes: null,
+    online: true,
+    note: null,
+  };
+  it.each([
+    ["no Runner", {}, healthyMac, null],
+    [
+      "a Mac reading",
+      { machine },
+      { ...healthyMac, cpuPercent: 9, cpuCount: 10, freeBytes: machine.availableMemoryBytes },
+      null,
+    ],
+    [
+      "the queue off",
+      { enabled: false },
+      { ...healthyMac, note: "Queue off: heavy jobs start right away" },
+      null,
+    ],
+    [
+      "a pause, which holds Linux too",
+      { paused: true, linux: LINUX },
+      { ...healthyMac, note: "paused" },
+      {
+        running: 1,
+        slots: 2,
+        cpuPercent: null,
+        load: 2,
+        cpuCount: 6,
+        freeBytes: LINUX.availableMemoryBytes,
+        online: true,
+        note: "paused",
+      },
+    ],
+    [
+      "a hold with a waiter",
+      { hold: "slots", linux: LINUX },
+      { ...healthyMac, note: "waiting: all 3 slots busy" },
+      {
+        running: 1,
+        slots: 2,
+        cpuPercent: null,
+        load: 2,
+        cpuCount: 6,
+        freeBytes: LINUX.availableMemoryBytes,
+        online: true,
+        note: null,
+      },
+    ],
+    [
+      "Linux offline",
+      { linux: { ...LINUX, online: false, error: "ssh timed out" } },
+      healthyMac,
+      expect.objectContaining({ online: false, note: "Linux offline: ssh timed out" }),
+    ],
+    [
+      "Linux not checked yet",
+      { linux: { ...LINUX, online: null } },
+      healthyMac,
+      expect.objectContaining({ online: null, note: "Checking Linux (remoto)…" }),
+    ],
+  ] as const)("summarizes each machine with %s", (_name, over, mac, linux) => {
+    expect(machineSummaries({ ...base, linux: null, ...over })).toEqual({ mac, linux });
   });
 
   it("finds a rule by folder ignoring trailing slashes", () => {

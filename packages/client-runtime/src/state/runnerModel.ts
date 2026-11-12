@@ -4,6 +4,7 @@
  */
 import type {
   HeavyQueueEntry,
+  HeavyQueueLimitKey,
   HeavyQueueState,
   HeavyRunner,
   HeavyRunnerLinux,
@@ -109,9 +110,10 @@ export const RUNNER_DEADLINE_LABEL: Record<RunnerDeadlineAction, string> = {
   cancel: "Cancel",
 };
 
-const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
+/** What a Linux job is doing, short enough for a row: "Installing · 3m". */
+export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
   syncing: "Syncing",
-  installing: "Installing deps",
+  installing: "Installing",
   running: "Running",
 };
 
@@ -285,3 +287,25 @@ export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
     "Jobs run on this Mac until it reaches its limits, then on Linux until Linux reaches its own. Past both, each job joins the shorter queue.",
   linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
 };
+
+export interface HeavyLimitChoices {
+  readonly queueEnabled: boolean;
+  readonly runnerEnabled: boolean | null;
+  readonly runnerWhere: RunnerWhere | null;
+}
+
+/**
+ * Why a Mac limit does nothing under these choices, or null when it applies. The Mac limits gate
+ * the queue and Hybrid's routing; how long a limit must hold also times Linux's limits. Null
+ * (targets disagree) counts as applying.
+ */
+export function heavyLimitIdle(key: HeavyQueueLimitKey, choices: HeavyLimitChoices): string | null {
+  if (choices.queueEnabled) return null;
+  const runnerOn = choices.runnerEnabled !== false;
+  if (key === "heavyOverLimitSeconds") {
+    return runnerOn ? null : "Only applies while the heavy work queue or the Runner is on.";
+  }
+  return runnerOn && (choices.runnerWhere === null || choices.runnerWhere === "automatic")
+    ? null
+    : "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+}

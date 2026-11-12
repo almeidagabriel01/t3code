@@ -158,10 +158,17 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
       ),
     )
     .toBeVisible();
-  for (const title of ["Pause heavy work queue", "CPU limit", "Heavy work priority by project"]) {
+  for (const title of [
+    "Pause heavy work queue",
+    "Jobs at once on this Mac",
+    "CPU limit",
+    "Keep memory free",
+    "Heavy work priority by project",
+  ]) {
     expect(off.getByRole("heading", { name: title }).elements()).toHaveLength(0);
   }
-  expect(off.getByRole("group", { name: "This Mac" }).elements()).toHaveLength(0);
+  // The Runner still times Linux's limits, so this one stays.
+  await expect.element(off.getByRole("heading", { name: "Over the limit for" })).toBeVisible();
   await expect
     .element(
       off.getByRole("switch", {
@@ -174,14 +181,25 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
   await userEvent.click(queue);
   expect(mocks.actions.setEnabled).toHaveBeenCalledWith(true);
 
+  // Hybrid routes on the Mac limits even without the queue.
+  setup({ enabled: false });
+  mocks.runner = { runnerEnabled: true, runnerWhere: "automatic" };
+  await using hybrid = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  await expect.element(hybrid.getByLabelText("CPU limit", { exact: true })).toBeEnabled();
+  await expect.element(hybrid.getByRole("heading", { name: "Keep memory free" })).toBeVisible();
+  expect(hybrid.getByRole("heading", { name: "Pause heavy work queue" }).elements()).toHaveLength(
+    0,
+  );
+
   setup({ enabled: false, macCpuCeilingPercent: 60 });
   mocks.target = "heavy-work-cpu-ceiling";
   await using searched = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
   await expect.element(searched.getByRole("heading", { name: "CPU limit" })).toBeVisible();
   await expect
-    .element(searched.getByText("Only applies while the heavy work queue is on."))
+    .element(
+      searched.getByText("Only applies while the heavy work queue is on or jobs run in Hybrid."),
+    )
     .toBeVisible();
-  await expect.element(searched.getByLabelText("CPU limit", { exact: true })).toBeDisabled();
   expect(searched.getByRole("heading", { name: "Keep memory free" }).elements()).toHaveLength(0);
 });
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   askRemaining,
+  heavyLimitIdle,
   heavyModeLine,
   linuxLine,
   routeActions,
@@ -108,7 +109,7 @@ describe("a row's runner", () => {
     [
       entry({ startedAt: "x", runner: "linux", phase: "installing" }),
       { linux: null, routes: {} },
-      { runner: "linux", label: "Linux · Installing deps" },
+      { runner: "linux", label: "Linux · Installing" },
     ],
     [entry({ startedAt: "x", runner: "linux" }), state, { runner: "linux", label: "Linux" }],
     [entry({ startedAt: "x" }), state, { runner: "mac", label: "This Mac" }],
@@ -174,4 +175,26 @@ describe("Runner fields that do nothing under the current choices", () => {
   ] as const)("%s with %o: %s", (key, choices, idle) => {
     expect(runnerFieldIdle(key, { ...on, ...choices })).toBe(idle);
   });
+});
+
+describe("heavyLimitIdle", () => {
+  const QUEUE_OFF = "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+  const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
+  it.each([
+    ["macCpuCeilingPercent", true, false, "mac", null],
+    ["macCpuCeilingPercent", false, true, "automatic", null],
+    ["macCpuCeilingPercent", false, true, null, null],
+    ["macCpuCeilingPercent", false, null, "automatic", null],
+    ["macCpuCeilingPercent", false, true, "linux", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, true, "mac", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, false, "automatic", QUEUE_OFF],
+    ["heavyOverLimitSeconds", false, true, "linux", null],
+    ["heavyOverLimitSeconds", true, false, "mac", null],
+    ["heavyOverLimitSeconds", false, false, "automatic", BOTH_OFF],
+  ] as const)(
+    "%s with queue %s, Runner %s, %s",
+    (key, queueEnabled, runnerEnabled, runnerWhere, idle) => {
+      expect(heavyLimitIdle(key, { queueEnabled, runnerEnabled, runnerWhere })).toBe(idle);
+    },
+  );
 });

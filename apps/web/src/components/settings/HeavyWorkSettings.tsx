@@ -1,4 +1,5 @@
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
+import { heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
 import {
   HEAVY_QUEUE_LIMITS,
   type EnvironmentId,
@@ -17,6 +18,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection, useSettingsSearchTargetId } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import { useScopedSettings, useScopedSettingsMixed } from "./useScopedSettings";
 
 const MAX_RUNNING = { min: 1, max: 8 } as const;
 const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
@@ -61,7 +63,23 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   const max = queueRow("heavy-work-max");
   const pause = queueRow("heavy-work-pause");
   const rulesRow = queueRow("heavy-work-rules");
-  const limits = LIMIT_ROWS.map((row) => ({ ...row, ...queueRow(row.searchId) }));
+  const runnerEnabled = useScopedSettings((settings) => settings.runnerEnabled);
+  const runnerWhere = useScopedSettings((settings) => settings.runnerWhere);
+  const runnerMixed = useScopedSettingsMixed(["runnerEnabled", "runnerWhere"]);
+  const limitChoices = {
+    queueEnabled: state.enabled,
+    runnerEnabled: runnerMixed ? null : runnerEnabled,
+    runnerWhere: runnerMixed ? null : runnerWhere,
+  };
+  // The Mac limits also steer Hybrid without the queue, so they follow the shared rule.
+  const limits = LIMIT_ROWS.map((row) => {
+    const idle = heavyLimitIdle(row.key, limitChoices);
+    return {
+      ...row,
+      shown: idle === null || target === searchableSetting(row.searchId).id,
+      status: idle === null ? undefined : <IdleNote>{idle}</IdleNote>,
+    };
+  });
   const setLimit: Record<HeavyQueueLimitKey, (value: number) => Promise<unknown>> = {
     macCpuCeilingPercent: actions.setMacCpuCeilingPercent,
     macMemoryFloorPercent: actions.setMacMemoryFloorPercent,
@@ -132,7 +150,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
                     title={searchableSetting(row.searchId).title}
                     {...HEAVY_QUEUE_LIMITS[row.key]}
                     value={state[row.key]}
-                    disabled={readOnly || !state.enabled}
+                    disabled={readOnly}
                     onCommit={(next) => void setLimit[row.key](next)}
                   />
                 }

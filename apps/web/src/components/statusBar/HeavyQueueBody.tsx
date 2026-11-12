@@ -13,41 +13,47 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   dropTarget,
   formatDuration,
+  formatFreeMemory,
   heavyItemsInProject,
   jobPriority,
+  machineSummaries,
   moveTarget,
   PRIORITY_CHANGE,
   ordinal,
   PRIORITY_LABEL,
   projectForCommand,
-  queueSummary,
   readableLabel,
   ruleForRoot,
   usageLine,
+  type MachineSummary,
   type MoveAction,
   type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   ASK_TITLE,
   askRemaining,
-  linuxLine,
   routeActions,
   RUNNER_DEADLINE_LABEL,
+  RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
   runnerBadge,
   RUNNER_UNCONFIRMED_NOTE,
 } from "@t3tools/client-runtime/state/runnerModel";
-import type { EnvironmentId, HeavyQueueEntry } from "@t3tools/contracts";
+import type { EnvironmentId, HeavyQueueEntry, HeavyRunner } from "@t3tools/contracts";
 import {
   ArrowDownIcon,
   ArrowDownToLineIcon,
   ArrowUpIcon,
   ArrowUpToLineIcon,
+  ChevronsDownIcon,
+  ChevronsUpIcon,
+  CpuIcon,
   EllipsisIcon,
   GaugeIcon,
   GripVerticalIcon,
-  HourglassIcon,
+  InfoIcon,
   LaptopIcon,
+  MemoryStickIcon,
   MessageSquareIcon,
   PlayIcon,
   RocketIcon,
@@ -57,7 +63,7 @@ import {
   Trash2Icon,
   ZapIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useProjects } from "../../state/entities";
 import { useHeavyQueue } from "../../state/heavyQueue";
@@ -83,18 +89,15 @@ const ELAPSED_REFRESH_MS = 5_000;
 const ASK_REFRESH_MS = 1_000;
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
 
-export function Elapsed({ since, prefix }: { readonly since: string; readonly prefix: string }) {
+export function Elapsed({ since, prefix }: { readonly since: string; readonly prefix?: string }) {
   const [now, setNow] = useState(() => Date.now());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer so the elapsed time does not repaint continuously
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), ELAPSED_REFRESH_MS);
     return () => clearInterval(timer);
   }, []);
-  return (
-    <>
-      {prefix} {formatDuration(since, now)}
-    </>
-  );
+  const duration = formatDuration(since, now);
+  return <>{prefix === undefined ? duration : `${prefix} ${duration}`}</>;
 }
 
 /** Ticks once a second only while `active`, so an idle list never repaints. */
@@ -319,6 +322,67 @@ function AskPrompt({
   );
 }
 
+/** An icon, or a short value, whose meaning lives in its tooltip and accessible name. */
+function Hint({
+  label,
+  Icon,
+  children,
+}: {
+  readonly label: string;
+  readonly Icon: typeof InfoIcon;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            aria-label={label}
+            tabIndex={0}
+            className="flex shrink-0 cursor-default items-center gap-0.5 rounded-sm tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&>svg]:size-3"
+          />
+        }
+      >
+        <Icon aria-hidden />
+        {children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** One truncated line whose full text is in its tooltip. */
+function TruncatedText({
+  text,
+  className,
+}: {
+  readonly text: string;
+  readonly className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            className={cn(
+              "cursor-default truncate rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+              className,
+            )}
+          />
+        }
+      >
+        {text}
+      </TooltipTrigger>
+      <TooltipPopup side="top" className="max-w-sm">
+        {text}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+const RULE_ICON = { first: ChevronsUpIcon, last: ChevronsDownIcon } as const;
+
 function Row({
   entry,
   entries,
@@ -332,6 +396,7 @@ function Row({
   scopeProjectId,
 }: {
   readonly entry: HeavyQueueEntry;
+  /** The waiters of this row's machine, in run order: moves stay inside its group. */
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly position: number | null;
   readonly state: QueueState;
@@ -356,13 +421,12 @@ function Row({
     isDragging,
   } = useSortable({ id: entry.id, disabled: running || !actions.canChange });
   const label = heavyEntryName(entry);
-  const command = readableLabel(entry.label);
-  const title = entry.threadId === null ? undefined : threadTitle(entry.threadId);
+  const { threadId } = entry;
+  const title = threadId === null ? undefined : threadTitle(threadId);
   const usage = usageLine(entry, state);
   const cpuLabel = jobPriority(entry).label;
   const detail = [state.reasons[entry.id], entry.note].filter(Boolean).join(" · ");
-  const badge = runnerBadge(entry, state);
-  const Icon = running ? PlayIcon : HourglassIcon;
+  const RuleIcon = rule === undefined ? null : RULE_ICON[rule.priority];
   return (
     <div
       ref={setNodeRef}
@@ -378,7 +442,7 @@ function Row({
       <div className="flex items-center gap-1.5">
         {running ? (
           <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-3">
-            <Icon aria-hidden />
+            <PlayIcon aria-hidden />
           </span>
         ) : (
           <Button
@@ -394,79 +458,49 @@ function Row({
             <GripVerticalIcon aria-hidden />
           </Button>
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-            {/* A project-scoped list already names the project. */}
-            {project !== undefined && project.id === scopeProjectId ? null : (
+        {readableLabel(entry.label) === label ? (
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
+            {label}
+          </span>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="min-w-0 flex-1 cursor-default truncate text-xs font-medium text-foreground/90" />
+              }
+            >
+              {label}
+            </TooltipTrigger>
+            <TooltipPopup side="top" className="max-w-sm break-all">
+              {entry.label}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="shrink-0 cursor-default text-2xs tabular-nums text-muted-foreground" />
+            }
+          >
+            {entry.startedAt === null ? (
               <>
-                {project === undefined ? null : (
-                  <ProjectFavicon project={project} className="size-3.5 shrink-0" />
-                )}
-                <span className="truncate">
-                  {project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean)}
-                </span>
+                {ordinal(position ?? 0)} · <Elapsed since={entry.createdAt} />
+              </>
+            ) : (
+              <>
+                {entry.phase === undefined ? "" : `${RUNNER_PHASE_LABEL[entry.phase]} · `}
+                <Elapsed since={entry.startedAt} />
               </>
             )}
-            {rule === undefined ? null : (
-              <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
-                {PRIORITY_LABEL[rule.priority]}
-              </span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {entry.startedAt === null ? (
+              <Elapsed since={entry.createdAt} prefix="Waiting" />
+            ) : (
+              <Elapsed since={entry.startedAt} prefix="Running" />
             )}
-            {cpuLabel === null ? null : (
-              <span className="shrink-0 rounded-sm bg-foreground/8 px-1">{cpuLabel}</span>
-            )}
-            {badge === null ? null : (
-              <span className="shrink-0 rounded-sm bg-foreground/8 px-1">{badge.label}</span>
-            )}
-          </div>
-          <div className="truncate text-xs font-medium text-foreground/90">{label}</div>
-          {command === label ? null : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <div className="cursor-default truncate font-mono text-3xs text-muted-foreground" />
-                }
-              >
-                {command}
-              </TooltipTrigger>
-              <TooltipPopup side="top" className="max-w-sm break-all">
-                {entry.label}
-              </TooltipPopup>
-            </Tooltip>
-          )}
-          {usage === null ? null : (
-            <div className="truncate text-3xs text-muted-foreground">{usage}</div>
-          )}
-          <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
-            {entry.threadId === null ? null : (
-              <button
-                type="button"
-                className="min-w-0 max-w-[60%] shrink-0 cursor-pointer truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => onOpenThread(entry.threadId!)}
-              >
-                {title ?? "Open thread"}
-              </button>
-            )}
-            {detail === "" ? null : (
-              <span className="truncate">
-                {entry.threadId === null ? "" : "· "}
-                {detail}
-              </span>
-            )}
-          </div>
-        </div>
-        <span className="shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-          {entry.startedAt === null ? (
-            <>
-              {ordinal(position ?? 0)}
-              <span className="block text-3xs">
-                <Elapsed since={entry.createdAt} prefix="waited" />
-              </span>
-            </>
-          ) : (
-            <Elapsed since={entry.startedAt} prefix="Running ·" />
-          )}
-        </span>
+          </TooltipPopup>
+        </Tooltip>
         {running ? null : (
           <Tooltip>
             <TooltipTrigger
@@ -493,9 +527,43 @@ function Row({
           actions={actions}
           priority={rule?.priority ?? "normal"}
           projectRoot={project?.workspaceRoot ?? null}
-          onOpenThread={entry.threadId === null ? null : () => onOpenThread(entry.threadId!)}
+          onOpenThread={threadId === null ? null : () => onOpenThread(threadId)}
         />
       </div>
+      <div className="mt-0.5 ml-6.5 flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground">
+        {/* A project-scoped list already names the project. */}
+        {project !== undefined && project.id === scopeProjectId ? null : (
+          <span className="flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
+            {project === undefined ? null : (
+              <ProjectFavicon project={project} className="size-3 shrink-0" />
+            )}
+            <span className="truncate">
+              {project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean)}
+            </span>
+          </span>
+        )}
+        {RuleIcon === null || rule === undefined ? null : (
+          <Hint label={`Project priority: ${PRIORITY_LABEL[rule.priority]}`} Icon={RuleIcon} />
+        )}
+        {cpuLabel === null ? null : <Hint label={cpuLabel} Icon={SnailIcon} />}
+        {threadId === null ? null : (
+          <button
+            type="button"
+            className="flex min-w-0 max-w-[40%] shrink-0 cursor-pointer items-center gap-0.5 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&>svg]:size-3 [&>svg]:shrink-0"
+            onClick={() => onOpenThread(threadId)}
+          >
+            <MessageSquareIcon aria-hidden />
+            <span className="truncate hover:underline">{title ?? "Open thread"}</span>
+          </button>
+        )}
+        {usage === null ? null : <TruncatedText text={usage} className="min-w-0 flex-1" />}
+      </div>
+      {detail === "" ? null : (
+        <div className="mt-0.5 ml-6.5 flex min-w-0 items-center gap-1 text-3xs text-muted-foreground [&>svg]:size-3 [&>svg]:shrink-0">
+          <InfoIcon aria-hidden />
+          <TruncatedText text={detail} className="min-w-0" />
+        </div>
+      )}
       {entry.ask === undefined ? null : (
         <AskPrompt entry={entry} ask={entry.ask} state={state} actions={actions} now={now} />
       )}
@@ -508,10 +576,157 @@ function Row({
 
 const NO_THREAD_PROJECT = () => undefined;
 
+const MACHINE = {
+  mac: { name: "This Mac", Icon: LaptopIcon },
+  linux: { name: "Linux", Icon: ServerIcon },
+} as const;
+
+const LINUX_STATUS = (online: boolean | null) =>
+  online === null
+    ? { text: "checking", dot: "bg-muted-foreground/60" }
+    : online
+      ? { text: "online", dot: "bg-success" }
+      : { text: "offline", dot: "bg-destructive" };
+
+/** A machine's name, status and readings on one row; the whole-queue control sits at its right. */
+function MachineHeader({
+  runner,
+  summary,
+  host,
+  queueOn,
+  children,
+}: {
+  readonly runner: HeavyRunner;
+  readonly summary: MachineSummary | null;
+  readonly host: string | null;
+  readonly queueOn: boolean;
+  readonly children?: ReactNode;
+}) {
+  const { name, Icon } = MACHINE[runner];
+  // A job can outlive the Runner on Linux; with no heartbeat there is no status to show.
+  const status = runner === "linux" && summary !== null ? LINUX_STATUS(summary.online) : null;
+  // Linux's readings are stale while it is offline or unchecked; the Mac's slots mean nothing with the queue off.
+  const live = summary !== null && summary.online === true;
+  const showSlots = live && (runner === "linux" || queueOn);
+  const load = summary?.load ?? null;
+  const cpuCount = summary?.cpuCount ?? null;
+  return (
+    <>
+      <div className="flex items-center gap-1.5 py-1.5 pl-2 pr-3 text-3xs text-muted-foreground">
+        <span className="flex size-5 shrink-0 items-center justify-center [&>svg]:size-3.5">
+          <Icon aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {host === null ? (
+            <span className="truncate text-xs font-medium text-foreground/90">{name}</span>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="cursor-default truncate text-xs font-medium text-foreground/90" />
+                }
+              >
+                {name}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {host} · {status?.text}
+              </TooltipPopup>
+            </Tooltip>
+          )}
+          {status === null ? null : (
+            <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)}>
+              <span className="sr-only">{status.text}</span>
+            </span>
+          )}
+        </span>
+        {!showSlots || summary === null ? null : (
+          <Hint label={`${summary.running} of ${summary.slots} running`} Icon={PlayIcon}>
+            {summary.running}/{summary.slots}
+          </Hint>
+        )}
+        {!live || summary.cpuPercent === null ? null : (
+          <Hint label={`CPU ${summary.cpuPercent}%`} Icon={CpuIcon}>
+            {summary.cpuPercent}%
+          </Hint>
+        )}
+        {!live || load === null ? null : (
+          <Hint
+            label={`load ${load.toFixed(1)}${cpuCount === null ? "" : ` on ${cpuCount} cores`}`}
+            Icon={CpuIcon}
+          >
+            {load.toFixed(1)}
+            {cpuCount === null ? "" : `/${cpuCount}`}
+          </Hint>
+        )}
+        {!live || summary.freeBytes === null ? null : (
+          <Hint label={`${formatFreeMemory(summary.freeBytes)} free`} Icon={MemoryStickIcon}>
+            {formatFreeMemory(summary.freeBytes)}
+          </Hint>
+        )}
+        {children}
+      </div>
+      {summary === null || summary.note === null ? null : (
+        <div className="-mt-1 flex items-start gap-1.5 pb-1.5 pl-2 pr-3 text-3xs text-muted-foreground">
+          <span className="flex h-3.5 w-5 shrink-0 items-center justify-center [&>svg]:size-3">
+            <InfoIcon aria-hidden />
+          </span>
+          <span className="min-w-0">{summary.note}</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MachineGroup({
+  rows,
+  waiting,
+  actions,
+  header,
+  renderRow,
+}: {
+  readonly rows: ReadonlyArray<HeavyQueueEntry>;
+  /** Every waiter on this machine in run order, shown or not: places and moves count them all. */
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+  readonly actions: Actions;
+  readonly header: ReactNode;
+  readonly renderRow: (entry: HeavyQueueEntry, position: number | null) => ReactNode;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over === null) return;
+    const target = dropTarget(waiting, String(active.id), String(over.id));
+    if (target !== undefined) void actions.move(String(active.id), target);
+  };
+  return (
+    <div className="border-t border-foreground/8 first:border-t-0">
+      {header}
+      {/* One drag context per machine, so a waiter cannot be dropped into the other machine's line. */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        modifiers={DRAG_MODIFIERS}
+        onDragEnd={onDragEnd}
+      >
+        <SortableContext
+          items={rows.filter((entry) => entry.startedAt === null).map((entry) => entry.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {rows.map((entry) =>
+            renderRow(
+              entry,
+              entry.startedAt === null ? waiting.findIndex((w) => w.id === entry.id) + 1 : null,
+            ),
+          )}
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
 /**
- * The popover's heavy-work section: slot summary, pause, and the entries in run order. With
- * `projectId` it lists that project's entries only, at their machine-wide places, and leaves the
- * machine-wide switches to the Resource Manager.
+ * The popover's heavy-work section, grouped by machine: each one's readings and note, the pause,
+ * and its entries in run order. With `projectId` it lists that project's entries only, at their
+ * places on their machine, and leaves the whole-queue switches to the Resource Manager.
  */
 export function HeavyQueueBody({
   environmentId,
@@ -529,14 +744,7 @@ export function HeavyQueueBody({
   const state = useHeavyQueue(environmentId);
   const actions = useHeavyQueueActions(environmentId);
   const projects = useProjects();
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const { entries } = state;
-  const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (over === null) return;
-    const target = dropTarget(entries, String(active.id), String(over.id));
-    if (target !== undefined) void actions.move(String(active.id), target);
-  };
-  const waiting = entries.filter((entry) => entry.startedAt === null);
   const shown =
     projectId === undefined
       ? entries
@@ -546,57 +754,62 @@ export function HeavyQueueBody({
           projectIdOfThread,
         });
   const now = useAskClock(entries.some((entry) => entry.ask !== undefined));
+  const summaries = machineSummaries(state);
+  const machineOf = (entry: HeavyQueueEntry) => runnerBadge(entry, state)?.runner ?? "mac";
+  const groups = (["mac", "linux"] as const)
+    .map((runner) => ({
+      runner,
+      summary: runner === "mac" ? summaries.mac : summaries.linux,
+      rows: shown.filter((entry) => machineOf(entry) === runner),
+      waiting: entries.filter((entry) => entry.startedAt === null && machineOf(entry) === runner),
+    }))
+    // Linux stays visible while the Runner is on, and while a job still runs there after it went off.
+    .filter((group) => group.runner === "mac" || group.summary !== null || group.rows.length > 0);
   return (
     <div>
-      <div className="flex items-center gap-2 py-1.5 pl-10 pr-3">
-        <span className="min-w-0 flex-1 truncate text-3xs text-muted-foreground">
-          {projectId === undefined ? queueSummary(state) : `Whole queue: ${queueSummary(state)}`}
-        </span>
-        {projectId !== undefined ? null : state.enabled ? (
-          <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-3xs text-muted-foreground">
-            Pause
-            <Switch
-              size="sm"
-              checked={state.paused}
-              disabled={!actions.canChange}
-              onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
-              aria-label="Pause the heavy work queue"
-            />
-          </label>
-        ) : (
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={!actions.canChange}
-            onClick={() => void actions.setEnabled(true)}
-          >
-            Turn on
-          </Button>
-        )}
-      </div>
-      {state.linux === null ? null : (
-        <div className="truncate pb-1.5 pl-10 pr-3 text-3xs text-muted-foreground">
-          {linuxLine(state.linux)}
-        </div>
-      )}
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        modifiers={DRAG_MODIFIERS}
-        onDragEnd={onDragEnd}
-      >
-        <SortableContext
-          items={shown.filter((entry) => entry.startedAt === null).map((entry) => entry.id)}
-          strategy={verticalListSortingStrategy}
-        >
-          {shown.map((entry) => (
+      {groups.map(({ runner, summary, rows, waiting }) => (
+        <MachineGroup
+          key={runner}
+          rows={rows}
+          waiting={waiting}
+          actions={actions}
+          header={
+            <MachineHeader
+              runner={runner}
+              summary={summary}
+              host={runner === "linux" ? (state.linux?.host ?? null) : null}
+              queueOn={state.enabled}
+            >
+              {runner === "linux" || projectId !== undefined ? null : state.enabled ? (
+                <label className="ml-1 flex shrink-0 cursor-pointer items-center gap-1.5">
+                  Pause
+                  <Switch
+                    size="sm"
+                    checked={state.paused}
+                    disabled={!actions.canChange}
+                    onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
+                    aria-label="Pause the heavy work queue"
+                  />
+                </label>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  className="ml-1"
+                  disabled={!actions.canChange}
+                  onClick={() => void actions.setEnabled(true)}
+                >
+                  Turn on
+                </Button>
+              )}
+            </MachineHeader>
+          }
+          renderRow={(entry, position) => (
             <Row
               key={entry.id}
               entry={entry}
-              entries={entries}
-              position={
-                entry.startedAt === null ? waiting.findIndex((w) => w.id === entry.id) + 1 : null
-              }
+              entries={waiting}
+              position={position}
               state={state}
               actions={actions}
               now={entry.ask === undefined ? 0 : now}
@@ -605,9 +818,9 @@ export function HeavyQueueBody({
               onOpenThread={onOpenThread}
               scopeProjectId={projectId}
             />
-          ))}
-        </SortableContext>
-      </DndContext>
+          )}
+        />
+      ))}
     </div>
   );
 }

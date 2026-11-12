@@ -150,18 +150,20 @@ describe("HeavyQueueGroup", () => {
     );
     await using screen = await render(group());
     await expect.element(screen.getByText("Fix build")).toBeVisible();
-    await expect.element(screen.getByText("Server tests")).toBeVisible();
-    await expect.element(screen.getByText("pnpm test")).toBeVisible();
-    await expect.element(screen.getByText(/^Running · /)).toBeVisible();
-    await expect.element(screen.getByText(/^1st/)).toBeVisible();
-    await expect.element(screen.getByText(/^2nd/)).toBeVisible();
+    await expect.element(screen.getByText(/^1st · /)).toBeVisible();
+    await expect.element(screen.getByText(/^2nd · /)).toBeVisible();
     await expect
       .element(
         screen.getByText(/needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare · Moved by the user/),
       )
       .toBeVisible();
-    await expect.element(screen.getByText("1 of 3 running")).toBeVisible();
+    await expect.element(screen.getByLabelText("1 of 3 running")).toBeVisible();
     expect(screen.container.querySelectorAll('[data-testid="favicon"]')).toHaveLength(3);
+    // The full command and how long a job has run or waited live in tooltips.
+    await userEvent.hover(screen.getByText("Server tests"));
+    await expect.element(screen.getByText("pnpm test", { exact: true })).toBeVisible();
+    await userEvent.hover(screen.getByText(/^1st · /));
+    await expect.element(screen.getByText(/^Waiting \d/)).toBeVisible();
   });
 
   it.each([
@@ -247,7 +249,9 @@ describe("HeavyQueueGroup", () => {
   ] as const)("sets the project's priority to %s from the menu", async (name, priority) => {
     setup([entry("a"), entry("b")], { rules: [{ root: "/work/app", priority: "first" }] });
     await using screen = await render(group());
-    await expect.element(screen.getByText("Always first").first()).toBeVisible();
+    await expect
+      .element(screen.getByLabelText("Project priority: Always first").first())
+      .toBeVisible();
     await openMenu(screen, "a");
     await userEvent.click(screen.getByRole("menuitemradio", { name }));
     expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", priority);
@@ -272,7 +276,8 @@ describe("HeavyQueueGroup", () => {
   it("pauses and resumes from the switch, and says so in the summary", async () => {
     setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" })], { paused: true });
     await using screen = await render(group());
-    await expect.element(screen.getByText("1 of 3 running · paused")).toBeVisible();
+    await expect.element(screen.getByLabelText("1 of 3 running")).toBeVisible();
+    await expect.element(screen.getByText("paused", { exact: true })).toBeVisible();
     await userEvent.click(screen.getByRole("switch", { name: "Pause the heavy work queue" }));
     expect(mocks.actions.setPaused).toHaveBeenCalledWith(false);
   });
@@ -299,27 +304,140 @@ describe("HeavyQueueGroup", () => {
     expect(empty.container.textContent).toBe("");
     setup([], { paused: true });
     await using paused = await render(group());
-    await expect.element(paused.getByText("0 of 3 running · paused")).toBeVisible();
+    await expect.element(paused.getByLabelText("0 of 3 running")).toBeVisible();
+    await expect.element(paused.getByText("paused", { exact: true })).toBeVisible();
   });
 
-  it("shows Linux's status and where each job runs or would run", async () => {
+  it("groups jobs by machine, with places, phase and readings per machine", async () => {
     setup(
       [
-        entry("run", { startedAt: STARTED, runner: "linux", phase: "syncing" }),
-        entry("next"),
-        entry("later"),
+        entry("mrun", { startedAt: STARTED }),
+        entry("lrun", { startedAt: STARTED, runner: "linux", phase: "installing" }),
+        entry("m1"),
+        entry("l1"),
+        entry("m2"),
+        entry("l2"),
       ],
-      { linux: LINUX, routes: { next: "linux" } },
+      {
+        linux: LINUX,
+        routes: { l1: "linux", l2: "linux" },
+        machine: {
+          busyCores: 2,
+          cpuCount: 8,
+          availableMemoryBytes: 3.4 * 1024 ** 3,
+          totalMemoryBytes: 16 * 1024 ** 3,
+          pressureLevel: null,
+          swapInBytesPerSecond: null,
+        },
+      },
     );
     await using screen = await render(group());
-    await expect
-      .element(
-        screen.getByText("Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.0 GB free"),
-      )
-      .toBeVisible();
-    await expect.element(screen.getByText("Linux · Syncing")).toBeVisible();
-    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
     await expect.element(screen.getByText("This Mac", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).toMatch(
+      /This Mac.*pnpm mrun.*pnpm m1.*1st · .*pnpm m2.*2nd · .*Linux.*online.*pnpm lrun.*Installing · .*pnpm l1.*1st · .*pnpm l2.*2nd · /s,
+    );
+    for (const label of [
+      "1 of 3 running",
+      "CPU 25%",
+      "3.4 GB free",
+      "1 of 2 running",
+      "load 1.2 on 6 cores",
+      "8.0 GB free",
+    ]) {
+      await expect.element(screen.getByLabelText(label)).toBeVisible();
+    }
+    await userEvent.hover(screen.getByText("Linux", { exact: true }));
+    await expect.element(screen.getByText("remoto · online")).toBeVisible();
+  });
+
+  it("keeps Linux's header while nothing runs there", async () => {
+    setup([entry("m")], { linux: LINUX });
+    await using screen = await render(group());
+    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
+    await expect.element(screen.getByLabelText("1 of 2 running")).toBeVisible();
+  });
+
+  it("keeps a job that still runs on Linux after the Runner went off, without a status", async () => {
+    setup([entry("l", { startedAt: STARTED, runner: "linux" })]);
+    await using screen = await render(group());
+    await expect.element(screen.getByText("pnpm l", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).toMatch(/This Mac.*Linux.*pnpm l/s);
+    expect(screen.container.textContent).not.toMatch(/checking|online|offline/);
+  });
+
+  it.each([
+    ["the pause", { paused: true }, "paused"],
+    ["what holds the next job", { hold: "slots" as const }, "waiting: all 3 slots busy"],
+    [
+      "Linux offline",
+      { linux: { ...LINUX, online: false, error: "ssh timed out" } },
+      "Linux offline: ssh timed out",
+    ],
+    ["Linux being checked", { linux: { ...LINUX, online: null } }, "Checking Linux (remoto)…"],
+  ])("notes %s under its machine", async (_name, over, note) => {
+    setup([entry("w")], over);
+    await using screen = await render(group());
+    await expect.element(screen.getByText(note, { exact: true })).toBeVisible();
+  });
+
+  it("shows no note while every machine is healthy", async () => {
+    setup([entry("r", { startedAt: STARTED })], { linux: LINUX });
+    await using screen = await render(group());
+    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).not.toMatch(/paused|waiting|offline|Checking/);
+  });
+
+  it("moves a waiter within its machine's line from the menu", async () => {
+    setup([entry("m1"), entry("l1"), entry("m2")], { linux: LINUX, routes: { l1: "linux" } });
+    await using screen = await render(group());
+    await openMenu(screen, "l1");
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Run next" }))
+      .toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+    await openMenu(screen, "m2");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Move up" }));
+    expect(mocks.actions.move).toHaveBeenCalledWith("m2", "m1");
+  });
+
+  it.each([
+    // Lands right after m2 in the Mac's line, ahead of the Mac's next waiter.
+    { onto: "m2", over: "m2", expected: ["m1", "m3"] },
+    // The Linux line is not a drop target for a Mac waiter: it lands at the end of its own line.
+    { onto: "l1", over: "m3", expected: ["m1", null] },
+  ])("drags a waiter onto $onto and keeps it on its machine", async ({ onto, over, expected }) => {
+    setup([entry("m1"), entry("m2"), entry("l1"), entry("m3")], {
+      linux: LINUX,
+      routes: { l1: "linux" },
+    });
+    await using screen = await render(group());
+    const grip = screen.getByRole("button", { name: "Drag to reorder pnpm m1" }).element();
+    const from = grip.getBoundingClientRect();
+    const to = screen.getByText(`pnpm ${onto}`, { exact: true }).element().getBoundingClientRect();
+    const pointer = (type: string, x: number, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    const live = () =>
+      [...document.querySelectorAll("[aria-live]")].map((node) => node.textContent).join(" ");
+    const x = from.x + from.width / 2;
+    grip.dispatchEvent(pointer("pointerdown", x, from.y + from.height / 2));
+    document.dispatchEvent(pointer("pointermove", x, from.y + from.height / 2 + 10));
+    await vi.waitFor(() => expect(live()).toContain("Draggable item m1"));
+    const y = to.y + to.height / 2;
+    document.dispatchEvent(pointer("pointermove", x, y));
+    await vi.waitFor(() => expect(live()).toContain(`over droppable area ${over}`));
+    document.dispatchEvent(pointer("pointerup", x, y));
+    await vi.waitFor(() => expect(mocks.actions.move).toHaveBeenCalledTimes(1));
+    expect(mocks.actions.move).toHaveBeenCalledWith(...expected);
   });
 
   it("moves jobs between this Mac and Linux from the menu, with the confirmation each needs", async () => {

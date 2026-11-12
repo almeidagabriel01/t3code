@@ -6,6 +6,8 @@ import {
   type HeavyQueueState,
 } from "@t3tools/contracts";
 
+import { linuxLine } from "./runnerModel.ts";
+
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
 /** The project whose folder holds `cwd`; the deepest folder wins, as the queue's own rules do. */
@@ -200,39 +202,108 @@ export function heavyItemsInProject<
 
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
 
-/**
- * One line for the Mac's side of the queue: what holds its next job, in words drawn from the same
- * reading as the numbers beside them. Linux jobs and waiters have their own line.
- */
-export function queueSummary(
-  state: Pick<
-    HeavyQueueState,
-    "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
-  >,
-): string {
-  if (!state.enabled) return QUEUE_OFF_SUMMARY;
-  const running = state.entries.filter(
-    (entry) => entry.startedAt !== null && entry.runner !== "linux",
-  ).length;
-  const head = `${running} of ${state.maxRunning} running`;
+/** One machine's side of the queue: its slots, its latest reading, and a note when it is not simply working. */
+export interface MachineSummary {
+  readonly running: number;
+  readonly slots: number;
+  /** The Mac's busy share of its CPU; null on Linux or without a reading. */
+  readonly cpuPercent: number | null;
+  /** Linux's one-minute load; null on the Mac or without a reading. */
+  readonly load: number | null;
+  readonly cpuCount: number | null;
+  readonly freeBytes: number | null;
+  /** Null while Linux has not been checked yet; the Mac is always online. */
+  readonly online: boolean | null;
+  /** The pause, what holds the next job, the queue being off, or Linux's trouble; null when healthy. */
+  readonly note: string | null;
+}
+
+type SummaryState = Pick<
+  HeavyQueueState,
+  "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons" | "routes"
+> &
+  Partial<Pick<HeavyQueueState, "linux">>;
+
+function macSummary(state: SummaryState): MachineSummary {
   const { machine, hold } = state;
-  const reading =
-    machine === null
-      ? ""
-      : ` · CPU ${Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100)}% · ${(machine.availableMemoryBytes / 1024 ** 3).toFixed(1)} GB free`;
-  if (state.paused) return `${head} · paused${reading}`;
   const next = state.entries.find(
     (entry) => entry.startedAt === null && state.routes[entry.id] !== "linux",
   );
-  const text =
+  const holdText =
     hold === null
       ? null
       : hold === "job-memory" || hold === "job-cpu"
         ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
         : heavyHoldText(hold, machine, state.maxRunning);
-  if (text !== null) return `${head} · ${next === undefined ? "" : "waiting: "}${text}${reading}`;
+  return {
+    running: state.entries.filter((entry) => entry.startedAt !== null && entry.runner !== "linux")
+      .length,
+    slots: state.maxRunning,
+    cpuPercent:
+      machine === null
+        ? null
+        : Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100),
+    load: null,
+    cpuCount: machine?.cpuCount ?? null,
+    freeBytes: machine?.availableMemoryBytes ?? null,
+    online: true,
+    note: !state.enabled
+      ? QUEUE_OFF_SUMMARY
+      : state.paused
+        ? "paused"
+        : holdText === null
+          ? null
+          : `${next === undefined ? "" : "waiting: "}${holdText}`,
+  };
+}
+
+/** Both machines' summaries; `linux` is null while the Runner is off. */
+export function machineSummaries(state: SummaryState): {
+  readonly mac: MachineSummary;
+  readonly linux: MachineSummary | null;
+} {
+  const { linux } = state;
+  return {
+    mac: macSummary(state),
+    linux:
+      linux === null || linux === undefined
+        ? null
+        : {
+            running: linux.running,
+            slots: linux.slots,
+            cpuPercent: null,
+            load: linux.load1,
+            cpuCount: linux.cpuCount,
+            freeBytes: linux.availableMemoryBytes,
+            online: linux.online,
+            note:
+              linux.online !== true
+                ? linuxLine(linux)
+                : state.enabled && state.paused
+                  ? "paused"
+                  : null,
+          },
+  };
+}
+
+/** "3.4 GB", as the queue's lines print free memory. */
+export const formatFreeMemory = (bytes: number) => `${(bytes / GB).toFixed(1)} GB`;
+
+/**
+ * One line for the Mac's side of the queue: what holds its next job, in words drawn from the same
+ * reading as the numbers beside them. Linux jobs and waiters have their own line.
+ */
+export function queueSummary(state: SummaryState): string {
+  const mac = macSummary(state);
+  if (!state.enabled) return QUEUE_OFF_SUMMARY;
+  const head = `${mac.running} of ${mac.slots} running`;
+  const reading =
+    mac.cpuPercent === null || mac.freeBytes === null
+      ? ""
+      : ` · CPU ${mac.cpuPercent}% · ${formatFreeMemory(mac.freeBytes)} free`;
+  if (mac.note !== null) return `${head} · ${mac.note}${reading}`;
   // Without a reading there is nothing to back a claim about the Mac.
-  return machine === null ? head : `${head} · Mac has room${reading}`;
+  return reading === "" ? head : `${head} · Mac has room${reading}`;
 }
 
 export function ordinal(n: number): string {
