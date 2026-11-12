@@ -9,6 +9,7 @@ import { AppRoot } from "~/AppRoot";
 // The thread route loads ChatView lazily; its first transform would eat the test's timeout.
 import "~/components/ChatView";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { useThreadTabsStore } from "~/threadTabsStore";
 import { useUiStateStore } from "~/uiStateStore";
@@ -98,6 +99,8 @@ it("splits the thread area when a sidebar thread drops on its edge", async () =>
   const clearTabs = () => useThreadTabsStore.setState({ byProject: {} });
   clearTabs();
   using _tabs = { [Symbol.dispose]: clearTabs };
+  // So does the right panel; one left open narrows the area until two groups fold into one.
+  useRightPanelStore.setState({ panelOpen: false });
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
   );
