@@ -5,33 +5,81 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 import type { HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
+import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
 
 const SAMPLE_INTERVAL = "2 seconds";
 
-/** A job is its entry's process and everything beneath it, in cores and resident bytes. */
+/** `footprint -f bytes` output to bytes by pid; a pid it could not read is simply absent. */
+export const parseFootprint = (text: string) =>
+  new Map(
+    [...text.matchAll(/\[(\d+)\]:[^\n]*?Footprint:\s+(\d+)\s+B/g)].map(
+      ([, pid, bytes]) => [Number(pid), Number(bytes)] as const,
+    ),
+  );
+
+/**
+ * A job is its entry's process and everything beneath it, in cores and bytes. `footprints`, by
+ * entry, replaces resident bytes: under compression RSS shows a fraction of what a job holds.
+ */
 export const peaksOf = (
   entries: ReadonlyArray<HeavyQueueEntry>,
   processes: ReadonlyArray<ResourceTelemetryProcess>,
+  footprints: Readonly<Record<string, number>> = {},
 ) => {
   const children = childrenByParent(processes);
   const peaks: Record<string, { cpu: number; memoryBytes: number }> = {};
   for (const entry of entries) {
     if (entry.startedAt === null) continue;
     const root = processes.find((process) => process.identity.pid === entry.pid);
-    if (root === undefined) continue;
+    const footprint = footprints[entry.id];
+    if (root === undefined) {
+      if (footprint !== undefined) peaks[entry.id] = { cpu: 0, memoryBytes: footprint };
+      continue;
+    }
     const { cpu, memoryBytes } = treeUsage(root, children);
-    peaks[entry.id] = { cpu, memoryBytes };
+    peaks[entry.id] = { cpu, memoryBytes: footprint ?? memoryBytes };
   }
   return peaks;
 };
+
+/** macOS physical footprint summed over each running `t3 heavy` job's tree, by entry; {} elsewhere. */
+export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
+  function* (entries: ReadonlyArray<HeavyQueueEntry>) {
+    const platform = yield* HostProcess.Platform;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = (program: string, args: ReadonlyArray<string>) =>
+      spawner
+        .string(ChildProcess.make(program, args, { stdin: "ignore", stderr: "ignore" }))
+        .pipe(Effect.timeout("2 seconds"));
+    // A server-held slot's pid is T3 itself, whose tree is everything.
+    const jobs = entries.filter((entry) => entry.startedAt !== null && entry.server !== true);
+    if (platform !== "darwin" || jobs.length === 0) return {};
+    const ps = yield* output("/bin/ps", ["-axo", "pid=,ppid="]);
+    const trees = jobs.map((entry) => [entry.id, treePids(ps, entry.pid)] as const);
+    const bytes = parseFootprint(
+      yield* output("/usr/bin/footprint", [
+        "-f",
+        "bytes",
+        "--noCategories",
+        ...new Set(trees.flatMap(([, pids]) => pids.map(String))),
+      ]),
+    );
+    return Object.fromEntries(
+      trees.map(([id, pids]) => [id, pids.reduce((sum, pid) => sum + (bytes.get(pid) ?? 0), 0)]),
+    );
+  },
+  Effect.orElseSucceed((): Record<string, number> => ({})),
+);
 
 export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
   Layer.effectDiscard(
@@ -61,7 +109,9 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             pressureLevel: reading.memoryPressureLevel ?? null,
             swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
           },
-          snapshot === null ? {} : peaksOf(entries, snapshot.processes),
+          running
+            ? peaksOf(entries, snapshot?.processes ?? [], yield* readFootprints(entries))
+            : {},
         );
       }).pipe(Effect.ignore);
       yield* tick.pipe(
