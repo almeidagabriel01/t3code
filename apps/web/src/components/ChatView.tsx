@@ -3332,6 +3332,7 @@ export default function ChatView(props: ChatViewProps) {
           workspaceRoot: activeWorkspaceRoot,
           availableEditors,
           pendingSurfaceIds: pendingFileSurfaceIds,
+          activeFile: activeMainFileSurface,
           onOpenFile: openFileSurfaceStable,
           onPendingChange: handleFilePendingChangeStable,
         }}

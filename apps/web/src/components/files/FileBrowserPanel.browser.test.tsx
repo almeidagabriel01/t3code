@@ -106,8 +106,10 @@ function setup(
     replies?: ChangeReply[];
     editorIds?: string[];
     activate?: (...args: unknown[]) => Promise<void>;
+    entries?: readonly ProjectEntry[];
   } = {},
 ) {
+  directory.entries = options.entries ?? entries;
   server.writable = options.writable ?? true;
   server.changes = [];
   server.replies = [...(options.replies ?? [])];
@@ -248,6 +250,54 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+  });
+
+  it("reveals an opened file inside closed folders without taking focus or closing open ones", async () => {
+    setup({
+      entries: [
+        { path: "docs", kind: "directory" },
+        { path: "docs/guide.md", kind: "file" },
+        { path: "src", kind: "directory" },
+        { path: "src/b.ts", kind: "file" },
+        { path: "src/lib", kind: "directory" },
+        { path: "src/lib/a.ts", kind: "file" },
+      ],
+    });
+    const panel = (selectedPath: string | null, selectedPathRevealId: number) => (
+      <>
+        <input aria-label="Editor" />
+        <FileBrowserPanel
+          environmentId={EnvironmentId.make("env-files")}
+          cwd="/repo"
+          projectName="repo"
+          selectedPath={selectedPath}
+          selectedPathRevealId={selectedPathRevealId}
+          onOpenFile={() => {}}
+          workspaceMutationId={null}
+        />
+      </>
+    );
+    await using screen = await render(panel(null, 0));
+    await vi.waitFor(() => expect(findTreeRow("docs/")).not.toBeNull());
+    findTreeRow("docs/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("docs/guide.md")).not.toBeNull());
+    const editor = screen.getByRole("textbox", { name: "Editor" });
+    await editor.click();
+
+    await screen.rerender(panel("src/lib/a.ts", 1));
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/lib/a.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+    expect(findTreeRow("docs/guide.md")).not.toBeNull();
+    await expect.element(editor).toHaveFocus();
+
+    // A repeat open after the user collapses the folder reveals the file again.
+    findTreeRow("src/lib/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/lib/a.ts")).toBeNull());
+    await editor.click();
+    await screen.rerender(panel("src/lib/a.ts", 2));
+    await vi.waitFor(() => expect(findTreeRow("src/lib/a.ts")).not.toBeNull());
+    await expect.element(editor).toHaveFocus();
   });
 
   it("groups the row menu and locks write actions without write access", async () => {
