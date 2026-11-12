@@ -5,7 +5,9 @@ import {
   dropTarget,
   formatDuration,
   heavyCommandKey,
+  heavyWork,
   jobPriority,
+  macNoteGauge,
   machineSummaries,
   moveTarget,
   ordinal,
@@ -417,6 +419,139 @@ describe("heavy commands", () => {
   it("keys a queue row by its entry and a direct one by its process identity", () => {
     expect(heavyCommandKey(command({ entryId: "q1" }))).toBe("q1");
     expect(heavyCommandKey(command({}))).toBe("12:34");
+  });
+});
+
+describe("heavyWork", () => {
+  const LINUX = {
+    host: "remoto",
+    online: true,
+    slots: 2,
+    running: 2,
+    load1: 1,
+    cpuCount: 6,
+    availableMemoryBytes: 8 * 1024 ** 3,
+    totalMemoryBytes: 16 * 1024 ** 3,
+  };
+  const job = (id: string, over: Partial<HeavyQueueEntry> = {}) => ({
+    ...e(id),
+    pid: 100,
+    ...over,
+  });
+  const cmd = (over: Partial<HeavyCommand>): HeavyCommand => ({
+    source: "agent",
+    pid: 7,
+    startTimeMs: 1,
+    threadId: "t1",
+    label: "vp test",
+    name: "Tests",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    stoppable: true,
+    ...over,
+  });
+  const STARTED = { startedAt: "2026-01-01T00:00:01.000Z" };
+  const ids = (work: ReturnType<typeof heavyWork>) => ({
+    mac: [...work.mac.running, ...work.mac.direct, ...work.mac.waiting].map((item) =>
+      "id" in item ? item.id : `cmd:${item.pid}`,
+    ),
+    linux: [...work.linux.running, ...work.linux.waiting].map((item) => item.id),
+    detached: work.detached.map((item) => `cmd:${item.pid}`),
+  });
+
+  it.each([
+    {
+      name: "a started entry repeated in the feed as a queue command shows once",
+      entries: [job("q", { ...STARTED, pid: 30 })],
+      commands: [cmd({ source: "queue", entryId: "q", pid: 30 })],
+      expected: { mac: ["q"], linux: [], detached: [] },
+    },
+    {
+      name: "a Linux job's queue command never lands under the Mac",
+      entries: [job("l", { ...STARTED, runner: "linux", pid: 31 })],
+      commands: [cmd({ source: "queue", entryId: "l", pid: 31 })],
+      expected: { mac: [], linux: ["l"], detached: [] },
+    },
+    {
+      name: "a queue command whose entry already finished shows nothing",
+      entries: [],
+      commands: [cmd({ source: "queue", entryId: "gone", pid: 32 })],
+      expected: { mac: [], linux: [], detached: [] },
+    },
+    {
+      name: "a started entry the feed has not sampled yet still shows",
+      entries: [job("new", { ...STARTED, pid: 33 })],
+      commands: [],
+      expected: { mac: ["new"], linux: [], detached: [] },
+    },
+    {
+      name: "a direct command on a running entry's pid is that job, seen before the queue claimed it",
+      entries: [job("q", { ...STARTED, pid: 34 })],
+      commands: [cmd({ pid: 34 }), cmd({ source: "terminal", pid: 35 })],
+      expected: { mac: ["q", "cmd:35"], linux: [], detached: [] },
+    },
+    {
+      name: "a server-held job's pid (the server) never hides a direct command",
+      entries: [job("s", { ...STARTED, pid: 7, server: true })],
+      commands: [cmd({ pid: 7 })],
+      expected: { mac: ["s", "cmd:7"], linux: [], detached: [] },
+    },
+    {
+      name: "detached commands come back apart",
+      entries: [],
+      commands: [cmd({ source: "detached", threadId: null, pid: 36 })],
+      expected: { mac: [], linux: [], detached: ["cmd:36"] },
+    },
+  ])("$name", ({ entries, commands, expected }) => {
+    expect(ids(heavyWork({ entries, linux: LINUX, routes: {} }, commands))).toEqual(expected);
+  });
+
+  it("lists each machine running first, then its waiters in run order", () => {
+    const work = heavyWork(
+      {
+        entries: [
+          job("m1"),
+          job("l1"),
+          job("mrun", STARTED),
+          job("m2"),
+          job("lrun", { ...STARTED, runner: "linux" }),
+        ],
+        linux: LINUX,
+        routes: { l1: "linux" },
+      },
+      [cmd({ pid: 9 })],
+    );
+    expect(ids(work)).toEqual({
+      mac: ["mrun", "cmd:9", "m1", "m2"],
+      linux: ["lrun", "l1"],
+      detached: [],
+    });
+  });
+
+  it("keeps a job still running on Linux there after the Runner went off", () => {
+    const work = heavyWork(
+      { entries: [job("l", { ...STARTED, runner: "linux" })], linux: null, routes: {} },
+      [],
+    );
+    expect(work.mac.running).toEqual([]);
+    expect(work.linux.running.map((entry) => entry.id)).toEqual(["l"]);
+  });
+});
+
+describe("macNoteGauge", () => {
+  it.each([
+    [{ hold: "memory-floor" }, "memory"],
+    [{ hold: "pressure" }, "memory"],
+    [{ hold: "swap-in" }, "memory"],
+    [{ hold: "job-memory" }, "memory"],
+    [{ hold: "cpu" }, "cpu"],
+    [{ hold: "job-cpu" }, "cpu"],
+    [{ hold: "slots" }, null],
+    [{ hold: "settling" }, null],
+    [{ hold: null }, null],
+    [{ hold: "cpu", paused: true }, null],
+    [{ hold: "cpu", enabled: false }, null],
+  ] as const)("puts %o on %s", (over, gauge) => {
+    expect(macNoteGauge({ enabled: true, paused: false, ...over })).toBe(gauge);
   });
 });
 

@@ -2,11 +2,13 @@ import {
   heavyHoldText,
   type HeavyCommand,
   type HeavyQueueEntry,
+  type HeavyQueueHold,
   type HeavyQueueRule,
   type HeavyQueueState,
+  type HeavyRunner,
 } from "@t3tools/contracts";
 
-import { linuxLine } from "./runnerModel.ts";
+import { linuxLine, runnerBadge } from "./runnerModel.ts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
 
@@ -284,6 +286,78 @@ export function machineSummaries(state: SummaryState): {
                   ? "paused"
                   : null,
           },
+  };
+}
+
+/** The Mac gauge a hold is about; the rest hold the slots, so they show on those. */
+const HOLD_GAUGE: Record<HeavyQueueHold, "cpu" | "memory" | null> = {
+  paused: null,
+  exclusive: null,
+  "runs-alone": null,
+  slots: null,
+  settling: null,
+  "no-reading": null,
+  steadying: null,
+  pressure: "memory",
+  "swap-in": "memory",
+  "memory-floor": "memory",
+  "job-memory": "memory",
+  cpu: "cpu",
+  "job-cpu": "cpu",
+};
+
+/** Which Mac gauge the Mac's note warns on, or null when the note (if any) is about its slots. */
+export function macNoteGauge(
+  state: Pick<HeavyQueueState, "enabled" | "paused" | "hold">,
+): "cpu" | "memory" | null {
+  return !state.enabled || state.paused || state.hold === null ? null : HOLD_GAUGE[state.hold];
+}
+
+/** One machine's share of the heavy work, running first and then waiting in its line's order. */
+export interface MachineWork {
+  readonly running: ReadonlyArray<HeavyQueueEntry>;
+  /** Heavy commands agents and terminals run directly, which no queue entry covers. */
+  readonly direct: ReadonlyArray<HeavyCommand>;
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+}
+
+/**
+ * The queue's entries and the heavy commands feed, merged with each job listed once. The feed
+ * repeats every started entry as a `queue` command and samples apart from the queue's own pushes,
+ * so the entries alone stand for queue jobs, and a direct command on a running entry's pid is that
+ * job seen before the queue claimed it. Detached commands run outside T3 and come back apart.
+ */
+export function heavyWork(
+  state: Pick<HeavyQueueState, "entries" | "linux" | "routes">,
+  commands: ReadonlyArray<HeavyCommand>,
+): {
+  readonly mac: MachineWork;
+  readonly linux: MachineWork;
+  readonly detached: ReadonlyArray<HeavyCommand>;
+} {
+  const machineOf = (entry: HeavyQueueEntry): HeavyRunner =>
+    runnerBadge(entry, state)?.runner ?? "mac";
+  const of = (runner: HeavyRunner, started: boolean) =>
+    state.entries.filter(
+      (entry) => (entry.startedAt !== null) === started && machineOf(entry) === runner,
+    );
+  const jobPids = new Set(
+    state.entries.flatMap((entry) =>
+      entry.startedAt !== null && entry.server !== true ? [entry.pid] : [],
+    ),
+  );
+  return {
+    mac: {
+      running: of("mac", true),
+      direct: commands.filter(
+        (command) =>
+          (command.source === "agent" || command.source === "terminal") &&
+          !jobPids.has(command.pid),
+      ),
+      waiting: of("mac", false),
+    },
+    linux: { running: of("linux", true), direct: [], waiting: of("linux", false) },
+    detached: commands.filter((command) => command.source === "detached"),
   };
 }
 
