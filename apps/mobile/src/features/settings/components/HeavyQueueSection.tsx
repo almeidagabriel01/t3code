@@ -24,6 +24,7 @@ import {
   ASK_TITLE,
   askRemaining,
   heavyModeLine,
+  linuxLine,
   RUNNER_POLICY_LABEL,
   routeActions,
   runnerBadge,
@@ -341,6 +342,8 @@ export function HeavyQueueSection(props: {
   readonly projectId?: string;
   /** Effective Runner settings, for the line that says what the queue and the Runner do together. */
   readonly runner?: RunnerMode;
+  /** Names the machine when Settings shows several environments' queues. */
+  readonly machine?: string;
 }) {
   const { environmentId, projectId, runner } = props;
   const inProject = useProjectItems(environmentId, projectId);
@@ -441,6 +444,10 @@ export function HeavyQueueSection(props: {
       })}
     </>
   );
+  const linuxRow =
+    state.linux === null ? null : (
+      <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
+    );
   if (projectId !== undefined) {
     return (
       <SettingsSection
@@ -448,13 +455,16 @@ export function HeavyQueueSection(props: {
         footer="Positions count every job on the machine. Pause and limits live in Settings."
       >
         <ListRowLayout icon="timer" label={`Whole queue: ${queueSummary(state)}`} />
+        {linuxRow}
         {rows}
       </SettingsSection>
     );
   }
   return (
     <SettingsSection
-      title="Heavy work queue"
+      title={
+        props.machine === undefined ? "Heavy work queue" : `Heavy work queue · ${props.machine}`
+      }
       footer="Agents queue tests, builds and simulators here. Up to the limit run at once, and the next one starts only when the machine has room."
     >
       <SettingsSwitchRow
@@ -470,6 +480,7 @@ export function HeavyQueueSection(props: {
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
       />
       <ListRowLayout icon="timer" label={queueSummary(state)} />
+      {linuxRow}
       {runner === undefined ? null : (
         <ListRowLayout
           icon="arrow.left.arrow.right"
@@ -627,6 +638,8 @@ function HeavyCommandRows(props: {
 export function HeavyCommandsSection(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId?: string;
+  /** Names the machine when Settings shows several environments' commands. */
+  readonly machine?: string;
 }) {
   const { environmentId } = props;
   const inProject = useProjectItems(environmentId, props.projectId);
@@ -669,7 +682,13 @@ export function HeavyCommandsSection(props: {
     ]);
   return (
     <SettingsSection
-      title={props.projectId === undefined ? "Heavy commands" : "Running now"}
+      title={
+        props.projectId !== undefined
+          ? "Running now"
+          : props.machine === undefined
+            ? "Heavy commands"
+            : `Heavy commands · ${props.machine}`
+      }
       footer="Commands running now that use at least half a core or 1 GB, queued or started directly by agents and terminals."
     >
       {commands.map((command) => (

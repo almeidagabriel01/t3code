@@ -15,7 +15,7 @@ import {
   type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -576,19 +576,30 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onChange={(mode) => write({ keepAwake: mode })}
                   />
                 ) : null}
-                {!projectSelected ? (
-                  <HeavyCommandsSection environmentId={reference.environment.environmentId} />
-                ) : null}
-                {!projectSelected ? (
-                  <HeavyQueueSection
-                    environmentId={reference.environment.environmentId}
-                    runner={{
-                      enabled: reference.settings.runnerEnabled,
-                      where: reference.settings.runnerWhere,
-                      overflow: reference.settings.runnerOverflow,
-                    }}
-                  />
-                ) : null}
+                {/* Each machine has its own queue, so several environments get one section each. */}
+                {!projectSelected
+                  ? displayTargets.map((target) => {
+                      const machine =
+                        displayTargets.length > 1 ? target.environment.label : undefined;
+                      return (
+                        <Fragment key={target.environment.environmentId}>
+                          <HeavyCommandsSection
+                            environmentId={target.environment.environmentId}
+                            {...(machine === undefined ? {} : { machine })}
+                          />
+                          <HeavyQueueSection
+                            environmentId={target.environment.environmentId}
+                            {...(machine === undefined ? {} : { machine })}
+                            runner={{
+                              enabled: target.settings.runnerEnabled,
+                              where: target.settings.runnerWhere,
+                              overflow: target.settings.runnerOverflow,
+                            }}
+                          />
+                        </Fragment>
+                      );
+                    })
+                  : null}
                 <RunnerSection
                   environmentId={reference.environment.environmentId}
                   settings={reference.settings}

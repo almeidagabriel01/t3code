@@ -573,6 +573,9 @@ describe("HeavyQueueSection", () => {
         row.textContent?.startsWith("Linux is unavailable"),
       )!.textContent;
     expect(askRow()).toMatch(/\|1:05$/);
+    expect(
+      [...view.host.querySelectorAll("p")].some((row) => row.textContent === "Linux offline"),
+    ).toBe(true);
     await act(async () => vi.advanceTimersByTime(1000));
     expect(askRow()).toMatch(/\|1:04$/);
     expect(view.button("Remove")).toBeUndefined();

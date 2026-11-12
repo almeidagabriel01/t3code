@@ -157,10 +157,11 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyCommandsSection: () => null,
-  HeavyQueueSection: (props: { environmentId: string; runner: object }) => (
+  HeavyQueueSection: (props: { environmentId: string; runner: object; machine?: string }) => (
     <i
       aria-label="heavy queue"
       data-env={props.environmentId}
+      data-machine={props.machine}
       data-runner={JSON.stringify(props.runner)}
     />
   ),
@@ -299,11 +300,23 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(JSON.stringify(mocks.updateSettings.mock.calls[0])).toMatch(/"a".*"b"|"b".*"a"/);
   });
 
-  it("shows the heavy-work queue of the selected environment on the Maintenance page", () => {
+  it("shows each selected environment's heavy-work queue, named once there are several", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
-    expect(container.querySelector<HTMLElement>('[aria-label="heavy queue"]')?.dataset.env).toBe(
-      "local",
-    );
+    const queues = () =>
+      [...container.querySelectorAll<HTMLElement>('[aria-label="heavy queue"]')].map((queue) => [
+        queue.dataset.env,
+        queue.dataset.machine,
+      ]);
+    expect(queues()).toEqual([["local", undefined]]);
+    act(() => root.unmount());
+
+    mocks.targets = [environment("local", "Local"), environment("remote", "Remote")];
+    root = createRoot(container);
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    expect(queues()).toEqual([
+      ["local", "Local"],
+      ["remote", "Remote"],
+    ]);
   });
 
   it("passes the effective Runner mode to the heavy-work queue", () => {
