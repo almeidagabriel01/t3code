@@ -222,20 +222,34 @@ repositories whose checkout settings changed.
 ## Storage cleanup
 
 Open **Settings → Worktrees → Cleanup** to enable automatic cleanup on one machine or all connected
-environments. Policies are off by default and run on the server at startup, when changed, and
-hourly. Offline machines keep their existing policies.
+environments. **Delete merged worktrees** is on by default; the other policies are off. They run on
+the server at startup, when changed, hourly, and when a thread's turn ends. Offline machines keep
+their existing policies.
 
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser
 captures and log retention remain machine-wide.
 
-Worktrees can be removed after a chosen number of inactive days, after a thread settles, after
-merging, or when they have no commits beyond the default branch. Set settled retention to 0 days
-to remove a worktree at the next cleanup after settlement. In repositories without remotes,
-unchanged-worktree cleanup compares against the branch checked out in the project workspace;
-if that checkout has a detached HEAD, the worktree is kept. Only T3-managed worktrees are eligible.
-Active sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
+**Delete merged worktrees** removes worktrees whose commits are already in the default branch,
+merged locally or through a pull request, including squash merges and cherry-picks. It compares with
+both the local and the remote default branch; in repositories without remotes it uses the branch
+checked out in the project workspace. Choose **Right away**, **After N days** of the worktree being
+unused, or **Off**. It covers every worktree of a project's repository, including ones agents make
+with `git worktree add` such as `.claude/worktrees/`, but never the main checkout, a worktree locked
+with `git worktree lock`, or a detached checkout outside T3's worktree folders. A merged worktree is
+removed only when nothing uses it: no running thread, open terminal or session, no process working
+in it, and no file changed in the last few minutes. A worktree with no thread gets an hour after it
+is created. Agents call `t3_worktree_finish` when their work is merged, which removes the worktree as
+soon as nothing uses it, even with **After N days**.
+
+**Delete the Linux copy too**, on by default, also deletes a removed worktree's copy under `~/runs`
+on the Runner's Linux machine while the Runner is on. If that machine is offline, the deletion waits
+until its next successful check, for up to 30 days.
+
+Worktrees can also be removed after a chosen number of inactive days or after a thread settles. Set
+settled retention to 0 days to remove a worktree at the next cleanup after settlement. These rules
+apply only to T3-managed thread worktrees. Active sessions and shared worktrees prevent removal. **Keep worktrees with local changes** defaults
 to **Uncommitted changes**, which protects tracked edits and untracked files but deletes ignored
 files such as `.env` and build output. **Any local files** also protects ignored files other than
 `node_modules`. **Edited tracked files** protects only tracked edits and allows untracked and
@@ -252,9 +266,10 @@ are kept for 30 days by default (**Settings → Storage → Keep worktree snapsh
 **Settings → Maintenance** on mobile); expired ones are pruned at cleanup, and the banner then says
 Restore will recreate the worktree from its branch without those changes. To inspect a snapshot by
 hand, run `git for-each-ref refs/t3/snapshots/`.
-Merge cleanup requires a merged pull request whose commits are included in the remote default
-branch. A squash or rebase merge on GitHub also counts when the pull request targeted the default
-branch and the worktree is still at the pull request's last commit.
+Worktrees with no thread are saved under `refs/t3/snapshots/worktree-<folder>/<time>` and have no
+Restore banner. Their branch stays, so bring one back with `git worktree add <path> <branch>`, then
+`git restore --source=<snapshot ref> -- .` inside it. Snapshots never include ignored files such as
+`.env`.
 
 Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
@@ -263,7 +278,7 @@ Existing prompts for deleting a worktree manually remain available when this pol
 
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
-Results also list folders in the worktree folder that no thread uses, with their sizes; cleanup never removes them, so remove them manually if you want.
+Results also list folders in the worktree folder that no thread uses and Git does not know as worktrees, with their sizes; cleanup never removes them, so remove them manually if you want.
 
 Browser captures and rotated logs have separate retention periods. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.

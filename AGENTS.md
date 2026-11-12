@@ -96,6 +96,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Refresh `statev2.sqlite`, not `state.sqlite`. The server copies the V1 `state.sqlite` only when `statev2.sqlite` is missing.
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
+- Dev servers and homes inside a checkout never delete worktrees, their snapshots or Linux copies, and `migrate-dev-db` turns worktree cleanup off in the copied settings. To test cleanup, set `T3CODE_DEV_WORKTREE_CLEANUP=1` and use throwaway repositories only.
 
 ## Verifying
 
