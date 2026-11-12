@@ -30,6 +30,7 @@ import { useEffect, useState } from "react";
 import { Alert } from "react-native";
 
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
+import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
 import { useProjects, useThreadShell } from "../../../state/entities";
 import {
@@ -44,11 +45,13 @@ import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 const MAX_LIMIT = 8;
+const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
 
 type Commands = {
   readonly move: (id: string, beforeId: string | null) => void;
   readonly startNow: (entry: HeavyQueueEntry) => void;
   readonly cancel: (entry: HeavyQueueEntry) => void;
+  readonly setPriority: (id: string, priority: "low" | "high") => void;
   readonly setRule: (root: string, priority: "first" | "last" | null) => void;
 };
 
@@ -139,6 +142,22 @@ function QueueEntryRows(props: {
           />
         </>
       )}
+      {entry.priority === "high" ? null : (
+        <SettingsActionRow
+          icon="bolt.horizontal.circle"
+          label="High priority now"
+          disabled={!props.canChange}
+          onPress={() => commands.setPriority(entry.id, "high")}
+        />
+      )}
+      {running ? (
+        <SettingsActionRow
+          icon="arrow.down.circle"
+          label="Lower priority"
+          disabled={!props.canChange}
+          onPress={() => commands.setPriority(entry.id, "low")}
+        />
+      ) : null}
       {entry.threadId === null ? null : (
         <SettingsActionRow
           icon="bubble.left"
@@ -198,8 +217,12 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
   const setPaused = useAtomCommand(heavyQueueEnvironment.setPaused);
   const setRule = useAtomCommand(heavyQueueEnvironment.setRule);
   const setMaxRunning = useAtomCommand(heavyQueueEnvironment.setMaxRunning);
+  const setPriority = useAtomCommand(heavyQueueEnvironment.setPriority);
+  const setClaudeHook = useAtomCommand(heavyQueueEnvironment.setClaudeHook);
+  const setDeviceIdleMinutes = useAtomCommand(heavyQueueEnvironment.setDeviceIdleMinutes);
   const projects = useProjects().filter((p) => p.environmentId === environmentId);
   const commands: Commands = {
+    setPriority: (id, priority) => void setPriority({ environmentId, input: { id, priority } }),
     move: (id, beforeId) => void move({ environmentId, input: { id, beforeId } }),
     setRule: (root, priority) => void setRule({ environmentId, input: { root, priority } }),
     startNow: (entry) =>
@@ -292,6 +315,28 @@ export function HeavyQueueSection(props: { readonly environmentId: EnvironmentId
           />
         );
       })}
+      <SettingsSwitchRow
+        icon="link"
+        label="Claude Code hook"
+        subtitle="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
+        value={state.claudeHookInstalled}
+        disabled={!canChange}
+        onValueChange={(installed) => void setClaudeHook({ environmentId, input: { installed } })}
+      />
+      <ListRowLayout
+        icon="moon"
+        label="Power off idle simulators"
+        description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
+      />
+      {IDLE_MINUTES.map((minutes) => (
+        <ListChoiceRow
+          key={minutes}
+          label={minutes === 0 ? "Off" : `${minutes} min`}
+          selected={state.deviceIdleMinutes === minutes}
+          disabled={!canChange}
+          onPress={() => void setDeviceIdleMinutes({ environmentId, input: { minutes } })}
+        />
+      ))}
       {entries.length === 0 ? <ListRowLayout icon="checkmark" label="Nothing queued." /> : null}
       {entries.map((entry, index) => {
         const position =

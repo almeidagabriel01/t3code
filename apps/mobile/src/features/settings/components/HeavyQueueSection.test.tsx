@@ -49,6 +49,9 @@ vi.mock("../../../state/heavyQueue", () => {
       setPaused: command("setPaused"),
       setRule: command("setRule"),
       setMaxRunning: command("setMaxRunning"),
+      setPriority: command("setPriority"),
+      setClaudeHook: command("setClaudeHook"),
+      setDeviceIdleMinutes: command("setDeviceIdleMinutes"),
       stopCommand: command("stopCommand"),
     },
     useHeavyQueueState: () => mocks.state,
@@ -70,6 +73,18 @@ vi.mock("./SettingsSection", () => ({
 vi.mock("../../../components/ui/ListRowLayout", () => ({
   ListRowLayout: (props: { label: string; description?: string; detail?: string }) => (
     <p>{[props.label, props.description, props.detail].filter(Boolean).join("|")}</p>
+  ),
+}));
+vi.mock("../../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: (props: {
+    label: string;
+    selected: boolean;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button aria-checked={props.selected} disabled={props.disabled} onClick={props.onPress}>
+      {props.label}
+    </button>
   ),
 }));
 vi.mock("./SettingsActionRow", () => ({
@@ -348,6 +363,38 @@ describe("HeavyQueueSection", () => {
       input: { enabled: true },
     });
     await off.unmount();
+  });
+
+  it("installs the Claude hook and picks the idle minutes", async () => {
+    setup([]);
+    const view = await mount();
+    expect(view.button("20 min").getAttribute("aria-checked")).toBe("true");
+    await act(async () => view.toggle("Claude Code hook").click());
+    expect(mocks.commands.setClaudeHook).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { installed: true },
+    });
+    await act(async () => view.button("Off").click());
+    await act(async () => view.button("60 min").click());
+    expect(mocks.commands.setDeviceIdleMinutes!.mock.calls.map(([call]) => call.input)).toEqual([
+      { minutes: 0 },
+      { minutes: 60 },
+    ]);
+    await view.unmount();
+  });
+
+  it("raises a job to high priority and lowers only running ones", async () => {
+    setup([entry("a", { startedAt: NOW }), entry("b"), entry("c", { priority: "high" })]);
+    const view = await mount();
+    expect(view.button("Lower priority", 1)).toBeUndefined();
+    expect(view.button("High priority now", 2)).toBeUndefined();
+    await act(async () => view.button("High priority now", 1).click());
+    await act(async () => view.button("Lower priority").click());
+    expect(mocks.commands.setPriority!.mock.calls.map(([call]) => call.input)).toEqual([
+      { id: "b", priority: "high" },
+      { id: "a", priority: "low" },
+    ]);
+    await view.unmount();
   });
 
   it("disables the actions without permission", async () => {
