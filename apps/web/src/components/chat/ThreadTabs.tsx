@@ -2,22 +2,26 @@ import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { XIcon } from "lucide-react";
+import { MessageSquareIcon } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   useEffect,
   useEffectEvent,
   useRef,
   useState,
 } from "react";
 
+import { useClosedViewStore } from "../../closedViewStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
 import { isElectron } from "../../env";
 import { resolveShortcutCommand } from "../../keybindings";
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
+import { selectActiveMainFileSurface, useRightPanelStore } from "../../rightPanelStore";
+import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useQuietThreadShell } from "../../state/entities";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -32,6 +36,7 @@ import {
   type LayoutRect,
   reconcileRouteTab,
   setThreadSplitRatio,
+  threadTabBlock,
   type ThreadTabGroup,
   type ThreadTabLayout,
   type ThreadTabWorkspace,
@@ -39,12 +44,15 @@ import {
   useThreadTabsStore,
   withRouteTab,
 } from "../../threadTabsStore";
+import { useUiStateStore } from "../../uiStateStore";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
 import ChatView from "../ChatView";
+import { resolveThreadLastVisitedAt, resolveThreadTabStatus } from "../Sidebar.logic";
 import { SidebarPointerSensor } from "../Sidebar.pointer";
-import { Button } from "../ui/button";
+import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { FileTab, TAB_CLASS, TabCloseButton, tabStateClass } from "./MainFileTabs";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -196,6 +204,8 @@ export function useThreadTabsLayout(input: {
 
   const closeTab = (tabKey: string) => {
     if (projectKey === null) return;
+    const threadRef = parseScopedThreadKey(tabKey);
+    if (threadRef) useClosedViewStore.getState().remember({ kind: "thread-tab", threadRef });
     let navigateTo: string | null | undefined;
     updateThreadTabs(projectKey, (current) => {
       if (!current) return current;
@@ -208,7 +218,14 @@ export function useThreadTabsLayout(input: {
 
   const onTabDrop = useEffectEvent((detail: ThreadTabDropDetail) => {
     if (projectKey === null) return;
+    const opened = !groupOfTab(
+      withRouteTab(useThreadTabsStore.getState().byProject[projectKey], routeKey),
+      detail.threadKey,
+    );
     const moved = applyThreadTabDrop(projectKey, routeKey, detail.threadKey, detail.target);
+    const droppedRef = parseScopedThreadKey(detail.threadKey);
+    // A thread dropped in from outside opens on its chat, like a sidebar pick; a moved tab keeps its view.
+    if (moved && opened && droppedRef) useRightPanelStore.getState().showChat(droppedRef);
     // The dropped thread becomes the full pane, as a tab picked in Orca becomes the active editor.
     if (moved && detail.threadKey !== routeKey) navigateToThreadKey(detail.threadKey);
   });
@@ -249,10 +266,18 @@ export function useThreadTabsLayout(input: {
     columnClassName:
       split && workspace.focusedGroupId === routeGroup?.id ? FOCUSED_GROUP_CLASS : null,
     routeEdges: rectEdges(routeRect),
+    /** The routed group's strip; null where threads open without tabs. */
     routeStrip:
-      routeGroup && projectKey !== null ? (
-        <ThreadTabStrip group={routeGroup} projectKey={projectKey} onClose={closeTab} />
-      ) : null,
+      routeGroup && projectKey !== null
+        ? (pendingFileIds: ReadonlySet<string>): ReactNode => (
+            <ThreadTabStrip
+              group={routeGroup}
+              projectKey={projectKey}
+              pendingFileIds={pendingFileIds}
+              onClose={closeTab}
+            />
+          )
+        : null,
     groups:
       split && geometry && projectKey !== null && container ? (
         <>
@@ -295,26 +320,88 @@ export function useThreadTabsLayout(input: {
 function ThreadTabStrip(props: {
   readonly group: ThreadTabGroup;
   readonly projectKey: string;
+  readonly pendingFileIds: ReadonlySet<string>;
   readonly onClose: (tabKey: string) => void;
 }) {
   return (
     <div
       role="tablist"
-      aria-label="Open threads"
+      aria-label="Open tabs"
       {...threadTabStripProps(props.group.id)}
-      className="flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
+      className="flex h-8 shrink-0 items-stretch gap-1 overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
     >
       {props.group.tabs.map((tabKey) => (
-        <ThreadTab
+        <ThreadTabBlock
           key={tabKey}
           tabKey={tabKey}
-          active={tabKey === props.group.active}
+          groupActive={props.group.active}
           projectKey={props.projectKey}
+          pendingFileIds={props.pendingFileIds}
           onClose={props.onClose}
         />
       ))}
     </div>
   );
+}
+
+/** A thread's tab and its file tabs; the strip measures and drops by these blocks. */
+function ThreadTabBlock(props: {
+  readonly tabKey: string;
+  readonly groupActive: string;
+  readonly projectKey: string;
+  readonly pendingFileIds: ReadonlySet<string>;
+  readonly onClose: (tabKey: string) => void;
+}) {
+  const panel = useRightPanelStore((state) => state.byThreadKey[props.tabKey]);
+  const ref = parseScopedThreadKey(props.tabKey);
+  const navigateToThreadKey = useNavigateToThreadKey();
+  const [thread, ...files] = threadTabBlock(props.tabKey, panel, props.groupActive);
+  return (
+    <div
+      {...threadTabProps(props.tabKey)}
+      className="relative flex shrink items-stretch gap-px not-first:before:pointer-events-none not-first:before:absolute not-first:before:inset-y-2 not-first:before:-left-0.5 not-first:before:w-px not-first:before:bg-foreground/10"
+      // Its tabs' min widths (min-w-24, min-w-20 and gap-px), so tabs shrink before the strip scrolls.
+      style={{ minWidth: `calc(6rem + ${files.length} * (5rem + 1px))` }}
+    >
+      <ThreadTab
+        tabKey={props.tabKey}
+        active={thread?.active === true}
+        projectKey={props.projectKey}
+        onClose={props.onClose}
+      />
+      {ref
+        ? files.map((entry) =>
+            entry.kind === "file" ? (
+              <FileTab
+                key={entry.surface.id}
+                surface={entry.surface}
+                active={entry.active}
+                pending={props.pendingFileIds.has(entry.surface.id)}
+                onActivate={() => {
+                  useRightPanelStore.getState().activateSurface(ref, entry.surface.id);
+                  navigateToThreadKey(props.tabKey);
+                }}
+                onClose={() => useRightPanelStore.getState().closeSurface(ref, entry.surface.id)}
+              />
+            ) : null,
+          )
+        : null}
+    </div>
+  );
+}
+
+/** The thread's status dot: working, or needing attention as its sidebar row shows. */
+function useThreadTabStatus(tabKey: string) {
+  const shell = useQuietThreadShell(parseScopedThreadKey(tabKey));
+  const visitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[tabKey]);
+  const hasOpenDecision = useOpenDecisionThreadKeys().has(tabKey);
+  return shell
+    ? resolveThreadTabStatus({
+        ...shell,
+        lastVisitedAt: resolveThreadLastVisitedAt(shell.lastVisitedAt, visitedAt),
+        hasOpenDecision,
+      })
+    : null;
 }
 
 function ThreadTab(props: {
@@ -325,18 +412,23 @@ function ThreadTab(props: {
 }) {
   const ref = parseScopedThreadKey(props.tabKey);
   const shell = useQuietThreadShell(ref);
+  const status = useThreadTabStatus(props.tabKey);
   const navigateToThreadKey = useNavigateToThreadKey();
   const deleted = shell?.deletedAt != null;
   const title = shell?.title.trim() || "Thread";
   const close = () => props.onClose(props.tabKey);
+  // The thread tab is its chat: picking it shows the chat even over one of its files.
+  const open = () => {
+    if (ref) useRightPanelStore.getState().showChat(ref);
+    navigateToThreadKey(props.tabKey);
+  };
   return (
     <div
       role="tab"
       aria-label={title}
       aria-selected={props.active}
       tabIndex={props.active ? 0 : -1}
-      {...threadTabProps(props.tabKey)}
-      onClick={() => navigateToThreadKey(props.tabKey)}
+      onClick={open}
       onMouseDown={(event) => {
         // A middle press would start the browser's autoscroll.
         if (event.button === 1) event.preventDefault();
@@ -349,46 +441,30 @@ function ThreadTab(props: {
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          navigateToThreadKey(props.tabKey);
+          open();
         }
       }}
       onPointerDown={(event) => {
         if (ref) startThreadTabDrag(event.nativeEvent, ref, title, props.projectKey);
       }}
-      className={cn(
-        "group/tab my-1 flex w-40 min-w-24 shrink cursor-pointer items-center gap-1 rounded-md pr-1 pl-2.5 text-xs select-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        props.active
-          ? "bg-foreground/10 text-foreground"
-          : "text-muted-foreground hover:bg-foreground/6 hover:text-foreground",
-      )}
+      className={cn(TAB_CLASS, "w-40 min-w-24", tabStateClass(props.active))}
     >
+      <span className="relative flex shrink-0">
+        <MessageSquareIcon aria-hidden className="size-3.5" />
+        <SidebarNotificationDot
+          dotClass={status?.dotClass ?? null}
+          className="absolute -right-0.5 -bottom-0.5 ring-1 ring-background"
+        />
+      </span>
       <Tooltip>
         <TooltipTrigger
           render={<span className={cn("min-w-0 flex-1 truncate", deleted && "line-through")} />}
         >
           {title}
         </TooltipTrigger>
-        <TooltipPopup side="bottom">{title}</TooltipPopup>
+        <TooltipPopup side="bottom">{status ? `${title} · ${status.label}` : title}</TooltipPopup>
       </Tooltip>
-      <span
-        className={cn(
-          "flex shrink-0 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100",
-          props.active ? "opacity-100" : "opacity-0",
-        )}
-      >
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Close ${title}`}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            close();
-          }}
-        >
-          <XIcon />
-        </Button>
-      </span>
+      <TabCloseButton label={`Close ${title}`} active={props.active} onClose={close} />
     </div>
   );
 }
@@ -415,7 +491,10 @@ function ThreadTabGroupPane(props: {
     });
     if (command !== "rightPanel.close" || event.repeat) return;
     event.preventDefault();
-    props.onClose(group.active);
+    const panels = useRightPanelStore.getState();
+    const file = selectActiveMainFileSurface(panels.byThreadKey, activeRef);
+    if (activeRef && file) panels.closeSurface(activeRef, file.id);
+    else props.onClose(group.active);
   };
   return (
     <div
@@ -457,7 +536,6 @@ function ThreadTabGroupPane(props: {
           <TooltipPopup side="bottom">Open with its panels and terminal</TooltipPopup>
         </Tooltip>
       </header>
-      <ThreadTabStrip group={group} projectKey={props.projectKey} onClose={props.onClose} />
       <div className="relative flex min-h-0 flex-1">
         {activeRef ? (
           <BackgroundThreadContext value>
@@ -469,6 +547,14 @@ function ThreadTabGroupPane(props: {
                 routeKind="server"
                 reserveTitleBarControlInset={false}
                 embedded
+                renderGroupTabStrip={(pendingFileIds) => (
+                  <ThreadTabStrip
+                    group={group}
+                    projectKey={props.projectKey}
+                    pendingFileIds={pendingFileIds}
+                    onClose={props.onClose}
+                  />
+                )}
               />
             </ComposerHandleContext>
           </BackgroundThreadContext>

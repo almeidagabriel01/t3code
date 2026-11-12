@@ -1,9 +1,12 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
 import { act, render } from "../../../test/render";
+import { useClosedViewStore } from "../../closedViewStore";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { type ThreadTabWorkspace, useThreadTabsStore } from "../../threadTabsStore";
 import { ThreadContextDragGhost } from "./ThreadContextDragGhost";
 import { useThreadTabsLayout } from "./ThreadTabs";
@@ -14,14 +17,24 @@ import {
   threadContextDropTargetProps,
 } from "./threadContextDrag";
 
-const state = vi.hoisted(() => ({ deleted: new Set<string>() }));
+const state = vi.hoisted(() => ({ deleted: new Set<string>(), working: new Set<string>() }));
 
 vi.mock("../ChatView", () => ({
-  default: (props: { threadId: string }) => (
+  default: (props: {
+    threadId: string;
+    renderGroupTabStrip?: (pendingFileIds: ReadonlySet<string>) => ReactNode;
+  }) => (
     <div data-testid="embedded-chat">
+      {props.renderGroupTabStrip?.(new Set())}
       <textarea aria-label={`Composer ${props.threadId}`} />
     </div>
   ),
+}));
+vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set<string>() }));
+vi.mock("../../keybindings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../keybindings")>()),
+  resolveShortcutCommand: (event: KeyboardEvent) =>
+    event.key === "w" && event.metaKey ? "rightPanel.close" : null,
 }));
 vi.mock("../../state/entities", () => {
   const shell = (ref: { environmentId: string; threadId: string } | null) =>
@@ -34,6 +47,8 @@ vi.mock("../../state/entities", () => {
           title: `Thread ${ref.threadId}`,
           lineage: { sideChat: false },
           deletedAt: state.deleted.has(ref.threadId) ? "2026-11-11T00:00:00Z" : null,
+          runtime: state.working.has(ref.threadId) ? { status: "running" } : null,
+          latestRun: null,
         };
   return { useQuietThreadShell: shell, readThreadShell: shell };
 });
@@ -43,12 +58,23 @@ const ref = (threadId: string) =>
   ({ environmentId: "env", threadId }) as unknown as ScopedThreadRef;
 const leaf = (groupId: string) => ({ type: "leaf", groupId }) as const;
 
-async function setup(workspace?: ThreadTabWorkspace, options: { deleted?: string[] } = {}) {
+async function setup(
+  workspace?: ThreadTabWorkspace,
+  options: { deleted?: string[]; working?: string[] } = {},
+) {
   // The default 414px viewport would put the side-by-side layout and its drop points off screen.
   await page.viewport(1280, 800);
   state.deleted = new Set(options.deleted);
+  state.working = new Set(options.working);
   useThreadTabsStore.setState({ byProject: workspace ? { [PROJECT]: workspace } : {} });
+  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useClosedViewStore.setState({ entries: [] });
 }
+const panels = () => useRightPanelStore.getState();
+const tabNames = (screen: { getByRole: (role: "tablist") => { element: () => Element } }) =>
+  [...screen.getByRole("tablist").element().querySelectorAll('[role="tab"]')].map((tab) =>
+    tab.getAttribute("aria-label"),
+  );
 const workspace = () => useThreadTabsStore.getState().byProject[PROJECT];
 const ratio = () => (workspace()?.layout as { ratio?: number } | undefined)?.ratio;
 const sideBySide = (): ThreadTabWorkspace => ({
@@ -68,7 +94,7 @@ const sideBySide = (): ThreadTabWorkspace => ({
 });
 
 /** The routed ChatView's shape: an area holding the chat column, its header, then the strip. */
-function Harness(props: { route: string; width?: number }) {
+function Harness(props: { route: string; width?: number; pending?: ReadonlySet<string> }) {
   const tabs = useThreadTabsLayout({ routeThreadRef: ref(props.route), enabled: true });
   return (
     <div style={{ display: "flex", width: props.width ?? 1000, height: 500 }}>
@@ -82,7 +108,7 @@ function Harness(props: { route: string; width?: number }) {
           <header data-testid="route-header" data-top={String(tabs.routeEdges.top)}>
             Route {props.route}
           </header>
-          {tabs.routeStrip}
+          {tabs.routeStrip?.(props.pending ?? new Set())}
           <div className="flex-1" />
           <div {...threadContextDropTargetProps()} data-testid="composer" style={{ height: 60 }} />
           <button type="button" onClick={() => tabs.closeRouteTab()}>
@@ -117,6 +143,10 @@ describe("thread tabs", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Close Thread c" }));
     expect(workspace()?.groups[0]?.tabs).toEqual(["env:a", "env:b"]);
+    expect(useClosedViewStore.getState().entries[0]).toMatchObject({
+      kind: "thread-tab",
+      threadRef: ref("c"),
+    });
     await act(() => {
       screen
         .getByRole("tab", { name: "Thread b" })
@@ -128,6 +158,60 @@ describe("thread tabs", () => {
     await userEvent.click(screen.getByRole("button", { name: "Cmd+W" }));
     expect(workspace()).toBeUndefined();
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/"));
+  });
+
+  it("puts each thread's files beside it in one row, the thread tab being its chat", async () => {
+    await setup(
+      {
+        ...sideBySide(),
+        groups: [{ id: "main", tabs: ["env:a", "env:b"], active: "env:a" }],
+        layout: leaf("main"),
+      },
+      { working: ["b"] },
+    );
+    panels().openFile(ref("b"), "b.ts");
+    panels().openFile(ref("a"), "src/x.ts");
+    await using screen = await render(<Harness route="a" pending={new Set(["file:src/x.ts"])} />, {
+      router: "/env/a",
+    });
+    expect(tabNames(screen)).toEqual(["Thread a", "x.ts", "Thread b", "b.ts"]);
+    const tab = (name: string) => screen.getByRole("tab", { name, exact: true });
+    await expect.element(tab("x.ts")).toHaveAttribute("aria-selected", "true");
+    await expect.element(tab("Thread a")).toHaveAttribute("aria-selected", "false");
+    expect(
+      tab("Thread b").element().querySelector('[data-testid="sidebar-notification-dot"]'),
+    ).not.toBeNull();
+    expect(
+      tab("Thread a").element().querySelector('[data-testid="sidebar-notification-dot"]'),
+    ).toBeNull();
+
+    // The thread tab shows its chat even over its own file.
+    await userEvent.click(tab("Thread a"));
+    await expect.element(tab("Thread a")).toHaveAttribute("aria-selected", "true");
+    expect(panels().byThreadKey["env:a"]?.activeMainId).toBeUndefined();
+
+    // Another thread's file routes there with that file shown.
+    await userEvent.click(tab("b.ts"));
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/b"));
+    expect(panels().byThreadKey["env:b"]?.activeMainId).toBe("file:b.ts");
+
+    await userEvent.click(screen.getByRole("button", { name: "Close x.ts" }));
+    expect(tabNames(screen)).toEqual(["Thread a", "Thread b", "b.ts"]);
+    expect(useClosedViewStore.getState().entries[0]).toMatchObject({ kind: "panel-tab" });
+  });
+
+  it("closes a split group's shown file with Cmd+W before its thread", async () => {
+    await setup(sideBySide());
+    panels().openFile(ref("c"), "c.ts");
+    await using screen = await render(<Harness route="a" />, { router: "/env/a" });
+    const composer = screen.getByRole("textbox", { name: "Composer c" });
+    await expect.element(screen.getByRole("tab", { name: "c.ts" })).toBeVisible();
+    await userEvent.click(composer);
+    await userEvent.keyboard("{Meta>}w{/Meta}");
+    expect(panels().byThreadKey["env:c"]?.surfaces ?? []).toEqual([]);
+    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a", "env:b"], ["env:c"]]);
+    await userEvent.keyboard("{Meta>}w{/Meta}");
+    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a", "env:b"]]);
   });
 
   it("lays groups out side by side and resizes them from the divider", async () => {
@@ -198,6 +282,8 @@ describe("dragging threads onto the thread area", () => {
 
   it("shows Orca's zones while held and splits on an edge drop", async () => {
     await setup();
+    // A thread dropped in from outside opens on its chat, not a file it left shown.
+    panels().openFile(ref("x"), "x.ts");
     await using screen = await render(
       <>
         <Harness route="a" />
@@ -238,6 +324,7 @@ describe("dragging threads onto the thread area", () => {
     });
     expect(preview()).toBeNull();
     expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a"], ["env:x"]]);
+    expect(panels().byThreadKey["env:x"]?.activeMainId).toBeUndefined();
     await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/x"));
     expect(dropThreadContext({ x: 5000, y: 5000 }, [ref("x")], label)).toBe(false);
     expect(dropThreadContext(rightEdge, [ref("x"), ref("y")], label)).toBe(false);

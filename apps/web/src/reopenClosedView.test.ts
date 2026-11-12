@@ -298,4 +298,27 @@ describe("planNextReopen", () => {
     expect(plan.drop.map((e) => e.id)).toEqual(dropped);
     expect(plan.restore?.id ?? null).toBe(restored);
   });
+
+  it.each([
+    [true, ["tab"], null],
+    [false, [], "tab"],
+  ] as const)(
+    "a closed thread tab whose tab is open (%s) drops, else reopens",
+    async (open, dropped, restored) => {
+      const plan = planNextReopen([{ id: "tab", kind: "thread-tab", threadRef }], () => ({
+        ...known,
+        threadTabOpen: open,
+      }));
+      expect(plan.drop.map((e) => e.id)).toEqual(dropped);
+      expect(plan.restore?.id ?? null).toBe(restored);
+      // Routing to the thread is the whole reopen, so nothing in its panel changes.
+      await expect(
+        reopenClosedView(
+          { kind: "thread-tab", threadRef },
+          { openPreview: vi.fn(), workspaceAvailable: false },
+        ),
+      ).resolves.toBe(true);
+      expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+    },
+  );
 });

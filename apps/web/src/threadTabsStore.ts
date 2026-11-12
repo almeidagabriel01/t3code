@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import type { RightPanelSurface, ThreadRightPanelState } from "./rightPanelStore";
 
 /**
  * Thread tabs and tab groups for one project, after Orca's editor groups: each group is a tab
@@ -247,6 +248,54 @@ export function closeThreadTab(
   };
 }
 
+export type ThreadFileSurface = Extract<RightPanelSurface, { kind: "file" }>;
+
+export type ThreadTabRowEntry =
+  | { readonly kind: "thread"; readonly threadKey: string; readonly active: boolean }
+  | {
+      readonly kind: "file";
+      readonly threadKey: string;
+      readonly surface: ThreadFileSurface;
+      readonly active: boolean;
+    };
+
+/**
+ * A thread's tab followed by its file tabs, in the order they opened. The group's active thread
+ * shows its chat unless its main area shows one of these files.
+ */
+export function threadTabBlock(
+  threadKey: string,
+  panel: Pick<ThreadRightPanelState, "surfaces" | "activeMainId"> | undefined,
+  groupActive: string,
+): ThreadTabRowEntry[] {
+  const files = (panel?.surfaces ?? []).filter(
+    (surface): surface is ThreadFileSurface => surface.kind === "file",
+  );
+  const selected = groupActive === threadKey;
+  const activeFileId = files.some((file) => file.id === panel?.activeMainId)
+    ? panel?.activeMainId
+    : undefined;
+  return [
+    { kind: "thread", threadKey, active: selected && activeFileId === undefined },
+    ...files.map((surface): ThreadTabRowEntry => ({
+      kind: "file",
+      threadKey,
+      surface,
+      active: selected && surface.id === activeFileId,
+    })),
+  ];
+}
+
+/** One strip: each thread tab with its own file tabs beside it. */
+export function threadTabRow(
+  group: ThreadTabGroup,
+  panels: Readonly<Record<string, Pick<ThreadRightPanelState, "surfaces" | "activeMainId">>>,
+): ThreadTabRowEntry[] {
+  return group.tabs.flatMap((threadKey) =>
+    threadTabBlock(threadKey, panels[threadKey], group.active),
+  );
+}
+
 export function focusThreadTabGroup(
   workspace: ThreadTabWorkspace,
   groupId: string,
@@ -477,6 +526,13 @@ export function applyThreadTabDrop(
     return next ?? current;
   });
   return moved;
+}
+
+/** Whether the thread has a tab in its project's groups. */
+export function hasThreadTab(projectKey: string | null, threadKey: string): boolean {
+  const workspace =
+    projectKey === null ? undefined : useThreadTabsStore.getState().byProject[projectKey];
+  return workspace !== undefined && groupOfTab(workspace, threadKey) !== undefined;
 }
 
 export function joinThreadTabGroups(projectKey: string): void {

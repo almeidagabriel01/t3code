@@ -1,5 +1,8 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { migratePersistedRightPanelState, useRightPanelStore } from "./rightPanelStore";
 import {
   closeThreadTab,
   dropThreadTab,
@@ -12,6 +15,7 @@ import {
   resolveTabInsertIndex,
   setThreadSplitRatio,
   type ThreadTabLayout,
+  threadTabRow,
   type ThreadTabWorkspace,
 } from "./threadTabsStore";
 
@@ -228,5 +232,146 @@ describe("parsePersistedWorkspace", () => {
         focusedGroupId: "missing",
       }),
     ).toEqual(one(["a"]));
+  });
+});
+
+describe("threadTabRow", () => {
+  const ref = (id: string) => scopeThreadRef("env" as EnvironmentId, ThreadId.make(id));
+  const A = ref("a");
+  const B = ref("b");
+  const key = (id: string) => scopedThreadKey(ref(id));
+  const panels = () => useRightPanelStore.getState();
+  /** `*` marks the active tab; a file shows as `thread/path`. */
+  const show = (workspace: ThreadTabWorkspace | null) =>
+    workspace === null
+      ? []
+      : threadTabRow(workspace.groups[0]!, panels().byThreadKey).map(
+          (entry) =>
+            `${entry.active ? "*" : ""}${entry.threadKey.split(":")[1]}${
+              entry.kind === "file" ? `/${entry.surface.relativePath}` : ""
+            }`,
+        );
+  const scenario = () => {
+    useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+    let workspace: ThreadTabWorkspace | null = reconcileRouteTab(undefined, key("a"));
+    return {
+      route: (id: string) => {
+        workspace = reconcileRouteTab(workspace ?? undefined, key(id));
+      },
+      close: (id: string, routeId: string) => {
+        workspace = workspace && closeThreadTab(workspace, key(id), key(routeId)).workspace;
+      },
+      drop: (id: string, index: number) => {
+        workspace =
+          (workspace && dropThreadTab(workspace, key(id), { groupId: "main", index }, ids())) ??
+          workspace;
+      },
+      row: () => show(workspace),
+    };
+  };
+  type Scenario = ReturnType<typeof scenario>;
+
+  it.each<[string, (t: Scenario) => void, string[]]>([
+    ["opens a thread as a tab after the active one", (t) => t.route("b"), ["a", "*b"]],
+    [
+      "opens a file beside the thread it came from, in opening order",
+      (t) => {
+        t.route("b");
+        t.route("a");
+        panels().openFile(A, "src/x.ts");
+        panels().openFile(A, "src/y.ts");
+      },
+      ["a", "a/src/x.ts", "*a/src/y.ts", "b"],
+    ],
+    [
+      "keeps another thread's files beside that thread, inactive",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        t.route("b");
+        t.route("a");
+      },
+      ["*a", "b", "b/b.ts"],
+    ],
+    [
+      "lands on the chat tab from the sidebar, even over a file of the same thread",
+      (t) => {
+        panels().openFile(A, "x.ts");
+        panels().showChat(A);
+        t.route("a");
+      },
+      ["*a", "a/x.ts"],
+    ],
+    [
+      "picks a file tab of another thread by activating it and routing there",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        panels().showChat(B);
+        t.route("b");
+        t.route("a");
+        panels().activateSurface(B, "file:b.ts");
+        t.route("b");
+      },
+      ["a", "b", "*b/b.ts"],
+    ],
+    [
+      "closes a file tab and hands focus to its neighbour",
+      () => {
+        panels().openFile(A, "x.ts");
+        panels().openFile(A, "y.ts");
+        panels().closeSurface(A, "file:y.ts");
+      },
+      ["a", "*a/x.ts"],
+    ],
+    [
+      "takes a thread's files out of the row with it, and back as they were when it reopens",
+      (t) => {
+        panels().openFile(B, "b.ts");
+        t.route("b");
+        t.close("b", "a");
+        expect(t.row()).toEqual(["*a"]);
+        t.route("b");
+      },
+      ["a", "b", "*b/b.ts"],
+    ],
+    [
+      "reorders a thread with its files as one block",
+      (t) => {
+        t.route("b");
+        panels().openFile(A, "x.ts");
+        t.drop("b", 0);
+      },
+      ["*b", "a", "a/x.ts"],
+    ],
+  ])("%s", (_name, steps, expected) => {
+    const t = scenario();
+    steps(t);
+    expect(t.row()).toEqual(expected);
+  });
+
+  it("derives the row from layouts and panels saved before the unified strip", () => {
+    const workspace = parsePersistedWorkspace({
+      groups: [{ id: "main", tabs: [key("a"), key("b")], active: key("b") }],
+      layout: leaf("main"),
+      focusedGroupId: "main",
+    });
+    const file = (path: string) => ({
+      id: `file:${path}`,
+      kind: "file",
+      relativePath: path,
+      revealLine: null,
+      revealRequestId: 1,
+    });
+    const { byThreadKey } = migratePersistedRightPanelState({
+      byThreadKey: {
+        [key("b")]: {
+          isOpen: true,
+          activeSurfaceId: "diff",
+          surfaces: [{ id: "diff", kind: "diff" }, file("one.ts"), file("two.ts")],
+          activeMainId: "file:two.ts",
+        },
+      },
+    });
+    useRightPanelStore.setState({ byThreadKey });
+    expect(show(workspace)).toEqual(["a", "b", "b/one.ts", "*b/two.ts"]);
   });
 });

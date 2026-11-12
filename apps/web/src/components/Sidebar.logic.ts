@@ -777,6 +777,12 @@ export function resolveSidebarNotificationDotClass(thread: ThreadStatusInput): s
     : null;
 }
 
+/** A tab's status: the thread is working, or needs attention as its sidebar dot shows. */
+export function resolveThreadTabStatus(thread: ThreadStatusInput): ThreadStatusPill | null {
+  const status = resolveThreadStatusPill({ thread });
+  return status && (status.pulse || hasSidebarNotification(thread)) ? status : null;
+}
+
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
