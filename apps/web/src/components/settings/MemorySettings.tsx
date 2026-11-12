@@ -30,7 +30,6 @@ import {
 import {
   memoryBrowseInput,
   memorySearchInput,
-  memoryProjectScope,
   memoryPreview,
   memoryRuleBody,
   memoryRuleScopeLabel,
@@ -61,6 +60,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useEnvironment, useEnvironments } from "../../state/environments";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
 import { useProjects } from "../../state/entities";
+import { useProjectMemoryScope } from "../memory/useProjectMemoryScope";
 import {
   readEnvironmentScope,
   readPreparedConnection,
@@ -372,24 +372,35 @@ function MemoryRecords({
 }) {
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const navigate = useNavigate();
-  const getBinding = useAtomCommand(memoryEnvironment.projectBindingGet, { reportFailure: false });
   const canGetBinding = useAtomValue(
     memoryEnvironment.projectBindingGet.permissionAtom(environmentId),
   );
-  const [selection, setSelection] = useState<string | null>("user");
-  const [scope, setScope] = useState<MemoryScope | null>({ kind: "user" });
+  const [selection, setSelection] = useState("user");
+  const [attempt, setAttempt] = useState(0);
   const selectedProject = projects.find((project) => `project:${project.id}` === selection);
-  const browseScope = selection?.startsWith("project:") && !selectedProject ? null : scope;
-  const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates in-flight async results on unmount
-  useEffect(
-    () => () => {
-      generation.current += 1;
-    },
-    [],
+  const projectScope = useProjectMemoryScope(
+    environmentId,
+    selectedProject?.id ?? null,
+    memorySpaceId,
+    attempt,
   );
-  function clearMemorySelection() {
+  const scope: MemoryScope | null =
+    selection === "user"
+      ? { kind: "user" }
+      : projectScope?.status === "ready"
+        ? projectScope.scope
+        : null;
+  const error =
+    projectScope?.status === "failed"
+      ? "Could not load project memory scope. Choose the project again to retry."
+      : projectScope?.status === "no-key"
+        ? "This project needs a repository or an explicit shared memory key."
+        : null;
+  // A failed project leaves the picker empty, so choosing it again retries.
+  const shown = error ? null : selection;
+  function choose(value: string) {
+    setSelection(value);
+    setAttempt((value) => value + 1);
     void navigate({
       to: "/settings/memory",
       // Keep an implicit space implicit: adding its resolved ID changes the parent's key.
@@ -400,33 +411,6 @@ function MemoryRecords({
       hash: "",
     });
   }
-  async function choose(project: (typeof projects)[number] | null) {
-    const attempt = ++generation.current;
-    setSelection(project ? `project:${project.id}` : "user");
-    setError(null);
-    setScope(project ? null : { kind: "user" });
-    clearMemorySelection();
-    if (!project) return;
-    const result = await getBinding({
-      environmentId,
-      input: {
-        memorySpaceId,
-        project: { environmentId, projectId: project.id },
-      },
-    });
-    if (generation.current !== attempt) return;
-    if (result._tag !== "Success") {
-      setSelection(null);
-      setError("Could not load project memory scope. Choose the project again to retry.");
-      return;
-    }
-    const next = memoryProjectScope(result.value, project.repositoryIdentity);
-    setScope(next);
-    if (!next) {
-      setSelection(null);
-      setError("This project needs a repository or an explicit shared memory key.");
-    }
-  }
   return (
     <>
       <SettingsSection title="Memory scope" id="memory-browse-scope">
@@ -435,7 +419,7 @@ function MemoryRecords({
           description={
             error ? (
               <span role="alert">{error}</span>
-            ) : !scope ? (
+            ) : projectScope?.status === "loading" ? (
               "Loading project memory scope"
             ) : !canGetBinding && projects.length > 0 ? (
               "Project scope requires memory write permission to look up its shared key."
@@ -443,18 +427,14 @@ function MemoryRecords({
           }
           control={
             <Select
-              value={selection}
+              value={shown}
               onValueChange={(value) => {
-                if (value === "user") void choose(null);
-                else {
-                  const project = projects.find((item) => `project:${item.id}` === value);
-                  if (project && canGetBinding) void choose(project);
-                }
+                if (value === "user" || (value !== null && canGetBinding)) choose(value);
               }}
             >
               <SelectTrigger aria-label="Memory scope">
                 <SelectValue placeholder="Choose memory scope">
-                  {selection === "user" ? "User" : selectedProject?.title}
+                  {shown === "user" ? "User" : shown && selectedProject?.title}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup>
@@ -473,14 +453,14 @@ function MemoryRecords({
           }
         />
       </SettingsSection>
-      {browseScope ? (
+      {scope ? (
         <ScopedMemoryRecords
-          key={JSON.stringify(browseScope)}
+          key={JSON.stringify(scope)}
           {...props}
           environmentId={environmentId}
           memorySpaceId={memorySpaceId}
-          scope={browseScope}
-          scopeLabel={selectedProject?.title ?? memoryScopeLabel(browseScope)}
+          scope={scope}
+          scopeLabel={selectedProject?.title ?? memoryScopeLabel(scope)}
         />
       ) : null}
     </>

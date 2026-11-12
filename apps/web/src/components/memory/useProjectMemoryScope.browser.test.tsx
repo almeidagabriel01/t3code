@@ -132,3 +132,24 @@ it("asks for nothing while disabled or without sync permission", async () => {
   );
   expect(mocks.bindingCalls).toEqual([]);
 });
+
+it("looks the space up once per environment and the key again on a new attempt", async () => {
+  setup();
+  function Retry(props: { readonly attempt: number }) {
+    const resolvedSpace = useMemorySpace(environmentId, true);
+    const scope = useProjectMemoryScope(
+      environmentId,
+      "no-repo" as ProjectId,
+      resolvedSpace,
+      props.attempt,
+    );
+    return <output>{JSON.stringify({ space: resolvedSpace, scope })}</output>;
+  }
+  await using screen = await render(<Retry attempt={0} />, { router: false });
+  await vi.waitFor(() => expect(read(screen).scope).toEqual({ status: "no-key" }));
+  mocks.sync = { _tag: "Failure" };
+  await using again = await render(<Retry attempt={0} />, { router: false });
+  expect(read(again).space).toBe(space);
+  await screen.rerender(<Retry attempt={1} />);
+  await vi.waitFor(() => expect(mocks.bindingCalls).toHaveLength(3));
+});

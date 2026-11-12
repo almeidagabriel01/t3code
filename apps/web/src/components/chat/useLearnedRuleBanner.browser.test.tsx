@@ -70,6 +70,7 @@ vi.mock("../../state/memory", () => ({
     list: () => ({ label: "list" }),
   },
 }));
+vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: { label: string } | null) => ({
     data: atom ? Option.some(page1) : null,
@@ -90,7 +91,7 @@ function Probe() {
   const item = useLearnedRuleBanner({
     environmentId,
     threadId: ThreadId.make(here.threadId),
-    project: null,
+    projectId: null,
     memoryAvailable: true,
   });
   return <ComposerBannerStack items={item ? [item] : []} />;

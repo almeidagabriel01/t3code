@@ -1290,9 +1290,7 @@ export default function ChatView(props: ChatViewProps) {
   const learnedRuleBannerItem = useLearnedRuleBanner({
     environmentId: activeThread?.environmentId,
     threadId,
-    project: activeProject
-      ? { id: activeProject.id, repositoryIdentity: activeProject.repositoryIdentity }
-      : null,
+    projectId: activeProject?.id ?? null,
     memoryAvailable: isMemoryEnvironmentAvailable(serverConfig?.environment.capabilities),
   });
   const selectedProviderByThreadId = composerActiveProvider ?? null;

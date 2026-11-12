@@ -8,26 +8,37 @@ import { useProjects } from "../../state/entities";
 import { memoryEnvironment } from "../../state/memory";
 import { useAtomCommand } from "../../state/use-atom-command";
 
+// A space id is stable per environment; one status call per environment is enough.
+const spaceByEnvironment = new Map<EnvironmentId, MemorySpaceId>();
+
 /** The environment's local memory space; null until the server reports one. */
 export function useMemorySpace(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | undefined,
   enabled: boolean,
 ): MemorySpaceId | null {
-  const canSync = useAtomValue(memoryEnvironment.syncStatus.permissionAtom(environmentId));
+  const canSync = useAtomValue(memoryEnvironment.syncStatus.permissionAtom(environmentId ?? null));
   const getSync = useAtomCommand(memoryEnvironment.syncStatus, { reportFailure: false });
-  const [space, setSpace] = useState<MemorySpaceId | null>(null);
+  const [loaded, setLoaded] = useState<{ environmentId: EnvironmentId; space: MemorySpaceId }>();
+  const known =
+    environmentId === undefined
+      ? null
+      : (spaceByEnvironment.get(environmentId) ??
+        (loaded?.environmentId === environmentId ? loaded.space : null));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's memory space from the server
   useEffect(() => {
-    if (!enabled || !canSync) return;
+    if (!enabled || !canSync || environmentId === undefined || known !== null) return;
     let current = true;
     void getSync({ environmentId, input: {} }).then((result) => {
-      if (current && result._tag === "Success") setSpace(memoryLocalSpace(result.value));
+      const space = result._tag === "Success" ? memoryLocalSpace(result.value) : null;
+      if (!space) return;
+      spaceByEnvironment.set(environmentId, space);
+      if (current) setLoaded({ environmentId, space });
     });
     return () => {
       current = false;
     };
-  }, [canSync, enabled, environmentId, getSync]);
-  return space;
+  }, [canSync, enabled, environmentId, getSync, known]);
+  return enabled && canSync ? known : null;
 }
 
 export type ProjectMemoryScope =
@@ -41,21 +52,27 @@ export type ProjectMemoryScope =
 
 type Resolved = { readonly key: string; readonly scope: ProjectMemoryScope };
 
-/** The project's memory scope, whose shared key needs a binding lookup; null without a project. */
+/**
+ * The project's memory scope, whose shared key needs a binding lookup; null without a project.
+ * A new `attempt` looks the key up again.
+ */
 export function useProjectMemoryScope(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | undefined,
   projectId: ProjectId | null,
   space: MemorySpaceId | null,
+  attempt = 0,
 ): ProjectMemoryScope | null {
   const projects = useProjects();
-  const canBind = useAtomValue(memoryEnvironment.projectBindingGet.permissionAtom(environmentId));
+  const canBind = useAtomValue(
+    memoryEnvironment.projectBindingGet.permissionAtom(environmentId ?? null),
+  );
   const getBinding = useAtomCommand(memoryEnvironment.projectBindingGet, { reportFailure: false });
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const repositoryIdentity = projects.find(
     (project) => project.environmentId === environmentId && project.id === projectId,
   )?.repositoryIdentity;
-  const key = `${environmentId}:${projectId}:${space}`;
-  const wanted = projectId !== null && canBind && space !== null;
+  const key = `${environmentId}:${projectId}:${space}:${attempt}`;
+  const wanted = environmentId !== undefined && projectId !== null && canBind && space !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the project's shared memory key from the server
   useEffect(() => {
     if (!wanted) return;
@@ -81,7 +98,7 @@ export function useProjectMemoryScope(
       current = false;
     };
   }, [environmentId, getBinding, key, projectId, repositoryIdentity, space, wanted]);
-  if (projectId === null) return null;
+  if (environmentId === undefined || projectId === null) return null;
   if (!canBind) return { status: "no-permission" };
   return resolved?.key === key ? resolved.scope : { status: "loading" };
 }
