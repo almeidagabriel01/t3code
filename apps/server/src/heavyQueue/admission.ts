@@ -2,7 +2,7 @@
  * Who may start now. Pure: the queue file feeds it the document, a clock reading and the latest
  * machine sample, so every waiter (CLI or server) reaches the same answer under the file lock.
  */
-import type { HeavyQueueEntry } from "@t3tools/contracts";
+import { heavyHoldText, type HeavyQueueEntry, type HeavyQueueHold } from "@t3tools/contracts";
 
 import { heavyRoute, heavySegment } from "./heavyHook.ts";
 
@@ -26,19 +26,17 @@ export interface Run {
   readonly durationMs: number;
 }
 
-/** Why the kernel's own signals say memory is short, or null when they do not. */
-const memoryPressure = (sample: Omit<Sample, "headroomSince">): string | null => {
-  if ((sample.pressureLevel ?? 0) >= 2) return "the system reports memory pressure";
-  const swapIn = sample.swapInBytesPerSecond ?? 0;
-  if (swapIn > SWAP_IN_LIMIT) return `swapping in ${(swapIn / 1024 ** 2).toFixed(0)} MB/s`;
+/** The machine-wide limit a reading is past, kernel signals first, or null when it has headroom. */
+export const machineHold = (sample: Omit<Sample, "headroomSince">) => {
+  if ((sample.pressureLevel ?? 0) >= 2) return "pressure";
+  if ((sample.swapInBytesPerSecond ?? 0) > SWAP_IN_LIMIT) return "swap-in";
+  if (sample.availableMemoryBytes < MEMORY_FLOOR * sample.totalMemoryBytes) return "memory-floor";
+  if (sample.busyCores > CPU_CEILING * sample.cpuCount) return "cpu";
   return null;
 };
 
 /** The machine is calm enough that admitting something could be considered. */
-export const hasHeadroom = (sample: Omit<Sample, "headroomSince">) =>
-  memoryPressure(sample) === null &&
-  sample.availableMemoryBytes >= MEMORY_FLOOR * sample.totalMemoryBytes &&
-  sample.busyCores <= CPU_CEILING * sample.cpuCount;
+export const hasHeadroom = (sample: Omit<Sample, "headroomSince">) => machineHold(sample) === null;
 
 /** Workers a starting job's runners get: the cores free now, all but one on an idle machine. */
 export const workersFor = (cpuCount: number, busyCores: number | null): number =>
@@ -142,9 +140,13 @@ export interface Plan {
   /** False while pressure or the pause is what keeps waiters back. */
   readonly room: boolean;
   readonly holding: boolean;
+  /** What holds the head back; null when it starts or nothing waits. */
+  readonly hold: HeavyQueueHold | null;
 }
 
 const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
+/** Rounded as the summary shows it, so a row and the summary never disagree. */
+const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sample.cpuCount)) * 100);
 
 /**
  * Pure: decides for one machine from its own sample and the entries it runs, so a second runner
@@ -156,75 +158,77 @@ export const plan = (input: PlanInput): Plan => {
   const waiting = entries.filter((entry) => entry.startedAt === null);
   const head = waiting[0];
   if (head === undefined || heavyRoute(input) === "direct") {
-    return { admit: head?.id ?? null, reasons: {}, room: true, holding: false };
+    return { admit: head?.id ?? null, reasons: {}, room: true, holding: false, hold: null };
   }
 
   const finish = (
     admit: string | null,
-    headReason: string | null,
+    hold: HeavyQueueHold | null,
     room: boolean,
     holding: boolean,
-  ) => {
+    headReason?: string,
+  ): Plan => {
+    const why =
+      headReason ??
+      (hold === null || hold === "job-memory" || hold === "job-cpu"
+        ? "next in line"
+        : heavyHoldText(hold, input.sample, input.maxRunning));
     const reasons: Record<string, string> = {};
     for (const waiter of waiting) {
       if (waiter.id === admit) continue;
-      reasons[waiter.id] =
-        waiter.id === head.id ? (headReason ?? "next in line") : "waiting its turn";
+      reasons[waiter.id] = waiter.id === head.id ? why : "waiting its turn";
     }
-    return { admit, reasons, room, holding };
+    return { admit, reasons, room, holding, hold: admit === head.id ? null : hold };
   };
 
   const forced = waiting.find((entry) => entry.forced === true);
   if (forced !== undefined) return finish(forced.id, null, true, input.holding);
   if (input.paused) return finish(null, "paused", false, input.holding);
   if (running.some((entry) => kindOf(entry) === "exclusive")) {
-    return finish(null, "an exclusive job is running alone", false, input.holding);
+    return finish(null, "exclusive", false, input.holding);
   }
   // One job always runs: holding the only one back on pressure from elsewhere would starve agents.
   if (running.length === 0) return finish(head.id, null, true, false);
-  if (kindOf(head) === "exclusive") {
-    return finish(null, "runs alone: waiting for the running ones to finish", false, input.holding);
-  }
+  if (kindOf(head) === "exclusive") return finish(null, "runs-alone", false, input.holding);
   if (running.length >= Math.max(1, input.maxRunning)) {
-    return finish(null, `all ${input.maxRunning} slots are busy`, true, input.holding);
+    return finish(null, "slots", true, input.holding);
   }
   if (input.lastStartAt !== null && now - input.lastStartAt < SETTLE_MS) {
-    return finish(null, "letting the last one ramp up", true, input.holding);
+    return finish(null, "settling", true, input.holding);
   }
   const { sample } = input;
   if (sample === null || now - sample.at > SAMPLE_FRESH_MS) {
-    return finish(null, "waiting for a load reading", false, input.holding);
+    return finish(null, "no-reading", false, input.holding);
   }
-  const pressure = memoryPressure(sample);
-  if (pressure !== null) return finish(null, `waiting for memory: ${pressure}`, false, true);
-
+  const limit = machineHold(sample);
+  if (limit === "pressure" || limit === "swap-in") return finish(null, limit, false, true);
+  if (limit !== null) return finish(null, limit, false, input.holding);
   if (sample.headroomSince === null || now - sample.headroomSince < HEADROOM_MS) {
-    return finish(null, "waiting for steady headroom", false, input.holding);
+    return finish(null, "steadying", false, input.holding);
   }
 
   const floor = (input.holding ? MEMORY_REOPEN : MEMORY_FLOOR) * sample.totalMemoryBytes;
   const verdict = (entry: HeavyQueueEntry) => {
     const cost = estimate(input.history, entry, sample.cpuCount);
-    const freeCores = sample.cpuCount * CPU_CEILING - sample.busyCores;
     if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
       return {
         cost,
-        fits: false,
-        why: `waiting for room: needs ~${gb(cost.memoryBytes)}, ${gb(sample.availableMemoryBytes - floor)} free`,
+        hold: "job-memory" as const,
+        why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
       };
     }
-    if (cost.cpu > freeCores) {
+    if (cost.cpu > sample.cpuCount * CPU_CEILING - sample.busyCores) {
       return {
         cost,
-        fits: false,
-        why: `waiting for room: needs ~${cost.cpu.toFixed(1)} cores, ${Math.max(0, freeCores).toFixed(1)} free`,
+        hold: "job-cpu" as const,
+        why: `needs ~${cost.cpu.toFixed(1)} cores; CPU ${pct(sample)}%, limit ${CPU_CEILING * 100}%`,
       };
     }
-    return { cost, fits: true, why: "" };
+    return { cost, hold: null, why: "" };
   };
 
   const headVerdict = verdict(head);
-  if (headVerdict.fits) return finish(head.id, null, true, false);
+  if (headVerdict.hold === null) return finish(head.id, null, true, false);
 
   // Backfill: a later, smaller job may go only if it fits and ends before the head would fit.
   const waited = now - Date.parse(head.createdAt);
@@ -238,13 +242,13 @@ export const plan = (input: PlanInput): Plan => {
       if (kindOf(waiter) === "exclusive") continue;
       const candidate = verdict(waiter);
       if (
-        candidate.fits &&
+        candidate.hold === null &&
         candidate.cost.durationMs !== null &&
         candidate.cost.durationMs <= headWait
       ) {
-        return finish(waiter.id, headVerdict.why, false, true);
+        return finish(waiter.id, headVerdict.hold, false, true, headVerdict.why);
       }
     }
   }
-  return finish(null, headVerdict.why, false, true);
+  return finish(null, headVerdict.hold, false, true, headVerdict.why);
 };

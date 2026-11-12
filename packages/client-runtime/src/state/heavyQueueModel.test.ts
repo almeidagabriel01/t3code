@@ -99,7 +99,14 @@ describe("moveTarget and dropTarget", () => {
 
 describe("usageLine", () => {
   const GB = 1024 ** 3;
-  const machine = { busyCores: 1, cpuCount: 8, availableMemoryBytes: GB, totalMemoryBytes: 8 * GB };
+  const machine = {
+    busyCores: 1,
+    cpuCount: 8,
+    availableMemoryBytes: GB,
+    totalMemoryBytes: 8 * GB,
+    pressureLevel: null,
+    swapInBytesPerSecond: null,
+  };
   const run = { ...e("r", true), cpu: 2.04, memory: 3.25 * GB, peakCpu: 4, peakMemory: 5 * GB };
   const usual = (durationMs: number) => ({ b: { cpu: 3.96, memoryBytes: 2.5 * GB, durationMs } });
   it.each([
@@ -153,25 +160,69 @@ describe("usageLine", () => {
 });
 
 describe("summary and formatting", () => {
-  const base = { entries, enabled: true, paused: false, maxRunning: 3, room: true, machine: null };
-  it("reads the slots, pause and headroom", () => {
+  const base = {
+    entries,
+    enabled: true,
+    paused: false,
+    maxRunning: 3,
+    machine: null,
+    hold: null,
+    reasons: {},
+  };
+  const machine = {
+    busyCores: 0.9,
+    cpuCount: 10,
+    availableMemoryBytes: 3.2 * 1024 ** 3,
+    totalMemoryBytes: 16 * 1024 ** 3,
+    pressureLevel: 2,
+    swapInBytesPerSecond: 40 * 1024 ** 2,
+  };
+  const reading = " · CPU 9% · 3.2 GB free";
+  it("reads the slots, pause and room", () => {
     expect(queueSummary(base)).toBe("1 of 3 running");
-    expect(queueSummary({ ...base, room: false })).toBe("1 of 3 running · waiting for headroom");
     expect(queueSummary({ ...base, paused: true })).toBe("1 of 3 running · paused");
-    expect(queueSummary({ ...base, enabled: false, paused: true, room: false })).toBe(
+    expect(queueSummary({ ...base, enabled: false, paused: true })).toBe(
       "Queue off: heavy jobs start right away",
     );
     expect(
-      queueSummary({
-        ...base,
-        machine: {
-          busyCores: 2,
-          cpuCount: 8,
-          availableMemoryBytes: 11.25 * 1024 ** 3,
-          totalMemoryBytes: 32 * 1024 ** 3,
-        },
-      }),
-    ).toBe("1 of 3 running · Mac has room · CPU 25% · 11.3 GB free");
+      queueSummary({ ...base, machine: { ...machine, pressureLevel: 0, swapInBytesPerSecond: 0 } }),
+    ).toBe(`1 of 3 running · Mac has room${reading}`);
+  });
+
+  // Each hold is worded from the reading printed beside it, never a generic "waiting for headroom".
+  it.each([
+    ["paused", machine, "paused"],
+    ["exclusive", machine, "waiting: a job that runs alone is running"],
+    ["runs-alone", machine, "waiting: the next job runs alone"],
+    ["slots", machine, "waiting: all 3 slots busy"],
+    ["settling", machine, "waiting: letting the last one ramp up"],
+    ["no-reading", null, "waiting: no load reading yet"],
+    ["pressure", machine, "waiting: memory pressure high"],
+    ["pressure", { ...machine, pressureLevel: 4 }, "waiting: memory pressure critical"],
+    ["swap-in", machine, "waiting: swapping 40 MB/s"],
+    ["memory-floor", machine, "waiting: memory low"],
+    ["cpu", machine, "waiting: CPU busy"],
+    ["steadying", machine, "waiting: making sure the room lasts"],
+    ["job-memory", machine, "waiting: needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare"],
+    ["job-cpu", machine, "waiting: needs ~4.0 cores; CPU 9%, limit 70%"],
+  ] as const)("says why it waits: %s", (hold, reading, text) => {
+    const reasons = {
+      a:
+        hold === "job-cpu"
+          ? "needs ~4.0 cores; CPU 9%, limit 70%"
+          : "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare",
+    };
+    const paused = hold === "paused";
+    const numbers = reading === null ? "" : " · CPU 9% · 3.2 GB free";
+    expect(queueSummary({ ...base, paused, machine: reading, hold, reasons })).toBe(
+      `1 of 3 running · ${text}${numbers}`,
+    );
+  });
+
+  it("names a limit without claiming anything waits when nothing does", () => {
+    expect(queueSummary({ ...base, entries: [e("r", true)], machine, hold: "pressure" })).toBe(
+      `1 of 3 running · memory pressure high${reading}`,
+    );
   });
 
   it("finds a rule by folder ignoring trailing slashes", () => {

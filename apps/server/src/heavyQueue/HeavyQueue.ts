@@ -15,7 +15,7 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { estimate, hasHeadroom, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
+import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { hookScript, interceptBashCall, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
@@ -192,8 +192,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
             cpuCount: sample.cpuCount,
             availableMemoryBytes: sample.availableMemoryBytes,
             totalMemoryBytes: sample.totalMemoryBytes,
+            pressureLevel: sample.pressureLevel ?? null,
+            swapInBytesPerSecond: sample.swapInBytesPerSecond ?? null,
           }
         : null,
+      // With nothing held back, the limit the same reading is past, so the summary never claims room.
+      hold: plan.hold ?? (fresh ? machineHold(sample) : null),
     };
   });
 

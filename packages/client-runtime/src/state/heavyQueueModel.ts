@@ -1,8 +1,9 @@
-import type {
-  HeavyCommand,
-  HeavyQueueEntry,
-  HeavyQueueRule,
-  HeavyQueueState,
+import {
+  heavyHoldText,
+  type HeavyCommand,
+  type HeavyQueueEntry,
+  type HeavyQueueRule,
+  type HeavyQueueState,
 } from "@t3tools/contracts";
 
 const trimRoot = (path: string) => path.replace(/[\\/]+$/, "");
@@ -183,24 +184,35 @@ export function projectForCommand<
 const QUEUE_OFF_SUMMARY = "Queue off: heavy jobs start right away";
 
 /** "2 of 3 running · Mac has room": what the queue is doing at a glance. */
+/**
+ * One line for the queue: what holds the next job, in words drawn from the same reading as the
+ * numbers beside them. A per-job hold reads the head's own reason, which names its need.
+ */
 export function queueSummary(
   state: Pick<
     HeavyQueueState,
-    "entries" | "enabled" | "paused" | "maxRunning" | "room" | "machine"
+    "entries" | "enabled" | "paused" | "maxRunning" | "machine" | "hold" | "reasons"
   >,
 ): string {
   if (!state.enabled) return QUEUE_OFF_SUMMARY;
   const running = state.entries.filter((entry) => entry.startedAt !== null).length;
   const head = `${running} of ${state.maxRunning} running`;
-  const { machine } = state;
+  const { machine, hold } = state;
   const reading =
     machine === null
       ? ""
       : ` · CPU ${Math.round((machine.busyCores / Math.max(1, machine.cpuCount)) * 100)}% · ${(machine.availableMemoryBytes / 1024 ** 3).toFixed(1)} GB free`;
   if (state.paused) return `${head} · paused${reading}`;
+  const next = state.entries.find((entry) => entry.startedAt === null);
+  const text =
+    hold === null
+      ? null
+      : hold === "job-memory" || hold === "job-cpu"
+        ? ((next === undefined ? undefined : state.reasons[next.id]) ?? null)
+        : heavyHoldText(hold, machine, state.maxRunning);
+  if (text !== null) return `${head} · ${next === undefined ? "" : "waiting: "}${text}${reading}`;
   // Without a reading there is nothing to back a claim about the Mac.
-  if (state.room && machine === null) return head;
-  return `${head} · ${state.room ? "Mac has room" : "waiting for headroom"}${reading}`;
+  return machine === null ? head : `${head} · Mac has room${reading}`;
 }
 
 export function ordinal(n: number): string {

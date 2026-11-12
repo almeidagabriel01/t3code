@@ -19,6 +19,7 @@ const EMPTY_QUEUE: HeavyQueueState = {
   claudeHookInstalled: false,
   deviceIdleMinutes: 20,
   machine: null,
+  hold: null,
 };
 const NO_QUEUE = Atom.make(EMPTY_QUEUE).pipe(Atom.withLabel("web-heavy-queue-none"));
 

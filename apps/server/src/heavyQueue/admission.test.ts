@@ -125,6 +125,7 @@ describe("admission plan", () => {
       entries: [entry("a", "vp run build")],
       change: { paused: true },
       admit: null,
+      hold: "paused",
       reason: { a: "paused" },
     },
     {
@@ -139,7 +140,8 @@ describe("admission plan", () => {
         sample: { ...calm, availableMemoryBytes: 0.29 * 32 * GIB, pressureLevel: 2 },
       },
       admit: null,
-      reason: { a: "waiting for memory: the system reports memory pressure" },
+      hold: "pressure",
+      reason: { a: "memory pressure high" },
     },
     {
       name: "sustained swap-in holds a second job even with 29% free",
@@ -153,7 +155,8 @@ describe("admission plan", () => {
         },
       },
       admit: null,
-      reason: { a: "waiting for memory: swapping in 80 MB/s" },
+      hold: "swap-in",
+      reason: { a: "swapping 80 MB/s" },
     },
     {
       name: "under pressure with nothing running, the head still runs alone",
@@ -166,14 +169,16 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: { sample: { ...calm, headroomSince: NOW - 2_000 } },
       admit: null,
-      reason: { a: "waiting for steady headroom" },
+      hold: "steadying",
+      reason: { a: "making sure the room lasts" },
     },
     {
       name: "pressure on the latest sample breaks the window",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: { sample: { ...calm, headroomSince: null } },
       admit: null,
-      reason: { a: "waiting for steady headroom" },
+      hold: "steadying",
+      reason: { a: "making sure the room lasts" },
     },
     {
       name: "all slots busy",
@@ -184,20 +189,23 @@ describe("admission plan", () => {
       ],
       change: { maxRunning: 2 },
       admit: null,
-      reason: { a: "all 2 slots are busy" },
+      hold: "slots",
+      reason: { a: "all 2 slots busy" },
     },
     {
       name: "maxRunning 1 is strictly one at a time",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: { maxRunning: 1 },
       admit: null,
-      reason: { a: "all 1 slots are busy" },
+      hold: "slots",
+      reason: { a: "the one slot is busy" },
     },
     {
       name: "ramp-up: the last start has not settled",
       entries: [entry("r", "vp run build", 5_000), entry("a", "vp run typecheck")],
       change: { lastStartAt: NOW - 5_000 },
       admit: null,
+      hold: "settling",
       reason: { a: "letting the last one ramp up" },
     },
     {
@@ -211,21 +219,40 @@ describe("admission plan", () => {
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: { sample: { ...calm, at: NOW - 60_000 } },
       admit: null,
-      reason: { a: "waiting for a load reading" },
+      hold: "no-reading",
+      reason: { a: "no load reading yet" },
     },
     {
       name: "memory short for the predicted peak",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run build")],
       change: { sample: { ...calm, availableMemoryBytes: 9 * GIB } },
       admit: null,
-      reasonStarts: { a: "waiting for room: needs ~4.0 GB" },
+      hold: "job-memory",
+      reason: { a: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare" },
+    },
+    {
+      name: "memory below the floor holds whatever the job needs",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: { sample: { ...calm, availableMemoryBytes: 5 * GIB } },
+      admit: null,
+      hold: "memory-floor",
+      reason: { a: "memory low" },
+    },
+    {
+      name: "CPU over the ceiling holds whatever the job needs",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: { sample: { ...calm, busyCores: 8 } },
+      admit: null,
+      hold: "cpu",
+      reason: { a: "CPU busy" },
     },
     {
       name: "cpu short for the predicted peak",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run build")],
-      change: { sample: { ...calm, busyCores: 8 } },
+      change: { sample: { ...calm, busyCores: 5 } },
       admit: null,
-      reasonStarts: { a: "waiting for room: needs ~4.0 cores" },
+      hold: "job-cpu",
+      reason: { a: "needs ~4.0 cores; CPU 50%, limit 70%" },
     },
     {
       name: "history lowers the prediction so a small job fits where the default would not",
@@ -240,13 +267,15 @@ describe("admission plan", () => {
       name: "exclusive job waits until nothing runs",
       entries: [entry("r", "vp run build", 60_000), entry("a", "xcrun simctl boot x")],
       admit: null,
-      reason: { a: "runs alone: waiting for the running ones to finish" },
+      hold: "runs-alone",
+      reason: { a: "the next job runs alone" },
     },
     {
       name: "nothing starts while an exclusive job runs",
       entries: [entry("r", "xcrun simctl boot x", 60_000), entry("a", "vp run typecheck")],
       admit: null,
-      reason: { a: "an exclusive job is running alone" },
+      hold: "exclusive",
+      reason: { a: "a job that runs alone is running" },
     },
     {
       name: "exclusive head with nothing running starts",
@@ -268,6 +297,7 @@ describe("admission plan", () => {
         },
       },
       admit: "small",
+      hold: "job-memory",
     },
     {
       name: "no backfill when the small job would outlast the wait",
@@ -284,6 +314,7 @@ describe("admission plan", () => {
         },
       },
       admit: null,
+      hold: "job-memory",
     },
     {
       name: "no backfill when the running job's length is unknown",
@@ -297,6 +328,7 @@ describe("admission plan", () => {
         history: { "vp run typecheck": [run(0.5, 0.3, 1_000)] },
       },
       admit: null,
+      hold: "job-memory",
     },
     {
       name: "aging: a head that waited long stops all backfill",
@@ -313,21 +345,21 @@ describe("admission plan", () => {
         },
       },
       admit: null,
+      hold: "job-memory",
     },
   ] as ReadonlyArray<{
     name: string;
     entries: ReadonlyArray<HeavyQueueEntry>;
     change?: Partial<Omit<PlanInput, "entries">>;
     admit: string | null;
+    hold?: string;
     reason?: Record<string, string>;
-    reasonStarts?: Record<string, string>;
-  }>)("$name", ({ entries, change, admit, reason, reasonStarts }) => {
+  }>)("$name", ({ entries, change, admit, hold, reason }) => {
     const result = plan({ ...base, ...change, entries });
     expect(result.admit).toBe(admit);
+    // Every held case names its enumerable reason; an admitted head has none.
+    expect(result.hold).toBe(hold ?? null);
     for (const [id, text] of Object.entries(reason ?? {})) expect(result.reasons[id]).toBe(text);
-    for (const [id, text] of Object.entries(reasonStarts ?? {})) {
-      expect(result.reasons[id]?.startsWith(text)).toBe(true);
-    }
   });
 
   const forced = (id: string, label: string) => ({ ...entry(id, label), forced: true });
@@ -359,7 +391,7 @@ describe("admission plan", () => {
   ])("switched off, holds no waiter despite $name", ({ change, entries }) => {
     const waiters = [entry("a", "xcrun simctl boot y"), entry("b", "vp run build")];
     const off = plan({ ...base, ...change, enabled: false, entries: [...entries, ...waiters] });
-    expect(off).toEqual({ admit: "a", reasons: {}, room: true, holding: false });
+    expect(off).toEqual({ admit: "a", reasons: {}, room: true, holding: false, hold: null });
     const on = plan({ ...base, ...change, entries: [...entries, ...waiters] });
     expect(on.admit).toBeNull();
     expect(Object.keys(on.reasons)).toEqual(["a", "b"]);

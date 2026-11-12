@@ -49,7 +49,73 @@ export const HeavyQueueMachine = Schema.Struct({
   cpuCount: Schema.Number,
   availableMemoryBytes: Schema.Number,
   totalMemoryBytes: Schema.Number,
+  /** macOS kernel memory pressure (2 warning, 4 critical); null where the host has none. */
+  pressureLevel: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  swapInBytesPerSecond: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
+export type HeavyQueueMachine = typeof HeavyQueueMachine.Type;
+
+/** What holds the next waiter back. */
+export const HeavyQueueHold = Schema.Literals([
+  "paused",
+  "exclusive",
+  "runs-alone",
+  "slots",
+  "settling",
+  "no-reading",
+  "pressure",
+  "swap-in",
+  "memory-floor",
+  "cpu",
+  "steadying",
+  "job-memory",
+  "job-cpu",
+]);
+export type HeavyQueueHold = typeof HeavyQueueHold.Type;
+
+const MB = 1024 ** 2;
+
+/**
+ * Words for a hold, from the same reading the numbers beside it come from. The two per-job holds
+ * name the job's own need, so only admission (which knows it) words those.
+ */
+export const heavyHoldText = (
+  hold: Exclude<HeavyQueueHold, "job-memory" | "job-cpu">,
+  machine: {
+    readonly pressureLevel?: number | null;
+    readonly swapInBytesPerSecond?: number | null;
+  } | null,
+  maxRunning: number,
+): string => {
+  switch (hold) {
+    case "paused":
+      return "paused";
+    case "exclusive":
+      return "a job that runs alone is running";
+    case "runs-alone":
+      return "the next job runs alone";
+    case "slots":
+      return maxRunning === 1 ? "the one slot is busy" : `all ${maxRunning} slots busy`;
+    case "settling":
+      return "letting the last one ramp up";
+    case "no-reading":
+      return "no load reading yet";
+    case "pressure":
+      return `memory pressure ${(machine?.pressureLevel ?? 0) >= 4 ? "critical" : "high"}`;
+    case "swap-in":
+      return `swapping ${Math.round((machine?.swapInBytesPerSecond ?? 0) / MB)} MB/s`;
+    case "memory-floor":
+      return "memory low";
+    case "cpu":
+      return "CPU busy";
+    case "steadying":
+      return "making sure the room lasts";
+  }
+};
 
 /** Machine-wide, in run order: the running entry (if any) first, then waiters. */
 /** What a command usually uses, from its finished runs; absent when it has no history. */
@@ -76,6 +142,8 @@ export const HeavyQueueState = Schema.Struct({
   ),
   /** The latest reading the admission rules used; null when no server has published a fresh one. */
   machine: Schema.NullOr(HeavyQueueMachine).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** What holds the next waiter back, from the reading in `machine`; null when nothing waits held. */
+  hold: Schema.NullOr(HeavyQueueHold).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** False while pressure, the pause or an exclusive job is what holds waiters back. */
   room: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** The user's Claude Code settings send heavy Bash calls through the queue in every session. */

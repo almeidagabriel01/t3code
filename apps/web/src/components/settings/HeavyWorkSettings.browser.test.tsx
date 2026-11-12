@@ -74,6 +74,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    hold: null,
     ...over,
   };
 };
