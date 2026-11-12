@@ -57,7 +57,9 @@ external display.
 
 When several agents run tests, builds or simulators at once, they queue on the
 machine that hosts T3 Code. Agents put the command behind `t3 heavy`, and the
-queue starts jobs in order. Open the **Resource Manager** in the status bar to
+queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
+commands (tests, builds, type checks, `git commit` with its hooks, simulators)
+go through the queue on their own, even when the agent forgets. Open the **Resource Manager** in the status bar to
 see each job with a short name (agents give one with `--name`; otherwise T3
 derives it from the command, which shows below it) and its project, the thread that queued it, how long it has run
 or waited, and why a waiting job has not started ("waiting for room: needs
@@ -71,6 +73,11 @@ under Settings → Maintenance.
   shorter job may go ahead of one that does not fit yet, but only if it will
   finish before that one fits. Simulators, emulators and the dev app run alone.
   Running jobs are never stopped to relieve pressure.
+- **Memory pressure.** On macOS, a second job waits while the system reports
+  memory pressure or is swapping heavily, whatever the free percentage says;
+  memory held by running simulators and emulators counts as used. A lone job
+  always starts. Each job's test runner gets as many workers as the machine has
+  free cores (`VITEST_MAX_WORKERS`, `T3_HEAVY_WORKERS`).
 - **Reorder.** Drag a waiting job, or use its **⋯** menu: **Run next**, **Move
   up**, **Move down**, **Move to end**, **Open thread**, **Remove**. A running
   job's menu has **Stop**, which ends its `t3 heavy` command.
@@ -78,6 +85,21 @@ under Settings → Maintenance.
   for the job's project. New jobs from that project go ahead of, or behind,
   normal ones; jobs already queued and jobs you moved by hand keep their place.
   Settings → Maintenance → **Heavy work** lists the rules so you can remove them.
+- **Priority per job.** Commands you run in T3 Code's terminal go ahead of the
+  ones agents queue. **High priority now** in a job's menu starts a waiting job
+  right away, or gives a running one its full CPU priority back; **Lower
+  priority** moves a running job to background priority (macOS). Agents can ask
+  for it with `t3 heavy --priority high`.
+- **Claude Code hook.** Settings → Maintenance → **Heavy work** → **Claude Code
+  hook** adds a hook to your Claude Code settings (`~/.claude/settings.json`, or
+  `CLAUDE_CONFIG_DIR`) so Claude sessions outside T3 Code queue heavy commands
+  too. Turning it off removes only that hook. A command run through the queue
+  starts in a fresh shell, so a `cd` inside it does not carry over.
+- **Idle simulators.** An emulator or simulator T3 Code opened powers off after
+  20 minutes in which nobody opened it, held it or ran an agent command on it
+  (Settings → Maintenance → **Heavy work** → **Power off idle simulators**;
+  **Off** keeps them on). Opening it again boots it. Devices T3 Code has not
+  opened since it started are left alone.
 - **Pause.** The **Pause** switch (also in Settings) stops anything new from
   starting while running jobs finish. A pause icon appears in the status bar.
 - **Off.** Settings → Maintenance → **Heavy work** → **Heavy work queue** turns
