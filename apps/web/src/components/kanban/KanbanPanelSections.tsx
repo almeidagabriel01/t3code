@@ -307,16 +307,17 @@ const KanbanPanelRow = memo(function KanbanPanelRow(props: {
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn(
-        "group/row rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        isDragging && "opacity-40",
-      )}
-      data-kanban-card={card.id}
-      {...attributes}
-      {...listeners}
-      aria-roledescription="Draggable card"
+      className={cn(isDragging && "opacity-40")}
     >
-      <div className="flex items-start gap-1 rounded-lg px-2 py-1.5 transition-colors hover:bg-foreground/6 has-focus-visible:bg-foreground/6">
+      {/* Keyboard drags start from the row itself, so Enter and Space still press its buttons. */}
+      <div
+        className="flex items-start gap-1 rounded-lg px-2 py-1.5 outline-none transition-colors hover:bg-foreground/6 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring has-focus-visible:bg-foreground/6"
+        data-kanban-card={card.id}
+        {...attributes}
+        {...listeners}
+        aria-roledescription="Draggable card"
+        aria-label={`Card #${card.number}, ${card.title}`}
+      >
         <button
           type="button"
           onClick={() => props.onOpen(card)}
@@ -330,6 +331,7 @@ const KanbanPanelRow = memo(function KanbanPanelRow(props: {
             <PriorityIcon priority={card.priority} />
             {progress.total > 0 ? (
               <span
+                role="img"
                 className="inline-flex shrink-0 items-center gap-1 tabular-nums"
                 aria-label={`Checklist ${progress.done} of ${progress.total} done`}
               >
