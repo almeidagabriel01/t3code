@@ -36,7 +36,8 @@ vi.mock("../../state/device", async (importOriginal) => ({
     refresh: () => undefined,
   }),
 }));
-vi.mock("../../state/heavyQueue", () => ({
+vi.mock("../../state/heavyQueue", async () => ({
+  resourceManagerOpenAtom: (await import("effect/reactivity")).Atom.make(false),
   useHeavyQueue: () => ({ entries: [], linux: null, macOnly: [], routes: {} }),
   useHeavyCommands: () => ({ commands: [], cpuCount: 1 }),
 }));

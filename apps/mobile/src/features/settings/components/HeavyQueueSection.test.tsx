@@ -27,10 +27,34 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+type A11y = {
+  children?: ReactNode;
+  accessibilityLabel?: string;
+  accessibilityRole?: string;
+  onPress?: () => void;
+};
 vi.mock("react-native", () => ({
   Alert: { alert: mocks.alert },
-  View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  Platform: { OS: "ios" },
+  View: (props: A11y) => (
+    <div role={props.accessibilityRole} aria-label={props.accessibilityLabel}>
+      {props.children}
+    </div>
+  ),
+  Pressable: (props: A11y) => (
+    <div
+      role={props.accessibilityRole}
+      aria-label={props.accessibilityLabel}
+      onClick={(event) => {
+        event.stopPropagation();
+        props.onPress?.();
+      }}
+    >
+      {props.children}
+    </div>
+  ),
 }));
+vi.mock("../../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../../components/ui/AppText", () => ({
   AppText: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
@@ -236,6 +260,21 @@ async function mount(projectId?: string, runner = RUNNER_OFF, machine?: string) 
   return { host, button, toggle, unmount: () => act(() => root.unmount()) };
 }
 
+/** Headers and job rows in screen order: "# This Mac, 0 of 3 running" or "cmd c: 1st on This Mac · Waiting 1m". */
+const outline = (host: HTMLElement) =>
+  [...host.querySelectorAll('[role="header"], [role="button"]')].map((el) => {
+    const label = el.getAttribute("aria-label") ?? "";
+    return el.getAttribute("role") === "header"
+      ? `# ${label}`
+      : label.split(", ").slice(0, 2).join(": ");
+  });
+const jobRow = (host: HTMLElement, name: string) =>
+  [...host.querySelectorAll<HTMLElement>('[role="button"]')].find((row) =>
+    row.getAttribute("aria-label")?.startsWith(`${name}, `),
+  )!;
+/** Durations read "1m" against a clock one minute after the entries were made. */
+const oneMinuteLater = () => vi.useFakeTimers({ now: Date.parse(NOW) + 60_000 });
+
 afterEach(() => {
   mocks.can = true;
   mocks.heavy = { commands: [], cpuCount: 8 };
@@ -247,36 +286,110 @@ afterEach(() => {
 });
 
 describe("HeavyQueueSection", () => {
-  it("says so when nothing is queued, with the slot summary", async () => {
+  it("says so when nothing is queued, under the Mac's header", async () => {
     setup([]);
     const view = await mount();
-    expect(view.host.textContent).toContain("0 of 3 running");
+    expect(outline(view.host)).toEqual(["# This Mac, 0 of 3 running"]);
+    expect(view.host.textContent).toContain("0/3");
     expect(view.host.textContent).toContain("Nothing queued.");
     await view.unmount();
   });
 
-  it("describes each entry with project, thread, rule, reason and note", async () => {
+  it("keeps a row to its name, place, folder and note, with every fact in its label and details", async () => {
+    oneMinuteLater();
     mocks.titles = { t1: "Fix login" };
     setup(
       [
-        entry("a", { startedAt: NOW, threadId: "t1", name: "Build iPhone" }),
+        entry("a", { startedAt: NOW, threadId: "t1", name: "Build iPhone", qos: "background" }),
         entry("b", { note: "Moved by the user" }),
         entry("c"),
       ],
       {
         rules: [{ root: "/work/app", priority: "first" }],
         reasons: { b: "letting the last one ramp up" },
+        estimates: { c: { cpu: 2, memoryBytes: 1024 ** 3, durationMs: 60_000 } },
       },
     );
     const view = await mount();
-    const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent);
-    expect(rows.find((row) => row?.startsWith("Build iPhone"))).toMatch(
-      /^Build iPhone\|cmd a · App Project · Fix login · Always first · Running /,
+    const facts = (name: string) => jobRow(view.host, name).getAttribute("aria-label");
+    expect(facts("Build iPhone")).toBe(
+      "Build iPhone, /usr/bin/cmd a, Running 1m on This Mac, Project: App Project, Folder: /work/app/src, Thread: Fix login, Project priority: Always first, Low priority",
     );
-    expect(rows.find((row) => row?.startsWith("cmd b"))).toMatch(
-      /Waiting .* · letting the last one ramp up · Moved by the user\|#1$/,
+    expect(facts("cmd b")).toBe(
+      "cmd b, 1st on This Mac · Waiting 1m, Project: App Project, Folder: /work/app/src, Project priority: Always first, letting the last one ramp up · Moved by the user",
     );
-    expect(rows.find((row) => row?.startsWith("cmd c"))).toMatch(/\|#2$/);
+    expect(facts("cmd c")).toBe(
+      "cmd c, 2nd on This Mac · Waiting 1m, Project: App Project, Folder: /work/app/src, Project priority: Always first, Usually ~2.0 cores · 1.0 GB · 1 min",
+    );
+    // On screen: the name and its place, the folder, and the reason line only where there is one.
+    expect(jobRow(view.host, "Build iPhone").textContent).toBe("Build iPhone1mApp Project");
+    expect(jobRow(view.host, "cmd b").textContent).toBe(
+      "cmd b1st · 1mApp Projectletting the last one ramp up · Moved by the user",
+    );
+    expect(jobRow(view.host, "cmd c").textContent).toBe("cmd c2nd · 1mApp Project");
+    await act(async () => jobRow(view.host, "cmd c").click());
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "cmd c",
+      "2nd on This Mac · Waiting 1m\nProject: App Project\nFolder: /work/app/src\nProject priority: Always first\nUsually ~2.0 cores · 1.0 GB · 1 min",
+    );
+    await act(async () =>
+      view.host.querySelector<HTMLElement>('[aria-label="Open thread Fix login"]')!.click(),
+    );
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "env", threadId: "t1" },
+    });
+    expect(mocks.alert).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it.each([
+    ["no reason or note", {}, {}, null],
+    [
+      "the reason it stays on this Mac",
+      {},
+      { reasons: { a: "Mac-only command" } },
+      "Mac-only command",
+    ],
+    ["the entry's note", { note: "Moved by the user" }, {}, "Moved by the user"],
+    [
+      "an unconfirmed Linux stop",
+      { unconfirmed: true },
+      { reasons: { a: "Linux dropped it" } },
+      "Linux dropped it · Linux has not confirmed the earlier run stopped.",
+    ],
+  ] as const)("shows a third line only for %s", async (_case, extra, over, line) => {
+    oneMinuteLater();
+    setup([entry("a", extra)], over);
+    const view = await mount();
+    expect(jobRow(view.host, "cmd a").textContent).toBe(`cmd a1st · 1mApp Project${line ?? ""}`);
+    await view.unmount();
+  });
+
+  it("moves a waiter only within its own machine's line", async () => {
+    setup([entry("a"), entry("b"), entry("c"), entry("d")], {
+      linux: LINUX,
+      routes: { b: "linux", d: "linux" },
+    });
+    const view = await mount();
+    // Screen order: This Mac a, c; Linux b, d.
+    expect(view.button("Move down", 1).disabled).toBe(true);
+    expect(view.button("Move up", 2).disabled).toBe(true);
+    await act(async () => view.button("Run next", 1).click());
+    expect(mocks.commands.move).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "c", beforeId: "a" },
+    });
+    await act(async () => view.button("Move up", 3).click());
+    expect(mocks.commands.move).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "d", beforeId: "b" },
+    });
+    await act(async () => view.button("Move down", 2).click());
+    expect(mocks.commands.move).toHaveBeenLastCalledWith({
+      environmentId: "env",
+      input: { id: "b", beforeId: null },
+    });
     await view.unmount();
   });
 
@@ -536,7 +649,8 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
   });
 
-  it("shows only a project's jobs, worktree ones included, with machine-wide places", async () => {
+  it("shows only a project's jobs, worktree ones included, with places counted on their machine", async () => {
+    oneMinuteLater();
     mocks.shells = [{ environmentId: "env", id: "t9", projectId: "p1" }];
     setup([
       entry("a", { startedAt: NOW }),
@@ -545,13 +659,12 @@ describe("HeavyQueueSection", () => {
       entry("d", { cwd: "/elsewhere" }),
     ]);
     const view = await mount("p1");
-    const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent ?? "");
-    expect(rows[0]).toMatch(/^Whole queue: 1 of 3 running/);
-    expect(rows.filter((row) => row.startsWith("cmd "))).toEqual([
-      expect.stringMatching(/^cmd a\|/),
-      expect.stringMatching(/^cmd c\|.*\|#2$/),
+    expect(outline(view.host)).toEqual([
+      "# This Mac, 1 of 3 running",
+      "cmd a: Running 1m on This Mac",
+      "cmd c: 2nd on This Mac · Waiting 1m",
     ]);
-    expect(rows.some((row) => row.includes("App Project"))).toBe(false);
+    expect(view.host.textContent).not.toContain("App Project");
     expect(view.host.querySelector("section")?.getAttribute("aria-label")).toBe("Queue");
     expect(view.toggle("Pause queue")).toBeNull();
     expect(view.button("Allow one more")).toBeUndefined();
@@ -580,38 +693,104 @@ describe("HeavyQueueSection", () => {
     await auto.unmount();
   });
 
-  it("badges where each row runs and notes an unconfirmed Linux stop", async () => {
-    setup(
-      [
-        entry("a", { startedAt: NOW, runner: "linux", phase: "syncing" }),
-        entry("b", { unconfirmed: true }),
-        entry("c"),
+  it.each([
+    {
+      case: "one machine while the Runner is off",
+      entries: [entry("a", { startedAt: NOW }), entry("b"), entry("c")],
+      over: {},
+      outline: [
+        "# This Mac, 1 of 3 running",
+        "cmd a: Running 1m on This Mac",
+        "cmd b: 1st on This Mac · Waiting 1m",
+        "cmd c: 2nd on This Mac · Waiting 1m",
       ],
-      { linux: LINUX, routes: { b: "linux" } },
-    );
+    },
+    {
+      case: "each machine counting its own places",
+      entries: [
+        entry("a", { startedAt: NOW, runner: "linux", phase: "syncing" }),
+        entry("b"),
+        entry("c"),
+        entry("d"),
+      ],
+      over: { linux: LINUX, routes: { b: "linux", d: "linux" } },
+      outline: [
+        "# This Mac, 0 of 3 running",
+        "cmd c: 1st on This Mac · Waiting 1m",
+        "# Linux, remoto, online, 1 of 2 running, load 1.2 on 6 cores, 8.0 GB free",
+        "cmd a: Running 1m on Linux · Syncing",
+        "cmd b: 1st on Linux · Waiting 1m",
+        "cmd d: 2nd on Linux · Waiting 1m",
+      ],
+    },
+    {
+      case: "Linux while empty and offline, its trouble as the note",
+      entries: [],
+      over: { linux: { ...LINUX, online: false, error: "ssh timed out" } },
+      outline: [
+        "# This Mac, 0 of 3 running",
+        "# Linux, remoto, offline, Linux offline: ssh timed out",
+      ],
+    },
+    {
+      case: "Linux still being checked",
+      entries: [],
+      over: { linux: { ...LINUX, online: null } },
+      outline: [
+        "# This Mac, 0 of 3 running",
+        "# Linux, remoto, checking, Checking Linux (remoto)…",
+      ],
+    },
+    {
+      case: "a job still on Linux after the Runner went off",
+      entries: [entry("a", { startedAt: NOW, runner: "linux" })],
+      over: {},
+      outline: ["# This Mac, 0 of 3 running", "# Linux", "cmd a: Running 1m on Linux"],
+    },
+    {
+      case: "the Mac's readings and its pause",
+      entries: [entry("b")],
+      over: {
+        paused: true,
+        machine: {
+          busyCores: 2,
+          cpuCount: 8,
+          availableMemoryBytes: 8 * 1024 ** 3,
+          totalMemoryBytes: 16 * 1024 ** 3,
+          pressureLevel: null,
+          swapInBytesPerSecond: null,
+        },
+      },
+      outline: [
+        "# This Mac, 0 of 3 running, CPU 25%, 8.0 GB free, paused",
+        "cmd b: 1st on This Mac · Waiting 1m",
+      ],
+    },
+    {
+      case: "no slots while the queue is off",
+      entries: [],
+      over: { enabled: false },
+      outline: ["# This Mac, Queue off: heavy jobs start right away"],
+    },
+  ] satisfies ReadonlyArray<{
+    case: string;
+    entries: HeavyQueueEntry[];
+    over: Partial<HeavyQueueState>;
+    outline: string[];
+  }>)("groups rows under This Mac and Linux: $case", async (row) => {
+    oneMinuteLater();
+    setup(row.entries, row.over);
     const view = await mount();
-    const rows = [...view.host.querySelectorAll("p")].map((row) => row.textContent ?? "");
-    expect(rows.find((row) => row.includes("cmd a"))).toMatch(/^cmd a\|Linux · Syncing · /);
-    expect(rows.find((row) => row.includes("cmd b"))).toMatch(
-      /^cmd b\|Linux · cmd b · .* · Linux has not confirmed the earlier run stopped\.\|#1$/,
-    );
-    expect(rows.find((row) => row.includes("cmd c"))).toMatch(/^cmd c\|This Mac · /);
-    // One machine: the Runner section carries the Linux line.
-    expect(rows.some((row) => row.startsWith("Linux online"))).toBe(false);
+    expect(outline(view.host)).toEqual(row.outline);
     await view.unmount();
-    const named = await mount(undefined, RUNNER_OFF, "Mac mini");
-    expect(named.host.querySelector('[aria-label="Heavy work queue · Mac mini"]')).not.toBeNull();
-    expect(
-      [...named.host.querySelectorAll("p")].some((row) =>
-        row.textContent?.startsWith("Linux online · 1 of 2 running"),
-      ),
-    ).toBe(true);
-    await named.unmount();
+  });
+
+  it("names the machine in the title and offers no route without the Runner", async () => {
     setup([entry("c")]);
-    const off = await mount();
-    expect(off.host.textContent).not.toContain("This Mac ·");
-    expect(off.host.textContent).not.toContain("Run on");
-    await off.unmount();
+    const view = await mount(undefined, RUNNER_OFF, "Mac mini");
+    expect(view.host.querySelector('[aria-label="Heavy work queue · Mac mini"]')).not.toBeNull();
+    expect(view.host.textContent).not.toContain("Run on");
+    await view.unmount();
   });
 
   it("moves a row between runners, confirming a stop or an unconfirmed rerun first", async () => {
@@ -635,7 +814,8 @@ describe("HeavyQueueSection", () => {
       environmentId: "env",
       input: { id: "a", runner: "linux", force: false },
     });
-    await act(async () => view.button("Run on this Mac", 0).click());
+    // Screen order: This Mac a, c; Linux b.
+    await act(async () => view.button("Run on this Mac", 1).click());
     expect(mocks.alert.mock.calls[1]![1]).toContain("may run it twice");
     (mocks.alert.mock.calls[1]![2] as Array<{ text: string; onPress?: () => void }>).find(
       (b) => b.text === "Run on this Mac",
@@ -644,7 +824,7 @@ describe("HeavyQueueSection", () => {
       environmentId: "env",
       input: { id: "b", runner: "mac", force: true },
     });
-    await act(async () => view.button("Run on this Mac", 1).click());
+    await act(async () => view.button("Run on this Mac", 0).click());
     expect(mocks.alert).toHaveBeenCalledTimes(2);
     expect(mocks.commands.route).toHaveBeenLastCalledWith({
       environmentId: "env",

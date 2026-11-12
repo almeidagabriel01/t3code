@@ -3,20 +3,23 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   formatDuration,
+  formatFreeMemory,
   HEAVY_COMMAND_SOURCE_LABEL,
   heavyCommandKey,
   heavyItemsInProject,
   jobPriority,
+  machineSummaries,
   moveTarget,
+  ordinal,
   PRIORITY_CHANGE,
   projectForCommand,
   PRIORITY_LABEL,
   projectForCwd,
-  queueSummary,
   readableLabel,
   ruleForRoot,
   runningUsageLine,
   usageLine,
+  type MachineSummary,
   type MoveAction,
   type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
@@ -25,7 +28,7 @@ import {
   askRemaining,
   heavyLimitIdle,
   heavyModeLine,
-  linuxLine,
+  RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
   routeActions,
   runnerBadge,
@@ -45,12 +48,13 @@ import {
   type HeavyQueueState,
   HEAVY_QUEUE_LIMITS,
   type HeavyQueueLimitKey,
+  type HeavyRunner,
   type RunnerWhere,
 } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
-import { Alert, View } from "react-native";
+import { Fragment, useEffect, useState } from "react";
+import { Alert, Platform, Pressable, View } from "react-native";
 
-import type { AppSymbolName } from "../../../components/ui/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../../components/ui/AppSymbol";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
@@ -165,22 +169,40 @@ function RunnerAskRows(props: {
   );
 }
 
+const MACHINE = {
+  mac: { name: "This Mac", icon: "laptopcomputer" },
+  linux: { name: "Linux", icon: "server.rack" },
+} as const satisfies Record<HeavyRunner, { name: string; icon: AppSymbolName }>;
+
+const RULE_ICON = { first: "chevron.up", last: "chevron.down" } as const;
+
+/** A small icon whose meaning lives in the row's accessible label and its details. */
+function Glyph(props: { readonly name: AppSymbolName }) {
+  return (
+    <SymbolView
+      name={props.name}
+      size={13}
+      tintColorClassName="accent-icon-subtle"
+      type="monochrome"
+    />
+  );
+}
+
 function QueueEntryRows(props: {
   readonly environmentId: EnvironmentId;
-  readonly entries: ReadonlyArray<HeavyQueueEntry>;
+  /** The waiters of this row's machine, in run order: places and moves stay inside its group. */
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
   readonly entry: HeavyQueueEntry;
+  readonly runner: HeavyRunner;
   readonly state: HeavyQueueState;
   readonly canRoute: boolean;
   readonly position: number | null;
-  readonly reason: string | undefined;
-  readonly usage: string | null;
-  readonly rules: ReadonlyArray<{ readonly root: string; readonly priority: "first" | "last" }>;
   readonly canChange: boolean;
   readonly commands: Commands;
   readonly now: number;
   readonly scoped: boolean;
 }) {
-  const { entry, entries, position, commands } = props;
+  const { entry, waiting, position, commands, state } = props;
   const projects = useProjects().filter((p) => p.environmentId === props.environmentId);
   const selectDetail = useSelectWorkspaceDetail();
   const thread = useThreadShell(
@@ -189,37 +211,53 @@ function QueueEntryRows(props: {
       : scopeThreadRef(props.environmentId, ThreadId.make(entry.threadId)),
   );
   const project = projectForCommand(entry, projects, () => thread?.projectId);
-  const rule = project === undefined ? undefined : ruleForRoot(props.rules, project.workspaceRoot);
-  const origin = thread?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
-  // A project-scoped list already names the project, and a folder named like it adds nothing.
-  const projectTitle = props.scoped ? undefined : project?.title;
+  const rule = project === undefined ? undefined : ruleForRoot(state.rules, project.workspaceRoot);
+  const name = heavyEntryName(entry);
+  const folder = project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
   const running = position === null;
-  const badge = runnerBadge(entry, props.state);
-  const routes = routeActions(entry, props.state);
+  const routes = routeActions(entry, state);
   const priority = jobPriority(entry);
-  const description = [
-    badge?.label,
-    readableLabel(entry.label),
-    props.usage,
-    projectTitle,
-    origin === project?.title ? undefined : origin,
-    rule === undefined ? undefined : PRIORITY_LABEL[rule.priority],
-    priority.label ?? undefined,
-    running && entry.startedAt !== null
-      ? `Running ${formatDuration(entry.startedAt, props.now)}`
-      : `Waiting ${formatDuration(entry.createdAt, props.now)}`,
-    props.reason,
+  const usage = usageLine(entry, state);
+  const phase =
+    entry.startedAt !== null && entry.phase !== undefined ? RUNNER_PHASE_LABEL[entry.phase] : null;
+  const time =
+    entry.startedAt === null
+      ? `${ordinal(position ?? 0)} · ${formatDuration(entry.createdAt, props.now)}`
+      : `${phase === null ? "" : `${phase} · `}${formatDuration(entry.startedAt, props.now)}`;
+  const detail = [
+    state.reasons[entry.id],
     entry.note,
-    entry.unconfirmed === true ? RUNNER_UNCONFIRMED_NOTE : undefined,
+    running || entry.unconfirmed !== true ? undefined : RUNNER_UNCONFIRMED_NOTE,
   ]
     .filter(Boolean)
     .join(" · ");
+  // Everything the compact row turns into icons, for its accessible label and its details.
+  const facts = [
+    readableLabel(entry.label) === name ? undefined : entry.label,
+    entry.startedAt === null
+      ? `${ordinal(position ?? 0)} on ${MACHINE[props.runner].name} · Waiting ${formatDuration(entry.createdAt, props.now)}`
+      : `Running ${formatDuration(entry.startedAt, props.now)} on ${MACHINE[props.runner].name}${phase === null ? "" : ` · ${phase}`}`,
+    `Project: ${folder}`,
+    `Folder: ${entry.cwd}`,
+    thread?.title === undefined ? undefined : `Thread: ${thread.title}`,
+    rule === undefined ? undefined : `Project priority: ${PRIORITY_LABEL[rule.priority]}`,
+    priority.label ?? undefined,
+    usage ?? undefined,
+    detail === "" ? undefined : detail,
+  ].filter((fact): fact is string => fact !== undefined);
+  const openThread = () => {
+    if (entry.threadId !== null)
+      selectDetail({
+        name: "Thread",
+        params: { environmentId: String(props.environmentId), threadId: entry.threadId },
+      });
+  };
   const move = (action: MoveAction) => {
-    const target = moveTarget(entries, entry.id, action);
+    const target = moveTarget(waiting, entry.id, action);
     if (target !== undefined) commands.move(entry.id, target);
   };
   const can = (action: MoveAction) =>
-    props.canChange && moveTarget(entries, entry.id, action) !== undefined;
+    props.canChange && moveTarget(waiting, entry.id, action) !== undefined;
   const item = (id: string, title: string, image: string, disabled = false): MenuAction => ({
     id,
     title,
@@ -280,11 +318,7 @@ function QueueEntryRows(props: {
     else if (id === "start-now") commands.startNow(entry);
     else if (id.startsWith("priority:"))
       commands.setPriority(entry.id, PRIORITY_CHANGE[id.slice(9) as PriorityChange]);
-    else if (id === "thread" && entry.threadId !== null)
-      selectDetail({
-        name: "Thread",
-        params: { environmentId: String(props.environmentId), threadId: entry.threadId },
-      });
+    else if (id === "thread") openThread();
     else if (id === "rule" && project !== undefined)
       Alert.alert("Priority for this project", project.title, [
         {
@@ -306,21 +340,77 @@ function QueueEntryRows(props: {
       if (route !== undefined) commands.route(entry, route);
     }
   };
+  // A project-scoped list already names the project.
+  const showProject = !(props.scoped && project !== undefined);
   return (
     <>
-      <ListRowLayout
-        icon={running ? "play" : "hourglass"}
-        label={heavyEntryName(entry)}
-        description={description}
-        {...(position === null ? {} : { detail: `#${position}` })}
-        accessory={
-          <RowMenuButton
-            label={`Actions for ${heavyEntryName(entry)}`}
-            actions={actions}
-            onAction={run}
-          />
-        }
-      />
+      <View className="flex-row items-center">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={[name, ...facts].join(", ")}
+          accessibilityHint="Shows the details"
+          onPress={() => Alert.alert(name, facts.join("\n"))}
+          className="min-w-0 flex-1 flex-row items-start gap-3 py-3 pl-4 active:opacity-70"
+        >
+          <View className="h-6 w-6 items-center justify-center">
+            <SymbolView
+              name={running ? "play" : "hourglass"}
+              size={Platform.OS === "android" ? 20 : 18}
+              tintColorClassName="accent-icon"
+              type="monochrome"
+            />
+          </View>
+          <View className="min-w-0 flex-1 gap-1">
+            <View className="flex-row items-center gap-2">
+              <Text textRole="body" className="min-w-0 flex-1 text-foreground" numberOfLines={1}>
+                {name}
+              </Text>
+              <Text textRole="footnote" className="shrink-0 text-foreground-muted tabular-nums">
+                {time}
+              </Text>
+            </View>
+            <View className="flex-row items-center gap-2">
+              {showProject ? (
+                <View className="min-w-0 shrink flex-row items-center gap-1">
+                  <Glyph name="folder" />
+                  <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
+                    {folder}
+                  </Text>
+                </View>
+              ) : null}
+              {rule === undefined ? null : <Glyph name={RULE_ICON[rule.priority]} />}
+              {priority.label === null ? null : <Glyph name="arrow.down.circle" />}
+              {entry.threadId === null ? null : (
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open thread ${thread?.title ?? ""}`.trim()}
+                  hitSlop={8}
+                  onPress={openThread}
+                  className="active:opacity-70"
+                >
+                  <Glyph name="bubble.left" />
+                </Pressable>
+              )}
+              {usage === null ? null : <Glyph name="chart.bar.xaxis" />}
+            </View>
+            {detail === "" ? null : (
+              <View className="flex-row items-center gap-1">
+                <Glyph name="info.circle" />
+                <Text
+                  textRole="footnote"
+                  className="min-w-0 flex-1 text-foreground-muted"
+                  numberOfLines={1}
+                >
+                  {detail}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Pressable>
+        <View className="pr-2 pl-1">
+          <RowMenuButton label={`Actions for ${name}`} actions={actions} onAction={run} />
+        </View>
+      </View>
       {entry.ask === undefined ? null : (
         <RunnerAskRows
           entry={entry}
@@ -332,6 +422,117 @@ function QueueEntryRows(props: {
         />
       )}
     </>
+  );
+}
+
+const LINUX_STATUS = (online: boolean | null) =>
+  online === null
+    ? { text: "checking", dot: "bg-foreground-muted" }
+    : online
+      ? { text: "online", dot: "bg-adaptive-emerald-600-400" }
+      : { text: "offline", dot: "bg-danger" };
+
+/** A machine's name, status and readings; its note follows only when there is something to say. */
+function MachineHeader(props: {
+  readonly runner: HeavyRunner;
+  readonly summary: MachineSummary | null;
+  readonly host: string | null;
+  readonly queueOn: boolean;
+}) {
+  const { runner, summary } = props;
+  const { name, icon } = MACHINE[runner];
+  // A job can outlive the Runner on Linux; with no heartbeat there is no status to show.
+  const status = runner === "linux" && summary !== null ? LINUX_STATUS(summary.online) : null;
+  // Linux's readings are stale while it is offline or unchecked; the Mac's slots mean nothing with the queue off.
+  const live = summary !== null && summary.online === true;
+  const load = summary?.load ?? null;
+  const cpuCount = summary?.cpuCount ?? null;
+  const readings: ReadonlyArray<{ icon: AppSymbolName; label: string; text: string }> =
+    summary === null || !live
+      ? []
+      : [
+          ...(runner === "linux" || props.queueOn
+            ? [
+                {
+                  icon: "play" as const,
+                  label: `${summary.running} of ${summary.slots} running`,
+                  text: `${summary.running}/${summary.slots}`,
+                },
+              ]
+            : []),
+          ...(summary.cpuPercent === null
+            ? []
+            : [
+                {
+                  icon: "gauge.with.dots.needle.50percent" as const,
+                  label: `CPU ${summary.cpuPercent}%`,
+                  text: `${summary.cpuPercent}%`,
+                },
+              ]),
+          ...(load === null
+            ? []
+            : [
+                {
+                  icon: "gauge.with.dots.needle.50percent" as const,
+                  label: `load ${load.toFixed(1)}${cpuCount === null ? "" : ` on ${cpuCount} cores`}`,
+                  text: `${load.toFixed(1)}${cpuCount === null ? "" : `/${cpuCount}`}`,
+                },
+              ]),
+          ...(summary.freeBytes === null
+            ? []
+            : [
+                {
+                  icon: "internaldrive" as const,
+                  label: `${formatFreeMemory(summary.freeBytes)} free`,
+                  text: formatFreeMemory(summary.freeBytes),
+                },
+              ]),
+        ];
+  const note = summary?.note ?? null;
+  return (
+    <View
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={[name, props.host, status?.text, ...readings.map((r) => r.label), note]
+        .filter(Boolean)
+        .join(", ")}
+      className="gap-1 px-4 pt-3 pb-1"
+    >
+      <View className="flex-row items-center gap-2">
+        <SymbolView
+          name={icon}
+          size={15}
+          tintColorClassName="accent-icon-muted"
+          type="monochrome"
+        />
+        <Text textRole="footnote" className="font-semibold text-foreground">
+          {name}
+        </Text>
+        {props.host === null ? null : (
+          <Text textRole="footnote" className="shrink text-foreground-muted" numberOfLines={1}>
+            {props.host}
+          </Text>
+        )}
+        {status === null ? null : <View className={`size-2 rounded-full ${status.dot}`} />}
+        <View className="flex-1" />
+        {readings.map((reading) => (
+          <View key={reading.label} className="flex-row items-center gap-1">
+            <Glyph name={reading.icon} />
+            <Text textRole="footnote" className="text-foreground-muted tabular-nums">
+              {reading.text}
+            </Text>
+          </View>
+        ))}
+      </View>
+      {note === null ? null : (
+        <View className="flex-row items-start gap-1.5">
+          <Glyph name="info.circle" />
+          <Text textRole="footnote" className="min-w-0 flex-1 text-foreground-muted">
+            {note}
+          </Text>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -465,48 +666,63 @@ export function HeavyQueueSection(props: {
     return () => clearInterval(timer);
   }, []);
   const shown = inProject(entries);
+  const summaries = machineSummaries(state);
+  const machineOf = (entry: HeavyQueueEntry) => runnerBadge(entry, state)?.runner ?? "mac";
+  const groups = (["mac", "linux"] as const)
+    .map((runner) => ({
+      runner,
+      summary: runner === "mac" ? summaries.mac : summaries.linux,
+      rows: shown.filter((entry) => machineOf(entry) === runner),
+      waiting: entries.filter((entry) => entry.startedAt === null && machineOf(entry) === runner),
+    }))
+    // Linux stays visible while the Runner is on, and while a job still runs there after it went off.
+    .filter((group) => group.runner === "mac" || group.summary !== null || group.rows.length > 0);
   const rows = (
     <>
+      {groups.map((group) => (
+        <Fragment key={group.runner}>
+          <MachineHeader
+            runner={group.runner}
+            summary={group.summary}
+            host={group.runner === "linux" ? (state.linux?.host ?? null) : null}
+            queueOn={state.enabled}
+          />
+          {group.rows.map((entry) => (
+            <QueueEntryRows
+              key={entry.id}
+              environmentId={environmentId}
+              waiting={group.waiting}
+              entry={entry}
+              runner={group.runner}
+              state={state}
+              canRoute={canRoute}
+              position={
+                entry.startedAt === null
+                  ? group.waiting.findIndex((w) => w.id === entry.id) + 1
+                  : null
+              }
+              now={now}
+              canChange={canChange}
+              commands={commands}
+              scoped={projectId !== undefined}
+            />
+          ))}
+        </Fragment>
+      ))}
       {shown.length === 0 ? (
         <ListRowLayout
           icon="checkmark"
           label={projectId === undefined ? "Nothing queued." : "Nothing queued for this project."}
         />
       ) : null}
-      {shown.map((entry) => {
-        const index = entries.indexOf(entry);
-        const position =
-          entry.startedAt === null
-            ? entries.slice(0, index + 1).filter((e) => e.startedAt === null).length
-            : null;
-        return (
-          <QueueEntryRows
-            key={entry.id}
-            environmentId={environmentId}
-            entries={entries}
-            entry={entry}
-            state={state}
-            canRoute={canRoute}
-            position={position}
-            now={now}
-            reason={state.reasons[entry.id]}
-            usage={usageLine(entry, state)}
-            rules={state.rules}
-            canChange={canChange}
-            commands={commands}
-            scoped={projectId !== undefined}
-          />
-        );
-      })}
     </>
   );
   if (projectId !== undefined) {
     return (
       <SettingsSection
         title="Queue"
-        footer="Positions count every job on the machine. Pause and limits live in Settings."
+        footer="Places count every job on its machine, This Mac or Linux. Pause and limits live in Settings."
       >
-        <ListRowLayout icon="timer" label={`Whole queue: ${queueSummary(state)}`} />
         {rows}
       </SettingsSection>
     );
@@ -530,11 +746,6 @@ export function HeavyQueueSection(props: {
         disabled={!canChange}
         onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
       />
-      <ListRowLayout icon="timer" label={queueSummary(state)} />
-      {/* With one machine the Runner section shows this line already. */}
-      {state.linux === null || props.machine === undefined ? null : (
-        <ListRowLayout icon="server.rack" label={linuxLine(state.linux)} />
-      )}
       {runner === undefined ? null : (
         <ListRowLayout
           icon="arrow.left.arrow.right"
@@ -655,6 +866,7 @@ const COMMAND_ICON = {
   queue: "list.number",
   agent: "bubble.left",
   terminal: "chevron.left.forwardslash.chevron.right",
+  detached: "terminal",
 } as const satisfies Record<HeavyCommand["source"], AppSymbolName>;
 
 function HeavyCommandRows(props: {
