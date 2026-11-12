@@ -26,7 +26,7 @@ import {
  * "background" is `taskpolicy -b`. Adopt it only if scripts/heavy-priority-bench.sh shows it
  * within ~15% of normal on a free machine.
  */
-const AGENT_JOB_CPU: "normal" | "background" = "normal";
+const AGENT_JOB_CPU = "normal" as "normal" | "background";
 
 /** The program a job runs as: under `taskpolicy -b` when it starts in the background on macOS. */
 export const launchOf = (
