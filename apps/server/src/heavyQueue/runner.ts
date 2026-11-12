@@ -184,14 +184,15 @@ const GIT_DRIVEN = /(^|[^a-z])(only)?(changed|staged)(since)?($|[^a-z])/i;
 
 /**
  * Whether a command needs the repository's history, which `remoto` leaves out of the Linux copy:
- * git itself, or a word that diffs against it (`check:changed`, `vp staged`, `--changed`,
- * `--onlyChanged`). File paths are skipped, so `changed.test.ts` stays eligible.
+ * git itself, or a flag, script or subcommand that diffs against it (`--changed`, `--onlyChanged`,
+ * `check:changed`, `vp staged`). Paths, a flag's value (`-t staged`) and free text are skipped.
  */
 export const needsGit = (values: ReadonlyArray<string>) =>
   values[0]?.split("/").pop() === "git" ||
-  values.some((value) => {
-    const word = value.replace(/=.*$/, "");
-    return !/[/.]/.test(word) && GIT_DRIVEN.test(word);
+  values.some((value, at) => {
+    const flag = value.startsWith("-");
+    if (!flag && (values[at - 1]?.startsWith("-") || /[\s/.]/.test(value))) return false;
+    return GIT_DRIVEN.test(flag ? value.replace(/=.*$/, "") : value);
   });
 
 /**

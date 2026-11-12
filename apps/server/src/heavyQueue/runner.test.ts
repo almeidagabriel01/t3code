@@ -613,6 +613,10 @@ describe("patterns and eligibility", () => {
     ["remoto /usr/bin/git status", "mac-only", NEEDS_GIT],
     ["vp test run src/changed.test.ts src/staged/a.test.ts", "linux", null],
     ["vp test run unchanged", "linux", null],
+    ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
+    ["vp test run -t staged", "linux", null],
+    ["vp test run --reporter=changed", "linux", null],
+    ["pnpm --filter web check:changed", "mac-only", NEEDS_GIT],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });
