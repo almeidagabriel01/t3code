@@ -126,8 +126,11 @@ or bundlers an agent or terminal started directly show there too once their
 processes use at least half a core or 1 GB for a few seconds. Each row shows
 its thread and project, CPU (cores and share of the machine), memory, the peak
 seen since T3 started watching it, and how long it has run. **Stop** ends the
-command and everything it started. The section appears only while something
-heavy runs.
+command and everything it started. A heavy command no agent or terminal in
+T3 Code started, such as tests a script runs on its own, shows as **Outside
+agents** with that reason: the queue cannot route it, and it has no **Stop**,
+since T3 Code cannot tell what else the script is doing. The section appears
+only while something heavy runs.
 
 Agents never reorder the queue on their own. They may move a job up only when
 you ask them to in the conversation, and the job's note says an agent did it.
