@@ -96,6 +96,7 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    hold: null,
     ...over,
   };
 }
@@ -124,7 +125,7 @@ describe("HeavyQueueGroup", () => {
         entry("build", { note: "Moved by the user" }),
         entry("e2e"),
       ],
-      { reasons: { build: "waiting for room: needs ~4.0 GB, 1.2 GB free" } },
+      { reasons: { build: "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare" } },
     );
     await using screen = await render(group());
     await expect.element(screen.getByText("Fix build")).toBeVisible();
@@ -134,7 +135,9 @@ describe("HeavyQueueGroup", () => {
     await expect.element(screen.getByText(/^1st/)).toBeVisible();
     await expect.element(screen.getByText(/^2nd/)).toBeVisible();
     await expect
-      .element(screen.getByText(/waiting for room: needs ~4.0 GB, 1.2 GB free · Moved by the user/))
+      .element(
+        screen.getByText(/needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare · Moved by the user/),
+      )
       .toBeVisible();
     await expect.element(screen.getByText("1 of 3 running")).toBeVisible();
     expect(screen.container.querySelectorAll('[data-testid="favicon"]')).toHaveLength(3);
@@ -179,6 +182,8 @@ describe("HeavyQueueGroup", () => {
           cpuCount: 8,
           availableMemoryBytes: 8 * 1024 ** 3,
           totalMemoryBytes: 16 * 1024 ** 3,
+          pressureLevel: null,
+          swapInBytesPerSecond: null,
         },
       },
     );

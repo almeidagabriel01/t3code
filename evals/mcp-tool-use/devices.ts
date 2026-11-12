@@ -850,6 +850,7 @@ export const makeDeviceTools = Effect.fn("evaluateMcpToolUse.makeDeviceTools")(f
               room: true,
               claudeHookInstalled: false,
               deviceIdleMinutes: 20,
+              hold: null,
             }),
           }),
           Layer.mock(DecisionService.DecisionService)({}),

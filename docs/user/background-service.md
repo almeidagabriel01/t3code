@@ -62,9 +62,10 @@ commands (tests, builds, type checks, `git commit` with its hooks, simulators)
 go through the queue on their own, even when the agent forgets. Open the **Resource Manager** in the status bar to
 see each job with a short name (agents give one with `--name`; otherwise T3
 derives it from the command, which shows below it) and its project, the thread that queued it, how long it has run
-or waited, and why a waiting job has not started ("waiting for room: needs
-~4 GB, 1.2 GB free", "letting the last one ramp up", "paused"). On mobile it is
-under Settings → Maintenance.
+or waited, and why a waiting job has not started ("memory pressure high",
+"swapping 40 MB/s", "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare",
+"paused"); the summary line says the same beside the CPU and free memory it
+read. On mobile it is under Settings → Maintenance.
 
 To see only one project's jobs, open **Heavy work** from a thread's right panel
 (on mobile, **Project → Heavy work** in the thread menu). Waiting jobs keep their

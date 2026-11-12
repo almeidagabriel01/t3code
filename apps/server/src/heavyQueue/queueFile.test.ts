@@ -386,7 +386,7 @@ describe("heavy queue file", () => {
     expect(Queue.tryStart(dir, "c", now + 40_000)).toMatchObject({
       status: "waiting",
       position: 1,
-      reason: "all 2 slots are busy",
+      reason: "all 2 slots busy",
     });
     expect(Queue.readPlan(dir, now + 40_000).plan.room).toBe(true);
   });
@@ -464,7 +464,7 @@ describe("heavy queue file", () => {
     at(8_000, 1);
     expect(Queue.tryStart(dir, "b", now + 8_000)).toMatchObject({
       status: "waiting",
-      reason: "waiting for steady headroom",
+      reason: "making sure the room lasts",
     });
     at(10_000, 1);
     at(12_000, 1);

@@ -290,7 +290,29 @@ describe("HeavyQueue", () => {
           { at: 2, busyCores: 8, cpuCount: 8, availableMemoryBytes: 5, totalMemoryBytes: 10 },
           {},
         );
-        expect(yield* queue.state).toMatchObject({ room: false, machine: { busyCores: 8 } });
+        // Nothing is held back (the head may start), yet the summary must not claim room.
+        expect(yield* queue.state).toMatchObject({
+          room: false,
+          hold: "cpu",
+          machine: { busyCores: 8, pressureLevel: null },
+        });
+        Queue.recordSample(
+          dir,
+          {
+            at: 3,
+            busyCores: 1,
+            cpuCount: 8,
+            availableMemoryBytes: 5,
+            totalMemoryBytes: 10,
+            pressureLevel: 2,
+            swapInBytesPerSecond: 40,
+          },
+          {},
+        );
+        expect(yield* queue.state).toMatchObject({
+          hold: "pressure",
+          machine: { pressureLevel: 2, swapInBytesPerSecond: 40 },
+        });
       }),
     ),
   );
