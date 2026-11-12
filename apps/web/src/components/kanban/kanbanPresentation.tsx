@@ -8,9 +8,6 @@ import {
   BrushCleaningIcon,
   BugIcon,
   CircleAlertIcon,
-  SignalHighIcon,
-  SignalLowIcon,
-  SignalMediumIcon,
   LightbulbIcon,
   TagIcon,
   WrenchIcon,
@@ -34,23 +31,44 @@ export function ColorDot({ color }: { readonly color: string }) {
 
 export const PRIORITY_LABELS = KANBAN_PRIORITY_LABELS;
 
+const PRIORITY_LEVEL: Record<Exclude<KanbanPriority, "none" | "urgent">, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
 export function PriorityIcon({ priority }: { readonly priority: KanbanPriority }) {
   if (priority === "none") return null;
-  const Icon =
-    priority === "urgent"
-      ? CircleAlertIcon
-      : priority === "high"
-        ? SignalHighIcon
-        : priority === "medium"
-          ? SignalMediumIcon
-          : SignalLowIcon;
+  if (priority === "urgent") {
+    return (
+      <CircleAlertIcon
+        aria-label={PRIORITY_LABELS[priority]}
+        className="size-3.5 text-destructive"
+      />
+    );
+  }
+  const level = PRIORITY_LEVEL[priority];
+  // All three bars always draw, so a low priority reads as a signal and not as a stray mark.
   return (
-    <Icon
+    <svg
+      role="img"
       aria-label={PRIORITY_LABELS[priority]}
-      className={
-        priority === "urgent" ? "size-3.5 text-destructive" : "size-3.5 text-muted-foreground"
-      }
-    />
+      viewBox="0 0 14 14"
+      className="size-3.5 text-muted-foreground"
+      fill="currentColor"
+    >
+      {[0, 1, 2].map((bar) => (
+        <rect
+          key={bar}
+          x={1.5 + bar * 4}
+          y={9 - bar * 3}
+          width={3}
+          height={3 + bar * 3}
+          rx={0.75}
+          opacity={bar < level ? 1 : 0.28}
+        />
+      ))}
+    </svg>
   );
 }
 
