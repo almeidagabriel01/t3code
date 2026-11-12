@@ -319,11 +319,12 @@ export const HeavyQueueSetRuleInput = Schema.Struct({
 export type HeavyQueueSetRuleInput = typeof HeavyQueueSetRuleInput.Type;
 
 /**
- * A heavy command running now: a started queue entry, or a process tree an agent or terminal runs
- * directly. Cores and bytes sum its process tree.
+ * A heavy command running now: a started queue entry, a process tree an agent or terminal runs
+ * directly, or a detached one nothing in T3 started (a script's playwright). Cores and bytes sum
+ * its process tree.
  */
 export const HeavyCommand = Schema.Struct({
-  source: Schema.Literals(["queue", "agent", "terminal"]),
+  source: Schema.Literals(["queue", "agent", "terminal", "detached"]),
   /** The queue entry, for queue rows; Stop goes through the queue's cancel. */
   entryId: Schema.optionalKey(Schema.String),
   pid: Schema.Int,
@@ -342,6 +343,8 @@ export const HeavyCommand = Schema.Struct({
   /** Highest tree total seen so far. */
   peakCpu: Schema.optionalKey(Schema.Number),
   peakMemory: Schema.optionalKey(Schema.Number),
+  /** Why the queue does not manage it, shown under the row. */
+  reason: Schema.optionalKey(Schema.String),
 });
 export type HeavyCommand = typeof HeavyCommand.Type;
 

@@ -163,6 +163,7 @@ export const HEAVY_COMMAND_SOURCE_LABEL: Record<HeavyCommand["source"], string> 
   queue: "Queued",
   agent: "Agent",
   terminal: "Terminal",
+  detached: "Outside agents",
 };
 
 /** Stable across samples: the queue entry, else the root process's identity. */
