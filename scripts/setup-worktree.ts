@@ -3,6 +3,8 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { resolveSetupProjectRoot } from "./lib/setup-project-root.ts";
+
 const ENV_FILES = [".env", NodePath.join("infra", "relay", ".env")];
 
 const worktree = NodePath.dirname(import.meta.dirname);
@@ -41,15 +43,12 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   });
 }
 
-const projectRoot = process.env.T3CODE_PROJECT_ROOT;
-if (!projectRoot) {
-  throw new Error("T3CODE_PROJECT_ROOT is not set. Run this through the t3.json setup action.");
-}
+const projectRoot = resolveSetupProjectRoot(worktree, process.env);
 
-// Use the shell for Windows vp shims. Unattended installs need pnpm's confirmation
-// flag and closed stdin so other prompts fail. A stale lockfile must fail, not be rewritten.
+// Use the shell for Windows vp shims. Closed stdin makes any install prompt fail instead of
+// hang; pnpm 12 has no `--yes` and rejects it. A stale lockfile must fail, not be rewritten.
 // Pipe output so the failure marker can keep its tail.
-const install = NodeChildProcess.spawn("vp i --frozen-lockfile -- --yes", {
+const install = NodeChildProcess.spawn("vp i --frozen-lockfile", {
   cwd: worktree,
   shell: true,
   stdio: ["ignore", "pipe", "pipe"],
