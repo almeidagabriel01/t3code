@@ -4,7 +4,7 @@
  */
 import type { HeavyQueueEntry } from "@t3tools/contracts";
 
-import { heavySegment } from "./heavyHook.ts";
+import { heavyRoute, heavySegment } from "./heavyHook.ts";
 
 export interface Sample {
   readonly at: number;
@@ -155,7 +155,7 @@ export const plan = (input: PlanInput): Plan => {
   const running = entries.filter((entry) => entry.startedAt !== null);
   const waiting = entries.filter((entry) => entry.startedAt === null);
   const head = waiting[0];
-  if (head === undefined || !input.enabled) {
+  if (head === undefined || heavyRoute(input) === "direct") {
     return { admit: head?.id ?? null, reasons: {}, room: true, holding: false };
   }
 
