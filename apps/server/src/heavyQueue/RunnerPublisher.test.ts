@@ -12,6 +12,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -124,5 +125,45 @@ describe("the publisher layer", () => {
         expect(doc.runner?.projects.map((project) => project.root)).toEqual(["/w/app"]);
         expect(doc.linux).toMatchObject({ online: true, load1: 1 });
       }),
+  );
+
+  it.effect("checks Linux at once when a change turns the Runner on or moves its host", () =>
+    Effect.gen(function* () {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-pub-"));
+      let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
+      const changes = yield* Queue.unbounded<ServerSettings>();
+      const checked = yield* Queue.unbounded<string>();
+      const check = async (machine: { readonly runnerHost: string }): Promise<HealthCheck> => {
+        Queue.offerUnsafe(checked, machine.runnerHost);
+        return {
+          ok: true,
+          reading: { load1: 1, cpuCount: 6, totalMemoryBytes: 8, availableMemoryBytes: 4 },
+        };
+      };
+      const change = (next: ServerSettings) => {
+        settings = next;
+        return Queue.offer(changes, next);
+      };
+      const services = Layer.mergeAll(
+        Layer.succeed(ServerSettingsService, {
+          getSettings: Effect.sync(() => settings),
+          streamChanges: Stream.fromQueue(changes),
+        } as unknown as ServerSettingsService["Service"]),
+        Layer.succeed(ProjectStoreV2, {
+          list: () => Effect.succeed([]),
+        } as unknown as ProjectStoreV2["Service"]),
+        Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
+      );
+      yield* Effect.gen(function* () {
+        yield* Layer.build(layer(dir, check).pipe(Layer.provide(services)));
+        yield* change({ ...settings, runnerEnabled: true });
+        expect(yield* Queue.take(checked)).toBe(RUNNER_DEFAULTS.runnerHost);
+        yield* change({ ...settings, runnerHost: "pc" });
+        // The first tick may also check the old host; the clock never moves, so "pc" comes from the change.
+        let host = yield* Queue.take(checked);
+        while (host !== "pc") host = yield* Queue.take(checked);
+        expect(host).toBe("pc");
+      }).pipe(Effect.scoped);
+    }),
   );
 });

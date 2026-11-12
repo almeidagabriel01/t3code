@@ -91,25 +91,36 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
         Effect.flatMap(publish),
         Effect.ignore({ log: true }),
       );
-      yield* settingsService.streamChanges.pipe(
-        Stream.runForEach((settings) => publish(settings).pipe(Effect.ignore({ log: true }))),
-        Effect.forkScoped,
-      );
-
-      // Projects come and go without a settings change; re-resolve on every heartbeat tick.
-      const tick = Effect.gen(function* () {
-        yield* settingsService.getSettings.pipe(
-          Effect.flatMap(publish),
-          Effect.ignore({ log: true }),
-        );
+      // The host last checked; null while the Runner is off, so turning it on checks at once.
+      let checkedHost: string | null = null;
+      const checkHealth = Effect.fn("RunnerPublisher.checkHealth")(function* (always: boolean) {
         const block = current;
-        if (block === null || !owner || !runnerOnAnywhere(block)) return;
+        if (block === null || !owner || !runnerOnAnywhere(block)) {
+          checkedHost = null;
+          return;
+        }
+        if (!always && checkedHost === block.machine.runnerHost) return;
+        checkedHost = block.machine.runnerHost;
         const reading = yield* Effect.promise(() => check(block.machine, process.env));
         yield* Effect.try({
           try: () => QueueFile.recordHealth(dir, reading),
           catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
         }).pipe(Effect.ignore);
       });
+
+      yield* settingsService.streamChanges.pipe(
+        Stream.runForEach((settings) =>
+          publish(settings).pipe(Effect.andThen(checkHealth(false)), Effect.ignore({ log: true })),
+        ),
+        Effect.forkScoped,
+      );
+
+      // Projects come and go without a settings change; re-resolve on every heartbeat tick.
+      const tick = settingsService.getSettings.pipe(
+        Effect.flatMap(publish),
+        Effect.ignore({ log: true }),
+        Effect.andThen(checkHealth(true)),
+      );
       yield* tick.pipe(
         Effect.andThen(
           Effect.suspend(() =>
