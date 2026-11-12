@@ -42,6 +42,7 @@ export type T3McpToolSummaryAction =
   | "question-respond"
   | "secret-request"
   | "worktree-handoff"
+  | "worktree-finish"
   | "worktree-list"
   | "worktree-status"
   | "project-list"
@@ -196,6 +197,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "worktree-handoff",
   ),
   t3_worktree_status: tool(["Get", "Getting", "Got", "thread worktree status"], "worktree-status"),
+  t3_worktree_finish: tool(
+    ["Finish", "Finishing", "Finished", "with a git worktree"],
+    "worktree-finish",
+  ),
   preview_status: tool(["Get", "Getting", "Got", "preview browser status"], "browser", "browser"),
   preview_open: tool(
     ["Open", "Opening", "Opened", "a page in the preview browser"],
