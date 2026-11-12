@@ -60,16 +60,11 @@ const PREFIXES = new Set([
 
 const base = (word: string) => word.split("/").pop() ?? word;
 const isAssignment = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
-/** Run here around the remote part: `time vp test` times the whole Linux run. */
-const LOCAL_PREFIXES = new Set([
-  "time",
-  "nice",
-  "command",
-  "exec",
-  "caffeinate",
-  "nohup",
-  "timeout",
-]);
+/**
+ * Run here around the remote part: `time vp test` times the whole Linux run. Each must stay in
+ * the job's process group, so a part Linux never ran can end the line (`timeout` does not).
+ */
+const LOCAL_PREFIXES = new Set(["time", "nice", "command", "exec", "caffeinate", "nohup"]);
 
 /** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */
 const programAt = (values: ReadonlyArray<string>, from = 0, local = false) => {

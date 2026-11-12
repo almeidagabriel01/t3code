@@ -330,9 +330,12 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
     });
 
-    it("stops the line where Linux is unavailable and reruns it on the Mac by policy", async () => {
+    it.each([
+      ["vp test run; echo after"],
+      // `timeout` runs its command in a process group of its own.
+      ["timeout 30 vp test run; echo after"],
+    ])("stops %j where Linux is unavailable and reruns it on the Mac by policy", async (line) => {
       const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
-      const line = "vp test run; echo after";
       const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run\nafter\n");
@@ -632,7 +635,6 @@ describe("t3 heavy", () => {
       ["vp test run 2>&1 | tail -20", "linux", "X vp test run 2>&1 | tail -20"],
       ["vp run lint; vp test run", "linux", "X vp run lint; X vp test run"],
       ["vp test run && git push", "linux", "X vp test run && git push"],
-      ["vp test run &", "linux", "X vp test run &"],
       [
         'grep -v "t3 heavy" log.txt && vp test run',
         "linux",
@@ -652,7 +654,8 @@ describe("t3 heavy", () => {
         'X env NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
       ],
       ["time vp test run", "linux", "time X vp test run"],
-      ["timeout 110 vp test run", "linux", "timeout 110 X vp test run"],
+      ["vp test run < /dev/null", "linux", "X vp test run < /dev/null"],
+      ["timeout 110 vp test run", "linux", "X timeout 110 vp test run"],
       // Wrappers run there as written.
       ["npx vitest run", "linux", "X npx vitest run"],
       ["pnpm exec playwright test", "linux", "X pnpm exec playwright test"],
@@ -681,6 +684,7 @@ describe("t3 heavy", () => {
       ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
       ["vp test run <<EOF\nx\nEOF", "Reads its input from this Mac: vp test run"],
       ["echo a | vp test run", "Reads its input from this Mac: vp test run"],
+      ["vp test run a & vp test run b & wait", "Runs in the background: vp test run"],
       ["eval vp test run", "Couldn't read this command safely (eval)"],
       ["vp test run 'unbalanced", "Couldn't read this command safely (unbalanced quotes)"],
       ["vp test run <<EOF\nnever ends", "Couldn't read this command safely (unterminated heredoc)"],

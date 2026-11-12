@@ -22,7 +22,7 @@ import {
   type Sustained,
 } from "./admission.ts";
 import { nameOf, readLine, workParts, type Part } from "./heavyHook.ts";
-import type { Word } from "./shellLine.ts";
+import type { Redirect, Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerEnabled: RUNNER_DEFAULTS.runnerEnabled,
@@ -200,8 +200,13 @@ const tieOf = (
   // Its own redirects and pipes would run there too.
   if (part.nested !== null) return "Couldn't read this command safely (nested shell)";
   const { command } = part;
-  // `remoto` gives the command no input there.
-  if (command.piped || command.redirects.some((redirect) => redirect.op.includes("<"))) {
+  // The job's one slot, Stop and requeue follow a single run at a time.
+  if (command.next === "&") return `Runs in the background: ${nameOf(text)}`;
+  // `remoto` gives the command no input there, which is all `< /dev/null` asks for.
+  const reads = (redirect: Redirect) =>
+    redirect.op.includes("<") &&
+    !(redirect.op.endsWith("<") && redirect.target?.value === "/dev/null");
+  if (command.piped || command.redirects.some(reads)) {
     return `Reads its input from this Mac: ${nameOf(text)}`;
   }
   if (cwd === null) return null;

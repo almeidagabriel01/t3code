@@ -189,7 +189,9 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
 
   it("`t3 heavy` reruns a dropped job on this Mac only after Linux confirms it stopped", async () => {
     const cwd = project();
-    const child = heavy(cwd, queueWith({ runnerDropped: "mac" }), "sleep 20; uname >> ran.txt");
+    // Only work goes to Linux; a bare `sleep` would run here.
+    NodeFS.writeFileSync(NodePath.join(cwd, "job.sh"), "sleep 20; uname >> ran.txt\n");
+    const child = heavy(cwd, queueWith({ runnerDropped: "mac" }), "sh job.sh");
     const result = finished(child);
     await new Promise<void>((resolve) =>
       child.stderr!.on("data", (chunk) => {
