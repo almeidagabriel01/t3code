@@ -220,6 +220,46 @@ describe("buildResourceTelemetryHistory", () => {
     expect(child?.ioWriteBytes).toBe(4_000);
   });
 
+  it("leaves a simulator outside T3 out of the T3 history", () => {
+    const withSimulator = (sequence: number, atMs: number, writeBytes: number) => {
+      const base = snapshot(sequence, atMs, 0, writeBytes);
+      const simulator = processSample({
+        pid: 700,
+        ppid: 1,
+        startTimeMs: 70,
+        name: "launchd_sim",
+        residentBytes: 1_000_000,
+        ioWriteBytes: writeBytes * 10,
+      });
+      return { ...base, processes: [...base.processes, simulator] };
+    };
+    const history = buildResourceTelemetryHistory({
+      readAt: DateTime.makeUnsafe(STARTED_AT_MS + 2_000),
+      windowMs: 5_000,
+      bucketMs: 5_000,
+      sampleIntervalMs: 1_000,
+      serverPid: SERVER_PID,
+      sidecarPid: Option.none(),
+      desktopSnapshot: Option.none(),
+      snapshots: [
+        {
+          ...withSimulator(1, STARTED_AT_MS, 0),
+          externalProcesses: [{ pid: 700, startTimeMs: 70 }],
+        },
+        {
+          ...withSimulator(2, STARTED_AT_MS + 1_000, 500),
+          externalProcesses: [{ pid: 700, startTimeMs: 70 }],
+        },
+      ],
+      health,
+    });
+
+    expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(500);
+    expect(Math.max(...history.buckets.map((bucket) => bucket.maxRssBytes))).toBeLessThan(
+      1_000_000,
+    );
+  });
+
   it("uses the preceding sample as a baseline without attributing pre-window deltas", () => {
     const readAtMs = STARTED_AT_MS + 10_000;
     const history = buildResourceTelemetryHistory({
