@@ -68,7 +68,10 @@ export const deviceReserve = (
       0,
     );
 
-const NO_FOOTPRINTS = { jobs: {}, byPid: new Map() } as const;
+const NO_FOOTPRINTS: {
+  readonly jobs: Readonly<Record<string, number>>;
+  readonly byPid: ReadonlyMap<number, number>;
+} = { jobs: {}, byPid: new Map() };
 
 /**
  * macOS physical footprint of each running `t3 heavy` job's tree (`jobs`, by entry) and of each
