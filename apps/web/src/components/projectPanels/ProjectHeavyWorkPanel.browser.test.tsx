@@ -118,6 +118,7 @@ it("shows only this project's commands and jobs, worktree jobs by their thread, 
   await expect.element(screen.getByText("pnpm worktree")).toBeVisible();
   await expect.element(screen.getByText("pnpm build")).toBeVisible();
   expect(screen.getByText("pnpm other").elements()).toHaveLength(0);
+  expect(screen.getByText("App", { exact: true }).elements()).toHaveLength(0);
   await expect.element(screen.getByText(/^2nd/)).toBeVisible();
   await expect.element(screen.getByText(/^Whole queue: /)).toBeVisible();
   expect(

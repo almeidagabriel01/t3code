@@ -221,6 +221,7 @@ function Row({
   threadTitle,
   projectIdOfThread,
   onOpenThread,
+  scopeProjectId,
 }: {
   readonly entry: HeavyQueueEntry;
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
@@ -230,6 +231,7 @@ function Row({
   readonly threadTitle: (threadId: string) => string | undefined;
   readonly projectIdOfThread: (threadId: string) => string | undefined;
   readonly onOpenThread: (threadId: string) => void;
+  readonly scopeProjectId?: string | undefined;
 }) {
   const running = position === null;
   const projects = useProjects();
@@ -283,12 +285,17 @@ function Row({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-3xs text-muted-foreground">
-          {project === undefined ? null : (
-            <ProjectFavicon project={project} className="size-3.5 shrink-0" />
+          {/* A project-scoped list already names the project. */}
+          {project !== undefined && project.id === scopeProjectId ? null : (
+            <>
+              {project === undefined ? null : (
+                <ProjectFavicon project={project} className="size-3.5 shrink-0" />
+              )}
+              <span className="truncate">
+                {project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean)}
+              </span>
+            </>
           )}
-          <span className="truncate">
-            {project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean)}
-          </span>
           {rule === undefined ? null : (
             <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
               {PRIORITY_LABEL[rule.priority]}
@@ -467,6 +474,7 @@ export function HeavyQueueBody({
               threadTitle={threadTitle}
               projectIdOfThread={projectIdOfThread}
               onOpenThread={onOpenThread}
+              scopeProjectId={projectId}
             />
           ))}
         </SortableContext>

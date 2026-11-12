@@ -97,6 +97,7 @@ export function ProjectHeavyWorkPanel(props: {
                 commands={running}
                 cpuCount={cpuCount}
                 threads={threads}
+                scopeProjectId={projectId}
               />
             </Section>
           )}

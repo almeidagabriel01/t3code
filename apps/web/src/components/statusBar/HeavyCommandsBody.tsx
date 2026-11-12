@@ -33,11 +33,13 @@ function Row({
   cpuCount,
   threads,
   stop,
+  scopeProjectId,
 }: {
   readonly command: HeavyCommand;
   readonly cpuCount: number;
   readonly threads: HeavyCommandThreads;
   readonly stop: ReturnType<typeof useStopHeavyCommand>;
+  readonly scopeProjectId: string | undefined;
 }) {
   const projects = useProjects();
   const project = projectForCommand(command, projects, threads.projectIdOfThread);
@@ -68,10 +70,17 @@ function Row({
           </TooltipPopup>
         </Tooltip>
         <div className="flex min-w-0 items-center gap-1 text-3xs text-muted-foreground">
-          {project === undefined ? null : (
-            <ProjectFavicon project={project} className="size-3 shrink-0" />
+          {/* A project-scoped list already names the project. */}
+          {project !== undefined && project.id === scopeProjectId ? null : (
+            <>
+              {project === undefined ? null : (
+                <ProjectFavicon project={project} className="size-3 shrink-0" />
+              )}
+              <span className="max-w-[40%] shrink-0 truncate">
+                {project?.title ?? "No project"}
+              </span>
+            </>
           )}
-          <span className="max-w-[40%] shrink-0 truncate">{project?.title ?? "No project"}</span>
           <span className="shrink-0 rounded-sm bg-foreground/8 px-1">
             {HEAVY_COMMAND_SOURCE_LABEL[command.source]}
           </span>
@@ -124,11 +133,13 @@ export function HeavyCommandRows({
   commands,
   cpuCount,
   threads,
+  scopeProjectId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly commands: ReadonlyArray<HeavyCommand>;
   readonly cpuCount: number;
   readonly threads: HeavyCommandThreads;
+  readonly scopeProjectId?: string | undefined;
 }) {
   const stop = useStopHeavyCommand(environmentId);
   return (
@@ -140,6 +151,7 @@ export function HeavyCommandRows({
           cpuCount={cpuCount}
           threads={threads}
           stop={stop}
+          scopeProjectId={scopeProjectId}
         />
       ))}
     </div>
