@@ -76,7 +76,14 @@ export const makeGuardedFetch =
       const response = await send(url, { ...init, redirect: "manual" });
       const location = response.headers.get("location");
       // The SDK follows its own same-origin redirects and asks for "manual"; give it the 3xx.
-      if (init?.redirect === "manual" || response.status < 300 || response.status >= 400) {
+      // A POST carries codes, tokens or a client secret, so it is never re-sent elsewhere.
+      const method = init?.method?.toUpperCase() ?? "GET";
+      if (
+        init?.redirect === "manual" ||
+        (method !== "GET" && method !== "HEAD") ||
+        response.status < 300 ||
+        response.status >= 400
+      ) {
         return response;
       }
       if (location === null || hop >= MAX_REDIRECTS) return response;

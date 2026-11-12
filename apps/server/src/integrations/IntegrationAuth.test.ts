@@ -300,6 +300,11 @@ it.effect("connects through discovery, registration and PKCE, and stores the tok
         integration: { catalogId: "linear", auth: "oauth", availability: "assistants" },
       });
       expect(yield* env.auth.accessToken("linear")).toBe("at-1");
+
+      yield* TestClock.adjust(600_001);
+      const [after] = (yield* env.auth.state).integrations;
+      expect(after).toMatchObject({ name: "linear", status: "connected" });
+      expect(after?.lastError).toBeUndefined();
     }),
   ),
 );

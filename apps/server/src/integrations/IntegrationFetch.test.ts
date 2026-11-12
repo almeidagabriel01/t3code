@@ -77,7 +77,7 @@ describe("makeGuardedFetch", () => {
     }
   });
 
-  it("hands a redirect back when the caller follows its own, and stops a loop", async () => {
+  it("hands a redirect back when the caller follows its own or posts, and stops a loop", async () => {
     const manual = recording(() => redirectTo("https://private.test/x"));
     const response = await manual.fetch("https://public.test/x", { redirect: "manual" });
     expect(response.status).toBe(302);
@@ -86,6 +86,14 @@ describe("makeGuardedFetch", () => {
     const loop = recording(() => redirectTo("/again"));
     expect((await loop.fetch("https://public.test/x")).status).toBe(302);
     expect(loop.sent).toHaveLength(6);
+
+    const post = recording(() => redirectTo("https://public.test/elsewhere"));
+    const posted = await post.fetch("https://public.test/token", {
+      method: "POST",
+      body: "code=c",
+    });
+    expect(posted.status).toBe(302);
+    expect(post.sent).toHaveLength(1);
 
     const nowhere = recording(() => new Response(null, { status: 302 }));
     expect((await nowhere.fetch("https://public.test/x")).status).toBe(302);
