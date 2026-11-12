@@ -112,6 +112,7 @@ import {
   SettingsScheduledTaskNewRouteScreen,
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
+import { ProjectScheduledTasksRouteScreen } from "./features/settings/ProjectScheduledTasksRouteScreen";
 import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
@@ -128,6 +129,7 @@ import {
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { KanbanBoardRouteScreen } from "./features/kanban/KanbanBoardRouteScreen";
+import { ProjectKanbanRouteScreen } from "./features/kanban/ProjectKanbanRouteScreen";
 import { KanbanCardRouteScreen } from "./features/kanban/KanbanCardRouteScreen";
 import { KanbanArchiveRouteScreen } from "./features/kanban/KanbanArchiveRouteScreen";
 import { KanbanLinkCardRouteScreen } from "./features/kanban/KanbanLinkCardRouteScreen";
@@ -453,6 +455,14 @@ const SETTINGS_SCREENS = {
     screen: KanbanBoardRouteScreen,
     linking: "settings/kanban",
     options: settingsPage("Board"),
+  }),
+  SettingsProjectKanban: createNativeStackScreen({
+    screen: ProjectKanbanRouteScreen,
+    options: settingsPage("Board"),
+  }),
+  SettingsProjectScheduledTasks: createNativeStackScreen({
+    screen: ProjectScheduledTasksRouteScreen,
+    options: settingsPage("Scheduled tasks"),
   }),
   SettingsKanbanCard: createNativeStackScreen({
     screen: KanbanCardRouteScreen,

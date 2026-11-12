@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
@@ -22,6 +23,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
 import { whenRootNavigationReady, rootNavigationRef } from "../../lib/rootNavigation";
+import { openProjectPanel } from "./projectPanels";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantWork } from "../assistants/assistantWorkTarget";
@@ -36,7 +38,6 @@ import { copyThreadMenuReference } from "./copyThreadMenuReference";
 import {
   buildSnoozePresetActions,
   buildThreadMenuActions,
-  canOpenProjectViews,
   canOpenThreadNotes,
   menuActionsToAppBarItems,
   resolveThreadMenuKind,
@@ -100,6 +101,10 @@ export function useThreadMenu(
     presets: snoozePresetSettings,
   });
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
+  const threadProject = projects.find(
+    (project) => project.environmentId === environmentId && project.id === thread.projectId,
+  );
+  const projectPanels = threadProject !== undefined && hasProjectPanels(threadProject);
   const menuActions = buildThreadMenuActions({
     kind: resolveThreadMenuKind({ snoozed, settlementSupported, settled, snoozable }),
     newThreadOnBranchTitle: thread.branch ? getThreadListV2NewBranchMenuTitle(thread.branch) : null,
@@ -118,7 +123,9 @@ export function useThreadMenu(
       linkedCard === null && kanbanActions.canEdit && kanbanEnvironmentIds.includes(environmentId),
     restartSession: true,
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
-    projectViews: !assistantEntry && canOpenProjectViews(thread, projects),
+    board: projectPanels && kanbanEnvironmentIds.includes(environmentId),
+    scheduledTasks: projectPanels,
+    projectViews: projectPanels,
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
     assistantTask: assistantTaskMenuState(assistantTask, thread),
@@ -174,6 +181,8 @@ export function useThreadMenu(
               project: thread.projectId,
             }),
           ),
+        openBoard: () => openProjectPanel("SettingsProjectKanban", thread),
+        openScheduledTasks: () => openProjectPanel("SettingsProjectScheduledTasks", thread),
         openProjectView: (view) =>
           whenRootNavigationReady(() =>
             rootNavigationRef.navigate("ThreadProjectView", {

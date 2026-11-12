@@ -183,6 +183,39 @@ describe("useThreadMenu Project views", () => {
   });
 });
 
+describe("useThreadMenu project board and scheduled tasks", () => {
+  const item = (id: string) => seen.mock.lastCall?.[0]?.find((entry) => entry.id === id);
+
+  it("opens each over the thread, on the thread's project", async () => {
+    mocks.kanbanEnvironmentIds = ["env"];
+    mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha" }];
+    await mount();
+    act(() => (item("board") as { onPress: () => void }).onPress());
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsProjectKanban", {
+      environmentId: "env",
+      projectId: "p1",
+    });
+    act(() => (item("scheduled-tasks") as { onPress: () => void }).onPress());
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectScheduledTasks", {
+      environmentId: "env",
+      projectId: "p1",
+    });
+  });
+
+  it.each([
+    { name: "an environment without boards", envs: [], role: undefined, board: false, tasks: true },
+    { name: "the assistants' home", envs: ["env"], role: "assistants", board: false, tasks: false },
+    { name: "a thread in no project", envs: ["env"], role: "scratch", board: true, tasks: true },
+  ])("offers the right items for $name", async ({ envs, role, board, tasks }) => {
+    mocks.kanbanEnvironmentIds = envs;
+    mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha", managedRole: role }];
+    await mount();
+    expect(item("board") !== undefined).toBe(board);
+    expect(item("scheduled-tasks") !== undefined).toBe(tasks);
+    expect(item("project-views") !== undefined).toBe(tasks);
+  });
+});
+
 describe("useThreadMenu Link to board card", () => {
   const linkCard = () => seen.mock.lastCall?.[0]?.find((item) => item.id === "link-card");
 

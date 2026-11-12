@@ -33,6 +33,8 @@ const reactTests = [
   "src/features/threads/sendToMainChat.test.tsx",
   "src/features/connection/ConnectionEnvironmentRow.test.tsx",
   "src/features/kanban/KanbanBoardRouteScreen.test.tsx",
+  "src/features/kanban/ProjectKanbanRouteScreen.test.tsx",
+  "src/features/settings/ProjectScheduledTasksRouteScreen.test.tsx",
   "src/features/kanban/KanbanCardMenu.test.tsx",
   "src/features/kanban/ThreadKanbanCardControls.test.tsx",
   "src/features/kanban/KanbanCardAttachments.test.tsx",

@@ -161,7 +161,9 @@ function SurfaceIcon({
     case "notes":
     case "activity":
     case "memory":
-    case "heavy-work": {
+    case "heavy-work":
+    case "kanban":
+    case "scheduled-tasks": {
       const Icon = RIGHT_PANEL_TOOLS[surface.kind].icon;
       return <Icon className="size-3 shrink-0" />;
     }

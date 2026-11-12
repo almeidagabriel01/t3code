@@ -17,6 +17,8 @@ const everything = {
   "pull-requests": true,
   "pull-request": true,
   notes: true,
+  kanban: true,
+  "scheduled-tasks": true,
   activity: true,
   memory: true,
   "heavy-work": true,

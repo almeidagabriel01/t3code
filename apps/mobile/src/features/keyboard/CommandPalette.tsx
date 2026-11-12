@@ -8,6 +8,7 @@ import {
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
+import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
 import {
   isListedThreadLineage,
   isSideChatThread,
@@ -56,7 +57,8 @@ import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/as
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
-import { useHasKanbanEnvironments } from "../../state/kanban";
+import { useHasKanbanEnvironments, useKanbanEnvironmentIds } from "../../state/kanban";
+import { openProjectPanel } from "../threads/projectPanels";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
 import { useDeviceEnvironmentIds } from "../../state/device";
@@ -244,6 +246,7 @@ export function CommandPalette(props: {
   const runCommand = props.onCommand;
   const projects = useProjects();
   const hasBoards = useHasKanbanEnvironments();
+  const kanbanEnvironmentIds = useKanbanEnvironmentIds();
   const hasNotes = useHasNotesEnvironments();
   const hasMemory = useHasMemoryEnvironments();
   const hasImessage = useImessageEnvironmentIds().length > 0;
@@ -557,6 +560,24 @@ export function CommandPalette(props: {
           }),
       });
     }
+    if (activeThread && activeProject && hasProjectPanels(activeProject)) {
+      if (kanbanEnvironmentIds.includes(activeProject.environmentId)) {
+        actions.push({
+          key: "projectBoard",
+          kind: "action",
+          title: `Board for ${activeProject.title}`,
+          searchTerms: ["kanban", "cards", "project", "tasks"],
+          run: () => openProjectPanel("SettingsProjectKanban", activeThread),
+        });
+      }
+      actions.push({
+        key: "projectScheduledTasks",
+        kind: "action",
+        title: `Scheduled tasks in ${activeProject.title}`,
+        searchTerms: ["agenda", "automations", "routines", "calendar", "project"],
+        run: () => openProjectPanel("SettingsProjectScheduledTasks", activeThread),
+      });
+    }
     if (activeThreadRef) {
       const threadActions = [
         ["files", "Go to file", ["open", "files", "browse", "search"]],
@@ -644,6 +665,7 @@ export function CommandPalette(props: {
     activeThreadRef,
     environments.length,
     hasBoards,
+    kanbanEnvironmentIds,
     hasNotes,
     hasMemory,
     hasImessage,

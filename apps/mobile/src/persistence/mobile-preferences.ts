@@ -90,6 +90,45 @@ const ThreadProject = Schema.Struct({
 });
 const isThreadProject = Schema.is(ThreadProject);
 
+/** A thread's project board view: which board each project shows and which sections are folded. */
+export interface KanbanPanelPreferences {
+  /** Keyed by the project's board scope key. */
+  readonly scopes?: Readonly<Record<string, "project" | "no-project">>;
+  /** Board id, then column id. */
+  readonly collapsed?: Readonly<Record<string, Readonly<Record<string, boolean>>>>;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Keeps every valid entry, so one bad key never drops the rest. */
+function sanitizeKanbanPanel(value: unknown): KanbanPanelPreferences | undefined {
+  if (!isRecord(value)) return undefined;
+  const scopes = Object.fromEntries(
+    Object.entries(isRecord(value.scopes) ? value.scopes : {}).filter(
+      (entry): entry is [string, "project" | "no-project"] =>
+        entry[1] === "project" || entry[1] === "no-project",
+    ),
+  );
+  const collapsed = Object.fromEntries(
+    Object.entries(isRecord(value.collapsed) ? value.collapsed : {}).flatMap(([board, columns]) =>
+      isRecord(columns)
+        ? [
+            [
+              board,
+              Object.fromEntries(
+                Object.entries(columns).filter(
+                  (entry): entry is [string, boolean] => typeof entry[1] === "boolean",
+                ),
+              ),
+            ],
+          ]
+        : [],
+    ),
+  );
+  return { scopes, collapsed };
+}
+
 export interface Preferences {
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
@@ -141,6 +180,7 @@ export interface Preferences {
   readonly homeAssistantsCollapsed?: boolean;
   readonly homeAgentsDoneExpanded?: boolean;
   readonly homeAssistantsShowAll?: boolean;
+  readonly kanbanPanel?: KanbanPanelPreferences;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
@@ -232,6 +272,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     homeAssistantsCollapsed?: boolean;
     homeAgentsDoneExpanded?: boolean;
     homeAssistantsShowAll?: boolean;
+    kanbanPanel?: KanbanPanelPreferences;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
@@ -410,6 +451,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
   }
+  const kanbanPanel = sanitizeKanbanPanel(parsed.kanbanPanel);
+  if (kanbanPanel !== undefined) preferences.kanbanPanel = kanbanPanel;
   if (isThreadListFilters(parsed.threadListFilters)) {
     preferences.threadListFilters = parsed.threadListFilters;
   }

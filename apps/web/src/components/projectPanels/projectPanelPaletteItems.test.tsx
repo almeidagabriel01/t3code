@@ -8,13 +8,9 @@ vi.mock("../../rightPanelStore", () => ({ useRightPanelStore: { getState: () => 
 import { projectPanelPaletteItems } from "./projectPanelPaletteItems";
 
 describe("projectPanelPaletteItems", () => {
-  it("offers nothing without an open thread", () => {
-    expect(projectPanelPaletteItems(null)).toEqual([]);
-  });
-
   it("opens each project panel beside the open thread", async () => {
-    const thread = { environmentId: "env" as EnvironmentId, id: "t1" as ThreadId };
-    const items = projectPanelPaletteItems(thread);
+    const threadRef = scopeThreadRef("env" as EnvironmentId, "t1" as ThreadId);
+    const items = projectPanelPaletteItems(threadRef);
     expect(items.map((item) => item.title)).toEqual([
       "Show project activity in panel",
       "Show project memory in panel",
@@ -22,9 +18,9 @@ describe("projectPanelPaletteItems", () => {
     ]);
     for (const item of items) await item.run();
     expect(open.mock.calls).toEqual([
-      [scopeThreadRef(thread.environmentId, thread.id), "activity"],
-      [scopeThreadRef(thread.environmentId, thread.id), "memory"],
-      [scopeThreadRef(thread.environmentId, thread.id), "heavy-work"],
+      [threadRef, "activity"],
+      [threadRef, "memory"],
+      [threadRef, "heavy-work"],
     ]);
   });
 });

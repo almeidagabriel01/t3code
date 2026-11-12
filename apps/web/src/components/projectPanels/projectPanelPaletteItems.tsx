@@ -1,5 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useRightPanelStore } from "../../rightPanelStore";
 import type { RightPanelToolKind } from "../../rightPanelToolKinds";
@@ -16,11 +15,7 @@ const PROJECT_PANELS = [
 ] as const satisfies ReadonlyArray<{ kind: RightPanelToolKind; searchTerms: string[] }>;
 
 /** "Show project activity / memory / heavy work in panel" for the open thread. */
-export function projectPanelPaletteItems(
-  thread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null,
-): CommandPaletteActionItem[] {
-  if (thread === null) return [];
-  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+export function projectPanelPaletteItems(threadRef: ScopedThreadRef): CommandPaletteActionItem[] {
   return PROJECT_PANELS.map(({ kind, searchTerms }) => {
     const { label, icon: Icon } = RIGHT_PANEL_TOOLS[kind];
     return {

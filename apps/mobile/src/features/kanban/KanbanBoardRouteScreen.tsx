@@ -1,4 +1,4 @@
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   boardScopeKey,
   collectGlobalBoards,
@@ -206,10 +206,13 @@ function ColumnPage(props: {
   );
 }
 
-export function KanbanBoardRouteScreen() {
+/** `scope` opens on one project's board, as a thread's project board does. */
+export function KanbanBoardRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly scope?: string } | undefined>) {
   const states = useKanbanStates();
   const projects = useProjects();
-  const [scope, setScope] = useState(ALL_PROJECTS);
+  const [scope, setScope] = useState(route.params?.scope ?? ALL_PROJECTS);
   const [width, setWidth] = useState(0);
   const boards = useMemo(() => collectGlobalBoards(states), [states]);
   const serverConfigs = useServerConfigs();

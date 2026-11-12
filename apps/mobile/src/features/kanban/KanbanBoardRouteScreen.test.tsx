@@ -145,7 +145,12 @@ beforeEach(() => {
 });
 afterEach(() => act(() => root.unmount()));
 
-const mount = () => act(async () => root.render(<KanbanBoardRouteScreen />));
+const mount = (scope?: string) =>
+  act(async () =>
+    root.render(
+      <KanbanBoardRouteScreen route={{ params: scope ? { scope } : undefined } as never} />,
+    ),
+  );
 const press = (label: string, which: "first" | "last" = "first") =>
   act(async () => {
     const matches = [...host.querySelectorAll("button")].filter(
@@ -275,6 +280,12 @@ describe("KanbanBoardRouteScreen", () => {
     await mount();
     expect(host.textContent).toContain("New card");
     await press("Alpha");
+    expect(host.textContent).not.toContain("New card");
+  });
+
+  it("opens on the project a thread's board passes in", async () => {
+    withBoard();
+    await mount("env:p1");
     expect(host.textContent).not.toContain("New card");
   });
 

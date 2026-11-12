@@ -24,6 +24,11 @@ vi.mock("../pullRequest/PullRequestsUnavailableState", () => ({
 }));
 vi.mock("../pullRequest/ThreadPullRequestsPanel", () => ({ ThreadPullRequestsPanel: () => null }));
 vi.mock("../notes/NotesSurface", () => ({ NotesSurface: () => null }));
+vi.mock("../kanban/KanbanSurface", () => ({ KanbanSurface: () => null }));
+vi.mock("../scheduledTasks/ScheduledTasksSurface", () => ({ ScheduledTasksSurface: () => null }));
+vi.mock("../projectPanels/ProjectActivityPanel", () => ({ ProjectActivityPanel: () => null }));
+vi.mock("../projectPanels/ProjectMemoryPanel", () => ({ ProjectMemoryPanel: () => null }));
+vi.mock("../projectPanels/ProjectHeavyWorkPanel", () => ({ ProjectHeavyWorkPanel: () => null }));
 vi.mock("../../rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ navigateFolder: state.navigateFolder }) },
 }));

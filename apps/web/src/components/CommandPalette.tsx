@@ -94,6 +94,7 @@ import {
   ArrowRightLeftIcon,
   NotebookPenIcon,
   SquareKanbanIcon,
+  CalendarClockIcon,
   Columns2Icon,
   PanelRightCloseIcon,
 } from "lucide-react";
@@ -181,6 +182,7 @@ import {
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
+  hasProjectPanels,
   isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
@@ -508,7 +510,8 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
-  const kanbanSupported = useKanbanEnvironmentIds().length > 0;
+  const kanbanEnvironmentIds = useKanbanEnvironmentIds();
+  const kanbanSupported = kanbanEnvironmentIds.length > 0;
   const notesSupported = useNotesEnvironmentIds().length > 0;
   const openDecisionCount = useDecisionEntries().open.length;
   const notesItems = useNotesPaletteItems((to) => navigate(to));
@@ -1510,6 +1513,41 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const activeThreadProject =
+    activeThread === null
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === activeThread.environmentId &&
+            project.id === activeThread.projectId,
+        );
+  if (activeThread !== null && activeThreadProject && hasProjectPanels(activeThreadProject)) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    if (kanbanEnvironmentIds.includes(activeThread.environmentId)) {
+      actionItems.push({
+        kind: "action",
+        value: "action:open-kanban-panel",
+        searchTerms: ["kanban", "board", "cards", "panel", "tasks"],
+        title: "Show project board in panel",
+        icon: <SquareKanbanIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          useRightPanelStore.getState().open(threadRef, "kanban");
+        },
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:open-scheduled-tasks-panel",
+      searchTerms: ["scheduled tasks", "agenda", "automations", "routines", "panel", "calendar"],
+      title: "Show scheduled tasks in panel",
+      icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "scheduled-tasks");
+      },
+    });
+    actionItems.push(...projectPanelPaletteItems(threadRef));
+  }
+
   if (
     activeThread !== null &&
     threadPullRequestLinkMode(activeThreadServerConfig?.environment.capabilities) !== "unsupported"
@@ -1537,8 +1575,6 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
-
-  actionItems.push(...projectPanelPaletteItems(activeThread));
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);

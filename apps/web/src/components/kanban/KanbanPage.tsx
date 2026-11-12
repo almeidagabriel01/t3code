@@ -1,7 +1,7 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { selectKanbanBoardByProject, type KanbanState } from "@t3tools/client-runtime/state/kanban";
 import type { EnvironmentId, KanbanCard, ProjectId } from "@t3tools/contracts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { isElectron } from "../../env";
@@ -32,6 +32,7 @@ import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
 import { OptionSelect, PromptDialog } from "./kanbanDialogs";
 import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
+import { useEnsureKanbanBoard } from "./useKanbanBoardCommands";
 
 function Message(props: { readonly title: string; readonly description: string }) {
   return (
@@ -58,19 +59,9 @@ function ProjectBoard(props: {
   const canEdit = useKanbanCanEdit(environmentId);
   const actions = useKanbanActions(environmentId);
   const board = state === null ? undefined : selectKanbanBoardByProject(state, props.projectId);
-  const ensuring = useRef(false);
   const [filters, setFilters] = useState<GlobalFilters>(EMPTY_FILTERS);
   const [addingColumn, setAddingColumn] = useState(false);
-  const missing = state !== null && board === undefined;
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server creates a project's board the first time it is opened
-  useEffect(() => {
-    if (!missing || !canEdit || ensuring.current) return;
-    ensuring.current = true;
-    void actions.ensureBoard({ projectId: props.projectId }).finally(() => {
-      ensuring.current = false;
-    });
-  }, [missing, canEdit, actions, props.projectId]);
+  useEnsureKanbanBoard(environmentId, props.projectId, state !== null && board === undefined);
 
   const boards = board === undefined ? [] : [{ environmentId, board }];
   const showBoard = board !== undefined && props.view === "board";

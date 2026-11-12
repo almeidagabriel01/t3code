@@ -29,6 +29,8 @@ import { NotesSurface, type NotesSurfaceProps } from "../notes/NotesSurface";
 import { ProjectActivityPanel } from "../projectPanels/ProjectActivityPanel";
 import { ProjectHeavyWorkPanel } from "../projectPanels/ProjectHeavyWorkPanel";
 import { ProjectMemoryPanel } from "../projectPanels/ProjectMemoryPanel";
+import { KanbanSurface } from "../kanban/KanbanSurface";
+import { ScheduledTasksSurface } from "../scheduledTasks/ScheduledTasksSurface";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -202,6 +204,10 @@ export function RightPanelSurfaceContent(props: {
       return props.project ? <ProjectMemoryPanel {...props.project} /> : null;
     case "heavy-work":
       return props.project ? <ProjectHeavyWorkPanel {...props.project} visible={visible} /> : null;
+    case "kanban":
+      return props.project ? <KanbanSurface {...props.project} /> : null;
+    case "scheduled-tasks":
+      return props.project ? <ScheduledTasksSurface {...props.project} /> : null;
     case "device":
       return (
         <Suspense fallback={null}>

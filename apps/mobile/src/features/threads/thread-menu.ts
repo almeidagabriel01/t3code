@@ -78,6 +78,10 @@ export interface ThreadMenuInput {
   readonly restartSession?: boolean;
   /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
   readonly notes?: boolean;
+  /** The environment has boards; a thread in no project shows the No project board. */
+  readonly board?: boolean;
+  /** The open thread only: its project's scheduled tasks. */
+  readonly scheduledTasks?: boolean;
   /** The thread has a project, so its Activity, Memory and Heavy work open beside it. */
   readonly projectViews?: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
@@ -194,6 +198,10 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
         ]
       : []),
     ...(input.notes ? [{ id: "notes", title: "Notes", image: "note.text" }] : []),
+    ...(input.board ? [{ id: "board", title: "Board", image: "square.grid.2x2" }] : []),
+    ...(input.scheduledTasks
+      ? [{ id: "scheduled-tasks", title: "Scheduled tasks", image: "calendar.badge.clock" }]
+      : []),
     ...(input.projectViews
       ? [
           {
@@ -287,6 +295,8 @@ export interface ThreadMenuHandlers {
   readonly linkCard?: () => void;
   readonly restartSession?: () => void;
   readonly openNotes?: () => void;
+  readonly openBoard?: () => void;
+  readonly openScheduledTasks?: () => void;
   readonly openProjectView?: (view: ProjectView) => void;
   readonly turnIntoProject: () => void;
   readonly dismissTask?: () => void;
@@ -351,6 +361,10 @@ export function runThreadMenuEvent(
       return handlers.restartSession?.();
     case "notes":
       return handlers.openNotes?.();
+    case "board":
+      return handlers.openBoard?.();
+    case "scheduled-tasks":
+      return handlers.openScheduledTasks?.();
     case "turn-into-project":
       return handlers.turnIntoProject();
     case "dismiss-task":
@@ -408,16 +422,6 @@ export function menuActionsToAppBarItems(
       onPress: () => onAction(id),
     };
   });
-}
-
-/** Project views need the thread's project; a Scratch thread has one too, as on web. */
-export function canOpenProjectViews(
-  thread: { readonly environmentId: string; readonly projectId: string },
-  projects: ReadonlyArray<{ readonly environmentId: string; readonly id: string }>,
-): boolean {
-  return projects.some(
-    (project) => project.environmentId === thread.environmentId && project.id === thread.projectId,
-  );
 }
 
 /** Notes open on the thread's project, so a thread in no real project (Scratch) has none. */

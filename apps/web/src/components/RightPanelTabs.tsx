@@ -566,6 +566,8 @@ function surfaceTitle(
     case "activity":
     case "memory":
     case "heavy-work":
+    case "kanban":
+    case "scheduled-tasks":
       return RIGHT_PANEL_TOOLS[surface.kind].label;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";

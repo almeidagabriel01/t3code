@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildSnoozePresetActions,
-  canOpenProjectViews,
   canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
@@ -63,11 +62,19 @@ describe("thread menu", () => {
     expect(openProjectView.mock.calls).toEqual([["heavy-work"]]);
   });
 
-  it("opens project views for any project the thread's environment knows", () => {
-    const thread = { environmentId: "e", projectId: "p" };
-    expect(canOpenProjectViews(thread, [{ environmentId: "e", id: "p" }])).toBe(true);
-    expect(canOpenProjectViews(thread, [{ environmentId: "other", id: "p" }])).toBe(false);
-    expect(canOpenProjectViews(thread, [])).toBe(false);
+  it.each([
+    ["board", "board", "openBoard"],
+    ["scheduledTasks", "scheduled-tasks", "openScheduledTasks"],
+  ] as const)("offers %s only when asked and routes it", (flag, id, handler) => {
+    expect(ids()).not.toContain(id);
+    expect(ids({ [flag]: true })).toContain(id);
+    const open = vi.fn();
+    runThreadMenuEvent(id, { [handler]: open } as unknown as ThreadMenuHandlers, {
+      displayedPresets: [],
+      presets: undefined,
+      now: new Date(0),
+    });
+    expect(open).toHaveBeenCalledTimes(1);
   });
 
   it("has thread Notes only in a real project of a notes environment", () => {

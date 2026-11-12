@@ -1,8 +1,10 @@
 import {
   ActivityIcon,
   BrainIcon,
+  CalendarClockIcon,
   HourglassIcon,
   NotebookPenIcon,
+  SquareKanbanIcon,
   type LucideIcon,
 } from "lucide-react";
 
@@ -24,6 +26,20 @@ export const RIGHT_PANEL_TOOLS: Record<RightPanelToolKind, RightPanelToolMeta> =
     shortcut: "N",
     disabledReason: "Notes are only available for projects on an environment with notes.",
     unavailableHint: "Available when a project is open.",
+  },
+  kanban: {
+    label: "Kanban",
+    icon: SquareKanbanIcon,
+    shortcut: "K",
+    disabledReason: "Boards are only available on an environment with boards.",
+    unavailableHint: "Available on an environment with boards.",
+  },
+  "scheduled-tasks": {
+    label: "Scheduled tasks",
+    icon: CalendarClockIcon,
+    shortcut: "C",
+    disabledReason: "Scheduled tasks are only available from a project thread.",
+    unavailableHint: "Available from a project thread.",
   },
   activity: {
     label: "Activity",

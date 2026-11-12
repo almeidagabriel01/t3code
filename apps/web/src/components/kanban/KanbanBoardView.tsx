@@ -1,19 +1,8 @@
 import { selectKanbanColumns, type KanbanBoardState } from "@t3tools/client-runtime/state/kanban";
-import type {
-  EnvironmentId,
-  KanbanCard,
-  KanbanCardId,
-  KanbanColumn,
-  KanbanColumnId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, KanbanCard, KanbanCardId, KanbanColumnId } from "@t3tools/contracts";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { toastManager } from "../ui/toast";
-import {
-  definitionOfDoneWarning,
-  subtaskTileInfo,
-  type CardMove,
-} from "@t3tools/client-runtime/state/kanbanLogic";
+import { subtaskTileInfo } from "@t3tools/client-runtime/state/kanbanLogic";
 import { KanbanColumnHeader } from "./KanbanColumnHeader";
 import { KanbanColumns } from "./KanbanColumns";
 import type { KanbanProjectInfo } from "./KanbanProjectBadge";
@@ -21,6 +10,7 @@ import { KanbanLinkThreadDialog } from "./KanbanLinkDialogs";
 import { KanbanQuickEdit, type QuickEditTarget } from "./KanbanQuickEdit";
 import { KanbanStartAgentDialog } from "./KanbanStartAgent";
 import { useKanbanActions } from "./useKanban";
+import { useMoveKanbanCard } from "./useKanbanBoardCommands";
 
 function isEditable(target: EventTarget) {
   return (
@@ -70,19 +60,7 @@ export function KanbanBoardView(props: {
     root.current?.querySelector<HTMLElement>("[data-quick-add]")?.click();
   };
 
-  const moveCard = async (move: CardMove, _from: KanbanColumn, to: KanbanColumn) => {
-    const card = board.cards.get(move.cardId);
-    const { cardId, ...position } = move;
-    const result = await actions.moveCard({ cardId, ...position });
-    const warning = card === undefined ? null : definitionOfDoneWarning(board, card, to);
-    if (result !== null && warning !== null) {
-      toastManager.add({
-        type: "warning",
-        title: "Moved without meeting the definition of done",
-        description: warning,
-      });
-    }
-  };
+  const moveCard = useMoveKanbanCard(environmentId, board);
 
   return (
     // The board is a keyboard scope for the N shortcut, not an interactive control.
@@ -110,7 +88,9 @@ export function KanbanBoardView(props: {
             canEdit={props.canEdit}
           />
         )}
-        onMoveCard={moveCard}
+        onMoveCard={async (move) => {
+          await moveCard(move);
+        }}
         onMoveColumn={(columnId, position) => actions.moveColumn({ columnId, ...position })}
         onAddCard={(columnId: KanbanColumnId, title, type) =>
           void actions.createCard({

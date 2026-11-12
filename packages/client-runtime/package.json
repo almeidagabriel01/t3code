@@ -323,6 +323,10 @@
       "types": "./src/scheduledTaskWording.ts",
       "default": "./src/scheduledTaskWording.ts"
     },
+    "./scheduledTaskAgenda": {
+      "types": "./src/scheduledTaskAgenda.ts",
+      "default": "./src/scheduledTaskAgenda.ts"
+    },
     "./assistantWork": {
       "types": "./src/assistantWork.ts",
       "default": "./src/assistantWork.ts"

@@ -78,6 +78,8 @@ export function KanbanCardMenu(props: {
   readonly board: KanbanBoardState;
   readonly card: KanbanCard;
   readonly onOpen: () => void;
+  /** Opens on a plain press, for a visible ⋯ button; the tile itself opens on long press. */
+  readonly openOnPress?: boolean;
   readonly children: ReactNode;
 }) {
   const { board, card } = props;
@@ -133,7 +135,7 @@ export function KanbanCardMenu(props: {
     <Menu
       actions={kanbanCardMenuActions(board, card)}
       onPressAction={({ nativeEvent }) => void run(nativeEvent.event)}
-      shouldOpenOnLongPress
+      shouldOpenOnLongPress={props.openOnPress !== true}
     >
       {props.children}
     </Menu>

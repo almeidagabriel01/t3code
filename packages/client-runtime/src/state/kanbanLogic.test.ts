@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   kanbanCardPickerRows,
   applyMoveLocally,
+  withOptimisticMove,
   checklistProgress,
   collectGlobalBoards,
   collectGlobalCards,
@@ -32,6 +33,8 @@ import {
   groupCardsByRole,
   isOverdue,
   isWipExceeded,
+  kanbanSectionCollapsed,
+  resolveKanbanPanelBoard,
   kanbanCardContextRecord,
   kanbanCardRecordForThread,
   withKanbanCardContext,
@@ -143,6 +146,37 @@ describe("dropToMove", () => {
   });
 });
 
+describe("withOptimisticMove", () => {
+  const card = (id: string, column: string, orderKey: string) => ({
+    id: cardId(id),
+    columnId: columnId(column),
+    orderKey,
+  });
+  const live = [
+    { column: { id: columnId("a") }, cards: [card("1", "a", "a0"), card("2", "a", "a1")] },
+    { column: { id: columnId("b") }, cards: [] },
+  ];
+  const optimistic = {
+    move: { cardId: cardId("1"), columnId: columnId("b") },
+    columnId: columnId("a"),
+    orderKey: "a0",
+  };
+  const ids = (columns: ReturnType<typeof withOptimisticMove>) =>
+    columns.map((entry) => entry.cards.map((entry) => entry.id));
+
+  it("shows the dropped place while the live card has not moved", () => {
+    expect(ids(withOptimisticMove(live, optimistic))).toEqual([["2"], ["1"]]);
+  });
+
+  it.each([
+    ["nothing is pending", null],
+    ["the server already moved the card", { ...optimistic, orderKey: "stale" }],
+    ["the card is gone", { ...optimistic, move: { ...optimistic.move, cardId: cardId("9") } }],
+  ])("keeps the live columns when %s", (_name, pending) => {
+    expect(withOptimisticMove(live, pending)).toBe(live);
+  });
+});
+
 describe("applyMoveLocally", () => {
   it("mirrors what the server does", () => {
     const moved = applyMoveLocally(columns, {
@@ -186,6 +220,94 @@ describe("definition of done", () => {
     expect(checklistProgress(open.checklist)).toEqual({ done: 1, total: 2 });
     expect(isWipExceeded(column("x", "none", 2), 3)).toBe(true);
     expect(isWipExceeded(column("x", "none", null), 99)).toBe(false);
+  });
+
+  it.each([
+    ["a done column without a saved choice", "done", undefined, true],
+    ["any other column without a saved choice", "in-progress", undefined, false],
+    ["a done column the viewer expanded", "done", { x: false }, false],
+    ["a column the viewer collapsed", "todo", { x: true }, true],
+  ] as const)("collapses %s", (_name, role, saved, expected) => {
+    expect(kanbanSectionCollapsed(column("x", role, null), saved)).toBe(expected);
+  });
+});
+
+describe("resolveKanbanPanelBoard", () => {
+  const project = "p1" as ProjectId;
+  const scratch = "scratch" as ProjectId;
+  const state = {
+    sequence: 1,
+    boards: new Map([
+      ["b1", board("p1", "b1", [])],
+      ["b2", board("scratch", "b2", [])],
+    ]),
+  } as never;
+
+  it.each([
+    ["the project board by default", false, scratch, undefined, "project", project, "b1", true],
+    [
+      "the No project board when chosen",
+      false,
+      scratch,
+      "no-project",
+      "no-project",
+      scratch,
+      "b2",
+      false,
+    ],
+    [
+      "no board before the No project folder exists",
+      false,
+      null,
+      "no-project",
+      "no-project",
+      null,
+      undefined,
+      false,
+    ],
+    [
+      "only the No project board on a scratch thread",
+      true,
+      scratch,
+      "project",
+      "no-project",
+      project,
+      "b1",
+      false,
+    ],
+  ] as const)(
+    "shows %s",
+    (
+      _name,
+      threadIsScratch,
+      scratchProjectId,
+      savedScope,
+      scope,
+      ownerId,
+      boardId,
+      createsOnView,
+    ) => {
+      const resolved = resolveKanbanPanelBoard({
+        state,
+        projectId: project,
+        threadIsScratch,
+        scratchProjectId,
+        savedScope,
+      });
+      expect(resolved).toMatchObject({ scope, ownerId, createsOnView });
+      expect(resolved.board?.id).toBe(boardId);
+    },
+  );
+
+  it("finds no board while the state loads", () => {
+    const resolved = resolveKanbanPanelBoard({
+      state: null,
+      projectId: project,
+      threadIsScratch: false,
+      scratchProjectId: scratch,
+      savedScope: undefined,
+    });
+    expect(resolved.board).toBeUndefined();
   });
 });
 

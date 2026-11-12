@@ -159,6 +159,8 @@ it("reserves the replacement add button when a mounted panel closes and reopens"
 
 it.each([
   ["Notes", "n", "notes"],
+  ["Kanban", "k", "kanban"],
+  ["Scheduled tasks", "c", "scheduled-tasks"],
   ["Activity", "a", "activity"],
   ["Memory", "e", "memory"],
   ["Heavy work", "h", "heavy-work"],

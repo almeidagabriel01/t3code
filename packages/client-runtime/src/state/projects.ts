@@ -155,6 +155,11 @@ export function isAssistantHomeProject(project: {
   return project.isScratch === true || project.managedRole === "assistants";
 }
 
+/** A thread's project board and schedule; the assistants' home is not a project anyone works in. */
+export function hasProjectPanels(project: { readonly managedRole?: ProjectManagedRole }): boolean {
+  return project.managedRole !== "assistants";
+}
+
 /** Projects opened with Open folder stay out of lists until they hold a thread or a draft. */
 export function hideIdleFolderProjects<
   P extends { readonly environmentId: string; readonly id: string },
