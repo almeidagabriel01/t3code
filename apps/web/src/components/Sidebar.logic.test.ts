@@ -1,4 +1,7 @@
-import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -23,7 +26,8 @@ import {
   resolveWorkingStartedAt,
   searchSidebarThreads,
   shouldRecedeSidebarThread,
-  sortInboxThreadsByReturn,
+  partitionSidebarThreads,
+  type SidebarThreadAttention,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
@@ -34,7 +38,6 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
-  resolveSidebarDropVerb,
   holdSidebarPriorityRank,
   isSidebarThreadWoke,
   resolveSidebarPriorityRank,
@@ -1020,7 +1023,7 @@ describe("sidebar notification", () => {
   });
 });
 
-describe("Working shelf (beta)", () => {
+describe("open threads", () => {
   const runtime = {
     status: "running" as const,
     activeRunId: null,
@@ -1073,57 +1076,57 @@ describe("Working shelf (beta)", () => {
     ).toBe(false);
   });
 
-  describe("sortInboxThreadsByReturn", () => {
+  it("keeps an agent-started run in the open list, ranked by what each row shows", () => {
+    const seen = "2026-03-10T00:00:00.000Z";
+    const base = presentThreadShell(localEnvironmentId, makeThreadFixture().source);
     const thread = (
       id: string,
-      input: { createdAt: string; completedAt?: string | null; unsettledAt?: string },
-    ) => ({
+      overrides: Partial<EnvironmentThreadShell>,
+    ): EnvironmentThreadShell => ({
+      ...base,
       id: ThreadId.make(id),
-      environmentId: localEnvironmentId,
-      createdAt: input.createdAt,
-      unsettledAt: input.unsettledAt ?? null,
-      latestRun:
-        input.completedAt === undefined
-          ? null
-          : { ...makeLatestRun({ completedAt: input.completedAt }), requestedAt: input.createdAt },
-      // Seen, so these rows compare by time alone.
-      lastVisitedAt: "2026-03-10T00:00:00.000Z",
+      createdAt: "2026-03-09T09:00:00.000Z",
+      latestRun: makeLatestRun(),
+      runtime: null,
+      lastVisitedAt: seen,
+      ...overrides,
     });
+    const keyOf = (entry: EnvironmentThreadShell) =>
+      scopedThreadKey(scopeThreadRef(entry.environmentId, entry.id));
+    // The agent woke this thread on its own: the user last wrote before its run was requested.
+    const wake = thread("wake", {
+      latestUserAuthoredMessageAt: "2026-03-09T08:00:00.000Z",
+      latestRun: makeLatestRun({ completedAt: null }),
+      runtime,
+    });
+    const done = thread("done", { latestUserAuthoredMessageAt: "2026-03-09T11:00:00.000Z" });
+    // An older server sends no visit, so only this client's visit marks the completion seen.
+    const { lastVisitedAt: _serverVisit, ...visitedHere } = thread("visited-here", {
+      latestUserAuthoredMessageAt: "2026-03-09T10:30:00.000Z",
+    });
+    const asks = thread("asks", { latestUserAuthoredMessageAt: "2026-03-09T07:00:00.000Z" });
+    const open = (attention: SidebarThreadAttention) =>
+      partitionSidebarThreads({
+        threads: [done, visitedHere, asks, wake],
+        scopedProjectKeys: null,
+        delegatedUnderParent: new Set(),
+        serverConfigs: new Map(),
+        connectedEnvironmentIds: [],
+        optimisticDrop: null,
+        threadOrder: "activity",
+        attention,
+        clockKey: "",
+      }).activeThreads;
 
-    it("puts the thread that finished last on top, whatever its age", () => {
-      const sorted = sortInboxThreadsByReturn([
-        thread("new", { createdAt: "2026-03-09T11:00:00.000Z" }),
-        thread("old-finished-now", {
-          createdAt: "2026-03-01T09:00:00.000Z",
-          completedAt: "2026-03-09T12:00:00.000Z",
-        }),
-        thread("reopened", {
-          createdAt: "2026-03-02T09:00:00.000Z",
-          unsettledAt: "2026-03-09T11:30:00.000Z",
-        }),
-      ]);
-      expect(sorted.map((entry) => entry.id)).toEqual(["old-finished-now", "reopened", "new"]);
-    });
-
-    it("counts a return the server does not stamp, like an approval request", () => {
-      const waiting = thread("asks-approval", {
-        createdAt: "2026-03-09T09:00:00.000Z",
-        completedAt: null,
-      });
-      const finished = thread("finished", {
-        createdAt: "2026-03-09T09:30:00.000Z",
-        completedAt: "2026-03-09T11:00:00.000Z",
-      });
-      expect(sortInboxThreadsByReturn([finished, waiting]).map((entry) => entry.id)).toEqual([
-        "finished",
-        "asks-approval",
-      ]);
-      expect(
-        sortInboxThreadsByReturn([finished, waiting], (entry) =>
-          entry === waiting ? Date.parse("2026-03-09T11:05:00.000Z") : undefined,
-        ).map((entry) => entry.id),
-      ).toEqual(["asks-approval", "finished"]);
-    });
+    expect(
+      open({
+        lastVisitedAtByKey: { [keyOf(visitedHere)]: seen },
+        openDecisionKeys: new Set([keyOf(asks)]),
+      }).map((entry) => entry.id),
+    ).toEqual(["asks", "wake", "done", "visited-here"]);
+    const unseen = open({ lastVisitedAtByKey: {}, openDecisionKeys: new Set() });
+    expect(unseen.map((entry) => entry.id)).toEqual(["visited-here", "wake", "done", "asks"]);
+    expect(unseen[0]).toBe(visitedHere);
   });
 
   describe("dragging", () => {
@@ -1139,48 +1142,17 @@ describe("Working shelf (beta)", () => {
       marker("pinned-divider"),
       row("a1", "active"),
       row("a2", "active"),
-      marker("working-header"),
-      row("w1", "working"),
       marker("settled-header"),
       row("s1", "settled"),
     ];
 
-    it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
-      expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
+    it("drops a pinned thread into the active order", () => {
       expect(resolveSidebarDropTarget(items, "p1", "a2")).toEqual({
         section: "active",
         pinnedOrder: [],
         activeOrder: ["a1", "a2", "p1"],
       });
-      expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
-
-    it.each([
-      ["pinned", "p1"],
-      ["active", "a2"],
-      ["settled", "s1"],
-    ] as const)(
-      "does not move a Working thread into %s when its reference drag ends in the sidebar",
-      (section, overKey) => {
-        const target = resolveSidebarDropTarget(items, "w1", overKey);
-        expect(target?.section).toBe(section);
-        expect(
-          planSidebarThreadDrop({
-            activeKey: "w1",
-            activeSection: "working",
-            target: target!,
-            pinnedOrder: ["p1"],
-            pinnedKeysById: new Map([["p1", "m"]]),
-            activeOrder: ["a1", "a2"],
-            activeKeysById: new Map([
-              ["a1", "f"],
-              ["a2", "t"],
-            ]),
-            activeTimeOrdered: true,
-          }),
-        ).toEqual({ kind: "none" });
-      },
-    );
 
     it("arranges the rows it can write when another row's server cannot store an order", () => {
       const plan = planSidebarThreadDrop({

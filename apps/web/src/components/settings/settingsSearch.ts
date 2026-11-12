@@ -538,12 +538,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sidebar thread rows multiline branch pull request details compact"],
   },
   {
-    id: "working-shelf",
-    title: "Working section",
-    to: "/settings/general",
-    searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
-  },
-  {
     id: "sidebar-show-assistants-section",
     title: "Show Assistants section",
     to: "/settings/general",

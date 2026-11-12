@@ -1,6 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import {
   hasSidebarNotification,
   hasUnseenCompletion,
@@ -9,6 +12,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-attention";
 import {
   filterSidebarV2VisibleThreads,
+  firstValidTimestampMs,
+  resolveThreadLastVisitedAt,
   type ThreadStatusInput,
 } from "@t3tools/client-runtime/state/thread-activity";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -33,7 +38,11 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarProjectSortOrder,
+  SidebarThreadOrder,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
   effectiveSnoozed,
@@ -42,6 +51,9 @@ import {
 import {
   getThreadSortTimestamp,
   planPinnedReorder,
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
@@ -189,10 +201,10 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 // Snoozed rows cannot accept drops without a wake time. Working rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
 
 /** Snooze wins until its wake boundary; otherwise settlement wins over a stale pin. */
-export function resolveSidebarThreadSection(input: {
+function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
@@ -210,7 +222,6 @@ export type SidebarListMarker =
   | "active-placeholder"
   | "settled-placeholder"
   | "pinned-divider"
-  | "working-header"
   | "snoozed-header"
   | "settled-header";
 
@@ -238,7 +249,6 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     const item = items[i]!;
     if (item.kind !== "marker") continue;
     if (item.marker === "pinned-divider") section = "active";
-    else if (item.marker === "working-header") section = "working";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
@@ -262,19 +272,14 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "snoozed") return null;
+  if (section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
   for (const item of moved) {
     if (item.kind === "marker") {
       if (item.marker === "pinned-divider") currentSection = "active";
-      else if (
-        item.marker === "working-header" ||
-        item.marker === "snoozed-header" ||
-        item.marker === "settled-header"
-      )
-        break;
+      else if (item.marker === "snoozed-header" || item.marker === "settled-header") break;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
@@ -310,7 +315,7 @@ export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "snoozed") return null;
+  if (to === null || to === from || to === "snoozed") return null;
   if (to === "pinned") return "pin";
   if (to === "settled") return "settle";
   if (from === "pinned") return "unpin";
@@ -395,7 +400,6 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
-  if (activeSection === "working") return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }
@@ -904,11 +908,154 @@ export type SidebarV2TopStatusKind =
   | "woke"
   | "working";
 
-export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
-export {
-  sortInboxThreadsByReturn,
-  sortWorkingThreadsBySend,
-} from "@t3tools/client-runtime/state/thread-inbox";
+/** Visits this client recorded and open decisions, which live outside the thread shell. */
+export interface SidebarThreadAttention {
+  readonly lastVisitedAtByKey: Readonly<Record<string, string>>;
+  readonly openDecisionKeys: ReadonlySet<string>;
+}
+
+export type SidebarOptimisticDrop = {
+  readonly key: string;
+  readonly sourceSection: SidebarSection;
+  readonly section: "pinned" | "active" | "settled";
+  readonly occurredAt: string;
+  readonly clearsSnooze: boolean;
+  readonly order: readonly string[] | null;
+  readonly keysAtDrop: ReadonlyMap<string, string | null>;
+  readonly assignedKeys: ReadonlyMap<string, string>;
+  /** The threads of the dragged thread's project; reorders only see that group. */
+  readonly scopeKeys: ReadonlySet<string>;
+};
+
+export interface SidebarThreadPartitionInput {
+  readonly threads: readonly EnvironmentThreadShell[];
+  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  /** Tasks linked environments run for a listed thread; they show under it. */
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
+  readonly connectedEnvironmentIds: readonly EnvironmentId[];
+  readonly optimisticDrop: SidebarOptimisticDrop | null;
+  readonly threadOrder: SidebarThreadOrder;
+  readonly attention: SidebarThreadAttention;
+  // Snooze wakes depend on the clock, so the minute tick and the precise snooze-wake
+  // tick are inputs: a new key repartitions.
+  readonly clockKey: string;
+}
+
+/** Splits listed threads into the sidebar sections; every open thread shares one ranking. */
+export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
+  const {
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    serverConfigs,
+    optimisticDrop,
+    threadOrder,
+    attention,
+  } = input;
+  const preciseNow = new Date().toISOString();
+  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const pinned: EnvironmentThreadShell[] = [];
+  const active: EnvironmentThreadShell[] = [];
+  const snoozed: EnvironmentThreadShell[] = [];
+  const settled: EnvironmentThreadShell[] = [];
+  const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
+    threads: visible,
+    serverConfigs,
+    connectedEnvironmentIds: input.connectedEnvironmentIds,
+  });
+  for (const thread of visible) {
+    const configLoaded = serverConfigs.has(thread.environmentId);
+    const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    if (optimisticDrop?.key === threadKey) {
+      const projected = applySidebarThreadDrop(
+        thread,
+        optimisticDrop.section,
+        optimisticDrop.occurredAt,
+        optimisticDrop.assignedKeys.get(threadKey),
+      );
+      (optimisticDrop.section === "pinned"
+        ? pinned
+        : optimisticDrop.section === "settled"
+          ? settled
+          : active
+      ).push(
+        optimisticDrop.clearsSnooze
+          ? projected
+          : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
+      );
+    } else {
+      const lifecycle = {
+        snoozed: configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
+        settled: configLoaded && thread.settledOverride === "settled",
+        pinned: thread.pinnedAt != null,
+      };
+      const section = resolveSidebarThreadSection(lifecycle);
+      (section === "snoozed"
+        ? snoozed
+        : section === "settled"
+          ? settled
+          : section === "pinned"
+            ? pinned
+            : active
+      ).push(thread);
+    }
+  }
+  // Availability gates dragging only; sorting must stay consistent across clients.
+  const sortedPinned = sortPinnedThreadsByOrderKey(pinned);
+  const sortedActive = sortOpenThreadsForSidebar(active, threadOrder, attention);
+  return {
+    pinnedThreads:
+      optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
+        ? sortedPinned
+        : orderItemsByPreferredIds({
+            items: sortedPinned,
+            preferredIds: optimisticDrop.order,
+            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          }),
+    draggableThreadKeys,
+    activeReorderableThreadKeys,
+    activeThreads:
+      optimisticDrop?.section !== "active" || optimisticDrop.order === null
+        ? sortedActive
+        : orderItemsByPreferredIds({
+            items: sortedActive,
+            preferredIds: optimisticDrop.order,
+            getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          }),
+    snoozedThreads: snoozed.toSorted(
+      (left, right) =>
+        firstValidTimestampMs(left.snoozedUntil ?? null) -
+        firstValidTimestampMs(right.snoozedUntil ?? null),
+    ),
+    settledThreads: sortSettledThreads(settled),
+    visibleThreads: visible,
+    snoozeNow: preciseNow,
+  };
+}
+
+/** Ranks open threads by the same seen and decision state their rows show. */
+export function sortOpenThreadsForSidebar<
+  T extends Parameters<typeof sortActiveThreadsByOrderKey>[0][number] & {
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+  },
+>(threads: readonly T[], order: SidebarThreadOrder, attention: SidebarThreadAttention): T[] {
+  if (order === "fixed") return sortActiveThreadsByOrderKey(threads, order);
+  const sourceOf = new Map<object, T>();
+  const ranked = threads.map((thread) => {
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const entry = {
+      ...thread,
+      lastVisitedAt:
+        resolveThreadLastVisitedAt(thread.lastVisitedAt, attention.lastVisitedAtByKey[key]) ?? null,
+      hasOpenDecision: attention.openDecisionKeys.has(key),
+    };
+    sourceOf.set(entry, thread);
+    return entry;
+  });
+  return sortActiveThreadsByOrderKey(ranked, order).map((entry) => sourceOf.get(entry)!);
+}
 
 export { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
@@ -1283,7 +1430,6 @@ export function sortScopedProjectsForSidebar<
 
 export {
   filterSidebarV2VisibleThreads,
-  firstValidTimestampMs,
   holdSidebarPriorityRank,
   isSidebarThreadWoke,
   resolveSidebarPriorityRank,

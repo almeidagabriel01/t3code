@@ -508,9 +508,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.boringSidebarMultilineRows !== DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows
       ? ["Two-line thread rows"]
       : []),
-    ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
-      ? ["Working section"]
-      : []),
     ...(settings.sidebarShowSubagents !== DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents ||
     settings.sidebarShowAgentsSection !== DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection ||
     settings.sidebarShowAssistantsSection !==
@@ -718,7 +715,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarThreadOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder,
       boringSidebarMultilineRows: DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows,
-      sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
       sidebarShowAgentsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection,
       sidebarShowAssistantsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAssistantsSection,
@@ -998,37 +994,6 @@ export function GeneralSettingsPanel() {
                 updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
               }
               aria-label="Two-line thread rows"
-            />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("working-shelf")}
-          description={
-            settings.sidebarThreadOrder === "fixed"
-              ? "Not used while thread order is Fixed."
-              : "Fold threads the agent is working on by itself into a Working section. Threads you message stay at the top, and threads return there when they need you."
-          }
-          resetAction={
-            settings.sidebarWorkingShelfEnabled !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
-              <SettingResetButton
-                label="working section"
-                onClick={() =>
-                  updateSettings({
-                    sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarWorkingShelfEnabled}
-              disabled={settings.sidebarThreadOrder === "fixed"}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
-              }
-              aria-label="Working section"
             />
           }
         />

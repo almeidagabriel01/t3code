@@ -140,13 +140,8 @@ export function buildProjectListItems(input: {
     marker("active-placeholder"),
     ...rows("active"),
   ];
-  for (const [section, header] of [
-    ["working", "working-header"],
-    ["snoozed", "snoozed-header"],
-  ] as const) {
-    const sectionRows = rows(section);
-    if (sectionRows.length > 0) items.push(marker(header), ...sectionRows);
-  }
+  const snoozedRows = rows("snoozed");
+  if (snoozedRows.length > 0) items.push(marker("snoozed-header"), ...snoozedRows);
   items.push(
     marker("settled-header"),
     marker("settled-placeholder"),

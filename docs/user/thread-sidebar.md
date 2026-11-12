@@ -168,10 +168,10 @@ threads and pinned threads, from every connected environment, with **New thread*
 and **Quit**. Choose a thread to open it. A number next to the icon counts the threads that need
 you. Turn the icon off under **Settings → General → Show in menu bar**.
 
-### Fold working threads (beta)
+### Fold working threads on mobile (beta)
 
-Threads the agent is working on by itself, or waiting on work they will resume from, move into a
-collapsed **Working** section below the active list. A thread you just sent a message to stays at
+On iOS and Android, threads the agent is working on by itself, or waiting on work they will
+resume from, move into a collapsed **Working** section below the active list. A thread you just sent a message to stays at
 the top of the active list while it works.
 That includes subagents, watched pull requests, and background commands or monitors the agent
 says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
@@ -179,9 +179,9 @@ there. A thread returns to the top of the active list when it finishes, fails, o
 answer. Pinned threads stay in
 the pinned section.
 
-This is off by default on web and desktop and on by default on iOS and Android. Change it with
-**Settings → General → Working section**. Each device keeps its own choice. It has no effect while
-thread order is **Fixed**.
+This is on by default. Change it with **Settings → General → Working section**. Each device keeps
+its own choice. It has no effect while thread order is **Fixed**. Web and desktop have no Working
+section: working threads stay in the active list, ordered by **Recent activity**.
 
 While this is on, the active list is ordered by when each thread last came back to you.
 
@@ -219,8 +219,8 @@ project's folder comes last and shows only while it has active threads. Click a 
 close it. A closed folder shows how many threads it holds, and a dot when one of them
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+can drag a thread onto the composer to mention it, but not within the sidebar. Each device keeps
+its own choice.
 
 ## Settle finished work
 

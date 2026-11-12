@@ -277,13 +277,12 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           />
         );
       }
-      case "working-header":
       case "snoozed-header":
         return (
           <SortableSidebarMarker
             key={markerKey}
             scope={scope}
-            marker={item.marker}
+            marker="snoozed-header"
             className="h-0"
           />
         );
