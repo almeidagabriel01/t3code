@@ -536,6 +536,55 @@ describe("grouping", () => {
     expect(groupNotices(notices, new Map(), NOW).batch[0]!.title).toBe("lint failed on this Mac");
   });
 
+  const waiter = entry({ startedAt: null });
+  const lost = (online: boolean) => ({ host: "pc", online, okAt: online ? 2 : 1 });
+  it.each([
+    [{ records: [record(endedRecord(mac, 127, NOW))] }, "3 jobs could not start on this Mac"],
+    [
+      { records: [record(endedRecord({ ...linux, phase: "syncing" }, 1, NOW))] },
+      "Linux sync failed for 3 jobs",
+    ],
+    [{ records: [record(deadlineRecord(waiter, NOW))] }, "3 jobs were cancelled"],
+    [
+      { records: [record(requeueRecord(linux, { dropped: true }, policies, NOW))] },
+      "Linux dropped 3 jobs mid-run",
+    ],
+    [
+      { records: [record(requeueRecord(linux, { linuxFailedAt: NOW }, policies, NOW))] },
+      "Linux was unavailable for 3 jobs",
+    ],
+    [{ records: [record(startRecord(waiter, "linux", "mac", NOW))] }, "3 jobs moved to this Mac"],
+    [
+      {
+        records: [
+          record(requeueRecord(linux, { route: "mac", routeReason: "Needs git" }, policies, NOW)),
+        ],
+      },
+      "3 jobs moved to this Mac",
+    ],
+    [{ records: [record(startRecord(waiter, "automatic", "linux", NOW))] }, "3 jobs went to Linux"],
+    [{ linuxBefore: lost(true), linuxAfter: lost(false) }, "Linux went offline"],
+    [{ linuxBefore: lost(false), linuxAfter: lost(true) }, "Linux is back online"],
+    [{ queueFileError: "EACCES" }, "The heavy queue file is not usable"],
+  ] as const)("titles several jobs: %#", (patch, title) => {
+    expect(rawNotices(tick(patch)).map((notice) => notice.many(3))).toEqual([title]);
+  });
+
+  it("titles several stuck jobs", () => {
+    const stuck = stuckJobs({
+      entries: [waiter],
+      routes: {},
+      macHold: "cpu",
+      macHoldText: "CPU busy",
+      linuxOver: null,
+      usualMs: () => null,
+      now: NOW + 40 * MIN,
+    });
+    expect(rawNotices(tick({ stuck })).map((notice) => notice.many(3))).toEqual([
+      "3 jobs are stuck waiting on this Mac",
+    ]);
+  });
+
   it("sends nothing for an empty tick", () => {
     expect(groupNotices([], new Map(), NOW).batch).toEqual([]);
   });
