@@ -48,6 +48,7 @@ import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
 import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
+import { WorktreeCleanupSections } from "./components/WorktreeCleanupSections";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
@@ -75,6 +76,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [
+    "worktreeCleanup",
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
     "branchNamingMode",
@@ -537,6 +539,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     instructions: disabledFor("branchNameInstructions"),
                   }}
                   onChange={write}
+                />
+                <WorktreeCleanupSections
+                  targets={displayTargets}
+                  projectSelected={projectSelected}
+                  disabledFor={disabledFor}
+                  managed={managed}
+                  write={write}
+                  clearProjectCleanup={() => clearProjectOverrides(["worktreeCleanup"])}
                 />
               </>
             ) : null}
