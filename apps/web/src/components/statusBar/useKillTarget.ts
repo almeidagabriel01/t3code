@@ -91,6 +91,15 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const enabledCommand = useAtomCommand(heavyQueueEnvironment.setEnabled, { reportFailure: false });
   const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
   const maxCommand = useAtomCommand(heavyQueueEnvironment.setMaxRunning, { reportFailure: false });
+  const priorityCommand = useAtomCommand(heavyQueueEnvironment.setPriority, {
+    reportFailure: false,
+  });
+  const hookCommand = useAtomCommand(heavyQueueEnvironment.setClaudeHook, {
+    reportFailure: false,
+  });
+  const idleCommand = useAtomCommand(heavyQueueEnvironment.setDeviceIdleMinutes, {
+    reportFailure: false,
+  });
   const report = (title: string, result: { readonly _tag: string }) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result as never)) {
       reportFailure(title, squashAtomCommandFailure(result as never));
@@ -131,6 +140,21 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       report(
         "Could not change the limit",
         await maxCommand({ environmentId, input: { maxRunning } }),
+      ),
+    setPriority: async (id: string, priority: "low" | "high") =>
+      report(
+        "Could not change the priority",
+        await priorityCommand({ environmentId, input: { id, priority } }),
+      ),
+    setClaudeHook: async (installed: boolean) =>
+      report(
+        "Could not change the Claude Code hook",
+        await hookCommand({ environmentId, input: { installed } }),
+      ),
+    setDeviceIdleMinutes: async (minutes: number) =>
+      report(
+        "Could not change the idle limit",
+        await idleCommand({ environmentId, input: { minutes } }),
       ),
   };
 }

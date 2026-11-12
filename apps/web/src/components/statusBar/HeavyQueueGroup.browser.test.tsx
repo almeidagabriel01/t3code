@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     setPaused: vi.fn(),
     setRule: vi.fn(),
     setMaxRunning: vi.fn(),
+    setPriority: vi.fn(),
     canChange: true,
   },
   state: null as unknown as HeavyQueueState,
@@ -78,6 +79,7 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     "setPaused",
     "setRule",
     "setMaxRunning",
+    "setPriority",
   ] as const) {
     mocks.actions[key].mockReset();
   }
@@ -222,6 +224,24 @@ describe("HeavyQueueGroup", () => {
     await openMenu(screen, "a");
     await userEvent.click(screen.getByRole("menuitemradio", { name }));
     expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", priority);
+  });
+
+  it("raises a job's priority, and lowers only a running one", async () => {
+    setup([
+      entry("run", { startedAt: "2026-01-01T00:00:00.000Z" }),
+      entry("b", { priority: "high" }),
+    ]);
+    await using screen = await render(group());
+    await openMenu(screen, "b");
+    expect(screen.getByRole("menuitem", { name: "High priority now" }).elements()).toHaveLength(0);
+    expect(screen.getByRole("menuitem", { name: "Lower priority" }).elements()).toHaveLength(0);
+    await userEvent.keyboard("{Escape}");
+    await openMenu(screen, "run");
+    await userEvent.click(screen.getByRole("menuitem", { name: "High priority now" }));
+    expect(mocks.actions.setPriority).toHaveBeenCalledWith("run", "high");
+    await openMenu(screen, "run");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Lower priority" }));
+    expect(mocks.actions.setPriority).toHaveBeenCalledWith("run", "low");
   });
 
   it("pauses and resumes from the switch, and says so in the summary", async () => {

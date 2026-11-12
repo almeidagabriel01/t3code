@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
     setPaused: vi.fn(),
     setRule: vi.fn(),
     setMaxRunning: vi.fn(),
+    setClaudeHook: vi.fn(),
+    setDeviceIdleMinutes: vi.fn(),
   },
 }));
 
@@ -57,6 +59,8 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   mocks.actions.setPaused.mockReset();
   mocks.actions.setRule.mockReset();
   mocks.actions.setMaxRunning.mockReset();
+  mocks.actions.setClaudeHook.mockReset();
+  mocks.actions.setDeviceIdleMinutes.mockReset();
   mocks.actions.canChange = true;
   mocks.scope = { environmentIds: ["env"] };
   mocks.state = {
@@ -84,6 +88,17 @@ it("changes the slot limit and the pause from the settings rows", async () => {
   );
   await userEvent.click(screen.getByRole("option", { name: "6" }));
   expect(mocks.actions.setMaxRunning).toHaveBeenCalledWith(6);
+  await userEvent.click(
+    screen.getByRole("switch", {
+      name: "Queue heavy commands from Claude Code sessions outside T3 Code",
+    }),
+  );
+  expect(mocks.actions.setClaudeHook).toHaveBeenCalledWith(true);
+  const idle = screen.getByRole("combobox", { name: "Power off idle simulators after" });
+  await expect.element(idle).toHaveTextContent("20 min");
+  await userEvent.click(idle);
+  await userEvent.click(screen.getByRole("option", { name: "Off" }));
+  expect(mocks.actions.setDeviceIdleMinutes).toHaveBeenCalledWith(0);
 });
 
 it("switches the queue off and on, and locks the other rows while it is off without changing them", async () => {
@@ -108,6 +123,13 @@ it("switches the queue off and on, and locks the other rows while it is off with
   await expect.element(pause).toBeChecked();
   const limit = off.getByRole("combobox", { name: "Run up to this many heavy jobs at once" });
   await expect.element(limit).toBeDisabled();
+  await expect
+    .element(
+      off.getByRole("switch", {
+        name: "Queue heavy commands from Claude Code sessions outside T3 Code",
+      }),
+    )
+    .toBeEnabled();
   await expect.element(limit).toHaveTextContent("6");
   await expect.element(off.getByText("Always first")).toBeVisible();
   await expect

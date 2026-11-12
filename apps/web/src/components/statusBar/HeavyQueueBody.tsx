@@ -35,8 +35,10 @@ import {
   MessageSquareIcon,
   PlayIcon,
   RocketIcon,
+  SnailIcon,
   SquareIcon,
   Trash2Icon,
+  ZapIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -142,6 +144,24 @@ function RowMenu({
             </MenuItem>
           </MenuGroup>
         )}
+        {entry.priority === "high" ? null : (
+          <MenuItem
+            disabled={!actions.canChange}
+            onClick={() => void actions.setPriority(entry.id, "high")}
+          >
+            <ZapIcon aria-hidden />
+            High priority now
+          </MenuItem>
+        )}
+        {running ? (
+          <MenuItem
+            disabled={!actions.canChange}
+            onClick={() => void actions.setPriority(entry.id, "low")}
+          >
+            <SnailIcon aria-hidden />
+            Lower priority
+          </MenuItem>
+        ) : null}
         {onOpenThread === null ? null : (
           <MenuItem onClick={onOpenThread}>
             <MessageSquareIcon aria-hidden />

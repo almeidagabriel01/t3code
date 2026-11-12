@@ -1247,6 +1247,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue hold stop starting"],
   },
   {
+    id: "heavy-work-claude-hook",
+    title: "Claude Code hook for the heavy work queue",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue claude code hook settings bash commands outside install"],
+  },
+  {
+    id: "heavy-work-device-idle",
+    title: "Power off idle simulators",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue emulator simulator idle power off shut down minutes"],
+  },
+  {
     id: "heavy-work-rules",
     title: "Heavy work priority by project",
     to: "/settings/maintenance",

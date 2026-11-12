@@ -13,6 +13,8 @@ import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const LIMITS = [1, 2, 3, 4, 6, 8] as const;
+const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
+const idleLabel = (minutes: number) => (minutes === 0 ? "Off" : `${minutes} min`);
 
 function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const state = useHeavyQueue(environmentId);
@@ -71,6 +73,46 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
             onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
             aria-label="Pause the heavy work queue"
           />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("heavy-work-claude-hook")}
+        description="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
+        control={
+          <Switch
+            checked={state.claudeHookInstalled}
+            disabled={!actions.canChange}
+            onCheckedChange={(checked) => void actions.setClaudeHook(Boolean(checked))}
+            aria-label="Queue heavy commands from Claude Code sessions outside T3 Code"
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("heavy-work-device-idle")}
+        description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
+        control={
+          <Select
+            value={String(state.deviceIdleMinutes)}
+            onValueChange={(next) => {
+              if (next !== null) void actions.setDeviceIdleMinutes(Number(next));
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-24"
+              aria-label="Power off idle simulators after"
+              disabled={!actions.canChange}
+            >
+              <SelectValue>{idleLabel(state.deviceIdleMinutes)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {IDLE_MINUTES.map((minutes) => (
+                <SelectItem hideIndicator key={minutes} value={String(minutes)}>
+                  {idleLabel(minutes)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         }
       />
       <SettingsRow
