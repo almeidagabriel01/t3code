@@ -72,6 +72,26 @@ Summary Footprint: 6123379008 B`;
     ]);
   });
 
+  it("reserves what a device holds beyond its resident pages, and nothing for other processes", () => {
+    const device = (pid: number, residentBytes: number) =>
+      ({
+        ...proc(pid, 1, 0, residentBytes),
+        category: "external-device",
+      }) as ResourceTelemetryProcess;
+    const footprints = new Map([
+      [40, 4_000],
+      [41, 500],
+      [10, 9_000],
+    ]);
+    // 40 has 3,000 paged out; 41 is all resident; 42 has no footprint; 10 is not a device.
+    expect(
+      Sampler.deviceReserve(
+        [device(40, 1_000), device(41, 800), device(42, 100), processes[0]!],
+        footprints,
+      ),
+    ).toBe(3_000);
+  });
+
   it("survives a cycle in the parent links", () => {
     const cyclic = [proc(10, 11, 100, 1), proc(11, 10, 100, 1)];
     expect(Sampler.peaksOf([entry("a", 10, true)], cyclic)).toEqual({
@@ -189,13 +209,17 @@ describe("HeavyQueueSampler", () => {
       // oxlint-disable-next-line t3code/no-global-process-runtime -- footprint(1) exists only on the real macOS host.
       if (NodeOS.platform() === "darwin") {
         const measured = yield* Sampler.readFootprints(jobs);
-        expect(Object.keys(measured)).toEqual(["a"]);
-        expect(measured.a).toBeGreaterThan(1024 ** 2);
+        expect(Object.keys(measured.jobs)).toEqual(["a"]);
+        expect(measured.jobs.a).toBeGreaterThan(1024 ** 2);
+        // A device's pid is read in the same call, with no job running.
+        const device = yield* Sampler.readFootprints([jobs[1]!], [process.pid]);
+        expect(device.jobs).toEqual({});
+        expect(device.byPid.get(process.pid)).toBeGreaterThan(1024 ** 2);
       }
-      const elsewhere = yield* Sampler.readFootprints(jobs).pipe(
+      const elsewhere = yield* Sampler.readFootprints(jobs, [process.pid]).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
       );
-      expect(elsewhere).toEqual({});
+      expect(elsewhere).toEqual({ jobs: {}, byPid: new Map() });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

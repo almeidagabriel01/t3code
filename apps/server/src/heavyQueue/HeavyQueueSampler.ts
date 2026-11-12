@@ -52,9 +52,30 @@ export const peaksOf = (
   return peaks;
 };
 
-/** macOS physical footprint summed over each running `t3 heavy` job's tree, by entry; {} elsewhere. */
+/**
+ * What booted simulators and emulators hold beyond their resident pages: compressed or swapped
+ * out now, it comes back the moment they are used, so the queue keeps it free.
+ */
+export const deviceReserve = (
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  footprints: ReadonlyMap<number, number>,
+) =>
+  processes
+    .filter((process) => process.category === "external-device")
+    .reduce(
+      (sum, process) =>
+        sum + Math.max(0, (footprints.get(process.identity.pid) ?? 0) - process.residentBytes),
+      0,
+    );
+
+const NO_FOOTPRINTS = { jobs: {}, byPid: new Map() } as const;
+
+/**
+ * macOS physical footprint of each running `t3 heavy` job's tree (`jobs`, by entry) and of each
+ * pid in `devicePids` (`byPid`); empty elsewhere.
+ */
 export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
-  function* (entries: ReadonlyArray<HeavyQueueEntry>) {
+  function* (entries: ReadonlyArray<HeavyQueueEntry>, devicePids: ReadonlyArray<number> = []) {
     const platform = yield* HostProcess.Platform;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = (program: string, args: ReadonlyArray<string>) =>
@@ -63,22 +84,25 @@ export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
         .pipe(Effect.timeout("2 seconds"));
     // A server-held slot's pid is T3 itself, whose tree is everything.
     const jobs = entries.filter((entry) => entry.startedAt !== null && entry.server !== true);
-    if (platform !== "darwin" || jobs.length === 0) return {};
-    const ps = yield* output("/bin/ps", ["-axo", "pid=,ppid="]);
+    if (platform !== "darwin" || (jobs.length === 0 && devicePids.length === 0)) {
+      return NO_FOOTPRINTS;
+    }
+    const ps = jobs.length === 0 ? "" : yield* output("/bin/ps", ["-axo", "pid=,ppid="]);
     const trees = jobs.map((entry) => [entry.id, treePids(ps, entry.pid)] as const);
-    const bytes = parseFootprint(
+    const byPid = parseFootprint(
       yield* output("/usr/bin/footprint", [
         "-f",
         "bytes",
         "--noCategories",
-        ...new Set(trees.flatMap(([, pids]) => pids.map(String))),
+        ...new Set([...trees.flatMap(([, pids]) => pids), ...devicePids].map(String)),
       ]),
     );
-    return Object.fromEntries(
-      trees.map(([id, pids]) => [id, pids.reduce((sum, pid) => sum + (bytes.get(pid) ?? 0), 0)]),
+    const jobFootprints: Record<string, number> = Object.fromEntries(
+      trees.map(([id, pids]) => [id, pids.reduce((sum, pid) => sum + (byPid.get(pid) ?? 0), 0)]),
     );
+    return { jobs: jobFootprints, byPid };
   },
-  Effect.orElseSucceed((): Record<string, number> => ({})),
+  Effect.orElseSucceed(() => NO_FOOTPRINTS),
 );
 
 export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
@@ -91,9 +115,17 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
         if (entries.length === 0) return;
         const reading = yield* host.read;
         const running = entries.some((entry) => entry.startedAt !== null);
+        // Devices live for minutes, so the last snapshot finds them while nothing runs.
         const snapshot = running
           ? yield* telemetry.refresh.pipe(Effect.catch(() => telemetry.latest))
-          : null;
+          : yield* telemetry.latest;
+        const processes = snapshot?.processes ?? [];
+        const footprints = yield* readFootprints(
+          entries,
+          processes
+            .filter((process) => process.category === "external-device")
+            .map((process) => process.identity.pid),
+        );
         QueueFile.recordSample(
           dir,
           {
@@ -104,14 +136,15 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
                 ? (NodeOS.loadavg()[0] ?? 0)
                 : reading.cpuUtilization * reading.cpuCount,
             cpuCount: reading.cpuCount,
-            availableMemoryBytes: reading.availableMemoryBytes,
+            availableMemoryBytes: Math.max(
+              0,
+              reading.availableMemoryBytes - deviceReserve(processes, footprints.byPid),
+            ),
             totalMemoryBytes: reading.totalMemoryBytes,
             pressureLevel: reading.memoryPressureLevel ?? null,
             swapInBytesPerSecond: reading.swapInBytesPerSecond ?? null,
           },
-          running
-            ? peaksOf(entries, snapshot?.processes ?? [], yield* readFootprints(entries))
-            : {},
+          running ? peaksOf(entries, processes, footprints.jobs) : {},
         );
       }).pipe(Effect.ignore);
       yield* tick.pipe(
