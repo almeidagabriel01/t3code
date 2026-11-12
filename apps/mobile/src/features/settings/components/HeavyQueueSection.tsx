@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { MenuAction } from "@react-native-menu/menu";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   formatDuration,
@@ -36,6 +37,7 @@ import { Alert } from "react-native";
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
+import { RowMenuButton } from "../../../components/ui/RowMenuButton";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../../state/entities";
 import {
   heavyQueueEnvironment,
@@ -50,7 +52,7 @@ import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 const MAX_LIMIT = 8;
 const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
-const PRIORITY_CHANGE_ROW: Record<PriorityChange, { icon: AppSymbolName; label: string }> = {
+const PRIORITY_CHANGE_ROW: Record<PriorityChange, { icon: string; label: string }> = {
   "high-now": { icon: "bolt.horizontal.circle", label: "High priority now" },
   normal: { icon: "gauge.with.dots.needle.50percent", label: "Normal priority" },
   lower: { icon: "arrow.down.circle", label: "Lower priority" },
@@ -94,6 +96,7 @@ function QueueEntryRows(props: {
   readonly canChange: boolean;
   readonly commands: Commands;
   readonly now: number;
+  readonly scoped: boolean;
 }) {
   const { entry, entries, position, commands } = props;
   const projects = useProjects().filter((p) => p.environmentId === props.environmentId);
@@ -106,13 +109,15 @@ function QueueEntryRows(props: {
   const project = projectForCommand(entry, projects, () => thread?.projectId);
   const rule = project === undefined ? undefined : ruleForRoot(props.rules, project.workspaceRoot);
   const origin = thread?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean) ?? entry.cwd;
+  // A project-scoped list already names the project, and a folder named like it adds nothing.
+  const projectTitle = props.scoped ? undefined : project?.title;
   const running = position === null;
   const priority = jobPriority(entry);
   const description = [
     readableLabel(entry.label),
     props.usage,
-    project?.title,
-    origin,
+    projectTitle,
+    origin === project?.title ? undefined : origin,
     rule === undefined ? undefined : PRIORITY_LABEL[rule.priority],
     priority.label ?? undefined,
     running && entry.startedAt !== null
@@ -129,103 +134,92 @@ function QueueEntryRows(props: {
   };
   const can = (action: MoveAction) =>
     props.canChange && moveTarget(entries, entry.id, action) !== undefined;
+  const item = (id: string, title: string, image: string, disabled = false): MenuAction => ({
+    id,
+    title,
+    image,
+    attributes: { disabled },
+  });
+  const actions: MenuAction[] = [
+    ...(running
+      ? []
+      : [
+          item("next", "Run next", "arrow.up.circle", !can("next")),
+          {
+            ...item("start-now", "Start now", "bolt.circle", !props.canChange),
+            subtitle: "Ignores how busy the Mac is",
+          },
+          item("up", "Move up", "arrow.up", !can("up")),
+          item("down", "Move down", "arrow.down", !can("down")),
+          item("end", "Move to end", "arrow.down.to.line", !can("end")),
+        ]),
+    ...priority.changes.map((change) =>
+      item(
+        `priority:${change}`,
+        PRIORITY_CHANGE_ROW[change].label,
+        PRIORITY_CHANGE_ROW[change].icon,
+        !props.canChange,
+      ),
+    ),
+    ...(entry.threadId === null ? [] : [item("thread", "Open thread", "bubble.left")]),
+    ...(project === undefined
+      ? []
+      : [item("rule", "Priority for this project", "tag", !props.canChange)]),
+    ...(running && entry.server === true
+      ? []
+      : [
+          {
+            ...item(
+              "cancel",
+              running ? "Stop" : "Remove",
+              running ? "xmark" : "trash",
+              !props.canChange,
+            ),
+            attributes: { disabled: !props.canChange, destructive: true },
+          },
+        ]),
+  ];
+  const run = (id: string) => {
+    if (id === "next" || id === "up" || id === "down" || id === "end") move(id);
+    else if (id === "start-now") commands.startNow(entry);
+    else if (id.startsWith("priority:"))
+      commands.setPriority(entry.id, PRIORITY_CHANGE[id.slice(9) as PriorityChange]);
+    else if (id === "thread" && entry.threadId !== null)
+      selectDetail({
+        name: "Thread",
+        params: { environmentId: String(props.environmentId), threadId: entry.threadId },
+      });
+    else if (id === "rule" && project !== undefined)
+      Alert.alert("Priority for this project", project.title, [
+        {
+          text: PRIORITY_LABEL.first,
+          onPress: () => commands.setRule(project.workspaceRoot, "first"),
+        },
+        {
+          text: PRIORITY_LABEL.last,
+          onPress: () => commands.setRule(project.workspaceRoot, "last"),
+        },
+        {
+          text: PRIORITY_LABEL.normal,
+          onPress: () => commands.setRule(project.workspaceRoot, null),
+        },
+      ]);
+    else if (id === "cancel") commands.cancel(entry);
+  };
   return (
-    <>
-      <ListRowLayout
-        icon={running ? "play" : "hourglass"}
-        label={heavyEntryName(entry)}
-        description={description}
-        {...(position === null ? {} : { detail: `#${position}` })}
-      />
-      {running ? null : (
-        <>
-          <SettingsActionRow
-            icon="arrow.up.circle"
-            label="Run next"
-            disabled={!can("next")}
-            onPress={() => move("next")}
-          />
-          <SettingsActionRow
-            icon="bolt.circle"
-            label="Start now"
-            description="Ignores how busy the Mac is"
-            disabled={!props.canChange}
-            onPress={() => commands.startNow(entry)}
-          />
-          <SettingsActionRow
-            icon="arrow.up"
-            label="Move up"
-            disabled={!can("up")}
-            onPress={() => move("up")}
-          />
-          <SettingsActionRow
-            icon="arrow.down"
-            label="Move down"
-            disabled={!can("down")}
-            onPress={() => move("down")}
-          />
-          <SettingsActionRow
-            icon="arrow.down.to.line"
-            label="Move to end"
-            disabled={!can("end")}
-            onPress={() => move("end")}
-          />
-        </>
-      )}
-      {priority.changes.map((change) => (
-        <SettingsActionRow
-          key={change}
-          icon={PRIORITY_CHANGE_ROW[change].icon}
-          label={PRIORITY_CHANGE_ROW[change].label}
-          disabled={!props.canChange}
-          onPress={() => commands.setPriority(entry.id, PRIORITY_CHANGE[change])}
+    <ListRowLayout
+      icon={running ? "play" : "hourglass"}
+      label={heavyEntryName(entry)}
+      description={description}
+      {...(position === null ? {} : { detail: `#${position}` })}
+      accessory={
+        <RowMenuButton
+          label={`Actions for ${heavyEntryName(entry)}`}
+          actions={actions}
+          onAction={run}
         />
-      ))}
-      {entry.threadId === null ? null : (
-        <SettingsActionRow
-          icon="bubble.left"
-          label="Open thread"
-          onPress={() =>
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: String(props.environmentId), threadId: entry.threadId! },
-            })
-          }
-        />
-      )}
-      {project === undefined ? null : (
-        <SettingsActionRow
-          icon="tag"
-          label="Priority for this project"
-          disabled={!props.canChange}
-          onPress={() =>
-            Alert.alert("Priority for this project", project.title, [
-              {
-                text: PRIORITY_LABEL.first,
-                onPress: () => commands.setRule(project.workspaceRoot, "first"),
-              },
-              {
-                text: PRIORITY_LABEL.last,
-                onPress: () => commands.setRule(project.workspaceRoot, "last"),
-              },
-              {
-                text: PRIORITY_LABEL.normal,
-                onPress: () => commands.setRule(project.workspaceRoot, null),
-              },
-            ])
-          }
-        />
-      )}
-      {running && entry.server === true ? null : (
-        <SettingsActionRow
-          icon={running ? "xmark" : "trash"}
-          label={running ? "Stop" : "Remove"}
-          tone="danger"
-          disabled={!props.canChange}
-          onPress={() => commands.cancel(entry)}
-        />
-      )}
-    </>
+      }
+    />
   );
 }
 
@@ -311,6 +305,7 @@ export function HeavyQueueSection(props: {
             rules={state.rules}
             canChange={canChange}
             commands={commands}
+            scoped={projectId !== undefined}
           />
         );
       })}
@@ -427,6 +422,7 @@ function HeavyCommandRows(props: {
   readonly canStop: boolean;
   readonly now: number;
   readonly onStop: (command: HeavyCommand) => void;
+  readonly scoped: boolean;
 }) {
   const { command, environmentId } = props;
   const { threadId } = command;
@@ -440,42 +436,48 @@ function HeavyCommandRows(props: {
   const description = [
     program === command.name ? undefined : program,
     runningUsageLine(command, props.cpuCount),
-    project?.title,
+    props.scoped ? undefined : project?.title,
     thread?.title,
     HEAVY_COMMAND_SOURCE_LABEL[command.source],
     `Running ${formatDuration(command.startedAt, props.now)}`,
   ]
     .filter(Boolean)
     .join(" · ");
+  const actions: MenuAction[] = [
+    ...(threadId === null ? [] : [{ id: "thread", title: "Open thread", image: "bubble.left" }]),
+    ...(command.stoppable
+      ? [
+          {
+            id: "stop",
+            title: "Stop",
+            image: "stop.fill",
+            attributes: { disabled: !props.canStop, destructive: true },
+          },
+        ]
+      : []),
+  ];
+  const run = (id: string) => {
+    if (id === "thread" && threadId !== null)
+      selectDetail({ name: "Thread", params: { environmentId: String(environmentId), threadId } });
+    else if (id === "stop") props.onStop(command);
+  };
   return (
-    <>
-      <ListRowLayout
-        icon={COMMAND_ICON[command.source]}
-        label={command.name}
-        description={description}
-      />
-      {threadId === null ? null : (
-        <SettingsActionRow
-          icon="bubble.left"
-          label="Open thread"
-          onPress={() =>
-            selectDetail({
-              name: "Thread",
-              params: { environmentId: String(environmentId), threadId },
-            })
-          }
-        />
-      )}
-      {command.stoppable ? (
-        <SettingsActionRow
-          icon="stop.fill"
-          label="Stop"
-          tone="danger"
-          disabled={!props.canStop}
-          onPress={() => props.onStop(command)}
-        />
-      ) : null}
-    </>
+    <ListRowLayout
+      icon={COMMAND_ICON[command.source]}
+      label={command.name}
+      description={description}
+      {...(actions.length === 0
+        ? {}
+        : {
+            accessory: (
+              <RowMenuButton
+                label={`Actions for ${command.name}`}
+                actions={actions}
+                onAction={run}
+              />
+            ),
+          })}
+    />
   );
 }
 
@@ -537,6 +539,7 @@ export function HeavyCommandsSection(props: {
           canStop={canStop}
           now={now}
           onStop={stop}
+          scoped={props.projectId !== undefined}
         />
       ))}
     </SettingsSection>

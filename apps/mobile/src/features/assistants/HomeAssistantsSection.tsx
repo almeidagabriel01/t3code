@@ -23,6 +23,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
+import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { cn } from "../../lib/cn";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import {
@@ -97,36 +98,6 @@ function AssistantAvatarButton(props: { readonly entry: AssistantEntry }) {
         </View>
       ) : null}
     </Pressable>
-  );
-}
-
-function RowMenuButton(props: {
-  readonly label: string;
-  readonly sidebar: boolean;
-  readonly actions: MenuAction[];
-  readonly onAction: (id: string) => void;
-}) {
-  return (
-    <Menu
-      actions={props.actions}
-      onPressAction={({ nativeEvent }) => props.onAction(nativeEvent.event)}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={props.label}
-        hitSlop={6}
-        className="size-9 items-center justify-center rounded-full active:opacity-70"
-      >
-        <SymbolView
-          name="ellipsis"
-          size={16}
-          tintColorClassName={
-            props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
-          }
-          type="monochrome"
-        />
-      </Pressable>
-    </Menu>
   );
 }
 

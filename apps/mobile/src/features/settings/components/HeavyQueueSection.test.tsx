@@ -73,9 +73,32 @@ vi.mock("./SettingsSection", () => ({
   ),
 }));
 vi.mock("../../../components/ui/ListRowLayout", () => ({
-  ListRowLayout: (props: { label: string; description?: string; detail?: string }) => (
-    <p>{[props.label, props.description, props.detail].filter(Boolean).join("|")}</p>
+  ListRowLayout: (props: {
+    label: string;
+    description?: string;
+    detail?: string;
+    accessory?: ReactNode;
+  }) => (
+    <>
+      <p>{[props.label, props.description, props.detail].filter(Boolean).join("|")}</p>
+      {props.accessory}
+    </>
   ),
+}));
+vi.mock("../../../components/ui/RowMenuButton", () => ({
+  RowMenuButton: (props: {
+    actions: Array<{ id: string; title: string; attributes?: { disabled?: boolean } }>;
+    onAction: (id: string) => void;
+  }) =>
+    props.actions.map((action) => (
+      <button
+        key={action.id}
+        disabled={action.attributes?.disabled}
+        onClick={() => props.onAction(action.id)}
+      >
+        {action.title}
+      </button>
+    )),
 }));
 vi.mock("../../../components/ui/ListChoiceRow", () => ({
   ListChoiceRow: (props: {
@@ -428,6 +451,7 @@ describe("HeavyQueueSection", () => {
       expect.stringMatching(/^cmd a\|/),
       expect.stringMatching(/^cmd c\|.*\|#2$/),
     ]);
+    expect(rows.some((row) => row.includes("App Project"))).toBe(false);
     expect(view.host.querySelector("section")?.getAttribute("aria-label")).toBe("Queue");
     expect(view.toggle("Pause queue")).toBeNull();
     expect(view.button("Allow one more")).toBeUndefined();
@@ -591,6 +615,7 @@ describe("HeavyCommandsSection", () => {
     expect(view.host.querySelector("section")?.getAttribute("aria-label")).toBe("Running now");
     const names = [...view.host.querySelectorAll("p")].map((row) => row.textContent?.split("|")[0]);
     expect(names).toEqual(["Here", "Worktree"]);
+    expect(view.host.textContent).not.toContain("App Project");
     await view.unmount();
 
     const none = await mountCommands([heavy({ threadId: null, cwd: "/work/api" })], "p1");
