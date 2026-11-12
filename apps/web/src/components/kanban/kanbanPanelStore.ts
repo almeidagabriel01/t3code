@@ -1,9 +1,8 @@
+import type { KanbanPanelScope } from "@t3tools/client-runtime/state/kanbanLogic";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../../lib/storage";
-
-export type KanbanPanelScope = "project" | "no-project";
 
 interface KanbanPanelState {
   /** Keyed by the thread's project scope key. */

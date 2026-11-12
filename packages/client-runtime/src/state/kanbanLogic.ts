@@ -17,7 +17,7 @@ import type {
   OrchestrationMessageContext,
   ProjectId,
 } from "@t3tools/contracts";
-import type { KanbanBoardState, KanbanState } from "./kanban.ts";
+import { selectKanbanBoardByProject, type KanbanBoardState, type KanbanState } from "./kanban.ts";
 
 export const KANBAN_PRIORITIES: ReadonlyArray<KanbanPriority> = [
   "urgent",
@@ -88,6 +88,37 @@ export function checklistProgress(items: ReadonlyArray<Pick<KanbanChecklistItem,
 
 export function isOverdue(card: Pick<KanbanCard, "dueAt">, now: number): boolean {
   return card.dueAt !== null && Date.parse(card.dueAt) < now;
+}
+
+export type KanbanPanelScope = "project" | "no-project";
+
+/**
+ * The board a project-scoped panel shows: the project's own, or the No project (Scratch) board.
+ * Only the project's own board is created by viewing it; the No project board waits for a card.
+ */
+export function resolveKanbanPanelBoard(input: {
+  readonly state: KanbanState | null;
+  readonly projectId: ProjectId;
+  readonly threadIsScratch: boolean;
+  readonly scratchProjectId: ProjectId | null;
+  readonly savedScope: KanbanPanelScope | undefined;
+}) {
+  const scope: KanbanPanelScope = input.threadIsScratch
+    ? "no-project"
+    : (input.savedScope ?? "project");
+  const ownerId =
+    scope === "project" || input.threadIsScratch ? input.projectId : input.scratchProjectId;
+  const board =
+    input.state === null || ownerId === null
+      ? undefined
+      : selectKanbanBoardByProject(input.state, ownerId);
+  return {
+    scope,
+    /** Null until the No project folder exists on this environment. */
+    ownerId,
+    board,
+    createsOnView: scope === "project" && !input.threadIsScratch,
+  };
 }
 
 /** Done columns start collapsed; the viewer's own choice wins after that. */

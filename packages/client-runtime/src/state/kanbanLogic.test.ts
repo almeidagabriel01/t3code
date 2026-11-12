@@ -34,6 +34,7 @@ import {
   isOverdue,
   isWipExceeded,
   kanbanSectionCollapsed,
+  resolveKanbanPanelBoard,
   kanbanCardContextRecord,
   kanbanCardRecordForThread,
   withKanbanCardContext,
@@ -228,6 +229,85 @@ describe("definition of done", () => {
     ["a column the viewer collapsed", "todo", { x: true }, true],
   ] as const)("collapses %s", (_name, role, saved, expected) => {
     expect(kanbanSectionCollapsed(column("x", role, null), saved)).toBe(expected);
+  });
+});
+
+describe("resolveKanbanPanelBoard", () => {
+  const project = "p1" as ProjectId;
+  const scratch = "scratch" as ProjectId;
+  const state = {
+    sequence: 1,
+    boards: new Map([
+      ["b1", board("p1", "b1", [])],
+      ["b2", board("scratch", "b2", [])],
+    ]),
+  } as never;
+
+  it.each([
+    ["the project board by default", false, scratch, undefined, "project", project, "b1", true],
+    [
+      "the No project board when chosen",
+      false,
+      scratch,
+      "no-project",
+      "no-project",
+      scratch,
+      "b2",
+      false,
+    ],
+    [
+      "no board before the No project folder exists",
+      false,
+      null,
+      "no-project",
+      "no-project",
+      null,
+      undefined,
+      false,
+    ],
+    [
+      "only the No project board on a scratch thread",
+      true,
+      scratch,
+      "project",
+      "no-project",
+      project,
+      "b1",
+      false,
+    ],
+  ] as const)(
+    "shows %s",
+    (
+      _name,
+      threadIsScratch,
+      scratchProjectId,
+      savedScope,
+      scope,
+      ownerId,
+      boardId,
+      createsOnView,
+    ) => {
+      const resolved = resolveKanbanPanelBoard({
+        state,
+        projectId: project,
+        threadIsScratch,
+        scratchProjectId,
+        savedScope,
+      });
+      expect(resolved).toMatchObject({ scope, ownerId, createsOnView });
+      expect(resolved.board?.id).toBe(boardId);
+    },
+  );
+
+  it("finds no board while the state loads", () => {
+    const resolved = resolveKanbanPanelBoard({
+      state: null,
+      projectId: project,
+      threadIsScratch: false,
+      scratchProjectId: scratch,
+      savedScope: undefined,
+    });
+    expect(resolved.board).toBeUndefined();
   });
 });
 

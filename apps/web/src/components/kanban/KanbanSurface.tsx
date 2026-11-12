@@ -1,6 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { selectKanbanBoardByProject } from "@t3tools/client-runtime/state/kanban";
-import { boardScopeKey } from "@t3tools/client-runtime/state/kanbanLogic";
+import { boardScopeKey, resolveKanbanPanelBoard } from "@t3tools/client-runtime/state/kanbanLogic";
 import type {
   EnvironmentId,
   KanbanCard,
@@ -22,7 +21,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { RightPanelLoading, RightPanelMessage } from "../chat/RightPanelStates";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanPanelSections } from "./KanbanPanelSections";
-import { useKanbanPanelStore, type KanbanPanelScope } from "./kanbanPanelStore";
+import { useKanbanPanelStore } from "./kanbanPanelStore";
 import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
 import { useEnsureKanbanBoard } from "./useKanbanBoardCommands";
 
@@ -53,17 +52,22 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
   const [openCardId, setOpenCardId] = useState<KanbanCardId | null>(null);
 
   const threadIsScratch = project?.isScratch === true;
-  const scope: KanbanPanelScope = threadIsScratch ? "no-project" : (storedScope ?? "project");
-  const boardProjectId = scope === "project" || threadIsScratch ? projectId : (scratch?.id ?? null);
   const state = entry?.state ?? null;
-  const board =
-    state === null || boardProjectId === null
-      ? undefined
-      : selectKanbanBoardByProject(state, boardProjectId);
-  // The No project board is created only when someone adds a card to it.
+  const {
+    scope,
+    ownerId: boardProjectId,
+    board,
+    createsOnView,
+  } = resolveKanbanPanelBoard({
+    state,
+    projectId,
+    threadIsScratch,
+    scratchProjectId: scratch?.id ?? null,
+    savedScope: storedScope,
+  });
   useEnsureKanbanBoard(
     environmentId,
-    scope === "project" && !threadIsScratch ? projectId : null,
+    createsOnView ? projectId : null,
     state !== null && board === undefined,
   );
   const openCard = openCardId === null ? undefined : board?.cards.get(openCardId);
@@ -118,7 +122,7 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
       return <RightPanelMessage title="Could not load the board" detail={entry.error} alert />;
     if (state === null) return <RightPanelLoading label="Loading board…" />;
     if (board === undefined) {
-      if (scope === "project" && !threadIsScratch) {
+      if (createsOnView) {
         return canEdit ? (
           <RightPanelLoading label="Setting up the board…" />
         ) : (
