@@ -103,12 +103,14 @@ export const installDesktopTray = Effect.fn("desktop.tray.install")(function* ()
   };
   yield* Effect.addFinalizer(() => Effect.sync(hide));
 
-  // Rows go stale once their renderer reloads or is gone (macOS keeps running windowless).
+  // Rows go stale once their renderer's document is replaced or gone (macOS keeps running
+  // windowless). Only a committed navigation replaces it: one that starts and is then cancelled
+  // (a blocked external link, a dropped file) keeps a renderer that will not publish again.
   const listen = (contents: Electron.WebContents) => {
     if (listening === contents) return deliver();
     listening = contents;
     const forget = () => {
-      contents.removeListener("did-start-navigation", onNavigation);
+      contents.removeListener("did-navigate", forget);
       contents.removeListener("destroyed", forget);
       if (listening !== contents) return;
       listening = null;
@@ -116,12 +118,7 @@ export const installDesktopTray = Effect.fn("desktop.tray.install")(function* ()
       syncTitle();
       gate.update(EMPTY_MENU);
     };
-    const onNavigation = (
-      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-    ) => {
-      if (event.isMainFrame && !event.isSameDocument) forget();
-    };
-    contents.on("did-start-navigation", onNavigation);
+    contents.on("did-navigate", forget);
     contents.once("destroyed", forget);
     deliver();
   };
