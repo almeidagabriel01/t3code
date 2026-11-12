@@ -351,6 +351,25 @@ To choose what the thread details card shows, right-click the card or open
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
 back the standard rows.
 
+## Thread tabs and side-by-side groups
+
+On web and desktop, threads you open show as tabs under the thread header, like open files.
+Picking a thread in the sidebar opens its tab, or switches to it when it is already open. Close a
+tab with its **×**, a middle click, or `mod+w`. Each project keeps its own tabs and layout, and
+they come back after a reload.
+
+Drag a tab, or a thread from the sidebar, over the thread area and keep holding: an overlay shows
+where it will go. Drop it on an edge to open a new group on that side, in the middle to add it to
+that group, or between tabs to place it there. Each group shows its own thread with its own
+composer; the thread you picked last is the full one, with the header, right panel and terminal.
+Clicking a group's title makes its thread the full one. Drag the line between groups to resize
+them, or double-click it to even them. Dragging a group's last tab elsewhere, or closing it,
+removes the group. **Open side by side** in a thread's menu or the command palette opens a thread
+in a new group on the right; **Join tab groups** in the command palette puts every tab back in
+one group. Dropping a thread on the composer still mentions it instead. When the window is too
+narrow for two groups, only the full thread's group shows until there is room again. Mobile
+shows one thread at a time.
+
 ## Side chats
 
 A side chat lets you ask a question about a thread without adding to it. It starts

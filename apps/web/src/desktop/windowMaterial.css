@@ -54,6 +54,7 @@ html[data-desktop-client]:is(
   :is(
     [data-native-material-band],
     :has(> [data-chat-column] > [data-chat-header]),
+    :has(> [data-thread-area] > [data-chat-column] > [data-chat-header]),
     :has(> [data-workspace-page-header])
   ) {
     background: linear-gradient(transparent 0 var(--workspace-topbar-height), var(--background) 0);

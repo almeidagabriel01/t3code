@@ -94,6 +94,8 @@ import {
   ArrowRightLeftIcon,
   NotebookPenIcon,
   SquareKanbanIcon,
+  Columns2Icon,
+  PanelRightCloseIcon,
 } from "lucide-react";
 import { useAutonomyPause } from "./assistants/useAutonomyPause";
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
@@ -243,6 +245,7 @@ import {
   remoteProjectInputPlaceholder,
   reduceCommandPaletteSearchState,
   type SearchOverlayMode,
+  splitThreadItems,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
@@ -298,6 +301,8 @@ import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { applyThreadTabDrop, joinThreadTabGroups, useThreadTabsStore } from "../threadTabsStore";
+import { readThreadTabsProjectKey } from "./chat/threadTabsProject";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -513,6 +518,11 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
+  const tabsRouteRef = paletteRouteTarget?.kind === "server" ? paletteRouteTarget.threadRef : null;
+  const tabsProjectKey = readThreadTabsProjectKey(tabsRouteRef);
+  const tabGroupCount = useThreadTabsStore((state) =>
+    tabsProjectKey === null ? 0 : (state.byProject[tabsProjectKey]?.groups.length ?? 0),
+  );
   const projects = useProjects();
   const referenceThreadRef =
     pathname === "/pull-requests"
@@ -1554,6 +1564,50 @@ function OpenCommandPaletteDialog(props: {
         openThreadHandoffDialog(threadRef);
       },
     });
+  }
+
+  if (tabsRouteRef !== null && tabsProjectKey !== null) {
+    const routeKey = scopedThreadKey(tabsRouteRef);
+    const projectKey = tabsProjectKey;
+    actionItems.push({
+      kind: "submenu",
+      value: "action:open-side-by-side",
+      searchTerms: ["split", "side by side", "split view", "tab group", "two threads", "compare"],
+      title: "Open side by side...",
+      icon: <Columns2Icon className={ITEM_ICON_CLASS} />,
+      addonIcon: <Columns2Icon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "split-threads",
+          label: "Threads",
+          items: splitThreadItems(
+            allThreadItems,
+            routeKey,
+            (ref) => readThreadTabsProjectKey(ref) === projectKey,
+            async (ref) => {
+              if (
+                applyThreadTabDrop(projectKey, routeKey, scopedThreadKey(ref), { beside: true })
+              ) {
+                await navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(ref),
+                });
+              }
+            },
+          ),
+        },
+      ],
+    });
+    if (tabGroupCount > 1) {
+      actionItems.push({
+        kind: "action",
+        value: "action:join-tab-groups",
+        searchTerms: ["close split", "join", "merge", "tab groups", "single pane", "unsplit"],
+        title: "Join tab groups",
+        icon: <PanelRightCloseIcon className={ITEM_ICON_CLASS} />,
+        run: async () => joinThreadTabGroups(projectKey),
+      });
+    }
   }
 
   if (activeThread !== null) {

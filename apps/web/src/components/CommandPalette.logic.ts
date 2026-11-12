@@ -9,6 +9,7 @@ import {
   type SearchRange,
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
@@ -935,4 +936,18 @@ export function newThreadNoProjectIndex(
   }
   const pinnedCount = projects.filter((entry) => entry.pinned).length;
   return Math.min(pinnedCount + 1, projects.length);
+}
+
+/** Thread rows re-aimed to open beside the routed thread instead of replacing it. */
+export function splitThreadItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  routeKey: string,
+  canOpen: (thread: ScopedThreadRef) => boolean,
+  openBeside: (thread: ScopedThreadRef) => Promise<void>,
+): CommandPaletteActionItem[] {
+  return items.flatMap((item) => {
+    const thread = item.threadRef;
+    if (!thread || scopedThreadKey(thread) === routeKey || !canOpen(thread)) return [];
+    return [{ ...item, value: `split:${item.value}`, run: () => openBeside(thread) }];
+  });
 }

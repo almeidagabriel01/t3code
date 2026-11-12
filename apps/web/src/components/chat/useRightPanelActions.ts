@@ -63,6 +63,8 @@ interface RightPanelActionsInput {
   readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly onDiffPanelOpen: (() => void) | undefined;
   readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
+  /** Closes the routed thread's tab; false when the thread has no tabs. */
+  readonly closeThreadTab?: () => boolean;
 }
 
 /**
@@ -339,6 +341,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         ? selectActiveMainFileSurface(useRightPanelStore.getState().byThreadKey, activeThreadRef)
         : null;
       const panelFocused = document.activeElement?.closest("[data-right-panel-surface-content]");
+      // Outside the panel, Cmd+W closes what the chat shows: an open file, else the thread's tab.
+      if (!panelFocused && !mainFile && !event.repeat && input.closeThreadTab?.()) return;
       const target =
         mainFile && (!activeRightPanelSurface || !panelFocused)
           ? mainFile
