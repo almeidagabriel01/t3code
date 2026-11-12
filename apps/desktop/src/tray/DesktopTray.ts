@@ -18,6 +18,7 @@ import { TrayMenuPayload } from "./trayMenuPayload.ts";
 import { createTrayMenuGate } from "./trayMenuGate.ts";
 
 const EMPTY_MENU: DesktopTrayMenu = { attention: [], running: [], pinned: [], attentionCount: 0 };
+const ERR_ABORTED = -3;
 
 const macOSMajor = () => Number.parseInt(process.getSystemVersion().split(".")[0] ?? "0", 10);
 
@@ -104,13 +105,15 @@ export const installDesktopTray = Effect.fn("desktop.tray.install")(function* ()
   yield* Effect.addFinalizer(() => Effect.sync(hide));
 
   // Rows go stale once their renderer's document is replaced or gone (macOS keeps running
-  // windowless). Only a committed navigation replaces it: one that starts and is then cancelled
-  // (a blocked external link, a dropped file) keeps a renderer that will not publish again.
+  // windowless). A navigation that starts and is then cancelled (a blocked external link, a
+  // download) keeps a renderer that will not publish again, so only a commit or a failed load
+  // (an error page) clears them; ERR_ABORTED is a navigation that never replaced the document.
   const listen = (contents: Electron.WebContents) => {
     if (listening === contents) return deliver();
     listening = contents;
     const forget = () => {
       contents.removeListener("did-navigate", forget);
+      contents.removeListener("did-fail-load", onFailedLoad);
       contents.removeListener("destroyed", forget);
       if (listening !== contents) return;
       listening = null;
@@ -118,7 +121,17 @@ export const installDesktopTray = Effect.fn("desktop.tray.install")(function* ()
       syncTitle();
       gate.update(EMPTY_MENU);
     };
+    const onFailedLoad = (
+      _event: Electron.Event,
+      errorCode: number,
+      _description: string,
+      _url: string,
+      isMainFrame: boolean,
+    ) => {
+      if (isMainFrame && errorCode !== ERR_ABORTED) forget();
+    };
     contents.on("did-navigate", forget);
+    contents.on("did-fail-load", onFailedLoad);
     contents.once("destroyed", forget);
     deliver();
   };
