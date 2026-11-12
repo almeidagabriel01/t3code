@@ -350,13 +350,14 @@ describe("HeavyCommandsGroup", () => {
     for (const text of ["Queued", "Agent", "Terminal", "App Project", "Package", "No project"]) {
       await expect.element(screen.getByText(text, { exact: true }).first()).toBeVisible();
     }
+    // The row names the command; its full program line and peak usage live in tooltips.
+    await userEvent.hover(screen.getByText("Tests", { exact: true }));
     await expect
-      .element(screen.getByText("node /work/app/node_modules/.bin/vp test run").first())
+      .element(screen.getByText(/^node \/work\/app\/node_modules\/\.bin\/vp test run · pid \d+$/))
       .toBeVisible();
-    await expect
-      .element(screen.getByText("Using 2.5 cores (31%) · 1.0 GB · peak 3.0 cores · 2.0 GB").first())
-      .toBeVisible();
-    expect(screen.getByText(/^Running · /).elements()).toHaveLength(3);
+    await userEvent.hover(screen.getByText("31%").nth(1));
+    await expect.element(screen.getByText(/^Peak .+ · .+$/)).toBeVisible();
+    expect(screen.getByText(/^· \d/).elements()).toHaveLength(3);
     await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
     expect(mocks.openThread).toHaveBeenCalledWith("t1");
     await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
