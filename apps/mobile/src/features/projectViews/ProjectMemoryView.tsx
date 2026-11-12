@@ -1,4 +1,3 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
 import {
   memoryBrowseInput,
   memoryPreview,
@@ -38,6 +37,7 @@ import {
   type ProjectMemoryScope,
 } from "../memory/useProjectMemory";
 import { ProjectViewMessage } from "./ProjectViewMessage";
+import { useLeaveSheet } from "./useLeaveSheet";
 
 type ActiveMemory = Extract<MemoryItem, { status: "active" }>;
 
@@ -123,7 +123,7 @@ function MemoryPages(props: {
   readonly query: string;
 }) {
   const { environmentId, query } = props;
-  const navigation = useNavigation();
+  const leaveSheet = useLeaveSheet();
   const forget = useForgetMemory(environmentId);
   const [cursors, setCursors] = useState<ReadonlyArray<string>>([]);
   const cursor = cursors.at(-1);
@@ -144,16 +144,13 @@ function MemoryPages(props: {
   }
   if (value === null) return <ProjectViewMessage title="Loading memories…" />;
   const items = value.items.filter((item): item is ActiveMemory => item.status === "active");
-  // Memory replaces the sheet, so it opens on top and going back returns to the thread.
   const edit = (item: ActiveMemory) =>
-    navigation.dispatch(
-      StackActions.replace("SettingsMemory", {
-        environmentId,
-        memorySpaceId: item.memorySpaceId,
-        memoryId: item.memoryId,
-        project: { environmentId, projectId: ProjectId.make(props.projectId) },
-      }),
-    );
+    leaveSheet("SettingsMemory", {
+      environmentId,
+      memorySpaceId: item.memorySpaceId,
+      memoryId: item.memoryId,
+      project: { environmentId, projectId: ProjectId.make(props.projectId) },
+    });
   return (
     <View className="gap-3">
       {items.length === 0 ? (

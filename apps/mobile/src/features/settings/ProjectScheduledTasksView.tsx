@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   agendaEntryDetail,
   localDayStarts,
@@ -29,22 +28,16 @@ import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
-import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import { SettingsScreen } from "./components/SettingsScreen";
+import { useLeaveSheet } from "../projectViews/useLeaveSheet";
 import { startScheduledTaskEditor } from "./scheduled-task-editor-state";
 import { describeSchedule, formatNextScheduledTaskRun } from "./scheduledTaskPresentation";
 import { editDraft } from "./scheduledTaskDraft";
-
-type ProjectScheduledTasksRouteParams = {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-};
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric" });
 
@@ -108,11 +101,12 @@ function Agenda(props: {
 }
 
 /** A thread's project schedule: today and tomorrow's runs, then every task with its controls. */
-export function ProjectScheduledTasksRouteScreen({
-  route,
-}: StaticScreenProps<ProjectScheduledTasksRouteParams>) {
-  const { environmentId, projectId } = route.params;
-  const navigation = useNavigation();
+export function ProjectScheduledTasksView(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+}) {
+  const { environmentId, projectId } = props;
+  const leaveSheet = useLeaveSheet();
   const selectDetail = useSelectWorkspaceDetail();
   const now = useNowMinuteMs();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -143,7 +137,7 @@ export function ProjectScheduledTasksRouteScreen({
       environmentLabel: savedConnectionsById[environmentId]?.environmentLabel ?? "This machine",
       draft: editDraft(task),
     });
-    navigation.navigate("SettingsScheduledTaskEdit");
+    leaveSheet("SettingsScheduledTaskEdit");
   };
   const act = async (
     task: ScheduledTask,
@@ -291,23 +285,5 @@ export function ProjectScheduledTasksRouteScreen({
     );
   })();
 
-  return (
-    <SettingsScreen
-      title="Scheduled tasks"
-      actions={[
-        {
-          accessibilityLabel: "Manage scheduled tasks",
-          icon: "gearshape",
-          onPress: () => navigation.navigate("SettingsScheduledTasks"),
-        },
-      ]}
-    >
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerClassName="gap-5 px-4 pb-10 pt-3"
-      >
-        {body}
-      </ScrollView>
-    </SettingsScreen>
-  );
+  return <View className="gap-5">{body}</View>;
 }

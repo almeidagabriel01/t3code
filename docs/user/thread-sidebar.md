@@ -201,8 +201,8 @@ A thread's project board and its scheduled tasks can also sit beside the convers
 **Kanban** or **Scheduled tasks** from the right panel's **+** menu, or search the command palette.
 The board switches between the project and **No project**, folds each column, and moves a card by
 dragging it or with **Move to** in its **⋯** menu. Scheduled tasks shows today's and tomorrow's
-runs above the project's tasks, each with run now, pause and resume. On mobile, both are in a
-thread's menu.
+runs above the project's tasks, each with run now, pause and resume. On mobile, both are sections
+of **Project** in a thread's menu.
 Long-press a card for quick actions: rename, move, labels, due date, archive, and delete. **New
 card** on the all-projects board adds a card to any project, and the card screen takes attachments.
 

@@ -9,6 +9,7 @@ import Animated, {
 
 import { segmentedControlColors } from "./segmentedControlColors";
 import { AppText } from "./AppText";
+import { SymbolView } from "./AppSymbol";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
 
@@ -39,13 +40,22 @@ export function SegmentedControl<Value extends string | number>(
     Platform.OS,
     themeId,
   );
-  const minHeight = props.size === "compact" ? 32 : Platform.OS === "android" ? 40 : 36;
+  const withIcons = props.options.some((option) => option.icon !== undefined);
+  const minHeight = withIcons
+    ? 52
+    : props.size === "compact"
+      ? 32
+      : Platform.OS === "android"
+        ? 40
+        : 36;
+  const shape = withIcons ? "rounded-2xl" : "rounded-full";
+  const segmentShape = withIcons ? "rounded-[13px]" : "rounded-full";
 
   return (
     <View collapsable={false} className={props.className}>
       <View
         onLayout={(event) => setLayout(event.nativeEvent.layout)}
-        className="flex-row rounded-full p-[3px]"
+        className={`flex-row p-[3px] ${shape}`}
         style={{
           minHeight,
           backgroundColor: trackColor,
@@ -54,7 +64,7 @@ export function SegmentedControl<Value extends string | number>(
         {selectedIndex >= 0 && width > 0 ? (
           <Animated.View
             pointerEvents="none"
-            className="absolute bottom-[3px] start-[3px] top-[3px] rounded-full"
+            className={`absolute bottom-[3px] start-[3px] top-[3px] ${segmentShape}`}
             style={[
               {
                 backgroundColor: selectedColor,
@@ -72,11 +82,20 @@ export function SegmentedControl<Value extends string | number>(
               accessibilityLabel={option.accessibilityLabel ?? option.label}
               accessibilityState={{ selected }}
               onPress={() => props.onSelect(option.value)}
-              className="flex-1 items-center justify-center rounded-full px-2 py-1 active:opacity-70"
+              className={`min-w-0 flex-1 items-center justify-center px-1 py-1 active:opacity-70 ${segmentShape} ${withIcons ? "gap-0.5" : ""}`}
               style={{ minHeight: minHeight - 6 }}
             >
+              {option.icon ? (
+                <SymbolView
+                  name={option.icon}
+                  size={17}
+                  tintColor={selected ? selectedTextColor : mutedColor}
+                  type="monochrome"
+                />
+              ) : null}
               <AppText
-                textRole="footnote"
+                textRole={withIcons ? "caption" : "footnote"}
+                numberOfLines={1}
                 className={selected ? "font-t3-bold" : "font-t3-medium"}
                 style={{
                   color: selected ? selectedTextColor : mutedColor,

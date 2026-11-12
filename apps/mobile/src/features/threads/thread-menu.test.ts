@@ -40,41 +40,16 @@ describe("thread menu", () => {
     expect(openNotes).toHaveBeenCalledTimes(1);
   });
 
-  it("offers the project's Activity, Memory and Heavy work only when asked, and routes each", () => {
-    expect(ids()).not.toContain("project-views");
-    const project = buildThreadMenuActions({ ...input, projectViews: true }).find(
-      (action) => action.id === "project-views",
-    );
-    expect(project?.subactions?.map((action) => [action.id, action.title])).toEqual([
-      ["project-view:activity", "Activity"],
-      ["project-view:memory", "Memory"],
-      ["project-view:heavy-work", "Heavy work"],
-    ]);
-    const openProjectView = vi.fn();
-    const run = (event: string) =>
-      runThreadMenuEvent(event, { openProjectView } as unknown as ThreadMenuHandlers, {
-        displayedPresets: [],
-        presets: undefined,
-        now: new Date(0),
-      });
-    run("project-view:heavy-work");
-    run("project-view:unknown");
-    expect(openProjectView.mock.calls).toEqual([["heavy-work"]]);
-  });
-
-  it.each([
-    ["board", "board", "openBoard"],
-    ["scheduledTasks", "scheduled-tasks", "openScheduledTasks"],
-  ] as const)("offers %s only when asked and routes it", (flag, id, handler) => {
-    expect(ids()).not.toContain(id);
-    expect(ids({ [flag]: true })).toContain(id);
-    const open = vi.fn();
-    runThreadMenuEvent(id, { [handler]: open } as unknown as ThreadMenuHandlers, {
+  it("offers the Project sheet only when asked and routes it", () => {
+    expect(ids()).not.toContain("project");
+    expect(ids({ projectViews: true })).toContain("project");
+    const openProject = vi.fn();
+    runThreadMenuEvent("project", { openProject } as unknown as ThreadMenuHandlers, {
       displayedPresets: [],
       presets: undefined,
       now: new Date(0),
     });
-    expect(open).toHaveBeenCalledTimes(1);
+    expect(openProject).toHaveBeenCalledTimes(1);
   });
 
   it("has thread Notes only in a real project of a notes environment", () => {

@@ -2,12 +2,6 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import {
-  isProjectView,
-  PROJECT_VIEW_META,
-  PROJECT_VIEWS,
-  type ProjectView,
-} from "../projectViews/projectViews";
 import { HANDOFF_ICON, HANDOFF_LABEL } from "./thread-handoff";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { resolveThreadListV2SnoozeMenuSelection } from "./threadListV2";
@@ -78,11 +72,7 @@ export interface ThreadMenuInput {
   readonly restartSession?: boolean;
   /** The project's notes are reachable: the environment supports notes and the thread has a real project. */
   readonly notes?: boolean;
-  /** The environment has boards; a thread in no project shows the No project board. */
-  readonly board?: boolean;
-  /** The open thread only: its project's scheduled tasks. */
-  readonly scheduledTasks?: boolean;
-  /** The thread has a project, so its Activity, Memory and Heavy work open beside it. */
+  /** The thread's project opens in a sheet: board, schedule, activity, memory and heavy work. */
   readonly projectViews?: boolean;
   readonly turnIntoProject: { readonly archivable: boolean } | null;
   readonly snoozePresetActions: ReadonlyArray<MenuAction>;
@@ -198,24 +188,7 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
         ]
       : []),
     ...(input.notes ? [{ id: "notes", title: "Notes", image: "note.text" }] : []),
-    ...(input.board ? [{ id: "board", title: "Board", image: "square.grid.2x2" }] : []),
-    ...(input.scheduledTasks
-      ? [{ id: "scheduled-tasks", title: "Scheduled tasks", image: "calendar.badge.clock" }]
-      : []),
-    ...(input.projectViews
-      ? [
-          {
-            id: "project-views",
-            title: "Project",
-            image: "folder",
-            subactions: PROJECT_VIEWS.map((view) => ({
-              id: `project-view:${view}`,
-              title: PROJECT_VIEW_META[view].title,
-              image: PROJECT_VIEW_META[view].icon,
-            })),
-          },
-        ]
-      : []),
+    ...(input.projectViews ? [{ id: "project", title: "Project", image: "folder" }] : []),
     { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
     { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
     ...(input.assistantTask
@@ -295,9 +268,7 @@ export interface ThreadMenuHandlers {
   readonly linkCard?: () => void;
   readonly restartSession?: () => void;
   readonly openNotes?: () => void;
-  readonly openBoard?: () => void;
-  readonly openScheduledTasks?: () => void;
-  readonly openProjectView?: (view: ProjectView) => void;
+  readonly openProject?: () => void;
   readonly turnIntoProject: () => void;
   readonly dismissTask?: () => void;
   readonly restoreTask?: () => void;
@@ -361,10 +332,8 @@ export function runThreadMenuEvent(
       return handlers.restartSession?.();
     case "notes":
       return handlers.openNotes?.();
-    case "board":
-      return handlers.openBoard?.();
-    case "scheduled-tasks":
-      return handlers.openScheduledTasks?.();
+    case "project":
+      return handlers.openProject?.();
     case "turn-into-project":
       return handlers.turnIntoProject();
     case "dismiss-task":
@@ -381,11 +350,6 @@ export function runThreadMenuEvent(
       return handlers.delete();
     case "snooze:custom":
       return handlers.openCustomSnooze();
-  }
-  const view = event.startsWith("project-view:") ? event.slice("project-view:".length) : null;
-  if (view !== null) {
-    if (isProjectView(view)) handlers.openProjectView?.(view);
-    return;
   }
   const selection = resolveThreadListV2SnoozeMenuSelection({
     event,

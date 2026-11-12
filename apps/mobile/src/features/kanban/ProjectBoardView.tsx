@@ -1,4 +1,3 @@
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { selectKanbanColumns } from "@t3tools/client-runtime/state/kanban";
 import {
   boardScopeKey,
@@ -19,26 +18,23 @@ import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
-import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useKanbanStates } from "../../state/kanban";
-import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { useLeaveSheet } from "../projectViews/useLeaveSheet";
 import { KanbanCardMenu } from "./KanbanCardMenu";
 import { KanbanCardTile } from "./KanbanCardTile";
 import { useCreateKanbanBoard, useCreateKanbanCard } from "./useCreateKanbanBoard";
 import { useKanbanActions } from "./useKanbanActions";
 import { useKanbanPanelPreferences } from "./useKanbanPanelPreferences";
 
-type ProjectKanbanRouteParams = {
+/** A thread's project board: one folding section per column, like the web right panel. */
+export function ProjectBoardView(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
-};
-
-/** A thread's project board: one folding section per column, like the web right panel. */
-export function ProjectKanbanRouteScreen({ route }: StaticScreenProps<ProjectKanbanRouteParams>) {
-  const { environmentId, projectId } = route.params;
-  const navigation = useNavigation();
+}) {
+  const { environmentId, projectId } = props;
+  const leaveSheet = useLeaveSheet();
   const now = useNowMinuteMs();
   const entry = useKanbanStates().find((state) => state.environmentId === environmentId);
   const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot;
@@ -204,7 +200,7 @@ export function ProjectKanbanRouteScreen({ route }: StaticScreenProps<ProjectKan
             ? null
             : cards.map((card) => {
                 const open = () =>
-                  navigation.navigate("SettingsKanbanCard", { environmentId, cardId: card.id });
+                  leaveSheet("SettingsKanbanCard", { environmentId, cardId: card.id });
                 return (
                   <KanbanCardMenu
                     key={card.id}
@@ -258,39 +254,14 @@ export function ProjectKanbanRouteScreen({ route }: StaticScreenProps<ProjectKan
   })();
 
   return (
-    <SettingsScreen
-      title="Board"
-      actions={[
-        ...(canAdd
-          ? [
-              {
-                accessibilityLabel: "New card",
-                icon: "plus" as const,
-                onPress: () => addCard(null, null),
-              },
-            ]
-          : []),
-        {
-          accessibilityLabel: "Open the full board",
-          icon: "square.grid.2x2" as const,
-          onPress: () =>
-            navigation.navigate("SettingsKanban", {
-              scope: boardScopeKey(environmentId, board?.projectId ?? ownerId ?? projectId),
-            }),
-        },
-      ]}
-    >
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        keyboardShouldPersistTaps="handled"
-        contentContainerClassName="gap-4 px-4 pb-10 pt-3"
-      >
+    <View className="gap-4">
+      <View className="flex-row items-center gap-1">
         {threadIsScratch ? (
-          <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
+          <Text textRole="footnote" className="flex-1 font-t3-medium text-foreground-muted">
             No project
           </Text>
         ) : (
-          <View className="flex-row">
+          <View className="min-w-0 flex-1 flex-row">
             <Menu
               actions={scopeActions}
               onPressAction={({ nativeEvent }) =>
@@ -314,8 +285,24 @@ export function ProjectKanbanRouteScreen({ route }: StaticScreenProps<ProjectKan
             </Menu>
           </View>
         )}
-        {body}
-      </ScrollView>
-    </SettingsScreen>
+        {canAdd ? (
+          <IconButton
+            accessibilityLabel="New card"
+            icon="plus"
+            onPress={() => addCard(null, null)}
+          />
+        ) : null}
+        <IconButton
+          accessibilityLabel="Open the full board"
+          icon="square.grid.2x2"
+          onPress={() =>
+            leaveSheet("SettingsKanban", {
+              scope: boardScopeKey(environmentId, board?.projectId ?? ownerId ?? projectId),
+            })
+          }
+        />
+      </View>
+      {body}
+    </View>
   );
 }

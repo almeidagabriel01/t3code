@@ -25,8 +25,10 @@ export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
   const { colors, colorScheme, themeId } = useControlTheme();
-  // UIKit adds a gray fill over the sunken card track.
-  if (props.variant === "card") return <FlatSegmentedControl {...props} />;
+  // UIKit adds a gray fill over the sunken card track, and its segments cannot stack an icon
+  // over a label.
+  if (props.variant === "card" || props.options.some((option) => option.icon !== undefined))
+    return <FlatSegmentedControl {...props} />;
   const { trackColor, selectedColor, selectedTextColor, mutedColor } = segmentedControlColors(
     colors,
     colorScheme,

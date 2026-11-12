@@ -23,7 +23,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import { useEnvironmentScope } from "../../state/session";
 import { turnThreadIntoProject, canTurnThreadIntoProject } from "./turnThreadIntoProject";
 import { whenRootNavigationReady, rootNavigationRef } from "../../lib/rootNavigation";
-import { openProjectPanel } from "./projectPanels";
+import { openProjectView } from "../projectViews/openProjectView";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantWork } from "../assistants/assistantWorkTarget";
@@ -123,8 +123,6 @@ export function useThreadMenu(
       linkedCard === null && kanbanActions.canEdit && kanbanEnvironmentIds.includes(environmentId),
     restartSession: true,
     notes: canOpenThreadNotes(thread, notesEnvironmentIds, projects),
-    board: projectPanels && kanbanEnvironmentIds.includes(environmentId),
-    scheduledTasks: projectPanels,
     projectViews: projectPanels,
     turnIntoProject: canTurnIntoProject ? { archivable: threadCanArchive(thread.runtime) } : null,
     snoozePresetActions: buildSnoozePresetActions(snoozePresets),
@@ -181,16 +179,7 @@ export function useThreadMenu(
               project: thread.projectId,
             }),
           ),
-        openBoard: () => openProjectPanel("SettingsProjectKanban", thread),
-        openScheduledTasks: () => openProjectPanel("SettingsProjectScheduledTasks", thread),
-        openProjectView: (view) =>
-          whenRootNavigationReady(() =>
-            rootNavigationRef.navigate("ThreadProjectView", {
-              environmentId,
-              threadId: thread.id,
-              view,
-            }),
-          ),
+        openProject: () => openProjectView(thread),
         turnIntoProject: () => void turnThreadIntoProject(thread),
         dismissTask: () => void assistantFlows.dismissTask(thread.id),
         restoreTask: () => void assistantFlows.restoreTask(thread.id),

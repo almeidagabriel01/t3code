@@ -159,60 +159,30 @@ describe("useThreadMenu Notes item", () => {
   });
 });
 
-describe("useThreadMenu Project views", () => {
-  const projectItem = () => seen.mock.lastCall?.[0]?.find((item) => item.id === "project-views");
-
-  it("opens the chosen view of the thread's project in its sheet", async () => {
-    mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha" }];
-    await mount();
-    const memory = (projectItem() as unknown as { items: AppBarMenuItem[] }).items.find(
-      (item) => item.id === "project-view:memory",
-    ) as { onPress: () => void };
-    act(() => memory.onPress());
-    expect(mocks.navigate).toHaveBeenCalledWith("ThreadProjectView", {
-      environmentId: "env",
-      threadId: "t1",
-      view: "memory",
-    });
-  });
-
-  it("is absent when the thread's project is unknown", async () => {
-    mocks.projects = [];
-    await mount();
-    expect(projectItem()).toBeUndefined();
-  });
-});
-
-describe("useThreadMenu project board and scheduled tasks", () => {
+describe("useThreadMenu Project", () => {
   const item = (id: string) => seen.mock.lastCall?.[0]?.find((entry) => entry.id === id);
 
-  it("opens each over the thread, on the thread's project", async () => {
+  it("opens the thread's project sheet, with no top-level board or schedule", async () => {
     mocks.kanbanEnvironmentIds = ["env"];
     mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha" }];
     await mount();
-    act(() => (item("board") as { onPress: () => void }).onPress());
-    expect(mocks.navigate).toHaveBeenCalledWith("SettingsProjectKanban", {
+    expect(item("board")).toBeUndefined();
+    expect(item("scheduled-tasks")).toBeUndefined();
+    act(() => (item("project") as { onPress: () => void }).onPress());
+    expect(mocks.navigate).toHaveBeenCalledWith("ThreadProjectView", {
       environmentId: "env",
-      projectId: "p1",
-    });
-    act(() => (item("scheduled-tasks") as { onPress: () => void }).onPress());
-    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectScheduledTasks", {
-      environmentId: "env",
-      projectId: "p1",
+      threadId: "t1",
     });
   });
 
   it.each([
-    { name: "an environment without boards", envs: [], role: undefined, board: false, tasks: true },
-    { name: "the assistants' home", envs: ["env"], role: "assistants", board: false, tasks: false },
-    { name: "a thread in no project", envs: ["env"], role: "scratch", board: true, tasks: true },
-  ])("offers the right items for $name", async ({ envs, role, board, tasks }) => {
-    mocks.kanbanEnvironmentIds = envs;
-    mocks.projects = [{ environmentId: "env", id: "p1", title: "Alpha", managedRole: role }];
+    { name: "an unknown project", projects: [], offered: false },
+    { name: "the assistants' home", projects: [{ managedRole: "assistants" }], offered: false },
+    { name: "a project", projects: [{}], offered: true },
+  ])("is offered for $name: $offered", async ({ projects, offered }) => {
+    mocks.projects = projects.map((extra) => ({ environmentId: "env", id: "p1", ...extra }));
     await mount();
-    expect(item("board") !== undefined).toBe(board);
-    expect(item("scheduled-tasks") !== undefined).toBe(tasks);
-    expect(item("project-views") !== undefined).toBe(tasks);
+    expect(item("project") !== undefined).toBe(offered);
   });
 });
 

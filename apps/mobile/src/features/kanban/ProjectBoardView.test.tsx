@@ -35,9 +35,7 @@ vi.mock("react-native", () => ({
     </button>
   ),
 }));
-vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ navigate: mocks.navigate }),
-}));
+vi.mock("../projectViews/useLeaveSheet", () => ({ useLeaveSheet: () => mocks.navigate }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ prompt: mocks.prompt }));
@@ -65,24 +63,6 @@ vi.mock("../../components/ui/Menu", () => ({
           {`pick ${action.title}`}
         </button>
       ))}
-    </>
-  ),
-}));
-vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
-vi.mock("../settings/components/SettingsScreen", () => ({
-  SettingsScreen: (props: {
-    actions: ReadonlyArray<{ accessibilityLabel: string; onPress: () => void }>;
-    children?: ReactNode;
-  }) => (
-    <>
-      {props.actions.map((action) => (
-        <button
-          key={action.accessibilityLabel}
-          aria-label={action.accessibilityLabel}
-          onClick={action.onPress}
-        />
-      ))}
-      {props.children}
     </>
   ),
 }));
@@ -120,7 +100,7 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/kanban", () => ({ useKanbanStates: () => mocks.states }));
 
-import { ProjectKanbanRouteScreen } from "./ProjectKanbanRouteScreen";
+import { ProjectBoardView } from "./ProjectBoardView";
 
 const environmentId = "env" as EnvironmentId;
 const column = (id: string, role: string, orderKey: string) => ({
@@ -188,9 +168,7 @@ afterEach(() => act(() => root.unmount()));
 
 const mount = (projectId = "p1") =>
   act(async () =>
-    root.render(
-      <ProjectKanbanRouteScreen route={{ params: { environmentId, projectId } } as never} />,
-    ),
+    root.render(<ProjectBoardView environmentId={environmentId} projectId={projectId as never} />),
   );
 const button = (label: string) =>
   [...host.querySelectorAll("button")].find(
@@ -200,7 +178,7 @@ const press = (label: string) => act(async () => button(label)?.click());
 const confirmPrompt = (value: string) =>
   act(async () => mocks.prompt.mock.calls.at(-1)![0].onConfirm(value));
 
-describe("ProjectKanbanRouteScreen", () => {
+describe("ProjectBoardView", () => {
   it("shows a section per column with Done folded, and folds a section on press", async () => {
     await mount();
     expect(host.textContent).toContain("tile Write spec");

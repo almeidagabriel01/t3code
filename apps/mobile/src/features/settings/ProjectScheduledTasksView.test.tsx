@@ -34,9 +34,7 @@ vi.mock("react-native", () => ({
     </button>
   ),
 }));
-vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ navigate: mocks.navigate }),
-}));
+vi.mock("../projectViews/useLeaveSheet", () => ({ useLeaveSheet: () => mocks.navigate }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.canOperate }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -72,24 +70,6 @@ vi.mock("../../components/ui/Menu", () => ({
     </>
   ),
 }));
-vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
-vi.mock("./components/SettingsScreen", () => ({
-  SettingsScreen: (props: {
-    actions: ReadonlyArray<{ accessibilityLabel: string; onPress: () => void }>;
-    children?: ReactNode;
-  }) => (
-    <>
-      {props.actions.map((action) => (
-        <button
-          key={action.accessibilityLabel}
-          aria-label={action.accessibilityLabel}
-          onClick={action.onPress}
-        />
-      ))}
-      {props.children}
-    </>
-  ),
-}));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => mocks.now }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: mocks.data, error: mocks.error }),
@@ -121,7 +101,7 @@ vi.mock("./scheduledTaskPresentation", () => ({
   formatNextScheduledTaskRun: () => "in 2h",
 }));
 
-import { ProjectScheduledTasksRouteScreen } from "./ProjectScheduledTasksRouteScreen";
+import { ProjectScheduledTasksView } from "./ProjectScheduledTasksView";
 
 const environmentId = "env" as EnvironmentId;
 const at = (day: number, hour: number) => new Date(2026, 10, day, hour).getTime();
@@ -162,9 +142,7 @@ afterEach(() => act(() => root.unmount()));
 const mount = () =>
   act(async () =>
     root.render(
-      <ProjectScheduledTasksRouteScreen
-        route={{ params: { environmentId, projectId: "p1" } } as never}
-      />,
+      <ProjectScheduledTasksView environmentId={environmentId} projectId={"p1" as never} />,
     ),
   );
 const button = (label: string) =>
@@ -175,7 +153,7 @@ const press = (label: string) => act(async () => button(label)?.click());
 const labels = () =>
   [...host.querySelectorAll("button")].map((node) => node.getAttribute("aria-label") ?? "");
 
-describe("ProjectScheduledTasksRouteScreen", () => {
+describe("ProjectScheduledTasksView", () => {
   it("lays this project's runs on today and tomorrow, then lists its tasks in run order", async () => {
     mocks.data = {
       tasks: [
@@ -246,7 +224,7 @@ describe("ProjectScheduledTasksRouteScreen", () => {
     expect(button("Run Hook now")).toBeUndefined();
   });
 
-  it("opens a task's thread and the scheduled task settings", async () => {
+  it("opens a task's thread and the task", async () => {
     mocks.data = { tasks: [task("Bound", { threadId: "thread-1" as never })] };
     await mount();
     await press("Open thread");
@@ -256,8 +234,6 @@ describe("ProjectScheduledTasksRouteScreen", () => {
     });
     await press("Open task");
     expect(mocks.startEditor).toHaveBeenCalledTimes(1);
-    await press("Manage scheduled tasks");
-    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsScheduledTasks");
   });
 
   it.each([
