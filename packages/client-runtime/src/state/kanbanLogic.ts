@@ -90,6 +90,14 @@ export function isOverdue(card: Pick<KanbanCard, "dueAt">, now: number): boolean
   return card.dueAt !== null && Date.parse(card.dueAt) < now;
 }
 
+/** Done columns start collapsed; the viewer's own choice wins after that. */
+export function kanbanSectionCollapsed(
+  column: Pick<KanbanColumn, "id" | "role">,
+  saved: Readonly<Record<string, boolean>> | undefined,
+): boolean {
+  return saved?.[column.id] ?? column.role === "done";
+}
+
 export function isWipExceeded(column: Pick<KanbanColumn, "wipLimit">, count: number): boolean {
   return column.wipLimit !== null && count > column.wipLimit;
 }
@@ -276,6 +284,44 @@ export function applyMoveLocally(
     const at = move.beforeCardId === undefined ? index + 1 : index;
     return { ...column, cardIds: [...rest.slice(0, at), move.cardId, ...rest.slice(at)] };
   });
+}
+
+/** A dropped card's place, shown until the server's copy of the card changes. */
+export interface OptimisticMove {
+  readonly move: CardMove;
+  readonly columnId: KanbanColumnId;
+  readonly orderKey: string;
+}
+
+/** The columns with `optimistic` applied while the live card still sits where the drag found it. */
+export function withOptimisticMove<
+  Column extends { readonly id: KanbanColumnId },
+  Card extends Pick<KanbanCard, "id" | "columnId" | "orderKey">,
+>(
+  columns: ReadonlyArray<{ readonly column: Column; readonly cards: ReadonlyArray<Card> }>,
+  optimistic: OptimisticMove | null,
+): ReadonlyArray<{ readonly column: Column; readonly cards: ReadonlyArray<Card> }> {
+  if (optimistic === null) return columns;
+  const cards = new Map(columns.flatMap((entry) => entry.cards.map((card) => [card.id, card])));
+  const live = cards.get(optimistic.move.cardId);
+  if (
+    live === undefined ||
+    live.columnId !== optimistic.columnId ||
+    live.orderKey !== optimistic.orderKey
+  ) {
+    return columns;
+  }
+  const moved = applyMoveLocally(
+    columns.map((entry) => ({
+      columnId: entry.column.id,
+      cardIds: entry.cards.map((card) => card.id),
+    })),
+    optimistic.move,
+  );
+  return columns.map((entry, index) => ({
+    column: entry.column,
+    cards: moved[index]!.cardIds.map((id) => cards.get(id)!),
+  }));
 }
 
 /** The user's manual drag is allowed; this is the reason to warn when it skips the definition of done. */

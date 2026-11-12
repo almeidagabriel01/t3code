@@ -32,6 +32,7 @@ import {
   groupCardsByRole,
   isOverdue,
   isWipExceeded,
+  kanbanSectionCollapsed,
   kanbanCardContextRecord,
   kanbanCardRecordForThread,
   withKanbanCardContext,
@@ -186,6 +187,15 @@ describe("definition of done", () => {
     expect(checklistProgress(open.checklist)).toEqual({ done: 1, total: 2 });
     expect(isWipExceeded(column("x", "none", 2), 3)).toBe(true);
     expect(isWipExceeded(column("x", "none", null), 99)).toBe(false);
+  });
+
+  it.each([
+    ["a done column without a saved choice", "done", undefined, true],
+    ["any other column without a saved choice", "in-progress", undefined, false],
+    ["a done column the viewer expanded", "done", { x: false }, false],
+    ["a column the viewer collapsed", "todo", { x: true }, true],
+  ] as const)("collapses %s", (_name, role, saved, expected) => {
+    expect(kanbanSectionCollapsed(column("x", role, null), saved)).toBe(expected);
   });
 });
 
