@@ -485,7 +485,7 @@ export const removeCopyScript = (id: string) => {
   const folder = `"$HOME/runs/${id}"`;
   return [
     `p=$(cat ${folder}.pgid 2>/dev/null)`,
-    `if [ -n "$p" ] && kill -0 -- "-$p" 2>/dev/null; then echo busy; exit 0; fi`,
+    `if [ -n "$p" ] && kill -0 "-$p" 2>/dev/null; then echo busy; exit 0; fi`,
     `rm -rf -- ${folder} ${folder}.lock ${folder}.pgid && echo removed`,
   ].join("\n");
 };
