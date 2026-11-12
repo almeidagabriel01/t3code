@@ -379,6 +379,8 @@ describe("sortActiveThreadsByOrderKey", () => {
       thread("question", 5, { hasPendingUserInput: true }),
       thread("plan", 3, { interactionMode: "plan", hasActionableProposedPlan: true }),
       thread("guest", 4, { pendingGuestMessageCount: 1 }),
+      // The row shows "Decision"; ranking reads the same signals the row does.
+      thread("decision", 2, { hasOpenDecision: true }),
       thread("done", 1, { latestRun: finished }),
       thread("seen", 40, { latestRun: finished, lastVisitedAt: at(52) }),
       thread("working", 2, { runtime: { status: "running" } }),
@@ -391,6 +393,7 @@ describe("sortActiveThreadsByOrderKey", () => {
       "question",
       "guest",
       "plan",
+      "decision",
       "done",
       "working",
       "waitsOnSubagent",

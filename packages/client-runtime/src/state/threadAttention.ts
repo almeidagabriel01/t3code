@@ -52,8 +52,12 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
 
 type ThreadAttentionFields = Pick<
   EnvironmentThreadShell,
-  "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "latestRun"
+  "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest"
 > & {
+  readonly latestRun: {
+    readonly status?: string | undefined;
+    readonly completedAt?: string | null | undefined;
+  } | null;
   readonly lastVisitedAt?: string | null | undefined;
   /** An agent in this thread is waiting on the user's answer to a decision. */
   readonly hasOpenDecision?: boolean | undefined;

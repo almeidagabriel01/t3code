@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts/settings";
 import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKey";
 import type { EnvironmentThreadShell } from "./models.ts";
+import { hasSidebarNotification } from "./threadAttention.ts";
 
 export interface ThreadSortInput {
   readonly createdAt: string;
@@ -258,7 +259,10 @@ type ActiveSortInput = Partial<
   readonly latestRun?: {
     readonly requestedAt: string | null;
     readonly completedAt?: string | null;
+    readonly status?: string;
   } | null;
+  /** An agent in this thread waits on the user's answer to a decision; lives outside the shell. */
+  readonly hasOpenDecision?: boolean | undefined;
   readonly runtime?: { readonly status: string } | null;
   readonly id: string;
   readonly createdAt: string;
@@ -267,11 +271,17 @@ type ActiveSortInput = Partial<
   readonly environmentId?: string | undefined;
 };
 
+// The same signals the row's notification dot reads, so a thread ranks where its label says.
 function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
   return (
-    thread.hasPendingApprovals === true ||
-    thread.hasPendingUserInput === true ||
-    thread.pendingSubagentRequest != null ||
+    hasSidebarNotification({
+      hasPendingApprovals: thread.hasPendingApprovals === true,
+      hasPendingUserInput: thread.hasPendingUserInput === true,
+      pendingSubagentRequest: thread.pendingSubagentRequest ?? null,
+      latestRun: thread.latestRun ?? null,
+      lastVisitedAt: thread.lastVisitedAt,
+      hasOpenDecision: thread.hasOpenDecision,
+    }) ||
     (thread.pendingGuestMessageCount ?? 0) > 0 ||
     (thread.interactionMode === "plan" && thread.hasActionableProposedPlan === true)
   );
@@ -284,11 +294,7 @@ const WORKING_RUNTIME = new Set(["preparing", "queued", "starting", "running", "
 /** Recent activity leads with what needs you or finished unseen, then running agents, then the rest. */
 export function activeThreadActivityRank(thread: ActiveSortInput): 0 | 1 | 2 {
   if (activeThreadNeedsUser(thread)) return 0;
-  if (thread.runtime != null && WORKING_RUNTIME.has(thread.runtime.status)) return 1;
-  const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-  if (Number.isNaN(completedAt)) return 2;
-  const visitedAt = Date.parse(thread.lastVisitedAt ?? "");
-  return Number.isNaN(visitedAt) || completedAt > visitedAt ? 0 : 2;
+  return thread.runtime != null && WORKING_RUNTIME.has(thread.runtime.status) ? 1 : 2;
 }
 
 // Only a message the user sent counts; latestUserMessageAt also advances on wakes.
