@@ -8,7 +8,7 @@ import type {
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import "../../index.css";
 
 const mocks = vi.hoisted(() => ({
@@ -21,7 +21,9 @@ const mocks = vi.hoisted(() => ({
     setRule: vi.fn(),
     setMaxRunning: vi.fn(),
     setPriority: vi.fn(),
+    route: vi.fn(),
     canChange: true,
+    canRoute: true,
   },
   state: null as unknown as HeavyQueueState,
   commands: { commands: [], cpuCount: 8 } as HeavyCommandsState,
@@ -80,11 +82,13 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     "setRule",
     "setMaxRunning",
     "setPriority",
+    "route",
   ] as const) {
     mocks.actions[key].mockReset();
   }
   mocks.openThread.mockReset();
   mocks.actions.canChange = true;
+  mocks.actions.canRoute = true;
   mocks.state = {
     entries,
     enabled: true,
@@ -96,9 +100,24 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    linux: null,
+    macOnly: [],
+    routes: {},
     ...over,
   };
 }
+
+const LINUX = {
+  host: "remoto",
+  online: true,
+  slots: 2,
+  running: 1,
+  load1: 1.2,
+  cpuCount: 6,
+  availableMemoryBytes: 8 * 1024 ** 3,
+  totalMemoryBytes: 16 * 1024 ** 3,
+};
+const STARTED = "2026-01-01T00:00:00.000Z";
 
 const title = (id: string) => (id === "t1" ? "Fix build" : undefined);
 const group = () => (
@@ -275,6 +294,127 @@ describe("HeavyQueueGroup", () => {
     setup([], { paused: true });
     await using paused = await render(group());
     await expect.element(paused.getByText("0 of 3 running · paused")).toBeVisible();
+  });
+
+  it("shows Linux's status and where each job runs or would run", async () => {
+    setup(
+      [
+        entry("run", { startedAt: STARTED, runner: "linux", phase: "syncing" }),
+        entry("next"),
+        entry("later"),
+      ],
+      { linux: LINUX, routes: { next: "linux" } },
+    );
+    await using screen = await render(group());
+    await expect
+      .element(
+        screen.getByText("Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.0 GB free"),
+      )
+      .toBeVisible();
+    await expect.element(screen.getByText("Linux · Syncing")).toBeVisible();
+    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("This Mac", { exact: true })).toBeVisible();
+  });
+
+  it("moves jobs between this Mac and Linux from the menu, with the confirmation each needs", async () => {
+    setup([entry("run", { startedAt: STARTED }), entry("w", { unconfirmed: true })], {
+      linux: LINUX,
+      routes: { w: "linux" },
+    });
+    await using screen = await render(group());
+    await expect
+      .element(screen.getByText("Linux has not confirmed the earlier run stopped."))
+      .toBeVisible();
+    await openMenu(screen, "run");
+    await expect.element(screen.getByRole("menuitem", { name: "Run on Linux" })).toBeVisible();
+    expect(document.body.textContent).not.toContain("Run on this Mac");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Run on Linux" }));
+    await openMenu(screen, "w");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Run on this Mac" }));
+    expect(mocks.actions.route.mock.calls).toEqual([
+      [
+        "run",
+        expect.objectContaining({
+          runner: "linux",
+          confirm: expect.stringContaining("Stop this job"),
+          force: false,
+        }),
+      ],
+      [
+        "w",
+        expect.objectContaining({
+          runner: "mac",
+          confirm: expect.stringContaining("may run it twice"),
+          force: true,
+        }),
+      ],
+    ]);
+  });
+
+  it("offers no move while the Runner is off", async () => {
+    setup([entry("w")]);
+    await using screen = await render(group());
+    await openMenu(screen, "w");
+    await expect.element(screen.getByRole("menuitem", { name: "Move to end" })).toBeVisible();
+    expect(document.body.textContent).not.toContain("Run on");
+  });
+
+  it("greys moves out without the route permission", async () => {
+    setup([entry("w")], { linux: LINUX });
+    mocks.actions.canRoute = false;
+    await using screen = await render(group());
+    await openMenu(screen, "w");
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Run on Linux" }))
+      .toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("asks where to run with a live countdown, and answers or cancels from the row", async () => {
+    setup(
+      [entry("w", { ask: { reason: "unavailable", deadlineAt: "2026-01-01T00:11:05.000Z" } })],
+      { linux: LINUX, routes: { w: "linux" } },
+    );
+    // The countdown reads the clock on its first render, so the clock is faked before it.
+    using _timers = fakeTimers({ now: new Date("2026-01-01T00:10:00.000Z") });
+    await using screen = await render(group());
+    const ask = screen.getByRole("group", { name: "Linux is unavailable" }).element();
+    expect(ask.textContent).toContain("1:05");
+    await act(() => vi.advanceTimersByTime(1_000));
+    expect(ask.textContent).toContain("1:04");
+    await userEvent.click(screen.getByRole("button", { name: "Run on this Mac" }));
+    await userEvent.click(screen.getByRole("button", { name: "Wait for Linux" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(mocks.actions.route.mock.calls).toEqual([
+      ["w", expect.objectContaining({ runner: "mac", confirm: null, force: false })],
+      ["w", expect.objectContaining({ runner: "linux", confirm: null, force: false })],
+    ]);
+    expect(mocks.actions.cancel).toHaveBeenCalledWith("w", false);
+  });
+
+  it("answers a dropped, unconfirmed job pinned to Linux with the rerun confirmation", async () => {
+    setup(
+      [
+        entry("d", {
+          ask: { reason: "dropped", deadlineAt: "2026-01-01T00:11:05.000Z" },
+          route: "linux",
+          unconfirmed: true,
+        }),
+      ],
+      { linux: LINUX, routes: { d: "linux" } },
+    );
+    await using screen = await render(group());
+    await expect
+      .element(screen.getByRole("group", { name: "Linux dropped this job mid-run" }))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Wait for Linux" }));
+    expect(mocks.actions.route).toHaveBeenCalledWith(
+      "d",
+      expect.objectContaining({
+        runner: "linux",
+        confirm: expect.stringContaining("may run it twice"),
+        force: true,
+      }),
+    );
   });
 
   it("says the queue is off instead of looking idle, and offers to turn it back on", async () => {

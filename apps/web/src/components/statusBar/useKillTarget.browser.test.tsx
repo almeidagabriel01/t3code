@@ -19,6 +19,7 @@ vi.mock("../../state/heavyQueue", async () => {
   return {
     heavyQueueEnvironment: {
       move: { permissionAtom: () => allowed, name: "move" },
+      route: { permissionAtom: () => allowed, name: "route" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
       stopCommand: { permissionAtom: () => allowed, name: "stopCommand" },
       setPaused: { permissionAtom: () => allowed, name: "setPaused" },
@@ -57,6 +58,18 @@ function Probe() {
     <>
       <output>{String(actions.canChange)}</output>
       <button onClick={() => void actions.move("a", "b")}>move</button>
+      <button
+        onClick={() => void actions.route("w", { runner: "linux", confirm: null, force: false })}
+      >
+        route
+      </button>
+      <button
+        onClick={() =>
+          void actions.route("w", { runner: "mac", confirm: "Run it twice?", force: true })
+        }
+      >
+        rerun
+      </button>
       <button onClick={() => void actions.cancel("b", false)}>cancel</button>
       <button onClick={() => void actions.cancel("c", true)}>stop</button>
       <button onClick={() => void actions.setPaused(true)}>pause</button>
@@ -153,6 +166,24 @@ describe("useHeavyQueueActions", () => {
     await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalled());
     await vi.waitFor(() => expect(mocks.calls).toHaveBeenCalledTimes(calls));
     await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledTimes(toasts));
+  });
+
+  it("moves a job straight away, and reruns an unconfirmed one with force only after confirmation", async () => {
+    await using screen = await setup();
+    await userEvent.click(screen.getByRole("button", { name: "route" }));
+    await userEvent.click(screen.getByRole("button", { name: "rerun" }));
+    expect(mocks.calls.mock.calls).toEqual([
+      ["route", { environmentId, input: { id: "w", runner: "linux" } }],
+      ["route", { environmentId, input: { id: "w", runner: "mac", force: true } }],
+    ]);
+    expect(mocks.confirm.mock.calls.map(([message]) => message)).toEqual(["Run it twice?"]);
+  });
+
+  it("does not move when the confirmation is declined", async () => {
+    await using screen = await setup({ confirm: false });
+    await userEvent.click(screen.getByRole("button", { name: "rerun" }));
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalled());
+    expect(mocks.calls).not.toHaveBeenCalled();
   });
 
   it("does not cancel when the confirmation is declined", async () => {

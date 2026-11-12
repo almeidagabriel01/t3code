@@ -5,6 +5,7 @@ import { XIcon } from "lucide-react";
 import { useProjects } from "../../state/entities";
 import { useHeavyQueue } from "../../state/heavyQueue";
 import { useHeavyQueueActions } from "../statusBar/useKillTarget";
+import { useHeavyModeLine } from "./RunnerSettings";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -21,11 +22,13 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   const actions = useHeavyQueueActions(environmentId);
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const locked = !actions.canChange || !state.enabled;
+  const modeLine = useHeavyModeLine(state);
   return (
     <>
       <SettingsRow
         {...searchableSetting("heavy-work-enabled")}
         description="On: tests, builds and simulators take turns, and agents ask before adding to a busy machine. Off: heavy jobs start right away and agents do not ask first."
+        status={modeLine}
         control={
           <Switch
             checked={state.enabled}

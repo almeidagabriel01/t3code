@@ -31,13 +31,13 @@ export const RUNNER_DEADLINE_LABEL: Record<RunnerDeadlineAction, string> = {
   cancel: "Cancel",
 };
 
-export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
+const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
   syncing: "Syncing",
   installing: "Installing deps",
   running: "Running",
 };
 
-export const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
+const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
 
 export interface HeavyModeInput {
   readonly queueEnabled: boolean;
@@ -108,6 +108,9 @@ export const ASK_TITLE: Record<NonNullable<HeavyQueueEntry["ask"]>["reason"], st
   unavailable: "Linux is unavailable",
   dropped: "Linux dropped this job mid-run",
 };
+
+/** On a waiter whose earlier Linux run may still be alive; rerunning it needs a force. */
+export const RUNNER_UNCONFIRMED_NOTE = "Linux has not confirmed the earlier run stopped.";
 
 /**
  * Where a row runs or would run, for a small badge: "Linux · Syncing" on a running Linux job,

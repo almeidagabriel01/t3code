@@ -9,6 +9,7 @@ import "../../index.css";
 const mocks = vi.hoisted(() => ({
   scope: { environmentIds: ["env"] } as { environmentIds: string[] },
   state: null as unknown as HeavyQueueState,
+  runner: { runnerEnabled: false, runnerWhere: "mac", runnerOverflow: 3 },
   actions: {
     canChange: true,
     setEnabled: vi.fn(),
@@ -27,25 +28,34 @@ vi.mock("../../state/entities", () => ({
   useProjects: () => [{ environmentId: "env", workspaceRoot: "/work/app", title: "App Project" }],
 }));
 vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => mocks.state }));
+vi.mock("./useScopedSettings", () => ({
+  useScopedSettings: (select: (settings: typeof mocks.runner) => unknown) => select(mocks.runner),
+  useScopedSettingsMixed: () => false,
+  useUpdateScopedSettings: () => vi.fn(),
+}));
 vi.mock("../statusBar/useKillTarget", () => ({ useHeavyQueueActions: () => mocks.actions }));
 vi.mock("./settingsLayout", () => ({
+  SettingResetButton: () => null,
   SettingsSection: ({ title, children }: { title: string; children: ReactNode }) => (
     <section aria-label={title}>{children}</section>
   ),
   SettingsRow: ({
     title,
     description,
+    status,
     control,
     children,
   }: {
     title: ReactNode;
     description?: ReactNode;
+    status?: ReactNode;
     control?: ReactNode;
     children?: ReactNode;
   }) => (
     <div>
       <h3>{title}</h3>
       <p>{description}</p>
+      <p>{status}</p>
       {control}
       {children}
     </div>
@@ -63,6 +73,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   mocks.actions.setDeviceIdleMinutes.mockReset();
   mocks.actions.canChange = true;
   mocks.scope = { environmentIds: ["env"] };
+  mocks.runner = { runnerEnabled: false, runnerWhere: "mac", runnerOverflow: 3 };
   mocks.state = {
     entries: [],
     enabled: true,
@@ -74,6 +85,9 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
     claudeHookInstalled: false,
     deviceIdleMinutes: 20,
     machine: null,
+    linux: null,
+    macOnly: [],
+    routes: {},
     ...over,
   };
 };
@@ -108,6 +122,7 @@ it("switches the queue off and on, and locks the other rows while it is off with
   await expect
     .element(on.getByText(/Off: heavy jobs start right away and agents do not ask first\./))
     .toBeVisible();
+  await expect.element(on.getByText("Heavy jobs wait their turn on this Mac.")).toBeVisible();
   await userEvent.click(on.getByRole("switch", { name: "Use the heavy work queue" }));
   expect(mocks.actions.setEnabled).toHaveBeenCalledWith(false);
 
@@ -117,7 +132,16 @@ it("switches the queue off and on, and locks the other rows while it is off with
     maxRunning: 6,
     rules: [{ root: "/work/app", priority: "first" }],
   });
+  // The Runner being on changes the mode line, never which queue rows are locked.
+  mocks.runner = { runnerEnabled: true, runnerWhere: "linux", runnerOverflow: 3 };
   await using off = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  await expect
+    .element(
+      off.getByText(
+        "No queue: listed commands wait for a Linux slot, the rest start here right away.",
+      ),
+    )
+    .toBeVisible();
   const pause = off.getByRole("switch", { name: "Pause the heavy work queue" });
   await expect.element(pause).toBeDisabled();
   await expect.element(pause).toBeChecked();

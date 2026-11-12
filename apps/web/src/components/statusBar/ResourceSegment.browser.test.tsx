@@ -37,7 +37,7 @@ vi.mock("../../state/device", async (importOriginal) => ({
   }),
 }));
 vi.mock("../../state/heavyQueue", () => ({
-  useHeavyQueue: () => ({ entries: [] }),
+  useHeavyQueue: () => ({ entries: [], linux: null, macOnly: [], routes: {} }),
   useHeavyCommands: () => ({ commands: [], cpuCount: 1 }),
 }));
 const live = vi.hoisted(() => ({
