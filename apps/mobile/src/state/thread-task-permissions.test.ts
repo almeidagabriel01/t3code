@@ -4,6 +4,7 @@ import {
   MessageId,
   ProjectId,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
@@ -472,6 +473,16 @@ describe("mobile task permissions", () => {
       records: [],
       attachments: 0,
       alert: ["Ask a side question", "Type the question after /side, then send it."],
+    },
+    {
+      name: "refuses more attachments than a send takes",
+      text: "/side why?",
+      records: [],
+      attachments: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1,
+      alert: [
+        "Too many attachments",
+        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      ],
     },
     {
       name: "sends attachments without a question",

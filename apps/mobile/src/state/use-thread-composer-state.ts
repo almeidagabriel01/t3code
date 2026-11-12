@@ -561,6 +561,16 @@ export function useThreadComposerState(input: {
       );
       Dialog.alert(title, detail);
     };
+    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject
+    // indefinitely, and a side chat takes the same limits.
+    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      Dialog.alert(
+        "Too many attachments",
+        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      );
+      return null;
+    }
+
     // A redirect's text answers its approval, so `/side` there is that text, not the command.
     const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
     if (sideChatCommand) {
@@ -634,14 +644,6 @@ export function useThreadComposerState(input: {
     ) {
       setFreshSessionPending(threadKey, true);
       clearComposerDraftContent(threadKey);
-      return null;
-    }
-    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
-    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-      Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
-      );
       return null;
     }
 
