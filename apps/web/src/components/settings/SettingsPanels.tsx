@@ -17,7 +17,9 @@ import {
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
+  MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
@@ -1639,6 +1641,82 @@ export function DiffsSettingsPanel() {
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ProviderIdleTimeoutInput({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (minutes: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const [draftSource, setDraftSource] = useState(value);
+  if (draftSource !== value) {
+    setDraftSource(value);
+    setDraft(String(value));
+  }
+
+  return (
+    <Input
+      size="sm"
+      type="number"
+      min={MIN_PROVIDER_IDLE_TIMEOUT_MINUTES}
+      max={MAX_PROVIDER_IDLE_TIMEOUT_MINUTES}
+      className="w-full sm:w-24"
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const parsed = Number(event.target.value);
+        if (
+          Number.isInteger(parsed) &&
+          parsed >= MIN_PROVIDER_IDLE_TIMEOUT_MINUTES &&
+          parsed <= MAX_PROVIDER_IDLE_TIMEOUT_MINUTES
+        ) {
+          onCommit(parsed);
+        }
+      }}
+      onBlur={() => setDraft(String(value))}
+      aria-label="Minutes before an idle Claude agent closes"
+    />
+  );
+}
+
+export function ProviderIdleTimeoutRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedProviderIdleTimeoutRow />;
+}
+
+function ScopedProviderIdleTimeoutRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["providerIdleTimeoutMinutes"]}
+      title="Close idle Claude agents"
+      description="Minutes without activity before an idle Claude agent process is closed. The conversation resumes on your next message."
+      resetAction={
+        settings.providerIdleTimeoutMinutes !==
+        DEFAULT_UNIFIED_SETTINGS.providerIdleTimeoutMinutes ? (
+          <SettingResetButton
+            label="close idle Claude agents"
+            onClick={() =>
+              updateSettings({
+                providerIdleTimeoutMinutes: DEFAULT_UNIFIED_SETTINGS.providerIdleTimeoutMinutes,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <ProviderIdleTimeoutInput
+          value={settings.providerIdleTimeoutMinutes}
+          onCommit={(minutes) => updateSettings({ providerIdleTimeoutMinutes: minutes })}
+        />
+      }
+    />
   );
 }
 
