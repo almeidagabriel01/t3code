@@ -8,7 +8,12 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { emptyTelemetryCounters, mergeProcesses, type MergeProcessesResult } from "./Model.ts";
+import {
+  emptyTelemetryCounters,
+  mergeProcesses,
+  outsideApps,
+  type MergeProcessesResult,
+} from "./Model.ts";
 
 const SERVER_PID = 100;
 const BASE_TIME_MS = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-06-17T12:00:00.000Z"));
@@ -676,5 +681,50 @@ describe("resource telemetry process model", () => {
     expect(reused.ioReadBytesPerSecond).toBe(0);
     expect(second.groups.backend.processStarts).toBe(3);
     expect(second.groups.backend.processExits).toBe(1);
+  });
+});
+
+describe("outsideApps", () => {
+  const usage = (name: string, cpuPercent: number, residentBytes: number, processCount = 1) => ({
+    name,
+    cpuPercent,
+    residentBytes,
+    processCount,
+  });
+
+  it.each([
+    {
+      name: "sums an app's helpers into the app",
+      untracked: [
+        usage("Google Chrome", 2, 100),
+        usage("Google Chrome Helper (Renderer)", 30, 900, 12),
+        usage("Google Chrome Helper (GPU)", 5, 200),
+        usage("Google Chrome Helper", 1, 50, 3),
+        usage("Code Helper (Plugin", 4, 70),
+      ],
+      expected: [
+        { name: "Google Chrome", cpuPercent: 38, rssBytes: 1250, processCount: 17 },
+        { name: "Code", cpuPercent: 4, rssBytes: 70, processCount: 1 },
+      ],
+    },
+    {
+      name: "keeps names that are not helpers, and drops blank ones",
+      untracked: [usage("node", 50, 10, 26), usage("HelperTool", 1, 5), usage("  ", 99, 99)],
+      expected: [
+        { name: "node", cpuPercent: 50, rssBytes: 10, processCount: 26 },
+        { name: "HelperTool", cpuPercent: 1, rssBytes: 5, processCount: 1 },
+      ],
+    },
+    {
+      name: "keeps the five heaviest by CPU and the five heaviest by memory",
+      untracked: [
+        ...["a", "b", "c", "d", "e", "f"].map((name, index) => usage(name, 60 - index * 10, 1)),
+        ...["m", "n", "o", "p", "q", "r"].map((name, index) => usage(name, 0, 600 - index * 100)),
+      ],
+      expected: ["a", "b", "c", "d", "e", "m", "n", "o", "p", "q"],
+    },
+  ])("$name", ({ untracked, expected }) => {
+    const apps = outsideApps(untracked);
+    expect(typeof expected[0] === "string" ? apps.map((app) => app.name) : apps).toEqual(expected);
   });
 });

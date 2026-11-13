@@ -237,17 +237,24 @@ describe("ResourceTelemetry", () => {
         const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);
         // A heavy job's root, registered beside Electron, comes back echoed with its start time.
         const JOB_PID = 7_000;
-        const sample = nativeSnapshot({
-          sequence: 1,
-          sampledAtUnixMs,
-          childCpuTimeMs: 100,
-          childWriteBytes: 1_000,
-          externalProcesses: [
-            { pid: ELECTRON_PID, startTimeMs: 300 },
-            { pid: JOB_PID, startTimeMs: 500 },
+        const sample = {
+          ...nativeSnapshot({
+            sequence: 1,
+            sampledAtUnixMs,
+            childCpuTimeMs: 100,
+            childWriteBytes: 1_000,
+            externalProcesses: [
+              { pid: ELECTRON_PID, startTimeMs: 300 },
+              { pid: JOB_PID, startTimeMs: 500 },
+            ],
+            extraProcesses: [
+              processSample({ pid: JOB_PID, ppid: 1, startTimeMs: 500, name: "yes" }),
+            ],
+          }),
+          untracked: [
+            { name: "Slack Helper (Renderer)", cpuPercent: 3, residentBytes: 500, processCount: 2 },
           ],
-          extraProcesses: [processSample({ pid: JOB_PID, ppid: 1, startTimeMs: 500, name: "yes" })],
-        });
+        };
         const desktop = {
           ...desktopSnapshot(sampledAtUnixMs),
           electronProcesses: [],
@@ -283,6 +290,9 @@ describe("ResourceTelemetry", () => {
         );
         expect(snapshot.groups.electron.processStarts).toBe(1);
         expect(snapshot.groups.backend.processStarts).toBe(3);
+        expect(snapshot.outsideApps).toEqual([
+          { name: "Slack", cpuPercent: 3, rssBytes: 500, processCount: 2 },
+        ]);
       }),
   );
 

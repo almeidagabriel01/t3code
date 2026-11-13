@@ -946,7 +946,9 @@ describe("ResourceManagerRouteScreen", () => {
           "external-device",
         ),
       ],
-      outsideApps: [{ name: "Google Chrome", cpuPercent: 160, rssBytes: 2 * GIB, processCount: 12 }],
+      outsideApps: [
+        { name: "Google Chrome", cpuPercent: 160, rssBytes: 2 * GIB, processCount: 12 },
+      ],
       owners: [
         { kind: "agent", pid: 50, threadId: "t1" },
         { kind: "agent", pid: 52, threadId: "t2" },

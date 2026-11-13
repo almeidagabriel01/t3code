@@ -32,6 +32,7 @@ import { MachineBar } from "./MachineBar";
 import {
   DeviceAndAppSections,
   DeviceRows,
+  OutsideAppRows,
   ProjectSections,
   RESOURCE_SORT_LABEL,
   sumUsage,
@@ -118,7 +119,7 @@ function EnvironmentResources(props: {
   const cores = snapshot?.cpuCount ?? 1;
   const work = heavyWork(state, commands);
   const outsideDevices = tree.devices.filter((device) => device.outside);
-  const outsideCount = outsideDevices.length + work.detached.length;
+  const outsideCount = outsideDevices.length + work.detached.length + tree.outsideApps.length;
   const outsideUsage = work.detached.reduce(
     (sum, command) =>
       command.cpu === undefined || command.memory === undefined
@@ -128,7 +129,7 @@ function EnvironmentResources(props: {
             rssBytes: command.memory,
             processCount: 1,
           }),
-    sumUsage(outsideDevices),
+    sumUsage([...outsideDevices, ...tree.outsideApps]),
   );
   const nothing =
     heavyWorkItems(work).length === 0 &&
@@ -188,6 +189,7 @@ function EnvironmentResources(props: {
               cores={cores}
             />
           )}
+          <OutsideAppRows rows={tree.outsideApps} cores={cores} />
           <HeavyCommandRows
             environmentId={environmentId}
             commands={work.detached}

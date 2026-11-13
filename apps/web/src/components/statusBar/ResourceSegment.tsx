@@ -16,6 +16,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   ActivityIcon,
   AppWindowIcon,
+  AppWindowMacIcon,
   BotIcon,
   ChevronRightIcon,
   CpuIcon,
@@ -387,7 +388,7 @@ export function EnvironmentSection({
   const detached = work.detached;
   const heavyCount = heavyWorkItems(work).length;
   const app = snapshot === null ? null : tree.app;
-  const outsideCount = outsideDevices.length + detached.length;
+  const outsideCount = outsideDevices.length + detached.length + tree.outsideApps.length;
   const outsideUsage = detached.reduce(
     (sum, command) =>
       command.cpu === undefined || command.memory === undefined
@@ -397,7 +398,7 @@ export function EnvironmentSection({
             rssBytes: command.memory,
             processCount: 1,
           }),
-    sumUsage(outsideDevices),
+    sumUsage([...outsideDevices, ...tree.outsideApps]),
   );
 
   return (
@@ -552,6 +553,16 @@ export function EnvironmentSection({
             {outsideDevices.length === 0 ? null : (
               <DeviceRows environmentId={environmentId} devices={outsideDevices} outside />
             )}
+            {tree.outsideApps.map((row) => (
+              <UsageRow
+                key={row.name}
+                icon={<AppWindowMacIcon aria-hidden />}
+                label={row.name}
+                detail={`${row.name} · runs outside T3, not counted in the T3 total`}
+                usage={row.usage}
+                onOpen={null}
+              />
+            ))}
             <HeavyCommandRows
               environmentId={environmentId}
               commands={detached}

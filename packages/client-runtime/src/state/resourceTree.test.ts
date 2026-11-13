@@ -217,9 +217,29 @@ describe("buildResourceTree", () => {
     ).toBe(false);
   });
 
+  const apps = (
+    [
+      ["Slack", 70, 1],
+      ["node", 60, 2],
+      ["Chrome", 50, 3],
+      ["Zoom", 40, 4],
+      ["Mail", 30, 5],
+      ["Docker", 20, 6],
+      ["Arc", 10, 7],
+    ] as const
+  ).map(([name, cpuPercent, rssBytes]) => ({ name, cpuPercent, rssBytes, processCount: 1 }));
+
+  it.each([
+    ["cpu", ["Slack", "node", "Chrome", "Zoom", "Mail"]],
+    ["memory", ["Arc", "Docker", "Mail", "Zoom", "Chrome"]],
+    ["name", ["Chrome", "Mail", "node", "Slack", "Zoom"]],
+  ] as const)("lists the five heaviest apps outside T3 for a %s sort", (sort, expected) => {
+    expect(run({ outsideApps: apps, sort }).outsideApps.map((row) => row.name)).toEqual(expected);
+  });
+
   it("holds projects, rows, devices, app groups and their processes in a kept order", () => {
-    const held = resourceTreeKeys(run());
-    const reranked = run({ sort: "name" });
+    const held = resourceTreeKeys(run({ outsideApps: apps.slice(0, 5) }));
+    const reranked = run({ sort: "name", outsideApps: apps.slice(0, 5) });
     expect(resourceTreeKeys(reranked)).not.toEqual(held);
     expect(resourceTreeKeys(orderResourceTree(reranked, held))).toEqual(held);
   });
@@ -356,6 +376,7 @@ describe("toMachineShare", () => {
     ({
       ...(cpuCount === undefined ? {} : { cpuCount }),
       processes: [proc(1, [], 10, 250)],
+      outsideApps: [{ name: "Slack", cpuPercent: 250, rssBytes: 1, processCount: 1 }],
       groups: { backend: aggregate, electron: aggregate, monitor: aggregate, allT3: aggregate },
     }) as unknown as ResourceTelemetrySnapshot;
 
@@ -366,6 +387,7 @@ describe("toMachineShare", () => {
   ])("on %s shows CPU as a share of the machine", (_case, cores, process, allT3) => {
     const shared = toMachineShare(snapshot(cores));
     expect(shared.processes[0]?.cpuPercent).toBe(process);
+    expect(shared.outsideApps?.[0]?.cpuPercent).toBe(process);
     expect(shared.groups.allT3.currentCpuPercent).toBe(allT3);
   });
 

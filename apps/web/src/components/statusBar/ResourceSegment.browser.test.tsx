@@ -259,7 +259,9 @@ describe("EnvironmentSection", () => {
         ),
         proc(71, [], 9_000_000, "SpringBoard", "SpringBoard", "external-device"),
       ],
-      outsideApps: [{ name: "Google Chrome", cpuPercent: 20, rssBytes: 2_000_000, processCount: 12 }],
+      outsideApps: [
+        { name: "Google Chrome", cpuPercent: 20, rssBytes: 2_000_000, processCount: 12 },
+      ],
     } as unknown as ResourceTelemetrySnapshot;
     await using screen = await render(
       <EnvironmentSection {...props} snapshot={withSimulator} sort="memory" label={null} />,

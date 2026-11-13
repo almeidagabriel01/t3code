@@ -13,6 +13,7 @@ import {
   type AppProcessGroup,
   type DevicePlatform,
   type DeviceRow,
+  type OutsideAppRow,
   type ResourceSort,
   type ResourceTree,
   type ResourceUsage,
@@ -279,6 +280,27 @@ export function ProjectSections(props: {
   ));
 }
 
+const OUTSIDE_NOTE: Fact = { label: "Note", value: "Runs outside T3, not counted in the T3 total" };
+
+/** The heaviest apps outside T3, helpers summed into their app. */
+export function OutsideAppRows(props: {
+  readonly rows: ReadonlyArray<OutsideAppRow>;
+  readonly cores: number;
+}) {
+  return props.rows.map((row) => (
+    <UsageRow
+      key={row.name}
+      icon="square.grid.2x2"
+      iconLabel="Outside T3"
+      label={row.name}
+      usage={row.usage}
+      cores={props.cores}
+      facts={[OUTSIDE_NOTE]}
+      actions={[]}
+    />
+  ));
+}
+
 /** Rendered only while devices run, so the device state subscription stays closed otherwise. */
 export function DeviceRows(props: {
   readonly environmentId: EnvironmentId;
@@ -314,11 +336,7 @@ export function DeviceRows(props: {
         usage={device.usage}
         processes={device.processes}
         cores={props.cores}
-        facts={
-          props.outside
-            ? [{ label: "Note", value: "Runs outside T3, not counted in the T3 total" }]
-            : []
-        }
+        facts={props.outside ? [OUTSIDE_NOTE] : []}
         actions={
           targets.length === 0
             ? []

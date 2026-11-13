@@ -30,6 +30,7 @@ import { deviceRoots } from "./DeviceProcesses.ts";
 import {
   emptyTelemetryCounters,
   mergeProcesses,
+  outsideApps,
   type ProcessState,
   type TelemetryCounters,
 } from "./Model.ts";
@@ -349,6 +350,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           updatePrevious: input.updatePrevious,
         });
         const readAt = DateTime.makeUnsafe(merged.sampledAtMs);
+        const untracked = Option.getOrUndefined(nativeSnapshot)?.untracked;
         const owners = liveOwners(yield* processOwners.list, merged.processes);
         // Before the first native sample the table is empty, which would forget every owner.
         if (Option.isSome(nativeSnapshot)) {
@@ -362,6 +364,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           cpuCount: Math.max(1, NodeOS.cpus().length),
           processes: merged.processes,
           owners,
+          ...(untracked === undefined ? {} : { outsideApps: outsideApps(untracked) }),
           groups: merged.groups,
           power: Option.match(desktopSnapshot, {
             onNone: () => unknownPower(readAt),

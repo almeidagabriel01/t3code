@@ -2,6 +2,7 @@ import type {
   DeviceShutdownInput,
   DeviceSummary,
   ResourceTelemetryAggregate,
+  ResourceTelemetryOutsideApp,
   ResourceTelemetryProcess,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
@@ -231,10 +232,17 @@ export interface DeviceRow {
   readonly processes: ReadonlyArray<ResourceTelemetryProcess>;
 }
 
+/** An app outside T3's process tree, its helpers summed into it. */
+export interface OutsideAppRow {
+  readonly name: string;
+  readonly usage: ResourceUsage;
+}
+
 export interface ResourceTree {
   readonly projects: ReadonlyArray<ProjectNode>;
   readonly devices: ReadonlyArray<DeviceRow>;
   readonly app: ReadonlyArray<AppGroupRow>;
+  readonly outsideApps: ReadonlyArray<OutsideAppRow>;
 }
 
 const processKey = (owner: string) => (process: ResourceTelemetryProcess) =>
@@ -243,6 +251,7 @@ const projectKey = (project: ProjectNode) => `project:${project.projectKey}`;
 const rowKey = (row: ProjectRow) => `row:${row.key}`;
 const deviceKey = (device: DeviceRow) => `device:${device.key}`;
 const appKey = (row: AppGroupRow) => `app:${row.group}`;
+const outsideAppKey = (row: OutsideAppRow) => `outside-app:${row.name}`;
 
 /** Every list entry of the tree, keyed by kind and owner, so one order can hold them all. */
 export function resourceTreeKeys(tree: ResourceTree): string[] {
@@ -259,6 +268,7 @@ export function resourceTreeKeys(tree: ResourceTree): string[] {
       ...device.processes.map(processKey(deviceKey(device))),
     ]),
     ...tree.app.flatMap((row) => [appKey(row), ...row.processes.map(processKey(appKey(row)))]),
+    ...tree.outsideApps.map(outsideAppKey),
   ];
 }
 
@@ -279,6 +289,7 @@ export function orderResourceTree(tree: ResourceTree, order: ReadonlyArray<strin
       withProcesses(device, deviceKey(device)),
     ),
     app: ordered(tree.app, appKey).map((row) => withProcesses(row, appKey(row))),
+    outsideApps: ordered(tree.outsideApps, outsideAppKey),
   };
 }
 
@@ -389,6 +400,22 @@ const compareUsage =
         ? right.cpuPercent - left.cpuPercent
         : right.rssBytes - left.rssBytes;
 
+const OUTSIDE_APP_ROWS = 5;
+
+/** The heaviest apps outside T3 by the sort's metric (CPU when sorting by name), in the sort's order. */
+function outsideAppRows(
+  apps: ReadonlyArray<ResourceTelemetryOutsideApp>,
+  sort: ResourceSort,
+): ReadonlyArray<OutsideAppRow> {
+  const byMetric = compareUsage(sort === "memory" ? "memory" : "cpu");
+  const compare = compareUsage(sort);
+  return apps
+    .map(({ name, ...usage }) => ({ name, usage }))
+    .sort((a, b) => byMetric(a.usage, b.usage, a.name, b.name))
+    .slice(0, OUTSIDE_APP_ROWS)
+    .sort((a, b) => compare(a.usage, b.usage, a.name, b.name));
+}
+
 /**
  * Terminals claim their subtree first, then agents, then devices: a process counts once, so
  * work a terminal started never also shows under the agent.
@@ -398,6 +425,7 @@ export function buildResourceTree(input: {
   readonly terminals: ReadonlyArray<TreeTerminal>;
   readonly agents: ReadonlyArray<TreeAgent>;
   readonly hubPids: ReadonlyArray<number>;
+  readonly outsideApps?: ReadonlyArray<ResourceTelemetryOutsideApp> | undefined;
   readonly sort: ResourceSort;
   readonly projectOfThread: (threadId: string) => string | null;
   readonly projectTitle: (projectKey: string | null) => string;
@@ -464,7 +492,12 @@ export function buildResourceTree(input: {
     .filter((device) => device.usage.processCount > 0)
     .sort((a, b) => compare(a.usage, b.usage, a.label, b.label));
 
-  return { projects, devices, app: appBreakdown(processes, claimed, sort) };
+  return {
+    projects,
+    devices,
+    app: appBreakdown(processes, claimed, sort),
+    outsideApps: outsideAppRows(input.outsideApps ?? [], sort),
+  };
 }
 
 /** Running terminals by `threadId:terminalId`, the key their tree rows carry. */
@@ -501,6 +534,7 @@ export function environmentResourceTree(input: {
       owner.kind === "agent" ? [{ pid: owner.pid, threadId: owner.threadId }] : [],
     ),
     hubPids: owners.flatMap((owner) => (owner.kind === "device-hub" ? [owner.pid] : [])),
+    outsideApps: input.snapshot?.outsideApps,
     sort: input.sort,
     projectOfThread: input.projectOfThread,
     projectTitle: input.projectTitle,
@@ -564,6 +598,14 @@ export function toMachineShare(snapshot: ResourceTelemetrySnapshot): ResourceTel
       ...process,
       cpuPercent: process.cpuPercent / cores,
     })),
+    ...(snapshot.outsideApps === undefined
+      ? {}
+      : {
+          outsideApps: snapshot.outsideApps.map((app) => ({
+            ...app,
+            cpuPercent: app.cpuPercent / cores,
+          })),
+        }),
     groups: {
       backend: group(snapshot.groups.backend),
       electron: group(snapshot.groups.electron),
