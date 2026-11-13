@@ -240,8 +240,29 @@ describe("group requests", () => {
     {
       name: "a lead question without a project",
       tasks: [],
-      extra: [inRequest(2, 1, { kind: "notice", author: "assistant", text: "Which project?" })],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          text: "Which project?",
+          replyToMessageId: "m1" as never,
+          asksProject: true,
+        }),
+      ],
       status: "needs-project",
+    },
+    {
+      name: "another lead notice without a project",
+      tasks: [],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          text: "I could not route this.",
+          replyToMessageId: "m1" as never,
+        }),
+      ],
+      status: "done",
     },
     {
       name: "a muted no-reply line",

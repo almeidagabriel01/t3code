@@ -226,16 +226,7 @@ function requestStatus(
     return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
   }
   if (root === null) return "done";
-  // The lead's question sits after the root as a notice, until a member is given the request.
-  if (
-    root.projectId === undefined &&
-    rows.some(
-      (row) =>
-        row.message.kind === "notice" &&
-        row.message.author === "assistant" &&
-        row.message.waiting === undefined,
-    )
-  ) {
+  if (root.projectId === undefined && rows.some((row) => row.message.asksProject === true)) {
     return "needs-project";
   }
   return assistantGroupAwaitingRoute(state, root) ? "routing" : "done";

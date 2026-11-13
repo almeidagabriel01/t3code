@@ -1085,6 +1085,7 @@ it("asks for a project on a request the lead could not place, and routes it on a
       author: "assistant",
       assistantId: "jarvis" as AssistantId,
       text: "Which project is this for?",
+      asksProject: true,
     }),
   ]);
   await using _screen = await openChat();

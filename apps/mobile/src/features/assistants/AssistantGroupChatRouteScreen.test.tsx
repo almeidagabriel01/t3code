@@ -1314,6 +1314,7 @@ describe("requests", () => {
       kind: "notice",
       assistantId: "jarvis",
       text: "Which project?",
+      asksProject: true,
       replyToMessageId: "r2",
       requestId: "r2",
     }),
