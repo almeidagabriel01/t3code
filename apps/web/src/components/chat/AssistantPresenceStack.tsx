@@ -2,13 +2,20 @@ import {
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenders,
+  assistantThreadSenders,
   type AssistantSender,
 } from "@t3tools/client-runtime/assistantPresence";
 import {
   assistantFace,
   assistantPresenceOf,
-  type AssistantPresence,
+  type AssistantFace,
 } from "@t3tools/client-runtime/assistantRobot";
+import {
+  ASSISTANT_TASK_FACE,
+  assistantTaskState,
+  canDismissAssistantTask,
+  type AssistantTaskState,
+} from "@t3tools/client-runtime/assistantTasks";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAssistantThreadId,
@@ -21,12 +28,23 @@ import {
   EllipsisIcon,
   InfoIcon,
   MessagesSquareIcon,
+  RotateCcwIcon,
   ShieldIcon,
+  XIcon,
 } from "lucide-react";
 import { useState } from "react";
 
-import { useQuietThreadProjection, useQuietThreadShells } from "../../state/entities";
-import { useAssistantActions, useAssistantEntries } from "../../state/assistants";
+import {
+  useQuietThreadProjection,
+  useQuietThreadShells,
+  useThreadShell,
+} from "../../state/entities";
+import {
+  useAssistantActions,
+  useAssistantEntries,
+  useAssistantTask,
+  useTaskAssistant,
+} from "../../state/assistants";
 import {
   AssistantAvatar,
   AssistantCluster,
@@ -59,15 +77,21 @@ function AssistantPresenceRow(props: {
   readonly environmentId: EnvironmentId;
   readonly threadKey: string;
   readonly sender: AssistantSender;
-  readonly presence: AssistantPresence;
+  readonly face: AssistantFace;
+  readonly working: boolean;
+  /** Set on the row of the assistant that launched this thread as a task. */
+  readonly task: {
+    readonly threadId: ThreadId;
+    readonly state: AssistantTaskState;
+    readonly dismissed: boolean;
+  } | null;
   readonly onDone: () => void;
 }) {
-  const { sender, environmentId } = props;
+  const { sender, environmentId, task, working } = props;
   const { assistant } = sender;
   const actions = useAssistantActions(environmentId);
   const flows = useAssistantFlows(environmentId);
   const name = assistant?.name ?? "Assistant";
-  const working = props.presence.mood === "working";
   const openInfo = () => {
     if (!assistant) return;
     props.onDone();
@@ -106,29 +130,31 @@ function AssistantPresenceRow(props: {
         <AssistantAvatar
           assistant={assistant ?? removedAssistantFace(sender.assistantId)}
           environmentId={environmentId}
-          mood={assistant ? assistantFace(props.presence) : "sleeping"}
+          mood={props.face}
           className="size-5"
         />
         <p className="min-w-0 flex-1 truncate text-sm font-medium">{name}</p>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                aria-label={`Jump to ${name}'s last message`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  jumpToTimelineMessage(props.threadKey, sender.lastMessageId);
-                  props.onDone();
-                }}
-              />
-            }
-          >
-            <CrosshairIcon />
-          </TooltipTrigger>
-          <TooltipPopup side="top">Jump to last message</TooltipPopup>
-        </Tooltip>
+        {sender.count === 0 ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`Jump to ${name}'s last message`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    jumpToTimelineMessage(props.threadKey, sender.lastMessageId);
+                    props.onDone();
+                  }}
+                />
+              }
+            >
+              <CrosshairIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="top">Jump to last message</TooltipPopup>
+          </Tooltip>
+        )}
         {assistant ? (
           <Menu>
             <MenuTrigger
@@ -180,6 +206,23 @@ function AssistantPresenceRow(props: {
                 <InfoIcon />
                 Assistant info
               </MenuItem>
+              {task === null ? null : task.dismissed ? (
+                <MenuItem
+                  disabled={!flows.canAct}
+                  onClick={() => void flows.restoreTask(task.threadId)}
+                >
+                  <RotateCcwIcon />
+                  Restore task
+                </MenuItem>
+              ) : (
+                <MenuItem
+                  disabled={!flows.canAct || !canDismissAssistantTask(task.state)}
+                  onClick={() => void flows.dismissTask(task.threadId)}
+                >
+                  <XIcon />
+                  Dismiss task
+                </MenuItem>
+              )}
             </MenuPopup>
           </Menu>
         ) : null}
@@ -205,7 +248,10 @@ function PresenceSection(props: { readonly title: string; readonly children: Rea
   );
 }
 
-/** Who from your assistants spoke in this thread, what each is doing, and a way to each one's info. */
+/**
+ * The header's one assistant control: who from your assistants spoke in this thread or launched it
+ * as a task, what each is doing, and a way to each one's info. The task owner wears the task's mood.
+ */
 export function AssistantPresenceStack(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -218,14 +264,29 @@ export function AssistantPresenceStack(props: {
   );
   const { active, archived } = useAssistantEntries();
   const shells = useQuietThreadShells();
+  const owner = useTaskAssistant(environmentId, threadId);
+  const taskShell = useThreadShell(owner === null ? null : scopeThreadRef(environmentId, threadId));
+  const taskRecord = useAssistantTask(environmentId, threadId);
   if (isAssistantThread || !projection) return null;
-  const senders = assistantSenders(
-    projection.projection.messages,
-    [...active, ...archived]
-      .filter((entry) => entry.environmentId === environmentId)
-      .map((entry) => entry.assistant),
+  const senders = assistantThreadSenders(
+    assistantSenders(
+      projection.projection.messages,
+      [...active, ...archived]
+        .filter((entry) => entry.environmentId === environmentId)
+        .map((entry) => entry.assistant),
+    ),
+    owner?.assistant ?? null,
   );
   if (senders.length === 0) return null;
+  const task =
+    owner === null
+      ? null
+      : {
+          assistantId: owner.assistant.id,
+          threadId,
+          state: taskShell === null ? ("running" as const) : assistantTaskState(taskShell),
+          dismissed: taskRecord?.dismissedAt != null,
+        };
   const threadKey = scopedThreadKey(scopeThreadRef(environmentId, threadId));
   const presenceById = new Map(
     senders.map((sender) => [
@@ -233,18 +294,28 @@ export function AssistantPresenceStack(props: {
       assistantPresenceOf(sender.assistant, environmentId, shells),
     ]),
   );
-  const presenceOf = (sender: AssistantSender) => presenceById.get(sender.assistantId)!;
-  const sections = assistantPresenceSections(
-    senders,
-    (sender) => presenceOf(sender).mood === "working",
-  );
+  const taskOf = (sender: AssistantSender) =>
+    task !== null && task.assistantId === sender.assistantId ? task : null;
+  const faceOf = (sender: AssistantSender): AssistantFace => {
+    const ownTask = taskOf(sender);
+    if (ownTask !== null) return ASSISTANT_TASK_FACE[ownTask.state];
+    return sender.assistant ? assistantFace(presenceById.get(sender.assistantId)!) : "sleeping";
+  };
+  const isWorking = (sender: AssistantSender) => {
+    const ownTask = taskOf(sender);
+    if (ownTask !== null) return ownTask.state === "running" || ownTask.state === "waiting";
+    return presenceById.get(sender.assistantId)!.mood === "working";
+  };
+  const sections = assistantPresenceSections(senders, isWorking);
   const row = (sender: AssistantSender) => (
     <AssistantPresenceRow
       key={sender.assistantId}
       environmentId={environmentId}
       threadKey={threadKey}
       sender={sender}
-      presence={presenceOf(sender)}
+      face={faceOf(sender)}
+      working={isWorking(sender)}
+      task={taskOf(sender)}
       onDone={() => setOpen(false)}
     />
   );
@@ -266,7 +337,7 @@ export function AssistantPresenceStack(props: {
           faces={senders.map((sender) => ({
             key: sender.assistantId,
             assistant: sender.assistant ?? removedAssistantFace(sender.assistantId),
-            mood: sender.assistant ? assistantFace(presenceOf(sender)) : "sleeping",
+            mood: faceOf(sender),
           }))}
         />
       </PopoverTrigger>
