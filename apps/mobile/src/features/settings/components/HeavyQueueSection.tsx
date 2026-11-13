@@ -28,6 +28,7 @@ import {
   askRemaining,
   heavyLimitIdle,
   heavyModeLine,
+  RUNNER_NAME,
   RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
   routeActions,
@@ -281,7 +282,7 @@ function QueueEntryRows(props: {
           item("next", "Run next", "arrow.up.circle", !can("next")),
           {
             ...item("start-now", "Start now", "bolt.circle", !props.canChange),
-            subtitle: "Ignores how busy the Mac is",
+            subtitle: `Skips the wait on ${RUNNER_NAME[props.runner]}`,
           },
           item("up", "Move up", "arrow.up", !can("up")),
           item("down", "Move down", "arrow.down", !can("down")),
@@ -637,13 +638,17 @@ export function HeavyQueueSection(props: {
       ]);
     },
     startNow: (entry) =>
-      Alert.alert("Start now?", `${heavyEntryName(entry)} starts even if the Mac is busy.`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Start now",
-          onPress: () => void startNow({ environmentId, input: { id: entry.id } }),
-        },
-      ]),
+      Alert.alert(
+        "Start now?",
+        `${heavyEntryName(entry)} starts now on ${RUNNER_NAME[machineOf(entry)]}, even if it is busy.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Start now",
+            onPress: () => void startNow({ environmentId, input: { id: entry.id } }),
+          },
+        ],
+      ),
     cancel: (entry) =>
       Alert.alert(
         entry.startedAt === null ? "Remove from the queue?" : "Stop the running command?",
@@ -727,138 +732,154 @@ export function HeavyQueueSection(props: {
       </SettingsSection>
     );
   }
-  return (
-    <SettingsSection
-      title={
-        props.machine === undefined ? "Heavy work queue" : `Heavy work queue · ${props.machine}`
-      }
-      footer="Agents queue tests, builds and simulators here. Up to the limit run at once, and the next one starts only when the machine has room."
-    >
-      <SettingsSwitchRow
-        icon="list.number"
-        label="Heavy work queue"
-        subtitle={
-          state.enabled
-            ? "On: heavy jobs take turns, and agents ask before adding to a busy machine."
-            : "Off: heavy jobs start right away and agents do not ask first."
-        }
-        value={state.enabled}
-        disabled={!canChange}
-        onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
-      />
-      {runner === undefined ? null : (
-        <ListRowLayout
-          icon="arrow.left.arrow.right"
-          label={heavyModeLine({
-            queueEnabled: state.enabled,
-            queuePaused: state.paused,
-            runnerEnabled: runner.enabled,
-            where: runner.where,
-          })}
-        />
-      )}
-      {/* Pause, slots and rules act only on the queue; the limits follow heavyLimitIdle. */}
-      {state.enabled ? (
-        <>
-          <SettingsSwitchRow
-            icon="pause"
-            label="Pause queue"
-            subtitle="Nothing new starts while paused. Running jobs continue."
-            value={state.paused}
-            disabled={!canChange}
-            onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
-          />
-          <ListRowLayout
-            icon="checklist.unchecked"
-            label={`Run up to ${state.maxRunning} at once`}
-          />
-          <SettingsActionRow
-            icon="plus"
-            label="Allow one more"
-            disabled={!canChange || state.maxRunning >= MAX_LIMIT}
-            onPress={() =>
-              void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
-            }
-          />
-          <SettingsActionRow
-            icon="minus"
-            label="Allow one fewer"
-            disabled={!canChange || state.maxRunning <= 1}
-            onPress={() =>
-              void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
-            }
-          />
-          {state.rules.map((rule) => {
-            const project = projectForCwd(projects, rule.root);
-            return (
-              <SettingsActionRow
-                key={rule.root}
-                icon="xmark"
-                label={`${project?.title ?? rule.root}: ${PRIORITY_LABEL[rule.priority]}`}
-                description="Remove this priority rule"
-                disabled={!canChange}
-                onPress={() => commands.setRule(rule.root, null)}
-              />
-            );
-          })}
-        </>
-      ) : null}
-      {LIMIT_ROWS.filter(
-        (row) =>
-          heavyLimitIdle(row.key, {
-            queueEnabled: state.enabled,
-            runnerEnabled: runner?.enabled ?? null,
-            runnerWhere: runner?.where ?? null,
-          }) === null,
-      ).map((row) => {
-        const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
-        return (
-          <ListRowLayout
-            key={row.key}
-            icon={row.icon}
-            label={row.label}
-            description={row.description}
-            accessory={
-              <View className="flex-row items-center gap-1">
-                <NumberField
-                  label={row.label}
-                  min={min}
-                  max={max}
-                  value={state[row.key]}
-                  formatValue={(value) => `${value}${UNIT[unit]}`}
-                  disabled={!canChange}
-                  onValueChange={(value) => setLimit(row.key, value)}
-                />
-                <Text className="text-base text-foreground-muted">{UNIT[unit]}</Text>
-              </View>
-            }
-          />
-        );
-      })}
-      <SettingsSwitchRow
-        icon="link"
-        label="Claude Code hook"
-        subtitle="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
-        value={state.claudeHookInstalled}
-        disabled={!canChange}
-        onValueChange={(installed) => void setClaudeHook({ environmentId, input: { installed } })}
-      />
+  const limitRow = (row: (typeof LIMIT_ROWS)[number]) => {
+    const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
+    return (
       <ListRowLayout
-        icon="moon"
-        label="Power off idle simulators"
-        description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
+        key={row.key}
+        icon={row.icon}
+        label={row.label}
+        description={row.description}
+        accessory={
+          <View className="flex-row items-center gap-1">
+            <NumberField
+              label={row.label}
+              min={min}
+              max={max}
+              value={state[row.key]}
+              formatValue={(value) => `${value}${UNIT[unit]}`}
+              disabled={!canChange}
+              onValueChange={(value) => setLimit(row.key, value)}
+            />
+            <Text className="text-base text-foreground-muted">{UNIT[unit]}</Text>
+          </View>
+        }
       />
-      {IDLE_MINUTES.map((minutes) => (
-        <ListChoiceRow
-          key={minutes}
-          label={minutes === 0 ? "Off" : `${minutes} min`}
-          selected={state.deviceIdleMinutes === minutes}
+    );
+  };
+  const limits = LIMIT_ROWS.filter(
+    (row) =>
+      heavyLimitIdle(row.key, {
+        queueEnabled: state.enabled,
+        runnerEnabled: runner?.enabled ?? null,
+        runnerWhere: runner?.where ?? null,
+      }) === null,
+  );
+  const macLimits = limits.filter((row) => row.key !== "heavyOverLimitSeconds");
+  const sharedLimits = limits.filter((row) => row.key === "heavyOverLimitSeconds");
+  const named = (title: string) =>
+    props.machine === undefined ? title : `${title} · ${props.machine}`;
+  return (
+    <>
+      <SettingsSection
+        title={named("Heavy work queue")}
+        footer="Agents queue tests, builds and simulators here. Each machine runs up to its own limit at once, and starts the next job only when it has room."
+      >
+        <SettingsSwitchRow
+          icon="list.number"
+          label="Heavy work queue"
+          subtitle={
+            state.enabled
+              ? "On: heavy jobs take turns, and agents ask before adding to a busy machine."
+              : "Off: heavy jobs start right away and agents do not ask first."
+          }
+          value={state.enabled}
           disabled={!canChange}
-          onPress={() => void setDeviceIdleMinutes({ environmentId, input: { minutes } })}
+          onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
         />
-      ))}
-      {rows}
-    </SettingsSection>
+        {runner === undefined ? null : (
+          <ListRowLayout
+            icon="arrow.left.arrow.right"
+            label={heavyModeLine({
+              queueEnabled: state.enabled,
+              queuePaused: state.paused,
+              runnerEnabled: runner.enabled,
+              where: runner.where,
+            })}
+          />
+        )}
+        {/* Pause and rules act only on the queue; the limits follow heavyLimitIdle. */}
+        {state.enabled ? (
+          <>
+            <SettingsSwitchRow
+              icon="pause"
+              label="Pause queue"
+              subtitle="Nothing new starts while paused. Running jobs continue."
+              value={state.paused}
+              disabled={!canChange}
+              onValueChange={(paused) => void setPaused({ environmentId, input: { paused } })}
+            />
+            {state.rules.map((rule) => {
+              const project = projectForCwd(projects, rule.root);
+              return (
+                <SettingsActionRow
+                  key={rule.root}
+                  icon="xmark"
+                  label={`${project?.title ?? rule.root}: ${PRIORITY_LABEL[rule.priority]}`}
+                  description="Remove this priority rule"
+                  disabled={!canChange}
+                  onPress={() => commands.setRule(rule.root, null)}
+                />
+              );
+            })}
+          </>
+        ) : null}
+        {/* Times both machines' limits, so it stays out of the This Mac section. */}
+        {sharedLimits.map(limitRow)}
+        <SettingsSwitchRow
+          icon="link"
+          label="Claude Code hook"
+          subtitle="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
+          value={state.claudeHookInstalled}
+          disabled={!canChange}
+          onValueChange={(installed) => void setClaudeHook({ environmentId, input: { installed } })}
+        />
+        <ListRowLayout
+          icon="moon"
+          label="Power off idle simulators"
+          description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
+        />
+        {IDLE_MINUTES.map((minutes) => (
+          <ListChoiceRow
+            key={minutes}
+            label={minutes === 0 ? "Off" : `${minutes} min`}
+            selected={state.deviceIdleMinutes === minutes}
+            disabled={!canChange}
+            onPress={() => void setDeviceIdleMinutes({ environmentId, input: { minutes } })}
+          />
+        ))}
+        {rows}
+      </SettingsSection>
+      {state.enabled || macLimits.length > 0 ? (
+        <SettingsSection title={named("This Mac")}>
+          {state.enabled ? (
+            <>
+              <ListRowLayout
+                icon="checklist.unchecked"
+                label={`Run up to ${state.maxRunning} at once on this Mac`}
+              />
+              <SettingsActionRow
+                icon="plus"
+                label="Allow one more"
+                disabled={!canChange || state.maxRunning >= MAX_LIMIT}
+                onPress={() =>
+                  void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
+                }
+              />
+              <SettingsActionRow
+                icon="minus"
+                label="Allow one fewer"
+                disabled={!canChange || state.maxRunning <= 1}
+                onPress={() =>
+                  void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
+                }
+              />
+            </>
+          ) : null}
+          {macLimits.map(limitRow)}
+        </SettingsSection>
+      ) : null}
+    </>
   );
 }
 

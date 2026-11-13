@@ -66,6 +66,8 @@ export interface SettingsSearchItem {
   readonly to: SettingsPath;
   readonly targetId?: string;
   readonly searchTerms?: ReadonlyArray<string>;
+  /** The machine a setting belongs to, beside the page name, where titles repeat across machines. */
+  readonly machine?: "This Mac" | "Linux PC";
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
@@ -1231,6 +1233,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-max",
+    machine: "This Mac",
     title: "Jobs at once on this Mac",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue concurrency parallel slots tests builds simulators"],
@@ -1243,12 +1246,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-cpu-ceiling",
+    machine: "This Mac",
     title: "CPU limit",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue mac cpu limit ceiling busy percent room"],
   },
   {
     id: "heavy-work-memory-floor",
+    machine: "This Mac",
     title: "Keep memory free",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue mac memory ram free floor percent low"],
@@ -1331,6 +1336,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-host",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerHost.title,
     to: "/settings/maintenance",
     scope: "environment",
@@ -1338,6 +1344,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-linux-slots",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerLinuxSlots.title,
     to: "/settings/maintenance",
     scope: "environment",
@@ -1345,6 +1352,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-linux-cpu-ceiling",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerLinuxCpuCeilingPercent.title,
     to: "/settings/maintenance",
     scope: "environment",
@@ -1352,6 +1360,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-linux-memory-floor",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerLinuxMemoryFloorPercent.title,
     to: "/settings/maintenance",
     scope: "environment",
@@ -2061,6 +2070,7 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        ...(item.machine === undefined ? [] : [normalizeSearchText(item.machine)]),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

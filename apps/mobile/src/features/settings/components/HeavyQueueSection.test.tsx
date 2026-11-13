@@ -432,7 +432,42 @@ describe("HeavyQueueSection", () => {
       environmentId: "env",
       input: { id: "b" },
     });
+    expect(mocks.alert.mock.calls.at(-1)?.[1]).toBe(
+      "cmd b starts now on this Mac, even if it is busy.",
+    );
     await view.unmount();
+  });
+
+  it("names the machine a waiter starts on: Start now keeps it there", async () => {
+    setup([entry("a", { startedAt: NOW }), entry("b")], { linux: LINUX, routes: { b: "linux" } });
+    const view = await mount(undefined, { enabled: true, where: "linux" });
+    await act(async () => view.button("Start now").click());
+    expect(mocks.alert.mock.calls.at(-1)?.[1]).toBe(
+      "cmd b starts now on Linux, even if it is busy.",
+    );
+    await view.unmount();
+  });
+
+  it("groups this Mac's slots and limits under This Mac; the over-the-limit time is shared", async () => {
+    setup([]);
+    const view = await mount(undefined, { enabled: true, where: "automatic" });
+    const mac = view.host.querySelector('section[aria-label="This Mac"]')!;
+    expect(mac.textContent).toContain("Run up to 3 at once on this Mac");
+    for (const name of ["CPU limit", "Keep memory free"]) {
+      expect(mac.querySelector(`input[aria-label="${name}"]`)).not.toBeNull();
+    }
+    expect(mac.querySelector('input[aria-label="Over the limit for"]')).toBeNull();
+    expect(view.toggle("Over the limit for")).not.toBeNull();
+    await view.unmount();
+    // Queue off with Linux only: nothing of this Mac's applies, so the section goes.
+    setup([], { enabled: false });
+    const linux = await mount(undefined, { enabled: true, where: "linux" }, "Studio");
+    expect(linux.host.querySelector('section[aria-label="This Mac · Studio"]')).toBeNull();
+    expect(
+      linux.host.querySelector('section[aria-label="Heavy work queue · Studio"]'),
+    ).not.toBeNull();
+    expect(linux.toggle("Over the limit for")).not.toBeNull();
+    await linux.unmount();
   });
 
   it("removes or stops only after the alert is confirmed", async () => {

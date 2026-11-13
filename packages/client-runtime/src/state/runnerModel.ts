@@ -117,7 +117,8 @@ export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
   running: "Running",
 };
 
-const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
+/** A machine as a sentence names it: "this Mac", "Linux". */
+export const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
 
 export interface HeavyModeInput {
   readonly queueEnabled: boolean;

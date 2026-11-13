@@ -86,6 +86,27 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
     macMemoryFloorPercent: actions.setMacMemoryFloorPercent,
     heavyOverLimitSeconds: actions.setHeavyOverLimitSeconds,
   };
+  const limitRow = (row: (typeof limits)[number]) =>
+    row.shown ? (
+      <SettingsRow
+        key={row.key}
+        {...searchableSetting(row.searchId)}
+        description={row.description}
+        status={row.status}
+        control={
+          <UnitStepper
+            title={searchableSetting(row.searchId).title}
+            {...HEAVY_QUEUE_LIMITS[row.key]}
+            value={state[row.key]}
+            disabled={readOnly}
+            onCommit={(next) => void setLimit[row.key](next)}
+          />
+        }
+      />
+    ) : null;
+  // The over-the-limit time paces both machines, so it sits outside the This Mac group.
+  const macLimits = limits.filter((row) => row.key !== "heavyOverLimitSeconds");
+  const sharedLimits = limits.filter((row) => row.key === "heavyOverLimitSeconds");
   const maxTitle = searchableSetting("heavy-work-max").title;
   return (
     <div className="space-y-5">
@@ -119,7 +140,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
           />
         ) : null}
       </SettingsGroup>
-      {max.shown || limits.some((row) => row.shown) ? (
+      {max.shown || macLimits.some((row) => row.shown) ? (
         <RunnerGroup title="This Mac">
           {max.shown ? (
             <SettingsRow
@@ -139,26 +160,11 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
               }
             />
           ) : null}
-          {limits.map((row) =>
-            row.shown ? (
-              <SettingsRow
-                key={row.key}
-                {...searchableSetting(row.searchId)}
-                description={row.description}
-                status={row.status}
-                control={
-                  <UnitStepper
-                    title={searchableSetting(row.searchId).title}
-                    {...HEAVY_QUEUE_LIMITS[row.key]}
-                    value={state[row.key]}
-                    disabled={readOnly}
-                    onCommit={(next) => void setLimit[row.key](next)}
-                  />
-                }
-              />
-            ) : null,
-          )}
+          {macLimits.map(limitRow)}
         </RunnerGroup>
+      ) : null}
+      {sharedLimits.some((row) => row.shown) ? (
+        <SettingsGroup>{sharedLimits.map(limitRow)}</SettingsGroup>
       ) : null}
       <SettingsGroup>
         {rulesRow.shown ? (

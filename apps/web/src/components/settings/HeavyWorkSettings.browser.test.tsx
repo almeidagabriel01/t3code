@@ -106,7 +106,12 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
 it("changes the pause, the Mac limits and the other rows", async () => {
   setup();
   await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
-  await expect.element(screen.getByRole("group", { name: "This Mac" })).toBeVisible();
+  const mac = screen.getByRole("group", { name: "This Mac" });
+  await expect.element(mac).toBeVisible();
+  // The over-the-limit time paces both machines, so it is not one of this Mac's rows.
+  await expect.element(mac.getByLabelText("CPU limit", { exact: true })).toBeVisible();
+  expect(mac.getByLabelText("Over the limit for", { exact: true }).elements()).toHaveLength(0);
+  await expect.element(screen.getByLabelText("Over the limit for", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("switch", { name: "Pause the heavy work queue" }));
   expect(mocks.actions.setPaused).toHaveBeenCalledWith(true);
   await userEvent.click(screen.getByRole("button", { name: "Increase Jobs at once on this Mac" }));

@@ -113,6 +113,20 @@ describe("searchSettings", () => {
     ).toEqual(["network-access", "connections-environment"]);
   });
 
+  it("tells the two machines' limits apart by the machine they belong to", () => {
+    const limits = searchSettings("cpu limit").filter((item) => item.title === "CPU limit");
+    expect(limits.map((item) => [item.id, item.machine])).toEqual([
+      ["heavy-work-cpu-ceiling", "This Mac"],
+      ["runner-linux-cpu-ceiling", "Linux PC"],
+    ]);
+    expect(searchSettings("linux pc cpu").map((item) => item.id)).toContain(
+      "runner-linux-cpu-ceiling",
+    );
+    expect(searchSettings("this mac memory free").map((item) => item.id)).toEqual([
+      "heavy-work-memory-floor",
+    ]);
+  });
+
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
     expect(searchSettings("hold to quit")).toEqual([]);
