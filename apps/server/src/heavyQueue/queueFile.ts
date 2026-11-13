@@ -507,7 +507,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       doc: {
         ...doc,
         entries: entries.filter((e) => e.id !== id),
-        events: withRecord(doc.events, deadlineRecord(entry, now)),
+        // Tell the agent cancels with no question: the requeue already logged the loss.
+        events: withRecord(doc.events, entry.ask === undefined ? null : deadlineRecord(entry, now)),
       },
       result: { status: "canceled", reason: canceled },
     };

@@ -727,6 +727,34 @@ describe("Runner in the queue file", () => {
     ]);
   });
 
+  // "When Linux is offline" decides a waiting job once, not again on every tick.
+  it.each(["ask", "mac", "wait"] as const)("Linux offline, %s: applied once", (policy) => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerUnavailable: policy })),
+      false,
+    );
+    Queue.enqueue(dir, test("a"));
+    const starts = [0, 1000, 2000].map((ms) => Queue.tryStart(dir, "a", NOW + ms).status);
+    expect(starts).toEqual(Array(3).fill(policy === "mac" ? "started" : "waiting"));
+    expect(Queue.read(dir)[0]!.ask?.deadlineAt).toBe(
+      policy === "ask" ? new Date(NOW + 5 * 60_000).toISOString() : undefined,
+    );
+    expect(Queue.readDoc(dir).events.map((event) => event.kind)).toEqual(
+      policy === "mac" ? ["displaced"] : [],
+    );
+  });
+
+  it("Tell the agent ends a job Linux dropped, without a nobody-answered notice", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })), false);
+    Queue.enqueue(dir, test("a", { dropped: true, linuxFailedAt: NOW - 1000 }));
+    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
+      status: "canceled",
+      reason: "Linux couldn't run this: Linux dropped it mid-run",
+    });
+    expect(Queue.read(dir)).toEqual([]);
+    expect(Queue.readDoc(dir).events).toEqual([]);
+  });
+
   it("logs a Linux-bound job that starts here, and the failure it then exits with", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerUnavailable: "mac" })), false);
     Queue.enqueue(dir, test("a"));

@@ -861,7 +861,8 @@ const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}
 type PartOutcome =
   | RemoteOutcome
   | { readonly kind: "mac"; readonly reason: string }
-  | { readonly kind: "environment"; readonly reason: string };
+  /** `code`: Linux's own exit code for it, when it ran there (126, 127). */
+  | { readonly kind: "environment"; readonly reason: string; readonly code?: number };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -981,6 +982,9 @@ const runLinuxAttempt = async (
   if (outcome.kind === "environment") {
     // It ended there with its exit code, so nothing is left to confirm.
     process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
+    if (configFor(readDoc(dir), process.cwd()).runnerDropped === "agent") {
+      return { kind: "exit", code: outcome.code ?? LINUX_UNAVAILABLE_EXIT };
+    }
     requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
     return { kind: "requeued" };
   }
@@ -1127,6 +1131,11 @@ const runLinuxPart = async (
   if (stopped) process.exit(143);
   if (outcome.kind === "finished") {
     fault({ kind: "exit", code: outcome.code, program: command.program });
+    // A tool or file Linux lacks is its environment's failure, which the policy decides.
+    const error = lastError as string | null;
+    if ((outcome.code === 126 || outcome.code === 127) && error !== null) {
+      return endLine(dir, id, { kind: "environment", reason: error, code: outcome.code });
+    }
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
         `[t3 heavy] This ran on Linux. These failures match the Mac-only list and fail there by nature; run them on this Mac:\n${platform.map((line) => `  ${line}`).join("\n")}\n`,

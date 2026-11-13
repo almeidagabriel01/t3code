@@ -814,13 +814,40 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     ["mac", "mac-start"],
     ["wait", "linux-wait"],
     ["ask", "ask"],
+    ["agent", "cancel"],
   ] as const)("dropped mid-run: %s → %s, apart from the unavailable policy", (policy, outcome) => {
     const plan = offline(job("a", "vp test run", { dropped: true }), {
       runnerDropped: policy,
       runnerUnavailable: "wait",
     });
-    expect(outcomeOf(plan, "a")).toBe(outcome);
+    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
     if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+  });
+
+  // Tell the agent hands every failure back, in every mode: nothing reruns on this Mac.
+  it.each(
+    (["linux", "automatic", "macFirst"] as const).flatMap((where) =>
+      (
+        [
+          [{}, "Linux couldn't run this: Linux dropped it mid-run"],
+          [{ failure: "sh: vp: not found" }, "Linux couldn't run this: sh: vp: not found"],
+        ] as const
+      ).map(([failed, reason]) => [where, failed, reason] as const),
+    ),
+  )("%s, Tell the agent: %j ends with %j", (where, failed, reason) => {
+    const entry = job("a", "vp test run", {
+      dropped: true,
+      linuxFailedAt: NOW - 500,
+      linkFailures: 3,
+      ...failed,
+    } as never);
+    for (const health of [OFFLINE, { ...ONLINE, okAt: NOW - 60_000 }]) {
+      const plan = planRoutes(
+        input([entry], { runnerWhere: where, runnerDropped: "agent" }, { health }),
+      );
+      expect(plan.cancels.a).toBe(reason);
+      expect(plan.admits).toEqual({});
+    }
   });
 
   // A drop is a lost link: once a heartbeat gets through, the job goes back to Linux by itself,
@@ -830,6 +857,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     ["ask", undefined, "linux-start"],
     ["ask", -1, "linux-start"],
     ["wait", undefined, "linux-start"],
+    ["agent", undefined, "linux-start"],
   ] as const)(
     "dropped mid-run, Linux back: %s (question deadline %s) → %s",
     (policy, deadline, outcome) => {

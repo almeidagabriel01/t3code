@@ -665,6 +665,7 @@ const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: num
   (entry as QueuedEntry).failure !== undefined &&
   entry.route === undefined &&
   (config.runnerDropped === "mac" ||
+    config.runnerDropped === "agent" ||
     (config.runnerDropped === "ask" &&
       !(askExpired(entry, now) && config.runnerDeadlineAction === "wait")));
 
@@ -789,6 +790,12 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
   const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
     entry.forced === true && busy.kind !== "worktree";
+  /** Tell the agent: a job Linux dropped or couldn't run ends with that, never rerunning here. */
+  const tellAgent = (entry: HeavyQueueEntry) => {
+    const { failure } = entry as QueuedEntry;
+    routes[entry.id] = "linux";
+    cancels[entry.id] = `Linux couldn't run this: ${failure ?? "Linux dropped it mid-run"}`;
+  };
   const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
@@ -835,10 +842,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         toMac(entry, "Hybrid: queue paused");
         continue;
       }
-      if (!up) {
-        toMac(entry, `${mode}: Linux is unavailable`);
-        continue;
-      }
+      if (!up && entry.dropped === true && config.runnerDropped === "agent") tellAgent(entry);
+      else if (!up) toMac(entry, `${mode}: Linux is unavailable`);
+      if (!up) continue;
       const busy = linuxBusy(worktree);
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";
@@ -905,6 +911,10 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         : reason === "dropped"
           ? "Linux dropped it mid-run"
           : "Linux is unavailable";
+    if (policy === "agent") {
+      tellAgent(entry);
+      continue;
+    }
     if (policy === "mac") {
       toMac(entry, `${what}: running here`);
       continue;

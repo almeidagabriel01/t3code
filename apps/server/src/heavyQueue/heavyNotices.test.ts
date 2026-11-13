@@ -392,6 +392,19 @@ describe("notices for each problem", () => {
       "Waiting for Linux to come back",
       "linux",
     ],
+    // Tell the agent: the agent gets the failure back, so the notice names no next step.
+    [
+      "dropped, telling the agent",
+      requeueRecord(
+        linux,
+        { dropped: true, unconfirmed: true },
+        { runnerDropped: "agent", runnerUnavailable: "ask" },
+        NOW,
+      ),
+      "Linux dropped pnpm test mid-run",
+      "Confirming the run stopped there first",
+      "linux",
+    ],
   ])("%s", (_name, value, one, description, machine) => {
     expect(titles({ records: [record(value)] })).toEqual([
       { one, description, category: "problem", machine },

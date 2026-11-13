@@ -414,15 +414,37 @@ describe("t3 heavy", () => {
       },
     );
 
+    // A tool or file Linux lacks (126, 127) is its environment's: "If a Linux run fails" decides,
+    // and Tell the agent hands back Linux's code and error without rerunning anywhere.
+    it.each([
+      [127, "agent", 127, ""],
+      [126, "agent", 126, ""],
+      // The whole line runs again here; under Tell the agent nothing after the failure runs.
+      [127, "mac", 0, "vp on mac: test run\nafter\n"],
+    ] as const)("exit %i, %s: ends %i", async (code, policy, exit, stdout) => {
+      const error = "sh: 1: tsgo: not found";
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=${code}\\n' >&2; exit ${code}`,
+        { runnerDropped: policy },
+      );
+      const run = heavy(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
+      expect(await run.exited).toBe(exit);
+      expect(run.stdout()).toBe(stdout);
+      expect(run.stderr()).toContain(`${error}\n`);
+      expect(run.stderr()).toContain(`[t3 heavy] Linux couldn't run this: ${error}\n`);
+      expect(Queue.read(dir)).toEqual([]);
+    });
+
     // A lazy install that raced in a fresh copy is Linux's failure: once more there, never the Mac.
     it.each([
-      ["output", 1, 0, 2, "linux-ok\n"],
-      ["output", 2, 0, 2, "vp on mac: test run\n"],
-      ["marker", 1, 0, 2, "linux-ok\n"],
-      ["marker", 2, 0, 2, "vp on mac: test run\n"],
+      ["output", 1, "mac", 0, 2, "linux-ok\n"],
+      ["output", 2, "mac", 0, 2, "vp on mac: test run\n"],
+      ["marker", 1, "mac", 0, 2, "linux-ok\n"],
+      ["marker", 2, "mac", 0, 2, "vp on mac: test run\n"],
+      ["output", 2, "agent", 75, 2, ""],
     ] as const)(
-      "an install failure seen in the %s %i time(s) ends %i after %i Linux runs",
-      async (seen, fails, code, runs, output) => {
+      "an install failure seen in the %s %i time(s), %s, ends %i after %i Linux runs",
+      async (seen, fails, policy, code, runs, output) => {
         const failure =
           seen === "output"
             ? "echo 'Error: Electron failed to install correctly.' >&2"
@@ -435,7 +457,7 @@ describe("t3 heavy", () => {
             "echo linux-ok",
             `printf '${M} exit=0\\n' >&2`,
           ].join("\n"),
-          { runnerDropped: "mac" },
+          { runnerDropped: policy },
         );
         const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
         expect(await run.exited).toBe(code);
