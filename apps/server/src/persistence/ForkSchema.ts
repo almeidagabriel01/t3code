@@ -576,6 +576,9 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN memories_json TEXT NOT NULL DEFAULT '[]'`;
   }
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
+  // Paused requests and failed root tasks count only after the newest boundary, as the chat offers
+  // their actions there. A failed child is reported to its parent, which goes on; a task the user
+  // stopped, or one an archive paused, waits on nobody.
   yield* sql`
     CREATE VIEW assistant_team_state AS
     SELECT t.*,
@@ -588,7 +591,20 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
         WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
       (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
         WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
-        ORDER BY m.seq DESC LIMIT 1) AS preview
+        ORDER BY m.seq DESC LIMIT 1) AS preview,
+      (SELECT COUNT(DISTINCT k.root_id) FROM assistant_group_tasks k
+        JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+        WHERE k.team_id = t.team_id AND k.kind <> 'reply' AND k.status = 'paused'
+          AND COALESCE(k.reason, '') NOT IN ('stopped', 'group_archived')
+          AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
+            WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS paused_tasks,
+      (SELECT COUNT(*) FROM assistant_group_tasks k
+        JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+        WHERE k.team_id = t.team_id AND k.kind = 'root' AND k.status = 'failed'
+          AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
+            WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS failed_tasks,
+      (SELECT json_group_array(g.thread_id) FROM assistant_group_threads g
+        WHERE g.team_id = t.team_id) AS thread_ids_json
     FROM assistant_teams t
   `;
   // A member's hidden thread for a group, and the last chat message that thread was shown.

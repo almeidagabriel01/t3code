@@ -2038,6 +2038,17 @@ it.effect("a queued run that has not started is cancelled instead of interrupted
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("cancelling a paused task republishes the team, whose counters it changes", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const root = yield* seedTask("paused");
+    h.refreshed.length = 0;
+    yield* groups.taskAction({ taskId: root as never, action: "cancel" });
+    assert.include(h.refreshed, TEAM);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("cancel ends every open task of the request", () => {
   const h = harness();
   return Effect.gen(function* () {
