@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
+import { parseLine, type Word } from "./shellLine.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
@@ -32,6 +33,44 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
+/** The Mac path a word names (`~/…`, `$HOME/…` or absolute), or null for anything else. */
+const macPath = (word: Word, value: string, home: string) => {
+  if (word.tilde && /^~(\/|$)/.test(value)) return home + value.slice(1);
+  const homeVar = /^\$(HOME|\{HOME\})(?=\/|$)/.exec(value);
+  if (homeVar !== null && word.vars.length === 1) return home + value.slice(homeVar[0].length);
+  return value.startsWith("/") && word.vars.length === 0 ? value : null;
+};
+
+/**
+ * A `sh -c` text as Linux runs it: each word naming a path in `root` (also a `--flag=` value or a
+ * redirect target) points at the copy instead, through `$T3_COPY`, which the wrapper sets there.
+ * Linux has no Mac home, so `cd ~/<checkout>/sub` would land in a folder that doesn't exist.
+ */
+const shellTextInCopy = (text: string, root: string, home: string) => {
+  const edits: Array<{ readonly start: number; readonly end: number; readonly text: string }> = [];
+  for (const command of parseLine(text).commands) {
+    const targets = command.redirects.flatMap((redirect) =>
+      redirect.target === null ? [] : [redirect.target],
+    );
+    for (const word of [...command.words, ...targets]) {
+      const flag = /^-[\w.-]*=/.exec(word.value)?.[0] ?? "";
+      const path = macPath(word, word.value.slice(flag.length), home);
+      if (path === null) continue;
+      const relative = NodePath.relative(root, NodePath.normalize(path));
+      if (relative.startsWith("..") || NodePath.isAbsolute(relative)) continue;
+      const copy = `"$T3_COPY"${relative === "" ? "" : shellQuote(`/${relative}`)}`;
+      edits.push({
+        start: word.start,
+        end: word.end,
+        text: `${flag === "" ? "" : shellQuote(flag)}${copy}`,
+      });
+    }
+  }
+  return edits
+    .toSorted((a, b) => b.start - a.start)
+    .reduce((out, edit) => out.slice(0, edit.start) + edit.text + out.slice(edit.end), text);
+};
+
 /**
  * The command as Linux runs it from the same folder of its synced copy: a path inside `root`
  * becomes relative to `cwd` (alone or as `--flag=<path>`), the Mac's `$SHELL` becomes `bash`, and
@@ -42,6 +81,7 @@ export const remoteCommand = (
   args: ReadonlyArray<string>,
   cwd: string,
   root: string,
+  home = NodeOS.homedir(),
 ) => {
   const local = (path: string) => {
     if (!NodePath.isAbsolute(path)) return null;
@@ -55,7 +95,15 @@ export const remoteCommand = (
     return local(value) ?? value;
   };
   const name = NodePath.basename(program);
-  if (SHELLS.has(name)) return ["bash", ...args.map(arg)];
+  if (SHELLS.has(name)) {
+    const text = args.findIndex((value) => /^-[a-z]*c[a-z]*$/.test(value)) + 1;
+    return [
+      "bash",
+      ...args.map((value, at) =>
+        at > 0 && at === text ? shellTextInCopy(value, root, home) : arg(value),
+      ),
+    ];
+  }
   const inside = local(program);
   const remote =
     inside === null
@@ -96,7 +144,7 @@ export const withProjectBins = (
   return [
     "bash",
     "-c",
-    `export PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle}; exec "$@"`,
+    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle}; exec "$@"`,
     "t3",
     ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,

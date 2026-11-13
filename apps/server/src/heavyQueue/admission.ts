@@ -113,7 +113,7 @@ const HEADROOM_MS = 6_000;
 /** Once blocked, memory has to recover this many points past the floor so admission does not flap. */
 const MEMORY_REOPEN_POINTS = 5;
 /** Sustained swap-in above this is the machine paging work back in, not a blip. */
-const SWAP_IN_LIMIT = 20 * 1024 ** 2;
+export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
 /** A head waiting this long stops anything from passing it. */
 const HEAD_PATIENCE_MS = 5 * 60_000;

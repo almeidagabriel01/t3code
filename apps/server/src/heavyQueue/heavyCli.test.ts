@@ -379,6 +379,14 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
     });
 
+    /** The faults the job logged for the problem detector, without the per-run fields. */
+    const faults = (dir: string) =>
+      Queue.readDoc(dir).events.flatMap((event) =>
+        event.kind === "t3-fault"
+          ? [{ reason: event.reason, cause: event.cause, command: event.command }]
+          : [],
+      );
+
     it("keeps a job on the Mac when Linux's pre-flight finds its tool missing", async () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
@@ -388,6 +396,9 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run\n");
       expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+      expect(faults(dir)).toEqual([
+        { reason: "command-not-found", cause: "command-not-found:vp", command: "vp test run" },
+      ]);
     });
 
     it.each([1, 2, 3])(
@@ -436,8 +447,53 @@ describe("t3 heavy", () => {
         expect(
           run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
         ).toBe(fails === 2);
+        expect(faults(dir).map((fault) => fault.cause)).toEqual(
+          fails === 2 ? ["linux-install:electron"] : [],
+        );
       },
     );
+
+    // Linux has no Mac home: `~`, `$HOME` and absolute paths into the checkout point at its copy.
+    it.each([
+      ["cd ~/W/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
+      ["cd D/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
+      ["remoto sh -c 'cd ~/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      ["remoto sh -c 'cd $HOME/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      ["remoto sh -c 'cd \"D/sub\" && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      [
+        "remoto sh -c 'cd D && vp test run --root=D/sub'",
+        `cd "$T3_COPY" && vp test run '--root='"$T3_COPY"'/sub'`,
+        "",
+      ],
+      [
+        "sh -c 'cd ~/W/sub && vp test run > ~/W/out.txt'",
+        `cd "$T3_COPY"'/sub' && vp test run > "$T3_COPY"'/out.txt'`,
+        "",
+      ],
+      // Quoted, `~` is no home.
+      ["remoto sh -c 'vp test run \"~/W\"'", `vp test run "~/W"`, ""],
+    ])("%s runs on Linux in its copy", async (line, body, folder) => {
+      const { dir: made, env } = setup(echoArgs);
+      // ponytail: paths compare as written; one through a symlink into the checkout stays here.
+      const dir = NodeFS.realpathSync(made);
+      NodeFS.mkdirSync(NodePath.join(dir, "sub"));
+      const real = (text: string) =>
+        text
+          .replaceAll(
+            /(~|\$HOME)\/W(?=\/|"|'| |$)/g,
+            (_, start: string) => `${start}/${NodePath.basename(dir)}`,
+          )
+          .replaceAll(/(?<=[ ="]|^)D(?=\/| |"|$)/g, dir);
+      const run = heavy(
+        dir,
+        ["/bin/sh", "-c", real(line)],
+        { ...env, HOME: NodePath.dirname(dir) },
+        ["--runner", "linux", "--"],
+        dir,
+      );
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(`bash|-c|${real(body)}| in ${NodePath.join(dir, folder)}\n`);
+    });
 
     it("sends a script outside the checkout to Linux as its text", async () => {
       const { dir, env } = setup(echoArgs);
@@ -459,26 +515,47 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
     });
 
+    /** Fails its first run with `first`, then runs as Linux would; `$0.count` counts the runs. */
+    const failingOnce = (first: string) =>
+      [
+        `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+        `if [ $n -eq 1 ]; then ${first}; fi`,
+        `printf '${M} phase=running pgid=4\\n' >&2`,
+        "echo on-linux",
+        `printf '${M} exit=0\\n' >&2`,
+      ].join("\n");
+    const runs = (dir: string) =>
+      NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim();
+
+    // One lost link is Linux's to recover: the heartbeat it triggers gets through, so the job goes
+    // back there by itself, never to the Mac, whatever the policy says.
     it.each([
       ["vp test run; echo after"],
       // `timeout` runs its command in a process group of its own.
       ["timeout 30 vp test run; echo after"],
-    ])("stops %j where Linux is unavailable and reruns it on the Mac by policy", async (line) => {
-      const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
-      expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run\nafter\n");
-      expect(run.stderr()).toContain("Linux is unavailable");
-    });
+    ])(
+      "stops %j where Linux was unreachable and runs it there once the link is back",
+      async (line) => {
+        const { dir, env } = setup(failingOnce("exit 75"), { runnerUnavailable: "mac" });
+        const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+        expect(await run.exited).toBe(0);
+        expect(run.stdout()).toBe("on-linux\nafter\n");
+        expect(run.stderr()).toContain("Linux is unavailable");
+        expect(runs(dir)).toBe("2");
+      },
+    );
 
-    it("reruns a dropped job on the Mac only after Linux confirms it stopped", async () => {
+    it("reruns a dropped job on Linux once it confirms it stopped and the link is back", async () => {
       const { dir, env } = setup(
-        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exit 255`,
+        failingOnce(
+          `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exit 255`,
+        ),
         { runnerDropped: "mac" },
       );
       const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("ran on mac\n");
+      expect(run.stdout()).toBe("on-linux\n");
+      expect(runs(dir)).toBe("2");
     });
 
     const longRun = `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exec sleep 30`;
@@ -703,7 +780,22 @@ describe("t3 heavy", () => {
     const config = {
       ...DEFAULT_PROJECT_CONFIG,
       runnerEnabled: true,
-      runnerLinuxCommands: [...DEFAULT_PROJECT_CONFIG.runnerLinuxCommands, "effect-tsgo"],
+      // The list as 0.1.9-fork.1 saved it: no tsgo or effect-tsgo, only `typecheck` and `tsc`.
+      runnerLinuxCommands: [
+        "test",
+        "vitest",
+        "jest",
+        "e2e",
+        "playwright",
+        "coverage",
+        "lint",
+        "oxlint",
+        "eslint",
+        "check",
+        "typecheck",
+        "tsc",
+        "knip",
+      ],
     };
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
@@ -811,6 +903,15 @@ describe("t3 heavy", () => {
       ["yarn test", "linux", "X yarn test"],
       ["bunx tsc --noEmit", "linux", "X bunx tsc --noEmit"],
       ["vp run typecheck", "linux", "X vp run typecheck"],
+      // A list naming `typecheck` or `tsc` covers every type checker.
+      ["pnpm exec effect-tsgo tsrs --noEmit", "linux", "X pnpm exec effect-tsgo tsrs --noEmit"],
+      [
+        "cd apps/server && pnpm exec effect-tsgo tsrs --noEmit",
+        "linux",
+        "X pnpm exec effect-tsgo tsrs --noEmit",
+        "/w/repo/apps/server",
+      ],
+      ["npx vue-tsc --noEmit", "linux", "X npx vue-tsc --noEmit"],
       // An agent's own `remoto` asks for Linux; T3 takes its word out and decides.
       ["remoto vp test run", "linux", "X vp test run"],
       ["cd apps/server && remoto vp run build", "linux", "X vp run build", "/w/repo/apps/server"],
@@ -820,6 +921,16 @@ describe("t3 heavy", () => {
       ["vp test run /Users/me/x/a.test.ts", `${OUTSIDE}/Users/me/x/a.test.ts`],
       ["vp test run --config ~/vitest.config.ts", `${OUTSIDE}/home/me/vitest.config.ts`],
       ["vp test run --outputFile=/private/tmp/r.json", `${OUTSIDE}/private/tmp/r.json`],
+      // A `sh -c` text runs there whole, in the copy of the checkout it starts in.
+      ["sh -c 'vp test run'", "linux", "X sh -c 'vp test run'"],
+      [
+        "remoto sh -c 'cd /w/repo/apps/server && vp test run'",
+        "linux",
+        "X sh -c 'cd /w/repo/apps/server && vp test run'",
+      ],
+      ["remoto sh -c 'cd ~/code && vp test run'", "Runs outside a git checkout: /home/me/code"],
+      ["sh -c 'vp test run /w/other/a.test.ts'", `${OUTSIDE}/w/other/a.test.ts`],
+      ["sh -c 'echo a | vp test run'", "Reads its input from this Mac: vp test run"],
       ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
       ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
       ["cd /nowhere && vp test run", "Runs outside a git checkout: /nowhere"],
@@ -835,10 +946,7 @@ describe("t3 heavy", () => {
       ["eval vp test run", "Couldn't read this command safely (eval)"],
       ["vp test run 'unbalanced", "Couldn't read this command safely (unbalanced quotes)"],
       ["vp test run <<EOF\nnever ends", "Couldn't read this command safely (unterminated heredoc)"],
-      [
-        "nohup sh -c 'vp test run > /tmp/x.log 2>&1' &",
-        "Couldn't read this command safely (nested shell)",
-      ],
+      ["nohup sh -c 'vp test run > /tmp/x.log 2>&1' &", "Runs in the background: sh vp test"],
       // Not heavy, or already queued: the hook leaves these alone.
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],

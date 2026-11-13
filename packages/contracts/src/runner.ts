@@ -3,6 +3,7 @@
  * setting; the ones in `RUNNER_PROJECT_KEYS` also take a per-project override.
  */
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export const RunnerWhere = Schema.Literals(["mac", "linux", "automatic"]);
 export type RunnerWhere = typeof RunnerWhere.Type;
@@ -19,7 +20,7 @@ export const RUNNER_LIMITS = {
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
   runnerLinuxSlots: { min: 1, max: 16, unit: "jobs" },
   runnerHeartbeatSeconds: { min: 5, max: 600, unit: "seconds" },
-  runnerOfflineAfterFailures: { min: 1, max: 10, unit: "failures" },
+  runnerOfflineAfterFailures: { min: 2, max: 10, unit: "failures" },
   runnerSshTimeoutSeconds: { min: 1, max: 30, unit: "seconds" },
   runnerStopWaitSeconds: { min: 1, max: 60, unit: "seconds" },
   runnerLinuxMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
@@ -142,7 +143,17 @@ const between = (key: RunnerNumberKey) =>
 export const RunnerAskMinutes = between("runnerAskMinutes");
 export const RunnerLinuxSlots = between("runnerLinuxSlots");
 export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
-export const RunnerOfflineAfterFailures = between("runnerOfflineAfterFailures");
+/** One failure never takes Linux offline, so a 1 saved before the minimum rose reads as 2. */
+export const RunnerOfflineAfterFailures = Schema.Int.pipe(
+  Schema.decodeTo(
+    between("runnerOfflineAfterFailures"),
+    SchemaTransformation.transform({
+      decode: (value: number) =>
+        value === 1 ? RUNNER_LIMITS.runnerOfflineAfterFailures.min : value,
+      encode: (value: number) => value,
+    }),
+  ),
+);
 export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
 export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");

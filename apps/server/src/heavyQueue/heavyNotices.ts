@@ -42,7 +42,122 @@ export type HeavyEvent =
       readonly cause: "unavailable" | "dropped" | "deadline";
     }
   /** Hybrid placed it on Linux: planned, shown only for every machine change. */
-  | { readonly kind: "hybrid" };
+  | { readonly kind: "hybrid" }
+  /** Linux couldn't run it for a reason of T3's or the PC's own; the problem detector files it and tells. */
+  | ({ readonly kind: "t3-fault" } & Fault);
+
+/** Each reason has an approved card label in the problem detector; a new one needs its label approved first. */
+export type FaultReason =
+  | "linux-sync"
+  | "linux-install"
+  | "linux-lost"
+  | "command-not-found"
+  | "network"
+  | "disk-full"
+  | "out-of-memory"
+  | "sign-in-expired";
+
+export interface Fault {
+  /** Stable cause key; the same fault gives the same key every time, e.g. "linux-sync:rsync-timeout". */
+  readonly cause: string;
+  readonly reason: FaultReason;
+  /** The command line that failed. */
+  readonly command: string;
+  /** The Linux error text; its first line is what the card shows. */
+  readonly error: string;
+  /** Absolute Mac path the job ran in (worktree or project root); null if unknown. */
+  readonly projectFolder: string | null;
+}
+
+/** How a Linux run failed by its environment, as the CLI saw it. */
+export type FaultSeen =
+  /** The pre-flight found the tool missing there. */
+  | { readonly kind: "missing"; readonly tool: string }
+  /** It ran and exited 126 or 127: something it calls is missing or not executable there. */
+  | { readonly kind: "exit"; readonly code: number; readonly program: string }
+  /** A package's install was unfinished in the copy twice in a row. */
+  | { readonly kind: "install"; readonly package: string | null }
+  /** `remoto` reached the PC and started syncing, but the command never ran. */
+  | { readonly kind: "sync" }
+  /** `remoto` never got as far as syncing. */
+  | { readonly kind: "unreachable" }
+  /** It started there and the connection ended without its exit code. */
+  | { readonly kind: "lost" };
+
+/** Causes the PC itself gives, whatever step it failed at. */
+const PC_CAUSES: ReadonlyArray<readonly [RegExp, FaultReason, string]> = [
+  [/No space left on device|ENOSPC|Disk quota exceeded/i, "disk-full", "no-space"],
+  [/Cannot allocate memory|ENOMEM|heap out of memory|Out of memory/i, "out-of-memory", "no-memory"],
+  [
+    /Permission denied \(publickey|Authentication failed|Too many authentication failures/i,
+    "sign-in-expired",
+    "ssh-key",
+  ],
+  [
+    /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i,
+    "network",
+    "dns",
+  ],
+  [/Network is unreachable|No route to host/i, "network", "unreachable"],
+  [/Connection refused/i, "network", "refused"],
+];
+const LINK_CAUSES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/timed? ?out/i, "timeout"],
+  [/Connection (?:reset|closed)|closed by remote host|Broken pipe/i, "closed"],
+];
+/** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
+const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
+
+/**
+ * A Linux environment failure as the problem detector files it, with a cause key that stays the same for the
+ * same fault: no counts, times or paths in it. Null when the run failed in its own code.
+ */
+export const faultOf = (
+  seen: FaultSeen,
+  error: string | null,
+  job: { readonly command: string; readonly projectFolder: string | null },
+): Fault | null => {
+  const line = error?.trim() || null;
+  const fault = (reason: FaultReason, detail: string, fallback: string): Fault => ({
+    cause: `${reason}:${detail}`,
+    reason,
+    command: job.command,
+    error: line ?? fallback,
+    projectFolder: job.projectFolder,
+  });
+  if (seen.kind === "missing") {
+    return fault("command-not-found", seen.tool, `${seen.tool}: command not found`);
+  }
+  if (seen.kind === "exit") {
+    if (seen.code !== 126 && seen.code !== 127) return null;
+    const tool = (line === null ? null : MISSING_TOOL.exec(line)?.[1]) ?? seen.program;
+    return fault("command-not-found", tool, `${tool}: command not found`);
+  }
+  const pc = line === null ? undefined : PC_CAUSES.find(([pattern]) => pattern.test(line));
+  if (pc !== undefined) return fault(pc[1], `${seen.kind}-${pc[2]}`, "");
+  if (seen.kind === "install") {
+    return fault(
+      "linux-install",
+      seen.package ?? "node_modules",
+      "Dependency install on Linux failed",
+    );
+  }
+  const link =
+    line === null
+      ? "unknown"
+      : (LINK_CAUSES.find(([pattern]) => pattern.test(line))?.[1] ?? "unknown");
+  const via = line !== null && /rsync/i.test(line) ? `rsync-${link}` : link;
+  if (seen.kind === "sync") return fault("linux-sync", via, "Linux sync failed");
+  if (seen.kind === "lost") return fault("linux-lost", via, "Linux dropped the job");
+  return fault("network", via, "Linux is unavailable");
+};
+
+/** The record of a fault, beside the job's own `ended` or `linux-lost` record. */
+export const faultRecord = (
+  entry: Pick<HeavyQueueEntry, "id" | "label" | "name" | "threadId" | "runner">,
+  fault: Fault,
+  now: number,
+): HeavyEventRecord => recordOf(entry, { kind: "t3-fault", ...fault }, now);
 
 export type HeavyEventRecord = HeavyEvent & {
   readonly id: string;
@@ -380,6 +495,9 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
               : "Linux is unavailable",
       });
     }
+    // The problem detector files these and tells the user; the toasts above already cover the job.
+    case "t3-fault":
+      return null;
     case "hybrid":
       return notice({
         group: "hybrid",

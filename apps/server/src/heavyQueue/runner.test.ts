@@ -13,6 +13,7 @@ import {
   eligibilityOf,
   foldMarker,
   installFailure,
+  linkMachine,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -31,6 +32,7 @@ import {
   MARKER,
   type HealthCheck,
   type LinuxHealth,
+  type QueuedEntry,
   type RoutePlanInput,
   type RunnerBlock,
 } from "./runner.ts";
@@ -380,28 +382,179 @@ describe("routing matrix", () => {
     ).toBe("mac");
   });
 
-  it("a remoto failure counts Linux down for that job until a newer heartbeat succeeds", () => {
-    const failed = job("a", "vp test run", { linuxFailedAt: NOW - 500 });
-    const stale = planRoutes(
-      input(
-        [failed],
-        { runnerWhere: "linux", runnerUnavailable: "mac" },
-        {
-          health: { ...ONLINE, okAt: NOW - 1000 },
-        },
-      ),
+  // 13:34: a job's sync timed out while this Mac swapped; ssh answered seconds later.
+  it("a run that lost the link waits for Linux, and goes back once a heartbeat gets through", () => {
+    const failed = job("a", "vp test run", { linuxFailedAt: NOW - 500, linkFailures: 1 } as never);
+    const at = (okAt: number) =>
+      outcomeOf(
+        planRoutes(
+          input(
+            [failed],
+            { runnerWhere: "linux", runnerUnavailable: "mac" },
+            { health: { ...ONLINE, okAt } },
+          ),
+        ),
+        "a",
+      );
+    expect(at(NOW - 1000)).toBe("linux-wait");
+    expect(at(NOW - 100)).toBe("linux-start");
+  });
+});
+
+describe("the Mac↔Linux link", () => {
+  const sample = (
+    over: Partial<typeof CALM> & { pressureLevel?: number; swapInBytesPerSecond?: number },
+  ) => ({
+    ...CALM,
+    ...over,
+  });
+  const SWAPPING = 96 * 1024 ** 2;
+
+  it.each([
+    ["no reading", null, 3],
+    ["calm", sample({ pressureLevel: 1 }), 3],
+    ["swapping", sample({ pressureLevel: 1, swapInBytesPerSecond: SWAPPING }), 6],
+    ["pressure warning", sample({ pressureLevel: 2 }), 6],
+    [
+      "pressure warning and swapping",
+      sample({ pressureLevel: 2, swapInBytesPerSecond: SWAPPING }),
+      6,
+    ],
+    ["pressure critical", sample({ pressureLevel: 4 }), 12],
+  ] as const)("with %s here, ssh gets %is to connect", (_, reading, seconds) => {
+    expect(linkMachine(DEFAULT_MACHINE_CONFIG, reading).runnerSshTimeoutSeconds).toBe(seconds);
+  });
+
+  const fail = { ok: false as const, error: "remoto could not reach Linux" };
+  const ok = { ok: true as const, reading: parseHeartbeat("0.5 0.4 0.3 1/2 3\n6\n") };
+  const BEAT = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+  const healthAfter = (
+    checks: ReadonlyArray<readonly [number, HealthCheck]>,
+    machine = DEFAULT_MACHINE_CONFIG,
+  ) =>
+    checks.reduce<LinuxHealth>(
+      (health, [at, check]) => nextHealth(health, check, machine, 20_000, NOW + at),
+      {
+        ...ONLINE,
+        okAt: NOW - BEAT,
+      },
     );
-    expect(stale.admits.a?.runner).toBe("mac");
-    const fresh = planRoutes(
-      input(
-        [failed],
-        { runnerWhere: "linux", runnerUnavailable: "mac" },
-        {
-          health: { ...ONLINE, okAt: NOW - 100 },
-        },
+
+  it.each([
+    ["one failure", [[0, fail]], true, 1, 2],
+    ["one failure, set to go offline after one", [[0, fail]], true, 1, 1],
+    [
+      "two jobs failing together",
+      [
+        [0, fail],
+        [400, fail],
+      ],
+      true,
+      1,
+      2,
+    ],
+    [
+      "a heartbeat failing with a job",
+      [
+        [0, fail],
+        [BEAT / 2 - 1, fail],
+      ],
+      true,
+      1,
+      2,
+    ],
+    [
+      "a failure, then the heartbeat gets through",
+      [
+        [0, fail],
+        [2000, ok],
+      ],
+      true,
+      0,
+      2,
+    ],
+    [
+      "failures a heartbeat apart",
+      [
+        [0, fail],
+        [BEAT, fail],
+      ],
+      false,
+      2,
+      2,
+    ],
+  ] as const)("%s: online %s, %i failures counted", (_, checks, online, failures, after) => {
+    const machine = { ...DEFAULT_MACHINE_CONFIG, runnerOfflineAfterFailures: after };
+    expect(healthAfter(checks as never, machine)).toMatchObject({ online, failures });
+  });
+
+  const plannedWith = (
+    entry: Partial<QueuedEntry>,
+    config: Partial<RunnerProjectConfig>,
+    over: Partial<RoutePlanInput> = {},
+  ) =>
+    outcomeOf(
+      planRoutes(
+        input([job("a", "vp test run", entry as never)], { runnerWhere: "linux", ...config }, over),
       ),
+      "a",
     );
-    expect(fresh.admits.a?.runner).toBe("linux");
+  const STRAINED = { sample: sample({ pressureLevel: 2, swapInBytesPerSecond: SWAPPING }) };
+
+  // Backoff from the ssh timeout (3s), doubling; the third loss counts Linux unavailable.
+  it.each([
+    [1, 2999, "linux-wait"],
+    [1, 3000, "linux-start"],
+    [2, 5999, "linux-wait"],
+    [2, 6000, "linux-start"],
+    [3, 500, "mac-start"],
+  ] as const)("after %i lost link(s), %ims later: %s", (linkFailures, ms, outcome) => {
+    const entry = { linuxFailedAt: NOW - ms, linkFailures };
+    expect(
+      plannedWith(
+        entry,
+        { runnerUnavailable: "mac" },
+        { health: { ...ONLINE, okAt: NOW - 60_000 } },
+      ),
+    ).toBe(outcome);
+  });
+
+  it.each([
+    ["unavailable, Run on this Mac", { linkFailures: 3 }, { runnerUnavailable: "mac" }, ONLINE],
+    ["Linux offline, Run on this Mac", {}, { runnerUnavailable: "mac" }, OFFLINE],
+    [
+      "dropped, Run on this Mac",
+      { dropped: true, linkFailures: 3 },
+      { runnerDropped: "mac" },
+      ONLINE,
+    ],
+    [
+      "a question nobody answered",
+      { linkFailures: 3, ask: { reason: "unavailable" as const, deadlineAt: ago(1) } },
+      { runnerUnavailable: "ask", runnerDeadlineAction: "mac" },
+      ONLINE,
+    ],
+    ["Hybrid with Linux offline", {}, { runnerWhere: "automatic" }, OFFLINE],
+  ] as const)("%s: a strained Mac keeps the job for Linux", (_, failed, config, health) => {
+    const entry = { linuxFailedAt: NOW - 500, ...failed };
+    const over = { health: { ...health, okAt: NOW - 60_000 } };
+    expect(plannedWith(entry, config, { ...over, ...STRAINED })).toBe("linux-wait");
+    // A reading older than a heartbeat no longer speaks for this Mac.
+    const stale = { sample: { ...STRAINED.sample, at: NOW - 21_000 } };
+    expect(plannedWith(entry, config, { ...over, ...stale })).toMatch(/^mac-/);
+  });
+
+  it("an environment failure keeps its policy, strained or not", () => {
+    const entry = {
+      dropped: true,
+      failure: "Dependency install on Linux failed",
+      linuxFailedAt: NOW - 500,
+    };
+    const health = { health: { ...ONLINE, okAt: NOW - 100 } };
+    expect(plannedWith(entry, { runnerDropped: "mac" }, { ...health, ...STRAINED })).toMatch(
+      /^mac-/,
+    );
+    expect(plannedWith(entry, { runnerDropped: "ask" }, health)).toBe("ask");
   });
 });
 
@@ -436,11 +589,11 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
   });
 
-  // A heartbeat right after the drop must not undo the policy: "Run on this Mac" stays on the
-  // Mac and an open question stays open; only waiting goes back to Linux once it answers.
+  // A drop is a lost link: once a heartbeat gets through, the job goes back to Linux by itself,
+  // whatever the policy and an open question say.
   it.each([
-    ["mac", undefined, "mac-start"],
-    ["ask", undefined, "ask"],
+    ["mac", undefined, "linux-start"],
+    ["ask", undefined, "linux-start"],
     ["ask", -1, "linux-start"],
     ["wait", undefined, "linux-start"],
   ] as const)(
@@ -599,6 +752,9 @@ describe("patterns and eligibility", () => {
     ["npx expo run:ios", "expo run", true],
     ["EXPO run:ios", "expo run", true],
     ["vp test", "  ", false],
+    ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
+    ["vue-tsc --noEmit", "tsc", true],
+    ["tsgo --noEmit", "test", false],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });
@@ -777,15 +933,22 @@ describe("Linux health", () => {
     const fail = { ok: false as const, error: "timeout" };
     const ok = { ok: true as const, reading: parseHeartbeat("0.5 0.4 0.3 1/2 3\n6\n") };
     const machine = { ...DEFAULT_MACHINE_CONFIG, runnerOfflineAfterFailures: 3 };
-    let health = nextHealth(UNKNOWN_HEALTH, fail, machine, 20_000, 1);
+    const beat = (n: number) => n * machine.runnerHeartbeatSeconds * 1000;
+    let health = nextHealth(UNKNOWN_HEALTH, fail, machine, 20_000, beat(1));
     expect(health).toMatchObject({ online: null, failures: 1 });
-    health = nextHealth(health, fail, machine, 20_000, 2);
+    health = nextHealth(health, fail, machine, 20_000, beat(2));
     expect(health.online).toBeNull();
-    health = nextHealth(health, fail, machine, 20_000, 3);
+    health = nextHealth(health, fail, machine, 20_000, beat(3));
     expect(health).toMatchObject({ online: false, failures: 3, error: "timeout" });
-    health = nextHealth(health, ok, machine, 20_000, 4);
-    expect(health).toMatchObject({ online: true, failures: 0, okAt: 4, load1: 0.5, cpuCount: 6 });
-    expect(nextHealth(health, fail, machine, 20_000, 5)).toMatchObject({
+    health = nextHealth(health, ok, machine, 20_000, beat(4));
+    expect(health).toMatchObject({
+      online: true,
+      failures: 0,
+      okAt: beat(4),
+      load1: 0.5,
+      cpuCount: 6,
+    });
+    expect(nextHealth(health, fail, machine, 20_000, beat(5))).toMatchObject({
       online: true,
       failures: 1,
     });

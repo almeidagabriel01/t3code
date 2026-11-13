@@ -25,6 +25,7 @@ import {
   UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
+import { faultOf, type FaultSeen } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -37,6 +38,7 @@ import {
   gitRootOf,
   modeFor,
   readDoc,
+  recordFault,
   recordHealth,
   recordSampleIfStale,
   requeue,
@@ -49,6 +51,8 @@ import {
 import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
+  linkAttempts,
+  linkMachine,
   NEEDS_GIT,
   needsGit,
   outsideTie,
@@ -755,11 +759,31 @@ const checkLinuxIfStale = (dir: string, environment: NodeJS.ProcessEnv) => {
   const staleMs = (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
   if (!claimHealthCheck(dir, staleMs)) return;
   healthCheckRunning = true;
-  void checkLinux(machine, environment).then((check) => {
+  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
     healthCheckRunning = false;
     recordHealth(dir, check);
   });
 };
+
+/**
+ * A run lost the link: one heartbeat now says whether Linux is down, instead of the run. Jobs that
+ * lost it together share that one check, so they count as one failure.
+ */
+const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
+  const doc = readDoc(dir);
+  const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+  if (!claimHealthCheck(dir, (machine.runnerHeartbeatSeconds * 1000) / 2)) return;
+  healthCheckRunning = true;
+  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
+    healthCheckRunning = false;
+    recordHealth(dir, check);
+  });
+};
+
+/** Its runs that lost the link so far, this one included. */
+const linkFailuresOf = (dir: string, id: string) =>
+  ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
+    ?.linkFailures ?? 0) + 1;
 
 type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
@@ -876,7 +900,8 @@ const runLinuxAttempt = async (
   if (remoto === null) {
     process.stderr.write("[t3 heavy] remoto is not installed; Linux counts as unavailable.\n");
     recordHealth(dir, { ok: false, error: "remoto is not installed" });
-    requeue(dir, id, { linuxFailedAt: Date.now() });
+    // This Mac can't reach Linux at all: no link to wait for, so the unavailable policy decides.
+    requeue(dir, id, { linuxFailedAt: Date.now(), failure: "remoto is not installed" });
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
@@ -956,15 +981,19 @@ const runLinuxAttempt = async (
   if (outcome.kind === "environment") {
     // It ended there with its exit code, so nothing is left to confirm.
     process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
-    requeue(dir, id, { dropped: true, linuxFailedAt: Date.now(), routeReason: outcome.reason });
+    requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
     return { kind: "requeued" };
   }
   if (outcome.kind === "unavailable") {
     process.stderr.write("[t3 heavy] Linux is unavailable; it never started there.\n");
     // A run that got as far as syncing may have a dependency install going there.
     const clean = !outcome.touched || (await confirmGone());
-    recordHealth(dir, { ok: false, error: "remoto could not reach Linux" });
-    requeue(dir, id, { linuxFailedAt: Date.now(), ...(clean ? {} : { unconfirmed: true }) });
+    checkLinuxNow(dir, environment);
+    requeue(dir, id, {
+      linuxFailedAt: Date.now(),
+      linkFailures: linkFailuresOf(dir, id),
+      ...(clean ? {} : { unconfirmed: true }),
+    });
     if (!clean) await confirmLater(dir, id, machine, environment, remote!);
     return { kind: "requeued" };
   }
@@ -972,9 +1001,11 @@ const runLinuxAttempt = async (
     "[t3 heavy] Linux dropped the connection mid-run; confirming the run stopped there.\n",
   );
   const clean = remote !== null && (await confirmGone());
+  checkLinuxNow(dir, environment);
   requeue(dir, id, {
     dropped: true,
     linuxFailedAt: Date.now(),
+    linkFailures: linkFailuresOf(dir, id),
     ...(clean ? {} : { unconfirmed: true }),
   });
   if (!clean && remote !== null) await confirmLater(dir, id, machine, environment, remote);
@@ -1029,6 +1060,15 @@ const runLinuxPart = async (
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }
   let recorded: string | null = null;
+  let lastError: string | null = null;
+  const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+  const fault = (seen: FaultSeen) => {
+    const found = faultOf(seen, lastError, {
+      command: labelOf(program, args),
+      projectFolder: root,
+    });
+    if (found !== null) recordFault(dir, id, found);
+  };
   const start = () =>
     startLinuxRun({
       remoto,
@@ -1037,11 +1077,15 @@ const runLinuxPart = async (
       cwd,
       root,
       environment: process.env,
-      machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
+      // `remoto` reads its ssh timeout from `REMOTO_TIMEOUT`, which this sets.
+      machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
       stdout: (chunk) => process.stdout.write(chunk),
-      stderr: (text) => process.stderr.write(text),
+      stderr: (text) => {
+        process.stderr.write(text);
+        lastError = lastLineOf(text) ?? lastError;
+      },
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;
         recorded = progress.phase;
@@ -1076,11 +1120,13 @@ const runLinuxPart = async (
     run = start();
     ({ outcome, platform, install } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
+      fault({ kind: "install", package: install });
       return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
     }
   }
   if (stopped) process.exit(143);
   if (outcome.kind === "finished") {
+    fault({ kind: "exit", code: outcome.code, program: command.program });
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
         `[t3 heavy] This ran on Linux. These failures match the Mac-only list and fail there by nature; run them on this Mac:\n${platform.map((line) => `  ${line}`).join("\n")}\n`,
@@ -1089,10 +1135,28 @@ const runLinuxPart = async (
     process.exit(outcome.code);
   }
   if (outcome.kind === "missing") {
+    fault({ kind: "missing", tool: outcome.tool });
     return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
+  }
+  // A lost link is retried: it's a fault only once this job has used up its attempts.
+  if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {
+    fault(
+      outcome.kind === "dropped"
+        ? { kind: "lost" }
+        : outcome.touched
+          ? { kind: "sync" }
+          : { kind: "unreachable" },
+    );
   }
   endLine(dir, id, outcome);
 };
+
+/** The last line of Linux's output worth showing: not T3's own notes, not blank. */
+const lastLineOf = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .findLast((line) => line !== "" && !line.startsWith("[t3 heavy]")) ?? null;
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {

@@ -10,14 +10,23 @@ const BASH_MAX_TIMEOUT_MS = 600_000;
 /** Set in a queue job's environment: commands inside it already hold a slot. */
 export const HEAVY_JOB_ENV = "T3CODE_HEAVY_JOB";
 
+// ponytail: known type checkers; add one here when a new checker shows up on the Mac.
+export const TYPE_CHECKERS = [
+  "tsc",
+  "tsgo",
+  "effect-tsgo",
+  "vue-tsc",
+  "svelte-check",
+  "tsc-files",
+  "pyright",
+  "mypy",
+];
 const DIRECT = new Set([
   "vitest",
   "jest",
   "mocha",
   "playwright",
-  "tsc",
-  "tsgo",
-  "effect-tsgo",
+  ...TYPE_CHECKERS,
   "oxlint",
   "eslint",
   "knip",

@@ -661,8 +661,10 @@ describe("Runner in the queue file", () => {
     Queue.publishRunner(dir, runner);
     if (online === true) Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW);
     if (online === false) {
-      for (let i = 0; i < DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i += 1) {
-        Queue.recordHealth(dir, { ok: false, error: "down" }, NOW);
+      // Failures closer than half a heartbeat are one outage: these are a heartbeat apart.
+      const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+      for (let i = DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i > 0; i -= 1) {
+        Queue.recordHealth(dir, { ok: false, error: "down" }, NOW - (i - 1) * beat);
       }
     }
     return dir;
@@ -832,8 +834,12 @@ describe("Runner in the queue file", () => {
 
   it("health goes offline after the configured failures, and only one waiter checks at a time", () => {
     const dir = queueWith(block(), null);
-    Queue.recordHealth(dir, { ok: false, error: "x" }, NOW);
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    Queue.recordHealth(dir, { ok: false, error: "x" }, NOW - beat);
     expect(Queue.readDoc(dir).linux.online).toBeNull();
+    // Two jobs losing the link together are one failure.
+    Queue.recordHealth(dir, { ok: false, error: "x" }, NOW - beat + 500);
+    expect(Queue.readDoc(dir).linux).toMatchObject({ online: null, failures: 1 });
     Queue.recordHealth(dir, { ok: false, error: "x" }, NOW);
     expect(Queue.readDoc(dir).linux.online).toBe(false);
     expect(Queue.claimHealthCheck(dir, 1000, NOW + 500)).toBe(false);

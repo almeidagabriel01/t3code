@@ -507,8 +507,10 @@ describe("Linux as clients see it", () => {
     Queue.publishRunner(dir, block(false));
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toBeNull();
     Queue.publishRunner(dir, block(true));
-    Queue.recordHealth(dir, { ok: false, error: "refused" });
-    Queue.recordHealth(dir, { ok: false, error: "refused" });
+    // Failures closer than half a heartbeat are one outage, so these are a minute apart.
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at);
+    Queue.recordHealth(dir, { ok: false, error: "refused" }, at + 60_000);
     Queue.enqueue(dir, { ...holder, startedAt: "2026-01-01T00:00:00.000Z", runner: "linux" });
     expect(HeavyQueue.linuxState(Queue.readDoc(dir))).toEqual({
       host: "pc",

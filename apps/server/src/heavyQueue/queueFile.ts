@@ -38,6 +38,8 @@ import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from 
 import {
   deadlineRecord,
   endedRecord,
+  type Fault,
+  faultRecord,
   type HeavyEventRecord,
   parseLog,
   requeueRecord,
@@ -49,6 +51,7 @@ import {
   eligibilityOf,
   intentOf,
   mayPublish,
+  linkAttempts,
   nextHealth,
   planRoutes,
   runnerConfigFor,
@@ -510,10 +513,11 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       ask: _ask,
       route: _route,
       dropped: _dropped,
+      failure: _failure,
       linuxFailedAt: _failed,
       unconfirmed: _unconfirmed,
       ...rest
-    } = entry;
+    }: QueuedEntry = entry;
     const started: HeavyQueueEntry = {
       ...rest,
       startedAt: new Date(now).toISOString(),
@@ -939,6 +943,23 @@ export const finish = (dir: string, id: string, code: number, now = Date.now()) 
     now,
   );
 
+/** Logs a Linux environment failure of a job still in the queue, for the problem detector to file. */
+export const recordFault = (dir: string, id: string, fault: Fault, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const entry = doc.entries.find((each) => each.id === id);
+      return {
+        doc:
+          entry === undefined
+            ? doc
+            : { ...doc, events: withRecord(doc.events, faultRecord(entry, fault, now)) },
+        result: undefined,
+      };
+    },
+    now,
+  );
+
 export const move = (dir: string, id: string, beforeId: string | null, note?: string) =>
   mutate(dir, (doc) => decideMove(doc, id, beforeId, note));
 
@@ -1133,7 +1154,16 @@ export const setProgress = (
 export const requeue = (
   dir: string,
   id: string,
-  next: Pick<QueuedEntry, "route" | "routeReason" | "dropped" | "unconfirmed" | "linuxFailedAt">,
+  next: Pick<
+    QueuedEntry,
+    | "route"
+    | "routeReason"
+    | "dropped"
+    | "unconfirmed"
+    | "linuxFailedAt"
+    | "linkFailures"
+    | "failure"
+  >,
 ) =>
   mutate(dir, (doc) => {
     const target = doc.entries.find((entry) => entry.id === id);
@@ -1145,7 +1175,13 @@ export const requeue = (
       ...previous,
       ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
     };
-    const record = requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    // A run that lost the link goes back by itself: people hear once it counts Linux unavailable.
+    const retrying =
+      next.linkFailures !== undefined &&
+      next.linkFailures < linkAttempts(doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG);
+    const record = retrying
+      ? null
+      : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
     return {
       doc: {
         ...doc,
