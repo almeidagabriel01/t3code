@@ -302,8 +302,10 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
   readonly preferredEnvironmentId?: EnvironmentId | null;
   readonly groupScratchProjects?: boolean;
 }): ReadonlyArray<ProjectGroup<TProject>> {
+  // The assistants' home holds their conversations, never project work: no project list shows it.
+  const projects = input.projects.filter((project) => project.managedRole !== "assistants");
   const projectsByPhysicalKey = new Map<string, TProject[]>();
-  for (const project of input.projects) {
+  for (const project of projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const existing = projectsByPhysicalKey.get(physicalProjectKey);
     if (existing) {
@@ -336,7 +338,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(input: {
 
   const projectRefsByLogicalKey = new Map<string, ScopedProjectRef[]>();
   const seenProjectRefs = new Set<string>();
-  for (const project of input.projects) {
+  for (const project of projects) {
     const physicalProjectKey = derivePhysicalProjectKey(project);
     const logicalKey =
       logicalKeyByPhysicalKey.get(physicalProjectKey) ??
