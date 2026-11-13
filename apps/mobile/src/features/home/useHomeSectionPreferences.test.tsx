@@ -59,4 +59,20 @@ describe("useHomeSectionPreferences", () => {
     expect(c!({})).toEqual({ homeAssistantsShowAll: true });
     expect(c!({ homeAssistantsShowAll: true })).toEqual({ homeAssistantsShowAll: false });
   });
+
+  it("folds and unfolds one assistant by key, keeping the others", () => {
+    const prefs = read(AsyncResult.success({ homeAssistantsFolded: ["env:bo"] }));
+    expect([...prefs.assistantsFolded]).toEqual(["env:bo"]);
+    prefs.toggleAssistantFolded("env:ada");
+    const fold = mocks.save.mock.calls[0]![0].transform as (c: object) => object;
+    expect(fold({ homeAssistantsFolded: ["env:bo"] })).toEqual({
+      homeAssistantsFolded: ["env:bo", "env:ada"],
+    });
+    expect(fold({ homeAssistantsFolded: ["env:bo", "env:ada"] })).toEqual({
+      homeAssistantsFolded: ["env:bo"],
+    });
+    expect(fold({})).toEqual({ homeAssistantsFolded: ["env:ada"] });
+    read(AsyncResult.initial()).toggleAssistantFolded("env:ada");
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
 });

@@ -221,7 +221,9 @@ const pill = (container: HTMLElement, name: string) =>
 
 describe("AssistantSidebarSection", () => {
   it("shows the projects an assistant works in and its live subagents, and opens each", async () => {
-    setup([{ name: "Jarvis", scope: "project", projectId: "p1" }]);
+    setup([{ name: "Jarvis", scope: "project", projectId: "p1" }], {
+      moods: { "child-1": "working" },
+    });
     const site = { environmentId: "env", assistantId: "jarvis", face: "working" };
     state.work = {
       sites: [
