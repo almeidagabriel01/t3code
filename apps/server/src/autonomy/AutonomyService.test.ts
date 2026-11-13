@@ -1042,6 +1042,28 @@ it.effect("secrets in a waiting command never reach the chat", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a secret at the edge of the clipped context is redacted before the cut", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, {
+      id: "r1",
+      threadId: "t1",
+      item: {
+        type: "approval_request",
+        requestId: "r1",
+        prompt: `echo ${"a".repeat(1_180)} ghp_${"Z".repeat(32)}`,
+      },
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [row] = yield* outboxRows;
+    assert.notInclude(row!.message.text, "ghp_");
+    assert.notInclude(row!.message.text, "ZZZZ");
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "a single-choice question offers its options; any other question informs and leaves when answered",
   () => {

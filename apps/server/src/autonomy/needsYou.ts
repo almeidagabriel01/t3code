@@ -32,8 +32,13 @@ export const userInputOptionIndex = (optionId: string | undefined): number | und
   return Number.isInteger(index) && index >= 0 ? index : undefined;
 };
 
-const clip = (text: string, max: number) =>
-  text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+/** Redacts before it cuts, so a credential straddling the limit never leaves as a fragment. */
+const clip = (text: string, max: number) => {
+  const clean = redactChannelText(text);
+  if (clean.length <= max) return clean;
+  const cut = /[\uD800-\uDBFF]/.test(clean.charAt(max - 2)) ? max - 2 : max - 1;
+  return `${clean.slice(0, cut)}…`;
+};
 
 export interface RequestDecision {
   readonly title: string;
@@ -96,7 +101,7 @@ export function requestDecision(
       `${agent} ${WANTS[request.kind] ?? DECISION_PHRASES.needsApproval}`,
       DECISION_TITLE_MAX_LENGTH,
     ),
-    context: context.slice(0, DECISION_CONTEXT_MAX_LENGTH),
+    context: clip(context, DECISION_CONTEXT_MAX_LENGTH),
     options: live
       ? [
           { id: "accept", label: DECISION_PHRASES.approve },
@@ -119,7 +124,7 @@ export interface NeedsYouCard {
   readonly answerable: boolean;
 }
 
-/** The chat text of a notice that something waits on the user. Secrets never leave in it. */
+/** The chat text of a notice that something waits on the user; the outbox redacts all of it again. */
 export function needsYouText(card: NeedsYouCard, language: ResolvedChannelLanguage): string {
   const t = channelStrings(language);
   const where = [
@@ -136,5 +141,5 @@ export function needsYouText(card: NeedsYouCard, language: ResolvedChannelLangua
     card.answerable ? "" : t.answerInT3,
     card.link === null ? "" : `${t.openInT3} ${card.link}`,
   ];
-  return redactChannelText(lines.filter((line) => line !== "").join("\n\n"));
+  return lines.filter((line) => line !== "").join("\n\n");
 }
