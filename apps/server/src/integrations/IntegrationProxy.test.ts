@@ -53,7 +53,7 @@ const makeUpstream = () => {
     readonly body: { id?: unknown; method?: string; params?: { name?: string } } | undefined;
   }
   const seen: Array<Seen> = [];
-  const state = { validToken: "at-1", scopeDenied: false, down: false };
+  const state = { validToken: "at-1", scopeDenied: false, down: false, listAsJson: false };
   const json = (body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), {
       headers: { "content-type": "application/json", ...headers },
@@ -94,6 +94,7 @@ const makeUpstream = () => {
           { name: "list_teams", annotations: { readOnlyHint: true } },
         ],
       };
+      if (state.listAsJson) return json({ jsonrpc: "2.0", id: body?.id, result });
       // Split across chunks the way a real stream arrives.
       const event = `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body?.id, result })}\n\n`;
       const encoder = new TextEncoder();
@@ -378,27 +379,30 @@ it.effect("only a provider session reaches an integration its thread may use", (
   ),
 );
 
-it.effect("read only blocks writes without reaching the service and forwards reads", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const env = yield* setup({ access: "read-only" });
-      // Before tools/list nothing is known, so every tool counts as a write.
-      expect(textOf(yield* env.call("search"))).toMatchObject({ isError: true });
-      yield* env.listTools();
-      const blocked = textOf(yield* env.call("create_issue"));
-      expect(blocked.isError).toBe(true);
-      expect(blocked.content[0]!.text).toBe(
-        IntegrationProxy.readOnlyBlocked("Linear", "create_issue"),
-      );
-      expect(textOf(yield* env.call("search")).content[0]!.text).toBe("ran search");
-      expect(textOf(yield* env.call("list_projects")).content[0]!.text).toBe("ran list_projects");
-      expect(env.upstream.calls().map((r) => r.body?.params?.name)).toEqual([
-        "search",
-        "list_projects",
-      ]);
-      expect(yield* env.openDecisions).toEqual([]);
-    }),
-  ),
+it.effect.each([false, true])(
+  "read only blocks writes without reaching the service and forwards reads (JSON list: %s)",
+  (listAsJson) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const env = yield* setup({ access: "read-only" });
+        env.upstream.state.listAsJson = listAsJson;
+        // Before tools/list nothing is known, so every tool counts as a write.
+        expect(textOf(yield* env.call("search"))).toMatchObject({ isError: true });
+        yield* env.listTools();
+        const blocked = textOf(yield* env.call("create_issue"));
+        expect(blocked.isError).toBe(true);
+        expect(blocked.content[0]!.text).toBe(
+          IntegrationProxy.readOnlyBlocked("Linear", "create_issue"),
+        );
+        expect(textOf(yield* env.call("search")).content[0]!.text).toBe("ran search");
+        expect(textOf(yield* env.call("list_projects")).content[0]!.text).toBe("ran list_projects");
+        expect(env.upstream.calls().map((r) => r.body?.params?.name)).toEqual([
+          "search",
+          "list_projects",
+        ]);
+        expect(yield* env.openDecisions).toEqual([]);
+      }),
+    ),
 );
 
 it.effect(
