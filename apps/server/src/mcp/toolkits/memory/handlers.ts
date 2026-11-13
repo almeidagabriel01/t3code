@@ -1,6 +1,9 @@
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
+import { effectiveProjectIdsOf, projectLabel } from "../../../assistants/AssistantSandboxPolicy.ts";
 import * as MemoryAccess from "../../../memory/MemoryAccess.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
@@ -156,6 +159,44 @@ const callerThread = Effect.gen(function* () {
     ? { environmentId: caller.environmentId, threadId: caller.thread.threadId }
     : undefined;
 });
+/** A project assistant's projects, own and its groups'; undefined for any other caller. */
+const assistantProjects = Effect.gen(function* () {
+  const thread = yield* callerThread;
+  const directory = yield* Effect.serviceOption(AssistantDirectory);
+  if (thread === undefined || Option.isNone(directory)) return undefined;
+  const found = yield* directory.value.forThread(thread.threadId);
+  if (Option.isNone(found) || found.value.assistant.scope !== "project") return undefined;
+  const projectIds = yield* effectiveProjectIdsOf(directory.value, found.value.assistant);
+  const titles =
+    directory.value.projectTitles === undefined
+      ? {}
+      : yield* directory.value.projectTitles(projectIds);
+  return { projectIds, list: projectIds.map((id) => projectLabel(id, titles[id])).join(", ") };
+});
+const refuse = (message: string) =>
+  new M.OrchestratorMcpFailure({ code: "invalid_request", message });
+/** A project memory lands in a project the caller works in, and never in its home one by default. */
+const checkRememberProject = Effect.fn("memory.checkRememberProject")(function* (
+  value: M.MemoryRememberInput,
+) {
+  if (value.scope !== "project") return;
+  const projects = yield* assistantProjects;
+  if (value.projectId !== undefined) {
+    if (projects === undefined)
+      return yield* refuse(
+        "projectId is for assistants that work in several projects; leave it out to save in this conversation's project.",
+      );
+    if (!projects.projectIds.includes(value.projectId))
+      return yield* refuse(
+        `That project is not one of yours, so nothing was saved. Your projects: ${projects.list}.`,
+      );
+    return;
+  }
+  if (projects !== undefined && projects.projectIds.length > 1)
+    return yield* refuse(
+      `You work in several projects (${projects.list}), so nothing was saved. Pass the projectId the fact is about, or use scope user when it holds for all of them.`,
+    );
+});
 /** Read tools default to this server's memory space, so a query or id alone is enough. */
 const currentSpace = Effect.gen(function* () {
   const sync = yield* MemorySyncService.MemorySyncService;
@@ -172,8 +213,13 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const value = yield* decodeRecall(input);
+      const projects = yield* assistantProjects;
       const recalled = yield* service.recall(
-        { ...value, memorySpaceId: yield* currentSpace },
+        {
+          ...value,
+          memorySpaceId: yield* currentSpace,
+          ...(projects === undefined ? {} : { projectIds: projects.projectIds }),
+        },
         yield* invocationPermit("read"),
         yield* callerThread,
       );
@@ -185,6 +231,7 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const value = yield* decodeRemember(input);
+      yield* checkRememberProject(value);
       return yield* service
         .remember(
           { ...value, memorySpaceId: yield* currentSpace },

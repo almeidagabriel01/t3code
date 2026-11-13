@@ -3,6 +3,7 @@ import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as Fixture from "./handlers.testkit.ts";
 
@@ -184,4 +185,106 @@ it.effect("recall without the orchestration capability returns no threads", () =
       ),
     ).toBeUndefined();
   }).pipe(Effect.provide(Fixture.layer)),
+);
+
+// An assistant whose conversation lives in project-1 and also works in project-2 (through a group).
+const assistantThread = M.ThreadId.make("assistant:ann:1");
+const assistantCaller = { ...caller, thread: { ...caller.thread, threadId: assistantThread } };
+const ann = {
+  id: "ann",
+  handle: "ann",
+  scope: "project",
+  projectId: "project-1",
+  projectIds: ["project-1"],
+} as unknown as M.Assistant;
+const directory = AssistantDirectory.of({
+  forThread: (threadId) =>
+    threadId === assistantThread
+      ? Effect.succeedSome({ assistant: ann, current: true })
+      : Effect.succeedNone,
+  teamsOf: () =>
+    Effect.succeed([
+      {
+        team: {
+          memberIds: ["ann"],
+          archivedAt: null,
+          projectIds: ["project-2"],
+        } as unknown as M.AssistantTeam,
+        lead: null,
+        teammates: [],
+      },
+    ]),
+  sandboxEnvironmentId: Effect.succeedNone,
+  taskOwner: () => Effect.succeedNone,
+  projectTitles: () => Effect.succeed({ "project-1": "Tudo-Azul", "project-2": "Apotek" }),
+});
+const seedSecondProject = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT INTO projection_projects VALUES ('project-2','/synthetic-2',NULL)`;
+  yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES (${assistantThread},'project-1',NULL)`;
+  const service = yield* MemoryService.MemoryService;
+  yield* service.updateProjectBinding(
+    {
+      memorySpaceId: Fixture.space,
+      project: { ...project, projectId: M.ProjectId.make("project-2") },
+      requestId: M.MemoryOperationId.make(Fixture.id(901)),
+      expectedVersion: 0,
+      action: "setExplicit",
+      sharedProjectId: "shared-2",
+    },
+    Effect.void,
+  );
+});
+const projectMemories = (sharedProjectId: string) =>
+  listAll({ kind: "project", projectKey: { kind: "explicit", sharedProjectId } });
+
+it.effect("an assistant in several projects saves a project memory only where it names", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    yield* seedSecondProject;
+    const saved = yield* Fixture.call(
+      "memory_remember",
+      { text: "Apotek deploys on Mondays", scope: "project", projectId: "project-2" },
+      assistantCaller,
+    );
+    expect(saved.result.isError).not.toBe(true);
+    expect(yield* projectMemories("shared-2")).toHaveLength(1);
+    expect(yield* projectMemories("shared-1")).toHaveLength(0);
+
+    // Unnamed, it would land in the conversation's (home) project, so it is refused.
+    const unnamed = yield* Fixture.call(
+      "memory_remember",
+      { text: "Release freeze in December", scope: "project" },
+      assistantCaller,
+    );
+    expect(unnamed.result.isError).toBe(true);
+    expect((yield* decodeRefusal(unnamed.body)).message).toContain(
+      "Tudo-Azul (id: project-1), Apotek (id: project-2)",
+    );
+    // A project it does not work in is refused too; nothing more was saved anywhere.
+    const outside = yield* Fixture.call(
+      "memory_remember",
+      { text: "Other fact", scope: "project", projectId: "project-9" },
+      assistantCaller,
+    );
+    expect((yield* decodeRefusal(outside.body)).message).toContain("not one of yours");
+    expect(yield* projectMemories("shared-1")).toHaveLength(0);
+    expect(yield* projectMemories("shared-2")).toHaveLength(1);
+
+    // Recall from its home conversation reaches every one of its projects.
+    const recalled = yield* decodeRecall(
+      (yield* Fixture.call("memory_recall", { query: "when does Apotek deploy" }, assistantCaller))
+        .body,
+    );
+    expect(recalled.items.map((item) => item.memoryId)).toEqual([
+      (yield* decodeReceipt(saved.body)).memoryId,
+    ]);
+    // A conversation that is not a project assistant's cannot name a project.
+    const plain = yield* Fixture.call(
+      "memory_remember",
+      { text: "x", scope: "project", projectId: "project-2" },
+      caller,
+    );
+    expect((yield* decodeRefusal(plain.body)).message).toContain("leave it out");
+  }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
 );

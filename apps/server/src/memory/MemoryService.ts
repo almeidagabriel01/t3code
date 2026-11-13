@@ -187,7 +187,11 @@ export class MemoryService extends Context.Service<
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<Store.StoredReceipt, MemoryServiceError | MemoryRememberScopeUnavailable>;
     readonly recall: (
-      input: M.MemoryRecallInput & { readonly memorySpaceId: M.MemorySpaceId },
+      input: M.MemoryRecallInput & {
+        readonly memorySpaceId: M.MemorySpaceId;
+        /** Search these projects instead of the conversation's one. */
+        readonly projectIds?: ReadonlyArray<M.ProjectId> | undefined;
+      },
       permit: Permit,
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<M.MemoryRecallResult, MemoryServiceError>;
