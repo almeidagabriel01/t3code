@@ -694,7 +694,16 @@ export const probe = (dir: string, line: string, cwd: string, now = Date.now()) 
 export const recordSample = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
-  peaks: Readonly<Record<string, { readonly cpu: number; readonly memoryBytes: number }>>,
+  peaks: Readonly<
+    Record<
+      string,
+      {
+        readonly cpu: number;
+        readonly memoryBytes: number;
+        readonly daemons?: ReadonlyArray<number>;
+      }
+    >
+  >,
 ) =>
   mutate(dir, (doc) => {
     const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
@@ -713,15 +722,18 @@ export const recordSample = (
         entries: doc.entries.map((entry) => {
           const peak = peaks[entry.id];
           // On Linux the local tree is only `remoto`'s wrapper, not the job.
-          return entry.startedAt === null || peak === undefined || entry.runner === "linux"
-            ? entry
-            : {
-                ...entry,
-                cpu: peak.cpu,
-                memory: peak.memoryBytes,
-                peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
-                peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
-              };
+          if (entry.startedAt === null || peak === undefined || entry.runner === "linux") {
+            return entry;
+          }
+          const { daemons: _daemons, ...rest } = entry;
+          return {
+            ...rest,
+            ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
+            cpu: peak.cpu,
+            memory: peak.memoryBytes,
+            peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
+            peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
+          };
         }),
       },
       result: undefined,

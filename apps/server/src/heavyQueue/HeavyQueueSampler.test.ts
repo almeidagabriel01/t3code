@@ -94,6 +94,16 @@ Summary Footprint: 6123379008 B`;
     ).toBe(3_000);
   });
 
+  it("adds the daemons working for a job, each process once", () => {
+    // 20 is a build daemon outside 10's tree; 99 has already exited.
+    expect(Sampler.peaksOf([entry("a", 10, true)], processes, {}, { a: [20, 99] })).toEqual({
+      a: { cpu: 7, memoryBytes: 1599, daemons: [20] },
+    });
+    expect(Sampler.peaksOf([entry("a", 10, true)], processes, { a: 5000 }, { a: [20] })).toEqual({
+      a: { cpu: 7, memoryBytes: 5000, daemons: [20] },
+    });
+  });
+
   it("survives a cycle in the parent links", () => {
     const cyclic = [proc(10, 11, 100, 1), proc(11, 10, 100, 1)];
     expect(Sampler.peaksOf([entry("a", 10, true)], cyclic)).toEqual({
@@ -141,6 +151,27 @@ describe("recordSample", () => {
         Queue.recordSample(dir, machine, { a: { cpu: cpu!, memoryBytes: memoryBytes! } });
       }
       expect(Queue.readDoc(dir).entries[0]).toMatchObject(expected);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a running job's daemons only while a sample finds them", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-record-"));
+    try {
+      Queue.enqueue(dir, entry("a", process.pid, false));
+      Queue.tryStart(dir, "a");
+      const machine = {
+        at: 1,
+        busyCores: 1,
+        cpuCount: 8,
+        availableMemoryBytes: 5,
+        totalMemoryBytes: 10,
+      };
+      Queue.recordSample(dir, machine, { a: { cpu: 3, memoryBytes: 9, daemons: [50, 51] } });
+      expect(Queue.readDoc(dir).entries[0]?.daemons).toEqual([50, 51]);
+      Queue.recordSample(dir, machine, { a: { cpu: 1, memoryBytes: 9 } });
+      expect(Queue.readDoc(dir).entries[0]?.daemons).toBeUndefined();
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }

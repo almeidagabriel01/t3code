@@ -313,6 +313,20 @@ describe("classifyHeavyCommands", () => {
         { source: "queue", pid: 71, threadId: "t-agent", cpu: undefined, memory: undefined },
       ],
     },
+    {
+      name: "counts a queue job's build daemon in its row, not as detached work",
+      processes: [
+        proc(70, 0, "claude"),
+        proc(71, 70, "node", {}, "t3 heavy -- ./gradlew assembleRelease"),
+        proc(80, 0, "java", { cpu: 100 }, "java org.gradle.launcher.daemon.bootstrap.GradleDaemon"),
+        proc(81, 80, "sh", {}, "sh -c tsc -b"),
+        proc(82, 81, "node", { cpu: 300 }, "node /w/node_modules/.bin/tsc -b"),
+      ],
+      entries: [entry({ pid: 71, daemons: [80, 81, 82] })],
+      expected: [
+        { source: "queue", pid: 71, threadId: "t-agent", cpu: undefined, memory: undefined },
+      ],
+    },
   ])("$name", ({ processes, expected, ...rest }) => {
     expect(summary(classify({ processes, ...rest }))).toEqual(expected);
   });

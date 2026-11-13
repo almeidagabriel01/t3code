@@ -195,6 +195,8 @@ export function classifyHeavyCommands(input: {
   for (const entry of running) {
     const root = entry.server === true ? undefined : byPid.get(entry.pid);
     if (root !== undefined) for (const pid of treeUsage(root, children).pids) claimed.add(pid);
+    // Daemons the sampler found working for it count in its row, not as detached work.
+    for (const pid of entry.daemons ?? []) claimed.add(pid);
   }
 
   const direct: HeavyCommand[] = [];
