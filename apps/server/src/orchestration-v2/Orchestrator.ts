@@ -296,16 +296,36 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+const SessionWorkKind = Schema.Literals([
+  "turn",
+  "request",
+  "command",
+  "tool call",
+  "subagent",
+  "background task",
+]);
+type SessionWorkKind = typeof SessionWorkKind.Type;
+const SESSION_WORK_PHRASES: Record<SessionWorkKind, string> = {
+  turn: "a turn is running",
+  request: "a request is waiting for your answer",
+  command: "a command is running",
+  "tool call": "a tool call is running",
+  subagent: "a subagent is running",
+  "background task": "a background task is running",
+};
+
 export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<OrchestratorProviderSelectionBusyError>()(
   "OrchestratorProviderSelectionBusyError",
   {
     commandId: CommandId,
     threadId: ThreadId,
     change: Schema.optional(Schema.Literals(["provider selection", "runtime mode"])),
+    holding: Schema.optional(SessionWorkKind),
   },
 ) {
   override get message(): string {
-    return `Thread ${this.threadId} has an active turn, a pending request, or background work. Let it finish or stop it, then retry the ${this.change ?? "provider selection"} change.`;
+    const change = this.change === "runtime mode" ? "switch mode" : "change the provider or model";
+    return `Can't ${change} while ${SESSION_WORK_PHRASES[this.holding ?? "turn"]}. Let it finish or stop it, then try again.`;
   }
 }
 
@@ -3878,18 +3898,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 targetModelSelection: command.modelSelection,
               })
               .pipe(mapDispatchError(command));
-            if (
-              (plan.instanceChanged || plan.releaseProviderSessionIds.length > 0) &&
-              (yield* holdsSessionWork(
-                command,
-                liveSessionIds(providerContext, (session) =>
-                  plan.releaseProviderSessionIds.includes(session.id),
-                ),
-              ))
-            ) {
+            const holding =
+              plan.instanceChanged || plan.releaseProviderSessionIds.length > 0
+                ? yield* heldSessionWork(
+                    command,
+                    liveSessionIds(providerContext, (session) =>
+                      plan.releaseProviderSessionIds.includes(session.id),
+                    ),
+                  )
+                : undefined;
+            if (holding !== undefined) {
               return yield* new OrchestratorProviderSelectionBusyError({
                 commandId: command.commandId,
                 threadId: command.threadId,
+                holding,
               });
             }
             return plan;
@@ -3902,15 +3924,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
           )
         : new Set<ProviderSessionId>();
-    if (
-      command.type === "thread.runtime-mode.set" &&
-      modeDetachedSessionIds.size > 0 &&
-      (yield* holdsSessionWork(command, modeDetachedSessionIds))
-    ) {
+    const modeHolding =
+      command.type === "thread.runtime-mode.set" && modeDetachedSessionIds.size > 0
+        ? yield* heldSessionWork(command, modeDetachedSessionIds)
+        : undefined;
+    if (modeHolding !== undefined) {
       return yield* new OrchestratorProviderSelectionBusyError({
         commandId: command.commandId,
         threadId: command.threadId,
         change: "runtime mode",
+        holding: modeHolding,
       });
     }
 
@@ -10745,10 +10768,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   /**
-   * Releasing these sessions now would kill a turn, an approval or question wait, or work their
-   * process runs in the background. Work no live session holds cannot be lost, so it never blocks.
+   * What releasing these sessions now would kill: a turn, a request waiting on the user, or work
+   * their process runs in the background. Work no live session holds cannot be lost, so it never blocks.
    */
-  const holdsSessionWork = (
+  const heldSessionWork = (
     command: OrchestrationV2Command,
     releasedSessionIds: ReadonlySet<ProviderSessionId>,
   ) =>
@@ -10757,8 +10780,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       turnItemStatuses: ["pending", "running", "waiting"],
       runtimeRequestStatuses: ["pending"],
     }).pipe(
-      Effect.map((projection) => {
-        if (projection.runs.some(isActiveRun)) return true;
+      Effect.map((projection): SessionWorkKind | undefined => {
+        if (
+          projection.runtimeRequests.some(
+            (request) =>
+              request.responseCapability.type === "live" &&
+              releasedSessionIds.has(request.responseCapability.providerSessionId),
+          )
+        ) {
+          return "request";
+        }
+        if (projection.runs.some(isActiveRun)) return "turn";
         const releasedProviderThreadIds = new Set(
           projection.providerThreads
             .filter(
@@ -10768,28 +10800,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             )
             .map((providerThread) => providerThread.id),
         );
-        return (
-          projection.providerThreads.some(
-            (providerThread) =>
-              releasedProviderThreadIds.has(providerThread.id) &&
-              (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
-          ) ||
-          pendingBackgroundTurnItems({
-            turnItems: projection.turnItems,
-            runs: projection.runs,
-          }).some(
-            (item) =>
-              item.providerThreadId != null &&
-              releasedProviderThreadIds.has(item.providerThreadId) &&
-              // A delegated task runs in its own thread and session.
-              (item.type !== "subagent" || item.origin === "provider_native"),
-          ) ||
-          projection.runtimeRequests.some(
-            (request) =>
-              request.responseCapability.type === "live" &&
-              releasedSessionIds.has(request.responseCapability.providerSessionId),
-          )
+        const item = pendingBackgroundTurnItems({
+          turnItems: projection.turnItems,
+          runs: projection.runs,
+        }).find(
+          (candidate) =>
+            candidate.providerThreadId != null &&
+            releasedProviderThreadIds.has(candidate.providerThreadId) &&
+            // A delegated task runs in its own thread and session.
+            (candidate.type !== "subagent" || candidate.origin === "provider_native"),
         );
+        if (item !== undefined) {
+          return item.type === "command_execution"
+            ? "command"
+            : item.type === "subagent"
+              ? "subagent"
+              : "tool call";
+        }
+        return projection.providerThreads.some(
+          (providerThread) =>
+            releasedProviderThreadIds.has(providerThread.id) &&
+            (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+          ? "background task"
+          : undefined;
       }),
     );
 

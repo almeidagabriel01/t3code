@@ -522,7 +522,7 @@ it.effect("update writes the row, then renames, switches access and archives the
     const refused = yield* assistants
       .update({ assistantId: made.id, toolAccess: "full" })
       .pipe(Effect.flip);
-    assert.match(refused.message, /active turn/);
+    assert.match(refused.message, /while a turn is running/);
     assert.equal(
       (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
       "read-only",

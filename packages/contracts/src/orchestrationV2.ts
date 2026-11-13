@@ -4046,6 +4046,8 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    /** Refused until the user lets the named work finish or stops it; never retry it unchanged. */
+    refusal: Schema.optional(Schema.Literals(["session-busy"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

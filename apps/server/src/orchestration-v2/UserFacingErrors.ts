@@ -144,3 +144,16 @@ export function userFacingDispatchErrorMessage(cause: unknown): string | undefin
   );
   return messages.at(-1);
 }
+
+/** A refusal the user clears by letting running work finish or stopping it; clients never retry it. */
+export function dispatchRefusal(
+  cause: unknown,
+  seen = new Set<unknown>(),
+): "session-busy" | undefined {
+  if (!Predicate.isObject(cause) || seen.has(cause)) return undefined;
+  seen.add(cause);
+  if (Predicate.isTagged(cause, "OrchestratorProviderSelectionBusyError")) return "session-busy";
+  return [cause.cause, cause.error, ...(Array.isArray(cause.errors) ? cause.errors : [])]
+    .map((nested) => dispatchRefusal(nested, seen))
+    .find((refusal) => refusal !== undefined);
+}

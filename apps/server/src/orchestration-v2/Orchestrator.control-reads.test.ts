@@ -302,6 +302,16 @@ it.effect.each(
         assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
         assert.ok(Result.isFailure(outcome));
         assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
+        const running =
+          request && !sessionStopped
+            ? "a request is waiting for your answer"
+            : active
+              ? "a turn is running"
+              : "a subagent is running";
+        assert.equal(
+          outcome.failure.message,
+          `Can't ${type === "thread.runtime-mode.set" ? "switch mode" : "change the provider or model"} while ${running}. Let it finish or stop it, then try again.`,
+        );
       } else if (type === "thread.runtime-mode.set") {
         assert.ok(Result.isSuccess(outcome));
         assert.equal(after.thread.runtimeMode, "approval-required");
