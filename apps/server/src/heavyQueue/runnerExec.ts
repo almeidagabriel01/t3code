@@ -17,6 +17,7 @@ import {
   MARKER,
   NO_PROGRESS,
   parseHeartbeat,
+  installFailure,
   platformFailures,
   remoteOutcome,
   remoteStopScript,
@@ -70,7 +71,8 @@ export const remoteCommand = (
 /**
  * Runs `command` with each `node_modules/.bin` from its folder up to the checkout first on PATH,
  * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
- * `remoto-rodar` sets its own PATH.
+ * `remoto-rodar` sets its own PATH. Before it starts, a lazy install left unfinished in the copy
+ * (Electron fetches its binary on first use) runs once, so the command's workers never race on it.
  */
 export const withProjectBins = (
   command: ReadonlyArray<string>,
@@ -79,16 +81,22 @@ export const withProjectBins = (
   env: ReadonlyArray<string> = [],
 ) => {
   const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
-  const bins = Array.from(
-    { length: depth + 1 },
-    (_, up) => `${up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`}/node_modules/.bin`,
+  const folders = Array.from({ length: depth + 1 }, (_, up) =>
+    up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`,
   );
+  const bins = folders.map((folder) => `${folder}/node_modules/.bin`);
+  // ponytail: Electron's install.js + path.txt only; add a row when another package fetches lazily.
+  const electrons = folders.flatMap((folder) => [
+    `"${folder}"/node_modules/electron`,
+    `"${folder}"/node_modules/.pnpm/electron@*/node_modules/electron`,
+  ]);
+  const settle = `for e in ${electrons.join(" ")}; do [ -f "$e/install.js" ] || continue; [ -f "$e/path.txt" ] && [ -e "$e/dist/$(cat "$e/path.txt")" ] && continue; printf '\\036remoto phase=installing\\n' >&2; (cd "$e" && node install.js) >&2 || { printf '\\036remoto install=electron\\n' >&2; exit 1; }; printf '\\036remoto phase=running\\n' >&2; done`;
   // The pre-flight: a program Linux can't find never starts, and says which one it was.
   const program = shellQuote(command[0] ?? "");
   return [
     "bash",
     "-c",
-    `export PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; exec "$@"`,
+    `export PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle}; exec "$@"`,
     "t3",
     ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,
@@ -313,6 +321,8 @@ export interface LinuxRun {
     readonly progress: RemoteProgress;
     /** Output lines naming Mac-only files, for a failed run. */
     readonly platform: ReadonlyArray<string>;
+    /** A package whose install was unfinished there, from the wrapper or the output. */
+    readonly install: string | null;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -365,8 +375,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   );
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
+  let install: string | null = null;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    install ??= installFailure(line);
   };
   const out = lineSplitter(scan);
   const err = lineSplitter((line, newline) => {
@@ -390,6 +402,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     outcome: RemoteOutcome;
     progress: RemoteProgress;
     platform: ReadonlyArray<string>;
+    install: string | null;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -397,7 +410,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       settled = true;
       out.end();
       err.end();
-      resolve({ outcome: remoteOutcome(progress), progress, platform: [...platform] });
+      resolve({
+        outcome: remoteOutcome(progress),
+        progress,
+        platform: [...platform],
+        install: progress.install ?? install,
+      });
     };
     child.on("error", (error) => {
       options.stderr(`[t3 heavy] cannot run remoto: ${error.message}\n`);

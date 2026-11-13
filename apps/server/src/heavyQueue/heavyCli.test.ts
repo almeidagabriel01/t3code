@@ -403,6 +403,42 @@ describe("t3 heavy", () => {
       },
     );
 
+    // A lazy install that raced in a fresh copy is Linux's failure: once more there, never the Mac.
+    it.each([
+      ["output", 1, 0, 2, "linux-ok\n"],
+      ["output", 2, 0, 2, "vp on mac: test run\n"],
+      ["marker", 1, 0, 2, "linux-ok\n"],
+      ["marker", 2, 0, 2, "vp on mac: test run\n"],
+    ] as const)(
+      "an install failure seen in the %s %i time(s) ends %i after %i Linux runs",
+      async (seen, fails, code, runs, output) => {
+        const failure =
+          seen === "output"
+            ? "echo 'Error: Electron failed to install correctly.' >&2"
+            : `printf '${M} install=electron\\n' >&2`;
+        const { dir, env } = setup(
+          [
+            `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            `if [ $n -le ${fails} ]; then ${failure}; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+            "echo linux-ok",
+            `printf '${M} exit=0\\n' >&2`,
+          ].join("\n"),
+          { runnerDropped: "mac" },
+        );
+        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe(output);
+        expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe(
+          `${runs}`,
+        );
+        expect(run.stderr()).toContain("Dependency install on Linux failed");
+        expect(
+          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+        ).toBe(fails === 2);
+      },
+    );
+
     it("sends a script outside the checkout to Linux as its text", async () => {
       const { dir, env } = setup(echoArgs);
       const scratch = tempDir();

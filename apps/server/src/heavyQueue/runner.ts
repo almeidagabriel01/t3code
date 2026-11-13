@@ -839,6 +839,8 @@ export interface RemoteProgress {
   readonly exit: number | null;
   /** The program the pre-flight found missing there, which therefore never started. */
   readonly missing: string | null;
+  /** A package whose install the wrapper could not finish there before the command. */
+  readonly install: string | null;
 }
 
 export const NO_PROGRESS: RemoteProgress = {
@@ -849,6 +851,7 @@ export const NO_PROGRESS: RemoteProgress = {
   pgid: null,
   exit: null,
   missing: null,
+  install: null,
 };
 
 /** Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. */
@@ -878,6 +881,10 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
       typeof fields.missing === "string" && fields.missing !== ""
         ? fields.missing
         : progress.missing,
+    install:
+      typeof fields.install === "string" && fields.install !== ""
+        ? fields.install
+        : progress.install,
   };
 };
 
@@ -961,6 +968,30 @@ export const remoteStopScript = (id: string, pgid: number | null, waitSeconds: n
     `{ [ -n "$p" ] && kill -KILL -- "-$p"; pkill -KILL -f '${pattern}'; } 2>/dev/null; sleep 1`,
     `if alive; then echo alive; exit 1; else echo killed; fi`,
   ].join("\n");
+};
+
+export const INSTALL_FAILED = "Dependency install on Linux failed";
+
+// A package install or lazy download that was unfinished, or raced, when the run started there.
+const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
+  [/Electron failed to install correctly/, "electron"],
+  [/Executable doesn't exist at \S*ms-playwright/, "playwright"],
+  [/Could not find Chrom(?:e|ium) \(ver\./, "puppeteer"],
+  [/Cypress (?:binary is missing|executable not found)/i, "cypress"],
+  [/^(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))(?=.*node_modules\/)/, null],
+];
+
+/** The package an output line says is not installed yet there, else null. */
+export const installFailure = (line: string): string | null => {
+  const hit = INSTALL_FAILURES.find(([pattern]) => pattern.test(line));
+  if (hit === undefined) return null;
+  return (
+    hit[1] ??
+    /node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?((?:@[^/\s'"]+\/)?[^/\s'"]+)/.exec(
+      line,
+    )?.[1] ??
+    "node_modules"
+  );
 };
 
 /** Lines of a failed Linux run that name files on the Mac-only list: they fail there by nature. */

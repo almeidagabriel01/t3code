@@ -46,7 +46,13 @@ import {
   startFolder,
   tryStart,
 } from "./queueFile.ts";
-import { DEFAULT_MACHINE_CONFIG, NEEDS_GIT, needsGit, outsideTie } from "./runner.ts";
+import {
+  DEFAULT_MACHINE_CONFIG,
+  INSTALL_FAILED,
+  NEEDS_GIT,
+  needsGit,
+  outsideTie,
+} from "./runner.ts";
 import {
   changedInputs,
   checkLinux,
@@ -816,8 +822,11 @@ const LINUX_JOB_ENV = "T3CODE_HEAVY_LINUX_JOB";
 /** Where a work part tells its job that Linux never ran it, or dropped it. */
 const outcomePath = (dir: string, id: string) => NodePath.join(dir, `linux-${id}.json`);
 
-/** Linux never ran a part or dropped it, or it turned out to need this Mac. */
-type PartOutcome = RemoteOutcome | { readonly kind: "mac"; readonly reason: string };
+/** Linux never ran a part or dropped it, couldn't run it, or it turned out to need this Mac. */
+type PartOutcome =
+  | RemoteOutcome
+  | { readonly kind: "mac"; readonly reason: string }
+  | { readonly kind: "environment"; readonly reason: string };
 
 const takeOutcome = (dir: string, id: string): PartOutcome | null => {
   try {
@@ -933,6 +942,12 @@ const runLinuxAttempt = async (
     requeue(dir, id, { route: "mac", routeReason: outcome.reason });
     return { kind: "requeued" };
   }
+  if (outcome.kind === "environment") {
+    // It ended there with its exit code, so nothing is left to confirm.
+    process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
+    requeue(dir, id, { dropped: true, linuxFailedAt: Date.now(), routeReason: outcome.reason });
+    return { kind: "requeued" };
+  }
   if (outcome.kind === "unavailable") {
     process.stderr.write("[t3 heavy] Linux is unavailable; it never started there.\n");
     // A run that got as far as syncing may have a dependency install going there.
@@ -1003,35 +1018,37 @@ const runLinuxPart = async (
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }
   let recorded: string | null = null;
-  const run = startLinuxRun({
-    remoto,
-    program: command.program,
-    args: command.args,
-    cwd,
-    root,
-    environment: process.env,
-    machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
-    macOnly: configFor(doc, cwd).runnerMacOnly,
-    env,
-    stdout: (chunk) => process.stdout.write(chunk),
-    stderr: (text) => process.stderr.write(text),
-    onProgress: (progress) => {
-      if (progress.phase === recorded || progress.phase === null) return;
-      recorded = progress.phase;
-      jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
-      setProgress(dir, id, {
-        phase: progress.phase,
-        ...(progress.id === null
-          ? {}
-          : {
-              remote: {
-                id: progress.id,
-                ...(progress.pgid === null ? {} : { pgid: progress.pgid }),
-              },
-            }),
-      });
-    },
-  });
+  const start = () =>
+    startLinuxRun({
+      remoto,
+      program: command.program,
+      args: command.args,
+      cwd,
+      root,
+      environment: process.env,
+      machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
+      macOnly: configFor(doc, cwd).runnerMacOnly,
+      env,
+      stdout: (chunk) => process.stdout.write(chunk),
+      stderr: (text) => process.stderr.write(text),
+      onProgress: (progress) => {
+        if (progress.phase === recorded || progress.phase === null) return;
+        recorded = progress.phase;
+        jobNote(`[t3 heavy] Linux: ${PHASE_LABEL[progress.phase]}\n`);
+        setProgress(dir, id, {
+          phase: progress.phase,
+          ...(progress.id === null
+            ? {}
+            : {
+                remote: {
+                  id: progress.id,
+                  ...(progress.pgid === null ? {} : { pgid: progress.pgid }),
+                },
+              }),
+        });
+      },
+    });
+  let run = start();
   // The job stopping or moving signals the whole group; that ends this part without a verdict.
   let stopped = false;
   for (const signal of SIGNALS) {
@@ -1040,7 +1057,17 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  const { outcome, platform } = await run.done;
+  let { outcome, platform, install } = await run.done;
+  // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
+  if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
+    jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
+    recorded = null;
+    run = start();
+    ({ outcome, platform, install } = await run.done);
+    if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
+      return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
+    }
+  }
   if (stopped) process.exit(143);
   if (outcome.kind === "finished") {
     if (outcome.code !== 0 && platform.length > 0) {

@@ -113,14 +113,126 @@ describe("running on Linux through remoto", () => {
       '"$PWD/node_modules/.bin:${PWD%/*}/node_modules/.bin:${PWD%/*/*}/node_modules/.bin:$PATH"',
     ],
   ])("from %s, Linux looks for project tools in %s first", (cwd, path) => {
-    expect(withProjectBins(["vp", "test"], cwd, "/w")).toEqual([
+    const wrapped = withProjectBins(["vp", "test"], cwd, "/w");
+    expect([...wrapped.slice(0, 2), ...wrapped.slice(3)]).toEqual([
       "bash",
       "-c",
-      `export PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; exec "$@"`,
       "t3",
       "vp",
       "test",
     ]);
+    expect(
+      wrapped[2]!.startsWith(
+        `export PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
+      ),
+    ).toBe(true);
+    expect(wrapped[2]!.endsWith('; exec "$@"')).toBe(true);
+  });
+
+  // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.
+  it.each([
+    ["no Electron", null, "", "ran\n", { kind: "finished", code: 0 }, null],
+    ["Electron settled", "linux", "", "ran\n", { kind: "finished", code: 0 }, null],
+    [
+      "Electron with no path.txt",
+      "fresh",
+      "install\n",
+      "ran\n",
+      { kind: "finished", code: 0 },
+      null,
+    ],
+    [
+      "Electron missing its binary",
+      "gone",
+      "install\n",
+      "ran\n",
+      { kind: "finished", code: 0 },
+      null,
+    ],
+    [
+      "Electron whose install fails",
+      "fail",
+      "install\n",
+      "",
+      { kind: "finished", code: 1 },
+      "electron",
+    ],
+  ] as const)(
+    "with %s, the copy settles it before the command starts",
+    async (_, state, installs, output, outcome, install) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(dir, "settle-"));
+      const web = NodePath.join(root, "apps", "web");
+      NodeFS.mkdirSync(web, { recursive: true });
+      const log = NodePath.join(root, "log");
+      if (state !== null) {
+        const electron = NodePath.join(
+          root,
+          "node_modules",
+          ".pnpm",
+          "electron@44.10.1",
+          "node_modules",
+          "electron",
+        );
+        NodeFS.mkdirSync(NodePath.join(electron, "dist"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(electron, "install.js"),
+          `require("fs").appendFileSync(${JSON.stringify(log)}, "install\\n");
+${state === "fail" ? "process.exit(1);" : ""}
+require("fs").writeFileSync(__dirname + "/path.txt", "electron");
+require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
+        );
+        if (state === "linux" || state === "gone") {
+          NodeFS.writeFileSync(NodePath.join(electron, "path.txt"), "electron");
+        }
+        if (state === "linux")
+          NodeFS.writeFileSync(NodePath.join(electron, "dist", "electron"), "");
+      }
+      const tool = NodePath.join(root, "node_modules", ".bin");
+      NodeFS.mkdirSync(tool, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(tool, "t3-tests"), `#!/bin/sh\necho ran\n`, {
+        mode: 0o755,
+      });
+      const stdout: Buffer[] = [];
+      const phases: string[] = [];
+      const run = startLinuxRun({
+        // Stands in for `remoto-rodar`: it marks the start, runs the wrapper, and marks the exit.
+        remoto: fake(
+          `printf '${M} phase=running pgid=4\\n' >&2; "$@"; c=$?; printf '${M} exit=%s\\n' $c >&2; exit $c`,
+        ),
+        program: "t3-tests",
+        args: [],
+        cwd: web,
+        root,
+        environment: process.env,
+        machine: DEFAULT_MACHINE_CONFIG,
+        macOnly: [],
+        onProgress: (progress) => phases.push(progress.phase ?? ""),
+        stdout: (chunk) => stdout.push(chunk),
+        stderr: () => {},
+      });
+      const result = await run.done;
+      expect(result.outcome).toEqual(outcome);
+      expect(result.install).toBe(install);
+      expect(NodeFS.existsSync(log) ? NodeFS.readFileSync(log, "utf8") : "").toBe(installs);
+      expect(Buffer.concat(stdout).toString("utf8")).toBe(output);
+      expect(phases.includes("installing")).toBe(installs !== "");
+    },
+  );
+
+  it("notes an install failure the command's own output reports", async () => {
+    const { run } = runWith(
+      fake(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} exit=1\\n' >&2`,
+          "exit 1",
+        ].join("\n"),
+      ),
+    );
+    const result = await run.done;
+    expect(result.outcome).toEqual({ kind: "finished", code: 1 });
+    expect(result.install).toBe("electron");
   });
 
   it("runs with the env it is handed, ahead of the command", () => {

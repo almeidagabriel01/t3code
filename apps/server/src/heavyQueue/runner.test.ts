@@ -12,6 +12,7 @@ import {
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   foldMarker,
+  installFailure,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -935,6 +936,36 @@ describe("Linux health", () => {
   });
 });
 
+describe("an install unfinished in a fresh Linux copy", () => {
+  it.each([
+    [
+      "failed to create directory '/home/dev/runs/t3-1a2b3c4d/node_modules/.pnpm/electron@44.10.1_supports-color@8.1.1/node_modules/electron/dist/locales': File exists (os error 17)",
+      "electron",
+    ],
+    [
+      'Error: Electron failed to install correctly. Please delete `node_modules/electron` and run "npx install-electron --no" manually.',
+      "electron",
+    ],
+    [
+      "browserType.launch: Executable doesn't exist at /home/dev/.cache/ms-playwright/chromium-1200/chrome-linux/chrome",
+      "playwright",
+    ],
+    ["Error: Could not find Chrome (ver. 131.0.6778.85). This can occur if either", "puppeteer"],
+    ["The cypress npm package is installed, but the Cypress binary is missing.", "cypress"],
+    [
+      "Error: EEXIST: file already exists, mkdir '/home/dev/runs/a/node_modules/@scope/tool/bin'",
+      "@scope/tool",
+    ],
+    ["Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'", "sharp"],
+    // The code's own failures, even ones about files that exist.
+    ["AssertionError: expected 1 to be 2", null],
+    ["Error: EEXIST: file already exists, mkdir '/tmp/out'", null],
+    ["FAIL src/node_modules.test.ts > writes the folder", null],
+  ] as const)("%j is an install failure of %j", (line, pkg) => {
+    expect(installFailure(line)).toBe(pkg);
+  });
+});
+
 describe("remoto markers", () => {
   const fold = (...lines: string[]) =>
     lines.reduce((progress, line) => foldMarker(progress, `${MARKER}${line}`), NO_PROGRESS);
@@ -954,10 +985,17 @@ describe("remoto markers", () => {
       { kind: "missing", tool: "vp" },
     ],
     [["phase=running pgid=42", "missing=", "exit=127"], { kind: "finished", code: 127 }],
+    // The wrapper couldn't finish a lazy install: the run ends with the code, the package noted.
+    [["phase=running pgid=42", "install=electron", "exit=1"], { kind: "finished", code: 1 }],
     [["phase=syncing id=app-1a2b3c4d"], { kind: "unavailable", touched: true }],
     [[], { kind: "unavailable", touched: false }],
   ] as const)("%j ends as %j", (lines, outcome) => {
     expect(remoteOutcome(fold(...lines))).toEqual(outcome);
+  });
+
+  it("notes the package whose install the wrapper couldn't finish", () => {
+    expect(fold("phase=running pgid=42", "install=electron", "exit=1").install).toBe("electron");
+    expect(fold("phase=running pgid=42", "install=", "exit=1").install).toBeNull();
   });
 
   it("keeps the run folder and process group, and ignores unsafe ids", () => {
