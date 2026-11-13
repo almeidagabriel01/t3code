@@ -76,7 +76,7 @@ const readSettings = (path: string): Json => {
  * The checkout root when `entry` is T3's own server entry in a git checkout (`vp run dev`,
  * `dev:desktop`, a source `bin.ts`); undefined for an installed T3 (app bundle, npm package, binary).
  */
-export const sourceCheckout = (entry: string | undefined) => {
+const sourceCheckout = (entry: string | undefined) => {
   if (entry === undefined) return undefined;
   const root = /^(.*)[\\/]apps[\\/]server[\\/](?:src[\\/]bin\.ts|dist[\\/]bin\.mjs)$/.exec(
     NodePath.resolve(entry),
