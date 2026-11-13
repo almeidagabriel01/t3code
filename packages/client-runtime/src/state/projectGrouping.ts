@@ -129,7 +129,7 @@ function deriveRepositoryScopedKey(
 function deriveLogicalProjectKey(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
   >,
   options?: {
     readonly groupingMode?: SidebarProjectGroupingMode;
@@ -138,7 +138,8 @@ function deriveLogicalProjectKey(
 ): string {
   if (options?.groupScratchProjects && project.isScratch) return SCRATCH_PROJECT_SCOPE_KEY;
   const groupingMode = options?.groupingMode ?? "repository";
-  if (groupingMode === "separate") {
+  // Managed projects live in T3 home, which may sit inside any repo; they never join its group.
+  if (groupingMode === "separate" || project.managedRole !== undefined) {
     return derivePhysicalProjectKey(project);
   }
 
@@ -152,7 +153,7 @@ function deriveLogicalProjectKey(
 export function deriveLogicalProjectKeyFromSettings(
   project: Pick<
     EnvironmentProject,
-    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+    "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
   >,
   settings: ProjectGroupingSettings,
   options?: { readonly groupScratchProjects?: boolean },
@@ -168,7 +169,7 @@ export function resolveScratchProjectScopeKey(
   projects: ReadonlyArray<
     Pick<
       EnvironmentProject,
-      "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch"
+      "environmentId" | "id" | "workspaceRoot" | "repositoryIdentity" | "isScratch" | "managedRole"
     >
   >,
   settings: ProjectGroupingSettings = {

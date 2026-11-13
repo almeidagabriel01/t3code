@@ -265,6 +265,24 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it.each([
+    { role: "assistants" as const, title: "Assistants" },
+    { role: "scratch" as const, title: "No project" },
+  ])(
+    "keeps the $role project out of the repository it sits in, so a real project keeps its name",
+    ({ role, title }) => {
+      // A T3 home inside a git repo puts its managed projects in that repo's worktree.
+      const projects = [
+        makeProject("server", "/work/t3code"),
+        makeProject(role, "/work/t3code/.t3/assistants", { title, managedRole: role }),
+      ];
+      for (const mode of ["repository", "repository_path"] as const) {
+        const groups = buildProjectGroups({ projects, settings: settings(mode) });
+        expect(groups.map((group) => group.label)).toEqual(["server", title]);
+      }
+    },
+  );
+
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {
     const fork = makeProject("fork", "/work/t3code-fork", {
       repositoryIdentity: {
