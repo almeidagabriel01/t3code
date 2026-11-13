@@ -703,6 +703,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
+  // A member's request conversation a cleared chat left it, deleted with the member.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_kept_threads (
+      thread_id TEXT PRIMARY KEY,
+      assistant_id TEXT NOT NULL
+    )
+  `;
 
   // A group's rolling chat summary, and the last message number it covers.
   yield* sql`

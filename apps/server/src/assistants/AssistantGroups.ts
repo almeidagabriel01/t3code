@@ -2929,6 +2929,9 @@ const make = Effect.gen(function* () {
    */
   const clearChat = Effect.fn("AssistantGroups.clearChat")(function* (teamId: string) {
     yield* settleThreads(yield* groupRequestThreads(teamId));
+    yield* sql`
+      INSERT OR IGNORE INTO assistant_kept_threads (thread_id, assistant_id)
+      SELECT thread_id, assistant_id FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     const owned = (yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
@@ -2953,6 +2956,7 @@ const make = Effect.gen(function* () {
       yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${teamId}`,
     );
     yield* deleteThreads(yield* groupRequestThreads(teamId));
+    yield* sql`DELETE FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     yield* scheduledTasks
       .deleteForTeam(teamId)
       .pipe(
@@ -2964,7 +2968,7 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM assistant_group_threads WHERE team_id = ${teamId}`;
   });
 
-  /** A deleted assistant: its group threads go with it; its tasks wait for a new owner. */
+  /** A deleted assistant: its group threads and kept conversations go; its tasks wait for a new owner. */
   const removeAssistant = Effect.fn("AssistantGroups.removeAssistant")(function* (
     assistantId: string,
   ) {
@@ -2973,7 +2977,10 @@ const make = Effect.gen(function* () {
       FROM assistant_group_threads WHERE assistant_id = ${assistantId}
       UNION ALL
       SELECT team_id, assistant_id, thread_id, seen_seq, request_id
-      FROM assistant_group_request_threads WHERE assistant_id = ${assistantId}`;
+      FROM assistant_group_request_threads WHERE assistant_id = ${assistantId}
+      UNION ALL
+      SELECT '' AS team_id, assistant_id, thread_id, 0 AS seen_seq, NULL AS request_id
+      FROM assistant_kept_threads WHERE assistant_id = ${assistantId}`;
     const open = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE owner_id = ${assistantId} AND status IN ${sql.in(ACTIVE)}`;
@@ -2981,6 +2988,7 @@ const make = Effect.gen(function* () {
     yield* deleteThreads(rows);
     yield* sql`DELETE FROM assistant_group_threads WHERE assistant_id = ${assistantId}`;
     yield* sql`DELETE FROM assistant_group_request_threads WHERE assistant_id = ${assistantId}`;
+    yield* sql`DELETE FROM assistant_kept_threads WHERE assistant_id = ${assistantId}`;
   });
 
   const handleAssistantEvent: AssistantGroups["Service"]["handleAssistantEvent"] = Effect.fn(

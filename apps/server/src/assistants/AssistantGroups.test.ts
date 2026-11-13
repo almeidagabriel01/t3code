@@ -3165,6 +3165,12 @@ it.effect(
         (yield* h.messages).map((row) => row.seq),
         [1],
       );
+      // The kept conversation is still the member's: it goes when the member is deleted.
+      yield* groups.handleAssistantEvent({ type: "removed", assistantId: "ada" as never });
+      assert.deepInclude(
+        h.dispatched.map((command) => [command.type, command.threadId]),
+        ["thread.delete", first],
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
