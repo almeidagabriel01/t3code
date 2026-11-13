@@ -771,7 +771,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Effect.gen(function* () {
       yield* (yield* ProblemDetector.ProblemDetector).start();
     }),
-  ).pipe(Layer.provideMerge(ProblemDetector.layer.pipe(Layer.provide(layerHeavyQueueNotices)))),
+  ).pipe(
+    Layer.provideMerge(
+      ProblemDetector.layer.pipe(
+        Layer.provide(layerHeavyQueueNotices),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+    ),
+  ),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),

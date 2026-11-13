@@ -157,18 +157,24 @@ export function runnerReport(record: HeavyEventRecord): ProblemReport | null {
     at: record.at,
   };
   switch (record.kind) {
+    case "t3-fault":
+      return {
+        ...base,
+        command: record.command,
+        error: record.error,
+        reason: record.reason,
+        cause: record.cause,
+        projectFolder: record.projectFolder,
+      };
     case "ended": {
-      if (record.code === 126 || record.code === 127)
-        return { ...base, error: `Exit code ${record.code}` };
-      if (record.phase === "syncing")
-        return { ...base, error: `Exit code ${record.code}`, reason: "linux-sync" };
-      if (record.phase === "installing")
-        return { ...base, error: `Exit code ${record.code}`, reason: "linux-install" };
-      return record.job.threadId === null ? { ...base, error: `Exit code ${record.code}` } : null;
+      const exit = { ...base, error: `Exit code ${record.code}` };
+      const missing = record.code === 126 || record.code === 127;
+      // Linux reports a failed sync or install, and 126/127, as a t3-fault record.
+      const faulted = missing || record.phase === "syncing" || record.phase === "installing";
+      if (record.job.runner === "linux" && faulted) return null;
+      if (missing) return exit;
+      return record.job.threadId === null ? exit : null;
     }
-    case "linux-lost":
-      return { ...base, error: "Linux dropped the job", reason: "linux-lost" };
-    // Linux environment failures land here as new record kinds with their own reason.
     default:
       return null;
   }

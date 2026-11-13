@@ -11,6 +11,7 @@ import {
   type KanbanStreamItem,
   type OrchestrationV2DomainEvent,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,6 +30,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { HeavyEventRecord } from "../heavyQueue/heavyNotices.ts";
@@ -92,6 +94,11 @@ const harness = () => {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: (projectId) => Effect.succeedSome({ title: `Project ${projectId}` } as never),
+          listShells: () => Effect.succeed([{ id: "p1", workspaceRoot: "/repo/one" }] as never),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadWorktreePaths: () =>
+            Effect.succeed([{ threadId: "tw" as ThreadId, worktreePath: "/wt/feature" }]),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Ref.get(settings).pipe(Effect.map((value) => value as never)),
@@ -792,9 +799,41 @@ describe("sources (PRO-30, PRO-32)", () => {
           pr("failing", "d"),
         ])
           yield* detector.handleEvent(event);
-        yield* detector.handleRecord(record({ id: "rec-1" }));
+        yield* detector.handleRecord(
+          record({ id: "rec-1", job: { id: "j", name: "x", threadId: null, runner: "mac" } }),
+        );
+        // Linux environment failures arrive as t3-fault; the plain records only feed the toasts.
+        yield* detector.handleRecord(record({ id: "rec-0" }));
         yield* detector.handleRecord(record({ id: "rec-2", code: 1, phase: "syncing" }));
         yield* detector.handleRecord(record({ id: "rec-3", kind: "linux-lost" }));
+        h.shells.set("tw", {
+          lineage: { relationshipToParent: null },
+          projectId: "p3",
+          title: "w",
+        });
+        const fault = (id: string, fields: Record<string, unknown>) =>
+          record({
+            id,
+            kind: "t3-fault",
+            cause: "command-not-found:vp",
+            reason: "command-not-found",
+            command: "vp test run",
+            error: "vp: command not found",
+            projectFolder: "/wt/feature/apps/web",
+            ...fields,
+          });
+        yield* detector.handleRecord(fault("rec-7", {}));
+        yield* detector.handleRecord(
+          fault("rec-8", { command: "vp lint", error: "zsh: command not found: vp" }),
+        );
+        yield* detector.handleRecord(
+          fault("rec-9", {
+            cause: "linux-sync:rsync-timeout",
+            reason: "linux-sync",
+            error: "rsync timed out",
+            projectFolder: "/repo/one/src",
+          }),
+        );
         // A plain failure of a thread's own job, a cancel, and a thread of another server.
         yield* detector.handleRecord(
           record({
@@ -817,12 +856,17 @@ describe("sources (PRO-30, PRO-32)", () => {
           "Environment: spawn codex ENOENT",
           "CI: Checks failing on PR #7",
           "Environment: Exit code 127",
-          "Environment: Exit code 1",
-          "Environment: Linux dropped the job",
+          "Environment: vp: command not found",
+          "Environment: rsync timed out",
         ]);
         assert.equal(byTitle["CI: Checks failing on PR #7"]!.problem?.count, 2);
         assert.equal(byTitle["CI: Checks failing on PR #7"]!.projectId, "p2");
-        assert.include(byTitle["Environment: Exit code 1"]!.description, "Linux sync failed");
+        const vp = byTitle["Environment: vp: command not found"]!;
+        assert.deepEqual([vp.projectId, vp.problem?.count], ["p3", 2]);
+        assert.include(vp.description, "vp test run");
+        const sync = byTitle["Environment: rsync timed out"]!;
+        assert.equal(sync.projectId, "p1");
+        assert.include(sync.description, "Linux sync failed");
         assert.equal(byTitle["Environment: spawn codex ENOENT"]!.problem?.count, 1);
       }),
     );

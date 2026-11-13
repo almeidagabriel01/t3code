@@ -42,6 +42,7 @@ import * as KanbanService from "../kanban/KanbanService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettingsService from "../serverSettings.ts";
@@ -52,6 +53,7 @@ import {
   effectiveLevel,
   evidenceDescription,
   fingerprint,
+  folderOwner,
   noOwnerNotice,
   noticeHeader,
   excerpt,
@@ -144,6 +146,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projects = yield* ProjectService.ProjectService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settingsService = yield* ServerSettingsService.ServerSettingsService;
   const spend = yield* AssistantSpend;
   const autonomy = yield* AutonomyService.AutonomyService;
@@ -154,6 +157,26 @@ const make = Effect.gen(function* () {
   const settings = settingsService.getSettings.pipe(
     Effect.orElseSucceed(() => null as ServerSettings | null),
   );
+
+  const folderProject = Effect.fn("ProblemDetector.folderProject")(function* (folder: string) {
+    const shells = yield* projects.listShells().pipe(Effect.orElseSucceed(() => []));
+    const worktrees = yield* projections
+      .getThreadWorktreePaths({ includeArchived: true })
+      .pipe(Effect.orElseSucceed(() => []));
+    const owner = folderOwner<`${"project" | "thread"}:${string}`>(folder, [
+      ...shells.map((shell) => ({ id: `project:${shell.id}` as const, root: shell.workspaceRoot })),
+      ...worktrees.map((tree) => ({
+        id: `thread:${tree.threadId}` as const,
+        root: tree.worktreePath,
+      })),
+    ]);
+    if (owner === null) return null;
+    if (owner.startsWith("project:")) return owner.slice("project:".length);
+    const shell = yield* engine
+      .getThreadShell(owner.slice("thread:".length) as ThreadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    return shell?.projectId ?? null;
+  });
 
   const projectName = (projectId: string) =>
     projects.getById(projectId as ProjectId).pipe(
@@ -193,6 +216,7 @@ const make = Effect.gen(function* () {
       const projectId =
         input.projectId ??
         shell?.projectId ??
+        (input.projectFolder == null ? null : yield* folderProject(input.projectFolder)) ??
         (yield* folders.ensureScratchProject.pipe(Effect.map((scratch) => scratch.projectId)));
       const resolved: ProblemReport = {
         ...input,

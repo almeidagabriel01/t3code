@@ -39,16 +39,19 @@ export type ProblemReason =
 export interface ProblemReport {
   readonly key: string;
   readonly source: ProblemSource;
-  /** Null resolves from the thread, else the No-project board. */
+  /** Null resolves from the thread, then `projectFolder`, else the No-project board. */
   readonly projectId: string | null;
+  readonly projectFolder?: string | null | undefined;
   readonly threadId: string | null;
   readonly threadTitle?: string | null;
   /** A raw identity that is part of the cause: a PR number, task, environment or provider. */
   readonly subject: string | null;
   readonly command: string | null;
   readonly error: string;
-  /** Set by a source that already knows why, such as a Runner Linux phase. */
+  /** Set by a source that already knows why, such as a Runner fault. */
   readonly reason?: ProblemReason | undefined;
+  /** A cause key from a source that already knows it; it alone identifies the card. */
+  readonly cause?: string | undefined;
   readonly prNumber?: number | undefined;
   readonly where: string | null;
   readonly at: number;
@@ -134,12 +137,28 @@ const firstLine = (text: string) =>
     .map((line) => line.trim())
     .find((line) => line !== "") ?? "";
 
+/** Which root holds `folder`, by id; the longest root wins. */
+export function folderOwner<Id extends string>(
+  folder: string,
+  roots: ReadonlyArray<{ readonly id: Id; readonly root: string }>,
+): Id | null {
+  let best: { readonly id: Id; readonly length: number } | null = null;
+  for (const { id, root } of roots) {
+    const base = root.replace(/\/+$/, "");
+    const holds = folder === base || folder.startsWith(`${base}/`);
+    if (holds && (best === null || base.length > best.length)) best = { id, length: base.length };
+  }
+  return best?.id ?? null;
+}
+
 /** Source, project, subject, command shape and error signature: one cause, one card. */
 export function fingerprint(
   report: ProblemReport,
   projectId: string,
   reason: ProblemReason | null,
 ): string {
+  if (report.cause !== undefined)
+    return [report.source, projectId, `cause:${report.cause}`].join("|");
   return [
     report.source,
     projectId,

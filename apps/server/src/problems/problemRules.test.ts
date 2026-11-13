@@ -15,6 +15,7 @@ import {
   noOwnerNotice,
   noticeHeader,
   normalize,
+  folderOwner,
   reasonLabel,
   selectOwner,
   summaryOf,
@@ -127,6 +128,35 @@ describe("normalize and fingerprint (PRO-01, PRO-02, PRO-05)", () => {
     for (const [name, value] of rows) {
       assert.notEqual(value, fingerprint(first, "p1", reason), name);
     }
+  });
+
+  it("a reported cause is the whole identity: other commands and errors are the same card", () => {
+    const fault = report({ cause: "command-not-found:vp", command: "vp test", error: "vp: nope" });
+    const same = fingerprint(fault, "p1", "command-not-found");
+    assert.equal(
+      fingerprint({ ...fault, command: "vp lint", error: "other text" }, "p1", "command-not-found"),
+      same,
+    );
+    assert.notEqual(fingerprint({ ...fault, cause: "command-not-found:git" }, "p1", null), same);
+    assert.notEqual(fingerprint(fault, "p2", "command-not-found"), same);
+  });
+});
+
+describe("folderOwner", () => {
+  const roots = [
+    { id: "web", root: "/repo/web" },
+    { id: "web-wt", root: "/wt/web/feature/" },
+    { id: "nested", root: "/repo/web/packages/inner" },
+  ];
+  it.each([
+    ["the root itself", "/repo/web", "web"],
+    ["a folder inside the root", "/repo/web/apps/server", "web"],
+    ["a worktree, with a trailing slash on its root", "/wt/web/feature/apps", "web-wt"],
+    ["the longest root wins", "/repo/web/packages/inner/src", "nested"],
+    ["a sibling that only shares a prefix", "/repo/web2", null],
+    ["no root holds it", "/elsewhere", null],
+  ])("%s", (_name, folder, expected) => {
+    assert.equal(folderOwner(folder, roots), expected);
   });
 });
 
