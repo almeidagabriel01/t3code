@@ -14,7 +14,7 @@ import {
   isQueued,
   nameOf,
   queueBashCall,
-  unwrapRemoto,
+  splitRemoto,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -162,33 +162,38 @@ describe("the PreToolUse answer", () => {
 
 describe("an agent's own remoto call", () => {
   it.each([
-    ["remoto vp test run", "vp test run"],
+    ["remoto vp test run", { before: "", rest: "vp test run" }],
     [
-      "cd apps/server && remoto vp test run src/a.test.ts",
-      "cd apps/server && vp test run src/a.test.ts",
+      "cd /Users/me/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+      {
+        before: "cd /Users/me/repo/apps/web && ",
+        rest: "pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+      },
     ],
-    ["  remoto ./scripts/check.sh --all", "./scripts/check.sh --all"],
+    ["  remoto ./scripts/check.sh --all", { before: "  ", rest: "./scripts/check.sh --all" }],
     ["ls && remoto vp test run", null],
     ["REMOTO_HOST=pc remoto vp test", null],
     ["remoto", null],
-  ])("%j unwraps to %j", (command, unwrapped) => {
-    expect(unwrapRemoto(command)).toBe(unwrapped);
+  ])("%j splits into %j", (command, parts) => {
+    expect(splitRemoto(command)).toEqual(parts);
   });
 
-  it("with the Runner on, becomes one job sent to Linux instead of a second wrapper", () => {
-    const answer = queueBashCall(
-      bash({ command: "cd apps/server && remoto vp test run" }),
-      PREFIX,
-      {},
-      { runner: true },
-    );
-    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
-      `${PREFIX} --runner linux --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run'`,
-    );
-    const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
-    expect(script!.hookSpecificOutput.updatedInput.command).toContain(
-      "--runner linux --name 'x.sh'",
-    );
+  // The cd, pipes and redirects stay here: `remoto` runs only its own argv on Linux, in the copy
+  // of the folder the cd reached, and a Mac path inside the job would not exist there.
+  it.each([
+    ["remoto vp test run", `${PREFIX} --runner linux --name 'vp test run' -- vp test run`],
+    [
+      "cd apps/server && remoto vp test run",
+      `cd apps/server && ${PREFIX} --runner linux --name 'vp test run' -- vp test run`,
+    ],
+    [
+      "cd /Users/me/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
+      `cd /Users/me/repo/apps/web && ${PREFIX} --runner linux --name 'pnpm exec vp' -- pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'`,
+    ],
+    ["remoto ./x.sh", `${PREFIX} --runner linux --name 'x.sh' -- ./x.sh`],
+  ])("with the Runner on, %j becomes one job sent to Linux", (command, rewritten) => {
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, { runner: true });
+    expect(answer!.hookSpecificOutput.updatedInput.command).toBe(rewritten);
   });
 
   it.each([
