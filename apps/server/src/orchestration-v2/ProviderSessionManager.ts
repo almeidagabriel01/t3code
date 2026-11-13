@@ -65,6 +65,7 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
@@ -1303,6 +1304,8 @@ export const layerWithOptions = (
           const key = sessionKey(input.providerSessionId);
           // Capture runtime identity on the first pass; replacements can reuse the session id.
           let probedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
+          // Provider activity reschedules this fiber, so only silent background work reaches the ceiling.
+          const pinnedSinceMs = yield* Clock.currentTimeMillis;
           while (true) {
             const entry = (yield* Ref.get(sessions)).get(key);
             if (
@@ -1314,13 +1317,24 @@ export const layerWithOptions = (
               return;
             }
             probedRuntime = entry.runtime;
-            // Never end a process with work in flight; a failed probe counts as work.
-            const hasPendingWork =
-              (entry.runtime.hasPendingBackgroundWork === undefined
+            // Never end a process with work in flight; a failed probe counts as work until the ceiling.
+            let backgroundPending =
+              entry.runtime.hasPendingBackgroundWork === undefined
                 ? false
                 : yield* entry.runtime.hasPendingBackgroundWork.pipe(
                     Effect.catchCause(() => Effect.succeed(true)),
-                  )) || (yield* hasUnfinishedRecords(entry, { backgroundRoster: false }));
+                  );
+            const pinnedForMs = (yield* Clock.currentTimeMillis) - pinnedSinceMs;
+            if (backgroundPending && pinnedForMs >= MAX_IDLE_PIN_MS) {
+              yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
+                providerSessionId: input.providerSessionId,
+                pinnedForMs,
+              });
+              backgroundPending = false;
+            }
+            const hasPendingWork =
+              backgroundPending ||
+              (yield* hasUnfinishedRecords(entry, { backgroundRoster: false }));
             let keptForRequest = false;
             if (!hasPendingWork) {
               // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.

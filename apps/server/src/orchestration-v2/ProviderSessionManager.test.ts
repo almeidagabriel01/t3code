@@ -27,6 +27,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -3297,12 +3298,11 @@ it.effect("ProviderSessionManagerV2 idle-releases Claude after the live idle-tim
 );
 
 it.effect.each([
-  { name: "a busy turn", pendingWork: false, arrange: "turn" },
-  { name: "background work or a running subagent", pendingWork: true, arrange: "none" },
-  { name: "a pending request", pendingWork: false, arrange: "request" },
+  { name: "a busy turn", arrange: "turn" },
+  { name: "a pending request", arrange: "request" },
 ] as const)(
   "ProviderSessionManagerV2 keeps an idle Claude session past 4 hours with $name",
-  ({ pendingWork, arrange }) =>
+  ({ arrange }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
@@ -3323,9 +3323,52 @@ it.effect.each([
           layerTest({
             state,
             driver: CLAUDE_DRIVER,
-            hasPendingBackgroundWork: Effect.succeed(pendingWork),
             serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
           }),
+        ),
+      );
+    }),
+);
+
+it.effect.each([
+  { name: "background work that went silent", probe: Effect.succeed(true) },
+  { name: "a failing background probe", probe: Effect.die("probe failed") },
+] as const)(
+  "ProviderSessionManagerV2 releases an idle Claude session pinned by $name after 4 hours",
+  ({ probe }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const warnings: unknown[] = [];
+      const logger = Logger.make(({ message, logLevel }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const session = yield* openIdleClaudeSession("provider-session-manager-pin-expired");
+
+        yield* TestClock.adjust("3 hours");
+        assert.isTrue(yield* manager.isLive(session.providerSessionId));
+
+        yield* TestClock.adjust("2 hours");
+        assert.isFalse(yield* manager.isLive(session.providerSessionId));
+        assert.deepInclude(
+          warnings.flat(),
+          "orchestration-v2.driver-session.idle-release-pin-expired",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.merge(
+            layerTest({
+              state,
+              driver: CLAUDE_DRIVER,
+              hasPendingBackgroundWork: probe,
+              serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
+            }),
+            Logger.layer([logger]),
+          ),
         ),
       );
     }),
@@ -3339,7 +3382,7 @@ it.effect("ProviderSessionManagerV2 idle-releases Claude once its background wor
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const session = yield* openIdleClaudeSession("provider-session-manager-background-ends");
 
-      yield* TestClock.adjust("5 hours");
+      yield* TestClock.adjust("3 hours");
       assert.isTrue(yield* manager.isLive(session.providerSessionId));
 
       yield* Ref.set(backgroundWork, false);
