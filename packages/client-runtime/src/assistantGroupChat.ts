@@ -524,7 +524,6 @@ export function assistantGroupProjectOptions<
   );
 }
 
-/** The text with the `#word` replaced by the project's `#slug` and a space, and where the caret goes. */
 /** One plain-text line of a markdown message, for a reply quote. */
 export function assistantGroupMessageExcerpt(text: string): string {
   return text
@@ -536,6 +535,7 @@ export function assistantGroupMessageExcerpt(text: string): string {
     .trim();
 }
 
+/** The text with the `#word` replaced by the project's `#slug` and a space, and where the caret goes. */
 export function insertAssistantGroupProject(
   text: string,
   mention: AssistantGroupMentionQuery,
