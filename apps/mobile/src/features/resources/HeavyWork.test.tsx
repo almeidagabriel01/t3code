@@ -30,6 +30,7 @@ const { mocks } = vi.hoisted(() => ({
       runtime?: { status: string } | null;
     }>,
     host: null as unknown,
+    hostError: null as string | null,
     telemetry: null as unknown,
     devices: null as unknown,
     terminals: [] as unknown[],
@@ -129,6 +130,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: "host" | "telemetry" | "devices" | null) => ({
     data: atom === null ? undefined : mocks[atom],
+    error: atom === "host" ? mocks.hostError : null,
   }),
 }));
 vi.mock("../../state/server", () => ({
@@ -944,6 +946,7 @@ describe("ResourceManagerRouteScreen", () => {
           "external-device",
         ),
       ],
+      outsideApps: [{ name: "Google Chrome", cpuPercent: 160, rssBytes: 2 * GIB, processCount: 12 }],
       owners: [
         { kind: "agent", pid: 50, threadId: "t1" },
         { kind: "agent", pid: 52, threadId: "t2" },
@@ -1066,7 +1069,14 @@ describe("ResourceManagerRouteScreen", () => {
       "T3 Code: 1, 1.0% · 1.00 GB",
       "Desktop main (1): Desktop main, 1.0% · 1.00 GB",
     ]);
+    expect(outline(outside!)).toEqual([
+      "Tablet X: Device, 10% · 1.00 GB",
+      "Google Chrome: Outside T3, 20% · 2.00 GB",
+    ]);
     expect(await expand(outside!, "Tablet X")).toContain(
+      "NoteRuns outside T3, not counted in the T3 total",
+    );
+    expect(await expand(outside!, "Google Chrome")).toContain(
       "NoteRuns outside T3, not counted in the T3 total",
     );
     expect(outside!.querySelector("button")).toBeNull();
@@ -1092,7 +1102,16 @@ describe("ResourceManagerRouteScreen", () => {
         "Queue off: heavy jobs start right away",
       ],
     },
-  ])("shows This Mac's gauges: $case", async ({ over, label, warn, hints }) => {
+    {
+      case: "a failed host read says so",
+      over: {},
+      hostError: "Timed out",
+      label: "This Mac, CPU --, -- free, 0 of 3 running",
+      warn: null,
+      hints: ["CPU reading failed", "Memory reading failed"],
+    },
+  ])("shows This Mac's gauges: $case", async ({ over, hostError, label, warn, hints }) => {
+    mocks.hostError = hostError ?? null;
     mocks.environments = [
       { environmentId: "env", label: "Studio", connection: { phase: "connected" } },
     ];

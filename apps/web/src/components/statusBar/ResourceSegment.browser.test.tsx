@@ -259,14 +259,16 @@ describe("EnvironmentSection", () => {
         ),
         proc(71, [], 9_000_000, "SpringBoard", "SpringBoard", "external-device"),
       ],
+      outsideApps: [{ name: "Google Chrome", cpuPercent: 20, rssBytes: 2_000_000, processCount: 12 }],
     } as unknown as ResourceTelemetrySnapshot;
     await using screen = await render(
       <EnvironmentSection {...props} snapshot={withSimulator} sort="memory" label={null} />,
       { router: "/" },
     );
     const outside = screen.getByRole("region", { name: "Outside T3" });
-    await expect.element(outside.getByRole("button", { name: "Outside T3 (2)" })).toBeVisible();
+    await expect.element(outside.getByRole("button", { name: "Outside T3 (3)" })).toBeVisible();
     await expect.element(outside.getByText("iPhone 17 Pro")).toBeVisible();
+    await expect.element(outside.getByText("Google Chrome")).toBeVisible();
     await expect.element(outside.getByText("playwright test")).toBeVisible();
     // Detached work has no Stop and no thread, so it has no menu; why it is here is one click away.
     expect(outside.getByRole("button", { name: /^Actions for/ }).elements()).toHaveLength(0);
@@ -395,7 +397,7 @@ describe("EnvironmentSection", () => {
       ),
     ).toEqual(["Heavy work", "My project", "Devices", "T3 Code", "Outside T3"]);
     const heavy = screen.getByRole("region", { name: "Heavy work" });
-    await expect.element(heavy.getByLabelText("CPU reading unavailable")).toHaveTextContent("—");
+    await expect.element(heavy.getByLabelText("CPU reading unavailable")).toHaveTextContent("--");
     await expect.element(heavy.getByText("112 MB")).toBeVisible();
   });
 });

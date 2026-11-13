@@ -62,7 +62,7 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 /** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
   composerTrigger,
-  slashCommandAtMessageStart,
+  slashCommandAfterLeadingChips,
   environmentId,
   linkedEnvironments,
   gitCwd,
@@ -83,7 +83,7 @@ export function useComposerMenuItems({
   modelMentions,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
-  readonly slashCommandAtMessageStart: boolean;
+  readonly slashCommandAfterLeadingChips: boolean;
   readonly environmentId: EnvironmentId;
   readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly gitCwd: string | null;
@@ -328,7 +328,8 @@ export function useComposerMenuItems({
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
-        slashCommandAtMessageStart,
+        composerTrigger.rangeStart === 0,
+        slashCommandAfterLeadingChips,
       );
       return searchSlashCommandItems(slashCommandItems, query);
     }

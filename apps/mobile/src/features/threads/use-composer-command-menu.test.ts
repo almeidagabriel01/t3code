@@ -106,6 +106,22 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  it("offers /side and /btw, but not /clear or provider commands, after leading chips", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "",
+      atMessageStart: false,
+      afterLeadingChips: true,
+      hasThread: true,
+      offersFreshSession: true,
+      offersSideChat: true,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("codex"),
+        slashCommands: [{ name: "review", description: "Review changes" }],
+      },
+    });
+    expect(items.map((item) => item.id)).toEqual(["cmd:model", "cmd:side", "cmd:btw"]);
+  });
 });
 
 describe("mobile catalog descriptions", () => {

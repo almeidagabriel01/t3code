@@ -1120,7 +1120,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
     composerTrigger,
-    slashCommandAtMessageStart:
+    slashCommandAfterLeadingChips:
       composerTrigger !== null && isAtMessageStart(prompt, composerTrigger.rangeStart),
     environmentId,
     linkedEnvironments,
