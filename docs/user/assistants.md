@@ -208,8 +208,11 @@ the members; it does not run an agent by itself.
   continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
   **Open conversation** shows the member's own thread for this group.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
-  per request). After eight hand-offs for one request the next one pauses until you resume it. At most
-  two tasks run at the same time in a group; the rest wait their turn.
+  per request). So members cannot pass work around forever, a request stops whole, and the chat
+  says why, after 12 hand-offs in which nobody delivers a new result, or after 30 hand-offs since you
+  last acted on it. **Resume**, **Reassign** or "continue" on any of its cards picks it up with its
+  subtasks; that, or any message you send to its members, starts both counts over. At most two tasks
+  run at the same time in a group; the rest wait their turn.
 - **Group routines** (group menu) lists the scheduled messages that post in the chat, for example a
   morning status request, with the next run in your local time, the last result, **Run now**, pause
   and resume, edit and delete. A routine can stop after a number of runs, and a daily or weekly one
