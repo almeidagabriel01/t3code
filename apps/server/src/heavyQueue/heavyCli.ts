@@ -25,6 +25,7 @@ import {
   UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
+import { faultOf, type FaultSeen } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -37,6 +38,7 @@ import {
   gitRootOf,
   modeFor,
   readDoc,
+  recordFault,
   recordHealth,
   recordSampleIfStale,
   requeue,
@@ -49,6 +51,7 @@ import {
 import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
+  linkAttempts,
   linkMachine,
   NEEDS_GIT,
   needsGit,
@@ -1057,6 +1060,15 @@ const runLinuxPart = async (
     command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
   }
   let recorded: string | null = null;
+  let lastError: string | null = null;
+  const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+  const fault = (seen: FaultSeen) => {
+    const found = faultOf(seen, lastError, {
+      command: labelOf(program, args),
+      projectFolder: root,
+    });
+    if (found !== null) recordFault(dir, id, found);
+  };
   const start = () =>
     startLinuxRun({
       remoto,
@@ -1066,11 +1078,14 @@ const runLinuxPart = async (
       root,
       environment: process.env,
       // `remoto` reads its ssh timeout from `REMOTO_TIMEOUT`, which this sets.
-      machine: linkMachine(doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG, doc.sample),
+      machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
       stdout: (chunk) => process.stdout.write(chunk),
-      stderr: (text) => process.stderr.write(text),
+      stderr: (text) => {
+        process.stderr.write(text);
+        lastError = lastLineOf(text) ?? lastError;
+      },
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;
         recorded = progress.phase;
@@ -1105,11 +1120,13 @@ const runLinuxPart = async (
     run = start();
     ({ outcome, platform, install } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
+      fault({ kind: "install", package: install });
       return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
     }
   }
   if (stopped) process.exit(143);
   if (outcome.kind === "finished") {
+    fault({ kind: "exit", code: outcome.code, program: command.program });
     if (outcome.code !== 0 && platform.length > 0) {
       process.stderr.write(
         `[t3 heavy] This ran on Linux. These failures match the Mac-only list and fail there by nature; run them on this Mac:\n${platform.map((line) => `  ${line}`).join("\n")}\n`,
@@ -1118,10 +1135,28 @@ const runLinuxPart = async (
     process.exit(outcome.code);
   }
   if (outcome.kind === "missing") {
+    fault({ kind: "missing", tool: outcome.tool });
     return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
+  }
+  // A lost link is retried: it's a fault only once this job has used up its attempts.
+  if (linkFailuresOf(dir, id) >= linkAttempts(machine)) {
+    fault(
+      outcome.kind === "dropped"
+        ? { kind: "lost" }
+        : outcome.touched
+          ? { kind: "sync" }
+          : { kind: "unreachable" },
+    );
   }
   endLine(dir, id, outcome);
 };
+
+/** The last line of Linux's output worth showing: not T3's own notes, not blank. */
+const lastLineOf = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .findLast((line) => line !== "" && !line.startsWith("[t3 heavy]")) ?? null;
 
 /** Ends the job's process group: nothing after this part runs until the job requeues the line. */
 const endLine = (dir: string, id: string, outcome: PartOutcome): never => {

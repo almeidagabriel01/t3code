@@ -38,6 +38,8 @@ import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from 
 import {
   deadlineRecord,
   endedRecord,
+  type Fault,
+  faultRecord,
   type HeavyEventRecord,
   parseLog,
   requeueRecord,
@@ -938,6 +940,23 @@ export const finish = (dir: string, id: string, code: number, now = Date.now()) 
       },
       result: undefined,
     }),
+    now,
+  );
+
+/** Logs a Linux environment failure of a job still in the queue, for the problem detector to file. */
+export const recordFault = (dir: string, id: string, fault: Fault, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const entry = doc.entries.find((each) => each.id === id);
+      return {
+        doc:
+          entry === undefined
+            ? doc
+            : { ...doc, events: withRecord(doc.events, faultRecord(entry, fault, now)) },
+        result: undefined,
+      };
+    },
     now,
   );
 

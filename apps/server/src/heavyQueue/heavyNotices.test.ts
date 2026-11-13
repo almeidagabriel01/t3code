@@ -6,6 +6,9 @@ import {
   deadlineRecord,
   endedRecord,
   EVENT_LOG_SIZE,
+  faultOf,
+  faultRecord,
+  type FaultSeen,
   groupNotices,
   type HeavyEventRecord,
   type LinuxView,
@@ -163,6 +166,145 @@ describe("the event log", () => {
       good,
     ]);
     expect(parseLog("nope")).toEqual([]);
+  });
+});
+
+describe("faults T3 records for the problem detector", () => {
+  const job = { command: "vp test run", projectFolder: "/w/app" };
+  const sync = { kind: "sync" } as const;
+  it.each<[string, FaultSeen, string | null, string | null, string | null]>([
+    // [case, what the CLI saw, Linux's last line, reason:cause, error the card shows]
+    [
+      "tool missing in the pre-flight",
+      { kind: "missing", tool: "vp" },
+      null,
+      "command-not-found:vp",
+      "vp: command not found",
+    ],
+    [
+      "exit 127 naming the tool",
+      { kind: "exit", code: 127, program: "bash" },
+      "sh: 1: vp: not found",
+      "command-not-found:vp",
+      "sh: 1: vp: not found",
+    ],
+    [
+      "exit 127 with no line",
+      { kind: "exit", code: 127, program: "pnpm" },
+      null,
+      "command-not-found:pnpm",
+      "pnpm: command not found",
+    ],
+    [
+      "exit 126",
+      { kind: "exit", code: 126, program: "bash" },
+      "bash: ./run.sh: Permission denied",
+      "command-not-found:./run.sh",
+      "bash: ./run.sh: Permission denied",
+    ],
+    [
+      "a test failing is the code's",
+      { kind: "exit", code: 1, program: "vp" },
+      "FAIL src/a.test.ts",
+      null,
+      null,
+    ],
+    [
+      "install raced twice",
+      { kind: "install", package: "electron" },
+      "Error: Electron failed to install correctly",
+      "linux-install:electron",
+      "Error: Electron failed to install correctly",
+    ],
+    [
+      "install with no package named",
+      { kind: "install", package: null },
+      null,
+      "linux-install:node_modules",
+      "Dependency install on Linux failed",
+    ],
+    [
+      "install out of disk",
+      { kind: "install", package: "electron" },
+      "ENOSPC: no space left on device, write",
+      "disk-full:install-no-space",
+      "ENOSPC: no space left on device, write",
+    ],
+    [
+      "sync timed out",
+      sync,
+      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
+      "linux-sync:rsync-timeout",
+      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
+    ],
+    ["sync with no line", sync, null, "linux-sync:unknown", "Linux sync failed"],
+    [
+      "sync out of memory",
+      sync,
+      "fatal: Cannot allocate memory",
+      "out-of-memory:sync-no-memory",
+      "fatal: Cannot allocate memory",
+    ],
+    [
+      "dropped mid-run",
+      { kind: "lost" },
+      "Connection to pc closed by remote host.",
+      "linux-lost:closed",
+      "Connection to pc closed by remote host.",
+    ],
+    [
+      "host name unknown",
+      { kind: "unreachable" },
+      "ssh: Could not resolve hostname pc: nodename nor servname provided",
+      "network:unreachable-dns",
+      "ssh: Could not resolve hostname pc: nodename nor servname provided",
+    ],
+    [
+      "connect timed out",
+      { kind: "unreachable" },
+      "ssh: connect to host pc port 22: Operation timed out",
+      "network:timeout",
+      "ssh: connect to host pc port 22: Operation timed out",
+    ],
+    [
+      "key no longer accepted",
+      { kind: "unreachable" },
+      "dev@pc: Permission denied (publickey).",
+      "sign-in-expired:unreachable-ssh-key",
+      "dev@pc: Permission denied (publickey).",
+    ],
+  ])("%s", (_, seen, line, expected, error) => {
+    const fault = faultOf(seen, line, job);
+    expect(fault === null ? null : `${fault.cause}`).toBe(expected);
+    expect(fault?.error ?? null).toBe(error);
+    if (fault !== null) {
+      expect(fault.cause.startsWith(`${fault.reason}:`)).toBe(true);
+      expect(fault).toMatchObject(job);
+    }
+  });
+
+  it("gives the same cause for the same fault, whatever the numbers or paths", () => {
+    const one = faultOf(
+      sync,
+      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
+      job,
+    );
+    const two = faultOf(sync, "rsync error: timeout in data receive (code 12) at main.c(9)", {
+      command: "vp lint",
+      projectFolder: "/w/other",
+    });
+    expect(two?.cause).toBe(one?.cause);
+  });
+
+  it("keeps the job's thread on the record and raises no toast", () => {
+    const fault = faultOf({ kind: "missing", tool: "vp" }, null, job)!;
+    const logged = faultRecord(linux, fault, NOW);
+    expect(logged).toMatchObject({
+      kind: "t3-fault",
+      reason: "command-not-found",
+      job: { id: "job-1", threadId: "thread-1", runner: "linux" },
+    });
+    expect(titles({ records: [logged] })).toEqual([]);
   });
 });
 

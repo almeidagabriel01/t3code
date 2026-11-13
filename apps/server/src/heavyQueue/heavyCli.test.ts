@@ -379,6 +379,14 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
     });
 
+    /** The faults the job logged for the problem detector, without the per-run fields. */
+    const faults = (dir: string) =>
+      Queue.readDoc(dir).events.flatMap((event) =>
+        event.kind === "t3-fault"
+          ? [{ reason: event.reason, cause: event.cause, command: event.command }]
+          : [],
+      );
+
     it("keeps a job on the Mac when Linux's pre-flight finds its tool missing", async () => {
       const { dir, env } = setup(
         `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
@@ -388,6 +396,9 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run\n");
       expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+      expect(faults(dir)).toEqual([
+        { reason: "command-not-found", cause: "command-not-found:vp", command: "vp test run" },
+      ]);
     });
 
     it.each([1, 2, 3])(
@@ -436,6 +447,9 @@ describe("t3 heavy", () => {
         expect(
           run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
         ).toBe(fails === 2);
+        expect(faults(dir).map((fault) => fault.cause)).toEqual(
+          fails === 2 ? ["linux-install:electron"] : [],
+        );
       },
     );
 
