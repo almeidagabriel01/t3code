@@ -123,6 +123,7 @@ const reactTests = [
   "src/features/assistants/ProjectAssistantFaces.test.tsx",
   "src/features/assistants/AssistantTaskChip.test.tsx",
   "src/features/home/useHomeSectionPreferences.test.tsx",
+  "src/features/threads/use-composer-command-menu.test.ts",
   "src/features/home/HomeNeedsYouSection.test.tsx",
   "src/features/home/UnreadActionsMenu.test.tsx",
   "src/features/decisions/DecisionCard.test.tsx",
