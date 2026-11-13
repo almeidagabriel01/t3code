@@ -10,6 +10,7 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { AssistantAutonomy, DEFAULT_ASSISTANT_AUTONOMY } from "./autonomy.ts";
+import { isMcpServerUrl, McpServerName } from "./mcpServers.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { RuntimeMode } from "./providerPolicy.ts";
 import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
@@ -203,6 +204,9 @@ export const AssistantMcpServerInput = Schema.Struct({
 });
 export type AssistantMcpServerInput = typeof AssistantMcpServerInput.Type;
 
+/** The same rule as T3's global servers: secret headers never cross a network in the clear. */
+const MCP_URL_PROBLEM = "needs an https URL (http only on localhost), without ? or #.";
+
 /** The first reason a connector list is unusable, or null. Clients and the server share it. */
 export function assistantMcpServersProblem(
   servers: ReadonlyArray<AssistantMcpServerInput>,
@@ -216,14 +220,7 @@ export function assistantMcpServersProblem(
     if (names.has(server.name)) return `Two connectors are named "${server.name}".`;
     names.add(server.name);
     if (server.transport === "http") {
-      let ok = false;
-      try {
-        const protocol = new URL(server.url ?? "").protocol;
-        ok = protocol === "http:" || protocol === "https:";
-      } catch {
-        // not a URL
-      }
-      if (!ok) return `"${server.name}" needs an http or https URL.`;
+      if (!isMcpServerUrl(server.url ?? "")) return `"${server.name}" ${MCP_URL_PROBLEM}`;
     } else if ((server.command ?? "").trim() === "") {
       return `"${server.name}" needs a command.`;
     }
@@ -234,6 +231,14 @@ export function assistantMcpServersProblem(
   }
   return null;
 }
+
+/** Which T3 MCP servers (integrations and hand-made ones) its sessions get. */
+export const AssistantIntegrations = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("all") }),
+  Schema.Struct({ mode: Schema.Literal("selected"), names: Schema.Array(McpServerName) }),
+]);
+export type AssistantIntegrations = typeof AssistantIntegrations.Type;
+export const DEFAULT_ASSISTANT_INTEGRATIONS: AssistantIntegrations = { mode: "all" };
 
 export const Assistant = Schema.Struct({
   id: AssistantId,
@@ -268,6 +273,10 @@ export const Assistant = Schema.Struct({
   scope: AssistantScope.pipe(Schema.withDecodingDefault(Effect.succeed("all" as const))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
   mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Only the user changes it (agents read it); a name that is no longer connected stays listed. */
+  integrations: AssistantIntegrations.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ASSISTANT_INTEGRATIONS)),
+  ),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -394,6 +403,7 @@ export const AssistantsCreateInput = Schema.Struct({
   /** A robot only: an image goes through `assistants.setAvatarImage`. */
   avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
+  integrations: Schema.optional(AssistantIntegrations),
   role: Schema.optional(AssistantRole),
   /** Brings Jarvis back (recreated or unarchived) and ignores every other field. */
   restoreDefault: Schema.optional(Schema.Boolean),
@@ -438,6 +448,7 @@ export const AssistantsUpdateInput = Schema.Struct({
   avatar: Schema.optional(Schema.NullOr(AssistantRobotAvatar)),
   /** Replaces the whole list; leave out to keep it. */
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
+  integrations: Schema.optional(AssistantIntegrations),
   role: Schema.optional(AssistantRole),
   archived: Schema.optional(Schema.Boolean),
 });

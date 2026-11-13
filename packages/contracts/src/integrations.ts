@@ -8,6 +8,24 @@ export const INTEGRATIONS_CALLBACK_PATH = "/oauth/integrations/callback";
 /** Path on the client's loopback listener (desktop) or the address the user pastes back. */
 export const INTEGRATIONS_LOOPBACK_CALLBACK_PATH = "/integrations/callback";
 
+/** Where providers reach a connected integration on T3's MCP server: `<prefix>/<name>`. */
+export const INTEGRATIONS_PROXY_PATH_PREFIX = "/mcp/integrations";
+
+/**
+ * Drivers whose adapters deliver proxied integrations: HTTP where the agent takes it, else the
+ * stdio bridge. OpenCode, Pi and Muse read no thread connectors, so integrations never reach them.
+ */
+export const INTEGRATION_PROVIDER_DRIVERS: ReadonlyArray<string> = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "kiro",
+  "antigravity",
+  "acpRegistry",
+  "fx",
+];
+
 const HttpsUrl = Schema.String.check(Schema.isPattern(/^https:\/\/[^\s]+$/));
 const ClientGroup = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,39}$/));
 const TokenFormat = Schema.String.check(Schema.isPattern(/\{token\}/));

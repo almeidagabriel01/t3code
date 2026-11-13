@@ -63,6 +63,7 @@ const assistant = (id: string, name: string): Assistant => ({
   avatar: null,
   scope: "all",
   mcpServers: [],
+  integrations: { mode: "all" },
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",

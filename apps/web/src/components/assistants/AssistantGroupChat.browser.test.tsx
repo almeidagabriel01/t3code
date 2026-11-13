@@ -109,6 +109,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
+  integrations: { mode: "all" },
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: WHEN,

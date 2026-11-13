@@ -582,7 +582,9 @@ describe("assistant connectors", () => {
     type("Header 1", "Authorization");
     type("Header 1 value", "Bearer abc");
     pick("Add");
-    expect(container.textContent).toContain('"docs" needs an http or https URL.');
+    expect(container.textContent).toContain(
+      '"docs" needs an https URL (http only on localhost), without ? or #.',
+    );
     type("URL", "https://docs.example.test/mcp");
     pick("Add");
     expect(container.textContent).toContain("docs");

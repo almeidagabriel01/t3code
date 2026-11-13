@@ -89,6 +89,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
+  integrations: { mode: "all" },
   autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
@@ -733,7 +734,9 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   await userEvent.fill(page.getByLabelText("Header 1", { exact: true }), "Authorization");
   await userEvent.fill(page.getByLabelText("Header 1 value"), "Bearer abc");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
-  await expect.element(page.getByText('"docs" needs an http or https URL.')).toBeVisible();
+  await expect
+    .element(page.getByText('"docs" needs an https URL (http only on localhost), without ? or #.'))
+    .toBeVisible();
   await userEvent.fill(page.getByLabelText("URL"), "https://docs.example.test/mcp");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
   await expect.element(page.getByText("docs", { exact: true })).toBeVisible();
