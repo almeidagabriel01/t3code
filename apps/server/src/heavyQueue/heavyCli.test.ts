@@ -1098,4 +1098,31 @@ describe("t3 heavy", () => {
     expect(parseHeavyArgs(["--queue-dir", "/q", "--name", "  ", "--", "vp"]).name).toBeUndefined();
     expect(parseHeavyArgs(["vp"]).dir).toBe(Queue.defaultQueueDir());
   });
+
+  it("defaults a checkout's own T3 to that checkout's queue and an installed T3 to the machine's", () => {
+    const root = tempDir();
+    const worktree = NodePath.join(root, "worktree");
+    const main = NodePath.join(root, "main");
+    NodeFS.mkdirSync(worktree);
+    NodeFS.writeFileSync(NodePath.join(worktree, ".git"), "gitdir: /repo/.git/worktrees/w\n");
+    NodeFS.mkdirSync(NodePath.join(main, ".git"), { recursive: true });
+    const live = NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
+    const worktreeSource = NodePath.join(worktree, "apps", "server", "src", "bin.ts");
+    const rows: ReadonlyArray<[NodeJS.ProcessEnv, string | undefined, string]> = [
+      [{}, worktreeSource, NodePath.join(worktree, ".t3", "heavy-queue-dev")],
+      [{}, `${main}/apps/server/dist/bin.mjs`, NodePath.join(main, ".t3", "heavy-queue-dev")],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, worktreeSource, "/q"],
+      [{ T3CODE_HEAVY_QUEUE_DIR: " " }, worktreeSource, `${worktree}/.t3/heavy-queue-dev`],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, undefined, "/q"],
+      [{}, "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs", live],
+      [{}, `${main}/node_modules/t3/dist/bin.mjs`, live],
+      [{}, `${main}/node_modules/vitest/vitest.mjs`, live],
+      [{}, `${root}/unpacked/apps/server/dist/bin.mjs`, live],
+      [{}, "/usr/local/bin/t3", live],
+      [{}, undefined, live],
+    ];
+    for (const [environment, entry, dir] of rows) {
+      expect(Queue.defaultQueueDir(environment, entry), entry).toBe(dir);
+    }
+  });
 });
