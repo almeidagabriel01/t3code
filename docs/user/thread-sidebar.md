@@ -356,7 +356,9 @@ Drag a tab, or a thread from the sidebar, over the thread area and keep holding:
 where it will go. Drop it on an edge to open a new group on that side, in the middle to add it to
 that group, or between tabs to place it there. A thread's file tabs move with it and always stay
 beside it. A thread from another project splits the same way and stays in that layout until you
-close its tab. Each group shows its own thread with its own composer; the thread you picked last is
+close its tab. Picking another thread of that project, from the sidebar or anywhere else, opens it
+in the group showing that project, so the split stays; closing it returns that group to the tab it
+showed before. **Reopen Closed Tab** puts a thread tab back in the layout and group it closed from. Each group shows its own thread with its own composer; the thread you picked last is
 the full one, with the header, right panel and terminal.
 Clicking a group's title makes its thread the full one. Drag the line between groups to resize
 them, or double-click it to even them. Dragging a group's last tab elsewhere, or closing it,

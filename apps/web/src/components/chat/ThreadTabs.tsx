@@ -32,15 +32,16 @@ import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   clampSplitRatio,
   closeThreadTab,
+  commitRouteTab,
   DEFAULT_SPLIT_RATIO,
   applyThreadTabDrop,
   focusThreadTabGroup,
   groupOfTab,
   layoutGeometry,
   type LayoutRect,
-  reconcileRouteTab,
   setThreadSplitRatio,
   threadTabBlock,
+  threadTabPlacement,
   threadTabsWorkspaceKey,
   type ThreadTabGroup,
   type ThreadTabLayout,
@@ -69,7 +70,7 @@ import {
   threadTabProps,
   threadTabStripProps,
 } from "./threadContextDrag";
-import { threadTabsProjectKey } from "./threadTabsProject";
+import { threadKeyProject, threadTabsProjectKey } from "./threadTabsProject";
 
 /** Below two groups of this width side by side, only the routed thread's group shows. */
 const MIN_TAB_GROUP_WIDTH = 320;
@@ -186,18 +187,20 @@ export function useThreadTabsLayout(input: {
   const routeKey = scopedThreadKey(input.routeThreadRef);
   const ownKey = input.enabled ? threadTabsProjectKey(routeShell) : null;
   const projectKey = useThreadTabsStore((state) =>
-    threadTabsWorkspaceKey(state.byProject, routeKey, ownKey),
+    threadTabsWorkspaceKey(state, routeKey, ownKey, threadKeyProject),
+  );
+  const placedGroupId = useThreadTabsStore(
+    (state) => threadTabPlacement(state, routeKey, ownKey, threadKeyProject)?.groupId,
   );
   const stored = useThreadTabsStore((state) =>
     projectKey === null ? undefined : state.byProject[projectKey],
   );
   // Until the commit below lands, render the route as already opened.
-  const workspace = projectKey === null ? null : withRouteTab(stored, routeKey);
+  const workspace = projectKey === null ? null : withRouteTab(stored, routeKey, placedGroupId);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- commits a route change into the persisted tab layout (open or focus its tab)
   useEffect(() => {
-    if (projectKey !== null)
-      updateThreadTabs(projectKey, (current) => reconcileRouteTab(current, routeKey));
-  }, [projectKey, routeKey]);
+    if (projectKey !== null) commitRouteTab(routeKey, ownKey, threadKeyProject);
+  }, [ownKey, projectKey, routeKey]);
 
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [fits, setFits] = useState(true);
@@ -213,7 +216,17 @@ export function useThreadTabsLayout(input: {
   const closeTab = (tabKey: string) => {
     if (projectKey === null) return;
     const threadRef = parseScopedThreadKey(tabKey);
-    if (threadRef) useClosedViewStore.getState().remember({ kind: "thread-tab", threadRef });
+    const groupId = groupOfTab(
+      withRouteTab(useThreadTabsStore.getState().byProject[projectKey], routeKey),
+      tabKey,
+    )?.id;
+    if (threadRef) {
+      useClosedViewStore.getState().remember({
+        kind: "thread-tab",
+        threadRef,
+        ...(groupId ? { layoutKey: projectKey, groupId } : {}),
+      });
+    }
     let navigateTo: string | null | undefined;
     updateThreadTabs(projectKey, (current) => {
       if (!current) return current;

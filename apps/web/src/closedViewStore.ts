@@ -21,8 +21,8 @@ export type ClosedView =
       surface: Exclude<RightPanelSurface, { kind: "terminal" }>;
     }
   | { kind: "browser"; threadRef: ScopedThreadRef; snapshot: PreviewSessionSnapshot }
-  /** A thread tab; it reopens with the file tabs the thread still holds. */
-  | { kind: "thread-tab"; threadRef: ScopedThreadRef };
+  /** A thread tab; it reopens with the file tabs the thread still holds, in the layout it left. */
+  | { kind: "thread-tab"; threadRef: ScopedThreadRef; layoutKey?: string; groupId?: string };
 
 export type ClosedViewEntry = ClosedView & { id: string };
 

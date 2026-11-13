@@ -77,8 +77,15 @@ async function setup(
   state.deleted = new Set(options.deleted);
   state.working = new Set(options.working);
   state.projects = new Map(Object.entries(options.projects ?? {}));
-  useThreadTabsStore.setState({ byProject: workspace ? { [PROJECT]: workspace } : {} });
-  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
+  useThreadTabsStore.setState({
+    byProject: workspace ? { [PROJECT]: workspace } : {},
+    visibleKey: null,
+  });
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    userActionRevisionByThreadKey: {},
+    panelOpen: false,
+  });
   useClosedViewStore.setState({ entries: [] });
 }
 const panels = () => useRightPanelStore.getState();
@@ -397,7 +404,7 @@ describe("dragging threads onto the thread area", () => {
     expect(useThreadTabsStore.getState().byProject["env:q"]).toBeUndefined();
     expect(workspace()?.focusedGroupId).toBe(workspace()?.groups[1]?.id);
 
-    // A project-q thread with no tab anywhere opens in project q's own tabs, leaving the split.
+    // A project-q thread with no tab anywhere joins the split's q group, and the split stays.
     await screen.rerender(
       <>
         <Harness route="z" />
@@ -405,12 +412,47 @@ describe("dragging threads onto the thread area", () => {
       </>,
     );
     await vi.waitFor(() =>
-      expect(useThreadTabsStore.getState().byProject["env:q"]?.groups).toEqual([
-        { id: "main", tabs: ["env:z"], active: "env:z" },
+      expect(workspace()?.groups.map((group) => group.tabs)).toEqual([
+        ["env:a"],
+        ["env:x", "env:z"],
       ]),
     );
-    expect(document.querySelectorAll("[data-thread-group]")).toHaveLength(1);
-    expect(workspace()?.groups.map((group) => group.tabs)).toEqual([["env:a"], ["env:x"]]);
+    expect(document.querySelectorAll("[data-thread-group]")).toHaveLength(2);
+    expect(useThreadTabsStore.getState().byProject["env:q"]).toBeUndefined();
+
+    // Closing it hands the group back to the tab it showed before, and remembers where it was.
+    const qGroup = workspace()?.groups[1]?.id;
+    await userEvent.click(screen.getByRole("button", { name: "Cmd+W" }));
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/x"));
+    expect(workspace()?.groups[1]).toMatchObject({ tabs: ["env:x"], active: "env:x" });
+    expect(useClosedViewStore.getState().entries[0]).toMatchObject({
+      kind: "thread-tab",
+      threadRef: ref("z"),
+      layoutKey: PROJECT,
+      groupId: qGroup,
+    });
+  });
+
+  it("opens a pick in the split a reload brought back, not in its own project's tabs", async () => {
+    await setup(undefined, { projects: { c: "q", z: "q" } });
+    localStorage.setItem(
+      "t3code:thread-tabs:v1",
+      JSON.stringify({
+        state: { byProject: { [PROJECT]: sideBySide() }, visibleKey: PROJECT },
+        version: 1,
+      }),
+    );
+    await useThreadTabsStore.persist.rehydrate();
+    expect(useThreadTabsStore.getState().visibleKey).toBe(PROJECT);
+    await using _screen = await render(<Harness route="z" />, { router: "/env/z" });
+    await vi.waitFor(() =>
+      expect(workspace()?.groups.map((group) => group.tabs)).toEqual([
+        ["env:a", "env:b"],
+        ["env:c", "env:z"],
+      ]),
+    );
+    expect(document.querySelectorAll("[data-thread-group]")).toHaveLength(2);
+    expect(useThreadTabsStore.getState().byProject["env:q"]).toBeUndefined();
   });
 
   it("splits with a thread from another environment", async () => {

@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { isAssistantThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
 import { readThreadShell } from "../../state/entities";
@@ -16,12 +16,18 @@ export function threadTabsProjectKey(
   return `${shell.environmentId}:${shell.projectId}`;
 }
 
-/** The workspace the thread's tab lives in; see `threadTabsWorkspaceKey`. */
+export function threadKeyProject(threadKey: string): string | null {
+  const ref = parseScopedThreadKey(threadKey);
+  return threadTabsProjectKey(ref ? readThreadShell(ref) : null);
+}
+
+/** The workspace the thread's tab lives in, or would open in; see `threadTabPlacement`. */
 export function readThreadTabsProjectKey(ref: ScopedThreadRef | null): string | null {
   if (ref === null) return null;
   return threadTabsWorkspaceKey(
-    useThreadTabsStore.getState().byProject,
+    useThreadTabsStore.getState(),
     scopedThreadKey(ref),
     threadTabsProjectKey(readThreadShell(ref)),
+    threadKeyProject,
   );
 }
