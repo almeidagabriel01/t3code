@@ -25,12 +25,13 @@ Ordinary coding tasks need no T3 tools.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Do not repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
   `### Heavy work and an overloaded machine
 
-Before heavy work (test suites, builds, bundling, simulators or emulators, Docker, e2e, large installs, repo-wide checks), call \`t3_heavy\` with action \`status\`.
+Before heavy work (test suites, builds, bundling, simulators or emulators, Docker, e2e, large installs, repo-wide checks), call \`t3_heavy\` with action \`status\` and \`commandLine\` set to the exact line you will run. \`askUser\` answers only for the machine in \`runsOn\` (this Mac or Linux).
 
-- \`askUser\` false: run it.
-- \`askUser\` true: ask the user before running it, with exactly two choices: run now anyway, or queue it. Use your native question tool when the user is present, \`t3_decision\` when nobody is watching. Never choose for them.
-- Run now: run it directly (\`device_open\` with \`skipHeavyQueue: true\`).
-- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it. Use \`t3_heavy\` action \`promote\` only when the user explicitly asks you to.`,
+- \`askUser\` false: run it as \`<command> <cmd>\`, where \`command\` comes from \`t3_heavy\`, so it runs on that machine.
+- \`askUser\` true: ask the user before running it, with exactly two choices: run now anyway, or queue it. Name the \`runsOn\` machine and its \`reason\`. Use your native question tool when the user is present, \`t3_decision\` when nobody is watching. Never choose for them.
+- Run now: \`<command> <cmd>\` with \`--now\` before the final \`--\`; it starts at once on that machine. Never run it bare. A device: \`device_open\` with \`skipHeavyQueue: true\`.
+- Queue: do the light work first and leave heavy steps for the end. Run each heavy command as \`<command> <cmd>\` in the background, and wait on it; a queued command can wait longer than a foreground shell timeout. \`device_open\` waits its turn on its own. Never skip ahead of others in the queue; only the user reorders it. Use \`t3_heavy\` action \`promote\` only when the user explicitly asks you to.
+- Needs a tool Linux lacks (such as Java for an emulator), or could not start on Linux (exit 127): add \`--runner mac\` before the final \`--\`, and suggest the user add it to Always on this Mac in the Runner settings.`,
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
