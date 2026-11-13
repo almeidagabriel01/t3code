@@ -14,7 +14,7 @@ import { heavyStatus } from "./model.ts";
 import { HeavyToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(HeavyToolkit, {
-  t3_heavy: McpToolAccess.reads(({ action, id, commandLine }) =>
+  t3_heavy: McpToolAccess.reads(({ action, id, to, commandLine }) =>
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();
       const queue = yield* HeavyQueue.HeavyQueue;
@@ -31,6 +31,25 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
             id,
             `Moved up by an agent (thread ${scope.thread?.threadId ?? "unknown"}) at the user's request`,
           )
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+            ),
+          );
+      }
+      let moved: ReadonlyArray<string> | undefined;
+      if (action === "move_all") {
+        yield* McpToolAccess.refuseReadOnlyClient;
+        if (to === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "move_all: send every waiting job that can run on `to` (mac or linux) there. Running jobs stay.",
+          });
+        }
+        moved = yield* queue
+          .routeAll(to)
           .pipe(
             Effect.mapError(
               (error) =>
@@ -58,7 +77,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
       const shells = yield* threads
         .listProjectThreads({ projectId: undefined, includeSubagents: true })
         .pipe(Effect.mapError(unavailable));
-      return heavyStatus({
+      const status = heavyStatus({
         entries: state.entries,
         maxRunning: state.maxRunning,
         enabled: state.enabled,
@@ -77,6 +96,7 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
         commands: running.commands,
         destination,
       });
+      return moved === undefined ? status : { ...status, moved };
     }),
   ),
 });

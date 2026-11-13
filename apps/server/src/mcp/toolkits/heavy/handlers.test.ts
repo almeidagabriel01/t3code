@@ -309,8 +309,15 @@ const promoted: Array<readonly [string, string | undefined]> = [];
 
 const probed: Array<readonly [string, string]> = [];
 
+const movedAll: Array<"mac" | "linux"> = [];
+
 const callTool = (
-  params: { action: "status" | "promote"; id?: string; commandLine?: string },
+  params: {
+    action: "status" | "promote" | "move_all";
+    id?: string;
+    to?: "mac" | "linux";
+    commandLine?: string;
+  },
   access?: "read-only",
 ) =>
   Effect.gen(function* () {
@@ -370,6 +377,11 @@ const callTool = (
             id === "gone"
               ? Effect.fail(new HeavyQueueError({ reason: "not-found", message: "No such entry." }))
               : Effect.sync(() => void promoted.push([id, note])),
+          routeAll: (runner) =>
+            Effect.sync(() => {
+              movedAll.push(runner);
+              return ["w"];
+            }),
         }),
         Layer.mock(HeavyCommands.HeavyCommands)({
           list: Effect.succeed({
@@ -465,6 +477,21 @@ describe("t3_heavy", () => {
       expect(gone).toMatchObject({ code: "invalid_request", message: "No such entry." });
       yield* callTool({ action: "promote", id: "w" }, "read-only");
       expect(promoted).toEqual([]);
+    }),
+  );
+
+  it.effect("move_all sends the waiters to `to` and answers with the moved ids", () =>
+    Effect.gen(function* () {
+      movedAll.length = 0;
+      const chunk = yield* callTool({ action: "move_all", to: "linux" });
+      expect(movedAll).toEqual(["linux"]);
+      expect(chunk.at(-1)!.result).toMatchObject({ moved: ["w"], yours: [{ id: "w" }] });
+      const noTarget = yield* callTool({ action: "move_all" });
+      expect(noTarget.at(-1)!.encodedResult).toMatchObject({ code: "invalid_request" });
+      yield* callTool({ action: "move_all", to: "mac" }, "read-only");
+      expect(movedAll).toEqual(["linux"]);
+      // Status alone moves nothing and says nothing about moves.
+      expect((yield* callTool({ action: "status" })).at(-1)!.result).not.toHaveProperty("moved");
     }),
   );
 });
