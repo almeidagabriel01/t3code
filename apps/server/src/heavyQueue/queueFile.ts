@@ -33,7 +33,7 @@ import {
   workersFor,
 } from "./admission.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
-import { interceptBashCall, lineParts } from "./heavyHook.ts";
+import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from "./heavyHook.ts";
 import {
   deadlineRecord,
   endedRecord,
@@ -1156,6 +1156,20 @@ export const confirmStopped = (dir: string, id: string) =>
     result: undefined,
   }));
 
+/** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
+export const scriptReader =
+  (cwd: string, home = NodeOS.homedir()): ReadScript =>
+  (word) => {
+    const path = NodePath.resolve(cwd, word.replace(/^~(?=\/|$)/, home));
+    try {
+      const stat = NodeFS.statSync(path);
+      if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) return null;
+      return NodeFS.readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  };
+
 /**
  * The one gate every Bash hook goes through (the `t3 heavy hook` CLI and the in-process Claude
  * callback): with the queue and the Runner both off for the call's folder, nothing is touched.
@@ -1173,7 +1187,13 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  const answer = interceptBashCall(hookInput, prefix, modeFor(doc, at), environment);
+  const answer = interceptBashCall(
+    hookInput,
+    prefix,
+    modeFor(doc, at),
+    environment,
+    scriptReader(at),
+  );
   return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
     ? null
     : answer;

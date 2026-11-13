@@ -20,7 +20,9 @@ import {
   lineParts,
   readLine,
   rewriteLine,
+  scriptOf,
   shellQuote,
+  UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
@@ -38,6 +40,7 @@ import {
   recordHealth,
   recordSampleIfStale,
   requeue,
+  scriptReader,
   setProgress,
   setQos,
   startFolder,
@@ -100,8 +103,16 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let priority: "low" | "normal" | "high" | undefined;
   let where: "mac" | "linux" | "automatic" | undefined;
   let requestId: string | undefined;
+  let routeReason: string | undefined;
   let now = false;
-  const options = ["--queue-dir", "--name", "--priority", "--runner", "--request-id"];
+  const options = [
+    "--queue-dir",
+    "--name",
+    "--priority",
+    "--runner",
+    "--request-id",
+    "--route-reason",
+  ];
   while (rest[0] === "--now" || (rest[1] !== undefined && options.includes(rest[0]!))) {
     if (rest[0] === "--now" || rest[1] === undefined) {
       now = true;
@@ -114,6 +125,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     } else if (rest[0] === "--runner") {
       if (rest[1] === "mac" || rest[1] === "linux" || rest[1] === "automatic") where = rest[1];
     } else if (rest[0] === "--request-id") requestId = rest[1].trim() || undefined;
+    else if (rest[0] === "--route-reason") routeReason = rest[1].trim().slice(0, 200) || undefined;
     else dir = rest[1];
     rest = rest.slice(2);
   }
@@ -125,6 +137,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     where,
     now,
     ...(requestId === undefined ? {} : { requestId }),
+    ...(routeReason === undefined ? {} : { routeReason }),
     program: rest[0],
     args: rest.slice(1),
   };
@@ -582,7 +595,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runLinuxPart(part.dir, part.program, part.args);
     return;
   }
-  const { dir, name, priority, where, now, requestId, program, args } = parseHeavyArgs(argv);
+  const { dir, name, priority, where, now, requestId, routeReason, program, args } =
+    parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
       "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
@@ -610,6 +624,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
   const agent = threadId !== null || process.env.CLAUDECODE === "1";
   const label = labelOf(launch.program, launch.args);
   const line = jobLine(launch.program, launch.args);
+  // The scripts it runs travel with the job: the Runner judges them by their text.
+  const scripts: Record<string, string | null> = {};
+  const readScript = scriptReader(launch.cwd);
+  readLine(line, (word) => (scripts[word] = readScript(word)));
   const entry: QueuedEntry = {
     id,
     pid: process.pid,
@@ -617,6 +635,8 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     label,
     ...(line === label ? {} : { line }),
     ...(name === undefined ? {} : { name }),
+    ...(Object.keys(scripts).length === 0 ? {} : { scripts }),
+    ...(routeReason === undefined ? {} : { routeReason }),
     cwd: process.cwd(),
     createdAt: new Date().toISOString(),
     startedAt: null,
@@ -969,13 +989,24 @@ const runLinuxPart = async (
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   const env = args.includes("check:changed") ? changedInputs(args, cwd, root) : [];
   if (env === null) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
-  const tie = args.map((arg) => outsideTie(arg, cwd, root)).find((why) => why !== null);
+  // A script outside the checkout goes as its text: its path does not exist in the Linux copy.
+  const script = scriptOf([program, ...args], 0, scriptReader(cwd));
+  const tie = args
+    .filter((arg) => arg !== script?.word)
+    .map((arg) => outsideTie(arg, cwd, root))
+    .find((why) => why !== null);
   if (tie !== undefined && tie !== null) return endLine(dir, id, { kind: "mac", reason: tie });
+  let command = { program, args };
+  if (script !== null && outsideTie(NodePath.resolve(cwd, script.word), cwd, root) !== null) {
+    if (script.body === null) return endLine(dir, id, { kind: "mac", reason: UNREADABLE_SCRIPT });
+    const rest = script.word === program ? args : args.slice(args.indexOf(script.word) + 1);
+    command = { program: "bash", args: ["-c", script.body, script.word, ...rest] };
+  }
   let recorded: string | null = null;
   const run = startLinuxRun({
     remoto,
-    program,
-    args,
+    program: command.program,
+    args: command.args,
     cwd,
     root,
     environment: process.env,

@@ -403,6 +403,18 @@ describe("t3 heavy", () => {
       },
     );
 
+    it("sends a script outside the checkout to Linux as its text", async () => {
+      const { dir, env } = setup(echoArgs);
+      const scratch = tempDir();
+      const path = NodePath.join(scratch, "verify.sh");
+      NodeFS.writeFileSync(path, "vp test run");
+      const run = heavy(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(
+        `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
+      );
+    });
+
     it("judges the whole line, not the label cut short for the row", async () => {
       const { dir, env } = setup(echoArgs);
       const line = `vp test run ${"a".repeat(200)} /etc/hosts`;

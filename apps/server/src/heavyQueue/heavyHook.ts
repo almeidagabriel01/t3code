@@ -182,6 +182,11 @@ const PROGRAMS = [
   "make",
   "just",
   "remoto",
+  // Scripts: the queue reads them (`bash x.sh`, `./verify`).
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
 ];
 
 /**
@@ -192,7 +197,10 @@ const HEAVY_PREFILTER = STARTS.flatMap((start) => [
   ...PROGRAMS.map((program) => `*${start}${program}${END}*`),
   `*${start}git${END}*commit*`,
   `*${start}node${END}*--test*`,
-]).join("|");
+  `*${start}./*`,
+])
+  .concat([`*.sh${END}*`, "*.sh"])
+  .join("|");
 
 /**
  * The `sh` entry Claude Code runs for sessions outside T3. Light commands answer here without
@@ -234,7 +242,41 @@ export interface Part {
   readonly queued: boolean;
   /** The heavy part inside a nested `sh -c '<line>'`, which makes this part heavy too. */
   readonly nested: Part | null;
+  /** The shell script it runs, by its path word, and its text (null when it couldn't be read). */
+  readonly script: { readonly word: string; readonly body: string | null } | null;
 }
+
+/** A script's text, or null when it is missing, unreadable or over `SCRIPT_MAX_BYTES`. */
+export type ReadScript = (word: string) => string | null;
+export const SCRIPT_MAX_BYTES = 64 * 1024;
+export const UNREADABLE_SCRIPT = "Couldn't read this script";
+const SHEBANG = /^#!\s*(\S*\/)?(env\s+)?(sh|bash|zsh|dash)(\s|$)/;
+
+/** The path word of the script a command runs: `bash x.sh`, `./x.sh`, or any path (`./verify`). */
+export const scriptWord = (values: ReadonlyArray<string>, at: number): string | null => {
+  const program = values[at];
+  if (program === undefined || program === "") return null;
+  if (SHELLS.has(base(program))) {
+    const rest = values.slice(at + 1);
+    if (rest.some((value) => /^-[a-z]*[cs][a-z]*$/.test(value))) return null;
+    return rest.find((value) => !value.startsWith("-")) ?? null;
+  }
+  return program.endsWith(".sh") || program.includes("/") ? program : null;
+};
+
+/** What the script word names: a script for sure (`.sh`, run by a shell) or by its shebang. */
+export const scriptOf = (
+  values: ReadonlyArray<string>,
+  at: number,
+  read: ReadScript | undefined,
+) => {
+  const word = read === undefined ? null : scriptWord(values, at);
+  if (word === null) return null;
+  const body = read!(word);
+  const sure = SHELLS.has(base(values[at]!)) || word.endsWith(".sh");
+  if (body !== null && (sure || SHEBANG.test(body))) return { word, body };
+  return sure && body === null ? { word, body: null } : null;
+};
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
@@ -256,7 +298,7 @@ const isHeavyCall = (values: ReadonlyArray<string>) => {
   );
 };
 
-const partOf = (command: Command): Part => {
+const partOf = (command: Command, read?: ReadScript): Part => {
   const values = command.words.map((word) => word.value);
   let remoteAt = programAt(values, 0, true);
   let remoto: Word | null = null;
@@ -266,6 +308,11 @@ const partOf = (command: Command): Part => {
   }
   const { at, program, words, flags } = wordsAt(values, remoteAt);
   const nested = nestedHeavy(program, values, at);
+  const script = scriptOf(values, at, read);
+  // A script's own scripts are not followed: one level is what an agent's scratch script needs.
+  const unreadable = script !== null && script.body === null;
+  const scriptHeavy =
+    script?.body != null && readLine(script.body).parts.some((part) => part.heavy);
   return {
     command,
     values,
@@ -274,21 +321,29 @@ const partOf = (command: Command): Part => {
     program,
     words,
     flags,
-    heavy: nested !== null || (program !== "" && heavyWords(program, words, flags)),
+    heavy:
+      nested !== null ||
+      unreadable ||
+      scriptHeavy ||
+      (program !== "" && heavyWords(program, words, flags)),
     remoto,
     queued: isHeavyCall(values.slice(at)),
     nested,
+    script,
   };
 };
 
 /** Every simple command of a line in source order, and why it cannot be followed exactly. */
 export const readLine = (
   line: string,
+  read?: ReadScript,
 ): { readonly unsafe: string | null; readonly parts: Part[] } => {
   const { commands, unsafe } = parseLine(line);
   return {
     unsafe,
-    parts: commands.map(partOf).toSorted((a, b) => a.command.start - b.command.start),
+    parts: commands
+      .map((command) => partOf(command, read))
+      .toSorted((a, b) => a.command.start - b.command.start),
   };
 };
 
@@ -343,13 +398,14 @@ export const commitOnly = (line: string) => {
 };
 
 /** Every part of a shell command line that is heavy work, in order. */
-const heavySegments = (command: string): ReadonlyArray<string> =>
-  readLine(command)
+const heavySegments = (command: string, read?: ReadScript): ReadonlyArray<string> =>
+  readLine(command, read)
     .parts.filter((part) => part.heavy)
     .map((part) => command.slice(part.command.start, part.command.end).trim());
 
 /** The first part of a shell command line that is heavy work, or null when none is. */
-export const heavySegment = (command: string): string | null => heavySegments(command)[0] ?? null;
+export const heavySegment = (command: string, read?: ReadScript): string | null =>
+  heavySegments(command, read)[0] ?? null;
 
 /**
  * The line runs `t3 heavy` itself (the prefix agents copy from `t3_heavy` status) or `remoto`,
@@ -476,6 +532,8 @@ export const queueBashCall = (
   options: {
     /** The Runner is on: an agent's `remoto <cmd>` is queued too, and `t3 heavy` sends it to Linux once. */
     readonly runner?: boolean;
+    /** Reads a script the line runs, from the folder the line starts in. */
+    readonly readScript?: ReadScript;
   } = {},
 ) => {
   if (environment[HEAVY_JOB_ENV] === "1" || !isRecord(hookInput)) return null;
@@ -487,9 +545,13 @@ export const queueBashCall = (
   const remoto = options.runner === true && parts.remoto;
   if (!remoto && isQueued(command)) return null;
   const segment = remoto
-    ? (heavySegment(parts.command) ?? parts.command.trim())
-    : heavySegment(command);
+    ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
+    : heavySegment(command, options.readScript);
   if (segment === null) return null;
+  // A script it couldn't read may be heavy: it waits on this Mac, saying why.
+  const unreadable = readLine(segment, options.readScript).parts.some(
+    (part) => part.script !== null && part.script.body === null,
+  );
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
   // A repeat of the same call attaches to its job instead of running it twice.
   const request =
@@ -502,7 +564,7 @@ export const queueBashCall = (
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request}${unreadable ? ` --runner mac --route-reason ${shellQuote(UNREADABLE_SCRIPT)}` : ""} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}
@@ -530,9 +592,13 @@ export const interceptBashCall = (
   queuePrefix: string,
   mode: { readonly enabled: boolean; readonly runner?: boolean },
   environment: Readonly<Record<string, string | undefined>> = {},
+  readScript?: ReadScript,
 ) =>
   heavyRoute(mode) === "direct"
     ? null
-    : queueBashCall(hookInput, queuePrefix, environment, { runner: mode.runner === true });
+    : queueBashCall(hookInput, queuePrefix, environment, {
+        runner: mode.runner === true,
+        ...(readScript === undefined ? {} : { readScript }),
+      });
 
 export type BashHook = (hookInput: unknown) => ReturnType<typeof queueBashCall>;

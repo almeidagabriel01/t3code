@@ -662,6 +662,35 @@ describe("patterns and eligibility", () => {
     },
   );
 
+  // The queue read each script when the job was queued; the Runner judges its text.
+  it.each([
+    ["vp test run", "linux", null],
+    ["cd sub && vp run lint", "linux", null],
+    ["vp run build", "not-listed", "Not on the Can run on Linux list: vp run build"],
+    [
+      "git add . && git commit -m x",
+      "mac-only",
+      "Commits run here: the pre-commit edits this Mac's repository",
+    ],
+    ["vp test run /etc/hosts", "mac-only", "Uses a file outside the project: /etc/hosts"],
+    [null, "mac-only", "Couldn't read this script"],
+  ] as const)("a script outside the project running %j is %s", (body, eligibility, reason) => {
+    for (const label of ["bash /tmp/s/v.sh", "/tmp/s/v.sh --fast"]) {
+      const scripts = { "/tmp/s/v.sh": body };
+      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+    }
+  });
+
+  it("a job the hook queued on this Mac shows why", () => {
+    const entry = {
+      ...job("s", "bash missing.sh"),
+      where: "mac" as const,
+      routeReason: "Couldn't read this script",
+    };
+    const plan = planRoutes(input([entry], {}, { runnerOn: true }));
+    expect(plan.reasons.s).toContain("Couldn't read this script");
+  });
+
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
     const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
     expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toEqual({

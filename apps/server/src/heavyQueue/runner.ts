@@ -24,7 +24,14 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
-import { commitOnly, nameOf, readLine, workParts, type Part } from "./heavyHook.ts";
+import {
+  commitOnly,
+  nameOf,
+  readLine,
+  UNREADABLE_SCRIPT,
+  workParts,
+  type Part,
+} from "./heavyHook.ts";
 import type { Redirect, Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
@@ -134,6 +141,8 @@ export interface Verdict {
 export type QueuedEntry = HeavyQueueEntry & {
   readonly line?: string;
   readonly routeReason?: string;
+  /** The scripts the line runs, read when it was queued, by their path word; null: unreadable. */
+  readonly scripts?: Readonly<Record<string, string | null>>;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 
@@ -275,6 +284,8 @@ const tieOf = (
   const root = rootOf(cwd);
   if (root === null) return `Runs outside a git checkout: ${cwd}`;
   for (const word of part.command.words.slice(part.programAt + 1)) {
+    // A script is judged by its text, which travels with the job.
+    if (word.value === part.script?.word) continue;
     const expanded = expand(word, vars, cwd);
     const tie = "value" in expanded ? outsideTie(expanded.value, cwd, root) : null;
     if (tie !== null) return tie;
@@ -295,7 +306,7 @@ const DECLARES = new Set(["export", "declare", "local", "readonly"]);
  * it runs in. Every part must pass, else the whole job stays and the reason names the part.
  */
 export const eligibilityOf = (
-  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where">,
+  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where" | "scripts">,
   context: Pick<WorkContext, "config" | "home" | "rootOf">,
 ): Verdict => {
   const line = lineOf(entry);
@@ -303,7 +314,11 @@ export const eligibilityOf = (
     return { eligibility: "exclusive", reason: `Always on this Mac: ${nameOf(line)}` };
   }
   const { config, home, rootOf } = context;
-  const { unsafe, parts } = readLine(line);
+  const { scripts } = entry;
+  const { unsafe, parts } = readLine(
+    line,
+    scripts === undefined ? undefined : (word) => scripts[word] ?? null,
+  );
   if (unsafe !== null) {
     return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
   }
@@ -324,7 +339,17 @@ export const eligibilityOf = (
       const tie = tieOf(part, cwd, vars, rootOf, config);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
-      if (
+      if (part.script !== null) {
+        if (part.script.body === null) {
+          return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
+        }
+        const inner = eligibilityOf(
+          { label: part.script.body, cwd: cwd ?? entry.cwd, where: entry.where },
+          context,
+        );
+        if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
+        if (inner.eligibility === "not-listed") notListed ??= inner.reason;
+      } else if (
         notListed === null &&
         entry.where === undefined &&
         part.remoto === null &&
@@ -563,7 +588,10 @@ export const intentOf = (
   const where = entry.where ?? (verdict.reason === null ? context.config.runnerWhere : "mac");
   if (where !== "mac") return { intent: where, reason: "" };
   return mac(
-    verdict.reason ?? (entry.where === "mac" ? "Asked for this Mac" : "Runner set to this Mac"),
+    verdict.reason ??
+      (entry.where === "mac"
+        ? ((entry as QueuedEntry).routeReason ?? "Asked for this Mac")
+        : "Runner set to this Mac"),
   );
 };
 

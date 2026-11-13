@@ -212,6 +212,55 @@ describe("the PreToolUse answer", () => {
   });
 });
 
+describe("scripts the line runs", () => {
+  const files: Record<string, string | null> = {
+    "/tmp/s/verify.sh": "cd /w && vp test run",
+    "./verify": "#!/bin/bash\nset -e\nvp run typecheck\n",
+    "./env-verify": "#!/usr/bin/env zsh\nnpx tsc --noEmit\n",
+    "./tool": "#!/usr/bin/env node\nrequire('x')\n",
+    "light.sh": "echo hi\nls\n",
+    "./light.sh": "echo hi\n",
+    "missing.sh": null,
+  };
+  const read = (word: string) => files[word] ?? null;
+  const command = (line: string) =>
+    queueBashCall(bash({ command: line }), PREFIX, {}, { readScript: read })?.hookSpecificOutput
+      .updatedInput.command ?? null;
+
+  it.each([
+    ["bash /tmp/s/verify.sh", "bash /tmp/s/verify.sh"],
+    ["sh -e /tmp/s/verify.sh a b", "sh /tmp/s/verify.sh a"],
+    ["/tmp/s/verify.sh", "verify.sh"],
+    ["./verify", "verify"],
+    ["./env-verify --fast", "env-verify"],
+    ["cd /w && ./verify", "verify"],
+  ])("queues %j, whose script runs heavy work, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
+  });
+
+  it.each(["bash light.sh", "./tool", "./light.sh", "bash -c 'echo hi'", "sh -s < light.sh"])(
+    "leaves %j alone: its script runs nothing heavy, or it is no script",
+    (line) => {
+      expect(command(line)).toBeNull();
+    },
+  );
+
+  it.each(["bash missing.sh", "./missing.sh"])(
+    "queues %j on this Mac when the script can't be read",
+    (line) => {
+      expect(command(line)).toContain(
+        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
+      );
+    },
+  );
+
+  it("reads no script without a reader, as before", () => {
+    expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();
+  });
+});
+
 describe("an agent's own remoto call", () => {
   it.each([
     ["remoto vp test run", [], true, "vp test run"],
@@ -310,6 +359,13 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
     "hands %j to T3, as the classifier calls it heavy",
     (command) => {
       expect(heavySegment(command)).not.toBeNull();
+      expect(run(reached, command)).toBe("T3");
+    },
+  );
+
+  it.each(["bash verify.sh", "./verify", "sh /tmp/s/check.sh --all", "zsh -e run.zsh"])(
+    "hands %j to T3, which reads the script it runs",
+    (command) => {
       expect(run(reached, command)).toBe("T3");
     },
   );
