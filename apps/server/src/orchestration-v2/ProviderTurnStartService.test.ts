@@ -303,7 +303,6 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
     readonly openCommand?: boolean;
-    readonly backgroundTasksEndWithProcess?: boolean;
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -1065,9 +1064,6 @@ function makeLocalCommandHarness(input: {
                     driver: providerThread.driver,
                     providerSessionId,
                     interruptTurn,
-                    ...(input.previousTurn?.backgroundTasksEndWithProcess === true
-                      ? { backgroundTasksEndWithProcess: true }
-                      : {}),
                   } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
             ),
         }),
@@ -1398,12 +1394,9 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
   }),
 );
 
-effectIt.effect.each([
-  { backgroundTasksEndWithProcess: true, commandStatus: "interrupted" },
-  { backgroundTasksEndWithProcess: false, commandStatus: "running" },
-] as const)(
-  "the restart that recovers an abandoned turn ends its commands when they die with the process: %j",
-  ({ backgroundTasksEndWithProcess, commandStatus }) =>
+effectIt.effect.each([{ liveSession: true }, { liveSession: false }] as const)(
+  "recovering an abandoned turn ends its open commands: %j",
+  ({ liveSession }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Continue",
@@ -1411,7 +1404,7 @@ effectIt.effect.each([
           runStatus: "failed",
           turnStatus: "running",
           openCommand: true,
-          backgroundTasksEndWithProcess,
+          liveSession,
         },
       });
 
@@ -1419,7 +1412,7 @@ effectIt.effect.each([
 
       expect(harness.projection().turnItems[0]).toMatchObject({
         id: "previous-open-command",
-        status: commandStatus,
+        status: "interrupted",
       });
     }),
 );

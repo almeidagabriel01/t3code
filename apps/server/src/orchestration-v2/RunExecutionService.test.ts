@@ -2979,14 +2979,15 @@ it.effect.each([
 );
 
 it.effect.each([
-  { backgroundTasksEndWithProcess: true, commandStatus: "interrupted" },
-  { backgroundTasksEndWithProcess: undefined, commandStatus: undefined },
+  { interrupt: "succeeds", commandStatus: "interrupted" },
+  // The stored turn stays running, so the next start ends both.
+  { interrupt: "fails", commandStatus: undefined },
 ] as const)(
-  "ends the commands of a turn the failed stream's restart abandons when they die with it: %j",
-  ({ backgroundTasksEndWithProcess, commandStatus }) =>
+  "ends the open commands of a turn a failed stream abandons when its interrupt succeeds: %j",
+  ({ interrupt, commandStatus }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
-      const key = `abandoned-command:${String(backgroundTasksEndWithProcess)}`;
+      const key = `abandoned-command:${interrupt}`;
       const ids = backgroundScenarioIds(key);
       const command = {
         id: TurnItemId.make(`command:${key}`),
@@ -3009,7 +3010,6 @@ it.effect.each([
       const { written } = yield* captureRootRunTermination({
         key,
         shouldFinalizeRun: () => Effect.succeed(true),
-        ...(backgroundTasksEndWithProcess === undefined ? {} : { backgroundTasksEndWithProcess }),
         events: () =>
           Stream.make(
             {
@@ -3040,6 +3040,17 @@ it.effect.each([
             ),
           ),
         ingestNormalized: () => Effect.succeed([]),
+        interruptTurn: (request) =>
+          interrupt === "succeeds"
+            ? Effect.void
+            : Effect.fail(
+                new ProviderAdapter.ProviderAdapterInterruptError({
+                  driver,
+                  providerThreadId: request.providerThread.id,
+                  providerTurnId: request.providerTurnId,
+                  cause: "provider already exited",
+                }),
+              ),
       });
       assert.equal(
         written.findLast((item) => item.id === command.id && item.status !== "running")?.status,
@@ -3253,7 +3264,6 @@ function captureRootRunTermination(input: {
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
-  readonly backgroundTasksEndWithProcess?: true;
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3408,7 +3418,6 @@ function captureRootRunTermination(input: {
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),
           hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread,
-          backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,

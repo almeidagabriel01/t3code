@@ -643,7 +643,7 @@ export const layer: Layer.Layer<
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
-        // Commands the restart that abandoned the turn killed.
+        // Commands of the turn T3's own interrupt ended, as Stop ends them.
         readonly abandonedTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
@@ -1719,10 +1719,9 @@ export const layer: Layer.Layer<
                     },
                     openRunOwnedSubagents: openSubagents,
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
-                    ...(abandonedProviderTurn !== null &&
-                    input.session.backgroundTasksEndWithProcess === true
-                      ? { abandonedTurnItems: [...openRootTurnItems.values()] }
-                      : {}),
+                    ...(abandonedProviderTurn === null
+                      ? {}
+                      : { abandonedTurnItems: [...openRootTurnItems.values()] }),
                     completedAt,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({

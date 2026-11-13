@@ -736,19 +736,16 @@ export const layer: Layer.Layer<
         }
         const completedAt = yield* DateTime.now;
         const abandonedTurnIds = new Set(abandonedTurns.map(({ turn }) => turn.id));
-        // The restart killed the process that ran the turn's commands, so end them with it.
-        const deadItems =
-          Option.isSome(liveSession) && liveSession.value.backgroundTasksEndWithProcess === true
-            ? processBoundTurnItems(
-                (yield* projectionStore.getThreadRecords(projection.thread.id, ["turnItems"], {
-                  turnItemRunIds: abandonedTurns.map(({ run: failedRun }) => failedRun.id),
-                  turnItemTypes: ["command_execution", "dynamic_tool"],
-                  turnItemStatuses: ["pending", "running", "waiting"],
-                })).turnItems,
-              ).filter(
-                (item) => item.providerTurnId !== null && abandonedTurnIds.has(item.providerTurnId),
-              )
-            : [];
+        // Ending the turn ends its commands, as Stop does; no later provider event can.
+        const deadItems = processBoundTurnItems(
+          (yield* projectionStore.getThreadRecords(projection.thread.id, ["turnItems"], {
+            turnItemRunIds: abandonedTurns.map(({ run: failedRun }) => failedRun.id),
+            turnItemTypes: ["command_execution", "dynamic_tool"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          })).turnItems,
+        ).filter(
+          (item) => item.providerTurnId !== null && abandonedTurnIds.has(item.providerTurnId),
+        );
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
