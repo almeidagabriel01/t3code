@@ -316,7 +316,7 @@ export function getThreadListV2OrderedSection(input: {
  * Ranks by what the row shows: "Done" only on a ready thread with a visit time (null means
  * imported history read; undefined, an older server), and no open decisions at all.
  */
-function sortActiveThreadsForRows(
+export function sortActiveThreadsForRows(
   threads: readonly EnvironmentThreadShell[],
   order: SidebarThreadOrder,
 ): EnvironmentThreadShell[] {

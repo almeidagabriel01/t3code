@@ -1,4 +1,10 @@
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
+import { assistantSites, type AssistantWorkSite } from "@t3tools/client-runtime/assistantLiveWork";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
+import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -25,15 +31,18 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { cn } from "../../lib/cn";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import {
   useAssistantEntries,
+  useAssistantLiveWork,
   type AssistantEntry,
   type AssistantTeamEntry,
 } from "../../state/assistants";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
+import { ThreadListV2SubagentRow } from "../threads/thread-list-v2-items";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
@@ -42,6 +51,9 @@ import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
 
 const COLLAPSED_AVATAR_LIMIT = 5;
+const WORK_SITE_LIMIT = 2;
+
+type WorkSite = { readonly site: AssistantWorkSite; readonly project: EnvironmentProject };
 const STACKED_AVATAR_LIMIT = 4;
 
 const threadRefOf = ({ assistant, environmentId }: AssistantEntry) =>
@@ -108,9 +120,21 @@ function AssistantRow(props: {
   readonly nested?: boolean;
   /** Shown as a pill when the assistant is project-scoped and has no status to show. */
   readonly projectLabel?: string | null;
+  /** The projects it is working in now; each favicon opens the thread it works on there. */
+  readonly workSites?: ReadonlyArray<WorkSite>;
+  /** Live delegated children of its chat and group threads, shown as a project shows a thread's. */
+  readonly subagents?: ReadonlyArray<EnvironmentThreadShell>;
 }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
+  const workSites = props.workSites ?? [];
+  const shownSites = workSites.slice(0, WORK_SITE_LIMIT);
+  const sections = useAssistantTaskSections(props.entry);
+  const subagents = props.subagents ?? [];
+  const { assistantsFolded, toggleAssistantFolded } = useHomeSectionPreferences();
+  const foldKey = `${environmentId}:${assistant.id}`;
+  const expanded = !assistantsFolded.has(foldKey);
+  const foldable = sections.open.length + sections.settled.length + subagents.length > 0;
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
   const state = useAssistantState(props.entry);
@@ -186,6 +210,29 @@ function AssistantRow(props: {
             </Text>
           ) : null}
           <View className="min-w-2 flex-1" />
+          {shownSites.map(({ site, project }) => (
+            <Pressable
+              key={`${site.environmentId}:${site.projectId}`}
+              testID="assistant-work-site"
+              accessibilityRole="button"
+              accessibilityLabel={`Working in ${project.title}`}
+              hitSlop={8}
+              onPress={() => flows.openConversation({ threadId: site.threadId })}
+              className="active:opacity-70"
+            >
+              <ProjectFavicon
+                environmentId={project.environmentId}
+                faviconPath={project.faviconPath}
+                projectIcon={project.projectIcon}
+                size={16}
+                projectTitle={project.title}
+                workspaceRoot={project.workspaceRoot}
+              />
+            </Pressable>
+          ))}
+          {workSites.length > shownSites.length ? (
+            <Text className={cn("text-2xs", muted)}>+{workSites.length - shownSites.length}</Text>
+          ) : null}
           {meta !== null ? (
             <Text
               testID="assistant-status"
@@ -197,7 +244,7 @@ function AssistantRow(props: {
             >
               {meta}
             </Text>
-          ) : props.projectLabel ? (
+          ) : props.projectLabel && workSites.length === 0 ? (
             <View
               testID="assistant-project"
               className="max-w-24 rounded-md border border-border px-1.5 py-px"
@@ -208,6 +255,25 @@ function AssistantRow(props: {
             </View>
           ) : null}
         </Pressable>
+        {foldable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
+            accessibilityState={{ expanded }}
+            hitSlop={6}
+            onPress={() => toggleAssistantFolded(foldKey)}
+            className="size-9 items-center justify-center rounded-full active:opacity-70"
+          >
+            <SymbolView
+              name={expanded ? "chevron.down" : "chevron.right"}
+              size={11}
+              tintColorClassName={
+                props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
+              }
+              type="monochrome"
+            />
+          </Pressable>
+        ) : null}
         <RowMenuButton
           label={`${assistant.name} actions`}
           sidebar={props.sidebar}
@@ -220,7 +286,19 @@ function AssistantRow(props: {
           }}
         />
       </View>
-      <AssistantTaskRows entry={props.entry} sidebar={props.sidebar} />
+      {expanded ? (
+        <>
+          <AssistantTaskRows entry={props.entry} sections={sections} sidebar={props.sidebar} />
+          {subagents.map((child) => (
+            <ThreadListV2SubagentRow
+              key={child.id}
+              pane={props.sidebar ? "sidebar" : "screen"}
+              thread={child}
+              onSelectThread={(thread) => flows.openConversation({ threadId: thread.id })}
+            />
+          ))}
+        </>
+      ) : null}
     </View>
   );
 }
@@ -371,6 +449,7 @@ export function HomeAssistantsSection(props: {
     useHomeSectionPreferences();
   const shells = useQuietThreadShells();
   const projects = useProjects();
+  const work = useAssistantLiveWork();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const sidebar = props.sidebar === true;
   if (active.length === 0 && teams.length === 0) return null;
@@ -392,6 +471,13 @@ export function HomeAssistantsSection(props: {
     projects.find((project) => project.environmentId === envId && project.id === projectId)
       ?.title ?? "Project";
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
+  const projectOf = (envId: string, projectId: string) =>
+    projects.find((project) => project.environmentId === envId && project.id === projectId);
+  const workSitesOf = ({ environmentId: envId, assistant }: AssistantEntry): WorkSite[] =>
+    assistantSites(work, envId, assistant.id, (projectId) => {
+      const project = projectOf(envId, projectId);
+      return project !== undefined && hasProjectPanels(project);
+    }).map((site) => ({ site, project: projectOf(envId, site.projectId)! }));
   const row = (entry: AssistantEntry, nested = false) => (
     <AssistantRow
       key={`${entry.environmentId}:${entry.assistant.id}`}
@@ -404,6 +490,8 @@ export function HomeAssistantsSection(props: {
       projectLabel={assistantProjectsChip(entry.assistant, (projectId) =>
         projectName(entry.environmentId, projectId),
       )}
+      workSites={workSitesOf(entry)}
+      subagents={work.subagents.get(`${entry.environmentId}:${entry.assistant.id}`) ?? []}
     />
   );
   const mutedIcon = sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";

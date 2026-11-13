@@ -37,7 +37,14 @@ const { mocks } = vi.hoisted(() => ({
       dismissedAt?: string | null;
     }>,
     dismissTask: vi.fn(),
+    liveWork: {
+      sites: [] as Array<Record<string, string>>,
+      subagents: new Map<string, Array<{ id: string; title: string }>>(),
+    },
     toggleShowAll: vi.fn(),
+    toggleFold: vi.fn(),
+    folded: new Set<string>(),
+    settled: new Set<string>(),
     presence: {} as Record<string, Presence>,
     notified: new Set<string>(),
     projects: [] as Array<{ environmentId: string; id: string; title: string }>,
@@ -72,7 +79,11 @@ vi.mock("react-native", () => ({
       aria-label={props.accessibilityLabel}
       aria-expanded={props.accessibilityState?.expanded}
       disabled={props.disabled}
-      onClick={props.onPress}
+      onClick={(event) => {
+        // A nested Pressable takes the press alone, as on device.
+        event.stopPropagation();
+        props.onPress?.();
+      }}
     >
       {props.children}
     </button>
@@ -151,6 +162,9 @@ vi.mock("../../state/entities", () => ({
         environmentId: "hub",
         id: task.threadId,
         title: task.title,
+        settledOverride: mocks.settled.has(task.threadId) ? "settled" : null,
+        settledAt: null,
+        updatedAt: task.createdAt,
         runtime:
           mood === "working"
             ? { status: "running" }
@@ -164,8 +178,41 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
+  useAssistantLiveWork: () => mocks.liveWork,
   useAssistantTasks: (_environmentId: string, assistantId: string) =>
     assistantId === "a0" ? mocks.tasks : [],
+}));
+vi.mock("../threads/threadListV2", () => ({
+  sortActiveThreadsForRows: (threads: ReadonlyArray<unknown>) => [...threads],
+}));
+vi.mock("../threads/use-thread-list-v2-shelf-preferences", () => ({
+  useThreadListV2ShelfPreferences: () => ({ threadOrder: "activity" }),
+}));
+vi.mock("../threads/thread-list-v2-items", () => ({
+  ThreadListV2SettledShelfHeader: (props: {
+    count: number;
+    expanded: boolean;
+    onToggle: () => void;
+  }) => (
+    <button
+      aria-label={`settled:${props.count}`}
+      aria-expanded={props.expanded}
+      onClick={props.onToggle}
+    />
+  ),
+  ThreadListV2SubagentRow: (props: {
+    thread: { id: string; title: string };
+    pane: string;
+    onSelectThread: (thread: { id: string }) => void;
+  }) => (
+    <button
+      aria-label={`subagent:${props.thread.title}:${props.pane}`}
+      onClick={() => props.onSelectThread(props.thread)}
+    />
+  ),
+}));
+vi.mock("../../components/ProjectFavicon", () => ({
+  ProjectFavicon: (props: { projectTitle: string }) => <em>{`fav:${props.projectTitle}`}</em>,
 }));
 vi.mock("../threads/SubagentStatusDot", () => ({
   SubagentStatusDot: (props: { tone: string }) => <u>{`dot:${props.tone}`}</u>,
@@ -202,6 +249,8 @@ vi.mock("../home/useHomeSectionPreferences", () => ({
     toggleAssistants: mocks.toggle,
     assistantsShowAll: mocks.showAll,
     toggleAssistantsShowAll: mocks.toggleShowAll,
+    assistantsFolded: mocks.folded,
+    toggleAssistantFolded: mocks.toggleFold,
   }),
 }));
 
@@ -256,6 +305,9 @@ beforeEach(() => {
     active: make(2),
     teams: [],
     tasks: [],
+    liveWork: { sites: [], subagents: new Map() },
+    folded: new Set(),
+    settled: new Set(),
     projects: [{ environmentId: "hub", id: "p1", title: "Website" }],
   });
   for (const fn of [
@@ -271,6 +323,7 @@ beforeEach(() => {
     mocks.markRead,
     mocks.markUnread,
     mocks.toggleShowAll,
+    mocks.toggleFold,
   ]) {
     fn.mockReset();
   }
@@ -278,6 +331,72 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("HomeAssistantsSection", () => {
+  it("shows where an assistant works and its live subagents, and opens each", async () => {
+    mocks.active = [bot(0, { scope: "project", projectId: "p1" })];
+    mocks.projects = [
+      { environmentId: "hub", id: "p1", title: "Website" },
+      { environmentId: "hub", id: "p2", title: "Docs" },
+      { environmentId: "hub", id: "p3", title: "Api" },
+      { environmentId: "hub", id: "home", title: "Assistants", managedRole: "assistants" } as never,
+    ];
+    const site = { environmentId: "hub", assistantId: "a0", face: "working" };
+    mocks.liveWork = {
+      sites: ["p1", "p2", "p3", "home"].map((projectId) => ({
+        ...site,
+        projectId,
+        threadId: `task-${projectId}`,
+      })),
+      subagents: new Map([["hub:a0", [{ id: "child-1", title: "Review the diff" }]]]),
+    };
+    render();
+    expect([...container.querySelectorAll("em")].map((favicon) => favicon.textContent)).toEqual([
+      "fav:Website",
+      "fav:Docs",
+    ]);
+    expect(container.textContent).toContain("+1");
+    // The favicons stand in for the configured-project pill.
+    expect(container.querySelector('[data-testid="assistant-project"]')).toBeNull();
+    await click("Working in Docs");
+    expect(mocks.open).toHaveBeenLastCalledWith({ threadId: "task-p2" });
+    await click("subagent:Review the diff:sidebar");
+    expect(mocks.open).toHaveBeenLastCalledWith({ threadId: "child-1" });
+  });
+
+  it("folds settled tasks into the Settled shelf and folds the whole list", async () => {
+    mocks.active = [bot(0)];
+    mocks.presence["task-1"] = { mood: "working", detail: "Working", since: null };
+    mocks.tasks = [
+      { threadId: "task-1", title: "Add retry", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "task-2", title: "Old chore", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "task-3", title: "Older chore", createdAt: "2026-10-01T00:00:00.000Z" },
+    ];
+    mocks.settled = new Set(["task-2", "task-3"]);
+    render();
+    const titles = () =>
+      [...container.querySelectorAll('[aria-label$=", Running"], [aria-label$=", Done"]')].map(
+        (row) => row.getAttribute("aria-label"),
+      );
+    expect(titles()).toEqual(["Add retry, Running"]);
+    await click("settled:2");
+    expect(titles()).toEqual(["Add retry, Running", "Old chore, Done", "Older chore, Done"]);
+    await click("Hide Bot0 tasks");
+    expect(mocks.toggleFold).toHaveBeenCalledWith("hub:a0");
+    mocks.folded = new Set(["hub:a0"]);
+    render();
+    expect(titles()).toEqual([]);
+    expect(byLabel("Show Bot0 tasks")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the project pill and no subagent rows once the work ends", () => {
+    mocks.active = [bot(0, { scope: "project", projectId: "p1" })];
+    render(false);
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.querySelector('[aria-label^="subagent:"]')).toBeNull();
+    expect(container.querySelector('[data-testid="assistant-project"]')).not.toBeNull();
+    // Nothing under it, so nothing to fold.
+    expect(container.querySelector('[aria-label="Hide Bot0 tasks"]')).toBeNull();
+  });
+
   it("renders nothing without assistants or groups, but a group alone still shows", () => {
     mocks.active = [];
     render();
