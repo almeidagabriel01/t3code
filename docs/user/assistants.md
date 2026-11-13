@@ -259,8 +259,8 @@ nothing starts a new **request**; it does not run an agent by itself.
   draw a divider: the lead routes new requests reading only what comes after it, and the older
   messages stay above. Compact first writes a summary of the chat that only the lead reads; members
   never get it, since each sees just its own request. **Undo divider** removes the latest one while
-  nothing follows it. **Clear history** deletes the chat, its tasks, files and the requests'
-  conversations after you confirm. These wait until the group stops working.
+  nothing follows it. **Clear history** deletes the chat, its tasks and files after you
+  confirm; members keep their requests' conversations, settled. These wait until the group stops working.
 - An agent in any conversation can post a request into a group ("ask the Leadership group to…"),
   naming its project or leaving it to the lead.
 
