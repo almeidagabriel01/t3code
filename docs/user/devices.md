@@ -281,4 +281,6 @@ localhost; use an address its worker can reach.
 
 The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. In Settings → Devices, select a version and choose **Check versions** to read installed versions without installing tools or starting devices.
 
+If agent tools on this computer stop responding, Settings → Devices shows them as not responding, and T3 restarts them the next time they are needed. While device sessions are still open, T3 leaves them running instead, so the open sessions are not lost: close those sessions, then try again.
+
 To receive newer tool versions on a remote environment, update that environment's T3 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; T3 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

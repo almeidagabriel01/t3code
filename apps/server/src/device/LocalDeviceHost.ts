@@ -57,6 +57,8 @@ import {
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
+const DAEMON_TERM_GRACE_MS = 5_000;
+const DAEMON_KILL_GRACE_MS = 2_000;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -76,6 +78,10 @@ const AgentDeviceDaemonFile = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
+// agent-device records the daemon holding its lock here, before daemon.json exists.
+const decodeDaemonLockOwner = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ pid: Schema.Int })),
+);
 
 const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -287,12 +293,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
+  const signalProcess = yield* HostProcess.SignalProcess;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const sdk = yield* androidSdk;
   const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
+  /** A daemon found alive but not answering and left running; cleared once one answers. */
+  const unresponsiveRef = yield* Ref.make<{
+    readonly pid: number;
+    readonly version?: string;
+  } | null>(null);
   const hostId = LOCAL_DEVICE_HOST_ID;
 
   const platformAvailability = Effect.fn("LocalDeviceHost.platformAvailability")(function* (
@@ -326,17 +338,23 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       : false;
     const agentAlive =
       Option.isSome(daemon) && daemon.value.pid ? yield* isProcessAlive(daemon.value.pid) : false;
+    const stuck = yield* Ref.get(unresponsiveRef);
+    const stuckAlive = stuck ? yield* isProcessAlive(stuck.pid) : false;
+    const agentVersion = stuckAlive
+      ? stuck?.version
+      : agentAlive && Option.isSome(daemon)
+        ? daemon.value.version
+        : undefined;
     const tools = yield* deviceToolVersions(config.baseDir, {
       ...(hubAlive ? { hub: DEVICE_HUB_VERSION } : {}),
-      ...(agentAlive && Option.isSome(daemon) && daemon.value.version
-        ? { agent: daemon.value.version }
-        : {}),
+      ...(agentVersion ? { agent: agentVersion } : {}),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
     return {
-      tools,
+      tools:
+        tools && stuckAlive ? { ...tools, agent: { ...tools.agent, unresponsive: true } } : tools,
       id: hostId,
       kind: "local",
       label: LOCAL_DEVICE_HOST_LABEL,
@@ -351,15 +369,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const hubStatePath = () => path.join(agentDeviceStateDir(path, config.stateDir), "hub.json");
 
-  const isProcessAlive = (pid: number) =>
-    Effect.sync(() => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+  const isProcessAlive = (pid: number) => Effect.sync(() => signalProcess(pid, 0));
+
+  const processCommandLine = (pid: number) =>
+    runner
+      .run({
+        command: "ps",
+        args: ["-o", "command=", "-p", String(pid)],
+        timeout: Duration.seconds(5),
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(
+        Effect.map((result) => result.stdout),
+        Effect.orElseSucceed(() => ""),
+      );
 
   // Check PID and entry path before reaping; the PID may have been recycled.
   const reapStaleHub = Effect.gen(function* () {
@@ -369,27 +392,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     if (previous._tag === "None") return;
     const alive = yield* isProcessAlive(previous.value.pid);
     if (alive) {
-      const commandLine = yield* runner
-        .run({
-          command: "ps",
-          args: ["-o", "command=", "-p", String(previous.value.pid)],
-          timeout: Duration.seconds(5),
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.map((result) => result.stdout),
-          Effect.orElseSucceed(() => ""),
-        );
+      const commandLine = yield* processCommandLine(previous.value.pid);
       if (commandLine.includes(previous.value.entryPath)) {
         yield* Effect.logWarning("Stopping a device hub left behind by a previous server", {
           pid: previous.value.pid,
           port: previous.value.port,
         });
-        yield* Effect.sync(() => {
-          try {
-            process.kill(previous.value.pid, "SIGTERM");
-          } catch {}
-        });
+        yield* Effect.sync(() => signalProcess(previous.value.pid, "SIGTERM"));
       }
     }
     yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
@@ -542,14 +551,65 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return yield* decodeDaemonFile(raw);
   });
 
+  const readDaemonLockOwnerPid = fs
+    .readFileString(
+      path.join(agentDeviceStateDir(path, config.stateDir), "daemon.lock", "owner.json"),
+    )
+    .pipe(
+      Effect.flatMap(decodeDaemonLockOwner),
+      Effect.map((owner) => owner.pid),
+      Effect.option,
+      Effect.map(Option.getOrUndefined),
+    );
+
+  // A PID can be reused, so only one running an installed agent-device is ever signalled.
+  // PIDs 0 and below name process groups, never one daemon.
+  const isAgentDeviceProcess = Effect.fn("LocalDeviceHost.isAgentDeviceProcess")(function* (
+    pid: number,
+  ) {
+    if (pid <= 1 || !(yield* isProcessAlive(pid))) return false;
+    const commandLine = yield* processCommandLine(pid);
+    return commandLine.includes(path.join(config.baseDir, "tools", "agent-device") + path.sep);
+  });
+
+  const waitForExit = Effect.fn("LocalDeviceHost.waitForExit")(function* (
+    pid: number,
+    timeoutMs: number,
+  ) {
+    const deadline = (yield* Clock.currentTimeMillis) + timeoutMs;
+    while (yield* isProcessAlive(pid)) {
+      if ((yield* Clock.currentTimeMillis) >= deadline) return false;
+      yield* Effect.sleep(Duration.millis(DAEMON_POLL_MS));
+    }
+    return true;
+  });
+
+  const stopUnresponsiveDaemon = Effect.fn("LocalDeviceHost.stopUnresponsiveDaemon")(function* (
+    pid: number,
+  ) {
+    yield* Effect.logWarning("Restarting agent tools that stopped responding", { pid });
+    yield* Effect.sync(() => signalProcess(pid, "SIGTERM"));
+    if (yield* waitForExit(pid, DAEMON_TERM_GRACE_MS)) return;
+    yield* Effect.logWarning("Agent tools ignored SIGTERM; sending SIGKILL", { pid });
+    yield* Effect.sync(() => signalProcess(pid, "SIGKILL"));
+    if (yield* waitForExit(pid, DAEMON_KILL_GRACE_MS)) return;
+    return yield* new DeviceHost.DeviceHostError({
+      hostId,
+      step: "stopping unresponsive agent tools",
+      cause: new Error(`Process ${pid} was still running after SIGKILL.`),
+    });
+  });
+
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: Pick<DeviceToolPaths, "entryPath">,
     nodePath: string,
+    recycleUnresponsive: boolean,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
     | DeviceHost.DeviceHostError
     | DeviceHost.DeviceHostTimeoutError
     | DeviceHost.AgentDeviceStartError
+    | DeviceHost.AgentDeviceUnresponsiveError
   > {
     const stateDir = agentDeviceStateDir(path, config.stateDir);
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
@@ -589,9 +649,33 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      if (alive) {
+        yield* Ref.set(unresponsiveRef, null);
+        return toEndpoint(existing.value);
+      }
     }
+    // daemon.json is the only record of a live daemon's PID, so it stays until that daemon exits.
+    const stuckPid =
+      (existing._tag === "Some" ? existing.value.pid : undefined) ??
+      (yield* readDaemonLockOwnerPid);
+    if (stuckPid !== undefined && (yield* isAgentDeviceProcess(stuckPid))) {
+      const stuck = {
+        pid: stuckPid,
+        ...(existing._tag === "Some" && existing.value.version
+          ? { version: existing.value.version }
+          : {}),
+      };
+      if (!recycleUnresponsive) {
+        yield* Ref.set(unresponsiveRef, stuck);
+        return yield* new DeviceHost.AgentDeviceUnresponsiveError({ hostId, pid: stuckPid });
+      }
+      yield* stopUnresponsiveDaemon(stuckPid).pipe(
+        Effect.tapError(() => Ref.set(unresponsiveRef, stuck)),
+      );
+    }
+    yield* Ref.set(unresponsiveRef, null);
+    if (existing._tag === "Some")
+      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
       .run({
@@ -759,7 +843,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const ensureReady: DeviceHost.DeviceHost["Service"]["ensureReady"] = (onPhase) =>
     startLock.withPermits(1)(ensureHubReady(onPhase).pipe(Effect.map(toReady)));
 
-  const ensureAgentReady: DeviceHost.DeviceHost["Service"]["ensureAgentReady"] = (onPhase) =>
+  const ensureAgentReady: DeviceHost.DeviceHost["Service"]["ensureAgentReady"] = (
+    onPhase,
+    options,
+  ) =>
     startLock.withPermits(1)(
       Effect.gen(function* (): Generator<
         Effect.Effect<
@@ -767,15 +854,18 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           | DeviceHost.DeviceHostError
           | DeviceHost.DeviceHostTimeoutError
           | DeviceHost.AgentDeviceStartError
+          | DeviceHost.AgentDeviceUnresponsiveError
           | NodeRuntimeUnavailableError
         >,
         DeviceHost.DeviceHostAgentReady
       > {
+        const recycleUnresponsive = options?.recycleUnresponsive ?? false;
         const running = yield* ensureHubReady(onPhase);
         if (running.agentDevice) {
           const agentDevice = yield* startAgentDeviceDaemon(
             running.agentDevice,
             running.hub.nodePath,
+            recycleUnresponsive,
           );
           yield* Ref.set(runningRef, { ...running, agentDevice });
           return { ...toReady(running), agentDevice };
@@ -805,7 +895,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           ),
         );
         yield* onPhase("starting");
-        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
+        const agentDevice = yield* startAgentDeviceDaemon(
+          agentTool,
+          running.hub.nodePath,
+          recycleUnresponsive,
+        );
         yield* pruneLocalDeviceTools(config.baseDir, running.hub.nodePath, "agent").pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -887,6 +981,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
       yield* stopAgentDeviceDaemon;
+      yield* Ref.set(unresponsiveRef, null);
       yield* Ref.update(runningRef, (running) =>
         running ? { ...running, agentDevice: null } : running,
       );
@@ -899,6 +994,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       yield* stopHub(running?.hub);
       yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
       yield* stopAgentDeviceDaemon;
+      yield* Ref.set(unresponsiveRef, null);
     }),
   );
 

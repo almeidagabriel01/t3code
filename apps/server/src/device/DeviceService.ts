@@ -859,9 +859,19 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const agentReadiness = Effect.fn("DeviceService.agentReadiness")(function* (
     host: DeviceHost.DeviceHost["Service"],
   ) {
+    // Restarting a stuck daemon would end every session it holds, so only an unused one restarts.
+    const openSessions = (yield* SynchronizedRef.get(stateRef)).state.sessions.filter(
+      (session) => session.hostId === host.id,
+    );
+    const publishHosts = Effect.forEach(hosts.values(), (candidate) => candidate.summary).pipe(
+      Effect.flatMap((hostSummaries) => publish((state) => ({ ...state, hosts: hostSummaries }))),
+    );
+    const unresponsiveReason = (error: DeviceHost.AgentDeviceUnresponsiveError) =>
+      `${error.message} T3 restarts them only when no device session is open on ${host.label}, and ${openSessions.length === 1 ? "1 is" : `${openSessions.length} are`}: ${openSessions.map((session) => session.deviceId).join(", ")}. Close ${openSessions.length === 1 ? "it" : "them"} with device_close or from the Device panel, then try again.`;
     const ready = yield* host
-      .ensureAgentReady((phase, detail) =>
-        setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+      .ensureAgentReady(
+        (phase, detail) => setHostStatus(host.id, { status: phase, detail }).pipe(Effect.asVoid),
+        { recycleUnresponsive: openSessions.length === 0 },
       )
       .pipe(
         Effect.tapError((error) =>
@@ -870,8 +880,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             detail:
               error._tag === "DeviceHostError" && error.step === "probe"
                 ? sshProbeFailureMessage(error)
-                : error.message,
-          }),
+                : error._tag === "AgentDeviceUnresponsiveError"
+                  ? unresponsiveReason(error)
+                  : error.message,
+          }).pipe(Effect.andThen(publishHosts)),
         ),
         Effect.mapError(
           (error) =>
@@ -885,15 +897,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                     ? `Agent tools did not start within ${error.timeoutMs} ms.`
                     : error._tag === "AgentDeviceStartError"
                       ? error.message
-                      : error.step === "probe"
-                        ? sshProbeFailureMessage(error)
-                        : `Device support failed during ${error.step}.`,
+                      : error._tag === "AgentDeviceUnresponsiveError"
+                        ? unresponsiveReason(error)
+                        : error.step === "probe"
+                          ? sshProbeFailureMessage(error)
+                          : `Device support failed during ${error.step}.`,
               cause: error,
             }),
         ),
       );
-    const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
-    yield* publish((state) => ({ ...state, hosts: hostSummaries }));
+    yield* publishHosts;
     yield* setHostStatus(host.id, { status: "ready" });
     return { hostId: host.id, ...ready };
   }, lifecycleLock.withPermit);
