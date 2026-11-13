@@ -1,4 +1,5 @@
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { usePromptProjectAssistantAccess } from "../assistants/promptProjectAccess";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -723,6 +724,7 @@ async function draftWithPrompt(
 
 function useCreateProject(environment: EnvironmentOption | null) {
   const openNewTaskDraft = useOpenNewTaskDraft();
+  const promptAssistantAccess = usePromptProjectAssistantAccess();
   const navigation = useNavigation();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useAtomCommand(projectEnvironment.update, {
@@ -806,6 +808,11 @@ function useCreateProject(environment: EnvironmentOption | null) {
         title: inferProjectTitleFromPath(workspaceRoot),
       },
       originRoute,
+    );
+    promptAssistantAccess(
+      environment.environmentId,
+      projectId,
+      inferProjectTitleFromPath(workspaceRoot),
     );
     return result;
   };
@@ -1031,6 +1038,7 @@ function FolderBrowser(props: {
 
 export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
+  const promptAssistantAccess = usePromptProjectAssistantAccess();
   const navigation = useNavigation();
   const environmentOptions = useEnvironmentOptions().filter(
     (option) => option.newProjectsRoot !== null,
@@ -1174,6 +1182,7 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
       },
       originRoute,
     );
+    promptAssistantAccess(environment.environmentId, projectId, trimmedName);
   };
 
   return (
@@ -1365,6 +1374,7 @@ export function AddProjectDestinationScreen(props: {
   readonly prompt?: string | string[];
 }) {
   const openNewTaskDraft = useOpenNewTaskDraft();
+  const promptAssistantAccess = usePromptProjectAssistantAccess();
   const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
     reportFailure: false,
   });
@@ -1465,6 +1475,7 @@ export function AddProjectDestinationScreen(props: {
           },
           originRoute,
         );
+        promptAssistantAccess(environment.environmentId, projectId, title);
       }
     }
     setIsSubmitting(false);

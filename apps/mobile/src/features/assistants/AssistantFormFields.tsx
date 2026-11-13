@@ -32,10 +32,12 @@ export function ChoiceRow(props: {
   readonly description?: string;
   readonly descriptionTruncatesStart?: boolean;
   readonly selected: boolean;
+  readonly disabled?: boolean;
   readonly onPress: () => void;
 }) {
   return (
     <RowPressable
+      disabled={props.disabled}
       accessibilityRole={props.role}
       accessibilityLabel={props.label}
       accessibilityHint={props.description}
@@ -49,6 +51,7 @@ export function ChoiceRow(props: {
         label={props.label}
         description={props.description}
         descriptionTruncatesStart={props.descriptionTruncatesStart}
+        disabled={props.disabled}
         accessory={
           props.role === "checkbox" ? (
             <SymbolView
