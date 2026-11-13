@@ -184,7 +184,9 @@ describe("the PreToolUse answer", () => {
     [42, " --name"],
   ])("passes the call's tool-use id %j on, so a repeat attaches to its job", (id, expected) => {
     const answer = queueBashCall({ ...bash({ command: "vp build" }), tool_use_id: id }, PREFIX);
-    expect(answer!.hookSpecificOutput.updatedInput.command).toContain(`${PREFIX}${expected} 'vp build'`);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toContain(
+      `${PREFIX}${expected} 'vp build'`,
+    );
   });
 
   it("never lowers a longer timeout and leaves a background call's limit alone", () => {

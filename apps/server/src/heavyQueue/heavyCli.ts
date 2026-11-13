@@ -52,7 +52,7 @@ import {
   startLinuxRun,
   stopRemote,
 } from "./runnerExec.ts";
-import type { RemoteOutcome } from "./runner.ts";
+import type { QueuedEntry, RemoteOutcome } from "./runner.ts";
 
 /**
  * CPU priority an agent's job starts with on macOS; the user's own jobs always run normal.
@@ -99,8 +99,9 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let name: string | undefined;
   let priority: "low" | "normal" | "high" | undefined;
   let where: "mac" | "linux" | "automatic" | undefined;
+  let requestId: string | undefined;
   let now = false;
-  const options = ["--queue-dir", "--name", "--priority", "--runner"];
+  const options = ["--queue-dir", "--name", "--priority", "--runner", "--request-id"];
   while (rest[0] === "--now" || (rest[1] !== undefined && options.includes(rest[0]!))) {
     if (rest[0] === "--now" || rest[1] === undefined) {
       now = true;
@@ -112,11 +113,21 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
       if (rest[1] === "low" || rest[1] === "normal" || rest[1] === "high") priority = rest[1];
     } else if (rest[0] === "--runner") {
       if (rest[1] === "mac" || rest[1] === "linux" || rest[1] === "automatic") where = rest[1];
-    } else dir = rest[1];
+    } else if (rest[0] === "--request-id") requestId = rest[1].trim() || undefined;
+    else dir = rest[1];
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
-  return { dir, name, priority, where, now, program: rest[0], args: rest.slice(1) };
+  return {
+    dir,
+    name,
+    priority,
+    where,
+    now,
+    ...(requestId === undefined ? {} : { requestId }),
+    program: rest[0],
+    args: rest.slice(1),
+  };
 };
 
 /**
@@ -571,7 +582,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runLinuxPart(part.dir, part.program, part.args);
     return;
   }
-  const { dir, name, priority, where, now, program, args } = parseHeavyArgs(argv);
+  const { dir, name, priority, where, now, requestId, program, args } = parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
       "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
@@ -590,12 +601,16 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     runDirect(program, args, process.env);
     return;
   }
-  const id = NodeCrypto.randomUUID();
+  // A repeated request (same tool call, same agent retry) lands on the same job.
+  const id =
+    requestId === undefined
+      ? NodeCrypto.randomUUID()
+      : `req-${NodeCrypto.createHash("sha1").update(requestId).digest("hex").slice(0, 16)}`;
   const threadId = process.env.T3CODE_THREAD_ID ?? null;
   const agent = threadId !== null || process.env.CLAUDECODE === "1";
   const label = labelOf(launch.program, launch.args);
   const line = jobLine(launch.program, launch.args);
-  enqueue(dir, {
+  const entry: QueuedEntry = {
     id,
     pid: process.pid,
     threadId,
@@ -609,7 +624,13 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     priority: priority ?? launch.priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
     ...(now ? { forced: true } : {}),
-  });
+  };
+  // Another process owns this request's job: wait for it to end and answer with its code. An
+  // owner that died without one leaves no result, so this process runs the job itself.
+  for (let added = enqueue(dir, entry); added !== "added"; added = enqueue(dir, entry)) {
+    if (added !== "attached") process.exit(added.code);
+    while (readDoc(dir).entries.some((each) => each.id === id)) await pause(POLL_MS);
+  }
   // The code a failure notice reports; every exit path ends here.
   process.on("exit", (code) => finish(dir, id, code));
 
