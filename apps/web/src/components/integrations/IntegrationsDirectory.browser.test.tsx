@@ -125,7 +125,7 @@ function makeActions() {
     completeConnect: vi.fn(async (_input: { flowId: string; callbackUrl: string }) =>
       ok(view("notion", "connected")),
     ),
-    cancelConnect: vi.fn(async (_flowId: string) => ok(undefined)),
+    cancelConnect: vi.fn(async (_name: string) => ok(undefined)),
     disconnect: vi.fn(async (_name: string) => ok(undefined)),
     saveToken: vi.fn(async (_catalogId: string, _token: string) => ok(view("github", "connected"))),
     saveOwnApp: vi.fn(async (_input: { clientGroup: string; clientId: string }) => ok(undefined)),
@@ -220,13 +220,18 @@ it("sorts rows into sections, filters by search and category, and shows source n
   await userEvent.click(page.getByRole("button", { name: "Add custom server" }));
   expect(harness.customServers).toHaveBeenCalledTimes(2);
 
-  await userEvent.click(page.getByRole("button", { name: "Docs", exact: true }));
+  await userEvent.click(
+    page.getByRole("group", { name: "Categories" }).getByRole("button", { name: "Docs" }),
+  );
   await expect.element(row("Notion")).toBeVisible();
   expect(row("Linear").query()).toBeNull();
   await userEvent.click(page.getByRole("button", { name: "All", exact: true }));
   await userEvent.fill(page.getByRole("searchbox", { name: "Search integrations" }), "lin");
   await expect.element(row("Linear")).toBeVisible();
   expect(row("Notion").query()).toBeNull();
+  expect(page.getByText("No integrations match your search.").query()).toBeNull();
+  await userEvent.fill(page.getByRole("searchbox", { name: "Search integrations" }), "zzz");
+  await expect.element(page.getByText("No integrations match your search.")).toBeVisible();
 });
 
 it("server mode opens the sign-in tab during the click, waits, and offers assistants once connected", async () => {
@@ -264,7 +269,7 @@ it("server mode opens the sign-in tab during the click, waits, and offers assist
   expect(toast).toHaveBeenCalledTimes(1);
 });
 
-it("cancels a pending sign-in it started, and cannot cancel one it did not", async () => {
+it("cancels any pending sign-in by name, including one another client started", async () => {
   const harness = setup();
   const { actions } = harness;
   using _open = vi.spyOn(window, "open").mockReturnValue(fakeTab() as unknown as Window);
@@ -272,7 +277,8 @@ it("cancels a pending sign-in it started, and cannot cancel one it did not", asy
     state({ integrations: [view("linear", "connecting")] }),
     harness,
   );
-  await expect.element(row("Linear").getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await userEvent.click(row("Linear").getByRole("button", { name: "Cancel" }));
+  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("linear"));
   await userEvent.click(row("Notion").getByRole("button", { name: "Connect" }));
   await vi.waitFor(() => expect(actions.beginConnect).toHaveBeenCalled());
   await screen.rerender(
@@ -282,17 +288,30 @@ it("cancels a pending sign-in it started, and cannot cancel one it did not", asy
     ),
   );
   await userEvent.click(row("Notion").getByRole("button", { name: "Cancel" }));
-  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("flow-notion"));
+  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenLastCalledWith("notion"));
 });
 
 it("paste mode parses the pasted address, completes the flow, and cancels it when closed", async () => {
   const harness = setup();
   const { actions } = harness;
   actions.beginConnect.mockResolvedValue(ok(begun("notion", "paste")));
-  using _open = vi.spyOn(window, "open").mockReturnValue(fakeTab() as unknown as Window);
+  using open = vi.spyOn(window, "open").mockReturnValue(fakeTab() as unknown as Window);
   using toast = vi.spyOn(toastManager, "add");
   await using _screen = await mount(state(), harness);
   await userEvent.click(row("Notion").getByRole("button", { name: "Connect" }));
+  await expect
+    .element(
+      page.getByText(
+        "After you sign in, the browser shows a page that can't load. Copy its address and paste it here.",
+      ),
+    )
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Open sign-in page" }));
+  expect(open).toHaveBeenLastCalledWith(
+    "https://auth.example.com/notion?state=s",
+    "_blank",
+    "noopener,noreferrer",
+  );
   const field = page.getByLabelText("Paste the address from the browser");
   await userEvent.fill(field, "not an address");
   await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect" }));
@@ -319,7 +338,7 @@ it("paste mode parses the pasted address, completes the flow, and cancels it whe
 
   await userEvent.click(row("Notion").getByRole("button", { name: "Connect" }));
   await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Cancel" }));
-  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("flow-notion"));
+  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("notion"));
 });
 
 it("desktop listens on loopback, completes with the received address, and opens no tab", async () => {
@@ -381,7 +400,8 @@ it("desktop retries once on a busy port, and cancels a flow the browser abandone
       callbackUrl: "http://127.0.0.1:1/x?code=1",
     }),
   );
-  expect(actions.cancelConnect).toHaveBeenCalledWith("flow-1");
+  expect(actions.cancelConnect).toHaveBeenCalledTimes(1);
+  expect(actions.cancelConnect).toHaveBeenCalledWith("notion");
   expect(actions.beginConnect).toHaveBeenLastCalledWith({
     catalogId: "notion",
     client: { kind: "desktop", loopback: true, loopbackBusy: true },
@@ -389,7 +409,7 @@ it("desktop retries once on a busy port, and cancels a flow the browser abandone
 
   await screen.rerender(ui(state(), harness));
   await userEvent.click(row("Notion").getByRole("button", { name: "Connect" }));
-  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("flow-3"));
+  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledTimes(2));
   expect(toast).toHaveBeenLastCalledWith(
     expect.objectContaining({ type: "error", title: "Sign-in expired or didn't match. Try again" }),
   );
@@ -417,9 +437,40 @@ it("desktop Cancel stops the loopback listener, which ends the flow on the serve
   await vi.waitFor(() => expect(receive).toHaveBeenCalled());
   await screen.rerender(ui(state({ integrations: [view("notion", "connecting")] }), harness));
   await userEvent.click(row("Notion").getByRole("button", { name: "Cancel" }));
-  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("flow-notion"));
+  await vi.waitFor(() => expect(actions.cancelConnect).toHaveBeenCalledWith("notion"));
   expect(stop).toHaveBeenCalled();
   expect(toast).not.toHaveBeenCalled();
+});
+
+it("a desktop sign-in that ends on the server stops its loopback listener", async () => {
+  const harness = setup();
+  const { actions } = harness;
+  actions.beginConnect.mockResolvedValue(ok(begun("notion", "loopback")));
+  let settle: (result: DesktopIntegrationCallbackResult) => void = () => {};
+  const receive = vi.fn(
+    (_input: unknown) =>
+      new Promise<DesktopIntegrationCallbackResult>((resolve) => {
+        settle = resolve;
+      }),
+  );
+  const stop = vi.fn(async () => settle({ status: "cancelled" }));
+  using _bridge = withBridge({
+    receiveIntegrationCallback: receive,
+    cancelIntegrationCallback: stop,
+  });
+  await using screen = await mount(state(), harness);
+  await userEvent.click(row("Notion").getByRole("button", { name: "Connect" }));
+  await vi.waitFor(() => expect(receive).toHaveBeenCalled());
+  // The push from before the sign-in began does not end it.
+  await screen.rerender(ui(state(), harness));
+  expect(stop).not.toHaveBeenCalled();
+  await screen.rerender(ui(state({ integrations: [view("notion", "connecting")] }), harness));
+  expect(stop).not.toHaveBeenCalled();
+  // Cancelled from another client.
+  await screen.rerender(ui(state(), harness));
+  await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  // The server already ended it, so this client does not cancel it again.
+  expect(actions.cancelConnect).not.toHaveBeenCalled();
 });
 
 it("a refused connect explains why, and own-app-required opens the own-app form", async () => {
@@ -461,7 +512,7 @@ it("own app: lists redirect URIs, saves the client, then continues the sign-in",
     .element(dialog.getByText(`${window.location.origin}/oauth/integrations/callback`))
     .toBeVisible();
   await expect
-    .element(dialog.getByRole("link", { name: "https://console.example.com/credentials" }))
+    .element(dialog.getByRole("link", { name: "Open the setup page" }))
     .toHaveAttribute("href", "https://console.example.com/credentials");
   expect(dialog.getByRole("button", { name: "Remove app" }).query()).toBeNull();
   await userEvent.fill(dialog.getByLabelText("Client ID"), " client-1 ");
@@ -487,8 +538,13 @@ it("own app: lists redirect URIs, saves the client, then continues the sign-in",
 it("own app: a saved secret stays unless retyped, and Remove app removes the client", async () => {
   const harness = setup();
   const { actions } = harness;
+  const google = CATALOG.find((item) => item.id === "google-calendar")!;
   await using _screen = await mount(
-    state({ ownApps: [{ clientGroup: "google", clientId: "client-1", hasClientSecret: true }] }),
+    state({
+      catalog: [...CATALOG, { ...google, id: "gmail", name: "Gmail", category: "email" }],
+      integrations: [view("google-calendar", "connected"), view("gmail", "needs-sign-in")],
+      ownApps: [{ clientGroup: "google", clientId: "client-1", hasClientSecret: true }],
+    }),
     harness,
   );
   await userEvent.click(page.getByRole("button", { name: "More actions for Google Calendar" }));
@@ -497,6 +553,7 @@ it("own app: a saved secret stays unless retyped, and Remove app removes the cli
   await expect.element(dialog.getByLabelText("Client ID")).toHaveValue("client-1");
   await expect.element(dialog.getByLabelText("Client secret")).toHaveValue("");
   await expect.element(dialog.getByText("Saved", { exact: true })).toBeVisible();
+  await expect.element(dialog.getByText("Disconnects: Google Calendar, Gmail")).toBeVisible();
   await userEvent.click(dialog.getByRole("button", { name: "Save" }));
   await vi.waitFor(() =>
     expect(actions.saveOwnApp).toHaveBeenCalledWith({
@@ -562,11 +619,16 @@ it("make available names what it copies, and a connect outcome starts Connect fo
     .toBeVisible();
   actions.makeAvailable.mockResolvedValueOnce(ok({ outcome: "connect", catalogId: "notion" }));
   await userEvent.click(dialog.getByRole("button", { name: "Make available to all providers" }));
+  // The sign-in tab must open from a click, so the dialog offers Connect instead of opening it.
+  await expect.element(dialog.getByRole("button", { name: "Connect" })).toBeVisible();
+  expect(actions.beginConnect).not.toHaveBeenCalled();
+  await userEvent.click(dialog.getByRole("button", { name: "Connect" }));
   await vi.waitFor(() =>
     expect(actions.beginConnect).toHaveBeenCalledWith(
       expect.objectContaining({ catalogId: "notion" }),
     ),
   );
+  expect(page.getByRole("dialog").query()).toBeNull();
   expect(actions.makeAvailable).toHaveBeenCalledWith("scratch");
 });
 

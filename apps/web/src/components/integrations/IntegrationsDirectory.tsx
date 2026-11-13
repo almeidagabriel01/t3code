@@ -12,6 +12,7 @@ import {
   type IntegrationBeginConnectResult,
   type IntegrationCatalogEntry,
   type IntegrationsState,
+  type IntegrationView,
 } from "@t3tools/contracts";
 import { BlocksIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -37,7 +38,6 @@ type Category = typeof IntegrationCategory.Type;
 interface Flow {
   readonly flowId: string;
   readonly mode: IntegrationBeginConnectResult["mode"];
-  readonly expiresAt: number;
   readonly title: string;
 }
 
@@ -45,6 +45,7 @@ type OpenDialog =
   | {
       readonly kind: "paste";
       readonly flowId: string;
+      readonly authorizationUrl: string;
       readonly name: string;
       readonly title: string;
     }
@@ -100,6 +101,35 @@ const announceConnected = (title: string, onChooseAssistants: () => void) =>
     actionProps: { children: "Assistants", onClick: onChooseAssistants },
   });
 
+/**
+ * Reports each sign-in this client started once its pushed status leaves "connecting" (finished,
+ * failed, expired or cancelled anywhere). Only a status seen as connecting counts, so a push
+ * still carrying the state from before the sign-in began does not end it.
+ */
+function SignInWatcher(props: {
+  readonly flows: ReadonlyMap<string, Flow>;
+  readonly integrations: ReadonlyArray<IntegrationView>;
+  readonly onEnded: (name: string, flow: Flow, status: IntegrationView["status"] | null) => void;
+}) {
+  const seen = useRef(new Set<string>());
+  const ended = useRef(new Set<string>());
+  const { flows, integrations, onEnded } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a sign-in ends on the server, so this client learns it only from the pushed status; ending the local listener and dialog is the side effect
+  useEffect(() => {
+    for (const [name, flow] of flows) {
+      const status = integrations.find((integration) => integration.name === name)?.status ?? null;
+      if (status === "connecting") {
+        seen.current.add(flow.flowId);
+        continue;
+      }
+      if (!seen.current.has(flow.flowId) || ended.current.has(flow.flowId)) continue;
+      ended.current.add(flow.flowId);
+      onEnded(name, flow, status);
+    }
+  }, [flows, integrations, onEnded]);
+  return null;
+}
+
 /** The Integrations directory of one environment and every connect, detail and consent flow. */
 export function IntegrationsDirectory(props: {
   readonly state: IntegrationsState;
@@ -117,7 +147,8 @@ export function IntegrationsDirectory(props: {
   const [category, setCategory] = useState<Category | null>(null);
   const [flows, setFlows] = useState<ReadonlyMap<string, Flow>>(new Map());
   const [open, setOpen] = useState<OpenDialog | null>(null);
-  const announced = useRef(new Set<string>());
+  // Loopback listeners stopped because the sign-in already ended on the server.
+  const endedByPush = useRef(new Set<string>());
   const directory = integrationDirectory(state, { query, category });
   const entryById = (catalogId: string) =>
     state.catalog.find((entry) => entry.id === catalogId) ?? null;
@@ -129,19 +160,18 @@ export function IntegrationsDirectory(props: {
       else next.set(name, flow);
       return next;
     });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a browser sign-in finishes on the server, so its success reaches this client only as a pushed status; the toast is the side effect
-  useEffect(() => {
-    for (const [name, flow] of flows) {
-      if (flow.mode !== "server" || announced.current.has(flow.flowId)) continue;
-      if (flow.expiresAt < Date.now()) continue;
-      const connected = state.integrations.some(
-        (integration) => integration.name === name && integration.status === "connected",
-      );
-      if (!connected) continue;
-      announced.current.add(flow.flowId);
+  const onFlowEnded = (name: string, flow: Flow, status: IntegrationView["status"] | null) => {
+    track(name, null);
+    if (status === "connected" && flow.mode === "server") {
       announceConnected(flow.title, props.onChooseAssistants);
     }
-  }, [flows, state.integrations, props.onChooseAssistants]);
+    const bridge = window.desktopBridge;
+    if (flow.mode === "loopback" && bridge) {
+      endedByPush.current.add(flow.flowId);
+      void bridge.cancelIntegrationCallback();
+    }
+    if (open?.kind === "paste" && open.flowId === flow.flowId) setOpen(null);
+  };
 
   const finish = async (name: string, flowId: string, title: string, callbackUrl: string) => {
     const result = await actions.completeConnect({ flowId, callbackUrl });
@@ -173,12 +203,7 @@ export function IntegrationsDirectory(props: {
       return;
     }
     const flow = begun.value;
-    track(flow.name, {
-      flowId: flow.flowId,
-      mode: flow.mode,
-      expiresAt: flow.expiresAt,
-      title: entry.name,
-    });
+    track(flow.name, { flowId: flow.flowId, mode: flow.mode, title: entry.name });
     if (flow.mode === "loopback" && bridge) {
       const received = await bridge.receiveIntegrationCallback({
         authorizationUrl: flow.authorizationUrl,
@@ -193,7 +218,8 @@ export function IntegrationsDirectory(props: {
         return;
       }
       track(flow.name, null);
-      await actions.cancelConnect(flow.flowId);
+      if (endedByPush.current.has(flow.flowId)) return;
+      await actions.cancelConnect(flow.name);
       if (received.status === "port-busy" && !options.busy) {
         return startFlow(entry, { busy: true });
       }
@@ -203,7 +229,13 @@ export function IntegrationsDirectory(props: {
     }
     openSignIn(tab, flow.authorizationUrl);
     if (flow.mode !== "server") {
-      setOpen({ kind: "paste", flowId: flow.flowId, name: flow.name, title: entry.name });
+      setOpen({
+        kind: "paste",
+        flowId: flow.flowId,
+        authorizationUrl: flow.authorizationUrl,
+        name: flow.name,
+        title: entry.name,
+      });
     }
   };
 
@@ -216,15 +248,14 @@ export function IntegrationsDirectory(props: {
     void startFlow(entry);
   };
 
-  const cancel = async (name: string) => {
+  const cancel = async (name: string, title: string) => {
     const flow = flows.get(name);
-    if (flow === undefined) return;
     const bridge = window.desktopBridge;
     // The listener then reports "cancelled", and its flow cancels the server side.
-    if (flow.mode === "loopback" && bridge) return bridge.cancelIntegrationCallback();
+    if (flow?.mode === "loopback" && bridge) return bridge.cancelIntegrationCallback();
     track(name, null);
-    const result = await actions.cancelConnect(flow.flowId);
-    if (!result.ok) showError(result.reason, flow.title);
+    const result = await actions.cancelConnect(name);
+    if (!result.ok) showError(result.reason, title);
   };
 
   const onMenu = (row: IntegrationDirectoryRow, action: IntegrationRowMenuAction) => {
@@ -250,8 +281,8 @@ export function IntegrationsDirectory(props: {
         <Button
           size="xs"
           variant="outline"
-          disabled={!flows.has(primary.name)}
-          onClick={() => void cancel(primary.name)}
+          disabled={!actions.canAct}
+          onClick={() => void cancel(primary.name, row.title)}
         >
           {primary.label}
         </Button>
@@ -304,6 +335,18 @@ export function IntegrationsDirectory(props: {
   const detailEntry =
     detail === null || detail.catalogId === null ? null : entryById(detail.catalogId);
   const ownApp = open?.kind === "own-app" ? ownAppGroup(open.entry) : null;
+  const nothingMatches =
+    (query.trim() !== "" || category !== null) &&
+    directory.connected.length + directory.available.length + directory.other.length === 0;
+  const ownAppUsers = state.integrations.flatMap((integration) => {
+    const catalogEntry = integration.catalogId === null ? null : entryById(integration.catalogId);
+    return ownApp !== null &&
+      catalogEntry !== null &&
+      ownAppGroup(catalogEntry) === ownApp &&
+      integration.status !== "not-connected"
+      ? [catalogEntry.name]
+      : [];
+  });
 
   return (
     <div className="@container/integrations flex flex-col gap-8">
@@ -325,6 +368,7 @@ export function IntegrationsDirectory(props: {
             />
           </InputGroup>
           <ToggleGroup
+            aria-label="Categories"
             variant="pill"
             size="compact"
             className="flex-wrap"
@@ -346,6 +390,9 @@ export function IntegrationsDirectory(props: {
           </ToggleGroup>
         </div>
       </SettingsSection>
+      {nothingMatches ? (
+        <p className="px-3 text-sm text-muted-foreground">No integrations match your search.</p>
+      ) : null}
       {section("Connected", directory.connected)}
       {section("Available", directory.available)}
       <SettingsSection
@@ -372,6 +419,7 @@ export function IntegrationsDirectory(props: {
       {open?.kind === "paste" ? (
         <PasteDialog
           name={open.title}
+          onOpenSignIn={() => openSignIn(null, open.authorizationUrl)}
           onComplete={async (callbackUrl) => {
             const result = await finish(open.name, open.flowId, open.title, callbackUrl);
             if (result.ok) setOpen(null);
@@ -380,7 +428,7 @@ export function IntegrationsDirectory(props: {
           onClose={() => {
             setOpen(null);
             track(open.name, null);
-            void actions.cancelConnect(open.flowId);
+            void actions.cancelConnect(open.name);
           }}
         />
       ) : null}
@@ -390,6 +438,7 @@ export function IntegrationsDirectory(props: {
           clientGroup={ownApp}
           saved={state.ownApps.find((app) => app.clientGroup === ownApp) ?? null}
           redirectUris={ownAppRedirectUris(state, callbackPageOrigin())}
+          disconnects={ownAppUsers}
           setupUrl={
             open.entry.auth.kind === "oauth" && open.entry.auth.registration === "own-app"
               ? (open.entry.auth.setupUrl ?? null)
@@ -468,17 +517,18 @@ export function IntegrationsDirectory(props: {
           server={open.server}
           onConfirm={async () => {
             const result = await actions.makeAvailable(open.server.id);
-            if (!result.ok) return result;
-            setOpen(null);
-            if (result.value.outcome === "connect") {
-              const entry = entryById(result.value.catalogId);
-              if (entry) connect(entry);
-            }
+            if (result.ok && result.value.outcome === "copied") setOpen(null);
             return result;
+          }}
+          onConnect={(catalogId) => {
+            setOpen(null);
+            const entry = entryById(catalogId);
+            if (entry) connect(entry);
           }}
           onClose={() => setOpen(null)}
         />
       ) : null}
+      <SignInWatcher flows={flows} integrations={state.integrations} onEnded={onFlowEnded} />
     </div>
   );
 }

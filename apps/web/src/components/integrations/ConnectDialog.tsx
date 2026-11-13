@@ -91,6 +91,7 @@ function FormDialog(props: {
 /** Paste mode: nothing listens on the redirect, so the user brings the address back. */
 export function PasteDialog(props: {
   readonly name: string;
+  readonly onOpenSignIn: () => void;
   readonly onComplete: (callbackUrl: string) => Promise<IntegrationReply<unknown>>;
   readonly onClose: () => void;
 }) {
@@ -111,6 +112,7 @@ export function PasteDialog(props: {
   return (
     <FormDialog
       title={props.name}
+      description="After you sign in, the browser shows a page that can't load. Copy its address and paste it here."
       formId={`${id}-paste`}
       submitLabel="Connect"
       canSubmit={text.trim() !== ""}
@@ -119,6 +121,10 @@ export function PasteDialog(props: {
       onSubmit={() => void submit()}
       onClose={props.onClose}
     >
+      <Button type="button" variant="outline" className="self-start" onClick={props.onOpenSignIn}>
+        <ExternalLinkIcon />
+        Open sign-in page
+      </Button>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${id}-address`}>Paste the address from the browser</Label>
         <Input
@@ -167,6 +173,8 @@ export function OwnAppDialog(props: {
   readonly clientGroup: string;
   readonly saved: IntegrationsState["ownApps"][number] | null;
   readonly redirectUris: ReadonlyArray<string>;
+  /** Integrations that sign in with this app, so removing it disconnects them. */
+  readonly disconnects: ReadonlyArray<string>;
   readonly setupUrl: string | null;
   readonly onSave: (input: {
     readonly clientId: string;
@@ -219,7 +227,7 @@ export function OwnAppDialog(props: {
       }
     >
       {props.setupUrl === null ? null : (
-        <ExternalLink href={props.setupUrl}>{props.setupUrl}</ExternalLink>
+        <ExternalLink href={props.setupUrl}>Open the setup page</ExternalLink>
       )}
       <div className="flex flex-col gap-1.5">
         <span id={`${id}-redirects`} className="text-sm font-medium">
@@ -257,6 +265,9 @@ export function OwnAppDialog(props: {
           </p>
         ) : null}
       </div>
+      {props.saved === null || props.disconnects.length === 0 ? null : (
+        <p className="text-xs text-muted-foreground">Disconnects: {props.disconnects.join(", ")}</p>
+      )}
     </FormDialog>
   );
 }

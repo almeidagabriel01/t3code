@@ -837,6 +837,7 @@ function AssistantDialog(props: {
                       state={integrationsState}
                       value={integrations}
                       onChange={setIntegrations}
+                      workspace={workspace}
                       provider={
                         modelEntry === undefined
                           ? null

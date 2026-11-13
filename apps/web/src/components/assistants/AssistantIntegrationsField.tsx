@@ -2,10 +2,16 @@ import {
   assistantIntegrationPicker,
   integrationProviderSupport,
   notAvailableOnLabel,
+  sandboxWorkNote,
   selectionForMode,
   toggleIntegration,
 } from "@t3tools/client-runtime/integrations";
-import type { AssistantIntegrations, EnvironmentId, IntegrationsState } from "@t3tools/contracts";
+import type {
+  AssistantIntegrations,
+  AssistantWorkspace,
+  EnvironmentId,
+  IntegrationsState,
+} from "@t3tools/contracts";
 
 import { useIntegrationsState } from "../../state/integrations";
 import { TONE_BADGE } from "../integrations/IntegrationRow";
@@ -28,6 +34,8 @@ export function AssistantIntegrationsField(props: {
   readonly state: IntegrationsState;
   readonly value: AssistantIntegrations;
   readonly onChange: (next: AssistantIntegrations) => void;
+  /** Where the assistant's work runs, as chosen in the form. */
+  readonly workspace: AssistantWorkspace;
   /** The assistant's provider instance, when it has a model. */
   readonly provider: {
     readonly instanceId: string;
@@ -42,9 +50,11 @@ export function AssistantIntegrationsField(props: {
     driverKind: provider?.driverKind ?? "",
     instanceId: provider?.instanceId ?? "",
   });
+  const sandboxNote = sandboxWorkNote(props.workspace);
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="text-sm font-medium">Integrations</legend>
+      {sandboxNote === null ? null : <p className="text-xs text-muted-foreground">{sandboxNote}</p>}
       {provider !== null && !integrationProviderSupport(provider.driverKind) ? (
         <p className="text-xs text-warning-foreground">
           {notAvailableOnLabel(provider.displayName)}

@@ -65,12 +65,14 @@ function Harness(props: {
   readonly initial: AssistantIntegrations;
   readonly onChange: (next: AssistantIntegrations) => void;
   readonly driverKind: string;
+  readonly workspace?: "host" | "sandbox";
 }) {
   const [value, setValue] = useState(props.initial);
   return (
     <AssistantIntegrationsField
       state={STATE}
       value={value}
+      workspace={props.workspace ?? "host"}
       onChange={(next) => {
         setValue(next);
         props.onChange(next);
@@ -104,6 +106,19 @@ it("Choose… starts from what All connected gave, then each checkmark edits the
   expect(onChange).toHaveBeenLastCalledWith({ mode: "selected", names: ["linear"] });
   await userEvent.click(page.getByRole("radio", { name: "All connected" }));
   expect(onChange).toHaveBeenLastCalledWith({ mode: "all" });
+});
+
+it("says integrations stay out of work the assistant runs in the sandbox", async () => {
+  await using _screen = await render(
+    <Harness
+      initial={{ mode: "all" }}
+      onChange={vi.fn()}
+      driverKind="claudeAgent"
+      workspace="sandbox"
+    />,
+    { router: false },
+  );
+  await expect.element(page.getByText("Not available in the sandbox")).toBeVisible();
 });
 
 it("says when the assistant's provider cannot use integrations", async () => {

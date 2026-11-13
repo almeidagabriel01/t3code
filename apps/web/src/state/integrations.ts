@@ -97,8 +97,8 @@ export function useIntegrationActions(environmentId: EnvironmentId) {
       reply(await begin({ environmentId, input })),
     completeConnect: async (input: { readonly flowId: string; readonly callbackUrl: string }) =>
       reply(await complete({ environmentId, input })),
-    cancelConnect: async (flowId: string) =>
-      reply(await cancel({ environmentId, input: { flowId } })),
+    /** Ends the pending sign-in of integration `name`, wherever it started. */
+    cancelConnect: async (name: string) => reply(await cancel({ environmentId, input: { name } })),
     disconnect: async (name: string) => reply(await disconnect({ environmentId, input: { name } })),
     saveToken: async (catalogId: string, token: string) =>
       reply(await saveToken({ environmentId, input: { catalogId, token } })),
