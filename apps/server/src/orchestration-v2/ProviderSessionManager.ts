@@ -1,5 +1,6 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -866,6 +867,83 @@ export const layerWithOptions = (
         }
       });
 
+      // The closed process ran these, so no provider event can end them. Shutdown leaves them to
+      // restart recovery, which tells the continuation what was cut.
+      const writeReleasedTurnItemEvents = Effect.fn(
+        "ProviderSessionManager.writeReleasedTurnItemEvents",
+      )(function* (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
+      }) {
+        if (
+          input.reason === "server_shutdown" ||
+          input.entry.runtime.backgroundTasksEndWithProcess !== true
+        ) {
+          return;
+        }
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const status = input.reason === "runtime_error" ? "failed" : "cancelled";
+        const now = yield* DateTime.now;
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        for (const threadId of releasedThreadIds(input)) {
+          const projection = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["providerThreads", "runs", "turnItems"],
+            {
+              turnItemTypes: ["command_execution", "dynamic_tool"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          );
+          const sessionProviderThreadIds = new Set(
+            projection.providerThreads
+              .filter((providerThread) => providerThread.providerSessionId === providerSessionId)
+              .map((providerThread) => providerThread.id),
+          );
+          // Session ids survive a restart, so only work that predates this release is ours.
+          const items = pendingBackgroundTurnItems(projection).filter(
+            (item) =>
+              item.providerThreadId !== null &&
+              sessionProviderThreadIds.has(item.providerThreadId) &&
+              (item.startedAt === null ||
+                DateTime.isLessThanOrEqualTo(item.startedAt, input.releasedAt)),
+          );
+          if (items.length === 0) continue;
+          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
+            nodeIds: items.flatMap((item) => item.nodeId ?? []),
+          });
+          for (const item of items) {
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "turn-item.updated",
+              threadId,
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              driver: input.entry.runtime.driver,
+              occurredAt: now,
+              payload: { ...item, status, completedAt: now, updatedAt: now },
+            });
+          }
+          for (const node of nodes) {
+            if (!isOrchestrationV2WorkActive(node.status)) continue;
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "node.updated",
+              threadId,
+              ...(node.runId === null ? {} : { runId: node.runId }),
+              nodeId: node.id,
+              driver: input.entry.runtime.driver,
+              occurredAt: now,
+              payload: { ...node, status, completedAt: now },
+            });
+          }
+        }
+        if (events.length > 0) {
+          yield* eventSink.write({ events });
+        }
+      });
+
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
       // Keep OpenCode's roster: its background subagents share a server and can outlive the session.
       const readReleasedBackgroundTasks = Effect.fn(
@@ -987,6 +1065,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedTurnItemEvents(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
