@@ -44,6 +44,27 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it("reads group members and projects as their own tokens, leaving the text as typed", () => {
+    const text = "@Ada fix #billing-api with @README.md and @beto_qa #nope @ada";
+    const tokens = collectComposerInlineTokens(text, {
+      memberHandles: ["ada", "beto_qa"],
+      projectSlugs: ["billing-api"],
+    });
+    expect(tokens.map((token) => [token.type, token.value, token.source])).toEqual([
+      ["member", "ada", "@Ada"],
+      ["project", "billing-api", "#billing-api"],
+      ["mention", "README.md", "@README.md"],
+      ["member", "beto_qa", "@beto_qa"],
+    ]);
+    for (const token of tokens) expect(text.slice(token.start, token.end)).toBe(token.source);
+  });
+
+  it("keeps @handles as file mentions and #words as text outside a group", () => {
+    expect(
+      collectComposerInlineTokens("@ada #billing-api ").map((token) => [token.type, token.value]),
+    ).toEqual([["mention", "ada"]]);
+  });
+
   it("leaves digits-only dollar amounts and compact monetary expressions as text", () => {
     expect(collectComposerInlineTokens("I'll pay $20 tomorrow")).toEqual([]);
     expect(collectComposerInlineTokens("Budget is $1_000 total")).toEqual([]);

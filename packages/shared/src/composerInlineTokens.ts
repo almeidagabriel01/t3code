@@ -14,10 +14,30 @@ export type ComposerInlineToken =
       readonly source: string;
       readonly start: number;
       readonly end: number;
+    }
+  | {
+      /** A group member, `@handle`; value is the handle. */
+      readonly type: "member";
+      readonly value: string;
+      readonly source: string;
+      readonly start: number;
+      readonly end: number;
+    }
+  | {
+      /** A group project, `#slug`; value is the slug. */
+      readonly type: "project";
+      readonly value: string;
+      readonly source: string;
+      readonly start: number;
+      readonly end: number;
     };
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+  /** Group members' handles: an `@handle` naming one is a member, not a file. */
+  readonly memberHandles?: ReadonlyArray<string>;
+  /** Group projects' `#slug`s (see `assistantGroupProjectSlug`). */
+  readonly projectSlugs?: ReadonlyArray<string>;
 }
 
 const SKILL_MENTION_SOURCE =
@@ -26,6 +46,7 @@ const SKILL_MENTION_SOURCE =
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
+const PROJECT_TOKEN_REGEX = /(^|\s)#([\p{L}\p{N}][\p{L}\p{N}_./-]*)(?=\s)/gu;
 // Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
 const FILE_LINK_TOKEN_REGEX = new RegExp(
@@ -38,7 +59,10 @@ const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200c\u200d]*\(/u;
 
-function collectMentionTokens(text: string): ComposerInlineToken[] {
+function collectMentionTokens(
+  text: string,
+  memberHandles: ReadonlySet<string> = new Set(),
+): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
   for (const match of text.matchAll(FILE_LINK_TOKEN_REGEX)) {
@@ -81,9 +105,10 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     }
     const start = (match.index ?? 0) + prefix.length;
     const end = start + fullMatch.length - prefix.length;
+    const member = quotedPath === undefined && memberHandles.has(path.toLowerCase());
     matches.push({
-      type: "mention",
-      value: path,
+      type: member ? "member" : "mention",
+      value: member ? path.toLowerCase() : path,
       source: text.slice(start, end),
       start,
       end,
@@ -121,7 +146,19 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  const handles = new Set(options.memberHandles?.map((handle) => handle.toLowerCase()));
+  const matches = collectMentionTokens(text, handles);
+  const slugs = new Set(options.projectSlugs);
+  if (slugs.size > 0) {
+    for (const match of text.matchAll(PROJECT_TOKEN_REGEX)) {
+      const prefix = match[1] ?? "";
+      const slug = (match[2] ?? "").toLowerCase();
+      if (!slugs.has(slug)) continue;
+      const start = (match.index ?? 0) + prefix.length;
+      const end = start + match[0].length - prefix.length;
+      matches.push({ type: "project", value: slug, source: text.slice(start, end), start, end });
+    }
+  }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];
