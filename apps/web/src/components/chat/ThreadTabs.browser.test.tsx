@@ -218,6 +218,18 @@ describe("thread tabs", () => {
     expect(useClosedViewStore.getState().entries[0]).toMatchObject({ kind: "panel-tab" });
   });
 
+  it("scrolls a strip that is out of room to show its active tab", async () => {
+    await setup({
+      groups: [{ id: "main", tabs: ["env:a", "env:b", "env:c"], active: "env:c" }],
+      layout: leaf("main"),
+      focusedGroupId: "main",
+    });
+    panels().openFile(ref("c"), "src/a-long-file-name-that-needs-room.ts");
+    await using screen = await render(<Harness route="c" width={240} />, { router: "/env/c" });
+    const strip = screen.getByRole("tablist").element();
+    await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
+  });
+
   it("closes a split group's shown file with Cmd+W before its thread", async () => {
     await setup(sideBySide());
     panels().openFile(ref("c"), "c.ts");
