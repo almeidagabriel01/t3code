@@ -2,7 +2,9 @@ import { useNavigation } from "@react-navigation/native";
 import {
   AUTONOMY_CHANNEL_LABELS,
   AUTONOMY_MINUTES_BOUNDS,
+  AUTONOMY_NOTIFY_AFTER_BOUNDS,
   AUTONOMY_RULE_OPTIONS,
+  AUTONOMY_USER_MESSAGES_BOUNDS,
   AUTONOMY_WAKES_BOUNDS,
   parseBoundedInt,
   withAutonomyChannel,
@@ -136,6 +138,27 @@ export function AutonomySettingsSection(props: {
         value={autonomy.enabled}
         onValueChange={(enabled) => void write({ ...autonomy, enabled })}
       />
+      <ListToggleRow
+        icon="envelope.badge"
+        label="Notify me when something is waiting for me"
+        description="Approvals, questions, open decisions and paused group tasks reach you directly, with no model and no daily limit. Works for every assistant and thread."
+        value={autonomy.notifyWaiting}
+        disabled={paused}
+        onValueChange={(notifyWaiting) => void write({ ...autonomy, notifyWaiting })}
+      />
+      <BoundedNumberRow
+        key={`notifyAfter:${autonomy.notifyWaitingAfterMinutes}`}
+        icon="calendar.badge.clock"
+        label="Notify after"
+        description="Something answered sooner is not sent."
+        unit="minutes"
+        value={autonomy.notifyWaitingAfterMinutes}
+        bounds={AUTONOMY_NOTIFY_AFTER_BOUNDS}
+        disabled={paused || !autonomy.notifyWaiting}
+        onCommit={(notifyWaitingAfterMinutes) =>
+          void write({ ...autonomy, notifyWaitingAfterMinutes })
+        }
+      />
       {AUTONOMY_RULE_OPTIONS.map((option) => (
         <ListToggleRow
           key={option.rule}
@@ -151,7 +174,7 @@ export function AutonomySettingsSection(props: {
         key={`waiting:${autonomy.waitingMinutes}`}
         icon="clock"
         label="Waiting for you after"
-        description="How long a run may wait on your answer before it counts as too long."
+        description="How long a run may wait on your answer before an assistant wakes to look into it."
         unit="minutes"
         value={autonomy.waitingMinutes}
         bounds={AUTONOMY_MINUTES_BOUNDS}
@@ -179,6 +202,17 @@ export function AutonomySettingsSection(props: {
         bounds={AUTONOMY_WAKES_BOUNDS}
         disabled={paused}
         onCommit={(maxWakesPerDay) => void write({ ...autonomy, maxWakesPerDay })}
+      />
+      <BoundedNumberRow
+        key={`userMessages:${autonomy.maxUserMessagesPerDay}`}
+        icon="bubble.left"
+        label="Messages from assistants per day"
+        description="How many short messages each assistant can send you on its own."
+        unit="per day"
+        value={autonomy.maxUserMessagesPerDay}
+        bounds={AUTONOMY_USER_MESSAGES_BOUNDS}
+        disabled={paused}
+        onCommit={(maxUserMessagesPerDay) => void write({ ...autonomy, maxUserMessagesPerDay })}
       />
       {CHANNEL_ROWS.map((row) => (
         <ListToggleRow

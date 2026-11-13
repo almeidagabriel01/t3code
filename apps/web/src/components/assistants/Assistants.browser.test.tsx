@@ -395,12 +395,16 @@ it("writes the whole autonomy object when a switch changes", async () => {
   await userEvent.click(page.getByRole("switch", { name: "Assistants can notify you" }));
   await userEvent.click(page.getByRole("switch", { name: "Run looks stuck" }));
   await userEvent.click(page.getByRole("switch", { name: "Notify on Telegram" }));
-  await eventually(() => expect(fakeSettings.patches).toHaveLength(3));
+  await userEvent.click(
+    page.getByRole("switch", { name: "Notify me when something is waiting for me" }),
+  );
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(4));
   // Each patch carries every field, so a write never drops a sibling setting.
   expect(fakeSettings.patches).toEqual([
     { autonomy: { ...on, enabled: false } },
     { autonomy: { ...on, rules: { ...on.rules, stuck: false } } },
     { autonomy: { ...on, channels: ["t3"] } },
+    { autonomy: { ...on, notifyWaiting: false } },
   ]);
 });
 
@@ -412,10 +416,16 @@ it("locks the rules, limits and channels while notifications are paused", async 
   await expect
     .element(page.getByRole("switch", { name: "Assistants can notify you" }))
     .toBeEnabled();
-  for (const name of ["Run looks stuck", "Notify on Telegram"]) {
+  for (const name of [
+    "Notify me when something is waiting for me",
+    "Run looks stuck",
+    "Notify on Telegram",
+  ]) {
     await expect.element(page.getByRole("switch", { name })).toBeDisabled();
   }
   await expect.element(page.getByLabelText("Waiting minutes")).toBeDisabled();
+  await expect.element(page.getByLabelText("Notify after")).toBeDisabled();
+  await expect.element(page.getByLabelText("Messages from assistants per day")).toBeDisabled();
 });
 
 it("saves valid numbers once and refuses out-of-range ones", async () => {
@@ -432,10 +442,16 @@ it("saves valid numbers once and refuses out-of-range ones", async () => {
   await userEvent.keyboard("{Enter}");
   await userEvent.fill(page.getByLabelText("Stuck minutes"), "10");
   await userEvent.keyboard("{Enter}");
-  await eventually(() => expect(fakeSettings.patches).toHaveLength(2));
+  await userEvent.fill(page.getByLabelText("Notify after"), "0");
+  await userEvent.keyboard("{Enter}");
+  await userEvent.fill(page.getByLabelText("Messages from assistants per day"), "50");
+  await userEvent.keyboard("{Enter}");
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(4));
   expect(fakeSettings.patches).toEqual([
     { autonomy: { ...on, waitingMinutes: 45 } },
     { autonomy: { ...on, stuckMinutes: 10 } },
+    { autonomy: { ...on, notifyWaitingAfterMinutes: 0 } },
+    { autonomy: { ...on, maxUserMessagesPerDay: 50 } },
   ]);
 });
 
