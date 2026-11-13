@@ -31,6 +31,10 @@ const state = vi.hoisted(() => ({
     createdAt: string;
     dismissedAt?: string | null;
   }>,
+  work: {
+    sites: [] as Array<Record<string, string>>,
+    subagents: new Map<string, ReadonlyArray<Record<string, unknown>>>(),
+  },
   dismissTask: vi.fn(),
   update: vi.fn(),
   openTeam: vi.fn(),
@@ -86,6 +90,7 @@ vi.mock("../../state/assistants", () => ({
     teams: state.teams,
     activeTeams: state.teams,
   }),
+  useAssistantLiveWork: () => state.work,
   useAssistantTasks: (_environmentId: string, assistantId: string) =>
     assistantId === "jarvis" ? state.tasks : [],
 }));
@@ -126,6 +131,8 @@ vi.mock("../../hooks/useSettings", () => ({
       sidebarAssistantsCollapsed: state.collapsed,
       sidebarAssistantsExpandedGroups: state.expanded,
       sidebarAssistantsShowAll: state.showAll,
+      sidebarShowSubagents: true,
+      sidebarAgentActivityDisplayMode: "compact",
     }),
   updateClientSettings: state.update,
 }));
@@ -168,6 +175,7 @@ function setup(
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
   state.tasks = [];
+  state.work = { sites: [], subagents: new Map() };
   state.dismissTask.mockClear();
 }
 
@@ -204,6 +212,44 @@ const pill = (container: HTMLElement, name: string) =>
   );
 
 describe("AssistantSidebarSection", () => {
+  it("shows the projects an assistant works in and its live subagents, and opens each", async () => {
+    setup([{ name: "Jarvis", scope: "project", projectId: "p1" }]);
+    const site = { environmentId: "env", assistantId: "jarvis", face: "working" };
+    state.work = {
+      sites: [
+        { ...site, projectId: "p1", threadId: "task-web" },
+        // The assistants' own home, or a project this client does not list, shows no favicon.
+        { ...site, projectId: "home", threadId: "child-home" },
+      ],
+      subagents: new Map([
+        ["env:jarvis", [{ ...shellFor("child-1"), title: "Review the diff", createdAt: "x" }]],
+      ]),
+    };
+    const onOpen = vi.fn();
+    await using screen = await render(element(onOpen));
+    const sites = screen.container.querySelectorAll('[data-testid="assistant-work-site"]');
+    expect([...sites].map((node) => node.getAttribute("aria-label"))).toEqual([
+      "Working in ProOps",
+    ]);
+    // The favicons replace the configured-project pill, so the row shows one set of projects.
+    expect(pill(screen.container, "jarvis")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Working in ProOps" }));
+    expect(onOpen).toHaveBeenLastCalledWith({ environmentId: "env", threadId: "task-web" });
+    const child = screen.getByTestId("sidebar-subagent-row");
+    await expect.element(child).toHaveTextContent("Review the diff");
+    await userEvent.click(child);
+    expect(onOpen).toHaveBeenLastCalledWith({ environmentId: "env", threadId: "child-1" });
+    expect(onOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops the favicons and subagent rows once the work ends", async () => {
+    setup([{ name: "Jarvis", scope: "project", projectId: "p1" }]);
+    await using screen = await render(element());
+    expect(screen.container.querySelector('[data-testid="assistant-work-sites"]')).toBeNull();
+    expect(screen.container.querySelector('[data-testid="sidebar-subagent-row"]')).toBeNull();
+    expect(pill(screen.container, "jarvis")).not.toBeNull();
+  });
+
   it("lists an assistant's tasks under it with their state, and opens one on click", async () => {
     setup(["Jarvis"], { moods: { "task-1": "working", "task-2": "failed" } });
     state.tasks = [

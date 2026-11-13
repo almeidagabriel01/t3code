@@ -70,6 +70,7 @@
     "@effect/tsgo": "0.67.1",
     "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
+    "@vitest/coverage-v8": "5.0.5",
     "knip": "6.34.0",
     "vite-plus": "catalog:"
   },

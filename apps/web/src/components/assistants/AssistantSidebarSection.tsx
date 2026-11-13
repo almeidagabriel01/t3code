@@ -1,4 +1,7 @@
 import { listedProjects } from "@t3tools/client-runtime/assistantSections";
+import { assistantSites, type AssistantWorkSite } from "@t3tools/client-runtime/assistantLiveWork";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   assistantMetaLabel,
@@ -41,11 +44,13 @@ import {
   type AssistantEntry,
   type AssistantTeamEntry,
   useAssistantEntries,
+  useAssistantLiveWork,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
+import { SubagentRows } from "../sidebar/SidebarSubagentRows";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -103,6 +108,51 @@ function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThre
   return { presence, dotClass, open };
 }
 
+const MAX_WORK_SITES = 2;
+
+/** The projects an assistant is working in now; each favicon opens the thread it works on there. */
+function AssistantWorkSites(props: {
+  readonly sites: ReadonlyArray<{
+    readonly site: AssistantWorkSite;
+    readonly project: ProjectFaviconProject;
+  }>;
+  readonly onOpen: (threadRef: ScopedThreadRef) => void;
+}) {
+  const shown = props.sites.slice(0, MAX_WORK_SITES);
+  const hidden = props.sites.length - shown.length;
+  return (
+    <span data-testid="assistant-work-sites" className="flex shrink-0 items-center gap-0.5">
+      {shown.map(({ site, project }) => (
+        <Tooltip key={`${site.environmentId}:${site.projectId}`}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Working in ${project.title}`}
+                data-testid="assistant-work-site"
+                className={cn(
+                  "inline-flex size-5 cursor-pointer items-center justify-center rounded-sm hover:bg-foreground/8",
+                  FOCUS_RING,
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onOpen(scopeThreadRef(site.environmentId, site.threadId));
+                }}
+              />
+            }
+          >
+            <ProjectFavicon project={project} className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{`Working in ${project.title}`}</TooltipPopup>
+        </Tooltip>
+      ))}
+      {hidden > 0 ? (
+        <span className="text-xs tabular-nums text-muted-foreground">+{hidden}</span>
+      ) : null}
+    </span>
+  );
+}
+
 const STATUS_DOT: Partial<Record<AssistantMood, string>> = {
   needs: "bg-warning",
   working: "bg-info",
@@ -119,6 +169,12 @@ const AssistantRow = memo(function AssistantRow(props: {
   readonly projectLabel?: string | null;
   readonly project?: ProjectFaviconProject | undefined;
   readonly nested?: boolean;
+  readonly workSites?: ReadonlyArray<{
+    readonly site: AssistantWorkSite;
+    readonly project: ProjectFaviconProject;
+  }>;
+  /** Live delegated children of its chat and group threads, shown as a project shows a thread's. */
+  readonly subagents?: ReadonlyArray<EnvironmentThreadShell>;
 }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
@@ -179,6 +235,9 @@ const AssistantRow = memo(function AssistantRow(props: {
           </Badge>
         ) : null}
         <span className="flex-1" />
+        {props.workSites && props.workSites.length > 0 ? (
+          <AssistantWorkSites sites={props.workSites} onOpen={props.onOpen} />
+        ) : null}
         {meta !== null ? (
           <span
             data-testid="assistant-status"
@@ -190,7 +249,7 @@ const AssistantRow = memo(function AssistantRow(props: {
           >
             {meta}
           </span>
-        ) : props.projectLabel ? (
+        ) : props.projectLabel && !props.workSites?.length ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -269,6 +328,11 @@ const AssistantRow = memo(function AssistantRow(props: {
         activeThreadKey={props.activeThreadKey}
         onOpen={props.onOpen}
       />
+      {props.subagents && props.subagents.length > 0 ? (
+        <ul aria-label={`${assistant.name} subagents`} className="m-0 p-0">
+          <SubagentRows onOpen={props.onOpen}>{props.subagents}</SubagentRows>
+        </ul>
+      ) : null}
     </li>
   );
 });
@@ -516,6 +580,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   const showAll = useClientSettings((settings) => settings.sidebarAssistantsShowAll);
   const shells = useQuietThreadShells();
   const projects = useProjects();
+  const work = useAssistantLiveWork();
   const [describing, setDescribing] = useState(false);
   if (!enabled || (active.length === 0 && teams.length === 0)) return null;
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
@@ -540,6 +605,12 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
     entry.assistant.threadId
       ? scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId))
       : null;
+
+  const workSitesOf = ({ environmentId, assistant }: AssistantEntry) =>
+    assistantSites(work, environmentId, assistant.id, (projectId) => {
+      const project = projectOf(environmentId, projectId);
+      return project !== undefined && hasProjectPanels(project);
+    }).map((site) => ({ site, project: projectOf(environmentId, site.projectId)! }));
 
   const row = (entry: AssistantEntry, nested = false) => {
     const key = keyOf(entry);
@@ -568,6 +639,8 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
         isActive={key !== null && key === props.routeThreadKey}
         activeThreadKey={props.routeThreadKey}
         onOpen={props.onOpenThread}
+        workSites={workSitesOf(entry)}
+        subagents={work.subagents.get(`${entry.environmentId}:${entry.assistant.id}`) ?? []}
       />
     );
   };

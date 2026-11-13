@@ -190,9 +190,18 @@ describe("sidebar thread lineage helpers", () => {
     const parent = makeThreadFixture({ id: ThreadId.make("parent") });
     const sideChat = { ...makeThreadFixture({ id: ThreadId.make("side") }), sideChatOf: parent.id };
     const assistant = makeThreadFixture({ id: ThreadId.make("assistant:jarvis:1") });
-    expect(filterSidebarV2VisibleThreads([parent, sideChat, assistant], null, new Set())).toEqual([
-      parent,
-    ]);
+    // Its delegated child lists under the assistant, not in the home project.
+    const delegated = makeThreadFixture({
+      id: ThreadId.make("delegated"),
+      lineage: {
+        rootThreadId: assistant.id,
+        parentThreadId: assistant.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(
+      filterSidebarV2VisibleThreads([parent, sideChat, assistant, delegated], null, new Set()),
+    ).toEqual([parent]);
   });
 });
 
