@@ -14,6 +14,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     selectAllProjects: vi.fn(),
     toggleProject: vi.fn(),
     openSettings: vi.fn(),
+    projectGroups: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({
@@ -24,9 +25,7 @@ vi.mock("react-native", () => ({
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => mocks.navigation }));
 vi.mock("../settings/settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    projectGroups: [
-      { key: "group-p1", members: [{ project: { environmentId: "env", id: "p1" } }] },
-    ],
+    readProjectGroups: () => mocks.projectGroups,
     selectAllProjects: mocks.selectAllProjects,
     toggleProject: mocks.toggleProject,
   }),
@@ -279,6 +278,10 @@ describe("access prompt after adding a project", () => {
         <Ask env="env" project="p1" title="Shop" />
       </>,
     );
+    // The project lands after the render, as it does right after an add.
+    mocks.projectGroups = [
+      { key: "group-p1", members: [{ project: { environmentId: "env", id: "p1" } }] },
+    ];
     await press("ask Elsewhere");
     await press("ask Unknown");
     expect(mocks.alert).not.toHaveBeenCalled();

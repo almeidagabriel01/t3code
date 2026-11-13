@@ -11,14 +11,15 @@ import { openSettings } from "../settings/settings-navigation";
 export function usePromptProjectAssistantAccess() {
   const navigation = useNavigation();
   const entries = useAssistantEntries();
-  const { projectGroups, selectAllProjects, toggleProject } = useSettingsEnvironmentFilter();
+  const { readProjectGroups, selectAllProjects, toggleProject } = useSettingsEnvironmentFilter();
   return (environmentId: EnvironmentId, projectId: ProjectId, title: string) => {
     const relevant =
       entries.activeTeams.some((entry) => entry.environmentId === environmentId) ||
       entries.active.some(
         (entry) => entry.environmentId === environmentId && entry.assistant.scope === "project",
       );
-    const group = projectGroups.find((candidate) =>
+    // Read now: the project was added after the render that made this callback.
+    const group = readProjectGroups().find((candidate) =>
       candidate.members.some(
         (member) =>
           member.project.environmentId === environmentId && member.project.id === projectId,
