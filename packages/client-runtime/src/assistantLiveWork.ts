@@ -110,20 +110,6 @@ export function assistantLiveWork(input: {
   return { sites, subagents, taskThreadKeys };
 }
 
-/** The assistant's sites, keeping only projects the caller lists (the assistants' home is none). */
-export const assistantSites = (
-  work: AssistantLiveWork,
-  environmentId: string,
-  assistantId: string,
-  isListedProject: (projectId: string) => boolean,
-): ReadonlyArray<AssistantWorkSite> =>
-  work.sites.filter(
-    (site) =>
-      site.environmentId === environmentId &&
-      site.assistantId === assistantId &&
-      isListedProject(site.projectId),
-  );
-
 /**
  * The faces a project row shows: assistants working there first (with the thread to open), then
  * its configured assistants. Each assistant once; a project can span environments.

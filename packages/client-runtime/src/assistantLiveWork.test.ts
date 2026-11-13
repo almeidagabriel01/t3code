@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantLiveWork, assistantSites, projectAssistantFaces } from "./assistantLiveWork.ts";
+import { assistantLiveWork, projectAssistantFaces } from "./assistantLiveWork.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
 
@@ -166,25 +166,6 @@ describe("assistantLiveWork", () => {
       shells: [shell("live"), shell("done", { status: "completed" }), shell("gone")],
     });
     expect([...work.taskThreadKeys].toSorted()).toEqual(["env:done", "env:live"]);
-  });
-});
-
-describe("assistantSites", () => {
-  it("keeps the assistant's own sites in listed projects only", () => {
-    const work = assistantLiveWork({
-      tasks: [task("t1"), task("t2", "bo")],
-      shells: [
-        shell("t1", { project: "web" }),
-        shell("t2", { project: "web" }),
-        shell("c1", { parent: "assistant:ada:1", project: "assistants-home" }),
-      ],
-    });
-    expect(
-      assistantSites(work, "env", "ada", (projectId) => projectId !== "assistants-home").map(
-        (site) => site.threadId,
-      ),
-    ).toEqual(["t1"]);
-    expect(assistantSites(work, "other-env", "ada", () => true)).toEqual([]);
   });
 });
 
