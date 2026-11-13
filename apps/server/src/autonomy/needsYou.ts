@@ -21,8 +21,7 @@ const WANTS: Readonly<Record<string, string>> = {
   "file-read": DECISION_PHRASES.wantsFileRead,
 };
 
-/** Kinds T3 answers itself; every other pending request waits on the user. */
-export const MACHINE_REQUEST_KINDS = ["dynamic_tool_call", "auth_refresh"] as const;
+export { MACHINE_REQUEST_KINDS } from "@t3tools/shared/needsUser";
 
 /** A user-input option id points back at the option by position: `option:<index>`. */
 const OPTION_PREFIX = "option:";
