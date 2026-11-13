@@ -46,17 +46,15 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
       const destination =
         commandLine === undefined || commandLine.trim() === ""
           ? null
-          : yield* queue
-              .probe(commandLine, cwd ?? NodeOS.homedir())
-              .pipe(
-                Effect.mapError(
-                  (error) =>
-                    new OrchestratorMcpFailure({
-                      code: "orchestration_error",
-                      message: error.message,
-                    }),
-                ),
-              );
+          : yield* queue.probe(commandLine, cwd ?? NodeOS.homedir()).pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "orchestration_error",
+                    message: error.message,
+                  }),
+              ),
+            );
       const shells = yield* threads
         .listProjectThreads({ projectId: undefined, includeSubagents: true })
         .pipe(Effect.mapError(unavailable));
