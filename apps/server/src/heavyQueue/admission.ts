@@ -64,7 +64,8 @@ export const sustain = (
 };
 
 export interface Run {
-  readonly cpu: number;
+  /** Absent when no sample read the job's processes. */
+  readonly cpu?: number;
   readonly memoryBytes: number;
   readonly durationMs: number;
 }
@@ -151,22 +152,34 @@ interface Cost {
   readonly durationMs: number | null;
 }
 
+/**
+ * The most CPU a command's finished runs used; undefined when none was read. Older files hold 0
+ * for runs whose processes the monitor never saw, so only a positive reading counts.
+ */
+export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label">) => {
+  const cpus = (history[signatureOf(entry.label)] ?? []).flatMap((run) =>
+    typeof run.cpu === "number" && run.cpu > 0 ? [run.cpu] : [],
+  );
+  return cpus.length === 0 ? undefined : Math.max(...cpus);
+};
+
 export const estimate = (
   history: History,
   entry: Pick<HeavyQueueEntry, "label" | "server">,
   cpuCount: number,
 ): Cost => {
   const runs = history[signatureOf(entry.label)] ?? [];
+  const medium = kindOf(entry) === "medium";
+  const guessCpu = Math.min(medium ? 2 : 4, Math.max(1, cpuCount));
   if (runs.length > 0) {
     return {
-      cpu: Math.max(...runs.map((run) => run.cpu)),
+      cpu: learnedCpu(history, entry) ?? guessCpu,
       memoryBytes: Math.max(...runs.map((run) => run.memoryBytes)),
       durationMs: medianDuration(runs),
     };
   }
-  const medium = kindOf(entry) === "medium";
   return {
-    cpu: Math.min(medium ? 2 : 4, Math.max(1, cpuCount)),
+    cpu: guessCpu,
     memoryBytes: (medium ? 1.5 : 4) * GIB,
     durationMs: null,
   };

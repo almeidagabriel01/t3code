@@ -44,7 +44,8 @@ export const peaksOf = (
   const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
   const peaks: Record<
     string,
-    { cpu: number; memoryBytes: number; daemons?: ReadonlyArray<number> }
+    // Null when the monitor did not see the job's root: unknown, never idle.
+    { cpu: number | null; memoryBytes: number; daemons?: ReadonlyArray<number> }
   > = {};
   for (const entry of entries) {
     // A Linux job's local tree is only `remoto`'s wrapper.
@@ -52,7 +53,7 @@ export const peaksOf = (
     const root = byPid.get(entry.pid);
     const footprint = footprints[entry.id];
     if (root === undefined) {
-      if (footprint !== undefined) peaks[entry.id] = { cpu: 0, memoryBytes: footprint };
+      if (footprint !== undefined) peaks[entry.id] = { cpu: null, memoryBytes: footprint };
       continue;
     }
     const tree = treeUsage(root, children);

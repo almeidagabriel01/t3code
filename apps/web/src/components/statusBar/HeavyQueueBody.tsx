@@ -15,6 +15,7 @@ import {
   heavyItemsInProject,
   heavyWork,
   heavyWorkItems,
+  heavyRowUsage,
   jobPriority,
   machineSummaries,
   moveTarget,
@@ -382,12 +383,7 @@ function QueueRow({
     : MACHINE.mac.name;
   const PhaseIcon = PHASE_ICON[entry.phase ?? "running"];
   // A Linux job's own processes run there; what this Mac samples is only its ssh session.
-  const usage =
-    !running || onLinux
-      ? undefined
-      : entry.cpu === undefined || entry.memory === undefined
-        ? null
-        : { cpuPercent: (entry.cpu / Math.max(1, cpuCount)) * 100, rssBytes: entry.memory };
+  const usage = !running || onLinux ? undefined : heavyRowUsage(entry, cpuCount);
   const facts = (interactive: boolean): ReadonlyArray<Fact> => [
     { label: "Command", value: entry.label, mono: true },
     { label: "Folder", value: entry.cwd, mono: true },

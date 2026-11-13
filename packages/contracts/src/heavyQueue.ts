@@ -200,7 +200,8 @@ export const heavyHoldText = (
 /** Machine-wide, in run order: the running entry (if any) first, then waiters. */
 /** What a command usually uses, from its finished runs; absent when it has no history. */
 export const HeavyQueueEstimate = Schema.Struct({
-  cpu: Schema.Number,
+  /** Absent when no run's CPU was read. */
+  cpu: Schema.optionalKey(Schema.Number),
   memoryBytes: Schema.Number,
   durationMs: Schema.Number,
 });

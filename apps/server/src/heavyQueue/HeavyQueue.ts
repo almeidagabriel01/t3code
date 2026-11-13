@@ -20,7 +20,14 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
+import {
+  estimate,
+  hasHeadroom,
+  learnedCpu,
+  machineHold,
+  SAMPLE_FRESH_MS,
+  signatureOf,
+} from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
@@ -233,7 +240,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
     const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
-    const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
+    const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
       // Usage is only known for this Mac's runs; a job headed for Linux shows none.
       if (
@@ -244,8 +251,15 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         continue;
       }
       const usual = estimate(doc.history, entry, 1);
-      if (usual.durationMs !== null)
-        estimates[entry.id] = { ...usual, durationMs: usual.durationMs };
+      // A guessed CPU would read as learned, so a command whose CPU was never read shows none.
+      const cpu = learnedCpu(doc.history, entry);
+      if (usual.durationMs !== null) {
+        estimates[entry.id] = {
+          ...(cpu === undefined ? {} : { cpu }),
+          memoryBytes: usual.memoryBytes,
+          durationMs: usual.durationMs,
+        };
+      }
     }
     return {
       // A job's full line stays in the file; the row shows its label.

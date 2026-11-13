@@ -652,7 +652,11 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
       );
     } else {
       if (gone.peakMemory === undefined) continue;
-      const run = { cpu: gone.peakCpu ?? 0, memoryBytes: gone.peakMemory, durationMs };
+      const run = {
+        ...(gone.peakCpu === undefined ? {} : { cpu: gone.peakCpu }),
+        memoryBytes: gone.peakMemory,
+        durationMs,
+      };
       history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
     }
     changed = true;
@@ -754,12 +758,13 @@ export const recordSample = (
     Record<
       string,
       {
-        readonly cpu: number;
+        /** Null when the job's processes could not be read: unknown, never 0. */
+        readonly cpu: number | null;
         readonly memoryBytes: number;
         readonly daemons?: ReadonlyArray<number>;
       }
     >
-  >,
+  > | null,
 ) =>
   mutate(dir, (doc) => {
     const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
@@ -769,19 +774,20 @@ export const recordSample = (
       reading.at,
       doc.heavyOverLimitSeconds * 1000,
     );
-    const entries = doc.entries.map((entry) => {
+    const entries = doc.entries.map((entry): HeavyQueueEntry => {
+      // On Linux the local tree is only `remoto`'s wrapper, not the job. Null: processes not read.
+      if (peaks === null || entry.startedAt === null || entry.runner === "linux") return entry;
       const peak = peaks[entry.id];
-      // On Linux the local tree is only `remoto`'s wrapper, not the job.
-      if (entry.startedAt === null || peak === undefined || entry.runner === "linux") {
-        return entry;
-      }
-      const { daemons: _daemons, ...rest } = entry;
+      const { daemons: _daemons, cpu: _cpu, memory: _memory, ...rest } = entry;
+      // A job this sample could not read keeps its peaks but shows no current usage.
+      if (peak === undefined) return rest;
       return {
         ...rest,
         ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
-        cpu: peak.cpu,
+        ...(peak.cpu === null
+          ? {}
+          : { cpu: peak.cpu, peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu) }),
         memory: peak.memoryBytes,
-        peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
         peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
       };
     });
@@ -793,6 +799,7 @@ export const recordSample = (
           entry.peakCpu ?? 0,
           estimate(doc.history, entry, reading.cpuCount).cpu,
         );
+        // An unread job counts as using nothing now, so restoring waits rather than flaps.
         return sum + Math.max(0, full - (entry.cpu ?? 0));
       }, 0);
     const slow = sustain(
@@ -840,7 +847,7 @@ export const recordSampleIfStale = (
 ) => {
   const current = readDoc(dir).sample;
   if (current !== null && reading.at - current.at < staleMs) return false;
-  recordSample(dir, reading, {});
+  recordSample(dir, reading, null);
   return true;
 };
 

@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { CPU_UNAVAILABLE } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   formatCpu,
   formatMemory,
@@ -12,6 +14,9 @@ import {
 } from "@t3tools/client-runtime/state/resourceTree";
 
 export const CPU_COLUMN = "w-12 text-right";
+// The user chose an em dash for a CPU the sample could not read; "--" already means not sampled yet.
+// oxlint-disable-next-line t3code/no-em-dash-copy
+const UNREAD_CPU = "—";
 export const MEM_COLUMN = "w-16 text-right";
 export const GUTTER = "flex w-5 shrink-0 items-center justify-end";
 export const METRICS = "flex shrink-0 items-center tabular-nums";
@@ -26,19 +31,38 @@ export const GLYPH =
 /** Aligns a row's second line, or its expanded details, under its name. */
 export const UNDER_NAME = "pl-9";
 
-/** `null` reads "--" (not sampled yet); `undefined` leaves the cells empty (nothing to sample here). */
+/**
+ * `null` reads "--" (not sampled yet); `undefined` leaves the cells empty (nothing to sample here).
+ * A null `cpuPercent` is a CPU the sample could not read: a dash, never 0%.
+ */
 export function Metrics({
   usage,
   className,
 }: {
-  readonly usage: Pick<ResourceUsage, "cpuPercent" | "rssBytes"> | null | undefined;
+  readonly usage:
+    | { readonly cpuPercent: number | null; readonly rssBytes: number }
+    | null
+    | undefined;
   readonly className?: string;
 }) {
   return (
     <div className={cn(METRICS, "text-2xs text-muted-foreground", className)}>
-      <span className={CPU_COLUMN}>
-        {usage === undefined ? null : usage === null ? "--" : formatCpu(usage.cpuPercent)}
-      </span>
+      {usage?.cpuPercent === null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span aria-label={CPU_UNAVAILABLE} className={cn(CPU_COLUMN, "relative z-10")} />
+            }
+          >
+            {UNREAD_CPU}
+          </TooltipTrigger>
+          <TooltipPopup side="left">{CPU_UNAVAILABLE}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        <span className={CPU_COLUMN}>
+          {usage === undefined ? null : usage === null ? "--" : formatCpu(usage.cpuPercent)}
+        </span>
+      )}
       <span className={MEM_COLUMN}>
         {usage === undefined ? null : usage === null ? "--" : formatMemory(usage.rssBytes)}
       </span>

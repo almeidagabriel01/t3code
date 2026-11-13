@@ -18,6 +18,7 @@ import {
   machineSummaries,
   moveTarget,
   ordinal,
+  heavyRowUsage,
   peakUsageLine,
   heavyItemsInProject,
   projectForCommand,
@@ -164,6 +165,18 @@ describe("usageLine", () => {
       "Usually ~4.0 cores · 2.5 GB · 1.5 h",
     ],
     ["nothing without history", e("b"), { machine, estimates: {} }, null],
+    [
+      "memory alone when the CPU was not read",
+      { ...e("r", true), memory: 2.1 * GB, peakMemory: 2.4 * GB },
+      { machine },
+      "Using 2.1 GB · CPU unavailable · peak 2.4 GB",
+    ],
+    [
+      "usual without cores when no run's CPU was read",
+      e("b"),
+      { machine, estimates: { b: { memoryBytes: 2.5 * GB, durationMs: 45_000 } } },
+      "Usually ~2.5 GB · 45s",
+    ],
   ])("%s", (_name, entry, state, expected) => {
     expect(usageLine(entry, state)).toBe(expected);
   });
@@ -717,7 +730,21 @@ describe("peakUsageLine", () => {
     [{ peakCpu: 0.9, peakMemory: 40 * 1024 ** 2 }, "Peak 0.9 cores · 40 MB"],
     [{ peakCpu: 3, peakMemory: 2.4 * 1024 ** 3 }, "Peak 3.0 cores · 2.4 GB"],
     [{ cpu: 1, memory: 1 }, null],
+    [{ peakMemory: 2.4 * 1024 ** 3 }, "Peak 2.4 GB"],
   ])("formats %o", (usage, expected) => {
     expect(peakUsageLine(usage)).toBe(expected);
+  });
+});
+
+describe("heavyRowUsage", () => {
+  it.each([
+    [
+      { cpu: 2, memory: 100 },
+      { cpuPercent: 25, rssBytes: 100 },
+    ],
+    [{ memory: 100 }, { cpuPercent: null, rssBytes: 100 }],
+    [{}, null],
+  ])("reads %o on 8 cores", (usage, expected) => {
+    expect(heavyRowUsage(usage, 8)).toEqual(expected);
   });
 });

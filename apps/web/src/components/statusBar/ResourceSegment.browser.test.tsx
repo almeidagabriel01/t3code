@@ -353,7 +353,7 @@ describe("EnvironmentSection", () => {
     expect(text).not.toContain("50%");
   });
 
-  it("orders sections Heavy work, Projects, Devices, T3 Code, Outside T3", async () => {
+  it("orders sections Heavy work, Projects, Devices, T3 Code, Outside T3; an unread CPU is a dash", async () => {
     const props = setup({
       entries: [
         {
@@ -364,6 +364,8 @@ describe("EnvironmentSection", () => {
           cwd: "/work/mine",
           createdAt: "2026-01-01T00:00:00.000Z",
           startedAt: "2026-01-01T00:00:00.000Z",
+          // The sample read its memory but not its CPU.
+          memory: 112 * 1024 ** 2,
         },
       ],
     });
@@ -392,6 +394,9 @@ describe("EnvironmentSection", () => {
         node.getAttribute("aria-label"),
       ),
     ).toEqual(["Heavy work", "My project", "Devices", "T3 Code", "Outside T3"]);
+    const heavy = screen.getByRole("region", { name: "Heavy work" });
+    await expect.element(heavy.getByLabelText("CPU reading unavailable")).toHaveTextContent("—");
+    await expect.element(heavy.getByText("112 MB")).toBeVisible();
   });
 });
 

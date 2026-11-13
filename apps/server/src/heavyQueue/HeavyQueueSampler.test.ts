@@ -51,13 +51,13 @@ describe("peaksOf", () => {
     expect(Sampler.peaksOf([linux], processes, { l: 5000 })).toEqual({});
   });
 
-  it("counts footprint instead of resident bytes, even for a job outside this server's tree", () => {
+  it("counts footprint instead of resident bytes; a job the snapshot misses has unknown CPU", () => {
     expect(
       Sampler.peaksOf([entry("a", 10, true), entry("out", 99, true)], processes, {
         a: 5000,
         out: 7000,
       }),
-    ).toEqual({ a: { cpu: 3, memoryBytes: 5000 }, out: { cpu: 0, memoryBytes: 7000 } });
+    ).toEqual({ a: { cpu: 3, memoryBytes: 5000 }, out: { cpu: null, memoryBytes: 7000 } });
   });
 
   it("reads footprint output per pid, skipping what it could not read", () => {

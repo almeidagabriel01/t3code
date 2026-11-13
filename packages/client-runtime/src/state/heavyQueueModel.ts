@@ -127,25 +127,53 @@ interface RunningUsage {
   readonly peakMemory?: number | undefined;
 }
 
-/** "Using 1.5 cores (9%) · 2.1 GB · peak 3.0 cores · 2.4 GB"; null when nothing was sampled yet. */
+/** Tooltip on a CPU cell whose reading is unknown: the monitor could not see the job's processes. */
+export const CPU_UNAVAILABLE = "CPU reading unavailable";
+
+/**
+ * A heavy row's usage columns: null before any sample, and a null CPU share when the sample read
+ * the job's memory but not its CPU, which is unknown rather than idle.
+ */
+export function heavyRowUsage(
+  usage: RunningUsage,
+  cpuCount: number,
+): { readonly cpuPercent: number | null; readonly rssBytes: number } | null {
+  if (usage.memory === undefined) return null;
+  return {
+    cpuPercent: usage.cpu === undefined ? null : (usage.cpu / Math.max(1, cpuCount)) * 100,
+    rssBytes: usage.memory,
+  };
+}
+
+/**
+ * "Using 1.5 cores (9%) · 2.1 GB · peak 3.0 cores · 2.4 GB", or "Using 2.1 GB · CPU unavailable"
+ * when the CPU was not read; null when nothing was sampled yet.
+ */
 export function runningUsageLine(usage: RunningUsage, cpuCount: number | null): string | null {
   const parts: string[] = [];
-  if (usage.cpu !== undefined && usage.memory !== undefined) {
-    const share =
-      cpuCount === null ? "" : ` (${Math.round((usage.cpu / Math.max(1, cpuCount)) * 100)}%)`;
-    parts.push(`Using ${cores(usage.cpu)}${share} · ${gb(usage.memory)}`);
+  if (usage.memory !== undefined) {
+    if (usage.cpu === undefined) {
+      parts.push(`Using ${gb(usage.memory)} · CPU unavailable`);
+    } else {
+      const share =
+        cpuCount === null ? "" : ` (${Math.round((usage.cpu / Math.max(1, cpuCount)) * 100)}%)`;
+      parts.push(`Using ${cores(usage.cpu)}${share} · ${gb(usage.memory)}`);
+    }
   }
-  if (usage.peakCpu !== undefined && usage.peakMemory !== undefined) {
-    parts.push(`peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`);
-  }
+  const peak = peakUsage(usage);
+  if (peak !== null) parts.push(`peak ${peak}`);
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-/** "Peak 3.0 cores · 2.4 GB"; null until a peak was sampled. */
-export function peakUsageLine(usage: RunningUsage): string | null {
-  return usage.peakCpu === undefined || usage.peakMemory === undefined
+const peakUsage = (usage: RunningUsage) =>
+  usage.peakMemory === undefined
     ? null
-    : `Peak ${cores(usage.peakCpu)} · ${gb(usage.peakMemory)}`;
+    : `${usage.peakCpu === undefined ? "" : `${cores(usage.peakCpu)} · `}${gb(usage.peakMemory)}`;
+
+/** "Peak 3.0 cores · 2.4 GB", without cores when no sample read the CPU; null until a peak was sampled. */
+export function peakUsageLine(usage: RunningUsage): string | null {
+  const peak = peakUsage(usage);
+  return peak === null ? null : `Peak ${peak}`;
 }
 
 /** One muted line of usage: a running job's current and peak, or a waiter's usual cost. Null when unknown. */
@@ -157,7 +185,7 @@ export function usageLine(
     const usual = state.estimates?.[entry.id];
     return usual === undefined
       ? null
-      : `Usually ~${cores(usual.cpu)} · ${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
+      : `Usually ~${usual.cpu === undefined ? "" : `${cores(usual.cpu)} · `}${gb(usual.memoryBytes)} · ${usualTime(usual.durationMs)}`;
   }
   return runningUsageLine(entry, state.machine?.cpuCount ?? null);
 }

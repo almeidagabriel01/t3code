@@ -123,6 +123,13 @@ describe("slowdownStep", () => {
       expected: { slowed: [], restored: [], lower: [], raise: [], slowedDaemons: [] },
     },
     {
+      name: "leaves a job the snapshot misses as it is, slowed or not",
+      input: {
+        entries: [job("gone", 99, { slowed: true, qos: "background" }), job("unseen", 98)],
+      },
+      expected: { slowed: [], restored: [], lower: [], raise: [], slowedDaemons: [] },
+    },
+    {
       name: "never touches the user's jobs, priorities the user set, Linux, server or ungated jobs",
       input: {
         entries: [

@@ -61,9 +61,11 @@ export const slowdownStep = (
     const root = byPid.get(entry.pid);
     return root === undefined ? [] : treeUsage(root, children).pids;
   };
-  const targets = on ? doc.entries.filter(slowable) : [];
+  // A job the monitor cannot see has no processes to lower or raise: its state waits until it can.
+  const visible = doc.entries.filter((entry) => byPid.has(entry.pid));
+  const targets = on ? visible.filter(slowable) : [];
   const slowed = targets.filter((entry) => entry.slowed !== true);
-  const restored = doc.entries.filter((entry) => entry.slowed === true && !targets.includes(entry));
+  const restored = visible.filter((entry) => entry.slowed === true && !targets.includes(entry));
   const slowedDaemons = targets.flatMap((entry) =>
     (entry.daemons ?? []).flatMap((pid) => {
       const process = byPid.get(pid);

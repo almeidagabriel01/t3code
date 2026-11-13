@@ -2,6 +2,7 @@ import {
   formatDuration,
   HEAVY_COMMAND_SOURCE_LABEL,
   heavyCommandKey,
+  heavyRowUsage,
   projectForCommand,
   runningUsageLine,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
@@ -15,7 +16,15 @@ import {
   TerminalIcon,
   UnplugIcon,
 } from "lucide-react";
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode, type Ref } from "react";
+import {
+  Fragment,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+} from "react";
 
 import { cn } from "../../lib/utils";
 import { useProjects } from "../../state/entities";
@@ -33,7 +42,6 @@ import {
   ROW_LINE,
   UNDER_NAME,
 } from "./ResourceMetrics";
-import type { ResourceUsage } from "@t3tools/client-runtime/state/resourceTree";
 import { useStopHeavyCommand } from "./useKillTarget";
 
 const ELAPSED_REFRESH_MS = 5_000;
@@ -151,7 +159,7 @@ export function HeavyRow({
   readonly glyph: ReactNode;
   readonly chip?: ReactNode;
   readonly state: ReactNode;
-  readonly usage: Pick<ResourceUsage, "cpuPercent" | "rssBytes"> | null | undefined;
+  readonly usage: ComponentProps<typeof Metrics>["usage"];
   readonly menu?: ReactNode;
   /** Shown only when the eye needs it, such as why a job waits. */
   readonly secondLine?: string | undefined;
@@ -232,10 +240,7 @@ export function HeavyCommandRow({
   const project = projectForCommand(command, projects, threads.projectIdOfThread);
   const Icon = command.source === "queue" ? BotIcon : SOURCE_ICON[command.source];
   const { threadId } = command;
-  const usage =
-    command.cpu === undefined || command.memory === undefined
-      ? null
-      : { cpuPercent: (command.cpu / Math.max(1, cpuCount)) * 100, rssBytes: command.memory };
+  const usage = heavyRowUsage(command, cpuCount);
   const canStop = command.stoppable && stop.canStop;
   const facts = (interactive: boolean): ReadonlyArray<Fact> => [
     { label: "Command", value: command.label, mono: true },

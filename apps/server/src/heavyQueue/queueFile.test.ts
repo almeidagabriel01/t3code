@@ -428,10 +428,36 @@ describe("heavy queue file", () => {
       },
     );
     expect(Queue.read(dir)[0]).toMatchObject({ peakCpu: 1.5, peakMemory: 300 });
+    // Processes the sample could not read: CPU unknown, memory still counts.
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
+      { a: { cpu: null, memoryBytes: 200 } },
+    );
+    expect(Queue.read(dir)[0]).toMatchObject({ memory: 200, peakCpu: 1.5 });
+    expect(Queue.read(dir)[0]!.cpu).toBeUndefined();
     Queue.remove(dir, "a");
     expect(Queue.readDoc(dir).history["vp run build"]).toMatchObject([
       { cpu: 1.5, memoryBytes: 300 },
     ]);
+    // A job whose CPU was never read leaves a run without CPU, never a 0.
+    Queue.enqueue(dir, { ...entry("b"), label: "vp run build" });
+    Queue.tryStart(dir, "b", now);
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
+      { b: { cpu: null, memoryBytes: 400 } },
+    );
+    Queue.recordSample(
+      dir,
+      { at: now, busyCores: 0, cpuCount: 4, availableMemoryBytes: 1, totalMemoryBytes: 2 },
+      {},
+    );
+    expect(Queue.read(dir)[0]!.memory).toBeUndefined();
+    Queue.remove(dir, "b");
+    const unread = Queue.readDoc(dir).history["vp run build"]![1];
+    expect(unread).toMatchObject({ memoryBytes: 400 });
+    expect(unread).not.toHaveProperty("cpu");
   });
 
   it("keeps only the last runs per command and ignores finished entries without samples", () => {

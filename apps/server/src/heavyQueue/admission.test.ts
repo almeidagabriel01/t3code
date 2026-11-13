@@ -82,7 +82,7 @@ describe("command kinds and signatures", () => {
     expect(signatureOf("vp test run src/a.test.ts")).toBe("vp test run");
   });
 
-  it("estimates from the worst recent run and the median duration, else by kind", () => {
+  it("estimates from the worst recent run and the median duration, else by kind; unread CPU never counts", () => {
     const history = {
       "vp run build": [run(2, 3, 30_000), run(6, 5, 60_000), run(3, 4, 90_000)],
     };
@@ -97,6 +97,14 @@ describe("command kinds and signatures", () => {
       durationMs: null,
     });
     expect(estimate({}, { label: "vp run typecheck" }, 1)).toMatchObject({ cpu: 1 });
+    // A run whose CPU was never read (absent, or 0 in older files) teaches memory and time only.
+    const unread = { memoryBytes: 2 * GIB, durationMs: 40_000 };
+    expect(
+      estimate({ "vp run build": [unread, run(0, 1, 20_000)] }, { label: "vp run build" }, 10),
+    ).toMatchObject({ cpu: 4, memoryBytes: 2 * GIB });
+    expect(
+      estimate({ "vp run build": [unread, run(3, 1, 20_000)] }, { label: "vp run build" }, 10).cpu,
+    ).toBe(3);
   });
 });
 
