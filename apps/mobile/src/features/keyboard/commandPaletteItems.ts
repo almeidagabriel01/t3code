@@ -12,6 +12,8 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 
+import { parseActiveGroupChatPath, parseActiveThreadPath } from "./hardwareKeyboardCommands";
+
 export interface CommandPaletteItem {
   readonly key: string;
   readonly kind: "action" | "project" | "thread";
@@ -51,6 +53,65 @@ export function autonomyPauseItems(
           run: () => void pause.toggle(),
         },
       ];
+}
+
+/** "Assistant info" on an assistant's chat, "Group info" on a group chat; nothing elsewhere. */
+export function assistantInfoItems<
+  A extends {
+    readonly environmentId: string;
+    readonly assistant: { readonly name: string; readonly threadId: string | null };
+  },
+  T extends {
+    readonly environmentId: string;
+    readonly team: { readonly id: string; readonly name: string };
+  },
+>(input: {
+  readonly pathname: string;
+  readonly assistants: ReadonlyArray<A>;
+  readonly teams: ReadonlyArray<T>;
+  readonly openAssistant: (entry: A) => void;
+  readonly openGroup: (entry: T) => void;
+}): CommandPaletteItem[] {
+  const thread = parseActiveThreadPath(input.pathname);
+  const assistant =
+    thread === null
+      ? undefined
+      : input.assistants.find(
+          (entry) =>
+            entry.environmentId === thread.environmentId &&
+            entry.assistant.threadId === thread.threadId,
+        );
+  const group = parseActiveGroupChatPath(input.pathname);
+  const team =
+    group === null
+      ? undefined
+      : input.teams.find(
+          (entry) => entry.environmentId === group.environmentId && entry.team.id === group.teamId,
+        );
+  return [
+    ...(assistant
+      ? [
+          {
+            key: "assistantInfo",
+            kind: "action" as const,
+            title: "Assistant info",
+            searchTerms: ["assistant", "info", "projects", "access", assistant.assistant.name],
+            run: () => input.openAssistant(assistant),
+          },
+        ]
+      : []),
+    ...(team
+      ? [
+          {
+            key: "groupInfo",
+            kind: "action" as const,
+            title: "Group info",
+            searchTerms: ["group", "info", "members", "team", team.team.name],
+            run: () => input.openGroup(team),
+          },
+        ]
+      : []),
+  ];
 }
 
 export interface CommandPaletteResult extends CommandPaletteItem {

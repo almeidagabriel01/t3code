@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { vi } from "vite-plus/test";
 
 import {
+  assistantInfoItems,
   autonomyPauseItems,
   filterCommandPaletteItems,
   type CommandPaletteItem,
@@ -77,5 +78,34 @@ describe("autonomyPauseItems", () => {
     expect(autonomyPauseItems({ enabled: false, toggle })[0]?.title).toBe(
       "Turn on assistant notifications",
     );
+  });
+});
+
+describe("assistantInfoItems", () => {
+  const ada = { environmentId: "hub", assistant: { id: "ada", name: "Ada", threadId: "chat-ada" } };
+  const crew = { environmentId: "hub", team: { id: "crew", name: "Crew" } };
+  it.each([
+    { pathname: "/threads/hub/chat-ada", expected: ["Assistant info", "ada"] },
+    { pathname: "/threads/other/chat-ada", expected: null },
+    { pathname: "/threads/hub/plain", expected: null },
+    { pathname: "/assistant-groups/hub/crew", expected: ["Group info", "crew"] },
+    { pathname: "/assistant-groups/hub/gone", expected: null },
+    { pathname: "/settings", expected: null },
+  ])("$pathname", ({ pathname, expected }) => {
+    const opened: string[] = [];
+    const items = assistantInfoItems({
+      pathname,
+      assistants: [ada],
+      teams: [crew],
+      openAssistant: (entry) => opened.push(entry.assistant.id),
+      openGroup: (entry) => opened.push(entry.team.id),
+    });
+    if (expected === null) {
+      expect(items).toEqual([]);
+      return;
+    }
+    expect(items.map((entry) => entry.title)).toEqual([expected[0]]);
+    items[0]!.run();
+    expect(opened).toEqual([expected[1]]);
   });
 });
