@@ -217,3 +217,108 @@ it.effect("keeps a group's messages numbered once and a request id once per grou
     );
   }).pipe(Effect.provide(database)),
 );
+
+it.effect("gives an older group chat its requests: every message and task joins one", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Shapes from before requests had their own id, project and conversations.
+    yield* sql`
+      CREATE TABLE assistant_group_messages (
+        message_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, seq INTEGER NOT NULL,
+        author TEXT NOT NULL, assistant_id TEXT, author_label TEXT, kind TEXT NOT NULL,
+        text TEXT NOT NULL, reply_to TEXT, task_id TEXT, client_request_id TEXT,
+        created_at TEXT NOT NULL, UNIQUE (team_id, seq), UNIQUE (team_id, client_request_id)
+      )`;
+    yield* sql`
+      CREATE TABLE assistant_group_tasks (
+        task_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, root_id TEXT NOT NULL, parent_id TEXT,
+        kind TEXT NOT NULL, request_message_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+        instruction TEXT NOT NULL, status TEXT NOT NULL, reason TEXT,
+        revision INTEGER NOT NULL DEFAULT 1, result_text TEXT, hops INTEGER NOT NULL DEFAULT 0,
+        followup TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`;
+    yield* sql`
+      CREATE TABLE assistant_group_threads (
+        team_id TEXT NOT NULL, assistant_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+        seen_seq INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (team_id, assistant_id)
+      )`;
+    const message = (
+      id: string,
+      seq: number,
+      author: string,
+      kind: string,
+      replyTo: string | null,
+      taskId: string | null,
+    ) => sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, reply_to, task_id, created_at)
+      VALUES (${id}, 'g1', ${seq}, ${author}, ${kind}, 'x', ${replyTo}, ${taskId}, 't')`;
+    const task = (id: string, root: string, kind: string, request: string, status: string) =>
+      sql`INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+          created_at, updated_at)
+        VALUES (${id}, 'g1', ${root}, ${kind}, ${request}, 'ada', 'do', ${status}, 't', 't')`;
+    yield* message("m1", 1, "user", "message", null, null);
+    yield* task("t1", "t1", "root", "m1", "running");
+    yield* task("t1c", "t1", "child", "m1", "completed");
+    yield* message("m2", 2, "assistant", "message", null, "t1c");
+    // A member's question to another: the question opens a reply task under the first request.
+    yield* message("m3", 3, "assistant", "message", null, null);
+    yield* task("t3", "t1", "reply", "m3", "completed");
+    yield* message("m4", 4, "user", "message", null, null);
+    yield* task("t4", "t4", "root", "m4", "paused");
+    yield* message("m5", 5, "assistant", "notice", "m4", null);
+    yield* message("m6", 6, "agent", "message", null, null);
+    yield* message("m7", 7, "user", "boundary", null, null);
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+      VALUES ('g1', 'ada', 'assistant:ada:g-legacy')`;
+
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+
+    assert.deepStrictEqual(
+      yield* sql`SELECT message_id, request_id, project_id, title FROM assistant_group_messages ORDER BY seq`,
+      [
+        ["m1", "m1"],
+        ["m2", "m1"],
+        ["m3", "m1"],
+        ["m4", "m4"],
+        ["m5", "m4"],
+        ["m6", "m6"],
+        ["m7", null],
+      ].map(([message_id, request_id]) => ({
+        message_id,
+        request_id,
+        project_id: null,
+        title: null,
+      })),
+    );
+    assert.deepStrictEqual(
+      yield* sql`SELECT task_id, request_id FROM assistant_group_tasks ORDER BY rowid`,
+      [
+        { task_id: "t1", request_id: "m1" },
+        { task_id: "t1c", request_id: "m1" },
+        { task_id: "t3", request_id: "m1" },
+        { task_id: "t4", request_id: "m4" },
+      ],
+    );
+    // The long conversation stays for the run still on it; requests get their own from now on.
+    assert.deepStrictEqual(yield* sql`SELECT thread_id FROM assistant_group_threads`, [
+      { thread_id: "assistant:ada:g-legacy" },
+    ]);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_request_threads`, []);
+    for (const column of [
+      "request_id",
+      "project_id",
+      "title",
+      "wait_key",
+      "wait_thread_id",
+      "wait_decision_id",
+      "wait_resolved_at",
+    ]) {
+      assert.strictEqual(
+        (yield* columnsOf("assistant_group_messages")).filter((name) => name === column).length,
+        1,
+      );
+    }
+  }).pipe(Effect.provide(database)),
+);

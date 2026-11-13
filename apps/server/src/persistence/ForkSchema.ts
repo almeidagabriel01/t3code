@@ -602,6 +602,61 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     )
   `;
 
+  // Requests: a message replying to nothing starts one (request_id = its own id) and everything
+  // said or done for it carries that id. The first message holds the project and short title.
+  if (!groupMessageColumns.some((column) => column.name === "request_id")) {
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN request_id TEXT`;
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN project_id TEXT`;
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN title TEXT`;
+    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN request_id TEXT`;
+    // Older chats: each message that opened root tasks, or still waits for them, was a request.
+    yield* sql`
+      UPDATE assistant_group_tasks SET request_id = (
+        SELECT r.request_message_id FROM assistant_group_tasks r
+        WHERE r.task_id = assistant_group_tasks.root_id)`;
+    yield* sql`
+      UPDATE assistant_group_messages SET request_id = message_id
+      WHERE EXISTS (SELECT 1 FROM assistant_group_tasks t
+          WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
+        OR (kind = 'message' AND author <> 'assistant')`;
+    yield* sql`
+      UPDATE assistant_group_messages SET request_id = COALESCE(
+        (SELECT t.request_id FROM assistant_group_tasks t
+          WHERE t.task_id = assistant_group_messages.task_id),
+        (SELECT t.request_id FROM assistant_group_tasks t
+          WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
+      WHERE request_id IS NULL`;
+    yield* sql`
+      UPDATE assistant_group_messages SET request_id = (
+        SELECT p.request_id FROM assistant_group_messages p
+        WHERE p.message_id = assistant_group_messages.reply_to)
+      WHERE request_id IS NULL AND reply_to IS NOT NULL`;
+  }
+  // A notice that a member's conversation waits on the user: one per wait (`wait_key`), resolved in
+  // place once nothing waits any more.
+  if (!groupMessageColumns.some((column) => column.name === "wait_key")) {
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_key TEXT`;
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_thread_id TEXT`;
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_decision_id TEXT`;
+    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_resolved_at TEXT`;
+  }
+  yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
+  // A member's hidden thread for one request, in the request's project. The per-group threads above
+  // stay for history and for runs that started before requests had their own.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_request_threads (
+      request_id TEXT NOT NULL,
+      assistant_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL UNIQUE,
+      seen_seq INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (request_id, assistant_id)
+    )
+  `;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
+
   // A group's rolling chat summary, and the last message number it covers.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_summaries (
