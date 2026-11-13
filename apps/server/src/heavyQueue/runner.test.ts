@@ -628,6 +628,38 @@ describe("patterns and eligibility", () => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });
 
+  // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
+  const open = {
+    ...at,
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
+  };
+  it.each([
+    ["pnpm install", "pnpm install"],
+    ["vp i", "vp i"],
+    ["npm ci", "npm ci"],
+    ["yarn add react", "yarn add react"],
+    ["pnpm --filter web remove lodash", "pnpm web remove"],
+    ["xcodebuild -scheme App test", "xcodebuild App test"],
+    ["adb install app.apk", "adb install app.apk"],
+    ["pnpm exec next start", "pnpm exec next"],
+    ["vp run dev", "vp run dev"],
+    ["pnpm start", "pnpm start"],
+    ["npm run watch:css", "npm run watch:css"],
+    ["npx vite", "npx vite"],
+    ["npx next dev", "npx next dev"],
+  ])("%s stays on this Mac whatever the lists say", (label, name) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
+      eligibility: "mac-only",
+      reason: `Always on this Mac: ${name}`,
+    });
+  });
+  it.each(["vp test run", "npx vite build", "pnpm run build", "./scripts/ci.sh"])(
+    "%s may still leave",
+    (label) => {
+      expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
+    },
+  );
+
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
     const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
     expect(eligibilityOf({ label: line.slice(0, 200), line, cwd: "/w" }, at)).toEqual({
