@@ -7,6 +7,7 @@ import {
   type IntegrationBeginConnectResult,
   type IntegrationConnectMode,
   type IntegrationErrorReason,
+  type IntegrationMakeAvailableResult,
   type IntegrationSaveOwnAppInput,
   type IntegrationUpdateInput,
   type IntegrationView,
@@ -48,6 +49,7 @@ import * as Stream from "effect/Stream";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import catalogJson from "./catalog.json" with { type: "json" };
+import * as IntegrationDetector from "./IntegrationDetector.ts";
 import * as IntegrationFetch from "./IntegrationFetch.ts";
 
 const FLOW_TTL_MS = 10 * 60 * 1000;
@@ -228,6 +230,10 @@ export class IntegrationAuth extends Context.Service<
     readonly update: (
       input: IntegrationUpdateInput,
     ) => Effect.Effect<IntegrationView, IntegrationError>;
+    /** Copies a server detected in Claude Code or Codex into T3's MCP servers, on consent. */
+    readonly makeAvailable: (input: {
+      readonly detectedId: string;
+    }) => Effect.Effect<IntegrationMakeAvailableResult, IntegrationError>;
     /** The proxy's last upstream outcome; unreachable shows as Error until the next answer. */
     readonly reportReachable: (name: string, reachable: boolean) => Effect.Effect<void>;
     /** The upstream refused a fresh token: the user must sign in again. */
@@ -244,6 +250,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const { fetch } = yield* IntegrationFetch.IntegrationFetch;
+  const detector = yield* IntegrationDetector.IntegrationDetector;
   const serviceScope = yield* Effect.scope;
   const catalog = decodeCatalog(catalogJson);
   if (catalog.length !== catalogJson.length) {
@@ -408,11 +415,14 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    const detection = yield* detector.detect;
     return {
       catalog,
       integrations,
       ownApps,
       loopbackRedirectUri: loopbackRedirectUri(yield* loopbackPort()),
+      detected: detection.detected,
+      detectionSources: detection.sources,
     } satisfies IntegrationsState;
   }).pipe(Effect.withSpan("IntegrationAuth.state"));
 
@@ -422,9 +432,13 @@ const make = Effect.gen(function* () {
       const settingsChanges = yield* serverSettings.subscribeChanges;
       return Stream.concat(
         Stream.succeed(undefined),
-        Stream.merge(
-          Stream.fromSubscription(own),
-          settingsChanges.pipe(Stream.map(() => undefined)),
+        Stream.mergeAll(
+          [
+            Stream.fromSubscription(own),
+            settingsChanges.pipe(Stream.map(() => undefined)),
+            detector.changes,
+          ],
+          { concurrency: "unbounded" },
         ),
       ).pipe(Stream.mapEffect(() => state));
     }),
@@ -1057,6 +1071,7 @@ const make = Effect.gen(function* () {
       );
       return yield* viewByName(name);
     }),
+    makeAvailable: detector.makeAvailable,
     // Untraced: the proxy reports after every upstream request.
     reportReachable: Effect.fnUntraced(function* (name: string, reachable: boolean) {
       const changed = reachable ? unreachable.delete(name) : !unreachable.has(name);

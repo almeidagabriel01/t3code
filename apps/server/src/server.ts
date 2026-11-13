@@ -169,6 +169,7 @@ import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import * as IntegrationAuth from "./integrations/IntegrationAuth.ts";
+import * as IntegrationDetector from "./integrations/IntegrationDetector.ts";
 import * as IntegrationFetch from "./integrations/IntegrationFetch.ts";
 import * as IntegrationsHttp from "./integrations/integrationsHttp.ts";
 import * as IntegrationProxy from "./integrations/IntegrationProxy.ts";
@@ -944,6 +945,8 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(
     IntegrationAuth.layer.pipe(
       Layer.provide(IntegrationFetch.layer),
+      // Runtime sessions read the same detector: claude.ai lists and native catalog entries (D7).
+      Layer.provideMerge(IntegrationDetector.layer),
       // Layers memoize by reference, so these are the instances the rest of the server reads.
       Layer.provide(layerServerSettings),
       Layer.provide(ServerSecretStore.layer),

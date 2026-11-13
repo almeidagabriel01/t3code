@@ -2781,6 +2781,7 @@ export const layerWsRpc = (
         [WS_METHODS.integrationsSaveOwnApp]: (input) => integrations.saveOwnApp(input),
         [WS_METHODS.integrationsRemoveOwnApp]: (input) => integrations.removeOwnApp(input),
         [WS_METHODS.integrationsUpdate]: (input) => integrations.update(input),
+        [WS_METHODS.integrationsMakeAvailable]: (input) => integrations.makeAvailable(input),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),

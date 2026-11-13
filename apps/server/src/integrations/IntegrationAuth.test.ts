@@ -14,6 +14,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import catalogJson from "./catalog.json" with { type: "json" };
 import * as IntegrationAuth from "./IntegrationAuth.ts";
+import * as IntegrationDetector from "./IntegrationDetector.ts";
 import * as IntegrationFetch from "./IntegrationFetch.ts";
 
 const MCP = "https://mcp.linear.app/mcp";
@@ -210,6 +211,18 @@ const setup = (options: FakeOptions = {}) =>
       IntegrationAuth.layer.pipe(
         Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store)),
+        Layer.provide(
+          Layer.succeed(
+            IntegrationDetector.IntegrationDetector,
+            IntegrationDetector.IntegrationDetector.of({
+              detect: Effect.succeed({ detected: [], sources: [] }),
+              changes: Stream.empty,
+              recordClaudeSession: () => Effect.void,
+              nativeCatalogIds: () => Effect.succeed(new Set()),
+              makeAvailable: () => Effect.die("unused"),
+            }),
+          ),
+        ),
         Layer.provide(
           Layer.succeed(
             IntegrationFetch.IntegrationFetch,

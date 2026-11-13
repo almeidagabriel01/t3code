@@ -11288,6 +11288,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return context;
           });
           yield* querySession.messages.pipe(
+            // Integrations read what loaded natively, claude.ai connectors included (D7, D11).
+            Stream.tap((message) =>
+              message.type === "system" && message.subtype === "init"
+                ? mcpSessions.reportLoadedServers(adapterOptions.instanceId, message.mcp_servers)
+                : Effect.void,
+            ),
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {

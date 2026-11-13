@@ -112,6 +112,14 @@ it.effect("an assistant gets only its selection, pre-approved, and a disconnecte
     expect(
       yield* globalMcpConnectors(settings, { assistant: calendarOnly, session: undefined }),
     ).toEqual([]);
+    // The provider instance already loads Google Calendar itself, so its own wins (D7).
+    expect(
+      yield* globalMcpConnectors(settings, {
+        assistant: calendarOnly,
+        session,
+        native: new Set(["google-calendar"]),
+      }),
+    ).toEqual([]);
   }),
 );
 

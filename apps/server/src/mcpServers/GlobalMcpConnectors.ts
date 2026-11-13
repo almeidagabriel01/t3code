@@ -18,6 +18,8 @@ export interface ThreadMcpContext {
   readonly assistant: { readonly integrations: AssistantIntegrations } | undefined;
   /** The thread's T3 session: proxied integrations need its endpoint and token. */
   readonly session: Pick<McpProviderSessionConfig, "endpoint" | "authorizationHeader"> | undefined;
+  /** Catalog entries the thread's provider instance already loads itself; they win there (D7). */
+  readonly native?: ReadonlySet<string>;
 }
 
 /**
@@ -78,7 +80,9 @@ export const globalMcpConnectors = (
             },
           ];
         }
-        if (thread.session === undefined) return [];
+        if (thread.session === undefined || thread.native?.has(server.integration.catalogId)) {
+          return [];
+        }
         return [
           {
             name: t3McpProviderName(name),

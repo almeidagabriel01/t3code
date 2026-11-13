@@ -298,6 +298,15 @@ MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrat
 although http connectors do not. OpenCode, Pi and Muse read no connectors, so integrations never
 reach them.
 
+`IntegrationDetector` reads Claude Code and Codex MCP config read-only per provider instance and
+never writes it. File presence does not prove a server works, so D7 (the provider's own copy wins
+and T3 does not inject its proxy) counts only a Codex entry that is enabled, or a Claude user-scope,
+plugin or claude.ai server whose latest session init reported `connected`. The adapter passes that
+init list through `McpProviderSessions.reportLoadedServers`, and the detector stores it per instance
+so a restart does not re-offer Connect. Local and project scope stay out of D7 because the init list
+is per cwd. Detected rows carry key names only, and their id is keyed over the values, so a copy
+request made after the file changed finds nothing.
+
 ## Autonomy and the loop guard
 
 `AutonomyService` turns domain events into wakes with no model. An assistant's wake is an ordinary
