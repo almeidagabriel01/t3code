@@ -26,6 +26,7 @@ import {
   fakeTeamEdits,
   installFakeEnvironment,
   publishAssistants,
+  publishIntegrations,
   threadWithHistory,
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
@@ -66,6 +67,7 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
 
 installFakeEnvironment([threadWithHistory("thread-a", 2)], {
   assistants: true,
+  integrations: true,
   reasoningEffort: true,
 });
 await page.viewport(1400, 900);
@@ -166,6 +168,7 @@ it("a new assistant starts with the basics, Advanced closed and the safe default
   expect(fakeAssistantEdits.creates[0]).not.toHaveProperty("workspace");
   expect(fakeAssistantEdits.creates[0]).not.toHaveProperty("budget");
   expect(fakeAssistantEdits.creates[0]).not.toHaveProperty("mcpServers");
+  expect(fakeAssistantEdits.creates[0]).not.toHaveProperty("integrations");
   appAtomRegistry.set(assistantDialogAtom, null);
 });
 
@@ -409,4 +412,46 @@ it("shows an uploaded image as the assistant's avatar, and the robot again if it
   await eventually(() =>
     expect(document.querySelector("[data-assistant-avatar-image]")).toBeNull(),
   );
+});
+
+it("narrows an assistant to chosen integrations and saves only that change", async () => {
+  fakeAssistantEdits.updates = [];
+  publishAssistants([assistant("jarvis", "Jarvis")]);
+  const catalogEntry = (id: string, name: string) => ({
+    id,
+    name,
+    category: "docs" as const,
+    description: "",
+    docsUrl: "https://example.com",
+    server: { transport: "http" as const, url: `https://${id}.example.com/mcp` },
+    auth: { kind: "oauth" as const, registration: "dynamic" as const },
+    match: { urls: [], packages: [], names: [] },
+  });
+  publishIntegrations({
+    catalog: [catalogEntry("linear", "Linear"), catalogEntry("notion", "Notion")],
+    integrations: ["linear", "notion"].map((name) => ({
+      name,
+      catalogId: name,
+      auth: "oauth" as const,
+      status: "connected" as const,
+      availability: "assistants" as const,
+    })),
+    ownApps: [],
+    loopbackRedirectUri: "http://127.0.0.1:43110/integrations/callback",
+    detected: [],
+    detectionSources: [],
+  });
+  await using _screen = await openApp();
+  openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "jarvis" as AssistantId });
+  await openAdvanced();
+  await userEvent.click(page.getByRole("radio", { name: "Choose…" }));
+  await userEvent.click(page.getByRole("checkbox", { name: "Notion" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { assistantId: "jarvis", integrations: { mode: "selected", names: ["linear"] } },
+    ]),
+  );
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("mcpServers");
+  appAtomRegistry.set(assistantDialogAtom, null);
 });
