@@ -8,6 +8,7 @@ import { memo } from "react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
+import { useAssistantLiveWork } from "../../state/assistants";
 import { useProjects } from "../../state/entities";
 import { formatElapsedDurationLabel } from "../../timestampFormat";
 import { useActivityEntries } from "../activity/useActivity";
@@ -90,7 +91,8 @@ export const AgentsSidebarSection = memo(function AgentsSidebarSection(props: {
   const projects = useProjects();
   const nowMs = useNowMinuteMs();
   const navigate = useNavigate();
-  const { needsYou, working, done } = selectAgentsSection(entries);
+  const { taskThreadKeys } = useAssistantLiveWork();
+  const { needsYou, working, done } = selectAgentsSection(entries, taskThreadKeys);
   const total = needsYou.length + working.length + done.length;
   if (!enabled || total === 0) return null;
   const projectByKey = new Map(

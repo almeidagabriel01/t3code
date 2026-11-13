@@ -155,6 +155,18 @@ describe("assistantLiveWork", () => {
     expect(work.sites.map((site) => site.threadId)).not.toContain("kept");
     expect(work.subagents.get("env:bo")).toBeUndefined();
   });
+
+  it("keys every task the assistant still lists, finished or not, but not dismissed ones", () => {
+    const work = assistantLiveWork({
+      tasks: [
+        task("live"),
+        task("done"),
+        task("gone", "ada", { dismissedAt: "2026-11-12T11:00:00.000Z" }),
+      ],
+      shells: [shell("live"), shell("done", { status: "completed" }), shell("gone")],
+    });
+    expect([...work.taskThreadKeys].toSorted()).toEqual(["env:done", "env:live"]);
+  });
 });
 
 describe("assistantSites", () => {

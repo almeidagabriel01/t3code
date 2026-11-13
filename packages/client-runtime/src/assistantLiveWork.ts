@@ -29,6 +29,8 @@ export interface AssistantLiveWork {
   readonly sites: ReadonlyArray<AssistantWorkSite>;
   /** Live delegated children of each assistant's own and group threads, by `env:assistantId`, oldest first. */
   readonly subagents: ReadonlyMap<string, ReadonlyArray<EnvironmentThreadShell>>;
+  /** `env:threadId` of every task an assistant still lists, live or finished. */
+  readonly taskThreadKeys: ReadonlySet<string>;
 }
 
 const NEEDS_USER = new Set(["approval", "input", "request"]);
@@ -48,8 +50,10 @@ export function assistantLiveWork(input: {
     input.shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]),
   );
   const found: Array<AssistantWorkSite & { readonly at: string }> = [];
+  const taskThreadKeys = new Set<string>();
   for (const { environmentId, task } of input.tasks) {
     if (task.dismissedAt != null) continue;
+    taskThreadKeys.add(`${environmentId}:${task.threadId}`);
     const shell = shellByKey.get(`${environmentId}:${task.threadId}`);
     if (shell === undefined || shell.archivedAt !== null) continue;
     const state = assistantTaskState(shell);
@@ -103,7 +107,7 @@ export function assistantLiveWork(input: {
     seen.add(key);
     sites.push(site);
   }
-  return { sites, subagents };
+  return { sites, subagents, taskThreadKeys };
 }
 
 /** The assistant's sites, keeping only projects the caller lists (the assistants' home is none). */
