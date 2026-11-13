@@ -890,6 +890,25 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** The group's next project list; every project it gains must exist and be a real workspace. */
+  const teamProjects = Effect.fn("AssistantService.teamProjects")(function* (
+    current: ReadonlyArray<ProjectId>,
+    input: Pick<AssistantTeamsUpdateInput, "projectIds" | "addProjectIds" | "removeProjectIds">,
+  ) {
+    const removed = new Set(input.removeProjectIds ?? []);
+    const next = [
+      ...new Set([...(input.projectIds ?? current), ...(input.addProjectIds ?? [])]),
+    ].filter((id) => !removed.has(id));
+    for (const projectId of next) {
+      if (current.includes(projectId)) continue;
+      yield* requireProject(projectId);
+      if ((yield* scopeFor(projectId)) === "all") {
+        return yield* invalid("That project does not exist.");
+      }
+    }
+    return next;
+  });
+
   const createTeam: AssistantService["Service"]["createTeam"] = Effect.fn(
     "AssistantService.createTeam",
   )(function* (input, options) {
@@ -935,6 +954,7 @@ const make = Effect.gen(function* () {
               ? current.leadId
               : null;
         yield* checkTeam({ memberIds, leadId }, current.memberIds);
+        const projectIds = yield* teamProjects(current.projectIds, input);
         const archivedAt =
           input.archived === undefined
             ? current.archivedAt
@@ -947,6 +967,7 @@ const make = Effect.gen(function* () {
             archived_at = ${archivedAt},
             instructions = ${input.instructions?.trim() ?? current.instructions ?? ""},
             memories_json = ${encodeMemories(input.memories ?? current.memories ?? [])},
+            project_ids_json = ${encodeMemberIds(projectIds)},
             updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));

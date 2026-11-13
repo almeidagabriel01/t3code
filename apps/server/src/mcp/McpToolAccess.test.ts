@@ -557,6 +557,8 @@ const launchServer = (sandbox: Option.Option<EnvironmentId>, scope: "all" | "pro
               : Option.none(),
           ),
         sandboxEnvironmentId: Effect.succeed(sandbox),
+        teamsOf: () => Effect.succeed([]),
+        projectTitles: () => Effect.succeed({}),
       }),
     ),
   );
@@ -613,7 +615,8 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["a project assistant launching in its own project", {}, "here"],
+  // Two projects: an unnamed one must not pass as the home project.
+  ["a project assistant in two projects naming none", {}, "invalid_request"],
   ["... naming its own project", { projectId: ProjectId.make("project-a") }, "here"],
   ["... naming a second listed project", { projectId: ProjectId.make("project-c") }, "here"],
   ["... naming another project", { projectId: ProjectId.make("project-b") }, "invalid_request"],

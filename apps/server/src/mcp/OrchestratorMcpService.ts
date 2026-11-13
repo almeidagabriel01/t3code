@@ -1085,7 +1085,11 @@ const make = Effect.gen(function* () {
   /** A project assistant starts work only in its own project; another environment's projects are never it. */
   const refuseOutsideProject = (
     scope: McpInvocationScope,
-    input: { readonly projectId?: ProjectId | undefined; readonly elsewhere?: boolean },
+    input: {
+      readonly projectId?: ProjectId | undefined;
+      readonly elsewhere?: boolean;
+      readonly delegate?: boolean;
+    },
   ) =>
     projectScopeRefusal(assistantDirectory, { threadId: scope.thread?.threadId, ...input }).pipe(
       Effect.flatMap(
@@ -2034,7 +2038,8 @@ const make = Effect.gen(function* () {
       // A task bound to this conversation runs in its read-only session; any other starts a thread here.
       if (!bindToCurrentThread) {
         yield* refuseOutsideSandbox(scope, undefined);
-        yield* refuseOutsideProject(scope, { projectId });
+        // The raw input: an omitted project must not pass as the home one.
+        yield* refuseOutsideProject(scope, { projectId: input.projectId });
       }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
@@ -2442,7 +2447,10 @@ const make = Effect.gen(function* () {
           ? undefined
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       yield* refuseOutsideSandbox(callerScope, environmentId);
-      yield* refuseOutsideProject(callerScope, { elsewhere: environmentId !== undefined });
+      yield* refuseOutsideProject(callerScope, {
+        elsewhere: environmentId !== undefined,
+        delegate: true,
+      });
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
         const scope = yield* requireThreadScope(callerScope, "delegate_task");

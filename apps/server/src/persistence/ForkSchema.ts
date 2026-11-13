@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import { backfillTeamProjects } from "../assistants/AssistantTeamProjects.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -505,6 +506,11 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;
+  }
+  // Projects a group gives its members, on top of their own.
+  if (!teamColumns.some((column) => column.name === "project_ids_json")) {
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN project_ids_json TEXT NOT NULL DEFAULT '[]'`;
+    yield* backfillTeamProjects(sql);
   }
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_messages (

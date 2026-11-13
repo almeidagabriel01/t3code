@@ -153,6 +153,52 @@ it.effect("turns an assistant's single project into a list of one and keeps a sa
   }).pipe(Effect.provide(database)),
 );
 
+it.effect("gives each existing group the projects all its members list, and no one more", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    // An older build: groups without their own project list.
+    yield* sql`DROP VIEW assistant_team_state`;
+    yield* sql`ALTER TABLE assistant_teams DROP COLUMN project_ids_json`;
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+    yield* sql`
+      INSERT INTO projection_projects VALUES ('p1', NULL), ('p2', NULL), ('p3', NULL), ('p4', 'gone')`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json, archived_at)
+      VALUES ('a1', 'a1', 'A1', 'p1', 'full', 't', 't', 'project', '["p1","p2","p4"]', NULL),
+             ('a2', 'a2', 'A2', 'p2', 'full', 't', 't', 'project', '["p2","p1","p4"]', NULL),
+             ('all', 'all', 'All', 'home', 'full', 't', 't', 'all', '["home"]', NULL),
+             ('unset', 'unset', 'Unset', 'p3', 'full', 't', 't', NULL, '["p3"]', NULL),
+             ('old', 'old', 'Old', 'p1', 'full', 't', 't', 'project', '["p1"]', 'then')`;
+    const groups: ReadonlyArray<readonly [string, ReadonlyArray<string>, ReadonlyArray<string>]> = [
+      ["shared", ["a1", "a2", "all"], ["p1", "p2"]],
+      ["ghost", ["a1", "nobody"], ["p1", "p2"]],
+      ["anywhere", ["all"], []],
+      ["unset", ["a1", "unset"], []],
+      ["archived", ["a1", "old"], ["p1"]],
+      ["empty", [], []],
+    ];
+    for (const [id, members] of groups) {
+      yield* sql`
+        INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+        VALUES (${id}, ${id}, ${JSON.stringify(members)}, 't', 't')`;
+    }
+    const lists = sql`SELECT assistant_id, project_ids_json FROM assistants ORDER BY assistant_id`;
+    const before = yield* lists;
+
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+
+    const rows = yield* sql<{ readonly team_id: string; readonly project_ids_json: string }>`
+      SELECT team_id, project_ids_json FROM assistant_teams`;
+    for (const [id, , expected] of groups) {
+      const row = rows.find((candidate) => candidate.team_id === id);
+      assert.deepStrictEqual([id, JSON.parse(row?.project_ids_json ?? "null")], [id, expected]);
+    }
+    assert.deepStrictEqual(yield* lists, before);
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect("turns an old team leader into the lead and drops reports_to and leader_title", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

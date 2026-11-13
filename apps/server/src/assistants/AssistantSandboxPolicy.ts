@@ -1,4 +1,10 @@
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type Assistant,
+  assistantEffectiveProjectIds,
+  type EnvironmentId,
+  type ProjectId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -49,10 +55,9 @@ export function sandboxNoteLine(environmentId: string | null): string {
 }
 
 /**
- * Why `threadId` may not start or message work in another project, or none when it may. Only a
- * project assistant is held: it works inside the projects on its list. `projectId` is the project the
- * work lands in (undefined when the caller names none, which means its home); `elsewhere` is true for
- * work aimed at another environment, whose projects are never this one.
+ * Why `threadId` may not start work there, or none. A project assistant stays inside its effective
+ * projects, and one with several must name `projectId`: an omitted one would land in its home
+ * project. `delegate_task` always runs in the caller's project, so it is refused for those.
  */
 export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScopeRefusal")(
   function* (
@@ -61,6 +66,7 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
       readonly threadId: ThreadId | undefined;
       readonly projectId?: ProjectId | undefined;
       readonly elsewhere?: boolean | undefined;
+      readonly delegate?: boolean | undefined;
     },
   ) {
     if (Option.isNone(directory) || input.threadId === undefined) return Option.none<string>();
@@ -68,24 +74,51 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
     if (Option.isNone(found) || found.value.assistant.scope !== "project") {
       return Option.none<string>();
     }
+    if (input.elsewhere === true) return Option.some(PROJECT_SCOPE_REFUSAL);
     const { assistant } = found.value;
-    if (
-      input.elsewhere !== true &&
-      assistant.projectIds.includes(input.projectId ?? assistant.projectId)
-    ) {
-      return Option.none<string>();
+    const projectIds = yield* effectiveProjectIdsOf(directory.value, assistant);
+    if (input.projectId !== undefined && input.delegate !== true) {
+      return projectIds.includes(input.projectId)
+        ? Option.none<string>()
+        : Option.some(PROJECT_SCOPE_REFUSAL);
     }
-    return Option.some(PROJECT_SCOPE_REFUSAL);
+    if (projectIds.length <= 1) return Option.none<string>();
+    const titles =
+      directory.value.projectTitles === undefined
+        ? {}
+        : yield* directory.value.projectTitles(projectIds);
+    const list = projectIds.map((id) => projectLabel(id, titles[id])).join(", ");
+    return Option.some(
+      input.delegate === true
+        ? `You work in several projects (${list}) and delegate_task runs only in this conversation's project. Start the work with t3_thread_launch and the projectId it belongs to.`
+        : `You work in several projects: ${list}. Pass the projectId this work belongs to; if the request does not make it clear, ask the user first.`,
+    );
   },
 );
 
+/** The projects an assistant may work in, with its groups' projects; empty for scope "all". */
+export const effectiveProjectIdsOf = (
+  directory: AssistantDirectoryShape,
+  assistant: Assistant,
+): Effect.Effect<ReadonlyArray<ProjectId>> =>
+  assistant.scope === "project"
+    ? directory.teamsOf(assistant).pipe(
+        Effect.map((memberships) =>
+          assistantEffectiveProjectIds(
+            assistant,
+            memberships.map((membership) => membership.team),
+          ),
+        ),
+      )
+    : Effect.succeed([]);
+
 const PROJECT_SCOPE_REFUSAL =
-  "You are a project assistant: you may only launch, delegate and message work inside the projects on your list. Omit the project for your home project, or ask the user to do this from another conversation.";
+  "You are a project assistant: you may only launch, delegate and message work inside the projects on your list. Pass one of them as projectId, or ask the user to do this from another conversation.";
 
 const MAX_PROJECT_TITLE = 80;
 
 /** "title (id: x)" on one line; the bare id when the title is missing or blank. */
-const projectLabel = (id: string, title: string | undefined) => {
+export const projectLabel = (id: string, title: string | undefined) => {
   const line = title?.replace(/\s+/g, " ").trim() ?? "";
   if (line === "") return id;
   return `${line.length > MAX_PROJECT_TITLE ? `${line.slice(0, MAX_PROJECT_TITLE - 1)}…` : line} (id: ${id})`;
@@ -95,8 +128,12 @@ const projectLabel = (id: string, title: string | undefined) => {
 export const projectScopeNoteLine = (
   projectIds: ReadonlyArray<string>,
   titles: Readonly<Record<string, string>> = {},
-): string =>
-  `You belong to ${projectIds.length === 1 ? "one project" : "these projects"}: ${projectIds.map((id) => projectLabel(id, titles[id])).join(", ")}. Pass the id as projectId. Launch, delegate and message work only inside ${projectIds.length === 1 ? "it" : "them"}; other projects are out of reach.`;
+): string => {
+  const list = projectIds.map((id) => projectLabel(id, titles[id])).join(", ");
+  return projectIds.length === 1
+    ? `You belong to one project: ${list}. Pass the id as projectId. Launch, delegate and message work only inside it; other projects are out of reach.`
+    : `You work in: ${list}. If the request does not make clear which one, ask before changing anything. Always pass the id as projectId to t3_thread_launch, and to memory_remember for a fact about one project; delegate_task runs only in this conversation's project, so it is refused for you. Other projects are out of reach.`;
+};
 
 /** The note line for an assistant that works on this Mac, which may send one task to the container. */
 export const HOST_CONTAINER_NOTE_LINE =

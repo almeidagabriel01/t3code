@@ -913,7 +913,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => null));
       const outside = yield* projectScopeRefusal(assistantDirectory, {
         threadId: sender,
-        projectId: target?.projectId,
+        projectId: target?.projectId ?? found.value.assistant.projectId,
       });
       if (Option.isSome(outside)) return yield* reject(command, outside.value);
     }

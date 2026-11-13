@@ -84,15 +84,18 @@ const ProjectIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeProjectIds = Schema.decodeOption(ProjectIdsJson);
 export const encodeProjectIds = Schema.encodeSync(ProjectIdsJson);
 
-/** The projects a row may work in: empty for "all", else its saved list or its one project. */
-const projectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> => {
-  if (row.scope !== "project") return [];
+/** The row's saved project list, or its one project; whatever its scope. */
+export const savedProjectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> => {
   const saved =
     row.project_ids_json == null
       ? []
       : Option.getOrElse(decodeProjectIds(row.project_ids_json), () => []);
   return (saved.length === 0 ? [row.project_id] : saved) as ReadonlyArray<ProjectId>;
 };
+
+/** The projects a row may work in: empty for "all", else its saved list or its one project. */
+const projectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> =>
+  row.scope === "project" ? savedProjectIdsOf(row) : [];
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,

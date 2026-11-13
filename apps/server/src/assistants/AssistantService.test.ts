@@ -1070,6 +1070,48 @@ it.effect(
 );
 
 it.effect(
+  "a group keeps its own projects, replaced or changed by delta, and only real ones",
+  () => {
+    const { layer } = harness();
+    const docs = ProjectId.make("docs");
+    const web = ProjectId.make("web");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const refused = <A>(effect: Effect.Effect<A, AssistantError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+      const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo] }));
+      const team = yield* assistants.createTeam({ name: "Dev", memberIds: [ana.id] });
+      assert.deepEqual(team.projectIds, []);
+      const set = yield* assistants.updateTeam({ teamId: team.id, projectIds: [docs, repo, docs] });
+      assert.deepEqual(set.projectIds, [docs, repo]);
+      // Removals apply last, so an id in both lists ends up out.
+      const changed = yield* assistants.updateTeam({
+        teamId: team.id,
+        addProjectIds: [web, repo],
+        removeProjectIds: [repo, web],
+      });
+      assert.deepEqual(changed.projectIds, [docs]);
+      for (const bad of [missingProject, scratch]) {
+        assert.include(
+          yield* refused(assistants.updateTeam({ teamId: team.id, addProjectIds: [web, bad] })),
+          "does not exist",
+        );
+      }
+      assert.deepEqual((yield* assistants.teams)[0]?.projectIds, [docs]);
+      // Other fields leave the list alone, and a member's own list never changes with it.
+      const renamed = yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" });
+      assert.deepEqual(renamed.projectIds, [docs]);
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === ana.id)?.projectIds, [
+        repo,
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
   "a project assistant keeps a list of projects, and only a new home starts a conversation",
   () => {
     const { layer } = harness();
