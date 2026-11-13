@@ -67,9 +67,9 @@ export function ProviderIdleTimeoutSection(props: {
   return (
     <SettingsSection
       title="Idle agents"
-      footer="An idle Claude agent process is closed after this long. The conversation resumes on your next message."
+      footer="An idle Claude agent process is closed after this many minutes without activity. The conversation resumes on your next message."
     >
-      <NumberRow label="Close after">
+      <NumberRow label="Minutes before closing">
         <NumberField
           value={props.minutes}
           disabled={props.disabled}
