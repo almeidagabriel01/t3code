@@ -293,7 +293,8 @@ approval forwards once. A tool counts as a write unless the upstream `tools/list
 tools once per session, so after a T3 restart the proxy sends its own `tools/list` in the provider's
 MCP session (one at a time per integration) before deciding. Because T3 already decided, Claude gets
 `mcp__<name>_t3__*` in `allowedTools` and Codex `default_tools_approval_mode = "approve"` on assistant
-threads; Cursor and ACP agents have no such switch and may prompt again. ACP agents without http
+threads only; other threads keep the provider's own prompts under their runtime mode. Cursor and ACP
+agents have no such switch and may prompt again. ACP agents without http
 MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrations work there
 although http connectors do not. OpenCode, Pi and Muse read no connectors, so integrations never
 reach them.
@@ -306,6 +307,19 @@ init list through `McpProviderSessions.reportLoadedServers`, and the detector st
 so a restart does not re-offer Connect. Local and project scope stay out of D7 because the init list
 is per cwd. Detected rows carry key names only, and their id is keyed over the values, so a copy
 request made after the file changed finds nothing.
+The detector re-parses a config file only when its mtime or size changes, so a test that rewrites a
+fixture in place must change one of them.
+
+Sign-in picks its redirect in `beginConnect` from what the client reports, not from how it is
+connected: the server's `/oauth/integrations/callback` when the client reaches this server over
+HTTPS or, from a web page, loopback HTTP; otherwise the desktop's loopback listener; otherwise the
+user pastes the final address. A desktop with a listener uses loopback even over HTTPS, and
+`loopback-only` catalog entries never use the server route. Pending flows (state and PKCE verifier)
+live in memory only. Any client cancels a pending sign-in by integration name, because the flow may
+have started on another device; a desktop listener stops when the pushed state no longer has it.
+
+Agents get `t3_integration` `list` and `read` only. It has no connect action, and its result is built
+field by field from `IntegrationsState`, so a new field there never reaches an agent by accident.
 
 ## Autonomy and the loop guard
 
