@@ -58,7 +58,14 @@ import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { FileTab, TAB_CLASS, TabCloseButton, TabLabel, tabStateClass } from "./MainFileTabs";
+import {
+  FileTab,
+  TAB_CLASS,
+  TabCloseButton,
+  TabLabel,
+  tabStateClass,
+  useRevealWhenActive,
+} from "./MainFileTabs";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -351,7 +358,7 @@ function ThreadTabStrip(props: {
       role="tablist"
       aria-label="Open tabs"
       {...threadTabStripProps(props.group.id)}
-      className="flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
+      className="@container flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
     >
       {props.group.tabs.map((tabKey, index) => (
         <ThreadTabBlock
@@ -440,6 +447,7 @@ function ThreadTab(props: {
   const deleted = shell?.deletedAt != null;
   const title = shell?.title.trim() || "Thread";
   const close = () => props.onClose(props.tabKey);
+  const tabRef = useRevealWhenActive(props.active);
   // The thread tab is its chat: picking it shows the chat even over one of its files.
   const open = () => {
     if (ref) useRightPanelStore.getState().showChat(ref);
@@ -447,6 +455,7 @@ function ThreadTab(props: {
   };
   return (
     <div
+      ref={tabRef}
       role="tab"
       aria-label={title}
       aria-selected={props.active}

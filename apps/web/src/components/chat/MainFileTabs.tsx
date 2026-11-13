@@ -1,5 +1,5 @@
 import { MessageSquareIcon, XIcon } from "lucide-react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import { useTheme } from "~/hooks/useTheme";
@@ -21,7 +21,7 @@ export function tabStateClass(active: boolean) {
 }
 
 const STRIP_CLASS =
-  "flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]";
+  "@container flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]";
 
 function fileName(surface: ThreadFileSurface) {
   return surface.relativePath.split("/").findLast(Boolean) ?? surface.relativePath;
@@ -38,9 +38,20 @@ function activateOnKey(event: KeyboardEvent, activate: () => void) {
   activate();
 }
 
+/** A strip out of room scrolls, so the tab brings itself into view when it becomes active. */
+export function useRevealWhenActive(active: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the strip, a DOM position React does not own
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
+  return ref;
+}
+
 /**
  * The label wraps anywhere, so only its hidden copy, capped at a few characters (more on the
- * active tab), holds the tab's minimum width; a shorter label is never padded out.
+ * active tab, less in a narrow strip), holds the tab's minimum width; a shorter label is never
+ * padded out.
  */
 export function TabLabel(props: {
   readonly text: string;
@@ -56,7 +67,7 @@ export function TabLabel(props: {
             data-label={props.text}
             className={cn(
               "min-w-0 flex-1 after:invisible after:block after:h-0 after:overflow-hidden after:whitespace-nowrap after:content-[attr(data-label)]",
-              props.active ? "after:max-w-32" : "after:max-w-10",
+              props.active ? "after:max-w-[min(8rem,25cqw)]" : "after:max-w-[min(2.5rem,8cqw)]",
             )}
           />
         }
@@ -113,8 +124,10 @@ export function FileTab(props: {
 }) {
   const { resolvedTheme } = useTheme();
   const name = fileName(props.surface);
+  const ref = useRevealWhenActive(props.active);
   return (
     <div
+      ref={ref}
       role="tab"
       aria-label={name}
       aria-selected={props.active}
@@ -160,9 +173,11 @@ export function MainFileTabs(props: {
 }) {
   const chatActive = props.activeFileId === null;
   const title = props.title.trim() || "Thread";
+  const chatRef = useRevealWhenActive(chatActive);
   return (
     <div role="tablist" aria-label="Open tabs" className={STRIP_CLASS}>
       <div
+        ref={chatRef}
         role="tab"
         aria-label={title}
         aria-selected={chatActive}
