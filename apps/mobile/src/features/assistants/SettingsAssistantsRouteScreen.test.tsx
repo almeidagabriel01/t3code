@@ -23,6 +23,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     archivedTeams: [] as unknown[],
     archiveTeam: vi.fn(),
     restoreTeam: vi.fn(),
+    integrations: null as unknown,
   },
 }));
 const assistant = (id: string, name: string, extra: object = {}) => ({
@@ -177,6 +178,11 @@ vi.mock("./AssistantSandboxSection", () => ({
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.openWork }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
+vi.mock("../../state/integrations", () => ({ useIntegrationsState: () => mocks.integrations }));
+vi.mock("./AssistantFormFields", () => ({}));
+vi.mock("../../components/ui/RowPressable", () => ({ RowPressable: Children }));
+vi.mock("../../components/ui/ListRowLayout", () => ({ ListRowLayout: () => null }));
+vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [{ environmentId: "hub", id: "p1", title: "Website" }],
   useThreadShell: (ref: { threadId: string } | null) =>
@@ -231,6 +237,7 @@ beforeEach(() => {
   mocks.presence = {};
   mocks.environmentIds = ["hub"];
   mocks.hasDefault = true;
+  mocks.integrations = null;
   for (const fn of [
     mocks.spendQuery,
     mocks.openEditor,
@@ -247,6 +254,46 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("assistants page", () => {
+  it("shows the integrations each assistant gets, warning on those needing attention", () => {
+    const view = (name: string, status: string) => ({
+      name,
+      catalogId: name === "custom" ? null : name,
+      auth: "oauth",
+      status,
+      availability: "all",
+    });
+    mocks.integrations = {
+      catalog: [
+        { id: "linear", name: "Linear" },
+        { id: "gmail", name: "Gmail" },
+        { id: "notion", name: "Notion" },
+      ],
+      integrations: [
+        view("linear", "connected"),
+        view("gmail", "needs-sign-in"),
+        view("notion", "not-connected"),
+        view("custom", "error"),
+      ],
+    };
+    mocks.entries = {
+      active: [
+        assistant("a1", "Jarvis", { integrations: { mode: "all" } }),
+        assistant("a2", "Plain", { integrations: { mode: "selected", names: ["gmail"] } }),
+      ],
+      archived: [],
+      teams: [],
+    };
+    render();
+    const jarvis = byLabel("Jarvis, All projects")!.textContent;
+    expect(jarvis).toContain("Linear · Connected");
+    expect(jarvis).toContain("Gmail · Needs sign-in");
+    expect(jarvis).toContain("custom · Error");
+    expect(jarvis).not.toContain("Notion");
+    const plain = byLabel("Plain, All projects")!.textContent;
+    expect(plain).toContain("Gmail · Needs sign-in");
+    expect(plain).not.toContain("Linear");
+  });
+
   it.each([
     ["exceeded", ", Limit reached"],
     ["warn", ", Near limit"],

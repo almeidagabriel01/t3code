@@ -55,6 +55,7 @@ import {
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
+  BlocksIcon,
   BrainIcon,
   BriefcaseIcon,
   UserRoundIcon,
@@ -112,6 +113,7 @@ import { openAssistantWork } from "./assistants/assistantWorkState";
 import { openAssistantInfo } from "./assistants/assistantInfoState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
+import { useIntegrationsEnvironmentIds } from "../state/integrations";
 import {
   useDeferredValue,
   useEffect,
@@ -522,6 +524,7 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
@@ -2036,6 +2039,20 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  if (hasIntegrations) {
+    actionItems.push({
+      kind: "action",
+      value: "action:integrations",
+      searchTerms: ["integrations", "connect", "connectors", "mcp", "sign in", "token"],
+      title: "Integrations",
+      icon: <BlocksIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setOpen(false);
+        await navigate({ to: "/settings/integrations", hash: "" });
+      },
+    });
+  }
+
   // Every group, so an archived project's thread still opens its own settings.
   const currentProjectGroup =
     (contextualProjectRef
@@ -2164,8 +2181,9 @@ function OpenCommandPaletteDialog(props: {
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
+  // The Integrations action above already opens that page.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
-    availableSettingsSearchItems,
+    availableSettingsSearchItems.filter((item) => item.id !== "integrations"),
   ).map((item) => ({
     kind: "action",
     value: `setting:${item.id}`,

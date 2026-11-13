@@ -89,6 +89,17 @@ const SETTINGS_SEARCH_TERMS = {
     "tool access",
     "reset",
   ],
+  SettingsIntegrations: [
+    "integrations",
+    "connect",
+    "sign in",
+    "oauth",
+    "mcp",
+    "token",
+    "google",
+    "linear",
+    "github",
+  ],
   SettingsImessage: [
     "imessage",
     "messages",

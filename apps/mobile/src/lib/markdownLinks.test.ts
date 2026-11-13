@@ -96,4 +96,11 @@ describe("resolveMarkdownLinkPresentation", () => {
       href: null,
     });
   });
+
+  it("keeps a settings link pressable", () => {
+    expect(resolveMarkdownLinkPresentation("t3-settings://v1/env-1/integrations#linear")).toEqual({
+      kind: "link",
+      href: "t3-settings://v1/env-1/integrations#linear",
+    });
+  });
 });

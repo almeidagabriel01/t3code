@@ -76,7 +76,7 @@ export function ChoiceRow(props: {
 
 export function Field(props: {
   readonly label: string;
-  readonly description: string;
+  readonly description?: string;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
 }) {
@@ -86,9 +86,11 @@ export function Field(props: {
         <Text textRole="footnote" className="font-t3-medium text-foreground">
           {props.label}
         </Text>
-        <Text textRole="footnote" className="text-foreground-muted">
-          {props.description}
-        </Text>
+        {props.description === undefined ? null : (
+          <Text textRole="footnote" className="text-foreground-muted">
+            {props.description}
+          </Text>
+        )}
       </View>
       <View className="overflow-hidden rounded-2xl bg-grouped-card px-4 py-3">
         {props.children}
@@ -100,7 +102,7 @@ export function Field(props: {
 
 export function TextField(props: {
   readonly label: string;
-  readonly description: string;
+  readonly description?: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly maxLength?: number;
@@ -110,6 +112,8 @@ export function TextField(props: {
   readonly footer?: ReactNode;
   readonly disabled?: boolean;
   readonly placeholder?: string;
+  /** Write-only values: what was typed is never shown again. */
+  readonly secure?: boolean;
 }) {
   return (
     <Field label={props.label} description={props.description} footer={props.footer}>
@@ -123,6 +127,7 @@ export function TextField(props: {
         multiline={props.multiline}
         autoCapitalize={props.autoCapitalize}
         keyboardType={props.keyboardType}
+        secureTextEntry={props.secure}
         autoCorrect={false}
         textAlignVertical={props.multiline ? "top" : "center"}
         placeholderTextColorClassName="accent-foreground-muted"

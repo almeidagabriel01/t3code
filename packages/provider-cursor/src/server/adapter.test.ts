@@ -1960,12 +1960,27 @@ describe("CursorAdapterV2", () => {
           headers: {},
           env: { T: "1" },
         },
+        {
+          name: "linear_t3",
+          transport: "http",
+          url: "http://127.0.0.1:43123/mcp/integrations/linear",
+          args: [],
+          headers: { Authorization: "Bearer secret-cursor-mcp-token" },
+          env: {},
+          proxy: { preApproved: true },
+        },
       ],
       platform: "linux",
     });
     assert.deepEqual(withConnectors.mcpServers, {
       docs: { type: "http", url: "https://docs.example.test/mcp", headers: { "X-Key": "k" } },
       files: { command: "npx", args: ["srv"], env: { T: "1" } },
+      // A proxied integration is plain http to T3; the upstream token never leaves the server.
+      linear_t3: {
+        type: "http",
+        url: "http://127.0.0.1:43123/mcp/integrations/linear",
+        headers: { Authorization: "Bearer secret-cursor-mcp-token" },
+      },
       ...cursorMcpServers(mcpSession),
     });
 

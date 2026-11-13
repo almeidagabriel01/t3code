@@ -179,6 +179,7 @@ describe("Assistant icon", () => {
 });
 
 describe("assistant connectors", () => {
+  const URL_PROBLEM = `"docs" needs an https URL (http only on localhost), without ? or #.`;
   const http = {
     name: "docs",
     transport: "http",
@@ -200,14 +201,14 @@ describe("assistant connectors", () => {
       [{ ...http, name: "t3-code-direct" }],
       '"t3-code-direct" is reserved for T3\'s own tools.',
     ],
-    ["a repeated name", [http, { ...stdio, name: "docs" }], 'Two connectors are named "docs".'],
-    [
-      "an http connector without a URL",
-      [{ ...http, url: undefined }],
-      '"docs" needs an http or https URL.',
-    ],
-    ["a non-http URL", [{ ...http, url: "ftp://x.test" }], '"docs" needs an http or https URL.'],
-    ["a garbage URL", [{ ...http, url: "not a url" }], '"docs" needs an http or https URL.'],
+    ["a repeated name", [http, { ...stdio, name: "docs" }], 'Two custom servers are named "docs".'],
+    ["an http connector without a URL", [{ ...http, url: undefined }], URL_PROBLEM],
+    ["a non-http URL", [{ ...http, url: "ftp://x.test" }], URL_PROBLEM],
+    ["a garbage URL", [{ ...http, url: "not a url" }], URL_PROBLEM],
+    ["plain http off this machine", [{ ...http, url: "http://192.168.1.5/mcp" }], URL_PROBLEM],
+    ["a URL with a query", [{ ...http, url: "https://x.test/mcp?key=1" }], URL_PROBLEM],
+    ["a URL with userinfo", [{ ...http, url: "https://u:p@x.test/mcp" }], URL_PROBLEM],
+    ["plain http on loopback", [{ ...http, url: "http://127.0.0.1:3000/mcp" }], null],
     ["a blank command", [{ ...stdio, command: "  " }], '"files" needs a command.'],
     [
       "a repeated header",
@@ -222,10 +223,34 @@ describe("assistant connectors", () => {
     [
       "too many connectors",
       Array.from({ length: 21 }, (_, i) => ({ ...http, name: `s${i}` })),
-      "At most 20 connectors.",
+      "At most 20 custom servers.",
     ],
   ] as const)("%s", (_label, servers, problem) => {
     expect(assistantMcpServersProblem(servers)).toBe(problem);
+  });
+
+  // Connectors saved before the URL rule tightened keep working until the user edits their URL.
+  const lan = { ...http, url: "http://192.168.1.5/mcp" } as const;
+  const query = { ...http, name: "q", url: "https://x.test/mcp?key=1" } as const;
+  it.each([
+    ["an unchanged LAN http URL next to a new connector", [lan, query], [lan, query, stdio], null],
+    ["an unchanged query URL", [query], [query], null],
+    [
+      "an unchanged URL with surrounding spaces",
+      [lan],
+      [{ ...lan, url: " http://192.168.1.5/mcp " }],
+      null,
+    ],
+    ["an edited URL", [lan], [{ ...lan, url: "http://192.168.1.6/mcp" }], URL_PROBLEM],
+    [
+      "a new connector reusing a saved bad URL",
+      [lan],
+      [{ ...lan, name: "other" }],
+      URL_PROBLEM.replace('"docs"', '"other"'),
+    ],
+    ["a saved stdio name now http", [{ ...stdio, name: "docs" }], [lan], URL_PROBLEM],
+  ] as const)("%s", (_label, saved, servers, problem) => {
+    expect(assistantMcpServersProblem(servers, saved)).toBe(problem);
   });
 
   const isInput = Schema.is(AssistantMcpServerInput);

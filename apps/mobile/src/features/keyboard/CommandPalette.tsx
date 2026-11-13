@@ -54,6 +54,7 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/assistants";
+import { useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
@@ -258,6 +259,7 @@ export function CommandPalette(props: {
   const assistantEntries = useAssistantEntries();
   const assistants = assistantEntries.active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
   const openAssistantTeam = useOpenAssistantTeam();
@@ -560,6 +562,15 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsAssistants"),
       });
     }
+    if (hasIntegrations) {
+      actions.push({
+        key: "integrations",
+        kind: "action",
+        title: "Integrations",
+        searchTerms: ["integrations", "connect", "sign in", "mcp", "token"],
+        run: () => openSettings(navigation, "SettingsIntegrations"),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -688,6 +699,7 @@ export function CommandPalette(props: {
     assistantEntries.activeTeams,
     props.pathname,
     hasAssistantsEnvironment,
+    hasIntegrations,
     openAssistantTeam,
     autonomyPause,
     openAssistantEditor,

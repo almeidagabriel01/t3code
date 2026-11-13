@@ -5,6 +5,7 @@ import {
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
+import { parseSettingsLinkHref } from "@t3tools/shared/settingsLinks";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { videoMimeType } from "@t3tools/shared/video";
 
@@ -281,7 +282,9 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   return {
     kind: "link",
     href:
-      /^(?:mailto|tel):/i.test(normalized) || parseThreadLinkHref(normalized) !== null
+      /^(?:mailto|tel):/i.test(normalized) ||
+      parseThreadLinkHref(normalized) !== null ||
+      parseSettingsLinkHref(normalized) !== null
         ? normalized
         : null,
   };

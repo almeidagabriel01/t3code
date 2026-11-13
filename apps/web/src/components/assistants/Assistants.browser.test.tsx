@@ -89,6 +89,7 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
+  integrations: { mode: "all" },
   autonomy: {
     mode: "reply-only",
     rules: null,
@@ -770,7 +771,7 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   fakeAssistantEdits.updates = [];
   await using _screen = await openEditDialog("Jarvis");
   await expect
-    .element(page.getByText("Connectors work with Claude", { exact: false }))
+    .element(page.getByText("Custom servers work with Claude", { exact: false }))
     .toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Add connector" }));
   await userEvent.fill(page.getByLabelText("Connector name"), "docs");
@@ -779,7 +780,9 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   await userEvent.fill(page.getByLabelText("Header 1", { exact: true }), "Authorization");
   await userEvent.fill(page.getByLabelText("Header 1 value"), "Bearer abc");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
-  await expect.element(page.getByText('"docs" needs an http or https URL.')).toBeVisible();
+  await expect
+    .element(page.getByText('"docs" needs an https URL (http only on localhost), without ? or #.'))
+    .toBeVisible();
   await userEvent.fill(page.getByLabelText("URL"), "https://docs.example.test/mcp");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
   await expect.element(page.getByText("docs", { exact: true })).toBeVisible();

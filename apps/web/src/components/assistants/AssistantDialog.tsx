@@ -7,7 +7,9 @@ import {
   AssistantHandle,
   BudgetPeriod,
   DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_ASSISTANT_INTEGRATIONS,
   type AssistantAutonomy,
+  type AssistantIntegrations,
   type AssistantTeam,
   type AssistantTeamId,
   type AssistantToolAccess,
@@ -60,6 +62,7 @@ import {
   useAssistantTeamActions,
 } from "../../state/assistants";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { useIntegrationsState } from "../../state/integrations";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -94,6 +97,7 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { AssistantAvatarPicker, type AvatarDraft } from "./AssistantAvatarPicker";
 import { AssistantConnectorsField } from "./AssistantConnectorsField";
+import { AssistantIntegrationsField, sameIntegrations } from "./AssistantIntegrationsField";
 import { AssistantNotifications } from "./AssistantNotifications";
 import { AssistantWorkspaceField } from "./AssistantWorkspaceField";
 import { AssistantSchedules } from "./AssistantSchedules";
@@ -290,6 +294,10 @@ function AssistantDialog(props: {
   const [connectors, setConnectors] = useState<ReadonlyArray<ConnectorDraft>>(() =>
     connectorDraftsFrom(assistant?.mcpServers ?? []),
   );
+  const [integrations, setIntegrations] = useState<AssistantIntegrations>(
+    assistant?.integrations ?? DEFAULT_ASSISTANT_INTEGRATIONS,
+  );
+  const integrationsState = useIntegrationsState(environmentId);
   const [picked, setPicked] = useState<ReadonlyArray<string> | null>(() =>
     assistant
       ? assistantProjectSelection(assistant)
@@ -394,8 +402,8 @@ function AssistantDialog(props: {
         : `$${budgetDraft.amount.trim()} limit`
       : "no spending limit",
     connectors.length === 0
-      ? "no connectors"
-      : `${connectors.length} connector${connectors.length === 1 ? "" : "s"}`,
+      ? "no custom servers"
+      : `${connectors.length} custom server${connectors.length === 1 ? "" : "s"}`,
     askBeforeActing ? "asks before messaging other threads" : "messages other threads freely",
   ].join(" · ");
 
@@ -423,7 +431,9 @@ function AssistantDialog(props: {
       connectors,
       connectorDraftsFrom(assistant?.mcpServers ?? []),
     );
-    const connectorProblem = connectorsChanged ? connectorDraftsProblem(connectors) : null;
+    const connectorProblem = connectorsChanged
+      ? connectorDraftsProblem(connectors, assistant?.mcpServers ?? [])
+      : null;
     if (connectorProblem !== null) return setError(connectorProblem);
     const robotAvatar = { kind: "robot", hue: avatar.hue, variant: avatar.variant } as const;
     const pendingFile = avatar.image?.kind === "file" ? avatar.image.file : null;
@@ -443,6 +453,7 @@ function AssistantDialog(props: {
           ...(workspace !== assistant.workspace ? { workspace } : {}),
           ...(avatarTouched && pendingFile === null ? { avatar: robotAvatar } : {}),
           ...(connectorsChanged ? { mcpServers: connectorInputsFrom(connectors) } : {}),
+          ...(sameIntegrations(integrations, assistant.integrations) ? {} : { integrations }),
           ...(role.trim() !== assistant.role ? { role: role.trim() } : {}),
           budget: budget.budget,
           ...(sameAssistantAutonomy(autonomy, assistant.autonomy) ? {} : { autonomy }),
@@ -458,6 +469,7 @@ function AssistantDialog(props: {
           ...(workspace === "host" ? {} : { workspace }),
           ...(pendingFile === null ? { avatar: robotAvatar } : {}),
           ...(connectors.length === 0 ? {} : { mcpServers: connectorInputsFrom(connectors) }),
+          ...(integrations.mode === "all" ? {} : { integrations }),
           ...(role.trim() === "" ? {} : { role: role.trim() }),
           ...(budget.budget ? { budget: budget.budget } : {}),
           ...(sameAssistantAutonomy(autonomy, DEFAULT_ASSISTANT_AUTONOMY) ? {} : { autonomy }),
@@ -820,7 +832,28 @@ function AssistantDialog(props: {
                     onChange={setWorkspace}
                   />
                   <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
-                  <AssistantConnectorsField value={connectors} onChange={setConnectors} />
+                  {integrationsState === null ? null : (
+                    <AssistantIntegrationsField
+                      state={integrationsState}
+                      value={integrations}
+                      onChange={setIntegrations}
+                      workspace={workspace}
+                      provider={
+                        modelEntry === undefined
+                          ? null
+                          : {
+                              instanceId: modelEntry.instanceId,
+                              driverKind: modelEntry.driverKind,
+                              displayName: modelEntry.displayName,
+                            }
+                      }
+                    />
+                  )}
+                  <AssistantConnectorsField
+                    value={connectors}
+                    saved={assistant?.mcpServers ?? []}
+                    onChange={setConnectors}
+                  />
                   <BudgetFields
                     draft={budgetDraft}
                     onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}

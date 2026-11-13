@@ -39,3 +39,21 @@ export function renderErrorPage(description: string): string {
     <p>Close this page and start the sign-in again from your agent.</p>`,
   );
 }
+
+export function renderIntegrationCallbackPage(input: {
+  readonly connected: boolean;
+  readonly serviceName: string | undefined;
+}): string {
+  const service = input.serviceName ?? "the service";
+  return input.connected
+    ? shell(
+        "Connected",
+        `<h1>Connected to ${escapeHtml(service)}</h1>
+    <p>You can close this tab.</p>`,
+      )
+    : shell(
+        "Sign-in failed",
+        `<h1>Sign-in expired or didn't match</h1>
+    <p>Close this tab and try again from T3 Code.</p>`,
+      );
+}

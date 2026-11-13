@@ -122,6 +122,7 @@ import * as Kanban from "./kanban/KanbanService.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
 import * as Notes from "./notes/NotesService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as IntegrationAuth from "./integrations/IntegrationAuth.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -876,6 +877,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AssistantGroups.AssistantGroups)({ member: {} as never }),
   Layer.mock(NoteWork.NoteWorkService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(IntegrationAuth.IntegrationAuth)({ catalog: [] }),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),

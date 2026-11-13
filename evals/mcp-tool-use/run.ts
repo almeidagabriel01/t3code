@@ -76,6 +76,7 @@ import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previ
 import { KanbanToolkit } from "../../apps/server/src/mcp/toolkits/kanban/tools.ts";
 import { MemoryToolkit } from "../../apps/server/src/mcp/toolkits/memory/tools.ts";
 import { NoteToolkit } from "../../apps/server/src/mcp/toolkits/note/tools.ts";
+import { IntegrationToolkit } from "../../apps/server/src/mcp/toolkits/integration/tools.ts";
 import { ProjectToolkit } from "../../apps/server/src/mcp/toolkits/project/tools.ts";
 import {
   CHILD_PULL_REQUEST_REPORT_NEXT,
@@ -578,6 +579,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DecisionToolkit,
   WatchToolkit,
   NoteToolkit,
+  IntegrationToolkit,
   DocsToolkit,
   HostToolkit,
   HeavyToolkit,

@@ -146,6 +146,7 @@ import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
 import * as Notes from "./notes/NotesService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as IntegrationAuth from "./integrations/IntegrationAuth.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
   bufferShellLiveStream,
@@ -1549,6 +1550,7 @@ export const layerWsRpc = (
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const integrations = yield* IntegrationAuth.IntegrationAuth;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
@@ -2789,6 +2791,16 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(guestShares.create(input)),
           ),
+        [WS_METHODS.integrationsSubscribe]: () => integrations.changes,
+        [WS_METHODS.integrationsBeginConnect]: (input) => integrations.beginConnect(input),
+        [WS_METHODS.integrationsCompleteConnect]: (input) => integrations.completeConnect(input),
+        [WS_METHODS.integrationsCancelConnect]: (input) => integrations.cancelConnect(input),
+        [WS_METHODS.integrationsDisconnect]: (input) => integrations.disconnect(input),
+        [WS_METHODS.integrationsSaveToken]: (input) => integrations.saveToken(input),
+        [WS_METHODS.integrationsSaveOwnApp]: (input) => integrations.saveOwnApp(input),
+        [WS_METHODS.integrationsRemoveOwnApp]: (input) => integrations.removeOwnApp(input),
+        [WS_METHODS.integrationsUpdate]: (input) => integrations.update(input),
+        [WS_METHODS.integrationsMakeAvailable]: (input) => integrations.makeAvailable(input),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),

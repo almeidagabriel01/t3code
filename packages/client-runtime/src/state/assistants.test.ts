@@ -37,6 +37,7 @@ const assistant = (id: string, overrides: Partial<Assistant> = {}): Assistant =>
   avatar: null,
   scope: "all",
   mcpServers: [],
+  integrations: { mode: "all" },
   isDefault: false,
   threadId: `assistant:${id}:1` as ThreadId,
   generation: 1,

@@ -56,6 +56,10 @@ const brief = (
     transport,
     enabled,
   })),
+  integrations:
+    assistant.integrations.mode === "all"
+      ? { mode: "all" }
+      : { mode: "selected", names: [...assistant.integrations.names] },
   role: assistant.role,
   teams: teams
     .filter((team) => team.memberIds.includes(assistant.id))
@@ -185,6 +189,8 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   const avatar =
     input.avatarHue === undefined ? undefined : ({ kind: "robot", hue: input.avatarHue } as const);
 
+  if (input.integrations !== undefined)
+    return yield* invalid("Only the user can change which integrations an assistant uses");
   if (input.action === "group_create" || input.action === "group_update")
     yield* requireUserTurn(caller, "change a group");
   // Waking on its own spends the user's tokens, so only the user turns it on.

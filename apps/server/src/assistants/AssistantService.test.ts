@@ -779,6 +779,26 @@ it.effect(
   },
 );
 
+it.effect("the integration selection defaults to all, saves and survives unrelated updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.deepEqual(plain.integrations, { mode: "all" });
+    const chosen = yield* assistants.create(
+      create({ name: "Scheduler", integrations: { mode: "selected", names: ["google-calendar"] } }),
+    );
+    assert.deepEqual(chosen.integrations, { mode: "selected", names: ["google-calendar"] });
+    const renamed = yield* assistants.update({ assistantId: chosen.id, role: "Ops" });
+    assert.deepEqual(renamed.integrations, { mode: "selected", names: ["google-calendar"] });
+    const opened = yield* assistants.update({
+      assistantId: chosen.id,
+      integrations: { mode: "all" },
+    });
+    assert.deepEqual(opened.integrations, { mode: "all" });
+  }).pipe(Effect.provide(layer), Effect.orDie);
+});
+
 it.effect(
   "connector secrets are write-only: reads show keys, omitted keeps, empty clears, deletes clean up",
   () => {
@@ -869,6 +889,27 @@ it.effect(
       );
       assert.equal(bad.reason, "invalid");
       assert.equal(secretValues.size, 0);
+
+      // A connector saved before the URL rule tightened survives a save that leaves its URL alone.
+      const legacy = {
+        name: "lan",
+        transport: "http" as const,
+        url: "http://192.168.1.5/mcp",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      };
+      const lanInput = { name: "lan", transport: "http" as const, url: legacy.url, enabled: true };
+      const resaved = yield* connectors.save(made.id, [legacy], [lanInput, docs([])]);
+      assert.deepEqual(
+        resaved.servers.map((server) => server.url),
+        [legacy.url, "https://docs.example.test/mcp"],
+      );
+      const edited = yield* Effect.flip(
+        connectors.save(made.id, [legacy], [{ ...lanInput, url: "http://192.168.1.6/mcp" }]),
+      );
+      assert.equal(edited.reason, "invalid");
 
       yield* assistants.update({
         assistantId: made.id,

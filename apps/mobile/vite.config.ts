@@ -153,6 +153,8 @@ const reactTests = [
   "src/features/assistants/AutonomySettingsSection.test.tsx",
   "src/features/assistants/AssistantWatchesSection.test.tsx",
   "src/features/assistants/AssistantWatchRouteScreen.test.tsx",
+  "src/features/integrations/SettingsIntegrationsRouteScreen.test.tsx",
+  "src/features/integrations/IntegrationRouteScreen.test.tsx",
   "src/state/autonomy.test.tsx",
   "src/features/imessage/SettingsImessageRouteScreen.test.tsx",
   "src/state/imessageChannel.test.tsx",

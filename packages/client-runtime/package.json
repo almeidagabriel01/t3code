@@ -375,6 +375,14 @@
       "types": "./src/state/assistants.ts",
       "default": "./src/state/assistants.ts"
     },
+    "./integrations": {
+      "types": "./src/integrations.ts",
+      "default": "./src/integrations.ts"
+    },
+    "./state/integrations": {
+      "types": "./src/state/integrations.ts",
+      "default": "./src/state/integrations.ts"
+    },
     "./state/mac-permissions": {
       "types": "./src/state/macPermissions.ts",
       "default": "./src/state/macPermissions.ts"

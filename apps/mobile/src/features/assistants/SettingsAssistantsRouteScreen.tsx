@@ -35,6 +35,7 @@ import {
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { AssistantIntegrationChips } from "./AssistantIntegrationsSection";
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
@@ -126,6 +127,12 @@ function AssistantCard(props: {
         )}
       </View>
       {archived ? null : <AssistantTaskRows entry={props.entry} sections={taskSections} />}
+      {archived ? null : (
+        <AssistantIntegrationChips
+          environmentId={environmentId}
+          selection={assistant.integrations}
+        />
+      )}
       {props.groupNames.length === 0 ? null : (
         <View className="flex-row flex-wrap gap-1">
           {props.groupNames.map((name) => (

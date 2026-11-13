@@ -198,3 +198,21 @@ describe("file explorer client guards", () => {
     ]);
   });
 });
+
+describe("integration client guards", () => {
+  it("guards every credential change with settings write and leaves the subscription open", () => {
+    for (const method of [
+      WS_METHODS.integrationsBeginConnect,
+      WS_METHODS.integrationsCompleteConnect,
+      WS_METHODS.integrationsCancelConnect,
+      WS_METHODS.integrationsDisconnect,
+      WS_METHODS.integrationsSaveToken,
+      WS_METHODS.integrationsSaveOwnApp,
+      WS_METHODS.integrationsRemoveOwnApp,
+      WS_METHODS.integrationsUpdate,
+      WS_METHODS.integrationsMakeAvailable,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["settings:write"]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.integrationsSubscribe)).toBe(false);
+  });
+});

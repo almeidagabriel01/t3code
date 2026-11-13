@@ -277,7 +277,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
-import { openSettings } from "../settings/settings-navigation";
+import { openSettings, openSettingsLink } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
 
@@ -2867,6 +2867,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (instructionsPath) openSkillInstructions(instructionsPath);
       return;
     }
+    if (openSettingsLink(navigation, href)) return;
     if (parseThreadLinkHref(href)) {
       const target = resolveLinkedThread(href);
       if (target) {

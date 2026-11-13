@@ -5,6 +5,7 @@ import {
   cancelCodexAuthCallback,
   CodexAuthCallbackError,
 } from "../../app/CodexAuthCallback.ts";
+import * as IntegrationCallback from "../../app/IntegrationCallback.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -44,4 +45,35 @@ export const cancelProviderAuthCallback = DesktopIpc.makeIpcMethod({
       try: () => cancelCodexAuthCallback(authorizationUrl),
       catch: () => new CodexAuthCallbackError({ detail: "Invalid ChatGPT sign-in request." }),
     }),
+});
+
+const IntegrationCallbackResult = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("received"), callbackUrl: Schema.String }),
+  Schema.Struct({ status: Schema.Literals(["port-busy", "cancelled", "expired", "failed"]) }),
+]);
+
+export const receiveIntegrationCallback = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RECEIVE_INTEGRATION_CALLBACK_CHANNEL,
+  payload: Schema.Struct({ authorizationUrl: Request, redirectUri: Request }),
+  result: IntegrationCallbackResult,
+  handler: Effect.fn("desktop.ipc.integrations.receiveCallback")(function* (input) {
+    const shell = yield* ElectronShell.ElectronShell;
+    const windows = yield* ElectronWindow.ElectronWindow;
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<ElectronShell.ElectronShell>());
+    const result = yield* Effect.promise(() =>
+      IntegrationCallback.receiveIntegrationCallback(input, (url) =>
+        runPromise(shell.openExternal(url)),
+      ),
+    );
+    const window = yield* windows.currentMainOrFirst;
+    if (result.status === "received" && Option.isSome(window)) yield* windows.reveal(window.value);
+    return result;
+  }),
+});
+
+export const cancelIntegrationCallback = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CANCEL_INTEGRATION_CALLBACK_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Void,
+  handler: () => Effect.sync(IntegrationCallback.cancelIntegrationCallback),
 });

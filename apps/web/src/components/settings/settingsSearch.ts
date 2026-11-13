@@ -30,6 +30,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/assistants"
+  | "/settings/integrations"
   | "/settings/imessage"
   | "/settings/telegram"
   | "/settings/memory"
@@ -86,6 +87,7 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly requiresMemory?: boolean;
+  readonly requiresIntegrations?: boolean;
   readonly requiresImessage?: boolean;
   readonly requiresTelegram?: boolean;
   readonly macProviderSettingsOnly?: boolean;
@@ -109,6 +111,7 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasMemory?: boolean;
+  readonly hasIntegrations?: boolean;
   readonly hasImessage?: boolean;
   readonly hasTelegram?: boolean;
   readonly hasMacProviderSettingsEnvironment?: boolean;
@@ -130,6 +133,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/assistants": "Assistants",
+  "/settings/integrations": "Integrations",
   "/settings/imessage": "iMessage",
   "/settings/telegram": "Telegram",
   "/settings/memory": "Memory",
@@ -177,6 +181,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/providers",
       "/settings/assistants",
+      "/settings/integrations",
       "/settings/imessage",
       "/settings/telegram",
       "/settings/memory",
@@ -730,6 +735,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/assistants",
     searchTerms: [
       "assistants jarvis named assistant instructions tool access read only full access reset conversation archive",
+    ],
+  },
+  {
+    id: "integrations",
+    title: "Integrations",
+    to: "/settings/integrations",
+    requiresIntegrations: true,
+    searchTerms: [
+      "integrations connectors connect sign in oauth token mcp google calendar gmail linear github notion slack claude.ai codex own app client id redirect",
     ],
   },
   {
@@ -1939,6 +1953,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/assistants": null,
+  "/settings/integrations": null,
   "/settings/imessage": null,
   "/settings/telegram": null,
   "/settings/memory": null,
@@ -1963,7 +1978,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
-  "/settings/integrations": "/settings/browser",
   "/settings/storage": "/settings/maintenance",
   "/settings/beta": "/settings/labs",
 };
@@ -1972,6 +1986,8 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  // Its old browser and device rows moved out before the path became Integrations.
+  "/settings/integrations",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
@@ -2075,6 +2091,7 @@ export function filterAvailableSettingsSearchItems(
   return items.filter(
     (item) =>
       (!item.requiresMemory || availability.hasMemory === true) &&
+      (!item.requiresIntegrations || availability.hasIntegrations === true) &&
       (!item.requiresImessage || availability.hasImessage === true) &&
       (!item.requiresTelegram || availability.hasTelegram === true) &&
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
