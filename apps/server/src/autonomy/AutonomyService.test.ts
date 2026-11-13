@@ -40,6 +40,7 @@ const awake: AssistantAutonomy = {
   rules: null,
   projectIds: null,
   channels: null,
+  onProblem: "offer",
 };
 const ON: AutonomySettings = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true };
 
@@ -62,6 +63,7 @@ const plain: Shell = {
 
 const harness = (language: "en" | "pt-BR" = "en") => {
   const settings = Ref.makeUnsafe<AutonomySettings>(ON);
+  const detectProblems = Ref.makeUnsafe(false);
   const shells = new Map<string, Shell | null>();
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
@@ -127,7 +129,12 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           getEnvironmentId: Effect.succeed("env-1" as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
+          getSettings: Effect.all([Ref.get(settings), Ref.get(detectProblems)]).pipe(
+            Effect.map(
+              ([autonomy, detect]) =>
+                ({ autonomy, detectProblems: detect, projectSettingsOverrides: {} }) as never,
+            ),
+          ),
         }),
         Layer.mock(AssistantSpend)({
           budgetRefusal: () =>
@@ -146,6 +153,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   return {
     layer,
     settings,
+    detectProblems,
     shells,
     sent,
     refusal,
@@ -1296,3 +1304,108 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect(
+  "with Detect problems on, failures stop waking every assistant by rule; watches still fire",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant();
+      yield* addAssistant(awake, "ana");
+      h.shells.set("t1", plain);
+      yield* service.upsertWatch({
+        assistantId: "ana",
+        title: "failures",
+        filter: { event: "run_failed" },
+        instruction: "",
+        oneShot: false,
+        expiresAt: null,
+      });
+      yield* Ref.set(h.detectProblems, true);
+      yield* service.handleEvent(run("failed", "r1"));
+      yield* service.handleEvent(
+        ev("thread.pull-request-link-updated", "t1", {
+          number: 3,
+          url: "u",
+          snapshot: { checksState: "failing", updatedAt: "x" },
+        }),
+      );
+      assert.deepEqual(
+        h.sent.map((wake) => [wake.threadId, wake.text.split("\n")[0]]),
+        [["assistant:ana:1", "[Autonomy] Watch: failures"]],
+      );
+      // Off again: the old fan-out returns.
+      yield* Ref.set(h.detectProblems, false);
+      yield* service.handleEvent(run("failed", "r2"));
+      assert.sameMembers(
+        h.sent.slice(1).map((wake) => wake.threadId),
+        ["assistant:jarvis:1", "assistant:ana:1", "assistant:ana:1"],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a problem wake's answer reaches the user after the server's line, once", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant();
+    h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+    const header = "Problem in acme: Disk full. Card #4.";
+    for (const [key, answer] of [
+      ["problem:jarvis:1:c1", "Clearing the build cache should fix it. Start?"],
+      ["problem:jarvis:2:c2", "Your token is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
+        VALUES (${key}, 'jarvis', 'assistant:jarvis:1', 'problem', ${header}, '2026-01-01')`;
+      h.answers.set("assistant:jarvis:1", answer);
+      for (let i = 0; i < 2; i++) {
+        yield* service.handleEvent(
+          run("completed", `run-${key}`, "assistant:jarvis:1", `autonomy-wake:${key}`),
+        );
+      }
+    }
+    const texts = (yield* outboxRows).map((row) => row.message.text);
+    assert.deepEqual(texts, [
+      `${header}\n\nClearing the build cache should fix it. Start?`,
+      header,
+    ]);
+    const counted = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM autonomy_wakes WHERE source = 'notify'`;
+    assert.equal(counted[0]!.n, 2);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("tells the user as T3 Code, in Activity when a thread carries it, once per key", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    const notice = { text: "No assistant can work on acme. Give one access in Assistants." };
+    for (let i = 0; i < 2; i++) {
+      yield* service.tellUser({
+        ...notice,
+        key: "k1",
+        projectId: "p1" as never,
+        threadId: "t1" as never,
+      });
+    }
+    yield* service.tellUser({ ...notice, key: "k2", projectId: "p1" as never, threadId: null });
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => [row.message.senderName, row.message.text]),
+      [
+        ["T3 Code", notice.text],
+        ["T3 Code", notice.text],
+      ],
+    );
+    const open = yield* decisions.list({});
+    assert.deepEqual(
+      open.map((decision) => decision.title),
+      [notice.text],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
