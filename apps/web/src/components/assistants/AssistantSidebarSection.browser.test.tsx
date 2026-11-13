@@ -2,6 +2,8 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import "../../index.css";
+
 import { render } from "../../../test/render";
 import { useThreadTabsStore } from "../../threadTabsStore";
 import { useUiStateStore } from "../../uiStateStore";
@@ -618,6 +620,34 @@ describe("AssistantSidebarSection", () => {
     await using screen = await render(element());
     expect(status(screen.container, "ada")?.textContent).toBe("Working in Growth");
   });
+
+  it.each([
+    { width: 296, text: false },
+    { width: 420, text: true },
+  ])(
+    "shows the status text in a $width px row only if it fits; the dot's tooltip carries it",
+    async ({ width, text }) => {
+      setup(["Ada", "Aprovador"], {
+        moods: { [threadOf("Ada")]: "needs", [threadOf("Aprovador")]: "failed" },
+      });
+      await using screen = await render(<div style={{ width }}>{element()}</div>);
+      const shown = (name: string) =>
+        getComputedStyle(status(screen.container, name)!).display !== "none";
+      expect(shown("ada")).toBe(text);
+      // A failed run has no dot to carry it, so its text stays.
+      expect(shown("aprovador")).toBe(true);
+      await userEvent.hover(
+        screen.container.querySelector(
+          '[data-sidebar-row="assistant:env:ada"] [data-slot="tooltip-trigger"]',
+        )!,
+      );
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
+          "Needs you",
+        ),
+      );
+    },
+  );
 
   it("shows active assistants plus five recent ones and toggles Show all", async () => {
     const all = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"];

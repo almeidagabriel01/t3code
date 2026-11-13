@@ -10,6 +10,7 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
+import { useAssistantLiveWork } from "../../state/assistants";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useProjects } from "../../state/entities";
 import { SubagentStatusDot } from "../threads/SubagentStatusDot";
@@ -44,8 +45,10 @@ export function HomeAgentsSection(props: {
   const nowMs = useNowMinuteMs();
   const selectDetail = useSelectWorkspaceDetail();
   const { agentsDoneExpanded, toggleAgentsDone } = useHomeSectionPreferences();
+  const { taskThreadKeys } = useAssistantLiveWork();
   const { working, done } = selectAgentsSection(
     buildHomeActivityEntries({ threads: props.threads, now: props.now, openDecisionThreadKeys }),
+    taskThreadKeys,
   );
   if (working.length + done.length === 0) return null;
   const sidebar = props.sidebar === true;

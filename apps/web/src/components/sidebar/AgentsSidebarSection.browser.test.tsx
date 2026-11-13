@@ -12,8 +12,12 @@ const state = vi.hoisted(() => ({
   collapsed: false,
   doneCollapsed: false,
   update: vi.fn(),
+  taskThreadKeys: new Set<string>(),
 }));
 vi.mock("../activity/useActivity", () => ({ useActivityEntries: () => state.entries }));
+vi.mock("../../state/assistants", () => ({
+  useAssistantLiveWork: () => ({ taskThreadKeys: state.taskThreadKeys }),
+}));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [
     {
@@ -47,6 +51,7 @@ const entry = (id: string, rank: 1 | 2, at: string | null, projectId = "p1"): Ac
     id: ThreadId.make(id),
     projectId: ProjectId.make(projectId),
     title: `Title ${id}`,
+    lineage: { relationshipToParent: null, parentThreadId: null },
     createdAt: at ?? "2026-03-09T09:00:00.000Z",
     latestRun: at === null ? null : { startedAt: at, completedAt: at },
   } as unknown as ActivityEntry["thread"],
@@ -54,9 +59,15 @@ const entry = (id: string, rank: 1 | 2, at: string | null, projectId = "p1"): Ac
 
 function setup(
   entries: ActivityEntry[],
-  options: { enabled?: boolean; collapsed?: boolean; doneCollapsed?: boolean } = {},
+  options: {
+    enabled?: boolean;
+    collapsed?: boolean;
+    doneCollapsed?: boolean;
+    taskThreadKeys?: Set<string>;
+  } = {},
 ) {
   state.entries = entries;
+  state.taskThreadKeys = options.taskThreadKeys ?? new Set();
   state.enabled = options.enabled ?? true;
   state.collapsed = options.collapsed ?? false;
   state.doneCollapsed = options.doneCollapsed ?? false;
@@ -76,6 +87,11 @@ describe("AgentsSidebarSection", () => {
       name: "is switched off",
       entries: [entry("a", 1, "2026-03-09T10:00:00Z")],
       options: { enabled: false },
+    },
+    {
+      name: "only has an assistant's tasks, which its row lists",
+      entries: [entry("task", 1, "2026-03-09T10:00:00Z")],
+      options: { taskThreadKeys: new Set(["env:task"]) },
     },
   ])("renders nothing when it $name", async ({ entries, options }) => {
     setup(entries, options);

@@ -25,7 +25,7 @@ import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/threa
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -262,6 +262,9 @@ function AssistantRow(props: {
   const state = useAssistantState(props.entry);
   const { presence } = state;
   const meta = assistantMetaLabel(presence);
+  const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
+  // Where the row is too narrow for the text, the dot and the row's label carry the status.
+  const dotCarriesStatus = (state.working || state.needsYou) && rowWidth < 304;
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   const actions: MenuAction[] = [
     {
@@ -305,6 +308,7 @@ function AssistantRow(props: {
               accessibilityLabel={statusLabel(assistant.name, state)}
               disabled={assistant.threadId === null}
               onPress={() => flows.openConversation(assistant)}
+              onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
               className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
             >
               <View>
@@ -373,16 +377,18 @@ function AssistantRow(props: {
                 </Text>
               ) : null}
               {meta !== null ? (
-                <Text
-                  testID="assistant-status"
-                  className={cn(
-                    "max-w-[45%] shrink text-xs",
-                    moodTextClass(presence.mood, props.sidebar),
-                  )}
-                  numberOfLines={1}
-                >
-                  {meta}
-                </Text>
+                dotCarriesStatus ? null : (
+                  <Text
+                    testID="assistant-status"
+                    className={cn(
+                      "max-w-[45%] shrink text-xs",
+                      moodTextClass(presence.mood, props.sidebar),
+                    )}
+                    numberOfLines={1}
+                  >
+                    {meta}
+                  </Text>
+                )
               ) : props.projectLabel && workSites.length === 0 ? (
                 <View
                   testID="assistant-project"

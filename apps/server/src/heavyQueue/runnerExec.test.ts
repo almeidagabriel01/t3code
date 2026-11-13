@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
+  changedInputs,
   checkLinux,
   confirmed,
   remoteCommand,
@@ -85,7 +86,8 @@ describe("running on Linux through remoto", () => {
         `printf '${M} phase=syncing id=app-1a2b3c4d\\n' >&2`,
         `printf '${M} phase=installing\\n' >&2`,
         `printf '${M} phase=running pgid=42\\n' >&2`,
-        `echo "args:$*"`,
+        // printf, not echo: sh's echo reads the pre-flight's own backslashes.
+        `printf '%s\\n' "args:$*"`,
         "echo FAIL src/device/CaptureDevices.test.ts",
         "printf 'to-stderr\\npartial' >&2",
         `printf '${M} exit=3\\n' >&2`,
@@ -111,13 +113,137 @@ describe("running on Linux through remoto", () => {
       '"$PWD/node_modules/.bin:${PWD%/*}/node_modules/.bin:${PWD%/*/*}/node_modules/.bin:$PATH"',
     ],
   ])("from %s, Linux looks for project tools in %s first", (cwd, path) => {
-    expect(withProjectBins(["vp", "test"], cwd, "/w")).toEqual([
+    const wrapped = withProjectBins(["vp", "test"], cwd, "/w");
+    expect([...wrapped.slice(0, 2), ...wrapped.slice(3)]).toEqual([
       "bash",
       "-c",
-      `export PATH=${path}; exec "$@"`,
       "t3",
       "vp",
       "test",
+    ]);
+    expect(
+      wrapped[2]!.startsWith(
+        `export PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
+      ),
+    ).toBe(true);
+    expect(wrapped[2]!.endsWith('; exec "$@"')).toBe(true);
+  });
+
+  // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.
+  it.each([
+    ["no Electron", null, "", "ran\n", { kind: "finished", code: 0 }, null],
+    ["Electron settled", "linux", "", "ran\n", { kind: "finished", code: 0 }, null],
+    [
+      "Electron with no path.txt",
+      "fresh",
+      "install\n",
+      "ran\n",
+      { kind: "finished", code: 0 },
+      null,
+    ],
+    [
+      "Electron missing its binary",
+      "gone",
+      "install\n",
+      "ran\n",
+      { kind: "finished", code: 0 },
+      null,
+    ],
+    [
+      "Electron whose install fails",
+      "fail",
+      "install\n",
+      "",
+      { kind: "finished", code: 1 },
+      "electron",
+    ],
+  ] as const)(
+    "with %s, the copy settles it before the command starts",
+    async (_, state, installs, output, outcome, install) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(dir, "settle-"));
+      const web = NodePath.join(root, "apps", "web");
+      NodeFS.mkdirSync(web, { recursive: true });
+      const log = NodePath.join(root, "log");
+      if (state !== null) {
+        const electron = NodePath.join(
+          root,
+          "node_modules",
+          ".pnpm",
+          "electron@44.10.1",
+          "node_modules",
+          "electron",
+        );
+        NodeFS.mkdirSync(NodePath.join(electron, "dist"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(electron, "install.js"),
+          `require("fs").appendFileSync(${JSON.stringify(log)}, "install\\n");
+${state === "fail" ? "process.exit(1);" : ""}
+require("fs").writeFileSync(__dirname + "/path.txt", "electron");
+require("fs").writeFileSync(__dirname + "/dist/electron", "");`,
+        );
+        if (state === "linux" || state === "gone") {
+          NodeFS.writeFileSync(NodePath.join(electron, "path.txt"), "electron");
+        }
+        if (state === "linux")
+          NodeFS.writeFileSync(NodePath.join(electron, "dist", "electron"), "");
+      }
+      const tool = NodePath.join(root, "node_modules", ".bin");
+      NodeFS.mkdirSync(tool, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(tool, "t3-tests"), `#!/bin/sh\necho ran\n`, {
+        mode: 0o755,
+      });
+      const stdout: Buffer[] = [];
+      const phases: string[] = [];
+      const run = startLinuxRun({
+        // Stands in for `remoto-rodar`: it marks the start, runs the wrapper, and marks the exit.
+        remoto: fake(
+          `printf '${M} phase=running pgid=4\\n' >&2; "$@"; c=$?; printf '${M} exit=%s\\n' $c >&2; exit $c`,
+        ),
+        program: "t3-tests",
+        args: [],
+        cwd: web,
+        root,
+        environment: process.env,
+        machine: DEFAULT_MACHINE_CONFIG,
+        macOnly: [],
+        onProgress: (progress) => phases.push(progress.phase ?? ""),
+        stdout: (chunk) => stdout.push(chunk),
+        stderr: () => {},
+      });
+      const result = await run.done;
+      expect(result.outcome).toEqual(outcome);
+      expect(result.install).toBe(install);
+      expect(NodeFS.existsSync(log) ? NodeFS.readFileSync(log, "utf8") : "").toBe(installs);
+      expect(Buffer.concat(stdout).toString("utf8")).toBe(output);
+      expect(phases.includes("installing")).toBe(installs !== "");
+    },
+  );
+
+  it("notes an install failure the command's own output reports", async () => {
+    const { run } = runWith(
+      fake(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          "echo 'Error: Electron failed to install correctly.' >&2",
+          `printf '${M} exit=1\\n' >&2`,
+          "exit 1",
+        ].join("\n"),
+      ),
+    );
+    const result = await run.done;
+    expect(result.outcome).toEqual({ kind: "finished", code: 1 });
+    expect(result.install).toBe("electron");
+  });
+
+  it("runs with the env it is handed, ahead of the command", () => {
+    expect(withProjectBins(["vp", "run", "x"], "/w", "/w", ["A=1", "B=x y"]).slice(3)).toEqual([
+      "t3",
+      "env",
+      "A=1",
+      "B=x y",
+      "vp",
+      "run",
+      "x",
     ]);
   });
 
@@ -135,6 +261,34 @@ describe("running on Linux through remoto", () => {
     const { run, out } = runWith(fake('exec "$@"'), "vp; vitest", web);
     expect((await run.done).outcome).toEqual({ kind: "unavailable", touched: false });
     expect(out()).toBe("web-vp\nroot-vitest\n");
+  });
+
+  it.each([
+    ["nope-not-installed", { kind: "missing", tool: "nope-not-installed" }, ""],
+    ["t3-present", { kind: "unavailable", touched: false }, "present\n"],
+  ] as const)("checks %s resolves there before running it", async (program, outcome, output) => {
+    const bin = NodePath.join(dir, "node_modules", ".bin");
+    NodeFS.mkdirSync(bin, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(bin, "t3-present"), "#!/bin/sh\necho present\n", {
+      mode: 0o755,
+    });
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      // Stands in for `remoto-rodar`: the wrapper runs as it would there.
+      remoto: fake('exec "$@"'),
+      program,
+      args: [],
+      cwd: dir,
+      root: dir,
+      environment: process.env,
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    expect((await run.done).outcome).toEqual(outcome);
+    expect(Buffer.concat(stdout).toString("utf8")).toBe(output);
   });
 
   it("reads a lost connection after the start as dropped, and exit 75 as unavailable", async () => {
@@ -217,5 +371,73 @@ describe("ssh calls around a Linux run", () => {
     expect(await removeRunnerCopy(DEFAULT_MACHINE_CONFIG, env(fake(body)), "app-0123abcd")).toBe(
       result,
     );
+  });
+});
+
+describe("check:changed's inputs, computed on this Mac", () => {
+  const repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-changed-"));
+  const write = (file: string, text: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(repo, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(repo, file), text);
+  };
+  write("package.json", JSON.stringify({ scripts: { "check:changed": "node scripts/cc.ts" } }));
+  write("scripts/cc.ts", "process.env.CHECK_CHANGED_FILES");
+  write("apps/web/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+  /** Answers git as a repo whose origin/main is 3 ahead-of-base and upstream/main 1. */
+  const git = (args: ReadonlyArray<string>) => {
+    const line = args.join(" ");
+    if (line === "remote") return "origin\nupstream";
+    if (line === "merge-base HEAD refs/remotes/origin/main") return "aaa";
+    if (line === "merge-base HEAD refs/remotes/upstream/main") return "bbb";
+    if (line === "merge-base HEAD v1") return "ccc";
+    if (line.startsWith("rev-list")) return line.includes("aaa") ? "3" : "1";
+    if (line.startsWith("diff")) return `b.ts\na.ts\n${args[3]}.ts`;
+    if (line.startsWith("ls-files")) return "new.ts\na.ts";
+    return null;
+  };
+  it.each([
+    [
+      ["run", "check:changed"],
+      repo,
+      [
+        "CHECK_CHANGED_BASE=bbb",
+        "CHECK_CHANGED_REF=upstream/main",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nbbb.ts\nnew.ts",
+      ],
+    ],
+    // An explicit ref after the script wins over the closest remote main.
+    [
+      ["run", "check:changed", "--", "--timeout", "3300", "--concurrency", "4", "v1"],
+      NodePath.join(repo, "apps/web"),
+      [
+        "CHECK_CHANGED_BASE=ccc",
+        "CHECK_CHANGED_REF=v1",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nccc.ts\nnew.ts",
+      ],
+    ],
+    // Not that check, or a ref git doesn't know.
+    [["test", "run"], repo, null],
+    [
+      ["run", "check:changed", "--timeout", "3300"],
+      repo,
+      [
+        "CHECK_CHANGED_BASE=bbb",
+        "CHECK_CHANGED_REF=upstream/main",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nbbb.ts\nnew.ts",
+      ],
+    ],
+    [["run", "check:changed", "nope"], repo, null],
+  ] as const)("%j from %s hands over %j", (args, cwd, expected) => {
+    expect(changedInputs(args, cwd, repo, git)).toEqual(expected);
+  });
+
+  it("is null when the project's check:changed doesn't read the inputs", () => {
+    const other = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-changed-"));
+    NodeFS.writeFileSync(
+      NodePath.join(other, "package.json"),
+      JSON.stringify({ scripts: { "check:changed": "node ci.mjs" } }),
+    );
+    NodeFS.writeFileSync(NodePath.join(other, "ci.mjs"), "git diff");
+    expect(changedInputs(["run", "check:changed"], other, other, git)).toBeNull();
   });
 });

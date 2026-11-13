@@ -217,8 +217,32 @@ describe("selectAgentsSection", () => {
       working: [],
       done: [],
     },
-  ])("$name", ({ threads, needsYou, working, done }) => {
-    const section = selectAgentsSection(build(threads));
+    {
+      name: "leaves out threads an assistant owns: its tasks and its chats' children",
+      threads: [
+        shell("task", { hasPendingUserInput: true }),
+        shell("task-done", {
+          latestRun: run(null, "2026-03-09T10:05:00.000Z"),
+          lastVisitedAt: before,
+        }),
+        shell("fork", {
+          runtime: { status: "running" },
+          lineage: { relationshipToParent: "fork", parentThreadId: "assistant:qa:1" },
+        }),
+        shell("delegated", {
+          runtime: { status: "running" },
+          delegatedFrom: { environmentId: "env-2", threadId: "assistant:qa:g-x", title: "QA" },
+        }),
+        shell("mine", { runtime: { status: "running" } }),
+      ],
+      assistantTaskKeys: new Set(["env:task", "env:task-done"]),
+      needsYou: [],
+      working: ["mine"],
+      done: [],
+    },
+  ])("$name", ({ threads, needsYou, working, done, ...rest }) => {
+    const assistantTaskKeys = "assistantTaskKeys" in rest ? rest.assistantTaskKeys : undefined;
+    const section = selectAgentsSection(build(threads), assistantTaskKeys);
     expect(section.needsYou.map((entry) => entry.thread.id)).toEqual(needsYou);
     expect(section.working.map((entry) => entry.thread.id)).toEqual(working);
     expect(section.done.map((entry) => entry.thread.id)).toEqual(done);
