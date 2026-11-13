@@ -30,17 +30,19 @@ export function DeviceToolVersions({
       <PopoverTrigger
         aria-label={
           kind
-            ? `${label}: ${version ? `version ${version}` : selected ? "not installed" : "version unknown"}. Show details`
+            ? `${label}: ${version ? `version ${version}` : selected ? "not installed" : "version unknown"}${selected?.unresponsive ? ", not responding" : ""}. Show details`
             : undefined
         }
         render={<InlineButton tone="muted" />}
       >
         {kind
-          ? version
-            ? `v${version}`
-            : selected
-              ? "Not installed"
-              : "Version unknown"
+          ? selected?.unresponsive
+            ? `${version ? `v${version} ` : ""}not responding`
+            : version
+              ? `v${version}`
+              : selected
+                ? "Not installed"
+                : "Version unknown"
           : error
             ? "Versions unavailable"
             : "Versions"}
@@ -61,7 +63,11 @@ export function DeviceToolVersions({
                   {!kind ? <p className="text-xs font-medium">{name}</p> : null}
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
                     <dt className="text-muted-foreground">Running</dt>
-                    <dd className="text-right font-mono">{tool.runningVersion ?? "Not running"}</dd>
+                    <dd className="text-right font-mono">
+                      {tool.unresponsive
+                        ? `${tool.runningVersion ?? "Unknown"} (not responding)`
+                        : (tool.runningVersion ?? "Not running")}
+                    </dd>
                     <dt className="text-muted-foreground">Required</dt>
                     <dd className="text-right font-mono">{tool.requiredVersion}</dd>
                     <dt className="text-muted-foreground">Installed</dt>

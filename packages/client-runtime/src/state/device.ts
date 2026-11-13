@@ -271,7 +271,7 @@ export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
     ] as const
   ).map(([name, tool]) => {
     const installed = tool.installedVersions.length ? tool.installedVersions.join(", ") : "none";
-    return `${name}: installed ${installed}; required ${tool.requiredVersion}${tool.runningVersion ? `; running ${tool.runningVersion}` : ""}.`;
+    return `${name}: installed ${installed}; required ${tool.requiredVersion}${tool.runningVersion ? `; running ${tool.runningVersion}` : ""}${tool.unresponsive ? "; not responding" : ""}.`;
   });
 }
 
