@@ -474,7 +474,7 @@ it.effect(
         threadTitle: "Jarvis",
         clientRequestId: "approval:1",
         title: "Jarvis wants to run a command",
-        context: "```sh\nls\n```\n\nReason: Deny nothing",
+        context: "```sh\nAPI_KEY=abc123 ls\n```\n\nReason: Deny nothing",
         options: [
           { id: "accept", label: "Approve" },
           { id: "decline", label: "Deny" },
@@ -490,7 +490,10 @@ it.effect(
         [
           ["Não consegui terminar isso: sem rede", "pt-BR"],
           ["Done. Approve it.", "pt-BR"],
-          ["Jarvis quer rodar um comando\n\n```sh\nls\n```\n\nMotivo: Deny nothing", "pt-BR"],
+          [
+            "Jarvis quer rodar um comando\n\n```sh\nAPI_KEY=[redacted] ls\n```\n\nMotivo: Deny nothing",
+            "pt-BR",
+          ],
           ["Jarvis quer rodar um comando — Aprovado", "pt-BR"],
         ],
       );
