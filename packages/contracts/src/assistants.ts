@@ -207,9 +207,14 @@ export type AssistantMcpServerInput = typeof AssistantMcpServerInput.Type;
 /** The same rule as T3's global servers: secret headers never cross a network in the clear. */
 const MCP_URL_PROBLEM = "needs an https URL (http only on localhost), without ? or #.";
 
-/** The first reason a connector list is unusable, or null. Clients and the server share it. */
+/**
+ * The first reason a connector list is unusable, or null. Clients and the server share it.
+ * A URL equal to the one `saved` holds under that name stays accepted: a rule that tightened
+ * later must not block saving an assistant over a connector the user did not touch.
+ */
 export function assistantMcpServersProblem(
   servers: ReadonlyArray<AssistantMcpServerInput>,
+  saved: ReadonlyArray<Pick<AssistantMcpServer, "name" | "transport" | "url">> = [],
 ): string | null {
   if (servers.length > ASSISTANT_MCP_MAX_SERVERS)
     return `At most ${ASSISTANT_MCP_MAX_SERVERS} connectors.`;
@@ -220,7 +225,12 @@ export function assistantMcpServersProblem(
     if (names.has(server.name)) return `Two connectors are named "${server.name}".`;
     names.add(server.name);
     if (server.transport === "http") {
-      if (!isMcpServerUrl(server.url ?? "")) return `"${server.name}" ${MCP_URL_PROBLEM}`;
+      const url = (server.url ?? "").trim();
+      const unchanged = saved.some(
+        (entry) =>
+          entry.name === server.name && entry.transport === "http" && entry.url?.trim() === url,
+      );
+      if (!unchanged && !isMcpServerUrl(url)) return `"${server.name}" ${MCP_URL_PROBLEM}`;
     } else if ((server.command ?? "").trim() === "") {
       return `"${server.name}" needs a command.`;
     }

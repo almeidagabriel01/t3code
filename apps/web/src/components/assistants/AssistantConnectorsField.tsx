@@ -1,3 +1,4 @@
+import type { AssistantMcpServer } from "@t3tools/contracts";
 import {
   CONNECTOR_TRANSPORT_LABELS,
   CONNECTORS_PROVIDER_NOTE,
@@ -181,6 +182,8 @@ function ConnectorForm(props: {
 /** The assistant's own MCP servers; edits stay in the draft until the assistant is saved. */
 export function AssistantConnectorsField(props: {
   readonly value: ReadonlyArray<ConnectorDraft>;
+  /** The assistant's stored connectors: a URL left as saved is not re-validated. */
+  readonly saved: ReadonlyArray<AssistantMcpServer>;
   readonly onChange: (next: ReadonlyArray<ConnectorDraft>) => void;
 }) {
   // index -1 is a connector being added.
@@ -193,7 +196,7 @@ export function AssistantConnectorsField(props: {
       editing.index === -1
         ? [...props.value, editing.draft]
         : props.value.map((entry, i) => (i === editing.index ? editing.draft : entry));
-    const found = connectorDraftsProblem(next);
+    const found = connectorDraftsProblem(next, props.saved);
     if (found !== null) return setProblem(found);
     props.onChange(next);
     setEditing(null);

@@ -652,6 +652,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
               </View>
               <AssistantConnectorsSection
                 value={current.connectors}
+                saved={assistant?.mcpServers ?? []}
                 onChange={(connectors) => updateAssistantDraft({ connectors })}
               />
               <AssistantNotificationsSection

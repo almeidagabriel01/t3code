@@ -818,6 +818,27 @@ it.effect(
       assert.equal(bad.reason, "invalid");
       assert.equal(secretValues.size, 0);
 
+      // A connector saved before the URL rule tightened survives a save that leaves its URL alone.
+      const legacy = {
+        name: "lan",
+        transport: "http" as const,
+        url: "http://192.168.1.5/mcp",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      };
+      const lanInput = { name: "lan", transport: "http" as const, url: legacy.url, enabled: true };
+      const resaved = yield* connectors.save(made.id, [legacy], [lanInput, docs([])]);
+      assert.deepEqual(
+        resaved.servers.map((server) => server.url),
+        [legacy.url, "https://docs.example.test/mcp"],
+      );
+      const edited = yield* Effect.flip(
+        connectors.save(made.id, [legacy], [{ ...lanInput, url: "http://192.168.1.6/mcp" }]),
+      );
+      assert.equal(edited.reason, "invalid");
+
       yield* assistants.update({
         assistantId: made.id,
         mcpServers: [docs([{ key: "Authorization", value: "again" }])],

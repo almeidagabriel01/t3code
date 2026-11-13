@@ -220,6 +220,30 @@ describe("assistant connectors", () => {
     expect(assistantMcpServersProblem(servers)).toBe(problem);
   });
 
+  // Connectors saved before the URL rule tightened keep working until the user edits their URL.
+  const lan = { ...http, url: "http://192.168.1.5/mcp" } as const;
+  const query = { ...http, name: "q", url: "https://x.test/mcp?key=1" } as const;
+  it.each([
+    ["an unchanged LAN http URL next to a new connector", [lan, query], [lan, query, stdio], null],
+    ["an unchanged query URL", [query], [query], null],
+    [
+      "an unchanged URL with surrounding spaces",
+      [lan],
+      [{ ...lan, url: " http://192.168.1.5/mcp " }],
+      null,
+    ],
+    ["an edited URL", [lan], [{ ...lan, url: "http://192.168.1.6/mcp" }], URL_PROBLEM],
+    [
+      "a new connector reusing a saved bad URL",
+      [lan],
+      [{ ...lan, name: "other" }],
+      URL_PROBLEM.replace('"docs"', '"other"'),
+    ],
+    ["a saved stdio name now http", [{ ...stdio, name: "docs" }], [lan], URL_PROBLEM],
+  ] as const)("%s", (_label, saved, servers, problem) => {
+    expect(assistantMcpServersProblem(servers, saved)).toBe(problem);
+  });
+
   const isInput = Schema.is(AssistantMcpServerInput);
   it.each([
     ["docs_2", true],

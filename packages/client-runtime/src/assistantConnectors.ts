@@ -108,12 +108,15 @@ export const connectorInputsFrom = (
 
 const isName = Schema.is(AssistantMcpServerName);
 
-/** The first reason these drafts cannot be saved, or null. */
-export const connectorDraftsProblem = (drafts: ReadonlyArray<ConnectorDraft>): string | null => {
+/** The first reason these drafts cannot be saved, or null; `saved` URLs left unchanged pass. */
+export const connectorDraftsProblem = (
+  drafts: ReadonlyArray<ConnectorDraft>,
+  saved: ReadonlyArray<AssistantMcpServer> = [],
+): string | null => {
   const bad = drafts.find((draft) => !isName(draft.name.trim()));
   if (bad !== undefined)
     return "Name each connector with lowercase letters, numbers, dashes or underscores (up to 32).";
-  return assistantMcpServersProblem(connectorInputsFrom(drafts));
+  return assistantMcpServersProblem(connectorInputsFrom(drafts), saved);
 };
 
 export const connectorsEqual = (

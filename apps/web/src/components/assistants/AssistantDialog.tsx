@@ -423,7 +423,9 @@ function AssistantDialog(props: {
       connectors,
       connectorDraftsFrom(assistant?.mcpServers ?? []),
     );
-    const connectorProblem = connectorsChanged ? connectorDraftsProblem(connectors) : null;
+    const connectorProblem = connectorsChanged
+      ? connectorDraftsProblem(connectors, assistant?.mcpServers ?? [])
+      : null;
     if (connectorProblem !== null) return setError(connectorProblem);
     const robotAvatar = { kind: "robot", hue: avatar.hue, variant: avatar.variant } as const;
     const pendingFile = avatar.image?.kind === "file" ? avatar.image.file : null;
@@ -820,7 +822,11 @@ function AssistantDialog(props: {
                     onChange={setWorkspace}
                   />
                   <AskBeforeActingField checked={askBeforeActing} onChange={setAskBeforeActing} />
-                  <AssistantConnectorsField value={connectors} onChange={setConnectors} />
+                  <AssistantConnectorsField
+                    value={connectors}
+                    saved={assistant?.mcpServers ?? []}
+                    onChange={setConnectors}
+                  />
                   <BudgetFields
                     draft={budgetDraft}
                     onChange={(patch) => setBudgetDraft((current) => ({ ...current, ...patch }))}
