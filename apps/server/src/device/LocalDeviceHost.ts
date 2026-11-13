@@ -80,7 +80,9 @@ const AgentDeviceDaemonFile = Schema.Struct({
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
 // agent-device records the daemon holding its lock here, before daemon.json exists.
 const decodeDaemonLockOwner = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ pid: Schema.Int })),
+  Schema.fromJsonString(
+    Schema.Struct({ pid: Schema.Int, acquiredAtMs: Schema.optional(Schema.Number) }),
+  ),
 );
 
 const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
@@ -551,16 +553,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return yield* decodeDaemonFile(raw);
   });
 
-  const readDaemonLockOwnerPid = fs
-    .readFileString(
-      path.join(agentDeviceStateDir(path, config.stateDir), "daemon.lock", "owner.json"),
-    )
-    .pipe(
-      Effect.flatMap(decodeDaemonLockOwner),
-      Effect.map((owner) => owner.pid),
-      Effect.option,
-      Effect.map(Option.getOrUndefined),
-    );
+  // A lock taken within the startup window may belong to a daemon that is still starting.
+  const readDaemonLockOwnerPid = Effect.gen(function* () {
+    const owner = yield* fs
+      .readFileString(
+        path.join(agentDeviceStateDir(path, config.stateDir), "daemon.lock", "owner.json"),
+      )
+      .pipe(Effect.flatMap(decodeDaemonLockOwner), Effect.option);
+    if (Option.isNone(owner)) return undefined;
+    const { pid, acquiredAtMs } = owner.value;
+    const now = yield* Clock.currentTimeMillis;
+    return acquiredAtMs !== undefined && now - acquiredAtMs < DAEMON_READY_TIMEOUT_MS
+      ? undefined
+      : pid;
+  });
 
   // A PID can be reused, so only one running an installed agent-device is ever signalled.
   // PIDs 0 and below name process groups, never one daemon.

@@ -329,6 +329,20 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("leaves a daemon that took its lock within the startup window alone", () =>
+    Effect.gen(function* () {
+      const { host, fs, stateDir, signals, stuckPid } = yield* stuckDaemon("daemon.lock");
+      yield* TestClock.adjust("1 minute");
+      yield* fs.writeFileString(
+        `${stateDir}/daemon.lock/owner.json`,
+        JSON.stringify({ pid: stuckPid, acquiredAtMs: 60_000 - 1_000 }),
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void, { recycleUnresponsive: true });
+      expect(ready.agentDevice?.token).toBe("fresh-token");
+      expect(signals).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("never signals a recorded PID that another program now uses", () =>
     Effect.gen(function* () {
       const { host, signals, stuckPid, processes } = yield* stuckDaemon();
