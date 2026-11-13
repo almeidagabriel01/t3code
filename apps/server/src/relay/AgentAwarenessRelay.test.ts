@@ -665,11 +665,13 @@ describe("AgentAwarenessRelay", () => {
           Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
         ),
       });
-      yield* made.sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
-        VALUES ('team-1', 'lead', ${GROUP_THREAD})`;
+      // The member answered in its conversation for the request.
+      yield* made.sql`INSERT INTO assistant_group_request_threads
+        (request_id, assistant_id, team_id, thread_id)
+        VALUES ('m0', 'lead', 'team-1', ${GROUP_THREAD})`;
       yield* made.sql`INSERT INTO assistant_group_messages
-        (message_id, team_id, seq, author, assistant_id, kind, text, created_at)
-        VALUES ('m1', 'team-1', 1, 'assistant', 'lead', 'message', 'Shipped', ${NOW})`;
+        (message_id, team_id, seq, author, assistant_id, kind, text, request_id, created_at)
+        VALUES ('m1', 'team-1', 1, 'assistant', 'lead', 'message', 'Shipped', 'm0', ${NOW})`;
       yield* Ref.set(
         made.currentShell,
         shell({

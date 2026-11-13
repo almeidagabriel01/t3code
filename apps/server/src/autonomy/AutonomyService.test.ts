@@ -34,6 +34,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
+import { requestThreadId } from "../assistants/AssistantGroups.ts";
 
 const awake: AssistantAutonomy = {
   mode: "reply-and-notify",
@@ -1162,9 +1163,9 @@ it.effect(
       const task = (id: string, reason: string) => sql`
         INSERT INTO assistant_group_tasks
           (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
-           reason, created_at, updated_at)
+           reason, request_id, created_at, updated_at)
         VALUES (${id}, 'team-1', ${id}, 'root', 'msg-1', 'ana', 'Ship the release notes',
-          'paused', ${reason}, ${T0}, ${T0})`;
+          'paused', ${reason}, 'msg-1', ${T0}, ${T0})`;
       yield* task("limit", "handoff_limit");
       yield* task("stopped", "stopped");
       yield* TestClock.adjust(MIN);
@@ -1178,6 +1179,8 @@ it.effect(
       assert.include(rows[0]!.message.text, "Chegou ao limite de repasses.");
       const [notice] = yield* decisions.list({});
       assert.equal(notice!.status, "open");
+      // The notice opens the conversation of the task's own request.
+      assert.equal(notice!.fromThreadId, requestThreadId("ana", "team-1", "msg-1"));
       yield* sql`UPDATE assistant_group_tasks SET status = 'running', updated_at = 'later' WHERE task_id = 'limit'`;
       yield* service.notifyWaiting;
       assert.equal((yield* decisions.get(notice!.id)).status, "withdrawn");

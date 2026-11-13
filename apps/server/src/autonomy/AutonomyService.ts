@@ -40,7 +40,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { groupThreadId } from "../assistants/AssistantGroups.ts";
+import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
@@ -935,6 +935,7 @@ const make = Effect.gen(function* () {
     readonly instruction: string;
     readonly reason: string | null;
     readonly thread_id: string | null;
+    readonly request_id: string | null;
     readonly updated_at: string;
     readonly team_name: string;
     readonly owner_name: string;
@@ -949,7 +950,10 @@ const make = Effect.gen(function* () {
     const subject = `group-task:${task.task_id}@${task.updated_at}`;
     if (yield* alreadyTold(subject)) return;
     const instruction = task.instruction.trim().slice(0, 1_000);
-    const threadId = (task.thread_id ?? groupThreadId(task.owner_id, task.team_id)) as ThreadId;
+    const threadId = (task.thread_id ??
+      (task.request_id === null
+        ? groupThreadId(task.owner_id, task.team_id)
+        : requestThreadId(task.owner_id, task.team_id, task.request_id))) as ThreadId;
     const contextIn = (language: ResolvedChannelLanguage) =>
       [instruction, channelStrings(language).groupTaskReason(task.reason)]
         .filter((part) => part !== "")
@@ -1060,11 +1064,14 @@ const make = Effect.gen(function* () {
 
         // Stopping a task or archiving its group is the user's own doing; the rest wait on them.
         const tasks = yield* sql<PausedTask>`
-          SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at,
-            gt.thread_id, tm.name AS team_name, a.name AS owner_name, a.project_id
+          SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at, t.request_id,
+            COALESCE(rt.thread_id, gt.thread_id) AS thread_id, tm.name AS team_name,
+            a.name AS owner_name, a.project_id
           FROM assistant_group_tasks t
           JOIN assistant_teams tm ON tm.team_id = t.team_id
           JOIN assistants a ON a.assistant_id = t.owner_id
+          LEFT JOIN assistant_group_request_threads rt
+            ON rt.request_id = t.request_id AND rt.assistant_id = t.owner_id
           LEFT JOIN assistant_group_threads gt
             ON gt.team_id = t.team_id AND gt.assistant_id = t.owner_id
           WHERE t.status = 'paused' AND t.kind <> 'reply'

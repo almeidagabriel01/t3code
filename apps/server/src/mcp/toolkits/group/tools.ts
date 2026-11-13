@@ -67,7 +67,7 @@ export type GroupParameters = typeof GroupParameters.Type;
 const GroupTool = Tool.make("t3_group", {
   description: [
     "Only inside a group task (your message holds a <t3_group_task> block). Renaming a group or changing its members is not done here: that is t3_assistant `group_update`, and only when the user asks.",
-    '`history` {beforeSeq?}: older group chat messages. `assign` {member, text, expectedResult?, sourceSeqs?, resources?}: give a member a subtask; you continue once it is done. expectedResult: what done looks like. sourceSeqs: #numbers of the messages it rests on. resources: what it uses alone ("folder:<path>", "browser"); subtasks sharing one run in turn. `transfer` {member, text?}: hand your whole task to a member who fits it better; stop working on it after. `reply` {seq, text}: ask the member who wrote message #seq one short question (under ' +
+    '`history` {beforeSeq?}: older messages of this request. `assign` {member, text, expectedResult?, sourceSeqs?, resources?}: give a member a subtask; you continue once it is done. expectedResult: what done looks like. sourceSeqs: #numbers of the messages it rests on. resources: what it uses alone ("folder:<path>", "browser"); subtasks sharing one run in turn. `transfer` {member, text?}: hand your whole task to a member who fits it better; stop working on it after. `reply` {seq, text}: ask the member who wrote message #seq one short question (under ' +
       ASSISTANT_GROUP_REPLY_MAX_CHARS +
       " characters, at most " +
       ASSISTANT_GROUP_REPLY_LIMIT +

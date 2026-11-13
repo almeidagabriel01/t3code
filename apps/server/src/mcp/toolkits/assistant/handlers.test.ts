@@ -600,6 +600,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         group: " Ops ",
         text: " @eng ship it ",
         paths: ["/home/user/a.txt"],
+        projectId: "Core",
       }),
     ).toEqual({
       status: "posted",
@@ -613,6 +614,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         group: "Ops",
         text: "@eng ship it",
         paths: ["/home/user/a.txt"],
+        project: "Core",
       }),
     ]);
     // A repeat of the same call carries the same request id, so the service posts it once.
@@ -621,6 +623,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
       group: " Ops ",
       text: " @eng ship it ",
       paths: ["/home/user/a.txt"],
+      projectId: "Core",
     });
     expect(posts[1]!.clientRequestId).toBe(posts[0]!.clientRequestId);
     expect(yield* call({ action: "group_post", text: "hi" })).toMatchObject({
