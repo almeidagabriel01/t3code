@@ -3463,6 +3463,66 @@ it.effect("ProviderSessionManagerV2 resumes a Claude thread intact after an idle
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 never marks a session reopened during a slow release as released",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closeReached = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const session = yield* openIdleClaudeSession("provider-session-manager-reopen-in-release");
+        const status = Effect.map(
+          projectionStore.getThreadProjection(session.threadId),
+          (projection) =>
+            projection.providerSessions.find((record) => record.id === session.providerSessionId)
+              ?.status,
+        );
+        const closeWithTimeout = Effect.gen(function* () {
+          const closing = yield* Effect.forkScoped(
+            Effect.exit(manager.close(session.providerSessionId)),
+          );
+          yield* Deferred.await(closeReached);
+          return closing;
+        });
+
+        const releasing = yield* closeWithTimeout;
+        yield* manager.open({
+          threadId: session.threadId,
+          providerSessionId: session.providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(releasing);
+
+        const live = yield* manager.isLive(session.providerSessionId);
+        const statusAfterRelease = yield* status;
+        const closing = yield* Effect.forkScoped(
+          Effect.exit(manager.close(session.providerSessionId)),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(closing);
+
+        assert.isTrue(live);
+        assert.notEqual(statusAfterRelease, "stopped");
+      });
+
+      yield* effect.pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerTest({
+            state,
+            driver: CLAUDE_DRIVER,
+            hangSessionScopeClose: true,
+            scopeCloseReached: closeReached,
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

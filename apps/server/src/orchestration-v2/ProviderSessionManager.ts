@@ -1042,21 +1042,27 @@ export const layerWithOptions = (
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
 
+      // An open can reuse the id while the old scope closes; it must not be marked released.
+      const writeReleaseRecordsUnlessReplaced = (
+        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
+      ) => {
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        return sessionOpen.withLock(
+          providerSessionId,
+          Effect.gen(function* () {
+            const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
+            yield* writeReleaseRecords({ ...input, replaced });
+          }),
+        );
+      };
+
       // Retry after removal from the live map; later releases cannot clear stale ready sessions and approvals.
       const retryReleaseRecords = (
         input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
       ) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
-          const exit = yield* Effect.exit(
-            sessionOpen.withLock(
-              providerSessionId,
-              Effect.gen(function* () {
-                const replaced = (yield* Ref.get(sessions)).has(sessionKey(providerSessionId));
-                yield* writeReleaseRecords({ ...input, replaced });
-              }),
-            ),
-          );
+          const exit = yield* Effect.exit(writeReleaseRecordsUnlessReplaced(input));
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
             providerSessionId,
@@ -1193,6 +1199,8 @@ export const layerWithOptions = (
         readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
         readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
+        /** Set by callers inside `open`, which already holds the non-reentrant open lock. */
+        readonly holdsOpenLock?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1236,7 +1244,9 @@ export const layerWithOptions = (
                     ...detachedThread,
                   };
                   const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
+                    input.holdsOpenLock === true
+                      ? writeReleaseRecords({ ...records, replaced: false })
+                      : writeReleaseRecordsUnlessReplaced(records),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
@@ -1951,6 +1961,7 @@ export const layerWithOptions = (
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords(entry, { backgroundRoster: true }),
+          holdsOpenLock: true,
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
@@ -2658,19 +2669,19 @@ export const layerWithOptions = (
               ).pipe(
                 // Release on interruption too; no event pump or idle timer exists to clean up yet.
                 Effect.onError((cause) =>
-                  releaseEntry(
-                    Cause.hasInterruptsOnly(cause)
+                  releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    holdsOpenLock: true,
+                    ...(Cause.hasInterruptsOnly(cause)
                       ? {
-                          providerSessionId: input.providerSessionId,
                           reason: "manual_shutdown",
                           detail: "The provider session start was interrupted.",
                         }
                       : {
-                          providerSessionId: input.providerSessionId,
                           reason: "runtime_error",
                           detail: "Failed to persist the provider-session attachment.",
-                        },
-                  ).pipe(logReleaseFailure(input.providerSessionId)),
+                        }),
+                  }).pipe(logReleaseFailure(input.providerSessionId)),
                 ),
               );
               yield* startEventPump(entry);
