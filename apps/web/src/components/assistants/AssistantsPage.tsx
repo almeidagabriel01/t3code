@@ -4,7 +4,6 @@ import {
   assistantGroupOwnerKey,
   assistantGroupThreadsOf,
   assistantPresence,
-  assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
@@ -34,7 +33,6 @@ import {
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
@@ -43,17 +41,10 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, assistantStatusText, MOOD_TEXT } from "./assistantPresentation";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
-
-const MOOD_TEXT = {
-  idle: "text-muted-foreground",
-  working: "text-info-foreground",
-  needs: "text-warning-foreground",
-  failed: "text-destructive-foreground",
-} as const;
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -73,7 +64,6 @@ function AssistantCard(props: {
     thread,
     assistantGroupThreadsOf(shells, props.entry.environmentId, props.entry.assistant.id),
   );
-  const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, props.nowMs);
   return (
     <article
       data-testid="assistant-card"
@@ -102,9 +92,7 @@ function AssistantCard(props: {
             <p className="truncate text-xs text-muted-foreground">Archived</p>
           ) : (
             <p className={cn("truncate text-xs", MOOD_TEXT[presence.mood])}>
-              {[presence.detail, since, assistantQueuedLabel(presence.queued)]
-                .filter((part) => part !== "" && part !== null)
-                .join(" · ")}
+              {assistantStatusText(presence, props.nowMs)}
             </p>
           )}
         </div>

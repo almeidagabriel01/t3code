@@ -87,7 +87,11 @@ import {
   MessageAuthorHeading,
   TimelineRowTimestamp,
 } from "./TimelineRowParts";
-import { AssistantAccentAvatar, toolAccessLabel } from "../assistants/assistantPresentation";
+import {
+  AssistantAvatar,
+  removedAssistantFace,
+  toolAccessLabel,
+} from "../assistants/assistantPresentation";
 import { useAssistantEntries } from "../../state/assistants";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import {
@@ -299,6 +303,7 @@ function AssistantSentMessageRow({
   )?.assistant;
   const name = assistant?.name ?? "Assistant";
   const accent = assistantAccent(assistantId);
+  const face = assistant ?? removedAssistantFace(assistantId);
   const senderThreadId = row.message.senderThreadId;
   const { text } = resolveUserMessagePresentation(row.message);
   const plainText = replaceComposerContextReferences(text, (reference) => reference.label);
@@ -310,24 +315,14 @@ function AssistantSentMessageRow({
           className="flex items-center gap-2 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-foreground/12 after:h-px after:flex-1 after:bg-foreground/12"
           data-assistant-joined={assistantId}
         >
-          <AssistantAccentAvatar
-            assistantId={assistantId}
-            name={name}
-            icon={assistant?.icon}
-            className="size-4 text-3xs"
-          />
+          <AssistantAvatar assistant={face} className="size-4" />
           <span className="tabular-nums">
             {name} joined the conversation · {time}
           </span>
         </div>
       ) : null}
       <div className="flex items-start gap-2.5">
-        <AssistantAccentAvatar
-          assistantId={assistantId}
-          name={name}
-          icon={assistant?.icon}
-          className="mt-0.5"
-        />
+        <AssistantAvatar assistant={face} className="mt-0.5 size-7" />
         <div className="flex min-w-0 max-w-[80%] flex-col gap-1">
           <MessageAuthorHeading>{name}</MessageAuthorHeading>
           <div className="flex items-center gap-1.5 text-xs" aria-hidden>

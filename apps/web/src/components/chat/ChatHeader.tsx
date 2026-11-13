@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon, MessagesSquareIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, MessagesSquareIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -49,6 +49,8 @@ import { KanbanThreadCardBadge } from "../kanban/KanbanThreadCardBadge";
 import { useKanbanCanEdit } from "../kanban/useKanban";
 import { useKanbanEnvironmentIds, useThreadKanbanCard } from "../../state/kanban";
 import { AssistantAvatar } from "../assistants/assistantPresentation";
+import { toggleAssistantInfo } from "../assistants/assistantInfoState";
+import { Button } from "../ui/button";
 import { useThreadAssistant } from "../../state/assistants";
 import { AssistantPresenceStack } from "./AssistantPresenceStack";
 import { AssistantTaskBadge } from "../assistants/AssistantTaskBadge";
@@ -369,6 +371,52 @@ export const ChatHeader = memo(function ChatHeader({
               onFocus={(event) => event.currentTarget.select()}
               onKeyDown={handleRenameKeyDown}
             />
+          ) : isServerThread && assistantEntry ? (
+            <>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={`${displayTitle}, Assistant info`}
+                      onClick={() =>
+                        toggleAssistantInfo({
+                          kind: "assistant",
+                          environmentId: assistantEntry.environmentId,
+                          assistantId: assistantEntry.assistant.id,
+                        })
+                      }
+                      className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <AssistantAvatar assistant={assistantEntry.assistant} className="size-4" />
+                  <h2 className="min-w-0" dir={textDirection(displayTitle)}>
+                    <WorkspaceBreadcrumbText>{displayTitle}</WorkspaceBreadcrumbText>
+                  </h2>
+                </TooltipTrigger>
+                <TooltipPopup side="top">Assistant info</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost-muted"
+                      aria-label={`Thread actions for ${displayTitle}`}
+                      aria-haspopup="menu"
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        openMenu({ x: rect.left, y: rect.bottom + 4 });
+                      }}
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{`Thread actions for ${displayTitle}`}</TooltipPopup>
+              </Tooltip>
+            </>
           ) : isServerThread ? (
             <Tooltip>
               <TooltipTrigger
@@ -383,9 +431,6 @@ export const ChatHeader = memo(function ChatHeader({
                   />
                 }
               >
-                {assistantEntry ? (
-                  <AssistantAvatar assistant={assistantEntry.assistant} className="size-4" />
-                ) : null}
                 <h2 className="min-w-0" dir={textDirection(displayTitle)}>
                   <WorkspaceBreadcrumbText>{displayTitle}</WorkspaceBreadcrumbText>
                 </h2>

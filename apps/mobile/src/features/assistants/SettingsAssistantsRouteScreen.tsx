@@ -3,7 +3,6 @@ import {
   assistantGroupOwnerKey,
   assistantGroupThreadsOf,
   assistantPresence,
-  assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
@@ -26,7 +25,6 @@ import { ListSection } from "../../components/ui/ListSection";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
-import { relativeTime } from "../../lib/time";
 import {
   useAssistantEntries,
   useAssistantSpend,
@@ -41,7 +39,7 @@ import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
-import { moodTextClass } from "./assistantPresenceLabels";
+import { assistantStatusText, moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
@@ -70,15 +68,7 @@ function AssistantCard(props: {
   );
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;
-  const status = archived
-    ? "Archived"
-    : [
-        presence.detail,
-        presence.since === null ? null : relativeTime(presence.since, props.nowMs),
-        assistantQueuedLabel(presence.queued),
-      ]
-        .filter((part) => part !== null)
-        .join(" · ");
+  const status = archived ? "Archived" : assistantStatusText(presence, props.nowMs);
   const where = [
     props.projectLabel,
     ...props.detail,

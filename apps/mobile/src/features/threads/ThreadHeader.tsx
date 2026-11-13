@@ -11,6 +11,8 @@ import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useThreadAssistant } from "../../state/assistants";
+import { AssistantAvatar } from "../assistants/assistantPresentation";
+import { useOpenAssistantInfo } from "../assistants/openAssistantInfo";
 import {
   threadTerminalMenu,
   useThreadGitMenuDefinition,
@@ -40,6 +42,7 @@ export function ThreadHeader(props: {
     props.thread?.id ?? null,
   );
   const title = assistant ? assistant.assistant.name : props.title;
+  const openInfo = useOpenAssistantInfo();
   const { items: actionItems, customSnoozeSheet } = useThreadMenu(props.thread, () => {
     // A split view has no list to return to; the deleted or archived thread's own state shows instead.
     if (!layout.usesSplitView) goBack();
@@ -101,6 +104,21 @@ export function ThreadHeader(props: {
     <>
       <AppBar
         title={title}
+        {...(assistant
+          ? {
+              titlePress: {
+                accessibilityLabel: `${title}, Assistant info`,
+                leading: (
+                  <AssistantAvatar
+                    assistant={assistant.assistant}
+                    environmentId={assistant.environmentId}
+                    size={22}
+                  />
+                ),
+                onPress: () => openInfo.assistant(assistant.environmentId, assistant.assistant.id),
+              },
+            }
+          : {})}
         subtitle={props.subtitle}
         onBackToList={goBack}
         onCompose={props.draft ? undefined : startNewTask}

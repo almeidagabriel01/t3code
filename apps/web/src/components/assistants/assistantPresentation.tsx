@@ -7,15 +7,21 @@ import {
   ASSISTANT_ICON_VIEWBOX,
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
-import { assistantAccent, assistantInitial } from "@t3tools/client-runtime/assistantPresence";
 import {
+  assistantClusterLayout,
+  type AssistantClusterCell,
+} from "@t3tools/client-runtime/assistantCluster";
+import {
+  assistantQueuedLabel,
   assistantRobotLook,
   type AssistantFace,
   type AssistantMood,
+  type AssistantPresence,
 } from "@t3tools/client-runtime/assistantRobot";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { useAssistantEntries } from "~/state/assistants";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { AssistantRobot } from "./AssistantRobot";
 
 export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
@@ -43,6 +49,22 @@ export const TOOL_ACCESS_OPTIONS: ReadonlyArray<{
     icon: ShieldOffIcon,
   },
 ];
+
+/** The color a status line takes for each mood. */
+export const MOOD_TEXT: Record<AssistantMood, string> = {
+  idle: "text-muted-foreground",
+  working: "text-info-foreground",
+  needs: "text-warning-foreground",
+  failed: "text-destructive-foreground",
+};
+
+/** "Working in Leadership · 3m ago · 2 queued": the one status line a card or info hero shows. */
+export function assistantStatusText(presence: AssistantPresence, nowMs: number): string {
+  const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, nowMs);
+  return [presence.detail, since, assistantQueuedLabel(presence.queued)]
+    .filter((part) => part !== "" && part !== null)
+    .join(" · ");
+}
 
 export function toolAccessLabel(access: AssistantToolAccess): string {
   return TOOL_ACCESS_OPTIONS.find((option) => option.value === access)?.label ?? access;
@@ -174,24 +196,61 @@ export function AssistantAvatar(props: {
   );
 }
 
-/** The assistant's initial on its accent color, the same on every client and in every thread. */
-export function AssistantAccentAvatar(props: {
-  readonly assistantId: string;
-  readonly name: string;
-  readonly icon?: string | null | undefined;
+/** A sender or member whose assistant was deleted: a robot derived from its id alone. */
+export const removedAssistantFace = (id: string): Pick<Assistant, "id" | "avatar" | "icon"> => ({
+  id: id as Assistant["id"],
+  avatar: null,
+  icon: null,
+});
+
+/**
+ * A group's faces in one square: one fills it, two sit side by side, three form a triangle, four
+ * a 2×2 grid; five or more show three faces and "+N". The frame's size comes from `className`.
+ */
+export function AssistantCluster(props: {
+  readonly faces: ReadonlyArray<{
+    readonly key: string;
+    readonly assistant: Pick<Assistant, "id" | "avatar" | "icon">;
+    readonly mood?: AssistantMood | AssistantFace;
+  }>;
+  readonly environmentId?: EnvironmentId | null;
   readonly className?: string;
 }) {
+  const layout = assistantClusterLayout(props.faces.length);
+  const place = (cell: AssistantClusterCell) => ({
+    left: `${cell.left}%`,
+    top: `${cell.top}%`,
+    width: `${cell.size}%`,
+    height: `${cell.size}%`,
+  });
   return (
     <span
       aria-hidden
-      className={cn(
-        "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-xs leading-none font-semibold text-white",
-        props.className,
-      )}
-      style={{ backgroundColor: assistantAccent(props.assistantId) }}
+      data-assistant-cluster={props.faces.length}
+      className={cn("@container relative inline-block size-5 shrink-0", props.className)}
     >
-      <AssistantIconGlyph icon={props.icon} />
-      {assistantIconFor(props.icon) ? null : assistantInitial(props.name)}
+      {layout.faces.map((cell, index) => {
+        const face = props.faces[index]!;
+        return (
+          <span key={face.key} className="absolute" style={place(cell)}>
+            <AssistantAvatar
+              assistant={face.assistant}
+              environmentId={props.environmentId ?? null}
+              {...(face.mood === undefined ? {} : { mood: face.mood })}
+              className="size-full"
+            />
+          </span>
+        );
+      })}
+      {layout.more ? (
+        <span
+          data-assistant-cluster-more
+          className="absolute flex items-center justify-center rounded-full bg-foreground/12 leading-none font-semibold text-foreground tabular-nums"
+          style={{ ...place(layout.more.cell), fontSize: "clamp(6px, 22cqw, 11px)" }}
+        >
+          +{layout.more.count}
+        </span>
+      ) : null}
     </span>
   );
 }

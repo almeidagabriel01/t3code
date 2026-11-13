@@ -1,80 +1,78 @@
-import { assistantSenders } from "@t3tools/client-runtime/assistantPresence";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  assistantPresenceSections,
+  assistantPresenceStatus,
+  assistantSenders,
+  type AssistantSender,
+} from "@t3tools/client-runtime/assistantPresence";
+import {
+  assistantFace,
+  assistantPresenceOf,
+  type AssistantPresence,
+} from "@t3tools/client-runtime/assistantRobot";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAssistantThreadId,
-  type Assistant,
   type AssistantToolAccess,
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { CrosshairIcon } from "lucide-react";
+import {
+  CrosshairIcon,
+  EllipsisIcon,
+  InfoIcon,
+  MessagesSquareIcon,
+  ShieldIcon,
+} from "lucide-react";
 import { useState } from "react";
 
-import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useQuietThreadProjection, useQuietThreadShells } from "../../state/entities";
 import { useAssistantActions, useAssistantEntries } from "../../state/assistants";
 import {
-  AssistantAccentAvatar,
+  AssistantAvatar,
+  AssistantCluster,
+  removedAssistantFace,
   TOOL_ACCESS_OPTIONS,
-  toolAccessLabel,
 } from "../assistants/assistantPresentation";
+import { openAssistantInfo } from "../assistants/assistantInfoState";
+import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { Button } from "../ui/button";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { jumpToTimelineMessage } from "./timelineJump";
-import { cn } from "~/lib/utils";
 
-const MAX_VISIBLE_AVATARS = 3;
-
-/** Green while the assistant's own conversation is running a turn, muted otherwise. */
-function useAssistantWorking(environmentId: EnvironmentId, assistant: Assistant | null) {
-  const shell = useQuietThreadShell(
-    assistant?.threadId ? scopeThreadRef(environmentId, assistant.threadId) : null,
-  );
-  return shell?.runtime?.status === "running";
-}
-
-function AssistantAvatarWithStatus(props: {
-  readonly environmentId: EnvironmentId;
-  readonly assistantId: string;
-  readonly assistant: Assistant | null;
-  readonly className?: string;
-}) {
-  const working = useAssistantWorking(props.environmentId, props.assistant);
-  return (
-    <span className="relative inline-flex">
-      <AssistantAccentAvatar
-        assistantId={props.assistantId}
-        name={props.assistant?.name ?? "Assistant"}
-        icon={props.assistant?.icon}
-        className={cn("size-5.5 text-2xs", props.className)}
-      />
-      <i
-        data-assistant-status={working ? "working" : "idle"}
-        className={cn(
-          "absolute -right-0.5 -bottom-0.5 size-2 rounded-full border-2 border-background",
-          working ? "bg-success" : "bg-muted-foreground",
-        )}
-      />
-    </span>
-  );
-}
+const FOCUS_RING =
+  "outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 function AssistantPresenceRow(props: {
   readonly environmentId: EnvironmentId;
   readonly threadKey: string;
-  readonly assistantId: string;
-  readonly assistant: Assistant | null;
-  readonly count: number;
-  readonly lastMessageId: string;
-  readonly onJumped: () => void;
+  readonly sender: AssistantSender;
+  readonly presence: AssistantPresence;
+  readonly onDone: () => void;
 }) {
-  const { assistant } = props;
-  const working = useAssistantWorking(props.environmentId, assistant);
-  const actions = useAssistantActions(props.environmentId);
+  const { sender, environmentId } = props;
+  const { assistant } = sender;
+  const actions = useAssistantActions(environmentId);
+  const flows = useAssistantFlows(environmentId);
   const name = assistant?.name ?? "Assistant";
+  const working = props.presence.mood === "working";
+  const openInfo = () => {
+    if (!assistant) return;
+    props.onDone();
+    openAssistantInfo({ kind: "assistant", environmentId, assistantId: assistant.id });
+  };
   const saveAccess = async (toolAccess: AssistantToolAccess) => {
     if (!assistant || toolAccess === assistant.toolAccess) return;
     const reply = await actions.update({ assistantId: assistant.id, toolAccess });
@@ -87,66 +85,127 @@ function AssistantPresenceRow(props: {
     }
   };
   return (
-    <div className="flex items-center gap-2.5 px-1 py-1.5" data-assistant-presence-row={name}>
-      <AssistantAvatarWithStatus
-        environmentId={props.environmentId}
-        assistantId={props.assistantId}
-        assistant={assistant}
-        className="size-7 text-xs"
-      />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{name}</p>
-        <p className="text-xs text-muted-foreground">
-          {working ? "Working" : "Idle"} · {props.count}{" "}
-          {props.count === 1 ? "message" : "messages"} here
-          {assistant?.askBeforeActing ? " · Asks before acting" : ""}
-        </p>
-      </div>
-      {assistant ? (
-        <Select
-          value={assistant.toolAccess}
-          onValueChange={(value) => void saveAccess(value as AssistantToolAccess)}
-        >
-          <SelectTrigger
-            size="sm"
-            className="w-32"
-            aria-label={`Access for ${name}`}
-            disabled={!actions.canAct}
+    <div
+      role={assistant ? "button" : undefined}
+      tabIndex={assistant ? 0 : undefined}
+      aria-label={assistant ? `${name}, Assistant info` : undefined}
+      data-assistant-presence-row={name}
+      className={`flex min-w-0 flex-col gap-0.5 rounded-md px-1.5 py-1.5 ${
+        assistant ? `cursor-pointer hover:bg-foreground/8 ${FOCUS_RING}` : ""
+      }`}
+      onClick={openInfo}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openInfo();
+        }
+      }}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <AssistantAvatar
+          assistant={assistant ?? removedAssistantFace(sender.assistantId)}
+          environmentId={environmentId}
+          mood={assistant ? assistantFace(props.presence) : "sleeping"}
+          className="size-5"
+        />
+        <p className="min-w-0 flex-1 truncate text-sm font-medium">{name}</p>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={`Jump to ${name}'s last message`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  jumpToTimelineMessage(props.threadKey, sender.lastMessageId);
+                  props.onDone();
+                }}
+              />
+            }
           >
-            <SelectValue>{toolAccessLabel(assistant.toolAccess)}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup alignItemWithTrigger={false}>
-            {TOOL_ACCESS_OPTIONS.map((option) => (
-              <SelectItem hideIndicator key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-      ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              size="icon-xs"
-              variant="ghost-muted"
-              aria-label={`Jump to ${name}'s last message`}
-              onClick={() => {
-                jumpToTimelineMessage(props.threadKey, props.lastMessageId);
-                props.onJumped();
-              }}
-            />
-          }
-        >
-          <CrosshairIcon />
-        </TooltipTrigger>
-        <TooltipPopup side="top">Jump to last message</TooltipPopup>
-      </Tooltip>
+            <CrosshairIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="top">Jump to last message</TooltipPopup>
+        </Tooltip>
+        {assistant ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`${name} actions`}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              }
+            >
+              <EllipsisIcon />
+            </MenuTrigger>
+            <MenuPopup
+              align="end"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <MenuSub>
+                <MenuSubTrigger disabled={!actions.canAct}>
+                  <ShieldIcon />
+                  Access
+                </MenuSubTrigger>
+                <MenuSubPopup>
+                  <MenuRadioGroup
+                    value={assistant.toolAccess}
+                    onValueChange={(value) => void saveAccess(value as AssistantToolAccess)}
+                  >
+                    {TOOL_ACCESS_OPTIONS.map((option) => (
+                      <MenuRadioItem key={option.value} value={option.value} closeOnClick>
+                        {option.label}
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuSubPopup>
+              </MenuSub>
+              <MenuItem
+                disabled={assistant.threadId === null}
+                onClick={() => {
+                  props.onDone();
+                  flows.openConversation(assistant);
+                }}
+              >
+                <MessagesSquareIcon />
+                Open chat
+              </MenuItem>
+              <MenuItem onClick={openInfo}>
+                <InfoIcon />
+                Assistant info
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        ) : null}
+      </div>
+      <p
+        data-assistant-presence-status
+        className="truncate ps-7 text-xs whitespace-nowrap text-muted-foreground"
+      >
+        {assistantPresenceStatus(working, sender, assistant?.askBeforeActing === true)}
+      </p>
     </div>
   );
 }
 
-/** Who from your assistants spoke in this thread, with a way to see them work and set their access. */
+function PresenceSection(props: { readonly title: string; readonly children: React.ReactNode }) {
+  return (
+    <section aria-label={props.title} className="flex min-w-0 flex-col">
+      <h3 className="px-1.5 pt-1.5 pb-0.5 text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {props.title}
+      </h3>
+      {props.children}
+    </section>
+  );
+}
+
+/** Who from your assistants spoke in this thread, what each is doing, and a way to each one's info. */
 export function AssistantPresenceStack(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -158,6 +217,7 @@ export function AssistantPresenceStack(props: {
     isAssistantThread ? null : scopeThreadRef(environmentId, threadId),
   );
   const { active, archived } = useAssistantEntries();
+  const shells = useQuietThreadShells();
   if (isAssistantThread || !projection) return null;
   const senders = assistantSenders(
     projection.projection.messages,
@@ -167,7 +227,27 @@ export function AssistantPresenceStack(props: {
   );
   if (senders.length === 0) return null;
   const threadKey = scopedThreadKey(scopeThreadRef(environmentId, threadId));
-  const visible = senders.slice(0, MAX_VISIBLE_AVATARS);
+  const presenceById = new Map(
+    senders.map((sender) => [
+      sender.assistantId,
+      assistantPresenceOf(sender.assistant, environmentId, shells),
+    ]),
+  );
+  const presenceOf = (sender: AssistantSender) => presenceById.get(sender.assistantId)!;
+  const sections = assistantPresenceSections(
+    senders,
+    (sender) => presenceOf(sender).mood === "working",
+  );
+  const row = (sender: AssistantSender) => (
+    <AssistantPresenceRow
+      key={sender.assistantId}
+      environmentId={environmentId}
+      threadKey={threadKey}
+      sender={sender}
+      presence={presenceOf(sender)}
+      onDone={() => setOpen(false)}
+    />
+  );
   return (
     // Narrow headers give the title room; the same assistants stay reachable from the minimap marks.
     <Popover open={open} onOpenChange={setOpen}>
@@ -176,40 +256,30 @@ export function AssistantPresenceStack(props: {
           <button
             type="button"
             aria-label={`Assistants in this thread: ${senders.length}`}
-            className="flex shrink-0 cursor-pointer items-center rounded-full border border-foreground/12 py-0.5 pe-1.5 ps-0.5 transition-colors hover:bg-foreground/8 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @max-xl/header:hidden [-webkit-app-region:no-drag]"
+            className={`flex shrink-0 cursor-pointer items-center rounded-md p-0.5 transition-colors hover:bg-foreground/8 @max-xl/header:hidden [-webkit-app-region:no-drag] ${FOCUS_RING}`}
           />
         }
       >
-        {visible.map((sender, index) => (
-          <span key={sender.assistantId} className={cn(index > 0 && "-ml-1.5")}>
-            <AssistantAvatarWithStatus
-              environmentId={environmentId}
-              assistantId={sender.assistantId}
-              assistant={sender.assistant}
-            />
-          </span>
-        ))}
-        {senders.length > MAX_VISIBLE_AVATARS ? (
-          <span className="ms-1.5 text-2xs text-muted-foreground tabular-nums">
-            +{senders.length - MAX_VISIBLE_AVATARS}
-          </span>
-        ) : null}
+        <AssistantCluster
+          environmentId={environmentId}
+          className="size-6"
+          faces={senders.map((sender) => ({
+            key: sender.assistantId,
+            assistant: sender.assistant ?? removedAssistantFace(sender.assistantId),
+            mood: sender.assistant ? assistantFace(presenceOf(sender)) : "sleeping",
+          }))}
+        />
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="end" width="md" padding="compact">
-        <div className="flex flex-col divide-y divide-foreground/8">
-          {senders.map((sender) => (
-            <AssistantPresenceRow
-              key={sender.assistantId}
-              environmentId={environmentId}
-              threadKey={threadKey}
-              assistantId={sender.assistantId}
-              assistant={sender.assistant}
-              count={sender.count}
-              lastMessageId={sender.lastMessageId}
-              onJumped={() => setOpen(false)}
-            />
-          ))}
-        </div>
+        <h2 className="px-1.5 pt-0.5 pb-1 text-xs font-medium text-muted-foreground">
+          Assistants in this thread · {senders.length}
+        </h2>
+        {sections.working.length === 0 ? null : (
+          <PresenceSection title="Working">{sections.working.map(row)}</PresenceSection>
+        )}
+        {sections.idle.length === 0 ? null : (
+          <PresenceSection title="Idle">{sections.idle.map(row)}</PresenceSection>
+        )}
       </PopoverPopup>
     </Popover>
   );

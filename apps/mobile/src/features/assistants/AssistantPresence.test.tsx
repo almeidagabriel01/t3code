@@ -1,0 +1,255 @@
+import type { MenuAction } from "@react-native-menu/menu";
+import type { AssistantSender } from "@t3tools/client-runtime/assistantPresence";
+import { act, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+const mocks = vi.hoisted(() => ({
+  working: new Set<string>(),
+  assistants: [] as unknown[],
+  canAct: true,
+  update: vi.fn(),
+  alert: vi.fn(),
+  jump: vi.fn(),
+  openChat: vi.fn(),
+  navigate: vi.fn(),
+}));
+vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
+  View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
+  Pressable: (props: { accessibilityLabel?: string; children?: ReactNode }) => (
+    <button aria-label={props.accessibilityLabel}>{props.children}</button>
+  ),
+}));
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
+}));
+const leaves = (actions: ReadonlyArray<MenuAction>): MenuAction[] =>
+  actions.flatMap((action) => (action.subactions ? leaves(action.subactions) : [action]));
+vi.mock("../../components/ui/Menu", () => ({
+  Menu: (props: {
+    title: string;
+    actions: MenuAction[];
+    onPressAction: (event: { nativeEvent: { event: string } }) => void;
+    children?: ReactNode;
+  }) => (
+    <section aria-label={props.title}>
+      {props.children}
+      {leaves(props.actions).map((action) => (
+        <button
+          key={action.id}
+          aria-label={`menu:${action.id}`}
+          onClick={() => props.onPressAction({ nativeEvent: { event: action.id ?? "" } })}
+        />
+      ))}
+    </section>
+  ),
+}));
+vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
+vi.mock("../../state/assistants", () => ({
+  useAssistantEntries: () => ({
+    active: mocks.assistants.map((assistant) => ({ environmentId: "hub", assistant })),
+    archived: [],
+  }),
+  useAssistantActions: () => ({ canAct: mocks.canAct, update: mocks.update }),
+}));
+vi.mock("../../state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("../../lib/scopedEntities", () => ({
+  scopedThreadKey: (environmentId: string, threadId: string) => `${environmentId}:${threadId}`,
+}));
+vi.mock("../threads/threadMessageJump", () => ({ requestThreadMessageJump: mocks.jump }));
+vi.mock("@t3tools/client-runtime/assistantRobot", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  assistantPresenceOf: (assistant: { id: string } | null) => ({
+    mood: assistant && mocks.working.has(assistant.id) ? "working" : "idle",
+    detail: "",
+    since: null,
+    reading: false,
+    queued: 0,
+  }),
+}));
+vi.mock("./assistantPresentation", () => ({
+  TOOL_ACCESS_OPTIONS: [
+    { value: "read-only", label: "Read only" },
+    { value: "full", label: "Full access" },
+  ],
+  toolAccessLabel: (access: string) => access,
+  removedAssistantFace: (id: string) => ({ id, avatar: null, icon: null }),
+  AssistantAvatar: (props: { assistant: { id: string } }) => <i>{`av:${props.assistant.id}`}</i>,
+  AssistantCluster: (props: { faces: Array<{ key: string; mood?: string }> }) => (
+    <i data-testid="cluster">{props.faces.map((face) => `${face.key}:${face.mood}`).join(",")}</i>
+  ),
+}));
+vi.mock("./useAssistantFlows", () => ({
+  useAssistantFlows: () => ({ openConversation: mocks.openChat }),
+}));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({ navigate: mocks.navigate }),
+}));
+
+import {
+  AssistantFeedMessage,
+  presenceMenuActions,
+  ThreadAssistantStack,
+} from "./AssistantPresence";
+
+const assistant = (id: string, name: string, extra: object = {}) => ({
+  id,
+  name,
+  toolAccess: "read-only",
+  askBeforeActing: false,
+  avatar: null,
+  icon: null,
+  threadId: `assistant:${id}:1`,
+  ...extra,
+});
+const sender = (id: string, count: number, extra: object = {}): AssistantSender => ({
+  assistantId: id,
+  assistant: assistant(id, id.toUpperCase(), extra) as never,
+  count,
+  firstMessageId: `first-${id}`,
+  lastMessageId: `last-${id}`,
+});
+const mood = (working: string[]) =>
+  new Map(
+    ["ada", "bo", "cy"].map((id) => [
+      id,
+      { mood: working.includes(id) ? "working" : "idle" } as never,
+    ]),
+  );
+const tree = (actions: ReadonlyArray<MenuAction>): unknown[] =>
+  actions.map((action) =>
+    action.displayInline && action.id?.startsWith("section:")
+      ? { [action.title]: tree(action.subactions ?? []) }
+      : `${action.title} — ${action.subtitle}`,
+  );
+
+describe("presenceMenuActions", () => {
+  const senders = [sender("ada", 1), sender("bo", 3, { askBeforeActing: true }), sender("cy", 2)];
+  it.each([
+    {
+      name: "iOS: Working then Idle as titled sections",
+      working: ["bo"],
+      inline: true,
+      expected: [
+        { Working: ["BO — Working · 3 messages here · Asks before acting"] },
+        { Idle: ["ADA — Idle · 1 message here", "CY — Idle · 2 messages here"] },
+      ],
+    },
+    {
+      name: "iOS: an empty section is left out",
+      working: [],
+      inline: true,
+      expected: [
+        {
+          Idle: [
+            "ADA — Idle · 1 message here",
+            "BO — Idle · 3 messages here · Asks before acting",
+            "CY — Idle · 2 messages here",
+          ],
+        },
+      ],
+    },
+    {
+      name: "Android: the same order, flat",
+      working: ["cy", "ada"],
+      inline: false,
+      expected: [
+        "ADA — Working · 1 message here",
+        "CY — Working · 2 messages here",
+        "BO — Idle · 3 messages here · Asks before acting",
+      ],
+    },
+  ])("$name", ({ working, inline, expected }) => {
+    expect(tree(presenceMenuActions(senders, mood(working), true, inline))).toEqual(expected);
+  });
+
+  it("a removed assistant can only be jumped to; access follows the permission", () => {
+    const removed = { ...sender("gone", 1), assistant: null };
+    const [row] = presenceMenuActions([removed], new Map(), true, false);
+    expect(row?.title).toBe("Assistant");
+    expect(row?.subactions?.map((action) => action.title)).toEqual(["Jump to last message"]);
+    const [locked] = presenceMenuActions([sender("ada", 1)], mood([]), false, false);
+    const access = locked?.subactions?.find((action) => action.title === "Access");
+    expect(access?.subactions?.map((option) => [option.title, option.state])).toEqual([
+      ["Read only", "on"],
+      ["Full access", "off"],
+    ]);
+    expect(access?.subactions?.every((option) => option.attributes?.disabled)).toBe(true);
+  });
+});
+
+const mount = (node: ReactNode) => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  act(() => root.render(node));
+  return { container, [Symbol.dispose]: () => act(() => root.unmount()) };
+};
+
+describe("ThreadAssistantStack", () => {
+  const messages = [
+    { id: "m1", senderThreadId: "assistant:ada:1" },
+    { id: "m2", senderThreadId: "assistant:bo:1" },
+  ] as never;
+
+  it("shows one cluster and routes each menu entry", async () => {
+    mocks.assistants = [assistant("ada", "Ada"), assistant("bo", "Bo")];
+    mocks.working = new Set(["bo"]);
+    mocks.update.mockReset().mockResolvedValue({ ok: false, message: "No permission" });
+    for (const fn of [mocks.alert, mocks.jump, mocks.openChat, mocks.navigate]) fn.mockReset();
+    using view = mount(
+      <ThreadAssistantStack
+        environmentId={"hub" as never}
+        threadId={"t1" as never}
+        messages={messages}
+      />,
+    );
+    const press = (id: string) =>
+      act(async () =>
+        view.container.querySelector<HTMLButtonElement>(`[aria-label="menu:${id}"]`)?.click(),
+      );
+    expect(view.container.querySelector("section")?.getAttribute("aria-label")).toBe(
+      "Assistants in this thread · 2",
+    );
+    expect(view.container.querySelector('[data-testid="cluster"]')?.textContent).toBe(
+      "ada:idle,bo:working",
+    );
+
+    await press("jump:bo");
+    expect(mocks.jump).toHaveBeenCalledWith("hub:t1", "m2");
+    await press("access:ada|full");
+    expect(mocks.update).toHaveBeenCalledWith({ assistantId: "ada", toolAccess: "full" });
+    expect(mocks.alert).toHaveBeenCalledWith("Could not change access", "No permission");
+    await press("chat:ada");
+    expect(mocks.openChat).toHaveBeenCalledWith(expect.objectContaining({ id: "ada" }));
+    await press("info:bo");
+    expect(mocks.navigate).toHaveBeenCalledWith("AssistantInfo", {
+      environmentId: "hub",
+      assistantId: "bo",
+    });
+  });
+
+  it("draws nothing in an assistant's own chat", () => {
+    mocks.assistants = [assistant("ada", "Ada")];
+    using view = mount(
+      <ThreadAssistantStack
+        environmentId={"hub" as never}
+        threadId={"assistant:ada:1" as never}
+        messages={messages}
+      />,
+    );
+    expect(view.container.innerHTML).toBe("");
+  });
+});
+
+it("a removed assistant's message keeps a face and falls back to Assistant", () => {
+  mocks.assistants = [];
+  using view = mount(
+    <AssistantFeedMessage environmentId={"hub" as never} assistantId="gone" joinedAtLabel="today">
+      hello
+    </AssistantFeedMessage>,
+  );
+  expect(view.container.textContent).toContain("av:gone");
+  expect(view.container.textContent).toContain("Assistant joined the conversation · today");
+});

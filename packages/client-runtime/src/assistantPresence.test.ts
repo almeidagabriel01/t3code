@@ -5,7 +5,8 @@ import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
 import {
   ASSISTANT_ACCENTS,
   assistantAccent,
-  assistantInitial,
+  assistantPresenceSections,
+  assistantPresenceStatus,
   assistantSenders,
   messageAssistantId,
 } from "./assistantPresence.ts";
@@ -71,7 +72,29 @@ describe("assistant look", () => {
   it("keeps one accent per assistant and an uppercase initial", () => {
     expect(assistantAccent("jarvis")).toBe(assistantAccent("jarvis"));
     expect(ASSISTANT_ACCENTS).toContain(assistantAccent("revisor"));
-    expect(assistantInitial(" bia ")).toBe("B");
-    expect(assistantInitial("")).toBe("?");
+  });
+});
+
+describe("presence rows", () => {
+  it.each([
+    [false, 1, false, "Idle · 1 message here"],
+    [false, 6, false, "Idle · 6 messages here"],
+    [true, 2, true, "Working · 2 messages here · Asks before acting"],
+  ])("working %s, %i messages, asks %s → %s", (working, count, asks, expected) => {
+    expect(assistantPresenceStatus(working, { count }, asks)).toBe(expected);
+  });
+
+  it.each([
+    { name: "mixed", working: ["b", "d"], expected: { working: ["b", "d"], idle: ["a", "c"] } },
+    { name: "all idle", working: [], expected: { working: [], idle: ["a", "b", "c", "d"] } },
+    {
+      name: "all working",
+      working: ["a", "b", "c", "d"],
+      expected: { working: ["a", "b", "c", "d"], idle: [] },
+    },
+  ])("lists Working before Idle in speaking order: $name", ({ working, expected }) => {
+    expect(assistantPresenceSections(["a", "b", "c", "d"], (id) => working.includes(id))).toEqual(
+      expected,
+    );
   });
 });

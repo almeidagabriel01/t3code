@@ -19,10 +19,6 @@ export function assistantAccent(assistantId: string): string {
   return ASSISTANT_ACCENTS[hash % ASSISTANT_ACCENTS.length]!;
 }
 
-export function assistantInitial(name: string): string {
-  return (name.trim()[0] ?? "?").toLocaleUpperCase();
-}
-
 export interface AssistantSender {
   readonly assistantId: string;
   /** Null when the assistant was deleted since; the message still shows who sent it. */
@@ -56,4 +52,28 @@ export function assistantSenders(
     });
   }
   return [...byId.values()];
+}
+
+/** A presence row's one status line: "Idle · 6 messages here · Asks before acting". */
+export function assistantPresenceStatus(
+  working: boolean,
+  sender: Pick<AssistantSender, "count">,
+  asksBeforeActing: boolean,
+): string {
+  return [
+    working ? "Working" : "Idle",
+    `${sender.count} message${sender.count === 1 ? "" : "s"} here`,
+    ...(asksBeforeActing ? ["Asks before acting"] : []),
+  ].join(" · ");
+}
+
+/** The thread's assistants split into Working, then Idle, each keeping the order they spoke in. */
+export function assistantPresenceSections<S>(
+  senders: ReadonlyArray<S>,
+  isWorking: (sender: S) => boolean,
+): { readonly working: ReadonlyArray<S>; readonly idle: ReadonlyArray<S> } {
+  const working: S[] = [];
+  const idle: S[] = [];
+  for (const sender of senders) (isWorking(sender) ? working : idle).push(sender);
+  return { working, idle };
 }

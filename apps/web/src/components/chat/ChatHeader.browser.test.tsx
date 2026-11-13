@@ -20,8 +20,15 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
 vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
   useThreadActionMenu: () => ({ openMenu, closeMenu: () => {} }),
 }));
+const threadAssistant = vi.hoisted(() => ({ entry: null as unknown }));
+vi.mock(import("../../state/assistants"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useThreadAssistant: (() => threadAssistant.entry) as never,
+}));
 
 import { render, stubGlobal } from "../../../test/render";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { assistantInfoAtom, closeAssistantInfo } from "../assistants/assistantInfoState";
 import { ChatHeader } from "./ChatHeader";
 
 function header(title: string) {
@@ -72,6 +79,37 @@ it.each(["blur", "Enter"] as const)(
     expect(persisted.title).toBe("My edited title");
   },
 );
+
+it("an assistant chat's name toggles Assistant info; ⋯ and right-click open the thread menu", async () => {
+  openMenu.mockClear();
+  closeAssistantInfo();
+  using _entry = {
+    [Symbol.dispose]: () => {
+      threadAssistant.entry = null;
+    },
+  };
+  threadAssistant.entry = {
+    environmentId: EnvironmentId.make("environment"),
+    assistant: { id: "jarvis", name: "Jarvis", avatar: null, icon: null },
+  };
+  await using screen = await render(header("assistant thread"));
+  const name = screen.getByRole("button", { name: "Jarvis, Assistant info" });
+  await name.click();
+  expect(appAtomRegistry.get(assistantInfoAtom)).toEqual({
+    kind: "assistant",
+    environmentId: "environment",
+    assistantId: "jarvis",
+  });
+  await name.click();
+  expect(appAtomRegistry.get(assistantInfoAtom)).toBeNull();
+  expect(openMenu).not.toHaveBeenCalled();
+
+  await screen.getByRole("button", { name: "Thread actions for Jarvis" }).click();
+  expect(openMenu).toHaveBeenCalledOnce();
+  await name.click({ button: "right" });
+  expect(openMenu).toHaveBeenCalledTimes(2);
+  expect(appAtomRegistry.get(assistantInfoAtom)).toBeNull();
+});
 
 it("opens the thread menu on a desktop title click without waiting", async () => {
   openMenu.mockClear();

@@ -24,7 +24,14 @@ import {
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
-import { commitOnly, nameOf, readLine, workParts, type Part } from "./heavyHook.ts";
+import {
+  commitOnly,
+  nameOf,
+  readLine,
+  UNREADABLE_SCRIPT,
+  workParts,
+  type Part,
+} from "./heavyHook.ts";
 import type { Redirect, Word } from "./shellLine.ts";
 
 export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
@@ -134,6 +141,8 @@ export interface Verdict {
 export type QueuedEntry = HeavyQueueEntry & {
   readonly line?: string;
   readonly routeReason?: string;
+  /** The scripts the line runs, read when it was queued, by their path word; null: unreadable. */
+  readonly scripts?: Readonly<Record<string, string | null>>;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 
@@ -197,10 +206,46 @@ const GIT_DRIVEN = /(^|[^a-z])(only)?(changed|staged)(since)?($|[^a-z])/i;
 export const needsGit = (values: ReadonlyArray<string>) =>
   values[0]?.split("/").pop() === "git" ||
   values.some((value, at) => {
+    // The Runner computes its changed files here and hands them over (`changedInputs`).
+    if (value === "check:changed") return false;
     const flag = value.startsWith("-");
     if (!flag && (values[at - 1]?.startsWith("-") || /[\s/.]/.test(value))) return false;
     return GIT_DRIVEN.test(flag ? value.replace(/=.*$/, "") : value);
   });
+
+const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun", "vp", "deno"]);
+const INSTALLS = /^(install|i|add|remove|rm|uninstall|un|update|up|upgrade|ci|link|unlink|dedupe)$/;
+const DEV_SERVER = /^(dev|start|serve|watch|preview)([:._-].*)?$/;
+const DEV_PROGRAMS: Readonly<Record<string, RegExp>> = {
+  vite: /^(dev|serve|preview)?$/,
+  next: /^(dev|start)$/,
+  expo: /^start$/,
+};
+const EXECUTORS = new Set(["npx", "pnpx", "bunx"]);
+const EXEC = /^(exec|dlx|x)$/;
+const MAC_TOOLS = new Set(["xcodebuild", "xcrun", "simctl", "emulator", "adb", "instruments"]);
+
+/**
+ * Work that stays here in every mode, whatever the lists say: installs (the lockfile and
+ * `node_modules` are this Mac's), Xcode, simulator and emulator tools, and dev servers.
+ */
+const alwaysMac = (part: Part): boolean => {
+  let { program, words } = part;
+  // `npx vite`, `pnpm exec next dev`: the tool they run decides.
+  if (EXECUTORS.has(program) || (PACKAGE_MANAGERS.has(program) && EXEC.test(words[0] ?? ""))) {
+    const at = EXECUTORS.has(program) ? 0 : 1;
+    program = words[at]?.split("/").pop() ?? "";
+    words = words.slice(at + 1);
+  }
+  const [first = "", second = ""] = words;
+  if (MAC_TOOLS.has(program)) return true;
+  if (program === "expo" && first.startsWith("run")) return true;
+  if (DEV_PROGRAMS[program]?.test(first) === true) return true;
+  if (!PACKAGE_MANAGERS.has(program)) return false;
+  const script = first === "run" || first === "run-script" ? second : first;
+  // `pnpm --filter web add x`: a flag's value can sit before the subcommand.
+  return INSTALLS.test(first) || INSTALLS.test(second) || DEV_SERVER.test(script);
+};
 
 /**
  * Why one part of the work must run on this Mac, or null when Linux can run it from `cwd`. What
@@ -217,6 +262,7 @@ const tieOf = (
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
   if (pattern !== undefined) return `Always on this Mac: ${pattern.trim()}`;
+  if (alwaysMac(part)) return `Always on this Mac: ${nameOf(text)}`;
   if (part.program === "git" && part.words[0] === "commit") {
     return "Commits run here: the pre-commit edits this Mac's repository";
   }
@@ -238,6 +284,8 @@ const tieOf = (
   const root = rootOf(cwd);
   if (root === null) return `Runs outside a git checkout: ${cwd}`;
   for (const word of part.command.words.slice(part.programAt + 1)) {
+    // A script is judged by its text, which travels with the job.
+    if (word.value === part.script?.word) continue;
     const expanded = expand(word, vars, cwd);
     const tie = "value" in expanded ? outsideTie(expanded.value, cwd, root) : null;
     if (tie !== null) return tie;
@@ -258,7 +306,7 @@ const DECLARES = new Set(["export", "declare", "local", "readonly"]);
  * it runs in. Every part must pass, else the whole job stays and the reason names the part.
  */
 export const eligibilityOf = (
-  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where">,
+  entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where" | "scripts">,
   context: Pick<WorkContext, "config" | "home" | "rootOf">,
 ): Verdict => {
   const line = lineOf(entry);
@@ -266,7 +314,11 @@ export const eligibilityOf = (
     return { eligibility: "exclusive", reason: `Always on this Mac: ${nameOf(line)}` };
   }
   const { config, home, rootOf } = context;
-  const { unsafe, parts } = readLine(line);
+  const { scripts } = entry;
+  const { unsafe, parts } = readLine(
+    line,
+    scripts === undefined ? undefined : (word) => scripts[word] ?? null,
+  );
   if (unsafe !== null) {
     return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
   }
@@ -287,7 +339,17 @@ export const eligibilityOf = (
       const tie = tieOf(part, cwd, vars, rootOf, config);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
-      if (
+      if (part.script !== null) {
+        if (part.script.body === null) {
+          return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
+        }
+        const inner = eligibilityOf(
+          { label: part.script.body, cwd: cwd ?? entry.cwd, where: entry.where },
+          context,
+        );
+        if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
+        if (inner.eligibility === "not-listed") notListed ??= inner.reason;
+      } else if (
         notListed === null &&
         entry.where === undefined &&
         part.remoto === null &&
@@ -526,7 +588,10 @@ export const intentOf = (
   const where = entry.where ?? (verdict.reason === null ? context.config.runnerWhere : "mac");
   if (where !== "mac") return { intent: where, reason: "" };
   return mac(
-    verdict.reason ?? (entry.where === "mac" ? "Asked for this Mac" : "Runner set to this Mac"),
+    verdict.reason ??
+      (entry.where === "mac"
+        ? ((entry as QueuedEntry).routeReason ?? "Asked for this Mac")
+        : "Runner set to this Mac"),
   );
 };
 
@@ -772,6 +837,10 @@ export interface RemoteProgress {
   readonly id: string | null;
   readonly pgid: number | null;
   readonly exit: number | null;
+  /** The program the pre-flight found missing there, which therefore never started. */
+  readonly missing: string | null;
+  /** A package whose install the wrapper could not finish there before the command. */
+  readonly install: string | null;
 }
 
 export const NO_PROGRESS: RemoteProgress = {
@@ -781,6 +850,8 @@ export const NO_PROGRESS: RemoteProgress = {
   id: null,
   pgid: null,
   exit: null,
+  missing: null,
+  install: null,
 };
 
 /** Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. */
@@ -806,6 +877,14 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
         : progress.id,
     pgid: int(fields.pgid) ?? progress.pgid,
     exit: int(fields.exit) ?? progress.exit,
+    missing:
+      typeof fields.missing === "string" && fields.missing !== ""
+        ? fields.missing
+        : progress.missing,
+    install:
+      typeof fields.install === "string" && fields.install !== ""
+        ? fields.install
+        : progress.install,
   };
 };
 
@@ -814,10 +893,13 @@ export type RemoteOutcome =
   /** The command never started there; `touched` when `remoto` got as far as syncing. */
   | { readonly kind: "unavailable"; readonly touched: boolean }
   /** It started there and the connection ended without its exit code. */
-  | { readonly kind: "dropped" };
+  | { readonly kind: "dropped" }
+  /** The pre-flight found its program missing there: nothing ran. */
+  | { readonly kind: "missing"; readonly tool: string };
 
 /** The exit marker is the command's own code; without it, ssh's 255 is not the command's. */
 export const remoteOutcome = (progress: RemoteProgress): RemoteOutcome => {
+  if (progress.missing !== null) return { kind: "missing", tool: progress.missing };
   if (progress.exit !== null) return { kind: "finished", code: progress.exit };
   if (!progress.running) return { kind: "unavailable", touched: progress.syncing };
   return { kind: "dropped" };
@@ -886,6 +968,30 @@ export const remoteStopScript = (id: string, pgid: number | null, waitSeconds: n
     `{ [ -n "$p" ] && kill -KILL -- "-$p"; pkill -KILL -f '${pattern}'; } 2>/dev/null; sleep 1`,
     `if alive; then echo alive; exit 1; else echo killed; fi`,
   ].join("\n");
+};
+
+export const INSTALL_FAILED = "Dependency install on Linux failed";
+
+// A package install or lazy download that was unfinished, or raced, when the run started there.
+const INSTALL_FAILURES: ReadonlyArray<readonly [RegExp, string | null]> = [
+  [/Electron failed to install correctly/, "electron"],
+  [/Executable doesn't exist at \S*ms-playwright/, "playwright"],
+  [/Could not find Chrom(?:e|ium) \(ver\./, "puppeteer"],
+  [/Cypress (?:binary is missing|executable not found)/i, "cypress"],
+  [/^(?=.*(?:\bEEXIST\b|File exists \(os error 17\)))(?=.*node_modules\/)/, null],
+];
+
+/** The package an output line says is not installed yet there, else null. */
+export const installFailure = (line: string): string | null => {
+  const hit = INSTALL_FAILURES.find(([pattern]) => pattern.test(line));
+  if (hit === undefined) return null;
+  return (
+    hit[1] ??
+    /node_modules\/(?:\.pnpm\/[^/]+\/node_modules\/)?((?:@[^/\s'"]+\/)?[^/\s'"]+)/.exec(
+      line,
+    )?.[1] ??
+    "node_modules"
+  );
 };
 
 /** Lines of a failed Linux run that name files on the Mac-only list: they fail there by nature. */
