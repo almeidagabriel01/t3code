@@ -6,6 +6,9 @@ import {
   AssistantGroupsPostInput,
   assistantGroupAddress,
   assistantGroupMentions,
+  assistantGroupProjectIds,
+  assistantGroupProjectMentionRanges,
+  assistantGroupProjectMentions,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
@@ -169,5 +172,50 @@ describe("group message attachments", () => {
     expect(() =>
       decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
     ).toThrow();
+  });
+});
+
+describe("assistantGroupProjectMentions", () => {
+  const projects = [
+    { id: "p1", name: "Billing API" },
+    { id: "p2", name: "agenda-instagram" },
+    { id: "p3", name: "Café" },
+  ];
+  it.each([
+    ["a one-word name", "deploy #cafe now", ["p3"]],
+    ["a name with spaces, as hyphens", "fix #billing-api.", ["p1"]],
+    ["a hyphenated name", "(#agenda-instagram) post it", ["p2"]],
+    ["case and accents ignored", "#BILLING-API and #Café", ["p1", "p3"]],
+    ["each project once", "#cafe or #cafe", ["p3"]],
+    ["an unknown project", "see #nope and issue #42", []],
+    ["a heading or a word with #", "# Billing api\nsee page#cafe", []],
+    ["code and links", "`#cafe` https://x.dev/#cafe", []],
+  ])("%s", (_name, text, ids) => {
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual(ids);
+  });
+  it("gives each mention's offsets, without trailing punctuation", () => {
+    expect(
+      assistantGroupProjectMentionRanges("fix #billing-api. #cafe", projects).map((found) => [
+        found.start,
+        found.end,
+        found.project.id,
+      ]),
+    ).toEqual([
+      [4, 16, "p1"],
+      [18, 23, "p3"],
+    ]);
+  });
+});
+
+describe("assistantGroupProjectIds", () => {
+  it("joins the members' project lists in member order, once each, home project as a fallback", () => {
+    expect(
+      assistantGroupProjectIds([
+        { projectId: "home" as never, projectIds: ["p2" as never, "p1" as never] },
+        { projectId: "p3" as never, projectIds: [] },
+        { projectId: "home" as never, projectIds: ["p1" as never] },
+      ]),
+    ).toEqual(["p2", "p1", "p3"]);
+    expect(assistantGroupProjectIds([])).toEqual([]);
   });
 });
