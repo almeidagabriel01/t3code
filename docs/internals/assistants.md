@@ -297,6 +297,29 @@ the assistant anything, otherwise dismissing it would wake the assistant again. 
 first allowed user's chat, unless a reply target already points at Telegram (the reply reactor posts
 the run there).
 
+## Problem detection
+
+`ProblemDetector` (`apps/server/src/problems/`) files one kanban card per failure cause, with no
+model. Sources only `report` an occurrence, keyed by what happened (a run id, an outage, a check
+result), never by its delivery, so a replayed event or a restart is a no-op. `tick` then processes
+each pending occurrence on its own and records a skip reason for the ones it drops, so one bad row
+never stops the rest. Every kanban write uses a command id derived from the occurrence key, which
+makes a crash between the card and the bookkeeping safe to retry.
+
+- **Cause.** The fingerprint is source, project, subject, the normalized command and the first line
+  of the normalized error (numbers, paths, ids, hashes and times stripped). A cause has one open
+  card; when that card is done, archived or deleted, the next occurrence starts a new generation
+  that names the previous card. A card never carries another project's data.
+- **Owner.** `selectOwner` is the single rule (project assistant with the project, then scope all;
+  ties go to notifying, then the oldest) and agrees with `projectScopeRefusal`. Each tick re-checks
+  the owner of every open card, so removing an assistant's access hands the card on.
+- **Wake.** A filed card queues a wake for its owner; a burst across projects becomes one message
+  per owner. It reuses `autonomy_wakes` (source `problem`), the daily limits, the pause switch and
+  the spending gate, so a held wake waits instead of being dropped. The owner's final answer is
+  the user's notice, prefixed with the approved header line.
+- **Replaces the fan-out.** With detection on for a project, the `run_failed` and `pr_checks_failed`
+  rules no longer wake every assistant there; watches still fire.
+
 ## iMessage channel
 
 `apps/server/src/channels` keeps chat transports out of assistant code: a transport turns its input

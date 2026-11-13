@@ -308,6 +308,35 @@ An assistant can also send you a short message of its own, with a link to a conv
 has one. It reaches Activity and Telegram (or iMessage when Telegram is off), never carries files or
 secrets, and stops while autonomy is paused.
 
+### Problems
+
+T3 Code watches every project for failures: a command that is not installed, an expired sign-in, a
+network, disk or memory failure, a Linux Runner job that could not sync or install, a provider
+session that fails, failing checks on a pull request, a scheduled task that fails, an unreachable
+linked environment, and the same failure three times in 24 hours. Each cause gets **one card** on
+its project's board (or the No-project board), titled by its kind, with what happened, where, and
+the conversations it came from. A repeat updates that card and shows **Seen N times**; once the card
+is done, archived or deleted, the next failure files a new card that links the old one.
+
+One assistant handles each card: the project assistant that has the project, or else one that works
+on all projects. The card shows **Handled by** its name. If none can work on the project, you get a
+notice saying so. The assistant's **When it finds a problem** setting decides what it does:
+
+- **Tell me**: a notice, nothing started.
+- **Offer to fix** (the default): a notice with a proposed fix; it starts after you agree.
+- **Fix small things**: starts small fixes on its own, such as a re-run, a sign-in, a dependency
+  reinstall or a few-line change in a new worktree, and asks before anything bigger.
+
+At every level it never pushes, merges, deploys, deletes or opens a pull request without your OK.
+A started fix runs in its own conversation, linked to the card, and moves the card to review when
+it ends. While autonomy is paused or past its daily limit, cards are still filed and the assistant
+catches up later.
+
+**Ignore this problem** on a card stops new reports of that cause; **Stop ignoring** undoes it.
+Turn detection off with **Detect problems** in **Settings → Assistants → Autonomy**, or for one
+project with **Detect problems in this project** in that project's settings (**Maintenance →
+Diagnostics**). You can also ask an agent to do any of these for you.
+
 ### Reminders and watches
 
 Ask an assistant in plain words. "Remind me tomorrow at 9am to renew the domain" creates a one-time
