@@ -221,13 +221,14 @@ it.effect("keeps a group's messages numbered once and a request id once per grou
 it.effect("gives an older group chat its requests: every message and task joins one", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    // Shapes from before requests had their own id, project and conversations.
+    // Shapes from before requests had their own id, project and conversations, left by a start
+    // that died after adding the first column of each change.
     yield* sql`
       CREATE TABLE assistant_group_messages (
         message_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, seq INTEGER NOT NULL,
         author TEXT NOT NULL, assistant_id TEXT, author_label TEXT, kind TEXT NOT NULL,
         text TEXT NOT NULL, reply_to TEXT, task_id TEXT, client_request_id TEXT,
-        created_at TEXT NOT NULL, UNIQUE (team_id, seq), UNIQUE (team_id, client_request_id)
+        created_at TEXT NOT NULL, request_id TEXT, wait_key TEXT, UNIQUE (team_id, seq), UNIQUE (team_id, client_request_id)
       )`;
     yield* sql`
       CREATE TABLE assistant_group_tasks (
@@ -269,6 +270,11 @@ it.effect("gives an older group chat its requests: every message and task joins 
     yield* message("m5", 5, "assistant", "notice", "m4", null);
     yield* message("m6", 6, "agent", "message", null, null);
     yield* message("m7", 7, "user", "boundary", null, null);
+    // A person's replies continue the request they answer, however deep; one to a lost message
+    // starts its own.
+    yield* message("m8", 8, "user", "message", "m1", null);
+    yield* message("m9", 9, "user", "message", "m8", null);
+    yield* message("m10", 10, "user", "message", "gone", null);
     yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
       VALUES ('g1', 'ada', 'assistant:ada:g-legacy')`;
 
@@ -285,6 +291,9 @@ it.effect("gives an older group chat its requests: every message and task joins 
         ["m5", "m4"],
         ["m6", "m6"],
         ["m7", null],
+        ["m8", "m1"],
+        ["m9", "m1"],
+        ["m10", "m10"],
       ].map(([message_id, request_id]) => ({
         message_id,
         request_id,

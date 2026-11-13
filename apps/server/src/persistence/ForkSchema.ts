@@ -17,8 +17,37 @@ export const forgetForkMigrations = Effect.fn("ForkSchema.forgetForkMigrations")
   yield* sql`DELETE FROM effect_sql_migrations WHERE name IN ${sql.in(FORK_MIGRATION_NAMES)}`;
 });
 
-/** Creates the fork's tables when missing; safe to run on every start. */
+/**
+ * Adds each missing column on its own, so a database an older build left halfway still ends
+ * complete. Returns the columns it added.
+ */
+const addColumns = Effect.fn("ForkSchema.addColumns")(function* (
+  table: string,
+  columns: ReadonlyArray<readonly [name: string, definition: string]>,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const existing = yield* sql<{
+    readonly name: string;
+  }>`SELECT name FROM pragma_table_info(${table})`;
+  const added: string[] = [];
+  for (const [name, definition] of columns) {
+    if (existing.some((column) => column.name === name)) continue;
+    yield* sql.unsafe(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+    added.push(name);
+  }
+  return added;
+});
+
+/**
+ * Creates the fork's tables when missing; safe to run on every start. One transaction: a start that
+ * dies halfway leaves no column without its backfill.
+ */
 export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql.withTransaction(ensure());
+});
+
+const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
     CREATE TABLE IF NOT EXISTS kanban_boards (
@@ -104,10 +133,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!cardColumns.some((column) => column.name === "parent_card_id")) {
     yield* sql`ALTER TABLE kanban_cards ADD COLUMN parent_card_id TEXT`;
   }
-  if (!cardColumns.some((column) => column.name === "attachments_json")) {
-    yield* sql`ALTER TABLE kanban_cards ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'`;
-    yield* sql`ALTER TABLE kanban_cards ADD COLUMN cover_attachment_id TEXT`;
-  }
+  yield* addColumns("kanban_cards", [
+    ["attachments_json", "TEXT NOT NULL DEFAULT '[]'"],
+    ["cover_attachment_id", "TEXT"],
+  ]);
   yield* sql`CREATE INDEX IF NOT EXISTS kanban_cards_parent_idx ON kanban_cards(parent_card_id)`;
   // Board snapshot and column neighbour lookups: live cards per column in order.
   yield* sql`
@@ -473,13 +502,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   `;
   // A request sent to several assistants shares a group; its replies are held in the rows until the
   // group is complete, then delivered to the asker as one message.
-  const requestColumns = yield* sql<{
-    readonly name: string;
-  }>`PRAGMA table_info(assistant_requests)`;
-  if (!requestColumns.some((column) => column.name === "group_id")) {
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN group_id TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN reply_text TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`;
+  const addedRequestColumns = yield* addColumns("assistant_requests", [
+    ["group_id", "TEXT"],
+    ["reply_text", "TEXT"],
+    ["delivered", "INTEGER NOT NULL DEFAULT 0"],
+  ]);
+  if (addedRequestColumns.includes("group_id")) {
     yield* sql`UPDATE assistant_requests SET group_id = request_id`;
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
@@ -553,11 +581,11 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   const groupTaskColumns = yield* sql<{
     readonly name: string;
   }>`PRAGMA table_info(assistant_group_tasks)`;
-  if (!groupTaskColumns.some((column) => column.name === "expected_result")) {
-    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN expected_result TEXT`;
-    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN source_seqs_json TEXT NOT NULL DEFAULT '[]'`;
-    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN resources_json TEXT NOT NULL DEFAULT '[]'`;
-  }
+  yield* addColumns("assistant_group_tasks", [
+    ["expected_result", "TEXT"],
+    ["source_seqs_json", "TEXT NOT NULL DEFAULT '[]'"],
+    ["resources_json", "TEXT NOT NULL DEFAULT '[]'"],
+  ]);
   // Hand-offs since a task last delivered. Additive with a default, so an older build still runs.
   if (!groupTaskColumns.some((column) => column.name === "undelivered_hops")) {
     yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN undelivered_hops INTEGER NOT NULL DEFAULT 0`;
@@ -571,10 +599,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       UPDATE assistant_teams SET read_seq = COALESCE(
         (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0)`;
   }
-  if (!teamColumns.some((column) => column.name === "instructions")) {
-    yield* sql`ALTER TABLE assistant_teams ADD COLUMN instructions TEXT NOT NULL DEFAULT ''`;
-    yield* sql`ALTER TABLE assistant_teams ADD COLUMN memories_json TEXT NOT NULL DEFAULT '[]'`;
-  }
+  yield* addColumns("assistant_teams", [
+    ["instructions", "TEXT NOT NULL DEFAULT ''"],
+    ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
+  ]);
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
   yield* sql`
     CREATE VIEW assistant_team_state AS
@@ -604,21 +632,28 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
 
   // Requests: a message replying to nothing starts one (request_id = its own id) and everything
   // said or done for it carries that id. The first message holds the project and short title.
-  if (!groupMessageColumns.some((column) => column.name === "request_id")) {
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN request_id TEXT`;
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN project_id TEXT`;
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN title TEXT`;
-    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN request_id TEXT`;
-    // Older chats: each message that opened root tasks, or still waits for them, was a request.
+  const addedRequestIds = [
+    ...(yield* addColumns("assistant_group_messages", [
+      ["request_id", "TEXT"],
+      ["project_id", "TEXT"],
+      ["title", "TEXT"],
+    ])),
+    ...(yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]])),
+  ];
+  if (addedRequestIds.includes("request_id")) {
+    // Older chats: a message that opened root tasks, or a person's message replying to nothing, was
+    // a request; a reply joins the request of what it answers, however deep the chain.
     yield* sql`
       UPDATE assistant_group_tasks SET request_id = (
         SELECT r.request_message_id FROM assistant_group_tasks r
-        WHERE r.task_id = assistant_group_tasks.root_id)`;
+        WHERE r.task_id = assistant_group_tasks.root_id)
+      WHERE request_id IS NULL`;
     yield* sql`
       UPDATE assistant_group_messages SET request_id = message_id
-      WHERE EXISTS (SELECT 1 FROM assistant_group_tasks t
+      WHERE request_id IS NULL AND (
+        EXISTS (SELECT 1 FROM assistant_group_tasks t
           WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
-        OR (kind = 'message' AND author <> 'assistant')`;
+        OR (kind = 'message' AND author <> 'assistant' AND reply_to IS NULL))`;
     yield* sql`
       UPDATE assistant_group_messages SET request_id = COALESCE(
         (SELECT t.request_id FROM assistant_group_tasks t
@@ -627,19 +662,29 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
           WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
       WHERE request_id IS NULL`;
     yield* sql`
+      WITH RECURSIVE chain(message_id, request_id) AS (
+        SELECT message_id, request_id FROM assistant_group_messages WHERE request_id IS NOT NULL
+        UNION
+        SELECT m.message_id, c.request_id FROM assistant_group_messages m
+        JOIN chain c ON m.reply_to = c.message_id
+        WHERE m.request_id IS NULL
+      )
       UPDATE assistant_group_messages SET request_id = (
-        SELECT p.request_id FROM assistant_group_messages p
-        WHERE p.message_id = assistant_group_messages.reply_to)
+        SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id)
       WHERE request_id IS NULL AND reply_to IS NOT NULL`;
+    // A person's reply to a message that is gone, or that belongs to no request, starts its own.
+    yield* sql`
+      UPDATE assistant_group_messages SET request_id = message_id
+      WHERE request_id IS NULL AND kind = 'message' AND author <> 'assistant'`;
   }
   // A notice that a member's conversation waits on the user: one per wait (`wait_key`), resolved in
   // place once nothing waits any more.
-  if (!groupMessageColumns.some((column) => column.name === "wait_key")) {
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_key TEXT`;
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_thread_id TEXT`;
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_decision_id TEXT`;
-    yield* sql`ALTER TABLE assistant_group_messages ADD COLUMN wait_resolved_at TEXT`;
-  }
+  yield* addColumns("assistant_group_messages", [
+    ["wait_key", "TEXT"],
+    ["wait_thread_id", "TEXT"],
+    ["wait_decision_id", "TEXT"],
+    ["wait_resolved_at", "TEXT"],
+  ]);
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
@@ -683,12 +728,11 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   ) {
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN assistant_team_id TEXT`;
   }
-  if (
-    scheduledColumns.length > 0 &&
-    !scheduledColumns.some((column) => column.name === "missed_run_policy")
-  ) {
-    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN missed_run_policy TEXT NOT NULL DEFAULT 'skip'`;
-    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN max_runs INTEGER`;
+  if (scheduledColumns.length > 0) {
+    yield* addColumns("scheduled_tasks", [
+      ["missed_run_policy", "TEXT NOT NULL DEFAULT 'skip'"],
+      ["max_runs", "INTEGER"],
+    ]);
   }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`
