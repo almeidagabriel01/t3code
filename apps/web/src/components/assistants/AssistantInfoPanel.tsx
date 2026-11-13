@@ -31,6 +31,8 @@ import {
   PencilIcon,
   ScrollTextIcon,
   SettingsIcon,
+  XIcon,
+  type LucideIcon,
 } from "lucide-react";
 import { useId, type ReactNode } from "react";
 
@@ -73,6 +75,31 @@ const ROW =
   "flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 const ACTIVE_ROW = `${ROW} cursor-pointer hover:bg-foreground/8`;
 
+function ActionRow(props: {
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
+  readonly onClick: () => void;
+}) {
+  const Icon = props.icon;
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className={cn(
+        ACTIVE_ROW,
+        "disabled:pointer-events-none disabled:opacity-64",
+        props.destructive && "hover:text-destructive",
+      )}
+    >
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      {props.label}
+    </button>
+  );
+}
+
 function Section(props: { readonly title: string; readonly children: ReactNode }) {
   return (
     <section aria-label={props.title} className="flex min-w-0 flex-col gap-1">
@@ -92,7 +119,7 @@ function Hero(props: {
   readonly statusClass: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-col items-center gap-1 px-4 pt-2 text-center">
+    <div className="flex min-w-0 flex-col items-center gap-1 px-2 pt-2 text-center">
       {props.face}
       <p className="mt-2 max-w-full truncate text-lg font-semibold" data-assistant-info-name>
         {props.name}
@@ -111,7 +138,7 @@ function Hero(props: {
 }
 
 function Actions(props: { readonly children: ReactNode }) {
-  return <div className="grid grid-cols-3 gap-2 px-4">{props.children}</div>;
+  return <div className="grid grid-cols-3 gap-2 px-2">{props.children}</div>;
 }
 
 function useProjectLookup() {
@@ -314,29 +341,22 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
           <InfoField label="Spending limit" value={spendLine(spend)} />
         ) : null}
       </Section>
-      <div className="px-2">
-        {archived ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!flows.canAct}
-            onClick={() => void flows.unarchive(assistant)}
-          >
-            <ArchiveRestoreIcon />
-            Restore
-          </Button>
-        ) : (
-          <Button
-            variant="ghost-destructive"
-            size="sm"
-            disabled={!flows.canAct}
-            onClick={() => void flows.archive(assistant)}
-          >
-            <ArchiveIcon />
-            Archive assistant
-          </Button>
-        )}
-      </div>
+      {archived ? (
+        <ActionRow
+          icon={ArchiveRestoreIcon}
+          label="Restore"
+          disabled={!flows.canAct}
+          onClick={() => void flows.unarchive(assistant)}
+        />
+      ) : (
+        <ActionRow
+          icon={ArchiveIcon}
+          label="Archive assistant"
+          destructive
+          disabled={!flows.canAct}
+          onClick={() => void flows.archive(assistant)}
+        />
+      )}
     </>
   );
 }
@@ -509,7 +529,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
           );
         })}
       </Section>
-      <ul className="m-0 flex flex-col p-0 px-2">
+      <ul className="m-0 flex flex-col p-0">
         {(
           [
             [
@@ -530,36 +550,26 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
           ] as const
         ).map(([label, Icon, onOpen]) => (
           <li key={label} className="list-none">
-            <button type="button" className={ACTIVE_ROW} onClick={onOpen}>
-              <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-              {label}
-            </button>
+            <ActionRow icon={Icon} label={label} onClick={onOpen} />
           </li>
         ))}
       </ul>
-      <div className="px-2">
-        {archived ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!flows.canAct}
-            onClick={() => void flows.restore(team)}
-          >
-            <ArchiveRestoreIcon />
-            Restore group
-          </Button>
-        ) : (
-          <Button
-            variant="ghost-destructive"
-            size="sm"
-            disabled={!flows.canAct}
-            onClick={() => void flows.archive(team)}
-          >
-            <ArchiveIcon />
-            Archive group
-          </Button>
-        )}
-      </div>
+      {archived ? (
+        <ActionRow
+          icon={ArchiveRestoreIcon}
+          label="Restore group"
+          disabled={!flows.canAct}
+          onClick={() => void flows.restore(team)}
+        />
+      ) : (
+        <ActionRow
+          icon={ArchiveIcon}
+          label="Archive group"
+          destructive
+          disabled={!flows.canAct}
+          onClick={() => void flows.archive(team)}
+        />
+      )}
     </>
   );
 }
@@ -600,14 +610,33 @@ export function AssistantInfoPanel() {
       <SheetPopup
         side="right"
         backdrop={false}
+        showCloseButton={false}
         aria-labelledby={titleId}
         data-testid="assistant-info-panel"
-        className="wco:mt-(--workspace-topbar-height) wco:h-[calc(100%-var(--workspace-topbar-height))] wco:max-h-[calc(100%-var(--workspace-topbar-height))]"
+        data-glass-pane="pane"
+        className="mt-(--workspace-topbar-height) h-[calc(100%-var(--workspace-topbar-height))] max-h-[calc(100%-var(--workspace-topbar-height))]"
       >
-        <h2 id={titleId} className="flex h-12 shrink-0 items-center px-4 text-sm font-semibold">
-          {teamEntry ? "Group info" : "Assistant info"}
-        </h2>
-        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pb-6">
+        <div className="flex h-12 shrink-0 items-center justify-between gap-2 ps-4 pe-2">
+          <h2 id={titleId} className="min-w-0 truncate text-sm font-semibold">
+            {teamEntry ? "Group info" : "Assistant info"}
+          </h2>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Close"
+                  onClick={closeAssistantInfo}
+                />
+              }
+            >
+              <XIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Close</TooltipPopup>
+          </Tooltip>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-2 pb-6">
           {assistantEntry ? (
             <AssistantInfo
               key={`${assistantEntry.environmentId}:${assistantEntry.assistant.id}`}
