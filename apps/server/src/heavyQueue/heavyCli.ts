@@ -14,7 +14,14 @@ import * as NodeSea from "node:sea";
 
 import type { RunnerMachineConfig, RunnerWhere } from "@t3tools/contracts";
 
-import { HEAVY_JOB_ENV, heavyRoute, lineParts, rewriteLine, shellQuote } from "./heavyHook.ts";
+import {
+  HEAVY_JOB_ENV,
+  heavyRoute,
+  lineParts,
+  readLine,
+  rewriteLine,
+  shellQuote,
+} from "./heavyHook.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -202,8 +209,100 @@ export const linuxLine = (program: string, args: ReadonlyArray<string>, executor
     : { shell: "/bin/sh", args: ["-c", rewriteLine(jobLine(program, args), executor)] };
 
 /**
- * Runners that size themselves by cores take the admitted count instead: Vitest from the
- * environment, `node --test` and `playwright test` from a flag when they are the program itself.
+ * Tools that size themselves by cores and the flag that caps them, placed right after the program
+ * or its subcommand so it never lands past a `--`. `set` lists the flags (or `-D` properties) that
+ * already pick a count; the command's own choice always stands.
+ */
+const WORKER_FLAGS: ReadonlyArray<{
+  readonly programs: ReadonlyArray<string>;
+  readonly subcommand?: RegExp;
+  /** The program only runs in parallel under this flag (`node --test`). */
+  readonly when?: RegExp;
+  readonly set: ReadonlyArray<string>;
+  readonly flag: (workers: number) => ReadonlyArray<string>;
+}> = [
+  // A flag reaches a reused daemon; `GRADLE_OPTS` only reaches the client JVM.
+  {
+    programs: ["gradle", "gradlew"],
+    set: ["--max-workers", "-Dorg.gradle.workers.max"],
+    flag: (n) => [`--max-workers=${n}`],
+  },
+  { programs: ["xcodebuild"], set: ["-jobs"], flag: (n) => ["-jobs", String(n)] },
+  {
+    programs: ["swift"],
+    subcommand: /^(build|test|run)$/,
+    set: ["-j", "--jobs"],
+    flag: (n) => ["-j", String(n)],
+  },
+  {
+    programs: ["node"],
+    when: /^--test(=|$)/,
+    set: ["--test-concurrency"],
+    flag: (n) => [`--test-concurrency=${n}`],
+  },
+  {
+    programs: ["playwright"],
+    subcommand: /^test$/,
+    set: ["--workers", "-j"],
+    flag: (n) => [`--workers=${n}`],
+  },
+];
+
+/**
+ * Read by the tool wherever it runs in the job, nested scripts included; an explicit flag or an
+ * inline assignment still wins. `make` is left out: it runs serially by default, so `MAKEFLAGS=-jN`
+ * would only raise it, and an explicit `-j` beats `MAKEFLAGS` anyway.
+ */
+const WORKER_ENV = [
+  "VITEST_MAX_WORKERS",
+  "CARGO_BUILD_JOBS",
+  "CMAKE_BUILD_PARALLEL_LEVEL",
+] as const;
+
+const setsCount = (args: ReadonlyArray<string>, set: ReadonlyArray<string>) =>
+  args.some((arg) =>
+    set.some(
+      (flag) =>
+        arg === flag ||
+        arg.startsWith(`${flag}=`) ||
+        // `-j4`: a short flag takes its value attached.
+        (/^-\w$/.test(flag) && arg.startsWith(flag) && /^\d+$/.test(arg.slice(flag.length))),
+    ),
+  );
+
+/** Where the capping flag goes among the words after the program; null when no row applies. */
+const flagIndex = (
+  program: string,
+  args: ReadonlyArray<string>,
+  workers: number,
+): { readonly at: number; readonly words: ReadonlyArray<string> } | null => {
+  const name = NodePath.basename(program);
+  const knob = WORKER_FLAGS.find((row) => row.programs.includes(name));
+  if (knob === undefined || setsCount(args, knob.set)) return null;
+  if (knob.when !== undefined && !args.some((arg) => knob.when!.test(arg))) return null;
+  if (knob.subcommand !== undefined && !knob.subcommand.test(args[0] ?? "")) return null;
+  return { at: knob.subcommand === undefined ? 0 : 1, words: knob.flag(workers) };
+};
+
+/** A shell line with each capped tool's flag spliced in after its program or subcommand. */
+const lineWithWorkers = (line: string, workers: number) =>
+  readLine(line)
+    .parts.flatMap((part) => {
+      const rest = part.values.slice(part.programAt + 1);
+      const word = part.command.words[part.programAt];
+      const insert = word === undefined ? null : flagIndex(word.value, rest, workers);
+      if (insert === null) return [];
+      return [{ end: part.command.words[part.programAt + insert.at]!.end, words: insert.words }];
+    })
+    .toSorted((a, b) => b.end - a.end)
+    .reduce(
+      (text, edit) => `${text.slice(0, edit.end)} ${edit.words.join(" ")}${text.slice(edit.end)}`,
+      line,
+    );
+
+/**
+ * Tools that size themselves by cores take the admitted count instead: from the environment, or
+ * from a flag when they are the program or a command of its shell line.
  */
 export const withWorkers = (
   program: string,
@@ -211,21 +310,19 @@ export const withWorkers = (
   workers: number,
   environment: NodeJS.ProcessEnv,
 ) => {
-  const name = NodePath.basename(program);
-  const has = (flag: string) => args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
-  const extra =
-    name === "node" && has("--test") && !has("--test-concurrency")
-      ? [`--test-concurrency=${workers}`]
-      : name === "playwright" && args[0] === "test" && !has("--workers") && !has("-j")
-        ? [`--workers=${workers}`]
-        : [];
+  const direct = flagIndex(program, args, workers);
+  const capped = isShellLine(program, args)
+    ? [args[0]!, lineWithWorkers(args[1]!, workers), ...args.slice(2)]
+    : direct === null
+      ? args
+      : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
   return {
-    args: [...args, ...extra],
+    args: capped,
     env: {
       ...environment,
+      ...Object.fromEntries(WORKER_ENV.map((name) => [name, environment[name] ?? String(workers)])),
       [HEAVY_JOB_ENV]: "1",
       T3_HEAVY_WORKERS: String(workers),
-      VITEST_MAX_WORKERS: environment.VITEST_MAX_WORKERS ?? String(workers),
     },
   };
 };

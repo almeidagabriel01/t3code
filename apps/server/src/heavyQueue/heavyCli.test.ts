@@ -779,7 +779,7 @@ describe("t3 heavy", () => {
     {
       program: "/usr/bin/node",
       args: ["--test", "a.js"],
-      expected: ["--test", "a.js", "--test-concurrency=4"],
+      expected: ["--test-concurrency=4", "--test", "a.js"],
     },
     {
       program: "node",
@@ -789,7 +789,52 @@ describe("t3 heavy", () => {
     { program: "node", args: ["a.js"], expected: ["a.js"] },
     { program: "playwright", args: ["test"], expected: ["test", "--workers=4"] },
     { program: "playwright", args: ["test", "--workers=1"], expected: ["test", "--workers=1"] },
+    { program: "playwright", args: ["test", "-j2"], expected: ["test", "-j2"] },
     { program: "playwright", args: ["install"], expected: ["install"] },
+    {
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      expected: ["--max-workers=4", "assembleRelease"],
+    },
+    {
+      program: "gradle",
+      args: ["build", "--max-workers", "2"],
+      expected: ["build", "--max-workers", "2"],
+    },
+    {
+      program: "gradlew",
+      args: ["build", "-Dorg.gradle.workers.max=2"],
+      expected: ["build", "-Dorg.gradle.workers.max=2"],
+    },
+    { program: "xcodebuild", args: ["-scheme", "App"], expected: ["-jobs", "4", "-scheme", "App"] },
+    { program: "xcodebuild", args: ["-jobs", "2"], expected: ["-jobs", "2"] },
+    { program: "swift", args: ["build"], expected: ["build", "-j", "4"] },
+    {
+      program: "swift",
+      args: ["run", "app", "--", "-x"],
+      expected: ["run", "-j", "4", "app", "--", "-x"],
+    },
+    { program: "swift", args: ["test", "--jobs=2"], expected: ["test", "--jobs=2"] },
+    { program: "swift", args: ["package", "resolve"], expected: ["package", "resolve"] },
+    { program: "cargo", args: ["test", "--", "-j", "9"], expected: ["test", "--", "-j", "9"] },
+    { program: "make", args: ["all"], expected: ["all"] },
+    // Shell lines: each tool in the line gets its flag; one that already sets a count keeps it.
+    {
+      program: "/bin/zsh",
+      args: ["-c", "cd android && ./gradlew assembleRelease | tail -5"],
+      expected: ["-c", "cd android && ./gradlew --max-workers=4 assembleRelease | tail -5"],
+    },
+    {
+      program: "bash",
+      args: ["-c", "swift build -c release && xcodebuild -jobs 2 test"],
+      expected: ["-c", "swift build -j 4 -c release && xcodebuild -jobs 2 test"],
+    },
+    {
+      program: "zsh",
+      args: ["-c", "FOO=1 node --test a.js; playwright test --workers=1"],
+      expected: ["-c", "FOO=1 node --test-concurrency=4 --test a.js; playwright test --workers=1"],
+    },
+    { program: "zsh", args: ["-c", "vp test run"], expected: ["-c", "vp test run"] },
   ])("hands $program $args the admitted workers", ({ program, args, expected }) => {
     const run = withWorkers(program, args, 4, { PATH: "/bin" });
     expect(run.args).toEqual(expected);
@@ -798,7 +843,14 @@ describe("t3 heavy", () => {
       T3CODE_HEAVY_JOB: "1",
       T3_HEAVY_WORKERS: "4",
       VITEST_MAX_WORKERS: "4",
+      CARGO_BUILD_JOBS: "4",
+      CMAKE_BUILD_PARALLEL_LEVEL: "4",
     });
+  });
+
+  it("keeps worker counts the environment already sets", () => {
+    const env = { VITEST_MAX_WORKERS: "1", CARGO_BUILD_JOBS: "2", CMAKE_BUILD_PARALLEL_LEVEL: "" };
+    expect(withWorkers("cargo", ["build"], 4, env).env).toMatchObject(env);
   });
 
   it("parses the queue dir and the separator", () => {
