@@ -58,7 +58,7 @@ import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { FileTab, TAB_CLASS, TabCloseButton, tabStateClass } from "./MainFileTabs";
+import { FileTab, TAB_CLASS, TabCloseButton, TabLabel, tabStateClass } from "./MainFileTabs";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -351,12 +351,13 @@ function ThreadTabStrip(props: {
       role="tablist"
       aria-label="Open tabs"
       {...threadTabStripProps(props.group.id)}
-      className="flex h-8 shrink-0 items-stretch gap-1 overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
+      className="flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
     >
-      {props.group.tabs.map((tabKey) => (
+      {props.group.tabs.map((tabKey, index) => (
         <ThreadTabBlock
           key={tabKey}
           tabKey={tabKey}
+          separated={index > 0}
           groupActive={props.group.active}
           projectKey={props.projectKey}
           pendingFileIds={props.pendingFileIds}
@@ -370,6 +371,7 @@ function ThreadTabStrip(props: {
 /** A thread's tab and its file tabs; the strip measures and drops by these blocks. */
 function ThreadTabBlock(props: {
   readonly tabKey: string;
+  readonly separated: boolean;
   readonly groupActive: string;
   readonly projectKey: string;
   readonly pendingFileIds: ReadonlySet<string>;
@@ -380,14 +382,11 @@ function ThreadTabBlock(props: {
   const navigateToThreadKey = useNavigateToThreadKey();
   const [thread, ...files] = threadTabBlock(props.tabKey, panel, props.groupActive);
   return (
-    <div
-      {...threadTabProps(props.tabKey)}
-      className="relative flex shrink items-stretch gap-px not-first:before:pointer-events-none not-first:before:absolute not-first:before:inset-y-2 not-first:before:-left-0.5 not-first:before:w-px not-first:before:bg-foreground/10"
-      // Its tabs' min widths (min-w-24, min-w-20 and gap-px), so tabs shrink before the strip scrolls.
-      style={{ minWidth: `calc(6rem + ${files.length} * (5rem + 1px))` }}
-    >
+    // `contents`, so every tab in the strip shares the row as one flex item.
+    <div {...threadTabProps(props.tabKey)} className="contents">
       <ThreadTab
         tabKey={props.tabKey}
+        separated={props.separated}
         active={thread?.active === true}
         projectKey={props.projectKey}
         onClose={props.onClose}
@@ -429,6 +428,7 @@ function useThreadTabStatus(tabKey: string) {
 
 function ThreadTab(props: {
   readonly tabKey: string;
+  readonly separated: boolean;
   readonly active: boolean;
   readonly projectKey: string;
   readonly onClose: (tabKey: string) => void;
@@ -470,7 +470,12 @@ function ThreadTab(props: {
       onPointerDown={(event) => {
         if (ref) startThreadTabDrag(event.nativeEvent, ref, title, props.projectKey);
       }}
-      className={cn(TAB_CLASS, "w-40 min-w-24", tabStateClass(props.active))}
+      className={cn(
+        TAB_CLASS,
+        props.separated &&
+          "relative ml-[3px] before:pointer-events-none before:absolute before:inset-y-1 before:-left-0.5 before:w-px before:bg-foreground/10",
+        tabStateClass(props.active),
+      )}
     >
       <span className="relative flex shrink-0">
         <MessageSquareIcon aria-hidden className="size-3.5" />
@@ -479,14 +484,12 @@ function ThreadTab(props: {
           className="absolute -right-0.5 -bottom-0.5 ring-1 ring-background"
         />
       </span>
-      <Tooltip>
-        <TooltipTrigger
-          render={<span className={cn("min-w-0 flex-1 truncate", deleted && "line-through")} />}
-        >
-          {title}
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">{status ? `${title} · ${status.label}` : title}</TooltipPopup>
-      </Tooltip>
+      <TabLabel
+        text={title}
+        tooltip={status ? `${title} · ${status.label}` : title}
+        active={props.active}
+        className={cn(deleted && "line-through")}
+      />
       <TabCloseButton label={`Close ${title}`} active={props.active} onClose={close} />
     </div>
   );
