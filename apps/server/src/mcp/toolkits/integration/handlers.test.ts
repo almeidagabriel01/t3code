@@ -240,11 +240,11 @@ it.effect("read links to the entry and tells the agent to ask the user to connec
       const call = yield* harness();
       expect(yield* call({ action: "read", id: "Gmail" })).toMatchObject({
         id: "gmail",
-        link: "/settings/integrations?machine=env-1&entry=gmail",
-        next: "Ask the user to connect Gmail from Integrations: /settings/integrations?machine=env-1&entry=gmail",
+        link: "[Gmail](t3-settings://v1/env-1/integrations#gmail)",
+        next: "Ask the user to connect Gmail from Integrations: [Gmail](t3-settings://v1/env-1/integrations#gmail)",
       });
       const linear = yield* call({ action: "read", id: "linear" });
-      expect(linear.link).toBe("/settings/integrations?machine=env-1&entry=linear");
+      expect(linear.link).toBe("[Linear](t3-settings://v1/env-1/integrations#linear)");
       expect(linear.next).toBeUndefined();
       expect((yield* call({ action: "read", id: "asana" })).next).toBeUndefined();
       expect(yield* call({ action: "read" })).toMatchObject({ code: "invalid_request" });

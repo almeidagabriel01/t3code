@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { formatSettingsLink, hostedSettingsLink } from "@t3tools/shared/settingsLinks";
 import * as Effect from "effect/Effect";
 
 import * as AssistantService from "../../../assistants/AssistantService.ts";
@@ -12,11 +13,15 @@ import { IntegrationToolkit, type IntegrationParameters } from "./tools.ts";
 const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
-/** Settings → Integrations on this environment, through the hosted app for outside clients. */
-const settingsLink = (scope: McpInvocationContext.McpInvocationScope, id: string) => {
-  const path = `/settings/integrations?${new URLSearchParams({ machine: scope.environmentId, entry: id })}`;
+/** Settings → Integrations on this entry, mirroring `threadLinkFor`: hosted only for outside clients. */
+const settingsLink = (
+  scope: McpInvocationContext.McpInvocationScope,
+  item: { readonly id: string; readonly name: string },
+) => {
+  const link = { environmentId: scope.environmentId, page: "integrations", entry: item.id };
   const hostedAppUrl = scope.client?.hostedAppUrl;
-  return hostedAppUrl === undefined ? path : new URL(path, hostedAppUrl).toString();
+  if (hostedAppUrl !== undefined) return hostedSettingsLink(link, hostedAppUrl);
+  return `[${item.name.replace(/[[\]\\\r\n]/g, " ")}](${formatSettingsLink(link)})`;
 };
 
 const run = Effect.fn("mcp.integration.run")(function* (input: IntegrationParameters) {
@@ -35,7 +40,7 @@ const run = Effect.fn("mcp.integration.run")(function* (input: IntegrationParame
   );
   if (found === undefined)
     return yield* invalid(`No integration has the id "${input.id}". Use list.`);
-  const link = settingsLink(yield* McpInvocationContext.McpInvocationContext, found.id);
+  const link = settingsLink(yield* McpInvocationContext.McpInvocationContext, found);
   return {
     ...found,
     link,
