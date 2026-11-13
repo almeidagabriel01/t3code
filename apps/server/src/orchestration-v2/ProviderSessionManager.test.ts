@@ -442,6 +442,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly driver?: ProviderDriverKind;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -508,7 +509,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
-          driver: CODEX_DRIVER,
+          driver: options.driver ?? CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           get providerSession() {
             return session;
@@ -575,8 +576,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
-  readonly maxIdlePinMs?: number;
+  /** Omit to use the production timeouts: Claude follows the server setting. */
+  readonly idleTimeoutMs?: number;
+  readonly driver?: ProviderDriverKind;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
@@ -645,6 +647,7 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.driver === undefined ? {} : { driver: input.driver }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -673,10 +676,10 @@ function layerTest(input: {
     IdAllocator.layer,
     layerConfiguredMcpRegistry,
     McpProviderSessions.layer,
-    ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
-      ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
-    }).pipe(
+    ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
+    ProviderSessionManager.layerWithOptions(
+      input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs },
+    ).pipe(
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
@@ -3168,6 +3171,253 @@ it.effect(
         ),
       );
     }),
+);
+
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+
+const openIdleClaudeSession = (fixtureName: string) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* idAllocator.allocate.thread({
+      fixtureName,
+      projectId: yield* idAllocator.allocate.project({ fixtureName }),
+    });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+    yield* eventSink.write({
+      events: [
+        yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "provider-thread.updated",
+          threadId,
+          driver: CLAUDE_DRIVER,
+          occurredAt: now,
+          payload: providerThread,
+        },
+      ],
+    });
+    const runtime = yield* manager.open({
+      threadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+    const startBusyTurn = Effect.gen(function* () {
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "hello",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+    });
+    const writeRequest = (status: "pending" | "resolved") =>
+      Effect.gen(function* () {
+        const request = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread,
+          now,
+        });
+        yield* eventSink.write({
+          events: request.events.map((event) =>
+            status === "resolved" && event.type === "runtime-request.updated"
+              ? { ...event, payload: { ...event.payload, status, resolvedAt: now } }
+              : event,
+          ),
+        });
+      });
+    return {
+      threadId,
+      providerSessionId,
+      providerThread,
+      runtime,
+      startBusyTurn,
+      writeRequest,
+    };
+  });
+
+it.effect("ProviderSessionManagerV2 idle-releases Claude after the live idle-timeout setting", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const first = yield* openIdleClaudeSession("provider-session-manager-claude-idle");
+
+      yield* TestClock.adjust("9 minutes");
+      assert.isTrue(yield* manager.isLive(first.providerSessionId));
+      yield* TestClock.adjust("1 minute");
+      assert.isFalse(yield* manager.isLive(first.providerSessionId));
+
+      // Lowering the setting reaches a session that is already idle, with no new activity.
+      const second = yield* openIdleClaudeSession("provider-session-manager-claude-idle-live");
+      yield* TestClock.adjust("2 minutes");
+      yield* settings.updateSettings({ providerIdleTimeoutMinutes: 3 });
+      assert.isTrue(yield* manager.isLive(second.providerSessionId));
+      yield* TestClock.adjust("1 minute");
+      assert.isFalse(yield* manager.isLive(second.providerSessionId));
+      assert.equal((yield* Ref.get(state)).closeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerTest({
+          state,
+          driver: CLAUDE_DRIVER,
+          serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect.each([
+  { name: "a busy turn", pendingWork: false, arrange: "turn" },
+  { name: "background work or a running subagent", pendingWork: true, arrange: "none" },
+  { name: "a pending request", pendingWork: false, arrange: "request" },
+] as const)(
+  "ProviderSessionManagerV2 keeps an idle Claude session past 4 hours with $name",
+  ({ pendingWork, arrange }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const session = yield* openIdleClaudeSession(`provider-session-manager-keep-${arrange}`);
+        if (arrange === "turn") yield* session.startBusyTurn;
+        if (arrange === "request") yield* session.writeRequest("pending");
+
+        yield* TestClock.adjust("5 hours");
+
+        assert.isTrue(yield* manager.isLive(session.providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerTest({
+            state,
+            driver: CLAUDE_DRIVER,
+            hasPendingBackgroundWork: Effect.succeed(pendingWork),
+            serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 idle-releases Claude once its background work ends", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const backgroundWork = yield* Ref.make(true);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const session = yield* openIdleClaudeSession("provider-session-manager-background-ends");
+
+      yield* TestClock.adjust("5 hours");
+      assert.isTrue(yield* manager.isLive(session.providerSessionId));
+
+      yield* Ref.set(backgroundWork, false);
+      yield* TestClock.adjust("10 minutes");
+      assert.isFalse(yield* manager.isLive(session.providerSessionId));
+    });
+
+    yield* effect.pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerTest({
+          state,
+          driver: CLAUDE_DRIVER,
+          hasPendingBackgroundWork: Ref.get(backgroundWork),
+          serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 resumes a Claude thread intact after an idle release", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const session = yield* openIdleClaudeSession("provider-session-manager-claude-resume");
+      yield* session.writeRequest("resolved");
+      const history = Effect.map(
+        projectionStore.getThreadProjection(session.threadId),
+        (projection) => ({
+          nativeThreadRefs: projection.providerThreads.map((thread) => thread.nativeThreadRef),
+          messages: projection.messages,
+          turnItems: projection.turnItems,
+        }),
+      );
+      const before = yield* history;
+      assert.lengthOf(before.turnItems, 1);
+
+      yield* TestClock.adjust("10 minutes");
+      assert.isFalse(yield* manager.isLive(session.providerSessionId));
+      assert.deepStrictEqual(yield* history, before);
+      const released = (yield* projectionStore.getThreadProjection(
+        session.threadId,
+      )).providerSessions.find((record) => record.id === session.providerSessionId);
+      assert.equal(released?.status, "stopped");
+      assert.isDefined(released);
+
+      const reopened = yield* manager.open({
+        threadId: session.threadId,
+        providerSessionId: session.providerSessionId,
+        modelSelection,
+        runtimePolicy,
+        resumeFromSession: released,
+        initialNativeThreadId: "native-thread",
+      });
+      const resumed = yield* reopened.resumeThread({
+        providerThread: session.providerThread,
+        threadId: session.threadId,
+      });
+      assert.equal(reopened.providerSessionId, session.providerSessionId);
+      assert.deepStrictEqual(resumed.nativeThreadRef, session.providerThread.nativeThreadRef);
+      assert.deepStrictEqual(yield* history, before);
+      assert.deepInclude(yield* Ref.get(state), { openCount: 2, closeCount: 1, resumeCount: 1 });
+    });
+
+    yield* effect.pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerTest({
+          state,
+          driver: CLAUDE_DRIVER,
+          serverSettingsLayer: ServerSettings.layerTest({ providerIdleTimeoutMinutes: 10 }),
+        }),
+      ),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>

@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  DEFAULT_SERVER_SETTINGS,
   isOrchestrationV2WorkActive,
   type MemoryTaskGrantCeiling,
   ModelSelection,
@@ -64,7 +65,6 @@ import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 /** Past adapters' own 10 s stop fallbacks, so they settle first when the provider answers at all. */
 export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
@@ -255,7 +255,6 @@ interface LiveSessionEntry {
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
 }
 
@@ -274,7 +273,6 @@ type ProviderSessionEventSignal =
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
-  readonly maxIdlePinMs?: number;
   readonly configureMcp?: boolean;
 }
 
@@ -472,7 +470,59 @@ export const layerWithOptions = (
         readonly threadId: ThreadId;
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
-      const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
+      // Only Claude follows the setting: only its resume after an idle release is proven.
+      const idleTimeoutFor = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
+        options.idleTimeoutMs !== undefined || runtime.driver !== "claudeAgent"
+          ? Effect.succeed(idleTimeoutMs)
+          : (Option.isNone(serverSettings)
+              ? Effect.succeed(DEFAULT_SERVER_SETTINGS)
+              : serverSettings.value.getSettings.pipe(
+                  Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+                )
+            ).pipe(Effect.map((settings) => settings.providerIdleTimeoutMinutes * 60_000));
+      // ponytail: wakes at least once a minute so a lowered setting applies to sessions already idle;
+      // a settings-change subscription could replace it if idle sessions ever number in the thousands.
+      const waitIdleTimeout = Effect.fnUntraced(function* (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+      ) {
+        const idleSinceMs = yield* Clock.currentTimeMillis;
+        while (true) {
+          const remainingMs =
+            idleSinceMs + (yield* idleTimeoutFor(runtime)) - (yield* Clock.currentTimeMillis);
+          if (remainingMs <= 0) return;
+          yield* Effect.sleep(Duration.millis(Math.min(remainingMs, 60_000)));
+        }
+      });
+      /** Projection work tied to this live process: a pending live request, and optionally its background roster. */
+      const hasUnfinishedRecords = (
+        entry: LiveSessionEntry,
+        include: { readonly backgroundRoster: boolean },
+      ) => {
+        const providerSessionId = entry.runtime.providerSessionId;
+        return Effect.forEach(entry.attachedThreadIds, (threadId) =>
+          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
+            runtimeRequestStatuses: ["pending"],
+          }),
+        ).pipe(
+          Effect.map((projections) =>
+            projections.some(
+              (projection) =>
+                projection.runtimeRequests.some(
+                  (request) =>
+                    request.responseCapability.type === "live" &&
+                    request.responseCapability.providerSessionId === providerSessionId,
+                ) ||
+                (include.backgroundRoster &&
+                  projection.providerThreads.some(
+                    (providerThread) =>
+                      providerThread.providerSessionId === providerSessionId &&
+                      (providerThread.pendingBackgroundTasks ?? []).length > 0,
+                  )),
+            ),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+      };
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
         readonly issued: boolean;
@@ -1250,72 +1300,54 @@ export const layerWithOptions = (
           readonly providerSessionId: ProviderSessionId;
           readonly generation: number;
         }): Effect.fn.Return<void> {
-          const current = yield* Ref.get(sessions);
           const key = sessionKey(input.providerSessionId);
-          const entry = current.get(key);
-          if (
-            entry === undefined ||
-            entry.busyTurns.size > 0 ||
-            entry.idleGeneration !== input.generation
-          ) {
-            return;
-          }
-          // Capture runtime identity before yielding; replacements can reuse the session id.
-          const probedRuntime = entry.runtime;
-          const hasPendingWork =
-            probedRuntime.hasPendingBackgroundWork === undefined
-              ? false
-              : yield* probedRuntime.hasPendingBackgroundWork.pipe(
-                  Effect.catchCause(() => Effect.succeed(false)),
-                );
-          if (hasPendingWork) {
-            const now = yield* Clock.currentTimeMillis;
-            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
-              const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
-                const latestEntry = latest.get(key);
-                if (
-                  latestEntry === undefined ||
-                  latestEntry.busyTurns.size > 0 ||
-                  latestEntry.idleGeneration !== input.generation ||
-                  latestEntry.runtime !== probedRuntime
-                ) {
-                  return [false, latest] as const;
-                }
-                const updated = new Map(latest);
-                updated.set(key, { ...latestEntry, pinnedSinceMs });
-                return [true, updated] as const;
-              });
-              if (!shouldContinuePin) {
-                return;
-              }
-              yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
-                providerSessionId: input.providerSessionId,
-                pinnedForMs: now - pinnedSinceMs,
-              });
-              // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
-              yield* Effect.sleep(Duration.millis(idleTimeoutMs));
-              return yield* releaseIfStillIdle(input);
+          // Capture runtime identity on the first pass; replacements can reuse the session id.
+          let probedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
+          while (true) {
+            const entry = (yield* Ref.get(sessions)).get(key);
+            if (
+              entry === undefined ||
+              entry.busyTurns.size > 0 ||
+              entry.idleGeneration !== input.generation ||
+              (probedRuntime !== undefined && entry.runtime !== probedRuntime)
+            ) {
+              return;
             }
-            yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
-              providerSessionId: input.providerSessionId,
-              pinnedForMs: now - pinnedSinceMs,
-            });
-          }
-          // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
-          yield* releaseEntry({
-            providerSessionId: input.providerSessionId,
-            reason: "idle_timeout",
-            cancelIdleFiber: false,
-            onlyIfIdleGeneration: input.generation,
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
+            probedRuntime = entry.runtime;
+            // Never end a process with work in flight; a failed probe counts as work.
+            const hasPendingWork =
+              (entry.runtime.hasPendingBackgroundWork === undefined
+                ? false
+                : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                    Effect.catchCause(() => Effect.succeed(true)),
+                  )) || (yield* hasUnfinishedRecords(entry, { backgroundRoster: false }));
+            let keptForRequest = false;
+            if (!hasPendingWork) {
+              // Adapter probes yield; guard busyTurns and idleGeneration atomically when removing the entry.
+              yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
-                cause,
-              }),
-            ),
-          );
+                reason: "idle_timeout",
+                cancelIdleFiber: false,
+                onlyIfIdleGeneration: input.generation,
+                keepIf: hasUnfinishedRecords(entry, { backgroundRoster: false }).pipe(
+                  Effect.tap((kept) => Effect.sync(() => (keptForRequest = kept))),
+                ),
+              }).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
+                    providerSessionId: input.providerSessionId,
+                    cause,
+                  }),
+                ),
+              );
+              if (!keptForRequest) return;
+            }
+            yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
+              providerSessionId: input.providerSessionId,
+            });
+            // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
+            yield* waitIdleTimeout(entry.runtime);
+          }
         },
       );
 
@@ -1334,13 +1366,9 @@ export const layerWithOptions = (
           ),
         );
 
-      // Provider activity restarts the pin budget, so background work that keeps
-      // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released. Progress events can be
-      // frequent, so keep this untraced.
+      // Provider progress events can be frequent, so keep this untraced.
       const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
-        options?: { readonly providerActivity?: boolean },
       ) {
         const key = sessionKey(providerSessionId);
         const current = yield* Ref.get(sessions);
@@ -1351,7 +1379,7 @@ export const layerWithOptions = (
 
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
-        const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
+        const idleFiber = yield* waitIdleTimeout(entry.runtime).pipe(
           Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
           Effect.forkIn(layerScope),
         );
@@ -1365,7 +1393,6 @@ export const layerWithOptions = (
             ...latestEntry,
             idleGeneration: generation,
             idleFiber,
-            ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
           });
           return updated;
         });
@@ -1373,15 +1400,6 @@ export const layerWithOptions = (
 
       const scheduleIdleRelease = (providerSessionId: ProviderSessionId) =>
         withActivityError(providerSessionId, scheduleIdleReleaseInternal(providerSessionId));
-
-      const touchActivity = (
-        providerSessionId: ProviderSessionId,
-        options?: { readonly providerActivity?: boolean },
-      ) =>
-        withActivityError(
-          providerSessionId,
-          scheduleIdleReleaseInternal(providerSessionId, options),
-        );
 
       const attachThread = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -1596,7 +1614,6 @@ export const layerWithOptions = (
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
                 idleFiber: null,
-                pinnedSinceMs: null,
               });
               return [{ idleFiber: entry.idleFiber }, updated] as const;
             });
@@ -1914,34 +1931,12 @@ export const layerWithOptions = (
               );
         if (hasPendingWork) return;
         // Checked under the request permit so a runless request mid-persist is not cancelled.
-        const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
-          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
-            runtimeRequestStatuses: ["pending"],
-          }),
-        ).pipe(
-          Effect.map((projections) =>
-            projections.some(
-              (projection) =>
-                projection.runtimeRequests.some(
-                  (request) =>
-                    request.responseCapability.type === "live" &&
-                    request.responseCapability.providerSessionId === providerSessionId,
-                ) ||
-                projection.providerThreads.some(
-                  (providerThread) =>
-                    providerThread.providerSessionId === providerSessionId &&
-                    (providerThread.pendingBackgroundTasks ?? []).length > 0,
-                ),
-            ),
-          ),
-          Effect.orElseSucceed(() => true),
-        );
         yield* releaseEntry({
           providerSessionId,
           reason: "idle_timeout",
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords,
+          keepIf: hasUnfinishedRecords(entry, { backgroundRoster: true }),
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
@@ -2200,12 +2195,12 @@ export const layerWithOptions = (
               ),
             ),
           steerTurn: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+            observeActivity(providerSessionId, scheduleIdleRelease(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+            observeActivity(providerSessionId, scheduleIdleRelease(providerSessionId)).pipe(
               Effect.andThen(
                 runtime.interruptTurn(input).pipe(
                   Effect.timeoutOrElse({
@@ -2225,7 +2220,7 @@ export const layerWithOptions = (
               ),
             ),
           respondToRuntimeRequest: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+            observeActivity(providerSessionId, scheduleIdleRelease(providerSessionId)).pipe(
               Effect.andThen(
                 runtime
                   .respondToRuntimeRequest(input)
@@ -2318,7 +2313,7 @@ export const layerWithOptions = (
                   )
                 : metadataOnly
                   ? Effect.void
-                  : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
+                  : scheduleIdleRelease(entry.runtime.providerSessionId),
             ).pipe(
               Effect.andThen(
                 event.type === "provider_session.updated"
@@ -2526,7 +2521,7 @@ export const layerWithOptions = (
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
                 });
-                yield* touchActivity(input.providerSessionId);
+                yield* scheduleIdleRelease(input.providerSessionId);
                 return existing.exposedRuntime;
               }
 
@@ -2630,7 +2625,6 @@ export const layerWithOptions = (
                 idleGeneration: 0,
                 busyTurns: new Set(),
                 idleFiber: null,
-                pinnedSinceMs: null,
                 idleThreadUnloads: new Map(),
               };
               yield* Ref.update(sessions, (current) => {
@@ -2680,7 +2674,7 @@ export const layerWithOptions = (
             if (entry === undefined) {
               return Option.none<ProviderAdapter.ProviderAdapterV2SessionRuntime>();
             }
-            yield* touchActivity(providerSessionId);
+            yield* scheduleIdleRelease(providerSessionId);
             return Option.some(entry.exposedRuntime);
           },
           (effect, providerSessionId) =>
