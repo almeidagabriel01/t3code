@@ -903,6 +903,77 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     },
   );
 
+  // An environment failure repeats on every run while Linux stays as it was: under Wait it goes
+  // back only once Linux has been offline and come back since, or when the user sends it there.
+  it.each([
+    ["a heartbeat since", {}, {}, "linux-wait"],
+    ["Linux back, but before it failed", {}, { backOnlineAt: NOW - 10_000 }, "linux-wait"],
+    ["Linux offline and back since", {}, { backOnlineAt: NOW - 100 }, "linux-start"],
+    ["the user sent it to Linux", { route: "linux" as const }, {}, "linux-start"],
+    [
+      "an expired question that waits",
+      { ask: { reason: "dropped" as const, deadlineAt: ago(1) } },
+      {},
+      "linux-wait",
+    ],
+  ] as const)("an environment failure under Wait, %s: %s", (_, extra, back, outcome) => {
+    const entry = job("a", "vp test run", {
+      dropped: true,
+      failure: "sh: 1: tsgo: not found",
+      linuxFailedAt: NOW - 5000,
+      ...extra,
+    } as never);
+    const plan = planRoutes(
+      input(
+        [entry],
+        { runnerWhere: "linux", runnerDropped: "wait", runnerDeadlineAction: "wait" },
+        { health: { ...ONLINE, okAt: NOW - 100, ...back } },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "linux-wait") {
+      expect(plan.reasons.a).toMatch(/^Linux couldn't run this: sh: 1: tsgo: not found: /);
+    }
+  });
+
+  it.each([
+    [{}, "linux-wait"],
+    [{ backOnlineAt: NOW - 100 }, "linux-start"],
+  ] as const)("without remoto under Wait, Linux %j: %s", (back, outcome) => {
+    const entry = job("a", "vp test run", {
+      failure: "remoto is not installed",
+      linuxFailedAt: NOW - 5000,
+    } as never);
+    const plan = planRoutes(
+      input(
+        [entry],
+        { runnerWhere: "linux", runnerUnavailable: "wait" },
+        { health: { ...ONLINE, okAt: NOW - 100, ...back } },
+      ),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+  });
+
+  // Hybrid and Mac first never wait for Linux: the job runs here instead of failing there again.
+  it.each(["automatic", "macFirst"] as const)(
+    "%s keeps an environment failure under Wait on this Mac",
+    (where) => {
+      const entry = job("a", "vp test run", {
+        dropped: true,
+        failure: "sh: 1: tsgo: not found",
+        linuxFailedAt: NOW - 5000,
+      } as never);
+      const plan = planRoutes(
+        input(
+          [entry],
+          { runnerWhere: where, runnerDropped: "wait" },
+          { health: { ...READ, okAt: NOW - 100 } },
+        ),
+      );
+      expect(outcomeOf(plan, "a")).toBe("mac-start");
+    },
+  );
+
   it("an open question holds the job until its deadline", () => {
     const plan = offline(job("a", "vp test run", { ask: asked(60_000) }), {});
     expect(plan.asks).toEqual({});
@@ -1230,12 +1301,16 @@ describe("Linux health", () => {
       online: true,
       failures: 0,
       okAt: beat(4),
+      backOnlineAt: beat(4),
       load1: 0.5,
       cpuCount: 6,
     });
-    expect(nextHealth(health, fail, machine, 20_000, beat(5))).toMatchObject({
-      online: true,
-      failures: 1,
+    // Only coming back from offline moves it, not every good beat.
+    health = nextHealth(health, fail, machine, 20_000, beat(5));
+    expect(health).toMatchObject({ online: true, failures: 1, backOnlineAt: beat(4) });
+    expect(nextHealth(health, ok, machine, 20_000, beat(6))).toMatchObject({
+      okAt: beat(6),
+      backOnlineAt: beat(4),
     });
   });
 

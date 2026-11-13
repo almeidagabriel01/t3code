@@ -23,8 +23,10 @@ const mocks = vi.hoisted(() => ({
     setMaxRunning: vi.fn(),
     setPriority: vi.fn(),
     route: vi.fn(),
+    moveAll: vi.fn(),
     canChange: true,
     canRoute: true,
+    canRouteAll: true,
   },
   state: null as unknown as HeavyQueueState,
   commands: { commands: [], cpuCount: 8 } as HeavyCommandsState,
@@ -96,12 +98,14 @@ function setup(
     "setMaxRunning",
     "setPriority",
     "route",
+    "moveAll",
   ] as const) {
     mocks.actions[key].mockReset();
   }
   mocks.openThread.mockReset();
   mocks.actions.canChange = true;
   mocks.actions.canRoute = true;
+  mocks.actions.canRouteAll = true;
   mocks.commands = { commands, cpuCount: 8 };
   mocks.stop = { canStop: true, stop: vi.fn() };
   mocks.state = {
@@ -507,6 +511,34 @@ describe("HeavyWorkSection", () => {
     await expect
       .element(screen.getByRole("menuitem", { name: "Run on Linux" }))
       .toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("moves every waiting job to the other machine from each machine's header, and back", async () => {
+    setup([entry("run", { startedAt: STARTED }), entry("m"), entry("l")], {
+      linux: LINUX,
+      routes: { l: "linux" },
+    });
+    await using screen = await render(group());
+    const mac = screen.getByRole("group", { name: "This Mac" });
+    const linux = screen.getByRole("group", { name: "Linux" });
+    await userEvent.click(mac.getByRole("button", { name: "Move all to Linux" }));
+    await userEvent.click(linux.getByRole("button", { name: "Move all to this Mac" }));
+    expect(mocks.actions.moveAll.mock.calls).toEqual([["linux"], ["mac"]]);
+    expect(mac.element().textContent).not.toContain("Move all to this Mac");
+  });
+
+  it("offers Move all only where a job would move, and greys it without the permission", async () => {
+    setup([entry("m", { where: "mac" })], { linux: LINUX });
+    {
+      await using _none = await render(group());
+      expect(document.body.textContent).not.toContain("Move all");
+    }
+
+    setup([entry("m")], { linux: LINUX });
+    mocks.actions.canRouteAll = false;
+    await using greyed = await render(group());
+    await expect.element(greyed.getByRole("button", { name: "Move all to Linux" })).toBeDisabled();
+    expect(document.body.textContent).not.toContain("Move all to this Mac");
   });
 
   it("asks where to run with a live countdown, and answers or cancels from the row", async () => {
