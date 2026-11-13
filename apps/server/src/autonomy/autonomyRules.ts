@@ -81,15 +81,20 @@ export interface AutonomyCandidate {
   readonly source: { readonly rule: AutonomyRule } | { readonly watch: AutonomyWatch };
 }
 
-/** Who this signal wakes. Only assistants in reply-and-notify mode ever wake. */
+/**
+ * Who this signal wakes. Rules wake only assistants in reply-and-notify mode; a watch was asked
+ * for by the user, so it wakes its assistant in either mode. `watchesOnly` keeps the rules out.
+ */
 export function candidatesFor(input: {
   readonly signal: AutonomySignal;
   readonly assistants: ReadonlyArray<{ readonly id: string; readonly autonomy: AssistantAutonomy }>;
   readonly watches: ReadonlyArray<AutonomyWatch>;
   readonly settings: AutonomySettings;
   readonly nowMs: number;
+  readonly watchesOnly?: boolean;
 }): ReadonlyArray<AutonomyCandidate> {
   const { signal, settings } = input;
+  const active = new Set(input.assistants.map((assistant) => assistant.id));
   const awake = new Map(
     input.assistants
       .filter(({ autonomy }) => autonomy.mode === "reply-and-notify")
@@ -97,7 +102,7 @@ export function candidatesFor(input: {
   );
   const rule = ruleOfSignal(signal);
   const byRule: AutonomyCandidate[] =
-    rule === undefined
+    rule === undefined || input.watchesOnly === true
       ? []
       : [...awake]
           .filter(
@@ -106,7 +111,7 @@ export function candidatesFor(input: {
           )
           .map(([assistantId]) => ({ assistantId, source: { rule } }));
   const byWatch = input.watches
-    .filter((watch) => awake.has(watch.assistantId) && watchMatches(watch, signal, input.nowMs))
+    .filter((watch) => active.has(watch.assistantId) && watchMatches(watch, signal, input.nowMs))
     .map((watch) => ({ assistantId: watch.assistantId, source: { watch } }));
   return [...byRule, ...byWatch];
 }
