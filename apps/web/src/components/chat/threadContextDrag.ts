@@ -104,7 +104,7 @@ export interface ThreadDragLabel {
   readonly count: number;
   /** The one dragged thread; null for several. */
   readonly threadKey: string | null;
-  /** The workspace key of that thread; null when it opens without tabs (assistant, side chat). */
+  /** The workspace to split; null when it has none (a side chat, or nothing on screen). */
   readonly projectKey: string | null;
   /** A tab moves between groups and never mentions itself in a composer. */
   readonly fromTab?: boolean;

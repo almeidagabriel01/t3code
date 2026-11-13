@@ -276,7 +276,8 @@ describe("AssistantSidebarSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Working in ProOps" }));
     expect(onOpen).toHaveBeenLastCalledWith({ environmentId: "env", threadId: "task-web" });
     const child = screen.getByTestId("sidebar-subagent-row");
-    await expect.element(child).toHaveTextContent("Review the diff");
+    await expect.element(child).toBeVisible();
+    expect(child.element().textContent).toContain("Review the diff");
     await userEvent.click(child);
     expect(onOpen).toHaveBeenLastCalledWith({ environmentId: "env", threadId: "child-1" });
     expect(onOpen).toHaveBeenCalledTimes(2);
@@ -372,6 +373,14 @@ describe("AssistantSidebarSection", () => {
       screen.container.querySelector('[data-sidebar-row="assistant:env:jarvis"] [data-jump-hint]')
         ?.textContent,
     ).toBe("1");
+    // Every numbered subagent row wears its number.
+    expect(
+      [
+        ...screen.container.querySelectorAll(
+          '[data-testid="sidebar-subagent-row"] [data-jump-hint]',
+        ),
+      ].map((hint) => hint.textContent),
+    ).toEqual(["3", "4", "5"]);
 
     await userEvent.click(screen.getByTestId("assistant-settled-toggle"));
     expect(fullRows()).toEqual([

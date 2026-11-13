@@ -17,7 +17,8 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { selectActiveMainFileSurface, useRightPanelStore } from "../rightPanelStore";
-import { useProjects, useQuietThreadShells } from "../state/entities";
+import { readThreadShell, useProjects, useQuietThreadShells } from "../state/entities";
+import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "./chat/threadContextDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -340,5 +341,91 @@ describe("sidebar assistants section", () => {
         "/local/assistant:jarvis:1",
       ),
     );
+  });
+
+  it("drags a task's second row into a split of its project", async () => {
+    const activeProject = project("active");
+    const task = threadShell(activeProject.id, 1);
+    const environmentId = activeProject.environmentId;
+    const entry = {
+      environmentId,
+      assistant: { id: "jarvis", name: "Jarvis", threadId: null, role: "", scope: "all" },
+    } as never as AssistantSidebarModel["active"][number];
+    vi.mocked(useAssistantSidebarModel).mockReturnValue({
+      enabled: true,
+      collapsed: false,
+      showAll: false,
+      expandedGroups: [],
+      active: [entry],
+      teams: [],
+      ranked: [],
+      shown: [{ entry, presence: { mood: "idle" } }],
+      hidden: 0,
+      items: new Map([
+        [
+          "local:jarvis",
+          {
+            sections: {
+              pinned: [],
+              open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
+              snoozed: [],
+              settled: [],
+            },
+            expanded: true,
+            subagents: [],
+          },
+        ],
+      ]),
+      threadKeys: [],
+    } as never as AssistantSidebarModel);
+    vi.mocked(readThreadShell).mockReturnValue(task);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([task]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: { environmentId, projectId: activeProject.id },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const copy = await vi.waitUntil(() =>
+      screen.container.querySelector(
+        `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
+      ),
+    );
+    const pointer = (type: string, x: number, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    copy.dispatchEvent(pointer("pointerdown", 1, 1));
+    const pane = document.createElement("div");
+    pane.setAttribute("data-thread-groups", "local:active");
+    pane.innerHTML = '<div data-thread-group-body="main" style="width:100%;height:100%"></div>';
+    Object.assign(pane.style, { position: "fixed", inset: "0", zIndex: "50" });
+    document.body.append(pane);
+    using _pane = { [Symbol.dispose]: () => pane.remove() };
+    const drops: ThreadTabDropDetail[] = [];
+    pane.addEventListener(THREAD_TAB_DROP_EVENT, (event) =>
+      drops.push((event as CustomEvent<ThreadTabDropDetail>).detail),
+    );
+    document.dispatchEvent(pointer("pointermove", 40, 40));
+    document.dispatchEvent(pointer("pointerup", 40, 40));
+    expect(drops.map((drop) => drop.threadKey)).toEqual([`local:${task.id}`]);
   });
 });

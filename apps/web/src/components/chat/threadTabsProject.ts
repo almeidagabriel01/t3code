@@ -6,8 +6,8 @@ import { readThreadShell } from "../../state/entities";
 import { threadTabsWorkspaceKey, useThreadTabsStore } from "../../threadTabsStore";
 
 /**
- * A thread's tabs open in its project's workspace. Assistant conversations and side chats live outside project lists, so
- * they open without tabs.
+ * A thread's tabs open in its project's workspace. Assistant conversations and side chats have no
+ * project workspace; an assistant chat shows tabs only in a split it was dragged into.
  */
 export function threadTabsProjectKey(
   shell: Pick<EnvironmentThreadShell, "environmentId" | "projectId" | "id" | "lineage"> | null,

@@ -2444,6 +2444,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               outsideProjects: isAssistantSubagent(thread),
+              // A subagent row has no title input to rename in.
+              canRename: !isAssistantSubagent(thread),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -3219,6 +3221,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           <StaticThreadRow
                             key={sectionRowKey}
                             {...threadRowProps(thread, section, assistantRow)}
+                            // One line, lighter than a project's rows.
+                            variant="folder"
                             sectionRowKey={sectionRowKey}
                             // A sweep runs down the project list, which this copy is not in.
                             onActionSweepStart={ignoreActionSweep}

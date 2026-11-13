@@ -109,6 +109,8 @@ export interface ThreadActionMenuState {
   readonly canLinkCard?: boolean | undefined;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted here. */
   readonly assistant?: { readonly name: string } | null | undefined;
+  /** False where the row offering the menu has no title input. */
+  readonly canRename?: boolean | undefined;
   /** An assistant's delegated subagent: it lives outside project lists, as the assistant chat does. */
   readonly outsideProjects?: boolean | undefined;
   /** Set when an assistant launched this thread as a task. */
@@ -206,7 +208,7 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    ...(isAssistant
+    ...(isAssistant || state.canRename === false
       ? []
       : [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]),
     ...(state.supports.titleRegeneration && !isAssistant

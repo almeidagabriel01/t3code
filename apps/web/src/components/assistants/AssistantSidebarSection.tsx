@@ -180,13 +180,15 @@ const AssistantRow = memo(function AssistantRow(props: {
     readonly project: ProjectFaviconProject;
   }>;
   readonly item: AssistantSidebarItem;
-  readonly jumpLabel: string | null;
+  readonly jumpLabelByKey: ReadonlyMap<string, string> | null | undefined;
   readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;
   readonly onThreadContextMenu?: SubagentContextMenu | undefined;
 }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const { presence, dotClass, open, threadRef } = useAssistantState(props.entry, props.onOpen);
+  const jumpLabel =
+    threadRef === null ? null : (props.jumpLabelByKey?.get(scopedThreadKey(threadRef)) ?? null);
   const { sections, expanded, subagents } = props.item;
   // Folds persist beside the project folds, under a key no project can take.
   const foldKey = assistantFoldKey(props.entry);
@@ -299,7 +301,7 @@ const AssistantRow = memo(function AssistantRow(props: {
           </Tooltip>
         ) : null}
         <SidebarNotificationDot dotClass={dotClass} />
-        {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
+        {jumpLabel ? <JumpHintBadge label={jumpLabel} /> : null}
         {foldable ? (
           <button
             type="button"
@@ -382,7 +384,11 @@ const AssistantRow = memo(function AssistantRow(props: {
           />
           {subagents.length > 0 ? (
             <ul aria-label={`${assistant.name} subagents`} className="m-0 p-0">
-              <SubagentRows onOpen={props.onOpen} onContextMenu={props.onThreadContextMenu}>
+              <SubagentRows
+                onOpen={props.onOpen}
+                onContextMenu={props.onThreadContextMenu}
+                jumpLabelByKey={props.jumpLabelByKey}
+              >
                 {subagents}
               </SubagentRows>
             </ul>
@@ -706,7 +712,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
         onOpen={props.onOpenThread}
         workSites={workSitesOf(entry)}
         item={items.get(`${entry.environmentId}:${entry.assistant.id}`)!}
-        jumpLabel={key === null ? null : (props.jumpLabelByKey?.get(key) ?? null)}
+        jumpLabelByKey={props.jumpLabelByKey}
         renderTaskRow={props.renderTaskRow}
         onThreadContextMenu={props.onThreadContextMenu}
       />

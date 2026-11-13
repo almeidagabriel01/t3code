@@ -11,6 +11,7 @@ import { useState } from "react";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 import { startThreadDrag } from "../threadDrag";
+import { JumpHintBadge } from "./JumpHintBadge";
 import { resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { WorkingDuration } from "./WorkingDuration";
 
@@ -30,6 +31,7 @@ function SubagentRow(props: {
   thread: EnvironmentThreadShell;
   onOpen: (threadRef: ScopedThreadRef) => void;
   onContextMenu?: SubagentContextMenu | undefined;
+  jumpLabel: string | null;
 }) {
   const { thread, onContextMenu } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -56,9 +58,13 @@ function SubagentRow(props: {
           className={cn("size-1.5 shrink-0 rounded-full", subagentDotClass(thread))}
         />
         <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-        <span className="shrink-0 tabular-nums">
-          <WorkingDuration startedAt={resolveThreadWorkingStartedAt(thread)} />
-        </span>
+        {props.jumpLabel ? (
+          <JumpHintBadge label={props.jumpLabel} />
+        ) : (
+          <span className="shrink-0 tabular-nums">
+            <WorkingDuration startedAt={resolveThreadWorkingStartedAt(thread)} />
+          </span>
+        )}
       </button>
     </li>
   );
@@ -68,6 +74,8 @@ export function SubagentRows(props: {
   children: readonly EnvironmentThreadShell[];
   onOpen: (threadRef: ScopedThreadRef) => void;
   onContextMenu?: SubagentContextMenu | undefined;
+  /** ⌘1–9 labels by thread key while the hints show. */
+  jumpLabelByKey?: ReadonlyMap<string, string> | null | undefined;
 }) {
   const show = useClientSettings((settings) => settings.sidebarShowSubagents);
   const mode = useClientSettings((settings) => settings.sidebarAgentActivityDisplayMode);
@@ -109,6 +117,7 @@ export function SubagentRows(props: {
               thread={child}
               onOpen={props.onOpen}
               onContextMenu={props.onContextMenu}
+              jumpLabel={props.jumpLabelByKey?.get(threadKeyOf(child)) ?? null}
             />
           ))
         : null}

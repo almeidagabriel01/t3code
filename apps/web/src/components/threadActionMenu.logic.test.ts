@@ -141,6 +141,13 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids).toEqual(expect.arrayContaining(["copy-thread", "copy-thread-id"]));
   });
 
+  it("leaves rename out where the row has no title input", () => {
+    const ids = (canRename: boolean) =>
+      buildThreadActionMenuItems({ ...baseState, canRename }).map((item) => item.id);
+    expect(ids(true)).toContain("rename");
+    expect(ids(false)).not.toContain("rename");
+  });
+
   it.each([
     ["not a task", null, []],
     ["a task that can be dismissed", { dismissed: false, canDismiss: true }, ["dismiss-task"]],

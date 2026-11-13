@@ -488,12 +488,15 @@ export function StaticThreadRow(
   const thread = useLiveRowThread(props.thread);
   const bag = {
     listeners: {
-      onPointerDown: (event: ReactPointerEvent) =>
+      onPointerDown: (event: ReactPointerEvent) => {
+        // Selecting text in the title input must not start a drag.
+        if (props.isRenaming) return;
         startThreadDrag(
           event.nativeEvent,
           scopeThreadRef(thread.environmentId, thread.id),
           thread.title,
-        ),
+        );
+      },
     },
     setNodeRef: noNodeRef,
     transform: null,
