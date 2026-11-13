@@ -12,6 +12,7 @@ import type * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopLoginItem from "./DesktopLoginItem.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -226,12 +227,18 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      // Startup already acted on the app link that launched it; passing it on replays it.
+      // Startup already acted on the app link and login launch; passing them on replays them.
       const appLinkPrefix = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}:`;
       const args = yield* HostProcess.Arguments;
       yield* electronApp.relaunch({
         execPath: yield* HostProcess.ExecutablePath,
-        args: args.slice(1).filter((arg) => !arg.toLowerCase().startsWith(appLinkPrefix)),
+        args: args
+          .slice(1)
+          .filter(
+            (arg) =>
+              !arg.toLowerCase().startsWith(appLinkPrefix) &&
+              arg !== DesktopLoginItem.OPENED_AT_LOGIN_ARG,
+          ),
       });
       yield* electronApp.exit(0);
     }).pipe(

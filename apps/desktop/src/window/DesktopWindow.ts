@@ -841,6 +841,9 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "linux") {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
+    // Consumed by the first window only, so a window reopened later reveals as usual.
+    const startHidden = yield* Ref.getAndSet(desktopState.startHidden, false);
+    let revealRequested = !startHidden;
     let rendererReady = false;
     let firstRevealComplete = false;
     const revealWhenReady = Effect.gen(function* () {
@@ -865,10 +868,20 @@ export const make = Effect.gen(function* () {
         );
       yield* dismissConnectingSplash;
     });
-    pendingMainReveals.set(window, revealWhenReady);
+    pendingMainReveals.set(
+      window,
+      Effect.suspend(() => {
+        revealRequested = true;
+        return revealWhenReady;
+      }),
+    );
     bindFirstRevealTrigger(revealSubscribers, () => {
       rendererReady = true;
-      void runPromise(revealWhenReady);
+      if (revealRequested) {
+        void runPromise(revealWhenReady);
+      } else if (!window.isDestroyed()) {
+        window.webContents.setBackgroundThrottling(true);
+      }
     });
 
     // Desktop IPC only answers the main window, so register it before its renderer can call in.
@@ -931,6 +944,7 @@ export const make = Effect.gen(function* () {
 
   const showConnectingSplash = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return;
+    if (yield* Ref.get(desktopState.startHidden)) return;
     const existingSplash = yield* Ref.get(splashWindowRef);
     if (Option.isSome(existingSplash)) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
@@ -1017,6 +1031,8 @@ export const make = Effect.gen(function* () {
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
+      // Asking for the app before its window exists cancels a hidden start.
+      yield* Ref.set(desktopState.startHidden, false);
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* revealMain(existingWindow.value);

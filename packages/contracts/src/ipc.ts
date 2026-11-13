@@ -1032,6 +1032,14 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** `status` is null in unpackaged builds, which never touch the system login item. */
+export const DesktopOpenAtLoginStateSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  platform: Schema.Literals(["darwin", "win32"]),
+  status: Schema.NullOr(Schema.Literals(["enabled", "requires-approval", "not-registered"])),
+});
+export type DesktopOpenAtLoginState = typeof DesktopOpenAtLoginStateSchema.Type;
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1094,6 +1102,10 @@ export interface DesktopBridge extends DesktopWindowMaterialBridge {
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  /** Null where the OS has no login items (Linux). */
+  getOpenAtLogin: () => Promise<DesktopOpenAtLoginState | null>;
+  setOpenAtLogin: (enabled: boolean) => Promise<DesktopOpenAtLoginState | null>;
+  openLoginItemsSettings: () => Promise<boolean>;
   /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
   getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;

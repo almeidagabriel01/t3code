@@ -274,6 +274,7 @@ function layerTest(input: {
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
     setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
+    setOpenAtLogin: () => Effect.die("unexpected open at login change"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -648,6 +649,53 @@ describe("DesktopWindow", () => {
           yield* windows.handleBackendNotReady;
           yield* windows.activate;
           assert.equal(reveal.mock.calls.length, 2);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              onReveal: () => {
+                reveal();
+                painted.resolve();
+              },
+            }),
+          ),
+        );
+      }),
+  );
+
+  it.effect.each(["after", "before"] as const)(
+    "keeps a login launch hidden until the app is activated %s its window exists",
+    (activation) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const reveal = vi.fn();
+        const painted = Promise.withResolvers<void>();
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          yield* Ref.set(state.startHidden, true);
+          yield* windows.showConnectingSplash;
+          assert.equal(yield* Ref.get(createCount), 0);
+          if (activation === "before") yield* windows.activate;
+          yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.isFalse(yield* Ref.get(state.startHidden));
+          fake.windowListeners.get("ready-to-show")?.();
+          if (activation === "before") {
+            yield* Effect.promise(() => painted.promise);
+            assert.equal(reveal.mock.calls.length, 1);
+            return;
+          }
+          assert.equal(reveal.mock.calls.length, 0);
+          assert.deepEqual(vi.mocked(fake.window.webContents.setBackgroundThrottling).mock.calls, [
+            [true],
+          ]);
+          yield* windows.activate;
+          assert.equal(reveal.mock.calls.length, 1);
         }).pipe(
           Effect.provide(
             layerTest({
