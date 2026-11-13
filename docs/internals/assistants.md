@@ -124,7 +124,9 @@ request's work goes only to members that may work in its project (`assistantWork
 transfer, reply and reassign are filtered or refused, the chat gets a notice naming who was left out,
 `ensureRequestThread` refuses a launch outside it (the task fails with `outside_project`), and an
 agent's `group_post` passes `projectScopeRefusal`. Before the lead, the project comes from the request, then the composer's pick, then a
-single `#slug` in the text (`assistantGroupProjectMentions`, the same parser clients highlight with);
+single `#slug` in the text (`assistantGroupProjectMentions`, the same parser clients highlight with;
+slugs come from `assistantGroupProjectSlugs` over the group's live projects, so colliding titles get
+the same `-2` suffix on every surface only when all pass that same list);
 two `#projects` force the question even when the lead would infer one. The lead routes through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
 Antigravity), which may answer `noReply` for a thanks: no task, a muted `change` line that also marks
 the message as handled. With no lead a message is stored and left pending (clients show it as waiting,

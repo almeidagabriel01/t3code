@@ -9,6 +9,8 @@ import {
   assistantGroupProjectIds,
   assistantGroupProjectMentionRanges,
   assistantGroupProjectMentions,
+  assistantGroupProjectSlug,
+  assistantGroupProjectSlugs,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
@@ -204,6 +206,40 @@ describe("assistantGroupProjectMentions", () => {
       [4, 16, "p1"],
       [18, 23, "p3"],
     ]);
+  });
+});
+
+describe("assistantGroupProjectSlugs", () => {
+  const projects = [
+    { id: "p4", name: "My App (v2)" },
+    { id: "p5", name: "C++" },
+    { id: "p6", name: "Foo & Bar" },
+    { id: "p7", name: "api." },
+    { id: "p8", name: "Ação Rápida" },
+    { id: "p9", name: "++" },
+    { id: "p3", name: "core" },
+    { id: "p1", name: "Core" },
+    { id: "p2", name: "Core 2" },
+  ];
+  it.each([
+    ["punctuation", "p4", "my-app-v2", "ship #my-app-v2 today"],
+    ["a symbol at the end", "p5", "c", "fix #c."],
+    ["a symbol between words", "p6", "foo-bar", "(#foo-bar)"],
+    ["a trailing dot", "p7", "api", "see #api"],
+    ["accents", "p8", "acao-rapida", "#Ação-Rápida"],
+    ["nothing left", "p9", "project", "in #project"],
+    ["the first id of a collision", "p1", "core", "#core"],
+    ["a later id, past a slug another title makes", "p3", "core-3", "#core-3"],
+    ["a title that makes the suffix itself", "p2", "core-2", "#core-2"],
+  ])("%s", (_name, id, slug, text) => {
+    expect(assistantGroupProjectSlugs(projects).get(id)).toBe(slug);
+    expect(assistantGroupProjectSlugs([...projects].reverse()).get(id)).toBe(slug);
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual([
+      id,
+    ]);
+  });
+  it("names one project the same way alone", () => {
+    expect(assistantGroupProjectSlug("My App (v2)")).toBe("my-app-v2");
   });
 });
 

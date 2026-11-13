@@ -367,9 +367,39 @@ export function assistantGroupMentions<
   return found;
 }
 
-/** How a `#mention` names a project: its title folded, with spaces as hyphens. */
+/**
+ * How a `#mention` names a project on its own: its title folded, each run of anything but letters
+ * and digits a hyphen. A title with neither is `project`. Use `assistantGroupProjectSlugs` for a
+ * group's list, where titles may collide.
+ */
 export function assistantGroupProjectSlug(name: string): string {
-  return foldAssistantGroupText(name).trim().replace(/\s+/g, "-");
+  const slug = foldAssistantGroupText(name)
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-|-$/g, "");
+  return slug === "" ? "project" : slug;
+}
+
+/**
+ * Each project's `#slug`, by id. Titles that make the same slug get `-2`, `-3`… in id order,
+ * skipping slugs another title makes, so the same projects in any order get the same slugs.
+ */
+export function assistantGroupProjectSlugs(
+  projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+): ReadonlyMap<string, string> {
+  const sorted = [...projects].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const natural = new Set(sorted.map((project) => assistantGroupProjectSlug(project.name)));
+  const used = new Set<string>();
+  const slugs = new Map<string, string>();
+  for (const project of sorted) {
+    const base = assistantGroupProjectSlug(project.name);
+    let slug = base;
+    for (let n = 2; used.has(slug) || (slug !== base && natural.has(slug)); n += 1) {
+      slug = `${base}-${n}`;
+    }
+    used.add(slug);
+    slugs.set(project.id, slug);
+  }
+  return slugs;
 }
 
 const PROJECT_MENTION = /(?:^|[\s(])#([\p{L}\p{N}][\p{L}\p{N}_./-]*)/gu;
@@ -386,13 +416,12 @@ export function assistantGroupProjectMentionRanges<
 ): ReadonlyArray<{ readonly start: number; readonly end: number; readonly project: P }> {
   if (!text.includes("#")) return [];
   const blanked = text.replace(UNADDRESSABLE, (match) => " ".repeat(match.length));
+  const slugs = assistantGroupProjectSlugs(projects);
   const found: Array<{ start: number; end: number; project: P }> = [];
   for (const match of blanked.matchAll(PROJECT_MENTION)) {
     const word = match[1]!.replace(/[./-]+$/, "");
     const token = foldAssistantGroupText(word);
-    const project = projects.find(
-      (candidate) => assistantGroupProjectSlug(candidate.name) === token,
-    );
+    const project = projects.find((candidate) => slugs.get(candidate.id) === token);
     if (project === undefined) continue;
     const start = match.index + match[0].length - match[1]!.length - 1;
     found.push({ start, end: start + 1 + word.length, project });
