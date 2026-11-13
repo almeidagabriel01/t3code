@@ -293,7 +293,9 @@ thread** from its long-press menu on mobile.
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
-another provider instance.
+another provider instance: the limited turn continues there right away, followed
+by any queued messages. Queued messages always start on the thread's current
+provider, unless you picked a different model in that message.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
 manually. Do this when the provider reports no reset time, because nothing
 continues the turn on its own.
