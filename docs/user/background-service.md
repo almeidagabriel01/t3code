@@ -92,7 +92,9 @@ place in the whole queue.
   always starts. Each job's test runners and build tools get as many workers as
   the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
   `node --test`, Gradle, xcodebuild, `swift build`, cargo and `cmake --build`.
-  A count the command already sets is kept.
+  The workers are a ceiling: a count the command sets is kept, and so is a lower
+  one from Gradle's or cargo's config; CMake is limited only with Ninja or Xcode.
+  `make` runs one job at a time unless you pass `-j`, so it is left as is.
 - **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
   much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
   while either is crossed, and memory must recover 5 points past the floor

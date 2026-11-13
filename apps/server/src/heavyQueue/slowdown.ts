@@ -115,6 +115,7 @@ export const applySlowdown = Effect.fn("HeavyQueueSlowdown.apply")(function* (st
         }),
       )
       .pipe(Effect.ignore);
+  // A few at a time: a big build tree should not spawn a burst of processes on a Mac already busy.
   yield* Effect.forEach(step.lower, set("-b"), { concurrency: 4, discard: true });
   yield* Effect.forEach(step.raise, set("-B"), { concurrency: 4, discard: true });
 });

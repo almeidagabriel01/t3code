@@ -151,6 +151,7 @@ export const readClues = Effect.fn("HeavyQueueDaemons.readClues")(
       spawner
         .string(ChildProcess.make("/usr/sbin/lsof", args, { stdin: "ignore", stderr: "ignore" }))
         .pipe(
+          // One sample's interval: a stuck lsof never delays the next sample.
           Effect.timeout("2 seconds"),
           Effect.orElseSucceed(() => ""),
         );

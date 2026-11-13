@@ -265,6 +265,120 @@ const WORKER_ENV = [
   "CMAKE_BUILD_PARALLEL_LEVEL",
 ] as const;
 
+/** A file's text, or null when it is missing or unreadable. */
+type ReadText = (path: string) => string | null;
+
+const readText: ReadText = (path) => {
+  try {
+    return NodeFS.readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+};
+
+/** `dir` and each folder above it, up to the first one `last` accepts or the filesystem root. */
+const foldersUp = (dir: string, last: (folder: string) => boolean = () => false) => {
+  const folders = [NodePath.resolve(dir)];
+  while (!last(folders.at(-1)!) && NodePath.dirname(folders.at(-1)!) !== folders.at(-1))
+    folders.push(NodePath.dirname(folders.at(-1)!));
+  return folders;
+};
+
+const counts = (texts: ReadonlyArray<string | null>, read: (text: string) => number | undefined) =>
+  texts.flatMap((text) => {
+    const count = text === null ? undefined : read(text);
+    return count === undefined ? [] : [count];
+  });
+
+const GRADLE_MAX = /(?:^|\s)-Dorg\.gradle\.workers\.max=(\d+)/;
+
+const gradleProperty = (text: string) => {
+  const match = /^\s*org\.gradle\.workers\.max\s*[=:]\s*(\d+)\s*$/m.exec(text);
+  return match === null ? undefined : Number(match[1]);
+};
+
+/** `build.jobs`, under `[build]` or dotted; a negative count means all cores but that many. */
+const cargoJobs = (text: string) => {
+  let section = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/#.*/, "").trim();
+    const header = /^\[\s*([\w.-]+)\s*\]$/.exec(line);
+    if (header !== null) section = header[1]!;
+    const pair = /^([\w.-]+)\s*=\s*(-?\d+)$/.exec(line);
+    if (pair !== null && (section === "" ? pair[1] : `${section}.${pair[1]}`) === "build.jobs") {
+      const jobs = Number(pair[2]);
+      return jobs < 0 ? Math.max(1, NodeOS.availableParallelism() + jobs) : jobs;
+    }
+  }
+  return undefined;
+};
+
+/** The program name and words after it of each command a job runs, its shell line's included. */
+const commandsOf = (program: string, args: ReadonlyArray<string>) =>
+  isShellLine(program, args)
+    ? readLine(args[1]!).parts.map((part) => ({
+        name: NodePath.basename(part.values[part.programAt] ?? ""),
+        rest: part.values.slice(part.programAt + 1),
+      }))
+    : [{ name: NodePath.basename(program), rest: args }];
+
+/**
+ * The cap is a ceiling: a tool keeps a lower count its own config sets, and CMake's level only
+ * goes to a build whose generator already runs in parallel (Make's runs one job at a time).
+ */
+const ownCounts = (
+  program: string,
+  args: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+  project: { readonly cwd: string; readonly read: ReadText },
+) => {
+  const home = environment.HOME ?? NodeOS.homedir();
+  const isRootProject = (folder: string) =>
+    ["settings.gradle", "settings.gradle.kts"].some(
+      (name) => project.read(NodePath.join(folder, name)) !== null,
+    );
+  const gradle = [
+    ...counts(
+      [
+        ...foldersUp(project.cwd, isRootProject).map((folder) =>
+          project.read(NodePath.join(folder, "gradle.properties")),
+        ),
+        project.read(
+          NodePath.join(
+            environment.GRADLE_USER_HOME ?? NodePath.join(home, ".gradle"),
+            "gradle.properties",
+          ),
+        ),
+      ],
+      gradleProperty,
+    ),
+    ...counts([environment.GRADLE_OPTS ?? null, environment.JAVA_OPTS ?? null], (text) => {
+      const match = GRADLE_MAX.exec(text);
+      return match === null ? undefined : Number(match[1]);
+    }),
+  ];
+  const cargo = counts(
+    [
+      ...foldersUp(project.cwd).flatMap((folder) =>
+        ["config.toml", "config"].map((name) =>
+          project.read(NodePath.join(folder, ".cargo", name)),
+        ),
+      ),
+      project.read(
+        NodePath.join(environment.CARGO_HOME ?? NodePath.join(home, ".cargo"), "config.toml"),
+      ),
+    ],
+    cargoJobs,
+  );
+  const cmakeParallel = commandsOf(program, args).some(({ name, rest }) => {
+    const at = rest.indexOf("--build");
+    if (name !== "cmake" || at === -1 || rest[at + 1] === undefined) return false;
+    const cache = project.read(NodePath.resolve(project.cwd, rest[at + 1]!, "CMakeCache.txt"));
+    return cache !== null && /^CMAKE_GENERATOR:INTERNAL=(Ninja|Xcode)/m.test(cache);
+  });
+  return { gradle: Math.min(...gradle), cargo: Math.min(...cargo), cmakeParallel };
+};
+
 const setsCount = (args: ReadonlyArray<string>, set: ReadonlyArray<string>) =>
   args.some((arg) =>
     set.some(
@@ -281,22 +395,24 @@ const flagIndex = (
   program: string,
   args: ReadonlyArray<string>,
   workers: number,
+  /** Programs whose own config already picks fewer workers. */
+  keep: ReadonlySet<string>,
 ): { readonly at: number; readonly words: ReadonlyArray<string> } | null => {
   const name = NodePath.basename(program);
   const knob = WORKER_FLAGS.find((row) => row.programs.includes(name));
-  if (knob === undefined || setsCount(args, knob.set)) return null;
+  if (knob === undefined || keep.has(name) || setsCount(args, knob.set)) return null;
   if (knob.when !== undefined && !args.some((arg) => knob.when!.test(arg))) return null;
   if (knob.subcommand !== undefined && !knob.subcommand.test(args[0] ?? "")) return null;
   return { at: knob.subcommand === undefined ? 0 : 1, words: knob.flag(workers) };
 };
 
 /** A shell line with each capped tool's flag spliced in after its program or subcommand. */
-const lineWithWorkers = (line: string, workers: number) =>
+const lineWithWorkers = (line: string, workers: number, keep: ReadonlySet<string>) =>
   readLine(line)
     .parts.flatMap((part) => {
       const rest = part.values.slice(part.programAt + 1);
       const word = part.command.words[part.programAt];
-      const insert = word === undefined ? null : flagIndex(word.value, rest, workers);
+      const insert = word === undefined ? null : flagIndex(word.value, rest, workers, keep);
       if (insert === null) return [];
       return [{ end: part.command.words[part.programAt + insert.at]!.end, words: insert.words }];
     })
@@ -315,10 +431,13 @@ export const withWorkers = (
   args: ReadonlyArray<string>,
   workers: number,
   environment: NodeJS.ProcessEnv,
+  project: { readonly cwd: string; readonly read: ReadText },
 ) => {
-  const direct = flagIndex(program, args, workers);
+  const own = ownCounts(program, args, environment, project);
+  const keep = new Set(own.gradle < workers ? ["gradle", "gradlew"] : []);
+  const direct = flagIndex(program, args, workers, keep);
   const capped = isShellLine(program, args)
-    ? [args[0]!, lineWithWorkers(args[1]!, workers), ...args.slice(2)]
+    ? [args[0]!, lineWithWorkers(args[1]!, workers, keep), ...args.slice(2)]
     : direct === null
       ? args
       : [...args.slice(0, direct.at), ...direct.words, ...args.slice(direct.at)];
@@ -326,7 +445,14 @@ export const withWorkers = (
     args: capped,
     env: {
       ...environment,
-      ...Object.fromEntries(WORKER_ENV.map((name) => [name, environment[name] ?? String(workers)])),
+      ...Object.fromEntries(
+        WORKER_ENV.filter(
+          (name) =>
+            environment[name] === undefined &&
+            !(name === "CARGO_BUILD_JOBS" && own.cargo < workers) &&
+            (name !== "CMAKE_BUILD_PARALLEL_LEVEL" || own.cmakeParallel),
+        ).map((name) => [name, String(workers)]),
+      ),
       [HEAVY_JOB_ENV]: "1",
       T3_HEAVY_WORKERS: String(workers),
     },
@@ -592,7 +718,10 @@ const runMacAttempt = async (
   const run =
     job.workers === null
       ? { args: job.args, env: { ...job.environment, [HEAVY_JOB_ENV]: "1" } }
-      : withWorkers(job.program, job.args, job.workers, job.environment);
+      : withWorkers(job.program, job.args, job.workers, job.environment, {
+          cwd: process.cwd(),
+          read: readText,
+        });
   const launch = launchOf(
     job.program,
     run.args,

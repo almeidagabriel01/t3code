@@ -853,22 +853,119 @@ describe("t3 heavy", () => {
       expected: ["-c", "FOO=1 node --test-concurrency=4 --test a.js; playwright test --workers=1"],
     },
     { program: "zsh", args: ["-c", "vp test run"], expected: ["-c", "vp test run"] },
-  ])("hands $program $args the admitted workers", ({ program, args, expected }) => {
-    const run = withWorkers(program, args, 4, { PATH: "/bin" });
-    expect(run.args).toEqual(expected);
-    expect(run.env).toEqual({
-      PATH: "/bin",
-      T3CODE_HEAVY_JOB: "1",
-      T3_HEAVY_WORKERS: "4",
-      VITEST_MAX_WORKERS: "4",
-      CARGO_BUILD_JOBS: "4",
-      CMAKE_BUILD_PARALLEL_LEVEL: "4",
-    });
-  });
+    // The cap is a ceiling: a lower count the project or user config sets wins, a higher one is capped.
+    {
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      files: {
+        "/repo/app/gradle.properties": "org.gradle.jvmargs=-Xmx2g\norg.gradle.workers.max=2\n",
+      },
+      expected: ["assembleRelease"],
+    },
+    {
+      program: "gradle",
+      args: ["build"],
+      files: {
+        "/repo/settings.gradle.kts": "",
+        "/repo/gradle.properties": "org.gradle.workers.max = 3",
+      },
+      expected: ["build"],
+    },
+    {
+      program: "gradle",
+      args: ["build"],
+      environment: { HOME: "/home/me" },
+      files: { "/home/me/.gradle/gradle.properties": "org.gradle.workers.max:2" },
+      expected: ["build"],
+    },
+    {
+      program: "zsh",
+      args: ["-c", "cd android && ./gradlew assembleRelease"],
+      environment: { JAVA_OPTS: "-Xmx1g -Dorg.gradle.workers.max=2" },
+      expected: ["-c", "cd android && ./gradlew assembleRelease"],
+    },
+    {
+      // Above the root project, and unparsable, values don't count; the user home's higher one is capped.
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      environment: { GRADLE_USER_HOME: "/gh", GRADLE_OPTS: "-Dorg.gradle.workers.max=8" },
+      files: {
+        "/repo/settings.gradle": "",
+        "/gradle.properties": "org.gradle.workers.max=1",
+        "/repo/app/gradle.properties": "org.gradle.workers.max=lots",
+        "/gh/gradle.properties": "org.gradle.workers.max=16",
+      },
+      expected: ["--max-workers=4", "assembleRelease"],
+    },
+    {
+      program: "cargo",
+      args: ["build"],
+      files: { "/repo/.cargo/config.toml": "[build]\njobs = 2 # laptop\n" },
+      expected: ["build"],
+      env: { CARGO_BUILD_JOBS: undefined },
+    },
+    {
+      // Negative: all cores but that many.
+      program: "cargo",
+      args: ["build"],
+      environment: { CARGO_HOME: "/ch" },
+      files: { "/ch/config.toml": "build.jobs = -100000" },
+      expected: ["build"],
+      env: { CARGO_BUILD_JOBS: undefined },
+    },
+    {
+      program: "cargo",
+      args: ["build"],
+      files: { "/repo/app/.cargo/config": '[term]\njobs = 1\n[build]\njobs = 32\ntarget = "x"' },
+      expected: ["build"],
+    },
+    // CMake's level only reaches a generator that already runs in parallel.
+    {
+      program: "cmake",
+      args: ["--build", "build"],
+      files: { "/repo/app/build/CMakeCache.txt": "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\n" },
+      expected: ["--build", "build"],
+    },
+    { program: "cmake", args: ["--build", "out"], expected: ["--build", "out"] },
+    {
+      program: "zsh",
+      args: ["-c", "cmake --build build -t app"],
+      files: {
+        "/repo/app/build/CMakeCache.txt":
+          "CMAKE_CACHEFILE_DIR:INTERNAL=/x\nCMAKE_GENERATOR:INTERNAL=Ninja\n",
+      },
+      expected: ["-c", "cmake --build build -t app"],
+      env: { CMAKE_BUILD_PARALLEL_LEVEL: "4" },
+    },
+  ])(
+    "hands $program $args the admitted workers",
+    ({ program, args, expected, files = {}, environment = {}, env = {} }) => {
+      const read = (path: string) => (files as Record<string, string>)[path] ?? null;
+      const run = withWorkers(
+        program,
+        args,
+        4,
+        { PATH: "/bin", ...environment },
+        { cwd: "/repo/app", read },
+      );
+      expect(run.args).toEqual(expected);
+      expect(run.env).toEqual({
+        PATH: "/bin",
+        ...environment,
+        T3CODE_HEAVY_JOB: "1",
+        T3_HEAVY_WORKERS: "4",
+        VITEST_MAX_WORKERS: "4",
+        CARGO_BUILD_JOBS: "4",
+        ...env,
+      });
+    },
+  );
 
   it("keeps worker counts the environment already sets", () => {
     const env = { VITEST_MAX_WORKERS: "1", CARGO_BUILD_JOBS: "2", CMAKE_BUILD_PARALLEL_LEVEL: "" };
-    expect(withWorkers("cargo", ["build"], 4, env).env).toMatchObject(env);
+    expect(
+      withWorkers("cargo", ["build"], 4, env, { cwd: "/repo", read: () => null }).env,
+    ).toMatchObject(env);
   });
 
   it("parses the queue dir and the separator", () => {
