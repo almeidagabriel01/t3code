@@ -30,9 +30,9 @@ import {
   type ResourceTelemetryProcess,
 } from "@t3tools/contracts";
 import { useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Alert, View } from "react-native";
 
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { deviceEnvironment } from "../../state/device";
@@ -363,39 +363,26 @@ export function DeviceAndAppSections(props: {
       {!props.live ? null : (
         <SettingsSection
           title="T3 Code"
-          trailing={
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`T3 Code, ${props.tree.app.length}, ${usageText(appUsage)}`}
-              accessibilityState={{ expanded: appOpen }}
-              onPress={() => setAppOpen((open) => !open)}
-              className="min-h-11 flex-row items-center gap-1.5 pl-6 active:opacity-70"
-            >
-              {sectionTrailing(props.tree.app.length, appUsage)}
-              <SymbolView
-                name={appOpen ? "chevron.down" : "chevron.right"}
-                size={12}
-                tintColorClassName="accent-icon-subtle"
-                type="monochrome"
-              />
-            </Pressable>
-          }
+          trailing={sectionTrailing(props.tree.app.length, appUsage)}
+          collapsible={{
+            expanded: appOpen,
+            onToggle: () => setAppOpen((open) => !open),
+            summary: `${props.tree.app.length}, ${usageText(appUsage)}`,
+          }}
         >
-          {!appOpen
-            ? null
-            : props.tree.app.map((row) => (
-                <UsageRow
-                  key={row.group}
-                  icon={APP_GROUP_ICON[row.group]}
-                  iconLabel={APP_GROUP_LABEL[row.group]}
-                  label={`${APP_GROUP_LABEL[row.group]} (${row.usage.processCount})`}
-                  usage={row.usage}
-                  processes={row.processes}
-                  cores={props.cores}
-                  facts={[]}
-                  actions={[]}
-                />
-              ))}
+          {props.tree.app.map((row) => (
+            <UsageRow
+              key={row.group}
+              icon={APP_GROUP_ICON[row.group]}
+              iconLabel={APP_GROUP_LABEL[row.group]}
+              label={`${APP_GROUP_LABEL[row.group]} (${row.usage.processCount})`}
+              usage={row.usage}
+              processes={row.processes}
+              cores={props.cores}
+              facts={[]}
+              actions={[]}
+            />
+          ))}
         </SettingsSection>
       )}
     </>

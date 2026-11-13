@@ -174,14 +174,16 @@ vi.mock("../settings/components/SettingsScreen", () => ({
     </main>
   ),
 }));
-vi.mock("../settings/components/SettingsSection", () => ({
-  SettingsSection: (props: { title?: string; trailing?: ReactNode; children: ReactNode }) => (
-    <section aria-label={props.title}>
-      {props.trailing}
-      {props.children}
-    </section>
-  ),
-}));
+vi.mock("../settings/components/SettingsSection", async () => {
+  const { ListSection } = await import("../../components/ui/ListSection");
+  return {
+    SettingsSection: (props: Parameters<typeof ListSection>[0]) => (
+      <section aria-label={props.title}>
+        <ListSection {...props} />
+      </section>
+    ),
+  };
+});
 vi.mock("../../components/ui/ListRowLayout", () => ({
   ListRowLayout: (props: { label: string; description?: string; detail?: string }) => (
     <p>{[props.label, props.description, props.detail].filter(Boolean).join("|")}</p>
@@ -1054,7 +1056,12 @@ describe("ResourceManagerRouteScreen", () => {
     });
 
     expect(outline(app!)).toEqual(["T3 Code: 1, 1.0% · 1.00 GB"]);
-    await act(async () => row(app!, "T3 Code").click());
+    expect(row(app!, "T3 Code").getAttribute("aria-expanded")).toBe("false");
+    expect(app!.querySelector(".bg-grouped-card")).toBeNull();
+    const title = [...app!.querySelectorAll("span")].find((el) => el.textContent === "T3 Code")!;
+    await act(async () => title.click());
+    expect(row(app!, "T3 Code").getAttribute("aria-expanded")).toBe("true");
+    expect(app!.querySelector(".bg-grouped-card")).not.toBeNull();
     expect(outline(app!)).toEqual([
       "T3 Code: 1, 1.0% · 1.00 GB",
       "Desktop main (1): Desktop main, 1.0% · 1.00 GB",
