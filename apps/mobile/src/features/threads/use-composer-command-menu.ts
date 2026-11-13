@@ -33,6 +33,7 @@ import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
+  isAtMessageStart,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -446,7 +447,7 @@ export function useComposerCommandMenu({
       const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
       const commandItems = buildComposerSlashCommandItems({
         query: q,
-        atMessageStart: trigger.rangeStart === 0,
+        atMessageStart: isAtMessageStart(draftMessage, trigger.rangeStart),
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
