@@ -282,10 +282,10 @@ and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
 Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
 reclaimed.
 
-**Summarize old tool output** (Settings > Maintenance, 30 days by default)
-replaces detailed tool output older than that, such as file contents and
-command output, with a one-line summary. Messages stay. Turn it off to keep
-everything. The freed space returns to disk through the repair below.
+**Summarize old tool output** (Settings > Maintenance, off by default; 30 days
+when you turn it on) replaces detailed tool output older than that, such as
+file contents and command output, with a one-line summary. Messages stay. The
+summary cannot be undone. The freed space returns to disk through the repair below.
 
 When the desktop app or the background service runs T3 Code on that machine,
 select **Reclaim** in Settings on web or desktop. T3 Code checks for free disk

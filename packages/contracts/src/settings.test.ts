@@ -77,7 +77,7 @@ describe("autonomy settings", () => {
 describe("retention and idle timeout settings", () => {
   it("default for older settings files and validate patches", () => {
     expect(decodeServerSettings({})).toMatchObject({
-      toolOutputHistoryDays: 30,
+      toolOutputHistoryDays: null,
       providerIdleTimeoutMinutes: 10,
     });
     expect(decodeServerSettingsPatch({ toolOutputHistoryDays: null })).toEqual({
