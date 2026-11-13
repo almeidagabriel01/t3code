@@ -309,7 +309,7 @@ describe("own app", () => {
     expect(uris?.textContent).toContain("http://127.0.0.1:9/integrations/callback");
     await press("Copy");
     expect(mocks.copy).toHaveBeenCalledWith("https://box.tail.ts.net/oauth/integrations/callback");
-    await press("console.cloud.google.com");
+    await press(gmail.auth.setupUrl);
     expect(mocks.openURL).toHaveBeenCalledWith(gmail.auth.setupUrl);
   });
 
@@ -327,7 +327,7 @@ describe("own app", () => {
     expect(input("Client secret").placeholder).toBe("Saved");
     expect(input("Client secret").value).toBe("");
     type("Client ID", " client-2 ");
-    await press("Connect");
+    await press("Save");
     expect(mocks.actions.saveOwnApp).toHaveBeenCalledWith({
       clientGroup: "google",
       clientId: "client-2",
@@ -340,7 +340,7 @@ describe("own app", () => {
 
     type("Client secret", "s3cret");
     mocks.actions.saveOwnApp!.mockResolvedValue({ ok: false, reason: "storage-failed" });
-    await press("Connect");
+    await press("Save");
     expect(mocks.actions.saveOwnApp).toHaveBeenLastCalledWith({
       clientGroup: "google",
       clientId: "client-2",
@@ -367,7 +367,7 @@ describe("own app", () => {
     render({ form: "own-app", catalogId: "gmail" });
     expect(input("Client secret").placeholder).toBe("");
     expect(container.textContent).not.toContain("Remove app");
-    expect(button("Connect").disabled).toBe(true);
+    expect(button("Save").disabled).toBe(true);
   });
 });
 

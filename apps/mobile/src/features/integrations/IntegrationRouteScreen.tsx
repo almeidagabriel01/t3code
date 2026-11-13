@@ -275,7 +275,7 @@ function OwnAppForm(props: FormProps) {
   return (
     <>
       <Header title={entry.name} icon={entry.icon ?? null} />
-      {setupUrl === undefined ? null : <LinkRow label={new URL(setupUrl).host} url={setupUrl} />}
+      {setupUrl === undefined ? null : <LinkRow label={setupUrl} url={setupUrl} />}
       <ListSection title="Redirect URIs to register">
         {redirectUris.map((uri) => (
           <View key={uri} className="flex-row items-center bg-grouped-card pe-2">
@@ -301,7 +301,7 @@ function OwnAppForm(props: FormProps) {
       />
       <ErrorText message={error} />
       <Button
-        label="Connect"
+        label="Save"
         tone="primary"
         fullWidth
         loading={saving}
