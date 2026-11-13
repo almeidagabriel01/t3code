@@ -661,13 +661,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       }
     }
     // daemon.json is the only record of a live daemon's PID, so it stays until that daemon exits.
-    const stuckPid =
-      (existing._tag === "Some" ? existing.value.pid : undefined) ??
-      (yield* readDaemonLockOwnerPid);
-    if (stuckPid !== undefined && (yield* isAgentDeviceProcess(stuckPid))) {
+    // A dead or reused recorded PID says nothing about who holds the lock, so the lock owner is next.
+    const recordedPid = existing._tag === "Some" ? existing.value.pid : undefined;
+    const recordedStuck = recordedPid !== undefined && (yield* isAgentDeviceProcess(recordedPid));
+    const lockPid = recordedStuck ? undefined : yield* readDaemonLockOwnerPid;
+    const stuckPid = recordedStuck
+      ? recordedPid
+      : lockPid !== undefined && (yield* isAgentDeviceProcess(lockPid))
+        ? lockPid
+        : undefined;
+    if (stuckPid !== undefined) {
       const stuck = {
         pid: stuckPid,
-        ...(existing._tag === "Some" && existing.value.version
+        ...(recordedStuck && existing._tag === "Some" && existing.value.version
           ? { version: existing.value.version }
           : {}),
       };

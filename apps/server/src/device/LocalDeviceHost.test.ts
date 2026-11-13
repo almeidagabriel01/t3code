@@ -243,7 +243,10 @@ describe("AgentDevice startup", () => {
   );
 
   const stuckDaemon = Effect.fn("stuckDaemon")(function* (
-    recordedIn: "daemon.json" | "daemon.lock" = "daemon.json",
+    recordedIn:
+      | "daemon.json"
+      | "daemon.lock"
+      | "daemon.lock behind a dead daemon.json" = "daemon.json",
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -274,8 +277,14 @@ describe("AgentDevice startup", () => {
       "node_modules/agent-device/dist/src/internal/daemon.js",
     );
     fixture.processes.set(stuckPid, { commandLine: `node ${daemonEntry}`, ignoresTerm: true });
-    if (recordedIn === "daemon.lock") {
-      yield* fs.remove(`${fixture.stateDir}/daemon.json`);
+    if (recordedIn !== "daemon.json") {
+      yield* recordedIn === "daemon.lock"
+        ? fs.remove(`${fixture.stateDir}/daemon.json`)
+        : fs.writeFileString(
+            `${fixture.stateDir}/daemon.json`,
+            // Above the Linux and macOS PID limits, so never a live process.
+            JSON.stringify({ httpPort: 12345, token: "stuck-token", pid: 4_194_305 }),
+          );
       yield* fs.makeDirectory(`${fixture.stateDir}/daemon.lock`);
       yield* fs.writeFileString(
         `${fixture.stateDir}/daemon.lock/owner.json`,
@@ -287,7 +296,7 @@ describe("AgentDevice startup", () => {
   });
 
   // regression: a daemon whose daemon.json an earlier server deleted is known only by its lock.
-  it.effect.each(["daemon.json", "daemon.lock"] as const)(
+  it.effect.each(["daemon.json", "daemon.lock", "daemon.lock behind a dead daemon.json"] as const)(
     "stops agent tools that stopped answering, recorded in %s, then starts fresh ones",
     (recordedIn) =>
       Effect.gen(function* () {
