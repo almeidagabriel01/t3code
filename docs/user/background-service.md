@@ -1,5 +1,15 @@
 # Running T3 Code in the background
 
+## Desktop app at sign-in
+
+On macOS and Windows, the desktop app starts when you sign in, so agents, the
+Runner and channels come back after a restart without opening it. It starts
+without a window; click its Dock icon or open T3 Code again to show one. Turn this off in
+Settings → General → Open at login. If macOS shows the setting as turned off in
+System Settings → Login Items, turn T3 Code on there.
+
+## Service
+
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.
 
