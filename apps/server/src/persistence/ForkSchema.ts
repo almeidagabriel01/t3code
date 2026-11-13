@@ -445,8 +445,18 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       assistant_id TEXT NOT NULL,
       watched_thread_id TEXT NOT NULL,
       -- 'rule' wakes share a minimum interval per thread; 'watch' wakes are asked for and exempt.
+      -- 'notify' rows are an assistant's messages to the user, counted against their own limit.
       source TEXT NOT NULL,
       label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
+  // One row per thing that waited on the user and was told about: a request, a decision or a
+  // paused group task. It is what keeps each from being told twice.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS autonomy_needs_you (
+      subject_key TEXT PRIMARY KEY,
+      decision_id TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `;

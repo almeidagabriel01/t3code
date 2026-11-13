@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  type AutonomyError,
+  DEFAULT_ASSISTANT_AUTONOMY,
   DEFAULT_AUTONOMY_SETTINGS,
   type AssistantAutonomy,
   type AutonomySettings,
@@ -17,13 +19,16 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
+import * as ImessageChannelSettings from "../channels/imessage/ImessageChannelSettings.ts";
 import * as ChannelOutbox from "../channels/ChannelOutbox.ts";
 import { outboxRows } from "../channels/channelBridgeTestSupport.ts";
 import * as ChannelTransport from "../channels/ChannelTransport.ts";
 import * as TelegramChannelSettings from "../channels/telegram/TelegramChannelSettings.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -41,6 +46,8 @@ const ON: AutonomySettings = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true };
 type Shell = {
   title: string;
   projectId: string;
+  providerInstanceId?: string;
+  archivedAt?: string | null;
   lineage: { relationshipToParent: string | null };
   sideChatOf?: unknown;
   delegatedFrom?: unknown;
@@ -49,6 +56,7 @@ type Shell = {
 const plain: Shell = {
   title: "Fix login",
   projectId: "p1",
+  archivedAt: null,
   lineage: { relationshipToParent: null },
 };
 
@@ -64,6 +72,13 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     allowedUserIds: ["4242", "7"],
   });
   const answers = new Map<string, string>();
+  /** What getRuntimeResponseContext returns, by request id. */
+  const contexts = new Map<string, { request: unknown; item?: unknown }>();
+  const imessage = Ref.makeUnsafe<{ enabled: boolean; selfHandles: ReadonlyArray<string> }>({
+    enabled: false,
+    selfHandles: [],
+  });
+  const dispatched: Array<Record<string, unknown>> = [];
   const layer = Autonomy.layer.pipe(
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
@@ -92,8 +107,24 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           getThreadRecords: (threadId) =>
             Effect.succeed({
               messages: [{ text: answers.get(threadId) ?? "" }],
-              turnItems: [],
+              turnItems: [...contexts.values()].flatMap((context) =>
+                context.item === undefined ? [] : [context.item],
+              ),
+              runtimeRequests: [...contexts.values()].map((context) => context.request),
             } as never),
+          dispatch: (command) => Effect.sync(() => void dispatched.push(command as never)) as never,
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRuntimeResponseContext: (_threadId, requestId) =>
+            Effect.succeed(
+              (contexts.get(requestId) ?? { request: undefined, item: undefined }) as never,
+            ),
+        }),
+        Layer.mock(ImessageChannelSettings.ImessageChannelSettings)({
+          get: Ref.get(imessage).pipe(Effect.map((value) => value as never)),
+        }),
+        Layer.mock(ServerEnvironment)({
+          getEnvironmentId: Effect.succeed("env-1" as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
@@ -112,7 +143,19 @@ const harness = (language: "en" | "pt-BR" = "en") => {
       ),
     ),
   );
-  return { layer, settings, shells, sent, refusal, sendFails, telegram, answers };
+  return {
+    layer,
+    settings,
+    shells,
+    sent,
+    refusal,
+    sendFails,
+    telegram,
+    answers,
+    contexts,
+    imessage,
+    dispatched,
+  };
 };
 
 const addAssistant = (autonomy: AssistantAutonomy = awake, id = "jarvis") =>
@@ -193,25 +236,72 @@ it.effect("the pause switch stops everything at once, and turning it on resumes"
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a reply-only assistant never wakes, even with a matching watch", () => {
-  const h = harness();
-  return Effect.gen(function* () {
-    const service = yield* Autonomy.AutonomyService;
-    yield* addAssistant({ ...awake, mode: "reply-only" });
-    h.shells.set("t1", plain);
-    yield* service.upsertWatch({
-      assistantId: "jarvis",
-      title: "any finish",
-      filter: { event: "run_finished" },
-      instruction: "",
-      oneShot: false,
-      expiresAt: null,
-    });
-    yield* service.handleEvent(run("failed", "r1"));
-    yield* service.handleEvent(run("completed", "r2"));
-    assert.lengthOf(h.sent, 0);
-  }).pipe(Effect.provide(h.layer));
-});
+it.effect(
+  "a reply-only assistant never wakes on a rule, but a watch it was asked for wakes it",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant({ ...awake, mode: "reply-only" });
+      h.shells.set("t1", plain);
+      yield* service.upsertWatch({
+        assistantId: "jarvis",
+        title: "any finish",
+        filter: { event: "run_finished" },
+        instruction: "",
+        oneShot: false,
+        expiresAt: null,
+      });
+      yield* service.handleEvent(run("failed", "r1"));
+      assert.lengthOf(h.sent, 0);
+      yield* service.handleEvent(run("completed", "r2"));
+      assert.lengthOf(h.sent, 1);
+      assert.include(h.sent[0]!.text, "Watch: any finish");
+      h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+      h.answers.set("assistant:jarvis:1", "r2 finished green.");
+      yield* service.handleEvent(
+        run("completed", "wake-run", "assistant:jarvis:1", h.sent[0]!.messageId),
+      );
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.equal(rows[0]!.message.destination.kind, "telegram");
+      assert.include(rows[0]!.message.text, "r2 finished green.");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a one-shot watch on a delegated task wakes its assistant; nothing else passes the loop guard",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      yield* addAssistant(awake, "ana");
+      h.shells.set("deleg", { ...plain, delegatedFrom: { threadId: "x" } });
+      h.shells.set("assistant:jarvis:1", plain);
+      const watch = (title: string, threadId: string, oneShot = true, assistantId = "jarvis") =>
+        service.upsertWatch({
+          assistantId,
+          title,
+          filter: { event: "run_finished", threadId: threadId as never },
+          instruction: "",
+          oneShot,
+          expiresAt: null,
+        });
+      yield* watch("task done", "deleg");
+      yield* watch("kept on", "deleg", false, "ana");
+      // An assistant watching its own thread would wake on its own answer.
+      yield* watch("myself", "assistant:jarvis:1");
+      yield* service.handleEvent(run("completed", "r1", "deleg"));
+      yield* service.handleEvent(run("completed", "r2", "assistant:jarvis:1"));
+      assert.deepEqual(
+        h.sent.map((wake) => [wake.threadId, wake.text.split("\n")[0]]),
+        [["assistant:jarvis:1", "[Autonomy] Watch: task done"]],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("rule wakes keep a minimum interval per thread and a daily cap", () => {
   const h = harness();
@@ -679,3 +769,530 @@ it.effect("start follows the event streams and the sweep timer", () => {
     yield* TestClock.adjust(2 * MIN);
   }).pipe(Effect.provide(h.layer));
 });
+
+const T0 = "1970-01-01T00:00:00.000Z";
+const live = { type: "live", providerSessionId: "s1" };
+
+/** A pending request as the projection holds it, plus what getRuntimeResponseContext returns. */
+const pendingRequest = (
+  h: ReturnType<typeof harness>,
+  input: {
+    id: string;
+    threadId: string;
+    kind?: string;
+    responseCapability?: unknown;
+    item?: Record<string, unknown>;
+    createdAt?: string;
+  },
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const kind = input.kind ?? "command";
+    const request = {
+      id: input.id,
+      kind,
+      status: "pending",
+      responseCapability: input.responseCapability ?? live,
+    };
+    h.contexts.set(input.id, {
+      request,
+      item: input.item ?? {
+        type: "approval_request",
+        requestId: input.id,
+        prompt: "vp test run",
+        reason: "Run the tests",
+      },
+    });
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runtime_requests
+        (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+      VALUES (${input.id}, ${input.threadId}, 'n1', ${kind}, 'pending', ${input.createdAt ?? T0}, '{}')`;
+  });
+
+const settleRequest = (h: ReturnType<typeof harness>, id: string, status = "resolved") =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status = ${status} WHERE runtime_request_id = ${id}`;
+    const context = h.contexts.get(id);
+    if (context !== undefined) {
+      h.contexts.set(id, { ...context, request: { ...(context.request as object), status } });
+    }
+  });
+
+const cards = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{ readonly decision_id: string; readonly delivery_id: string }>`
+    SELECT * FROM channel_cards`;
+});
+
+it.effect("a request its assistant's chat already carded is not carded a second time", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+    yield* pendingRequest(h, { id: "jarvis", threadId: "assistant:jarvis:1" });
+    const mirror = yield* decisions.request({
+      fromThreadId: "assistant:jarvis:1" as never,
+      projectId: plain.projectId as never,
+      threadTitle: "Jarvis",
+      clientRequestId: "approval:jarvis",
+      title: "Jarvis wants to run a command",
+      context: "",
+      options: [
+        { id: "accept", label: "Approve" },
+        { id: "decline", label: "Deny" },
+      ],
+      approvalRequestId: "jarvis",
+    });
+    yield* sql`INSERT INTO channel_cards (decision_id, delivery_id) VALUES (${mirror.id}, 'reply-card')`;
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.id),
+      [mirror.id],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a waiting approval in any thread reaches Telegram once, after the grace, as a numbered card",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      // Jarvis keeps the default: only replies when messaged. Telling the user needs no mode.
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      h.shells.set("t1", { ...plain, providerInstanceId: "claudeAgent" });
+      h.shells.set("deleg", { ...plain, title: "Child", delegatedFrom: { threadId: "t1" } });
+      h.shells.set("sub", {
+        ...plain,
+        title: "Sub",
+        lineage: { relationshipToParent: "subagent" },
+      });
+      h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+      yield* pendingRequest(h, { id: "plain", threadId: "t1" });
+      yield* pendingRequest(h, { id: "child", threadId: "deleg" });
+      yield* pendingRequest(h, { id: "subagent", threadId: "sub" });
+      yield* pendingRequest(h, { id: "jarvis", threadId: "assistant:jarvis:1" });
+      // A provider's own machinery never waits on the user.
+      yield* pendingRequest(h, { id: "tool", threadId: "t1", kind: "dynamic_tool_call" });
+
+      yield* TestClock.adjust(MIN / 2);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+
+      yield* TestClock.adjust(MIN / 2);
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 4);
+      const card = (threadId: string) =>
+        rows.find((row) => row.message.text.endsWith(`/threads/env-1/${threadId}`))!.message;
+      const first = card("t1");
+      assert.deepEqual(first.destination, {
+        kind: "telegram",
+        connectionId: "telegram",
+        chatId: "4242",
+      });
+      assert.equal(first.senderName, "T3 Code");
+      assert.deepEqual(first.choices, [
+        { label: "Approve", value: "accept" },
+        { label: "Deny", value: "decline" },
+      ]);
+      assert.equal(
+        first.text,
+        [
+          "Claude is waiting for you",
+          "Claude wants to run a command",
+          "Project: acme/app · Thread: Fix login",
+          "```sh\nvp test run\n```\n\nReason: Run the tests",
+          "Open in T3: https://app.t3.codes/threads/env-1/t1",
+        ].join("\n\n"),
+      );
+      assert.include(card("assistant%3Ajarvis%3A1").text, "Jarvis is waiting for you");
+      assert.include(card("deleg").text, "Thread: Child");
+      // Each card is the one a number answers, and it answers the request itself.
+      assert.lengthOf(yield* cards, 4);
+      const mirrors = yield* decisions.list({});
+      assert.sameMembers(
+        mirrors.map((decision) => decision.approvalRequestId),
+        ["plain", "child", "subagent", "jarvis"],
+      );
+      const plainDecision = mirrors.find((decision) => decision.approvalRequestId === "plain")!;
+      yield* decisions.answer({ decisionId: plainDecision.id, optionId: "accept" });
+      assert.deepEqual(
+        h.dispatched.map((command) => [command["requestId"], command["decision"]]),
+        [["plain", "accept"]],
+      );
+      // None of it is a model wake, so the daily wake limit is untouched.
+      const sql = yield* SqlClient.SqlClient;
+      assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_wakes`, 0);
+      assert.lengthOf(h.sent, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a request answered within the grace is never told, and the pause switches stop it",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "quick", threadId: "t1" });
+      yield* TestClock.adjust(MIN / 2);
+      yield* settleRequest(h, "quick");
+      yield* pendingRequest(h, { id: "later", threadId: "t1" });
+      yield* Ref.set(h.settings, { ...ON, notifyWaiting: false });
+      yield* TestClock.adjust(5 * MIN);
+      yield* service.notifyWaiting;
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+      assert.lengthOf(yield* decisions.list({}), 0);
+      // A longer grace is honored, and turning it back on tells what still waits.
+      yield* Ref.set(h.settings, { ...ON, notifyWaitingAfterMinutes: 10 });
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+      yield* TestClock.adjust(5 * MIN);
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.equal(rows[0]!.delivery_id.startsWith("needs-you:"), true);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("without Telegram the waiting request is only in Activity, answerable there", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    yield* Ref.update(h.telegram, (value) => ({ ...value, enabled: false }));
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    const [decision] = yield* decisions.list({});
+    assert.equal(decision!.status, "open");
+    assert.equal(decision!.approvalRequestId, "r1");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "iMessage carries the card when Telegram is not set up and the user wrote from it",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* Ref.update(h.telegram, (value) => ({ ...value, tokenConfigured: false }));
+      yield* Ref.set(h.imessage, { enabled: true, selfHandles: ["me@example.com"] });
+      const self = {
+        kind: "imessage" as const,
+        connectionId: "imessage",
+        chatGuid: "iMessage;-;me@example.com",
+      };
+      const friend = { ...self, chatGuid: "iMessage;-;+15550000001" };
+      for (const [key, actor, address] of [
+        ["k1", "me@example.com", self],
+        ["k2", "+15550000001", friend],
+      ] as const) {
+        yield* sql`
+        INSERT INTO channel_inbox (connection_id, idempotency_key, payload_json, state)
+        VALUES ('imessage', ${key}, ${JSON.stringify({ actor: { externalActorId: actor }, replyAddress: address })}, 'sent')`;
+      }
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      const [row] = yield* outboxRows;
+      // The newest message came from someone else; only the user's own chat gets the card.
+      assert.deepEqual(row!.message.destination, self);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("secrets in a waiting command never reach the chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, {
+      id: "r1",
+      threadId: "t1",
+      item: {
+        type: "approval_request",
+        requestId: "r1",
+        prompt: "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345 gh pr merge",
+      },
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [row] = yield* outboxRows;
+    assert.include(row!.message.text, "GITHUB_TOKEN=[redacted] gh pr merge");
+    assert.notInclude(row!.message.text, "ghp_");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a single-choice question offers its options; any other question informs and leaves when answered",
+  () => {
+    const h = harness("pt-BR");
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      h.shells.set("t1", plain);
+      const question = (id: string, multiSelect = false) => ({
+        id: `q-${id}`,
+        header: "Region",
+        question: `Where should ${id} deploy?`,
+        options: [
+          { label: "Europe", description: "eu", value: "eu-west-1" },
+          { label: "Brazil", description: "br" },
+        ],
+        multiSelect,
+      });
+      yield* pendingRequest(h, {
+        id: "single",
+        threadId: "t1",
+        kind: "user_input",
+        item: { type: "user_input_request", requestId: "single", questions: [question("single")] },
+      });
+      yield* pendingRequest(h, {
+        id: "multi",
+        threadId: "t1",
+        kind: "user_input",
+        item: {
+          type: "user_input_request",
+          requestId: "multi",
+          questions: [question("multi", true)],
+        },
+      });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      const single = rows.find((row) => row.message.text.includes("single deploy"))!.message;
+      assert.deepEqual(
+        single.choices?.map((choice) => choice.label),
+        ["Europe", "Brazil"],
+      );
+      assert.include(single.text, "T3 Code está esperando você");
+      assert.include(single.text, "T3 Code tem uma pergunta para você");
+      const multi = rows.find((row) => row.message.text.includes("multi deploy"))!.message;
+      assert.isUndefined(multi.choices);
+      assert.include(multi.text, "Responda no T3.");
+      assert.lengthOf(yield* cards, 1);
+
+      const answered = (yield* decisions.list({})).find(
+        (decision) => decision.approvalRequestId === "single",
+      )!;
+      yield* decisions.answer({ decisionId: answered.id, optionId: "option:1" });
+      assert.deepEqual(h.dispatched.at(-1)?.["answers"], { "q-single": "Brazil" });
+
+      yield* settleRequest(h, "multi");
+      yield* service.notifyWaiting;
+      const notice = (yield* decisions.list({})).find((decision) => decision.notice === true)!;
+      assert.equal(notice.status, "withdrawn");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("an open decision, Jarvis's own included, is carded once; notices are not", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+    const asked = yield* decisions.request({
+      fromThreadId: "assistant:jarvis:1" as never,
+      projectId: "p1" as never,
+      threadTitle: "Jarvis",
+      clientRequestId: "ask-1",
+      title: "Renew the domain now?",
+      context: "It expires Friday.",
+      options: [
+        { id: "yes", label: "Renew" },
+        { id: "no", label: "Let it lapse" },
+      ],
+    });
+    yield* decisions.request({
+      fromThreadId: "assistant:jarvis:1" as never,
+      projectId: "p1" as never,
+      threadTitle: "Jarvis",
+      clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}run-1`,
+      title: "Jarvis: Run looks stuck",
+      context: "",
+      options: [{ id: "ok", label: "Got it" }],
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 1);
+    assert.include(rows[0]!.message.text, "Jarvis is waiting for you\n\nRenew the domain now?");
+    assert.deepEqual(rows[0]!.message.choices, [
+      { label: "Renew", value: "yes" },
+      { label: "Let it lapse", value: "no" },
+    ]);
+    assert.deepEqual(yield* cards, [{ decision_id: asked.id, delivery_id: rows[0]!.delivery_id }]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a group task paused for the user is told once, and its notice leaves when it resumes",
+  () => {
+    const h = harness("pt-BR");
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+      yield* sql`
+        INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+        VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+      const task = (id: string, reason: string) => sql`
+        INSERT INTO assistant_group_tasks
+          (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+           reason, created_at, updated_at)
+        VALUES (${id}, 'team-1', ${id}, 'root', 'msg-1', 'ana', 'Ship the release notes',
+          'paused', ${reason}, ${T0}, ${T0})`;
+      yield* task("limit", "handoff_limit");
+      yield* task("stopped", "stopped");
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.isUndefined(rows[0]!.message.choices);
+      assert.include(rows[0]!.message.text, "ana está esperando você");
+      assert.include(rows[0]!.message.text, "Ops: Tarefa de grupo pausada");
+      assert.include(rows[0]!.message.text, "Chegou ao limite de repasses.");
+      const [notice] = yield* decisions.list({});
+      assert.equal(notice!.status, "open");
+      yield* sql`UPDATE assistant_group_tasks SET status = 'running', updated_at = 'later' WHERE task_id = 'limit'`;
+      yield* service.notifyWaiting;
+      assert.equal((yield* decisions.get(notice!.id)).status, "withdrawn");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+const scheduledRun = (
+  status: string,
+  runId: string,
+  taskId: string,
+  threadId = "assistant:jarvis:1",
+) => run(status, runId, threadId, `scheduled-task-message:${taskId}:123:schedule`);
+
+const addScheduledTask = (taskId: string, teamId: string | null = null) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO scheduled_tasks (task_id, title, prompt, enabled, schedule_json, project_id,
+        thread_id, workspace_strategy_json, model_selection_json, runtime_mode, interaction_mode,
+        created_by, creation_source, created_at, updated_at, last_run_status, run_count,
+        assistant_team_id)
+      VALUES (${taskId}, 'Renew the domain', 'Remind me', 1, '{}', 'p1', 'assistant:jarvis:1',
+        '{}', '{}', 'full-access', 'default', 'agent', 'mcp', ${T0}, ${T0}, 'never', 0, ${teamId})`;
+  });
+
+it.effect(
+  "an assistant's reminder reaches Telegram whatever its mode; a group routine does not",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      yield* addScheduledTask("task:remind");
+      yield* addScheduledTask("task:group", "team-1");
+      h.answers.set("assistant:jarvis:1", "Time to renew acme.dev.");
+      yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
+      yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
+      yield* service.handleEvent(scheduledRun("completed", "s2", "task:group"));
+      yield* service.handleEvent(scheduledRun("cancelled", "s3", "task:remind"));
+      yield* service.handleEvent(scheduledRun("completed", "s4", "task:remind", "t1"));
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.equal(rows[0]!.message.text, "Routine: Renew the domain\n\nTime to renew acme.dev.");
+      assert.equal(rows[0]!.message.senderName, "Jarvis");
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      yield* service.handleEvent(scheduledRun("completed", "s5", "task:remind"));
+      assert.lengthOf(yield* outboxRows, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "an assistant's message to the user reaches Telegram and Activity once, within its own limit",
+  () => {
+    const h = harness("pt-BR");
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const decisions = yield* DecisionService.DecisionService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      h.shells.set("t1", plain);
+      yield* Ref.set(h.settings, { ...ON, maxUserMessagesPerDay: 2, maxWakesPerDay: 1 });
+      const say = (key: string, text: string, threadId?: string) =>
+        service.notifyUser({
+          assistantId: "jarvis",
+          key,
+          text,
+          ...(threadId === undefined ? {} : { threadId: threadId as never }),
+        });
+      const sent = yield* say("k1", "The deploy finished.", "t1");
+      assert.deepEqual(sent, {
+        status: "sent",
+        channels: ["activity", "telegram"],
+        remainingToday: 1,
+      });
+      assert.equal((yield* say("k1", "The deploy finished.", "t1")).status, "already_sent");
+      const [row] = yield* outboxRows;
+      assert.equal(row!.message.senderName, "Jarvis");
+      assert.equal(
+        row!.message.text,
+        "The deploy finished.\n\nAbrir no T3: https://app.t3.codes/threads/env-1/t1",
+      );
+      const [notice] = yield* decisions.list({});
+      assert.isTrue(notice!.notice);
+      assert.equal(notice!.title, "Jarvis");
+
+      const refused = <A>(effect: Effect.Effect<A, AutonomyError>) =>
+        Effect.flip(effect).pipe(Effect.map((error) => error.message));
+      assert.include(
+        yield* refused(say("k2", "token: ghp_abcdefghijklmnopqrstuvwxyz0123")),
+        "secret",
+      );
+      assert.include(yield* refused(say("k3", "  ")), "text");
+      assert.include(yield* refused(say("k3b", "x".repeat(2_001))), "2000 characters");
+      assert.include(
+        yield* refused(service.notifyUser({ assistantId: "ghost", key: "k3c", text: "Hi." })),
+        "active assistant",
+      );
+      assert.include(yield* refused(say("k4", "x", "missing")), "thread");
+      yield* say("k5", "Second.");
+      assert.include(yield* refused(say("k6", "Third.")), "2 messages today");
+
+      // Messages and wakes keep separate counts.
+      h.shells.set("t2", plain);
+      yield* Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) => sql`UPDATE assistants SET autonomy_json = ${JSON.stringify(awake)}`,
+      );
+      yield* service.handleEvent(run("failed", "r1", "t2"));
+      assert.lengthOf(h.sent, 1);
+
+      yield* TestClock.adjust(24 * 60 * MIN + 1);
+      assert.equal((yield* say("k7", "Next day.")).status, "sent");
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      assert.include(yield* refused(say("k8", "Paused.")), "paused");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
