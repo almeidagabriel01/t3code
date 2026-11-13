@@ -199,6 +199,34 @@ it.effect("gives each existing group the projects all its members list, and no o
   }).pipe(Effect.provide(database)),
 );
 
+it.effect("adds a group's project list only together with its backfill", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`DROP VIEW assistant_team_state`;
+    yield* sql`ALTER TABLE assistant_teams DROP COLUMN project_ids_json`;
+    // No deleted_at column: the backfill's read fails.
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY)`;
+    yield* sql`INSERT INTO projection_projects VALUES ('p1')`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json)
+      VALUES ('a1', 'a1', 'A1', 'p1', 'full', 't', 't', 'project', '["p1"]')`;
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('g', 'g', '["a1"]', 't', 't')`;
+
+    const failed = yield* Effect.exit(ensureForkSchema());
+    assert.strictEqual(failed._tag, "Failure");
+    assert.isFalse((yield* columnsOf("assistant_teams")).includes("project_ids_json"));
+
+    yield* sql`ALTER TABLE projection_projects ADD COLUMN deleted_at TEXT`;
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(yield* sql`SELECT team_id, project_ids_json FROM assistant_teams`, [
+      { team_id: "g", project_ids_json: '["p1"]' },
+    ]);
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect("turns an old team leader into the lead and drops reports_to and leader_title", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

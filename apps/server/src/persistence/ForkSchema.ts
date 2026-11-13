@@ -508,9 +508,14 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;
   }
   // Projects a group gives its members, on top of their own.
+  // The column is the "backfilled" marker, so it must not outlive a failed backfill.
   if (!teamColumns.some((column) => column.name === "project_ids_json")) {
-    yield* sql`ALTER TABLE assistant_teams ADD COLUMN project_ids_json TEXT NOT NULL DEFAULT '[]'`;
-    yield* backfillTeamProjects(sql);
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistant_teams ADD COLUMN project_ids_json TEXT NOT NULL DEFAULT '[]'`;
+        yield* backfillTeamProjects(sql);
+      }),
+    );
   }
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_messages (
