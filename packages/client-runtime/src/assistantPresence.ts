@@ -54,6 +54,21 @@ export function assistantSenders(
   return [...byId.values()];
 }
 
+/**
+ * The thread's assistants behind its one header control: who wrote here, and first the assistant
+ * that launched it as a task when that one has not written here yet (`count` 0, no message ids).
+ */
+export function assistantThreadSenders(
+  senders: ReadonlyArray<AssistantSender>,
+  taskOwner: Assistant | null,
+): ReadonlyArray<AssistantSender> {
+  if (taskOwner === null || senders.some((sender) => sender.assistantId === taskOwner.id)) {
+    return senders;
+  }
+  const owner = { assistantId: taskOwner.id, assistant: taskOwner, count: 0 };
+  return [{ ...owner, firstMessageId: "", lastMessageId: "" }, ...senders];
+}
+
 /** A presence row's one status line: "Idle · 6 messages here · Asks before acting". */
 export function assistantPresenceStatus(
   working: boolean,
@@ -62,7 +77,7 @@ export function assistantPresenceStatus(
 ): string {
   return [
     working ? "Working" : "Idle",
-    `${sender.count} message${sender.count === 1 ? "" : "s"} here`,
+    ...(sender.count === 0 ? [] : [`${sender.count} message${sender.count === 1 ? "" : "s"} here`]),
     ...(asksBeforeActing ? ["Asks before acting"] : []),
   ].join(" · ");
 }

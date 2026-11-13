@@ -8,6 +8,7 @@ import {
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenders,
+  assistantThreadSenders,
   messageAssistantId,
 } from "./assistantPresence.ts";
 
@@ -52,6 +53,36 @@ describe("assistantSenders", () => {
   });
 });
 
+describe("assistantThreadSenders", () => {
+  const qa = { id: "qa", name: "QA" } as Assistant;
+  const sender = (assistant: Assistant, count: number) => ({
+    assistantId: assistant.id,
+    assistant,
+    firstMessageId: `${assistant.id}-1`,
+    lastMessageId: `${assistant.id}-${count}`,
+    count,
+  });
+  const ownerOnly = { assistantId: "qa", assistant: qa, firstMessageId: "", lastMessageId: "" };
+  it.each([
+    { name: "no task, no senders", senders: [], owner: null, expected: [] },
+    { name: "a sender only", senders: [sender(jarvis, 2)], owner: null, expected: ["jarvis:2"] },
+    { name: "the owner with no message", senders: [], owner: qa, expected: ["qa:0"] },
+    { name: "the owner who also wrote", senders: [sender(qa, 2)], owner: qa, expected: ["qa:2"] },
+    {
+      name: "the owner and another sender",
+      senders: [sender(jarvis, 1)],
+      owner: qa,
+      expected: ["qa:0", "jarvis:1"],
+    },
+  ])("one entry per assistant: $name", ({ senders, owner, expected }) => {
+    const merged = assistantThreadSenders(senders, owner);
+    expect(merged.map((entry) => `${entry.assistantId}:${entry.count}`)).toEqual(expected);
+    if (owner !== null && !senders.some((entry) => entry.assistantId === owner.id)) {
+      expect(merged[0]).toEqual({ ...ownerOnly, count: 0 });
+    }
+  });
+});
+
 describe("assistant icons", () => {
   it("has one drawable definition per contract id and ignores unknown ids", () => {
     expect(ASSISTANT_ICONS.map((icon) => icon.id)).toEqual([...ASSISTANT_ICON_IDS]);
@@ -80,6 +111,7 @@ describe("presence rows", () => {
     [false, 1, false, "Idle · 1 message here"],
     [false, 6, false, "Idle · 6 messages here"],
     [true, 2, true, "Working · 2 messages here · Asks before acting"],
+    [true, 0, true, "Working · Asks before acting"],
   ])("working %s, %i messages, asks %s → %s", (working, count, asks, expected) => {
     expect(assistantPresenceStatus(working, { count }, asks)).toBe(expected);
   });
