@@ -438,5 +438,7 @@ describe("movedSettingsPath", () => {
     expect(movedSettingsPath("/settings/projects", "project-defaults")).toBeNull();
     expect(movedSettingsPath("/settings/connections", "remote-environments")).toBeNull();
     expect(movedSettingsPath("/settings/appearance", "theme")).toBeNull();
+    expect(movedSettingsPath("/settings/integrations", "")).toBeNull();
+    expect(movedSettingsPath("/settings/integrations", "integrations")).toBeNull();
   });
 });
