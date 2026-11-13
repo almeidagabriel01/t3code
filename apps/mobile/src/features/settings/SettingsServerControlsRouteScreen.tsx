@@ -50,6 +50,10 @@ import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
 import { HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
 import { WorktreeCleanupSections } from "./components/WorktreeCleanupSections";
+import {
+  ProviderIdleTimeoutSection,
+  ToolOutputHistorySection,
+} from "./components/ServerRetentionSections";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
@@ -664,6 +668,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       write({ storageCleanup: { worktreeSnapshotsAfterDays: days } })
                     }
                   />
+                ) : null}
+                {!projectSelected ? (
+                  <>
+                    <ToolOutputHistorySection
+                      days={reference.settings.toolOutputHistoryDays}
+                      disabled={disabledFor("toolOutputHistoryDays")}
+                      onChange={(days) => write({ toolOutputHistoryDays: days })}
+                    />
+                    <ProviderIdleTimeoutSection
+                      minutes={reference.settings.providerIdleTimeoutMinutes}
+                      disabled={disabledFor("providerIdleTimeoutMinutes")}
+                      onChange={(minutes) => write({ providerIdleTimeoutMinutes: minutes })}
+                    />
+                  </>
                 ) : null}
                 <SettingsSection title="Updates">
                   <SettingsSwitchRow

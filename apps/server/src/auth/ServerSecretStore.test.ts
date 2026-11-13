@@ -6,7 +6,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
@@ -170,5 +172,101 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
       assert.instanceOf(error.cause, PlatformError.PlatformError);
       assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "PermissionDenied");
     }).pipe(Effect.provide(layerRenameFailureSecretStore())),
+  );
+});
+
+const layerCountingFileSystem = (options: {
+  readonly reads: Ref.Ref<number>;
+  readonly events: Queue.Queue<string>;
+  readonly watchFails?: boolean;
+}) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return {
+        ...fileSystem,
+        readFile: (path) =>
+          Ref.update(options.reads, (count) => count + 1).pipe(
+            Effect.andThen(fileSystem.readFile(path)),
+          ),
+        watch: (path, watchOptions) =>
+          options.watchFails
+            ? Stream.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "watch",
+                  pathOrDescriptor: String(path),
+                }),
+              )
+            : fileSystem
+                .watch(path, watchOptions)
+                .pipe(Stream.tap((event) => Queue.offer(options.events, event.path))),
+      } satisfies FileSystem.FileSystem;
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+const layerCountingSecretStore = (options: Parameters<typeof layerCountingFileSystem>[0]) =>
+  ServerSecretStore.layer.pipe(
+    Layer.provide(layerServerConfig()),
+    Layer.provideMerge(layerCountingFileSystem(options)),
+  );
+
+const countingEnv = Effect.gen(function* () {
+  return { reads: yield* Ref.make(0), events: yield* Queue.unbounded<string>() };
+});
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStore cache", (it) => {
+  it.effect("serves repeated gets from memory and sees its own writes", () =>
+    Effect.gen(function* () {
+      const env = yield* countingEnv;
+      yield* Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        assert.isTrue(Option.isNone(yield* store.get("a")));
+        assert.isTrue(Option.isNone(yield* store.get("a")));
+        assert.equal(yield* Ref.get(env.reads), 1);
+
+        yield* store.set("a", Uint8Array.from([1, 2]));
+        const first = Option.getOrThrow(yield* store.get("a"));
+        first[0] = 9;
+        assert.deepEqual(Array.from(Option.getOrThrow(yield* store.get("a"))), [1, 2]);
+
+        yield* store.remove("a");
+        assert.isTrue(Option.isNone(yield* store.get("a")));
+      }).pipe(Effect.provide(layerCountingSecretStore(env)));
+    }),
+  );
+
+  it.effect("sees a file written outside the store after the watcher reports it", () =>
+    Effect.gen(function* () {
+      const env = yield* countingEnv;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        const dir = store.directory;
+        assert.isTrue(Option.isNone(yield* store.get("ext")));
+        // Rename publishes the file atomically, so the single event cannot precede its content.
+        const tmp = `${dir}/ext.stage`;
+        yield* fileSystem.writeFile(tmp, Uint8Array.from([7]));
+        yield* fileSystem.rename(tmp, `${dir}/ext.bin`);
+        while ((yield* Queue.take(env.events)) !== "ext.bin") {
+          // drain until the watcher reports the published file
+        }
+        assert.deepEqual(Array.from(Option.getOrThrow(yield* store.get("ext"))), [7]);
+      }).pipe(Effect.provide(layerCountingSecretStore(env)));
+    }),
+  );
+
+  it.effect("reads from disk every time when the watcher cannot start", () =>
+    Effect.gen(function* () {
+      const env = { ...(yield* countingEnv), watchFails: true };
+      yield* Effect.gen(function* () {
+        const store = yield* ServerSecretStore.ServerSecretStore;
+        yield* store.get("a");
+        yield* store.get("a");
+        assert.equal(yield* Ref.get(env.reads), 2);
+      }).pipe(Effect.provide(layerCountingSecretStore(env)));
+    }),
   );
 });

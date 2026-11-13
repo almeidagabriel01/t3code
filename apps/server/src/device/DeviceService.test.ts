@@ -100,6 +100,8 @@ const fixture = Effect.fn("fixture")(function* (
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
     readonly onPlatformAvailability?: Effect.Effect<void>;
     readonly launchers?: DeviceService.AgentDeviceLaunchers;
+    /** Agent tools alive but not answering: they start only when the caller allows a restart. */
+    readonly agentUnresponsive?: boolean;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -266,9 +268,14 @@ const fixture = Effect.fn("fixture")(function* (
         yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
       }),
-    ensureAgentReady: (onPhase) =>
+    ensureAgentReady: (onPhase, agentOptions) =>
       Effect.gen(function* () {
         if (runtimeFailure) return yield* runtimeFailure;
+        if (options.agentUnresponsive && !agentOptions?.recycleUnresponsive)
+          return yield* new DeviceHost.AgentDeviceUnresponsiveError({
+            hostId: LOCAL_DEVICE_HOST_ID,
+            pid: 4242,
+          });
         agentStarts.push("start");
         yield* onPhase("starting");
         return {
@@ -381,6 +388,48 @@ describe("device setup consent", () => {
         status: "failed",
         detail: startupError.message,
       });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("restarts unresponsive agent tools only once no device session uses them", () =>
+    Effect.gen(function* () {
+      const { service, settings, agentStarts } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        { agentUnresponsive: true },
+      );
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        enableAgentDeviceAccess: true,
+      }));
+      yield* service.configure({ enabled: true });
+      const threadId = ThreadId.make("thread-1");
+      const session = yield* service.open({
+        threadId,
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+
+      const error = yield* service.agentReadinessIfSupported().pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "DeviceHostUnavailableError" });
+      expect(error.message).toContain("process 4242");
+      expect(error.message).toContain(`1 is: ${session.deviceId}`);
+      expect(error.message).toContain("device_close");
+      expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toMatchObject({
+        status: "failed",
+      });
+      expect(agentStarts).toEqual([]);
+
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      expect(yield* service.agentReadinessIfSupported()).toMatchObject({
+        hostId: LOCAL_DEVICE_HOST_ID,
+      });
+      expect(agentStarts).toEqual(["start"]);
     }).pipe(Effect.scoped),
   );
 

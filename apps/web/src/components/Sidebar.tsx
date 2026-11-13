@@ -29,7 +29,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
@@ -66,6 +66,7 @@ import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import { CheckIcon, ChevronDownIcon, FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 import {
+  memo,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -268,7 +269,7 @@ import { readAssistantTask } from "../state/assistants";
 import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
 import { AgentsSidebarSection } from "./sidebar/AgentsSidebarSection";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
+import { SidebarProjectGroups, StableSortableContext } from "./sidebar/SidebarProjectGroups";
 import {
   buildProjectListItems,
   groupListItemsByScope,
@@ -329,6 +330,8 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("sidebar-provider-entries"));
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
+// Any thread change rebuilds every row element; rows whose props are unchanged skip useSortable.
+const MemoSortableThreadRow = memo(SortableThreadRow);
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -1542,10 +1545,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
   const pointerSensorOptions = {
     distance: SIDEBAR_DRAG_DISTANCE,
-    onAttach: attachDragSensor,
-    onFinish: finishThreadDrag,
-    onMove: moveThreadContextDrag,
-    onDrop: dropThreadContextDrag,
+    onAttach: useStableCallback(attachDragSensor),
+    onFinish: useStableCallback(finishThreadDrag),
+    onMove: useStableCallback(moveThreadContextDrag),
+    onDrop: useStableCallback(dropThreadContextDrag),
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
@@ -3090,7 +3093,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 onDragOver={handleThreadDragOver}
                 onDragEnd={handleThreadDragEnd}
               >
-                <SortableContext
+                <StableSortableContext
                   items={projectLayout.layout.map((entry) =>
                     projectDragId(entry.project.projectKey),
                   )}
@@ -3197,7 +3200,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         return (
-                          <SortableThreadRow
+                          <MemoSortableThreadRow
                             key={threadKey}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
@@ -3342,7 +3345,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       </li>
                     ) : null}
                   </ul>
-                </SortableContext>
+                </StableSortableContext>
               </DndContext>
             </TooltipProvider>
           ) : null}

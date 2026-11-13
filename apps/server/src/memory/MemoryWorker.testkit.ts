@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 import * as RepositoryResolver from "../project/RepositoryIdentityResolver.ts";
 import * as Environment from "../environment/ServerEnvironment.ts";
@@ -28,30 +29,34 @@ export const threadId = M.ThreadId.make("thread");
 // Memory falls back from disabled instances, so the fixture runs on a default-enabled one.
 export const selection = { instanceId: M.ProviderInstanceId.make("codex"), model: "fixture" };
 export const now = "2026-10-14T00:00:00.000Z";
-const setup = Layer.effectDiscard(
-  Effect.gen(function* () {
-    yield* ensureMemorySchema();
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY,event_id TEXT,stream_id TEXT,event_type TEXT,payload_json TEXT,occurred_at TEXT,application_event_version INTEGER,aggregate_kind TEXT)`;
-    yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY,deleted_at TEXT)`;
-  }),
-).pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })));
-const storage = Store.layer.pipe(Layer.provideMerge(setup));
-const quota = Quota.layer.pipe(Layer.provideMerge(storage));
-const service = Service.layer.pipe(
-  Layer.provideMerge(quota),
-  Layer.provide(
-    Layer.mock(RepositoryResolver.RepositoryIdentityResolver)({
-      resolve: () => Effect.succeed(null),
+// A file database routes read-only work to its reader; the default in-memory one cannot.
+const services = (database: Layer.Layer<SqlClient.SqlClient, SqlError>) => {
+  const setup = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* ensureMemorySchema();
+      yield* sql`CREATE TABLE orchestration_events (sequence INTEGER PRIMARY KEY,event_id TEXT,stream_id TEXT,event_type TEXT,payload_json TEXT,occurred_at TEXT,application_event_version INTEGER,aggregate_kind TEXT)`;
+      yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY,deleted_at TEXT)`;
     }),
-  ),
-  Layer.provide(
-    Layer.succeed(Environment.ServerEnvironmentIdentity, {
-      getEnvironmentId: Effect.succeed(environmentId),
-    }),
-  ),
-);
-const maintenance = Maintenance.layer.pipe(Layer.provideMerge(quota));
+  ).pipe(Layer.provideMerge(database));
+  const storage = Store.layer.pipe(Layer.provideMerge(setup));
+  const quota = Quota.layer.pipe(Layer.provideMerge(storage));
+  const service = Service.layer.pipe(
+    Layer.provideMerge(quota),
+    Layer.provide(
+      Layer.mock(RepositoryResolver.RepositoryIdentityResolver)({
+        resolve: () => Effect.succeed(null),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(Environment.ServerEnvironmentIdentity, {
+        getEnvironmentId: Effect.succeed(environmentId),
+      }),
+    ),
+  );
+  return Layer.merge(service, Maintenance.layer.pipe(Layer.provideMerge(quota)));
+};
 export const live = (
   // A function decides per call: a detail string fails with it, undefined succeeds.
   failure: boolean | (() => string | M.TextGenerationError | undefined) = false,
@@ -69,10 +74,12 @@ export const live = (
   rules?: (
     input: M.GenerateMemorySummaryInput,
   ) => NonNullable<M.GenerateMemorySummaryOutcome["rules"]>,
+  database: Layer.Layer<SqlClient.SqlClient, SqlError> = NodeSqliteClient.layer({
+    filename: ":memory:",
+  }),
 ) =>
   Worker.layer.pipe(
-    Layer.provideMerge(service),
-    Layer.provideMerge(maintenance),
+    Layer.provideMerge(services(database)),
     Layer.provide(NodeServices.layer),
     Layer.provideMerge(
       Settings.layerMemoryCommittedSettings.pipe(

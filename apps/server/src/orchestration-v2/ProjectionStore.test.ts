@@ -2702,6 +2702,46 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `,
         [{ updated_at: DateTime.formatIso(updatedAt) }],
       );
+
+      // regression: a rewritten item kept its compacted mark, so its new output was never summarized
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items SET tool_output_compacted = 1
+        WHERE turn_item_id = ${itemId}
+      `;
+      yield* store.apply({
+        id: EventId.make("event:streamed-payload-parse:item-again"),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        occurredAt: updatedAt,
+        payload: {
+          id: itemId,
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          type: "assistant_message",
+          status: "completed",
+          title: "Assistant",
+          messageId,
+          text,
+          streaming: false,
+          startedAt: createdAt,
+          completedAt: updatedAt,
+          updatedAt,
+        },
+      });
+      assert.deepStrictEqual(
+        yield* sql`
+          SELECT tool_output_compacted FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id = ${itemId}
+        `,
+        [{ tool_output_compacted: 0 }],
+      );
     }),
   );
 
