@@ -4,7 +4,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -127,6 +127,8 @@ export const makeTelegramApi = (
           credentials: "omit",
           cache: "no-store",
         }),
+        // The client span records the full URL, which holds the token.
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
         Effect.flatMap((response) =>
           Effect.map(response.text, (text) => ({ status: response.status, text })),
         ),
