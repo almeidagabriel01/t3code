@@ -26,6 +26,8 @@ const DesktopSettingsPatch = Schema.Struct({
     ),
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  openAtLogin: Schema.optionalKey(Schema.Boolean),
+  openAtLoginRegistered: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -183,6 +185,8 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
+          openAtLogin: true,
+          openAtLoginRegistered: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
@@ -229,6 +233,7 @@ describe("DesktopSettings", () => {
 
         yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 400, height: 360 }, true);
         yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setOpenAtLogin({ openAtLogin: false, openAtLoginRegistered: false });
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
@@ -236,6 +241,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(persisted, {
           mainWindowBounds: { x: -1200, y: 40, width: 400, height: 360 },
           mainWindowMaximized: true,
+          openAtLogin: false,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
 
@@ -245,6 +251,17 @@ describe("DesktopSettings", () => {
         }).pipe(Effect.provide(DesktopAppSettings.layer));
         assert.deepEqual(restored.mainWindowBounds, persisted.mainWindowBounds);
         assert.isTrue(restored.mainWindowMaximized);
+        assert.isFalse(restored.openAtLogin);
+        yield* settings.setOpenAtLogin({ openAtLogin: true, openAtLoginRegistered: true });
+        const confirmed = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(environment.desktopSettingsPath),
+        );
+        assert.isUndefined(confirmed.openAtLogin);
+        assert.isTrue(confirmed.openAtLoginRegistered);
+        assert.isFalse(
+          (yield* settings.setOpenAtLogin({ openAtLogin: true, openAtLoginRegistered: true }))
+            .changed,
+        );
       }),
     ),
   );
@@ -314,6 +331,8 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: true,
+          openAtLoginRegistered: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -343,6 +362,8 @@ describe("DesktopSettings", () => {
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
+          openAtLogin: true,
+          openAtLoginRegistered: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,

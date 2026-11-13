@@ -3,7 +3,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
+const { getSystemLocaleMock, getUserDefaultMock, loginItems } = vi.hoisted(() => ({
+  loginItems: { get: vi.fn(), set: vi.fn() },
   getSystemLocaleMock: vi.fn(() => "en-GB"),
   getUserDefaultMock: vi.fn((_key: string) => false),
 }));
@@ -11,6 +12,8 @@ const { getSystemLocaleMock, getUserDefaultMock } = vi.hoisted(() => ({
 vi.mock("electron", () => ({
   app: {
     getSystemLocale: getSystemLocaleMock,
+    getLoginItemSettings: loginItems.get,
+    setLoginItemSettings: loginItems.set,
   },
   systemPreferences: {
     getUserDefault: getUserDefaultMock,
@@ -35,6 +38,18 @@ describe("ElectronApp", () => {
   it("drops ICU keywords Intl cannot read instead of losing the whole locale", () => {
     assert.strictEqual(ElectronApp.toSystemLocaleTag("de_DE@calendar=buddhist"), "de-DE");
   });
+
+  it.effect("passes login item options through to Electron", () =>
+    Effect.gen(function* () {
+      loginItems.get.mockReturnValue({ openAtLogin: true });
+      assert.deepEqual(yield* ElectronApp.make.getLoginItemSettings({ args: ["--x"] }), {
+        openAtLogin: true,
+      });
+      yield* ElectronApp.make.setLoginItemSettings({ openAtLogin: false });
+      assert.deepEqual(loginItems.get.mock.calls, [[{ args: ["--x"] }]]);
+      assert.deepEqual(loginItems.set.mock.calls, [[{ openAtLogin: false }]]);
+    }),
+  );
 
   it.effect("follows LC_TIME on Linux when it differs from the language", () =>
     Effect.gen(function* () {

@@ -24,6 +24,7 @@ import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
+import * as DesktopLoginItem from "./DesktopLoginItem.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
@@ -345,6 +346,14 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  const state = yield* DesktopState.DesktopState;
+  if (yield* DesktopLoginItem.openedAtLogin) {
+    yield* Ref.set(state.startHidden, true);
+    yield* logStartupInfo("opened at login; main window starts hidden");
+  }
+  yield* DesktopLoginItem.reconcileOpenAtLogin().pipe(
+    Effect.catchCause((cause) => logStartupError("open at login reconcile failed", { cause })),
+  );
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
