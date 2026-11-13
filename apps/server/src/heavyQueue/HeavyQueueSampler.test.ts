@@ -45,8 +45,10 @@ describe("peaksOf", () => {
     expect(peaks([entry("a", 10, true)])).toEqual({ a: { cpu: 3, memoryBytes: 600 } });
   });
 
-  it("skips waiting entries and entries missing from the snapshot", () => {
+  it("skips waiting entries, entries missing from the snapshot and Linux jobs", () => {
     expect(peaks([entry("w", 20, false), entry("gone", 99, true)])).toEqual({});
+    const linux = { ...entry("l", 10, true), runner: "linux" as const };
+    expect(Sampler.peaksOf([linux], processes, { l: 5000 })).toEqual({});
   });
 
   it("counts footprint instead of resident bytes, even for a job outside this server's tree", () => {

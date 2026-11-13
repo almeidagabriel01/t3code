@@ -405,7 +405,7 @@ describe("jobs stuck waiting", () => {
       routes: {},
       macHold: "cpu",
       macHoldText: "CPU busy",
-      linuxOver: null,
+      linuxOver: {},
       usualMs: () => null,
       now: NOW,
       ...patch,
@@ -432,12 +432,14 @@ describe("jobs stuck waiting", () => {
     expect(stuck({ entries: [waiting(40)], ...patch })).toEqual(expected ? ["job-1"] : []);
   });
 
-  it("on Linux only while Linux is over its limits", () => {
+  it("on Linux only while Linux's limits hold that job, timed by its Linux runs", () => {
     const routes = { "job-1": "linux" as const };
-    expect(stuck({ entries: [waiting(40)], routes, linuxOver: "load or memory too high" })).toEqual(
-      ["job-1"],
-    );
-    expect(stuck({ entries: [waiting(40)], routes })).toEqual([]);
+    const linuxOver = { "job-1": "1.8 GB free, keeping 20%" };
+    const usualMs = (_: HeavyQueueEntry, runner: string) => (runner === "linux" ? 20 * MIN : null);
+    expect(stuck({ entries: [waiting(61)], routes, linuxOver, usualMs })).toEqual(["job-1"]);
+    expect(stuck({ entries: [waiting(50)], routes, linuxOver, usualMs })).toEqual([]);
+    // Slots, an offline PC or another reason: not over its limits.
+    expect(stuck({ entries: [waiting(61)], routes, usualMs })).toEqual([]);
   });
 
   it("never for a running job or one waiting for the user's answer", () => {
@@ -453,7 +455,7 @@ describe("jobs stuck waiting", () => {
       routes: {},
       macHold: "cpu",
       macHoldText: "CPU busy",
-      linuxOver: null,
+      linuxOver: {},
       usualMs: () => 2 * MIN,
       now: NOW,
     });
@@ -576,7 +578,7 @@ describe("grouping", () => {
       routes: {},
       macHold: "cpu",
       macHoldText: "CPU busy",
-      linuxOver: null,
+      linuxOver: {},
       usualMs: () => null,
       now: NOW + 40 * MIN,
     });

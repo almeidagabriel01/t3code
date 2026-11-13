@@ -92,6 +92,12 @@ export const workersFor = (cpuCount: number, busyCores: number | null): number =
   Math.max(2, Math.min(cpuCount - 1, Math.floor(cpuCount - (busyCores ?? 0))));
 
 export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
+/** Linux runs by command: only their time, since their usage is measured on the PC, not here. */
+export type LinuxHistory = Readonly<Record<string, ReadonlyArray<{ readonly durationMs: number }>>>;
+
+/** The middle run's time, or null without runs. */
+export const medianDuration = (runs: ReadonlyArray<{ readonly durationMs: number }>) =>
+  runs.map((run) => run.durationMs).toSorted((a, b) => a - b)[Math.floor(runs.length / 2)] ?? null;
 
 export const DEFAULT_MAX_RUNNING = 3;
 export const HISTORY_RUNS = 5;
@@ -150,11 +156,10 @@ export const estimate = (
 ): Cost => {
   const runs = history[signatureOf(entry.label)] ?? [];
   if (runs.length > 0) {
-    const durations = runs.map((run) => run.durationMs).toSorted((a, b) => a - b);
     return {
       cpu: Math.max(...runs.map((run) => run.cpu)),
       memoryBytes: Math.max(...runs.map((run) => run.memoryBytes)),
-      durationMs: durations[Math.floor(durations.length / 2)]!,
+      durationMs: medianDuration(runs),
     };
   }
   const medium = kindOf(entry) === "medium";
@@ -194,6 +199,35 @@ export interface Plan {
 const gb = (bytes: number) => `${(Math.max(0, bytes) / GIB).toFixed(1)} GB`;
 /** Rounded as the summary shows it, so a row and the summary never disagree. */
 const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sample.cpuCount)) * 100);
+
+/**
+ * Whether `entry` fits on this Mac on top of what runs now, from what its command used before:
+ * `plan`'s check for the head, which Hybrid routing asks too.
+ */
+export const jobVerdict = (
+  input: Pick<PlanInput, "history" | "holding" | keyof MacLimits>,
+  sample: Sample,
+  entry: Pick<HeavyQueueEntry, "label" | "server">,
+) => {
+  const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
+  const floor = (floorPercent / 100) * sample.totalMemoryBytes;
+  const cost = estimate(input.history, entry, sample.cpuCount);
+  if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
+    return {
+      cost,
+      hold: "job-memory" as const,
+      why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
+    };
+  }
+  if (cost.cpu > sample.cpuCount * (input.macCpuCeilingPercent / 100) - sample.busyCores) {
+    return {
+      cost,
+      hold: "job-cpu" as const,
+      why: `needs ~${cost.cpu.toFixed(1)} cores; CPU ${pct(sample)}%, limit ${input.macCpuCeilingPercent}%`,
+    };
+  }
+  return { cost, hold: null, why: "" };
+};
 
 /**
  * Pure: decides for one machine from its own sample and the entries it runs, so a second runner
@@ -254,28 +288,7 @@ export const plan = (input: PlanInput): Plan => {
     return finish(null, "steadying", false, input.holding);
   }
 
-  const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
-  const floor = (floorPercent / 100) * sample.totalMemoryBytes;
-  const ceiling = input.macCpuCeilingPercent / 100;
-  const verdict = (entry: HeavyQueueEntry) => {
-    const cost = estimate(input.history, entry, sample.cpuCount);
-    if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
-      return {
-        cost,
-        hold: "job-memory" as const,
-        why: `needs ~${gb(cost.memoryBytes)}; ${gb(sample.availableMemoryBytes)} free, ${gb(floor)} kept spare`,
-      };
-    }
-    if (cost.cpu > sample.cpuCount * ceiling - sample.busyCores) {
-      return {
-        cost,
-        hold: "job-cpu" as const,
-        why: `needs ~${cost.cpu.toFixed(1)} cores; CPU ${pct(sample)}%, limit ${input.macCpuCeilingPercent}%`,
-      };
-    }
-    return { cost, hold: null, why: "" };
-  };
-
+  const verdict = (entry: HeavyQueueEntry) => jobVerdict(input, sample, entry);
   const headVerdict = verdict(head);
   if (headVerdict.hold === null) return finish(head.id, null, true, false);
 

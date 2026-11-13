@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off
 /**
- * `t3 heavy [--name <title>] [--priority high|low] [--queue-dir <dir>] -- <program> [args...]`:
- * waits for the machine's heavy slot, then runs the program. `t3 heavy hook` is the Claude Code
+ * `t3 heavy [--name <title>] [--priority high|low] [--now] [--queue-dir <dir>] -- <program> [args...]`:
+ * waits for a heavy slot on the machine the Runner picks, then runs the program there. `--now`
+ * skips the wait, as the user's Start now does. `t3 heavy hook` is the Claude Code
  * PreToolUse hook that puts heavy Bash commands behind it.
  */
 import * as NodeChildProcess from "node:child_process";
@@ -83,8 +84,14 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
   let name: string | undefined;
   let priority: "low" | "normal" | "high" | undefined;
   let where: "mac" | "linux" | "automatic" | undefined;
+  let now = false;
   const options = ["--queue-dir", "--name", "--priority", "--runner"];
-  while (rest[1] !== undefined && options.includes(rest[0]!)) {
+  while (rest[0] === "--now" || (rest[1] !== undefined && options.includes(rest[0]!))) {
+    if (rest[0] === "--now" || rest[1] === undefined) {
+      now = true;
+      rest = rest.slice(1);
+      continue;
+    }
     if (rest[0] === "--name") name = rest[1].trim().slice(0, 60) || undefined;
     else if (rest[0] === "--priority") {
       if (rest[1] === "low" || rest[1] === "normal" || rest[1] === "high") priority = rest[1];
@@ -94,7 +101,7 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     rest = rest.slice(2);
   }
   if (rest[0] === "--") rest = rest.slice(1);
-  return { dir, name, priority, where, program: rest[0], args: rest.slice(1) };
+  return { dir, name, priority, where, now, program: rest[0], args: rest.slice(1) };
 };
 
 /**
@@ -328,10 +335,10 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     await runLinuxPart(part.dir, part.program, part.args);
     return;
   }
-  const { dir, name, priority, where, program, args } = parseHeavyArgs(argv);
+  const { dir, name, priority, where, now, program, args } = parseHeavyArgs(argv);
   if (program === undefined) {
     process.stderr.write(
-      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--queue-dir <dir>] -- <program> [args...]\n",
+      "Usage: t3 heavy [--name <title>] [--priority high|low] [--runner mac|linux|automatic] [--now] [--queue-dir <dir>] -- <program> [args...]\n",
     );
     process.exit(2);
   }
@@ -365,6 +372,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
     // Agents' jobs wait behind the user's own.
     priority: priority ?? (agent ? "low" : "normal"),
     ...(launch.where === undefined ? {} : { where: launch.where }),
+    ...(now ? { forced: true } : {}),
   });
   // The code a failure notice reports; every exit path ends here.
   process.on("exit", (code) => finish(dir, id, code));
@@ -428,11 +436,11 @@ const waitForStart = async (
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
     if (start.status === "started") return start;
-    const shown = `${start.position}|${start.running?.id ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
+    const shown = `${start.position}|${start.running?.id ?? ""}|${start.runner ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
       lastShown = shown;
       process.stderr.write(
-        `[t3 heavy] waiting: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}${start.paused ? " (queue paused)" : ""}${start.reason ? `: ${start.reason}` : ""}${start.reason?.includes("your answer") ? " (answer in T3's Resource Manager)" : ""}\n`,
+        `[t3 heavy] waiting${start.runner === undefined ? "" : ` on ${runnerName(start.runner)}`}: position ${start.position}${start.running ? ` (running: ${start.running.label})` : ""}${start.paused ? " (queue paused)" : ""}${start.reason ? `: ${start.reason}` : ""}${start.reason?.includes("your answer") ? " (answer in T3's Resource Manager)" : ""}\n`,
       );
     }
     await pause(POLL_MS);

@@ -111,6 +111,22 @@ describe("t3 heavy", () => {
     expect(Queue.read(dir)).toEqual([]);
   });
 
+  it("--now starts at once past a full slot, as the user's Start now does", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "marker.txt");
+    Queue.setMaxRunning(dir, 1);
+    const first = heavy(dir, [process.execPath, "-e", holdProgram(marker, "1")]);
+    await first.until("out", "started 1");
+    const now = heavy(dir, [process.execPath, "-e", holdProgram(marker, "2")], {}, ["--now", "--"]);
+    await now.until("out", "started 2");
+    expect(Queue.read(dir).find((entry) => entry.pid === now.child.pid)).toMatchObject({
+      forced: true,
+    });
+    first.child.stdin.end();
+    now.child.stdin.end();
+    expect(await Promise.all([first.exited, now.exited])).toEqual([0, 0]);
+  });
+
   it("frees the place of a killed waiter and exits 125 when the user removes one", async () => {
     const dir = tempDir();
     const marker = NodePath.join(dir, "marker.txt");
@@ -790,8 +806,14 @@ describe("t3 heavy", () => {
       dir: "/q",
       name: undefined,
       priority: undefined,
+      now: false,
       program: "vp",
       args: ["test"],
+    });
+    expect(parseHeavyArgs(["--now", "--name", "Tests", "--now", "--", "vp"])).toMatchObject({
+      now: true,
+      name: "Tests",
+      program: "vp",
     });
     expect(parseHeavyArgs(["--priority", "high", "--", "vp"]).priority).toBe("high");
     expect(parseHeavyArgs(["--priority", "urgent", "--", "vp"]).priority).toBeUndefined();

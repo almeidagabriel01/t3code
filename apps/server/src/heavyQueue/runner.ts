@@ -13,7 +13,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  jobVerdict,
   kindOf,
+  machineHold,
   plan,
   SAMPLE_FRESH_MS,
   sustain,
@@ -458,6 +460,11 @@ export interface RoutePlanInput extends PlanInput {
   readonly runnerOn?: boolean;
 }
 
+interface LinuxBusy {
+  readonly kind: "slots" | "worktree" | "limits" | "reading";
+  readonly why: string;
+}
+
 export interface Admit {
   readonly runner: HeavyRunner;
   /** The queue is off: no admission gate, worker cap or QoS. */
@@ -469,6 +476,8 @@ export interface RoutePlan {
   /** Where each waiter would go if a slot opened now. */
   readonly routes: Readonly<Record<string, HeavyRunner>>;
   readonly reasons: Readonly<Record<string, string>>;
+  /** Waiters Linux holds back only because it is over its own limits, with which one. */
+  readonly linuxOver: Readonly<Record<string, string>>;
   /** Waiters that must ask the user now (they have no question yet). */
   readonly asks: Readonly<Record<string, HeavyRunnerAskReason>>;
   /** Waiters whose unanswered question ended in Cancel. */
@@ -499,7 +508,6 @@ export const intentOf = (
 ): { readonly intent: "mac" | "linux" | "automatic"; readonly reason: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) return mac("Runner off for this project");
-  if (entry.forced === true) return mac("Started here by you");
   const verdict = eligibilityOf(entry, context);
   if (verdict.eligibility === "exclusive" || verdict.eligibility === "mac-only") {
     return mac(verdict.reason!);
@@ -536,8 +544,8 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     -Infinity,
     ...linuxRunning.map((entry) => Date.parse(entry.startedAt!)),
   );
-  const macOver =
-    sample !== null && now - sample.at <= SAMPLE_FRESH_MS && sample.overLimit === true;
+  const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
+  const macOver = fresh && sample.overLimit === true;
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
   const reading = health.load1 !== null || health.availableMemoryBytes !== null;
@@ -547,6 +555,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const reasons: Record<string, string> = {};
   const asks: Record<string, HeavyRunnerAskReason> = {};
   const cancels: Record<string, string> = {};
+  const linuxOver: Record<string, string> = {};
   const macWaiters: HeavyQueueEntry[] = [];
   /** Why each job runs on this Mac, shown with what it waits for there. */
   const macWhy: Record<string, string> = {};
@@ -558,25 +567,52 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (queueOn) macWaiters.push(entry);
     else admits[entry.id] = { runner: "mac", ungated: true };
   };
-  const toLinux = (entry: HeavyQueueEntry, reason: string) => {
+  const toLinux = (entry: HeavyQueueEntry, busy: LinuxBusy | string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
-    reasons[entry.id] = reason;
+    if (typeof busy === "string") reasons[entry.id] = busy;
+    else {
+      reasons[entry.id] = `waiting for Linux: ${busy.why}`;
+      if (busy.kind === "limits") linuxOver[entry.id] = busy.why;
+    }
   };
-  /** The Mac takes another job now: slots (with the queue on) and its limits. */
-  const macRoom = () =>
-    !macOver && !macExclusive && (!queueOn || macCount < Math.max(1, input.maxRunning));
+  /**
+   * The Mac takes `entry` now: slots and the job's own fit (with the queue on) and its sustained
+   * limits. The fit counts only where `plan` would judge it: beside other work, under the instant
+   * limits, which only the sustained ones may turn into a move.
+   */
+  const macRoom = (entry: HeavyQueueEntry) =>
+    !macOver &&
+    !macExclusive &&
+    (!queueOn ||
+      (macCount < Math.max(1, input.maxRunning) &&
+        (macCount === 0 ||
+          !fresh ||
+          machineHold(sample, input) !== null ||
+          jobVerdict(input, sample, entry).hold === null)));
   /** Why Linux cannot take a job of `worktree` now, or null when it can. */
-  const linuxBusy = (worktree: string): string | null => {
-    if (linuxFree <= 0) return `all ${machine.runnerLinuxSlots} Linux slots are busy`;
-    if (busyWorktrees.has(worktree)) return "this worktree is already running on Linux";
-    if (health.overLimit) return linuxOverBy(health, machine) ?? "easing back under its limits";
+  const linuxBusy = (worktree: string): LinuxBusy | null => {
+    if (linuxFree <= 0) {
+      return { kind: "slots", why: `all ${machine.runnerLinuxSlots} Linux slots are busy` };
+    }
+    if (busyWorktrees.has(worktree)) {
+      return { kind: "worktree", why: "this worktree is already running on Linux" };
+    }
+    if (health.overLimit) {
+      return {
+        kind: "limits",
+        why: linuxOverBy(health, machine) ?? "easing back under its limits",
+      };
+    }
     // A reading from before the last start does not show its load yet.
     if (reading && (health.okAt ?? 0) <= lastLinuxStart) {
-      return "a fresh reading since the last job started there";
+      return { kind: "reading", why: "a fresh reading since the last job started there" };
     }
     return null;
   };
+  /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
+  const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
+    entry.forced === true && busy.kind !== "worktree";
   const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
     routes[entry.id] = "linux";
     linuxCount += 1;
@@ -607,7 +643,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     const up = linuxUpFor(health, entry) && !dropHolds(entry, config, now);
     if (intent === "automatic") {
-      if (paused || !up || macRoom()) {
+      if (paused || !up || macRoom(entry)) {
         toMac(
           entry,
           paused
@@ -618,27 +654,28 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
         );
         continue;
       }
-      const why = linuxBusy(worktree);
-      if (why === null) toLinuxNow(entry, worktree);
+      const busy = linuxBusy(worktree);
+      if (busy === null) toLinuxNow(entry, worktree);
       // Both are full: the smaller backlog per slot, the Mac on a tie. With the queue off the Mac
       // never waits, so it starts here.
       else if (
         queueOn &&
         linuxCount / machine.runnerLinuxSlots < macCount / Math.max(1, input.maxRunning)
       ) {
-        toLinux(entry, `waiting for Linux: ${why}`);
+        if (startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
+        else toLinux(entry, busy);
       } else toMac(entry, "Hybrid: this Mac's backlog is shorter");
       continue;
     }
     // Bound for Linux.
-    if (paused) {
+    if (paused && !(up && entry.forced === true)) {
       toLinux(entry, "paused");
       continue;
     }
     if (up) {
-      const why = linuxBusy(worktree);
-      if (why === null) toLinuxNow(entry, worktree);
-      else toLinux(entry, `waiting for Linux: ${why}`);
+      const busy = linuxBusy(worktree);
+      if (busy !== null && !startsOnLinux(entry, busy)) toLinux(entry, busy);
+      else toLinuxNow(entry, worktree);
       continue;
     }
     if (health.online === null && entry.linuxFailedAt === undefined) {
@@ -685,6 +722,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       admits,
       routes,
       reasons: { ...macWhy, ...reasons },
+      linuxOver,
       asks,
       cancels,
       room: true,
@@ -707,6 +745,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       ),
       ...reasons,
     },
+    linuxOver,
     asks,
     cancels,
     room: mac.room,

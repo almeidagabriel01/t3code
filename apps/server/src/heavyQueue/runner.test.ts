@@ -357,13 +357,6 @@ describe("routing matrix", () => {
     expect(plan.reasons.b).toBe("waiting for Linux: this worktree is already running on Linux");
   });
 
-  it("a forced (Start now) job starts on the Mac whatever the Runner says", () => {
-    const plan = planRoutes(
-      input([job("a", "vp test run", { forced: true })], { runnerWhere: "linux" }),
-    );
-    expect(plan.admits).toEqual({ a: { runner: "mac", ungated: false } });
-  });
-
   it("the job's own --runner wins over the project and takes unlisted work", () => {
     const plan = planRoutes(input([job("a", "make deploy", { where: "linux" })]));
     expect(plan.admits.a).toEqual({ runner: "linux", ungated: false });
@@ -533,7 +526,7 @@ describe("runtime toggles", () => {
     expect(plan.admits.r).toBeUndefined();
   });
 
-  it("paused holds both runners; a forced job still starts", () => {
+  it("paused holds both runners; a forced job still starts where it was headed", () => {
     const plan = planRoutes(
       input(
         [job("l", "vp test run"), job("f", "vp test run", { forced: true })],
@@ -541,7 +534,7 @@ describe("runtime toggles", () => {
         { paused: true },
       ),
     );
-    expect(plan.admits).toEqual({ f: { runner: "mac", ungated: false } });
+    expect(plan.admits).toEqual({ f: { runner: "linux", ungated: false } });
     expect(plan.reasons.l).toBe("paused");
   });
 
@@ -563,11 +556,10 @@ describe("runtime toggles", () => {
     const commits = "Commits run here: the pre-commit edits this Mac's repository";
     expect(at({ runnerOn: true })).toEqual({
       run: commits,
-      commit: `${commits} · next in line`,
+      commit: `${commits} · the one slot is busy`,
       build: "Not on the Can run on Linux list: vp run build · waiting its turn",
       moved: "Moved to this Mac · waiting its turn",
       back: "Uses a file outside the project: /x · waiting its turn",
-      forced: "Started here by you",
     });
     expect(at({ runnerOn: true }, { runnerWhere: "mac" }).build).toMatch(/^Not on the/);
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
@@ -899,5 +891,258 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+  });
+});
+
+describe("Hybrid asks the Mac's own verdict for the job", () => {
+  /** 6 of 16 GiB free with 20% kept: a 4 GiB job does not fit, a 1.5 GiB one does. */
+  const TIGHT = { ...CALM, availableMemoryBytes: 6 * GIB, totalMemoryBytes: 16 * GIB };
+  it.each([
+    {
+      name: "it fits",
+      sample: CALM,
+      macJobs: 1,
+      label: "vp test run",
+      queue: true,
+      out: "mac-start",
+    },
+    {
+      name: "too much memory",
+      sample: TIGHT,
+      macJobs: 1,
+      label: "vp test run",
+      queue: true,
+      out: "linux-start",
+    },
+    {
+      name: "too many cores",
+      sample: { ...CALM, busyCores: 5 },
+      macJobs: 1,
+      label: "vp test run",
+      queue: true,
+      out: "linux-start",
+    },
+    {
+      name: "a smaller job fits",
+      sample: TIGHT,
+      macJobs: 1,
+      label: "vp run lint",
+      queue: true,
+      out: "mac-start",
+    },
+    // `plan` always starts a lone job, so an idle Mac has room.
+    {
+      name: "the Mac is idle",
+      sample: TIGHT,
+      macJobs: 0,
+      label: "vp test run",
+      queue: true,
+      out: "mac-start",
+    },
+    // A spike is the sustained limits' call: the instant reading never moves work.
+    {
+      name: "a CPU spike",
+      sample: { ...CALM, busyCores: 9, headroomSince: null },
+      macJobs: 1,
+      label: "vp test run",
+      queue: true,
+      out: "mac-wait",
+    },
+    {
+      name: "a stale reading",
+      sample: { ...TIGHT, at: NOW - 60_000 },
+      macJobs: 1,
+      label: "vp test run",
+      queue: true,
+      out: "mac-wait",
+    },
+    // With the queue off the Mac never holds a job, so only the sustained limits move work.
+    {
+      name: "the queue is off",
+      sample: TIGHT,
+      macJobs: 1,
+      label: "vp test run",
+      queue: false,
+      out: "mac-start",
+    },
+  ] as const)("$name: $out", ({ sample, macJobs, label, queue, out }) => {
+    const entries = [
+      ...Array.from({ length: macJobs }, (_, i) => runningOn(`m${i}`, "mac")),
+      job("a", label),
+    ];
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "automatic" }, { health: READ, sample, enabled: queue }),
+    );
+    expect(outcomeOf(plan, "a")).toBe(out);
+  });
+
+  it("names why the Mac has no room in the waiting reason when Linux is busy too", () => {
+    const entries = [
+      runningOn("m0", "mac"),
+      runningOn("l1", "linux"),
+      runningOn("l2", "linux"),
+      job("a", "vp test run"),
+    ];
+    const plan = planRoutes(
+      input(entries, { runnerWhere: "automatic" }, { health: READ, sample: TIGHT, runnerOn: true }),
+    );
+    expect(plan.routes.a).toBe("mac");
+    expect(plan.reasons.a).toBe(
+      "Hybrid: this Mac's backlog is shorter · needs ~4.0 GB; 6.0 GB free, 3.2 GB kept spare",
+    );
+  });
+});
+
+describe("Start now keeps a job on the machine it was headed for", () => {
+  const forced = (extra: Partial<HeavyQueueEntry> = {}) =>
+    job("f", "vp test run", { forced: true, ...extra });
+  it.each([
+    { name: "Linux slots full", where: "linux", linux: "full", out: "linux-start" },
+    { name: "Linux over its limits", where: "linux", linux: "overloaded", out: "linux-start" },
+    { name: "no fresh Linux reading yet", where: "linux", linux: "stale", out: "linux-start" },
+    // `remoto` serializes one worktree's runs, so starting it would only wait there.
+    { name: "same worktree on Linux", where: "linux", linux: "same-worktree", out: "linux-wait" },
+    {
+      name: "Linux offline, policy Run here",
+      where: "linux",
+      linux: "offline-mac",
+      out: "mac-start",
+    },
+    {
+      name: "Linux offline, policy Wait",
+      where: "linux",
+      linux: "offline-wait",
+      out: "linux-wait",
+    },
+    { name: "Hybrid, Mac has room", where: "automatic", linux: "full", out: "mac-start" },
+    // Linux waits for a fresh reading, and its line is shorter than the full Mac's.
+    {
+      name: "Hybrid, Mac full, Linux line shorter",
+      where: "automatic",
+      linux: "stale",
+      macFull: true,
+      out: "linux-start",
+    },
+    {
+      name: "Hybrid, Mac full, Mac line shorter",
+      where: "automatic",
+      linux: "full",
+      macFull: true,
+      out: "mac-start",
+    },
+    { name: "This Mac, Mac full", where: "mac", linux: "online", macFull: true, out: "mac-start" },
+  ] as const)("$name: $out", (row) => {
+    const linuxJobs =
+      row.linux === "full"
+        ? [runningOn("l1", "linux"), runningOn("l2", "linux")]
+        : row.linux === "same-worktree"
+          ? [runningOn("l1", "linux", "/work/f")]
+          : row.linux === "stale"
+            ? [{ ...runningOn("l1", "linux"), startedAt: ago(500) }]
+            : [];
+    const macJobs = "macFull" in row ? ["m1", "m2", "m3"].map((id) => runningOn(id, "mac")) : [];
+    const plan = planRoutes(
+      input(
+        [...macJobs, ...linuxJobs, forced()],
+        {
+          runnerWhere: row.where,
+          runnerUnavailable: row.linux === "offline-wait" ? "wait" : "mac",
+        },
+        {
+          health:
+            row.linux === "overloaded"
+              ? OVERLOADED
+              : row.linux.startsWith("offline")
+                ? OFFLINE
+                : READ,
+        },
+      ),
+    );
+    expect(outcomeOf(plan, "f")).toBe(row.out);
+  });
+
+  it("a forced Linux start gives its row no Mac reason", () => {
+    const plan = planRoutes(
+      input(
+        [runningOn("l1", "linux"), runningOn("l2", "linux"), forced()],
+        {
+          runnerWhere: "linux",
+        },
+        { health: READ, runnerOn: true },
+      ),
+    );
+    expect(plan.admits.f).toEqual({ runner: "linux", ungated: false });
+    expect(plan.reasons.f).toBeUndefined();
+  });
+});
+
+describe("Linux limits as a waiting reason", () => {
+  it.each([
+    {
+      name: "over its limits",
+      health: OVERLOADED,
+      linuxJobs: 0,
+      sameWorktree: false,
+      over: "1.8 GB free, keeping 20%",
+    },
+    {
+      name: "easing back under",
+      health: { ...READ, overLimit: true },
+      linuxJobs: 0,
+      sameWorktree: false,
+      over: "easing back under its limits",
+    },
+    // Full slots come first: the limits are not what holds it.
+    {
+      name: "slots full and over",
+      health: OVERLOADED,
+      linuxJobs: 2,
+      sameWorktree: false,
+      over: undefined,
+    },
+    {
+      name: "same worktree",
+      health: OVERLOADED,
+      linuxJobs: 1,
+      sameWorktree: true,
+      over: undefined,
+    },
+    // `nextHealth` keeps `overLimit` through failed checks: offline is never "over its limits".
+    {
+      name: "offline",
+      health: { ...OVERLOADED, online: false },
+      linuxJobs: 0,
+      sameWorktree: false,
+      over: undefined,
+    },
+    {
+      name: "not checked yet",
+      health: { ...UNKNOWN_HEALTH, overLimit: true },
+      linuxJobs: 0,
+      sameWorktree: false,
+      over: undefined,
+    },
+    { name: "has room", health: READ, linuxJobs: 0, sameWorktree: false, over: undefined },
+  ])("$name", ({ health, linuxJobs, sameWorktree, over }) => {
+    const entries = [
+      ...Array.from({ length: linuxJobs }, (_, i) =>
+        runningOn(`l${i}`, "linux", sameWorktree ? "/work/a" : `/work/l${i}`),
+      ),
+      job("a", "vp test run"),
+    ];
+    for (const where of ["linux", "automatic"] as const) {
+      const plan = planRoutes(
+        input(
+          entries,
+          { runnerWhere: where, runnerUnavailable: "wait" },
+          {
+            health,
+            maxRunning: 1,
+            ...(where === "automatic" ? { entries: [runningOn("m0", "mac"), ...entries] } : {}),
+          },
+        ),
+      );
+      expect(plan.linuxOver.a).toBe(over);
+    }
   });
 });

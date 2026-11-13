@@ -136,22 +136,39 @@ const roundMemory = (bytes: number) => {
   return bytes > 0 ? Math.max(MIB, Math.round(bytes / step) * step) : 0;
 };
 
-const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => ({
-  source: "queue",
-  entryId: entry.id,
-  pid: entry.pid,
-  startTimeMs: Math.max(0, Date.parse(entry.startedAt) || 0),
-  threadId: entry.threadId,
-  cwd: entry.cwd,
-  label: entry.label,
-  name: heavyEntryName(entry),
-  startedAt: entry.startedAt,
-  stoppable: entry.server !== true,
-  ...(entry.cpu === undefined ? {} : { cpu: tenth(entry.cpu) }),
-  ...(entry.memory === undefined ? {} : { memory: roundMemory(entry.memory) }),
-  ...(entry.peakCpu === undefined ? {} : { peakCpu: tenth(entry.peakCpu) }),
-  ...(entry.peakMemory === undefined ? {} : { peakMemory: roundMemory(entry.peakMemory) }),
-});
+/**
+ * A Linux job's local tree is only the `remoto` wrapper, so its usage says nothing; files written
+ * by a version that sampled it still carry those numbers.
+ */
+export const withoutUsage = <E extends HeavyQueueEntry>({
+  cpu: _cpu,
+  memory: _memory,
+  peakCpu: _peakCpu,
+  peakMemory: _peakMemory,
+  ...entry
+}: E) => entry;
+
+const queueCommand = (entry: HeavyQueueEntry & { readonly startedAt: string }): HeavyCommand => {
+  const usage: Partial<Pick<HeavyQueueEntry, "cpu" | "memory" | "peakCpu" | "peakMemory">> =
+    entry.runner === "linux" ? {} : entry;
+  return {
+    source: "queue",
+    ...(entry.runner === "linux" ? { runner: "linux" as const } : {}),
+    entryId: entry.id,
+    pid: entry.pid,
+    startTimeMs: Math.max(0, Date.parse(entry.startedAt) || 0),
+    threadId: entry.threadId,
+    cwd: entry.cwd,
+    label: entry.label,
+    name: heavyEntryName(entry),
+    startedAt: entry.startedAt,
+    stoppable: entry.server !== true,
+    ...(usage.cpu === undefined ? {} : { cpu: tenth(usage.cpu) }),
+    ...(usage.memory === undefined ? {} : { memory: roundMemory(usage.memory) }),
+    ...(usage.peakCpu === undefined ? {} : { peakCpu: tenth(usage.peakCpu) }),
+    ...(usage.peakMemory === undefined ? {} : { peakMemory: roundMemory(usage.peakMemory) }),
+  };
+};
 
 /**
  * Every heavy command running now: started queue entries first, then the direct commands under

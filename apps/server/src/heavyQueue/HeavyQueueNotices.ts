@@ -14,7 +14,7 @@ import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../serverSettings.ts";
-import { estimate, SAMPLE_FRESH_MS } from "./admission.ts";
+import { SAMPLE_FRESH_MS } from "./admission.ts";
 import { linuxState } from "./HeavyQueue.ts";
 import {
   groupNotices,
@@ -85,8 +85,8 @@ const make = Effect.fn("HeavyQueueNotices.make")(function* (dir: string) {
           : hold === "job-memory" || hold === "job-cpu"
             ? "the job needs more than is free"
             : heavyHoldText(hold, fresh ? doc.sample : null, doc.maxRunning),
-      linuxOver: doc.linux.overLimit ? "load or memory too high" : null,
-      usualMs: (entry) => estimate(doc.history, entry, 1).durationMs,
+      linuxOver: plan.linuxOver,
+      usualMs: (entry, runner) => QueueFile.usualMs(doc, entry, runner),
       now,
     });
     const shown = linuxState(doc);

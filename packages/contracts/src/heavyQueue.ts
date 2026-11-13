@@ -345,6 +345,8 @@ export const HeavyCommand = Schema.Struct({
   peakMemory: Schema.optionalKey(Schema.Number),
   /** Why the queue does not manage it, shown under the row. */
   reason: Schema.optionalKey(Schema.String),
+  /** Where a queue row runs; absent means this Mac. A Linux row carries no usage. */
+  runner: Schema.optionalKey(HeavyRunner),
 });
 export type HeavyCommand = typeof HeavyCommand.Type;
 

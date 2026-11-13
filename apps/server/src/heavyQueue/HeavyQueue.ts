@@ -22,6 +22,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
+import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
 import type { QueuedEntry } from "./runner.ts";
@@ -113,6 +114,11 @@ export class HeavyQueue extends Context.Service<
     ) => Effect.Effect<A, E | HeavyQueueError, R>;
     /** The shell prefix agents put before a heavy command. */
     readonly command: Effect.Effect<string>;
+    /** Where `line`, started now from `cwd`, would run; nothing is queued. */
+    readonly probe: (
+      line: string,
+      cwd: string,
+    ) => Effect.Effect<ReturnType<typeof QueueFile.probe>, HeavyQueueError>;
   }
 >()("t3/heavyQueue/HeavyQueue") {}
 
@@ -229,7 +235,12 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
     for (const entry of entries) {
-      if (entry.startedAt !== null || (doc.history[signatureOf(entry.label)] ?? []).length === 0) {
+      // Usage is only known for this Mac's runs; a job headed for Linux shows none.
+      if (
+        entry.startedAt !== null ||
+        plan.routes[entry.id] === "linux" ||
+        (doc.history[signatureOf(entry.label)] ?? []).length === 0
+      ) {
         continue;
       }
       const usual = estimate(doc.history, entry, 1);
@@ -238,7 +249,9 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     }
     return {
       // A job's full line stays in the file; the row shows its label.
-      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) => entry),
+      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
+        entry.runner === "linux" ? withoutUsage(entry) : entry,
+      ),
       estimates,
       enabled,
       paused,
@@ -397,6 +410,13 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     ),
     withSlot,
     command: Effect.succeed(command),
+    probe: Effect.fn("HeavyQueue.probe")(function* (line: string, cwd: string) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Effect.try({
+        try: () => QueueFile.probe(dir, line, cwd, now),
+        catch: unavailable,
+      });
+    }),
   });
 });
 

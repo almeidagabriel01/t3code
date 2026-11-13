@@ -39,7 +39,8 @@ export const peaksOf = (
   const children = childrenByParent(processes);
   const peaks: Record<string, { cpu: number; memoryBytes: number }> = {};
   for (const entry of entries) {
-    if (entry.startedAt === null) continue;
+    // A Linux job's local tree is only `remoto`'s wrapper.
+    if (entry.startedAt === null || entry.runner === "linux") continue;
     const root = processes.find((process) => process.identity.pid === entry.pid);
     const footprint = footprints[entry.id];
     if (root === undefined) {
@@ -86,7 +87,9 @@ export const readFootprints = Effect.fn("HeavyQueueSampler.readFootprints")(
         .string(ChildProcess.make(program, args, { stdin: "ignore", stderr: "ignore" }))
         .pipe(Effect.timeout("2 seconds"));
     // A server-held slot's pid is T3 itself, whose tree is everything.
-    const jobs = entries.filter((entry) => entry.startedAt !== null && entry.server !== true);
+    const jobs = entries.filter(
+      (entry) => entry.startedAt !== null && entry.server !== true && entry.runner !== "linux",
+    );
     if (platform !== "darwin" || (jobs.length === 0 && devicePids.length === 0)) {
       return NO_FOOTPRINTS;
     }

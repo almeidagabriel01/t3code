@@ -197,8 +197,9 @@ export const stuckJobs = (input: {
   readonly routes: Readonly<Record<string, HeavyRunner>>;
   readonly macHold: HeavyQueueHold | null;
   readonly macHoldText: string | null;
-  readonly linuxOver: string | null;
-  readonly usualMs: (entry: HeavyQueueEntry) => number | null;
+  /** Waiters Linux holds back only for its own limits (`RoutePlan.linuxOver`). */
+  readonly linuxOver: Readonly<Record<string, string>>;
+  readonly usualMs: (entry: HeavyQueueEntry, runner: HeavyRunner) => number | null;
   readonly now: number;
 }): ReadonlyArray<StuckJob> =>
   input.entries.flatMap((entry) => {
@@ -209,9 +210,9 @@ export const stuckJobs = (input: {
         ? input.macHold !== null && LIMIT_HOLDS.has(input.macHold)
           ? input.macHoldText
           : null
-        : input.linuxOver;
+        : (input.linuxOver[entry.id] ?? null);
     if (why === null) return [];
-    const usualMs = input.usualMs(entry);
+    const usualMs = input.usualMs(entry, runner);
     const waitedMs = input.now - Date.parse(entry.createdAt);
     const limit = usualMs === null ? STUCK_NO_HISTORY_MS : Math.max(3 * usualMs, STUCK_FLOOR_MS);
     if (!(waitedMs > limit)) return [];

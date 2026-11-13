@@ -21,8 +21,10 @@ import {
   DEFAULT_MAX_RUNNING,
   hasHeadroom,
   HISTORY_RUNS,
+  medianDuration,
   signatureOf,
   type History,
+  type LinuxHistory,
   type Run,
   type Sample,
   SAMPLE_FRESH_MS,
@@ -113,7 +115,10 @@ interface QueueDoc {
   readonly paused: boolean;
   readonly rules: ReadonlyArray<HeavyQueueRule>;
   readonly maxRunning: number;
+  /** This Mac's finished runs: Linux runs only show the local `remoto` wrapper's usage. */
   readonly history: History;
+  /** How long each command took on Linux, newest last; usage there is not measured. */
+  readonly linuxHistory: LinuxHistory;
   /** The latest machine reading a server published; waiters cannot measure free memory themselves. */
   readonly sample: Sample | null;
   readonly lastStartAt: number | null;
@@ -139,6 +144,7 @@ const EMPTY_DOC: QueueDoc = {
   rules: [],
   maxRunning: DEFAULT_MAX_RUNNING,
   history: {},
+  linuxHistory: {},
   sample: null,
   lastStartAt: null,
   holding: false,
@@ -185,6 +191,7 @@ const loadDoc = (dir: string): QueueDoc => {
       rules?: unknown;
       maxRunning?: unknown;
       history?: unknown;
+      linuxHistory?: unknown;
       sample?: unknown;
       lastStartAt?: unknown;
       holding?: unknown;
@@ -209,6 +216,7 @@ const loadDoc = (dir: string): QueueDoc => {
         parsed?.history !== null && typeof parsed?.history === "object"
           ? (parsed.history as History)
           : {},
+      linuxHistory: isObject(parsed?.linuxHistory) ? (parsed.linuxHistory as LinuxHistory) : {},
       sample:
         parsed?.sample !== null && typeof parsed?.sample === "object"
           ? (parsed.sample as Sample)
@@ -253,8 +261,11 @@ export type StartResult =
     }
   | {
       readonly status: "waiting";
+      /** Place among the waiters for its machine, and that machine's first running job. */
       readonly position: number;
       readonly running?: HeavyQueueEntry;
+      /** The machine it waits for; absent while no project uses the Runner. */
+      readonly runner?: HeavyRunner;
       readonly paused?: true;
       /** Why it is not starting, for people; changes as the machine does. */
       readonly reason?: string;
@@ -334,6 +345,12 @@ const contextOf =
     rootOf: gitRootOf,
   });
 
+/** Some project uses the Runner, so jobs can wait on either machine. */
+const runnerOn = (doc: QueueDoc) =>
+  doc.runner !== null &&
+  (doc.runner.global.runnerEnabled ||
+    doc.runner.projects.some((project) => project.config.runnerEnabled));
+
 const planOf = (doc: QueueDoc, now: number): RoutePlan =>
   planRoutes({
     entries: doc.entries,
@@ -350,10 +367,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
-    runnerOn:
-      doc.runner !== null &&
-      (doc.runner.global.runnerEnabled ||
-        doc.runner.projects.some((project) => project.config.runnerEnabled)),
+    runnerOn: runnerOn(doc),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -467,12 +481,19 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
               }
             : e,
         );
+  // Counted on the machine it waits for, as the Resource Manager groups rows.
+  const runner = decision.routes[id] ?? "mac";
+  const machineOf = (e: HeavyQueueEntry) =>
+    e.startedAt === null ? (decision.routes[e.id] ?? "mac") : (e.runner ?? "mac");
+  const there = entries.filter((e) => machineOf(e) === runner);
+  const runningThere = there.find((e) => e.startedAt !== null);
   return {
     doc: { ...doc, entries: asked, holding: decision.holding },
     result: {
       status: "waiting",
-      position: index - active.length + 1,
-      ...(active[0] === undefined ? {} : { running: active[0] }),
+      position: there.filter((e) => e.startedAt === null).findIndex((e) => e.id === id) + 1,
+      ...(runningThere === undefined ? {} : { running: runningThere }),
+      ...(runnerOn(doc) ? { runner } : {}),
       ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
       ...(decision.reasons[id] === undefined ? {} : { reason: decision.reasons[id] }),
     },
@@ -567,23 +588,41 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
   return { doc, result: "ok" };
 };
 
+/** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
 const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): QueueDoc => {
   const kept = new Set(after.entries.map((entry) => entry.id));
   const history: Record<string, ReadonlyArray<Run>> = { ...after.history };
+  const linuxHistory: Record<string, LinuxHistory[string]> = { ...after.linuxHistory };
   let changed = false;
   for (const gone of before.entries) {
-    if (gone.startedAt === null || kept.has(gone.id) || gone.peakMemory === undefined) continue;
+    if (gone.startedAt === null || kept.has(gone.id)) continue;
     const signature = signatureOf(gone.label);
-    const run = {
-      cpu: gone.peakCpu ?? 0,
-      memoryBytes: gone.peakMemory,
-      durationMs: Math.max(0, now - Date.parse(gone.startedAt)),
-    };
-    history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
+    const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
+    if (gone.runner === "linux") {
+      // A run that never got past syncing says nothing about how long the command takes.
+      if (gone.phase !== "running") continue;
+      linuxHistory[signature] = [...(linuxHistory[signature] ?? []), { durationMs }].slice(
+        -HISTORY_RUNS,
+      );
+    } else {
+      if (gone.peakMemory === undefined) continue;
+      const run = { cpu: gone.peakCpu ?? 0, memoryBytes: gone.peakMemory, durationMs };
+      history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
+    }
     changed = true;
   }
-  return changed ? { ...after, history } : after;
+  return changed ? { ...after, history, linuxHistory } : after;
 };
+
+/** How long `entry`'s command usually takes on `runner`, from that machine's runs; null without any. */
+export const usualMs = (
+  doc: Pick<QueueDoc, "history" | "linuxHistory">,
+  entry: Pick<HeavyQueueEntry, "label">,
+  runner: HeavyRunner,
+) =>
+  medianDuration(
+    (runner === "linux" ? doc.linuxHistory : doc.history)[signatureOf(entry.label)] ?? [],
+  );
 
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
@@ -613,6 +652,44 @@ export const readPlan = (dir: string, now = Date.now()) => {
   return { doc, plan: planOf(doc, now) };
 };
 
+/**
+ * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
+ * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
+ * and waiters ahead fill its slots.
+ */
+export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
+  const doc = readDoc(dir);
+  const parts = lineParts(line);
+  const id = `probe-${now}`;
+  const withProbe = insertNew(doc, {
+    id,
+    pid: process.pid,
+    threadId: null,
+    label: parts.command,
+    cwd: startFolder(parts.dirs, cwd, NodeOS.homedir()),
+    createdAt: new Date(now).toISOString(),
+    startedAt: null,
+    // As `t3 heavy` queues an agent's job, behind the user's own.
+    priority: "low",
+    ...(parts.remoto ? { where: "linux" as const } : {}),
+  });
+  const plan = planOf(withProbe, now);
+  const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
+  // Running there or waiting for it ahead of this command: what fills Linux before it.
+  const ahead = withProbe.entries
+    .slice(
+      0,
+      withProbe.entries.findIndex((e) => e.id === id),
+    )
+    .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  return {
+    runsOn: plan.routes[id] ?? ("mac" as const),
+    reason: plan.reasons[id] ?? null,
+    startsNow: plan.admits[id] !== undefined,
+    linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
+  };
+};
+
 /** A server publishes the machine reading and each running job's process-tree peak. */
 export const recordSample = (
   dir: string,
@@ -635,7 +712,8 @@ export const recordSample = (
         sample,
         entries: doc.entries.map((entry) => {
           const peak = peaks[entry.id];
-          return entry.startedAt === null || peak === undefined
+          // On Linux the local tree is only `remoto`'s wrapper, not the job.
+          return entry.startedAt === null || peak === undefined || entry.runner === "linux"
             ? entry
             : {
                 ...entry,

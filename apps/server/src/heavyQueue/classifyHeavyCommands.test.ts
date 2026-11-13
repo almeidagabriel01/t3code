@@ -346,6 +346,24 @@ describe("classifyHeavyCommands", () => {
     ]);
   });
 
+  it("says where a queue row runs, and gives a Linux row none of the wrapper's usage", () => {
+    const usage = { cpu: 0.04, memory: 30e6, peakCpu: 0.1, peakMemory: 40e6 };
+    const result = classify({
+      processes: [SERVER],
+      entries: [
+        entry({ id: "mac", pid: 1, server: true, ...usage }),
+        entry({ id: "linux", pid: 2, server: true, runner: "linux", ...usage }),
+      ],
+    });
+    const [mac, linux] = result.commands;
+    expect(mac).not.toHaveProperty("runner");
+    expect(mac).toMatchObject({ cpu: 0, peakCpu: 0.1 });
+    expect(linux).toMatchObject({ runner: "linux" });
+    for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+      expect(linux).not.toHaveProperty(key);
+    }
+  });
+
   it("orders direct commands oldest first and records the pids Stop may signal", () => {
     const result = classify({
       processes: [
