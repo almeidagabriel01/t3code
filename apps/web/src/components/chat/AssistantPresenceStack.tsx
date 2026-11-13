@@ -1,17 +1,13 @@
 import {
   assistantPresenceSections,
   assistantPresenceStatus,
+  assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
   type AssistantSender,
 } from "@t3tools/client-runtime/assistantPresence";
+import { assistantPresenceOf, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import {
-  assistantFace,
-  assistantPresenceOf,
-  type AssistantFace,
-} from "@t3tools/client-runtime/assistantRobot";
-import {
-  ASSISTANT_TASK_FACE,
   assistantTaskState,
   canDismissAssistantTask,
   type AssistantTaskState,
@@ -296,16 +292,10 @@ export function AssistantPresenceStack(props: {
   );
   const taskOf = (sender: AssistantSender) =>
     task !== null && task.assistantId === sender.assistantId ? task : null;
-  const faceOf = (sender: AssistantSender): AssistantFace => {
-    const ownTask = taskOf(sender);
-    if (ownTask !== null) return ASSISTANT_TASK_FACE[ownTask.state];
-    return sender.assistant ? assistantFace(presenceById.get(sender.assistantId)!) : "sleeping";
-  };
-  const isWorking = (sender: AssistantSender) => {
-    const ownTask = taskOf(sender);
-    if (ownTask !== null) return ownTask.state === "running" || ownTask.state === "waiting";
-    return presenceById.get(sender.assistantId)!.mood === "working";
-  };
+  const lookOf = (sender: AssistantSender) =>
+    assistantSenderLook(sender, presenceById.get(sender.assistantId), task);
+  const faceOf = (sender: AssistantSender) => lookOf(sender).face;
+  const isWorking = (sender: AssistantSender) => lookOf(sender).working;
   const sections = assistantPresenceSections(senders, isWorking);
   const row = (sender: AssistantSender) => (
     <AssistantPresenceRow

@@ -1,5 +1,8 @@
 import { assistantIdFromThreadId, type Assistant } from "@t3tools/contracts";
 
+import { assistantFace, type AssistantFace, type AssistantPresence } from "./assistantRobot.ts";
+import { ASSISTANT_TASK_FACE, type AssistantTaskState } from "./assistantTasks.ts";
+
 /** Distinct hues that read on dark, light and glass surfaces. */
 export const ASSISTANT_ACCENTS = [
   "#8b5cf6",
@@ -67,6 +70,25 @@ export function assistantThreadSenders(
   }
   const owner = { assistantId: taskOwner.id, assistant: taskOwner, count: 0 };
   return [{ ...owner, firstMessageId: "", lastMessageId: "" }, ...senders];
+}
+
+/**
+ * A sender's face and Working/Idle section, from one reading: the assistant that launched the
+ * thread as a task wears the task's state, everyone else their own presence.
+ */
+export function assistantSenderLook(
+  sender: Pick<AssistantSender, "assistantId" | "assistant">,
+  presence: AssistantPresence | undefined,
+  task: { readonly assistantId: string; readonly state: AssistantTaskState } | null,
+): { readonly face: AssistantFace; readonly working: boolean } {
+  if (task !== null && task.assistantId === sender.assistantId) {
+    return {
+      face: ASSISTANT_TASK_FACE[task.state],
+      working: task.state === "running" || task.state === "waiting",
+    };
+  }
+  const working = presence?.mood === "working";
+  return { face: sender.assistant && presence ? assistantFace(presence) : "sleeping", working };
 }
 
 /** A presence row's one status line: "Idle · 6 messages here · Asks before acting". */

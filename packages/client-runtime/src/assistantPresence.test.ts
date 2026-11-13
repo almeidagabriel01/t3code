@@ -7,6 +7,7 @@ import {
   assistantAccent,
   assistantPresenceSections,
   assistantPresenceStatus,
+  assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
   messageAssistantId,
@@ -103,6 +104,33 @@ describe("assistant look", () => {
   it("keeps one accent per assistant and an uppercase initial", () => {
     expect(assistantAccent("jarvis")).toBe(assistantAccent("jarvis"));
     expect(ASSISTANT_ACCENTS).toContain(assistantAccent("revisor"));
+  });
+});
+
+describe("assistantSenderLook", () => {
+  const presence = (mood: string) => ({ mood }) as never;
+  const qa = { assistantId: "qa", assistant: { id: "qa" } as Assistant };
+  it.each([
+    { name: "no task: presence", task: null, mood: "working", expected: ["working", true] },
+    { name: "no task: idle", task: null, mood: "idle", expected: ["idle", false] },
+    { name: "task running", task: "running", mood: "idle", expected: ["working", true] },
+    { name: "task waiting", task: "waiting", mood: "idle", expected: ["waiting", true] },
+    { name: "task failed", task: "failed", mood: "working", expected: ["failed", false] },
+    { name: "task done", task: "done", mood: "working", expected: ["done", false] },
+  ] as const)("face and section agree: $name", ({ task, mood, expected }) => {
+    const look = assistantSenderLook(
+      qa,
+      presence(mood),
+      task === null ? null : { assistantId: "qa", state: task },
+    );
+    expect([look.face, look.working]).toEqual(expected);
+  });
+
+  it("a task of another assistant and a removed assistant fall back to presence", () => {
+    const other = { assistantId: "qa", state: "failed" as const };
+    expect(
+      assistantSenderLook({ assistantId: "ada", assistant: null }, presence("idle"), other),
+    ).toEqual({ face: "sleeping", working: false });
   });
 });
 
