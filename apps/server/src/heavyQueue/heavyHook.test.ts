@@ -15,6 +15,9 @@ import {
   nameOf,
   lineParts,
   queueBashCall,
+  readLine,
+  rewriteLine,
+  workParts,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -302,6 +305,48 @@ describe("an agent's own remoto call", () => {
     ["the Runner off, after another command", "ls && remoto vp test run", false],
   ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+
+  // Queued or left to the agent's remoto; then the line Linux mode runs here, one remoto per call.
+  it.each([
+    [
+      `cd /w/s && remoto sh -c 'vp test run'`,
+      true,
+      null,
+      true,
+      `cd /w/s && remoto sh -c 'vp test run'`,
+    ],
+    [`cd /w/s && remoto sh -c 'vp test run'`, false, null, false, null],
+    [`remoto sh -c 'cd /w && remoto vp test'`, true, null, true, `sh -c 'cd /w && remoto vp test'`],
+    [`sh -c 'cd /w && remoto vp test run'`, true, null, false, null],
+    [`cd /w && bash -lc "remoto pnpm exec vp test run"`, true, null, false, null],
+    [
+      `vp lint && sh -c 'remoto vp test'`,
+      true,
+      null,
+      true,
+      `remoto vp lint && sh -c 'remoto vp test'`,
+    ],
+    [
+      `cd /w && vp lint && remoto vp test`,
+      true,
+      null,
+      true,
+      `cd /w && remoto vp lint && remoto vp test`,
+    ],
+    // Local heavy work beside the inner remoto still queues, and the part is never wrapped again.
+    [`sh -c 'vp lint && remoto vp test'`, true, null, true, `sh -c 'vp lint && remoto vp test'`],
+    [`sh -c 'vp lint && remoto vp test'`, false, null, true, `sh -c 'vp lint && remoto vp test'`],
+    ["sh ./check.sh", true, "cd /w && remoto vp test run", false, null],
+    ["sh ./check.sh", true, "vp lint && remoto vp test run", true, null],
+    ["remoto vp test run", false, null, false, null],
+  ])("%j (Runner %s, script %j) queued %s, runs %j", (command, runner, body, queued, linux) => {
+    const readScript = () => body;
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, { runner, readScript });
+    expect(answer !== null).toBe(queued);
+    if (linux !== null) expect(rewriteLine(command, "remoto")).toBe(linux);
+    // A script that calls remoto is never Linux work, so it is never wrapped in another.
+    if (body !== null) expect(workParts(readLine(command, readScript).parts)).toEqual([]);
   });
 });
 
