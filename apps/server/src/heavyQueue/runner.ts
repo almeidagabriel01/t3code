@@ -209,6 +209,8 @@ export const outsideTie = (arg: string, cwd: string, root: string): string | nul
   return null;
 };
 
+const BOTH_AT_LIMITS = "Both machines are at their limits";
+
 /** Why a commit waits in the queue at all; with the Runner on, the Runner's own reason shows. */
 const COMMIT_HOOK = "Commit hook runs checks";
 
@@ -385,6 +387,7 @@ export const eligibilityOf = (
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;
       } else if (
         notListed === null &&
+        !config.runnerLinuxEverything &&
         entry.where === undefined &&
         part.remoto === null &&
         !matchesAny(text, config.runnerLinuxCommands)
@@ -693,10 +696,10 @@ export const intentOf = (
 };
 
 /**
- * Decides every waiter for both runners. Hybrid places each in queue order: the Mac while it has
- * room, else Linux while it has room, else the smaller backlog per slot (the Mac on a tie). Room is
- * judged on sustained readings, so a spike never moves work; Hybrid never asks and stays on the Mac
- * while Linux is offline or unknown.
+ * Decides every waiter in queue order. Hybrid: the smaller backlog per slot (the Mac on a tie), and
+ * a machine that can start it now takes it from one that can't. Mac first: this Mac up to
+ * `runnerMacFirstAfter` jobs, then Linux. A machine over its sustained limits takes nothing new;
+ * past both, the job holds. Neither asks: Linux offline or unknown keeps the job on the Mac.
  */
 export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const { entries, now, health, machine, sample } = input;
@@ -825,29 +828,52 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toLinux(entry, "waiting for Linux to come back");
       continue;
     }
-    if (intent === "automatic") {
-      if (paused || !up || macRoom(entry)) {
-        toMac(
-          entry,
-          paused
-            ? "Hybrid: queue paused"
-            : !up
-              ? "Hybrid: Linux is unavailable"
-              : "Hybrid: this Mac has room",
-        );
+    if (intent === "automatic" || intent === "macFirst") {
+      const hybrid = intent === "automatic";
+      const mode = hybrid ? "Hybrid" : "Mac first";
+      if (hybrid && paused) {
+        toMac(entry, "Hybrid: queue paused");
+        continue;
+      }
+      if (!up) {
+        toMac(entry, `${mode}: Linux is unavailable`);
         continue;
       }
       const busy = linuxBusy(worktree);
-      if (busy === null) toLinuxNow(entry, worktree);
-      // Both are full: the smaller backlog per slot, the Mac on a tie. With the queue off the Mac
-      // never waits, so it starts here.
-      else if (
-        queueOn &&
-        linuxCount / machine.runnerLinuxSlots < macCount / Math.max(1, input.maxRunning)
-      ) {
-        if (startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
-        else toLinux(entry, busy);
-      } else toMac(entry, "Hybrid: this Mac's backlog is shorter");
+      if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
+        routes[entry.id] = "linux";
+        linuxCount += 1;
+        reasons[entry.id] = BOTH_AT_LIMITS;
+        continue;
+      }
+      const past = macCount >= config.runnerMacFirstAfter;
+      let onMac: boolean;
+      if (hybrid) {
+        onMac = macCount / Math.max(1, input.maxRunning) <= linuxCount / machine.runnerLinuxSlots;
+        if (onMac && macOver) onMac = false;
+        else if (!onMac && health.overLimit) onMac = true;
+        // A machine that can start it now takes it from the other one, which can't.
+        if (onMac && busy === null && !macRoom(entry)) onMac = false;
+        else if (
+          !onMac &&
+          busy !== null &&
+          !startsOnLinux(entry, busy) &&
+          macWaiters.length === 0 &&
+          macRoom(entry)
+        )
+          onMac = true;
+      } else onMac = !macOver && !past;
+      if (onMac) {
+        toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
+        continue;
+      }
+      if (paused && entry.forced !== true) toLinux(entry, "paused");
+      else if (busy === null || startsOnLinux(entry, busy)) toLinuxNow(entry, worktree);
+      else {
+        toLinux(entry, busy);
+        if (hybrid && macOver) reasons[entry.id] = "Hybrid: this Mac is over its limits";
+        if (!hybrid && past) reasons[entry.id] = `Mac first: this Mac has ${macCount} jobs`;
+      }
       continue;
     }
     // Bound for Linux.
