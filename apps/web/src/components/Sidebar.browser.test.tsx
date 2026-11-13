@@ -19,6 +19,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { selectActiveMainFileSurface, useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects, useQuietThreadShells } from "../state/entities";
 import * as session from "../state/session";
+import { setTaskDismissed } from "./assistants/useAssistantFlows";
 import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "./chat/threadContextDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
@@ -37,6 +38,7 @@ vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("./assistants/useAssistantSidebarModel", { spy: true });
 vi.mock("../state/session", { spy: true });
+vi.mock("./assistants/useAssistantFlows", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -44,6 +46,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -245,13 +248,22 @@ describe("sidebar thread pick", () => {
 });
 
 /** One assistant whose task is also its project's thread, so the sidebar draws it twice. */
-function mockTaskCopy() {
+function mockTaskCopy(
+  options: { readonly state?: "running" | "done"; readonly routed?: boolean } = {},
+) {
   const activeProject = project("active");
   const task = threadShell(activeProject.id, 1);
   const environmentId = activeProject.environmentId;
+  const routeThreadRef = options.routed ? { environmentId, threadId: task.id } : null;
   const entry = {
     environmentId,
-    assistant: { id: "jarvis", name: "Jarvis", threadId: null, role: "", scope: "all" },
+    assistant: {
+      id: "jarvis",
+      name: "Jarvis",
+      threadId: ThreadId.make("assistant:jarvis:1"),
+      role: "",
+      scope: "all",
+    },
   } as never as AssistantSidebarModel["active"][number];
   vi.mocked(useAssistantSidebarModel).mockReturnValue({
     enabled: true,
@@ -269,7 +281,7 @@ function mockTaskCopy() {
         {
           sections: {
             pinned: [],
-            open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
+            open: [{ task: { threadId: task.id }, shell: task, state: options.state ?? "running" }],
             snoozed: [],
             settled: [],
           },
@@ -278,11 +290,14 @@ function mockTaskCopy() {
         },
       ],
     ]),
-    threadKeys: [],
+    threadKeys: ["local:assistant:jarvis:1", `local:${task.id}`],
   } as never as AssistantSidebarModel);
   vi.mocked(useProjects).mockReturnValue([activeProject]);
-  vi.mocked(useQuietThreadShells).mockReturnValue([task]);
-  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
+  vi.mocked(useQuietThreadShells).mockReturnValue([threadShell(activeProject.id, 0), task]);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({
+    kind: "server",
+    threadRef: routeThreadRef,
+  } as never);
   vi.mocked(useHandleNewThread).mockReturnValue({
     activeDraftThread: null,
     activeThread: null,
@@ -290,7 +305,7 @@ function mockTaskCopy() {
     defaultProjectFallbackReady: true,
     handleNewThread: vi.fn().mockResolvedValue(null),
     routeDraftId: null,
-    routeThreadRef: null,
+    routeThreadRef,
   });
   return task;
 }
@@ -395,6 +410,35 @@ describe("sidebar assistants section", () => {
     expect(vi.mocked(StaticThreadRow).mock.calls.length).toBeGreaterThan(before);
     await userEvent.keyboard(`{/${modifier}}`);
     await userEvent.keyboard(`{${modifier}>}1{/${modifier}}`);
+    await vi.waitFor(() =>
+      expect(decodeURIComponent(screen.router?.state.location.pathname ?? "")).toBe(
+        "/local/assistant:jarvis:1",
+      ),
+    );
+  });
+
+  it("offers Dismiss in a finished task copy's action slot instead of Settle", async () => {
+    const task = mockTaskCopy({ state: "done" });
+    vi.mocked(setTaskDismissed).mockResolvedValue(undefined);
+    await using screen = await render(sidebarElement());
+    const copy = await vi.waitUntil(() =>
+      screen.container.querySelector<HTMLElement>(
+        `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
+      ),
+    );
+    expect(copy.querySelector('[aria-label="Settle thread"]')).toBeNull();
+    copy.querySelector<HTMLElement>('[aria-label="Dismiss task"]')!.click();
+    expect(setTaskDismissed).toHaveBeenCalledWith("local", task.id, true);
+  });
+
+  it("walks to the previous thread through the assistants section, as ⌘1–9 numbers it", async () => {
+    mockTaskCopy({ routed: true });
+    await using screen = await render(sidebarElement());
+    await vi.waitUntil(() =>
+      screen.container.querySelector('[data-sidebar-row="assistant:local:jarvis"]'),
+    );
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}{Shift>}[[{/Shift}{/${modifier}}`);
     await vi.waitFor(() =>
       expect(decodeURIComponent(screen.router?.state.location.pathname ?? "")).toBe(
         "/local/assistant:jarvis:1",

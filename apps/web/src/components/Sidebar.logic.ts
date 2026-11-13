@@ -1474,8 +1474,8 @@ export function resolveSidebarMenuThread<
   };
 }
 
-/** ⌘1–9 numbers the assistants section's rows first, then the projects', each thread once. */
-export const sidebarJumpThreadKeys = (
+/** ⌘1–9 and next/previous order: the assistants section's rows, then the projects', each once. */
+export const sidebarNavigationThreadKeys = (
   assistantKeys: ReadonlyArray<string>,
   projectKeys: ReadonlyArray<string>,
 ): ReadonlyArray<string> => [...new Set([...assistantKeys, ...projectKeys])];

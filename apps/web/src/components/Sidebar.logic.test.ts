@@ -23,7 +23,7 @@ import {
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarMenuThread,
-  sidebarJumpThreadKeys,
+  sidebarNavigationThreadKeys,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -967,9 +967,9 @@ describe("resolveSidebarMenuThread", () => {
   });
 });
 
-describe("sidebarJumpThreadKeys", () => {
+describe("sidebarNavigationThreadKeys", () => {
   it("numbers the assistants section first and keeps one number per thread", () => {
-    expect(sidebarJumpThreadKeys(["chat", "task"], ["a", "task", "b"])).toEqual([
+    expect(sidebarNavigationThreadKeys(["chat", "task"], ["a", "task", "b"])).toEqual([
       "chat",
       "task",
       "a",

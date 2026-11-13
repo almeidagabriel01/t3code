@@ -578,6 +578,9 @@ type SidebarThreadRowProps = {
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
   revealRef?: ((row: HTMLElement, threadKey: string) => void) | undefined;
+  // A finished assistant task: a folder row's Settle slot dismisses the task instead, which
+  // needs no settlement support.
+  onDismissTask?: ((threadRef: ScopedThreadRef) => void) | undefined;
   // A second copy of the row (the assistants section) has its own tree key, and the list's
   // geometry queries skip it.
   sectionRowKey?: string | undefined;
@@ -935,6 +938,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.preventDefault();
     event.stopPropagation();
     onSettle(threadRef);
+  };
+  const handleDismissClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    props.onDismissTask?.(threadRef);
   };
   const handleActionPointerDown = (event: ReactPointerEvent) => {
     if (!event.isPrimary || event.button !== 0) return;
@@ -1411,6 +1419,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockOffIcon className="mb-px size-3" />
                       </button>
                     )
+                  ) : props.onDismissTask ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="Dismiss task"
+                            onClick={handleDismissClick}
+                            className={cn(
+                              "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              isWoke && "group-any-hover/sidebar-row:static",
+                            )}
+                          />
+                        }
+                      >
+                        <XIcon className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">Dismiss task</TooltipPopup>
+                    </Tooltip>
                   ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                     <Tooltip>
                       <TooltipTrigger

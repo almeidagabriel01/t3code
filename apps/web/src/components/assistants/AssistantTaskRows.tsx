@@ -100,6 +100,8 @@ export type AssistantTaskRowRenderer = (
   thread: EnvironmentThreadShell,
   section: SidebarSection,
   assistantRowKey: string,
+  /** Done or failed: its row offers Dismiss where others offer Settle. */
+  canDismiss: boolean,
 ) => ReactNode;
 
 const SECTION_OF = {
@@ -187,7 +189,7 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
   const rowsOf = (key: keyof typeof SECTION_OF) =>
     props.sections[key].map((row) =>
       props.renderRow
-        ? props.renderRow(row.shell, SECTION_OF[key], foldKey)
+        ? props.renderRow(row.shell, SECTION_OF[key], foldKey, canDismissAssistantTask(row.state))
         : renderCompactRow(row),
     );
   return (

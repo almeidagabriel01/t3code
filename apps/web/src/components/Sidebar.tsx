@@ -204,7 +204,7 @@ import {
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarMenuThread,
-  sidebarJumpThreadKeys,
+  sidebarNavigationThreadKeys,
   resolveSidebarRowThreadId,
 } from "./Sidebar.logic";
 import {
@@ -343,6 +343,8 @@ function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id
 
 const nowIso = () => new Date().toISOString();
 const ignoreActionSweep = () => {};
+const dismissTask = (threadRef: ScopedThreadRef) =>
+  void setTaskDismissed(threadRef.environmentId, threadRef.threadId, true);
 const NO_LIST_ITEMS: readonly SidebarListItem[] = [];
 const NO_DRAGGED_ORDER: readonly string[] = [];
 const NO_DRAGGED_ORDERS: {
@@ -1160,10 +1162,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
   const assistantModel = useAssistantSidebarModel();
-  const jumpThreadKeys = sidebarJumpThreadKeys(assistantModel.threadKeys, orderedThreadKeys);
+  // ⌘1–9 and next/previous walk this one list, so they can't disagree.
+  const navigationThreadKeys = sidebarNavigationThreadKeys(
+    assistantModel.threadKeys,
+    orderedThreadKeys,
+  );
   const jumpLabelByKey = (() => {
     const mapping = new Map<string, string>();
-    for (const [index, threadKey] of jumpThreadKeys.entries()) {
+    for (const [index, threadKey] of navigationThreadKeys.entries()) {
       const jumpCommand = threadJumpCommandForIndex(index);
       if (!jumpCommand) break;
       const label = shortcutLabelForCommand(keybindings, jumpCommand);
@@ -2734,7 +2740,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (traversalDirection !== null) {
         navigateToThreadKey(
           resolveAdjacentThreadId({
-            threadIds: orderedThreadKeys,
+            threadIds: navigationThreadKeys,
             currentThreadId: routeRowThreadKey,
             direction: traversalDirection,
           }),
@@ -2743,18 +2749,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
-      navigateToThreadKey(jumpThreadKeys[jumpIndex] ?? null);
+      navigateToThreadKey(navigationThreadKeys[jumpIndex] ?? null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
-  }, [
-    jumpThreadKeys,
-    keybindings,
-    navigateToThread,
-    orderedThreadKeys,
-    routeRowThreadKey,
-    routeThreadRef,
-  ]);
+  }, [navigationThreadKeys, keybindings, navigateToThread, routeRowThreadKey, routeThreadRef]);
 
   const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
 
@@ -3216,6 +3215,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
                         assistantRow: string,
+                        canDismiss: boolean,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -3230,6 +3230,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sectionRowKey={sectionRowKey}
                             // A sweep runs down the project list, which this copy is not in.
                             onActionSweepStart={ignoreActionSweep}
+                            onDismissTask={
+                              canDismiss && (section === "active" || section === "pinned")
+                                ? dismissTask
+                                : undefined
+                            }
                             isRenaming={
                               renamingThreadKey === threadKey && renamingRowKey === sectionRowKey
                             }
