@@ -124,27 +124,7 @@ describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads
   it("does not re-render thread rows when a quick Mod shortcut opens and focuses the terminal", async () => {
     using stack = new DisposableStack();
-    const activeProject = project("active");
-    const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
-    const routeThreadRef: ScopedThreadRef = {
-      environmentId: activeProject.environmentId,
-      threadId: threads[0]!.id,
-    };
-    vi.mocked(useProjects).mockReturnValue([activeProject]);
-    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
-    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: {
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-      },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef,
-    });
+    const { routeThreadRef } = mockFiveThreadSidebar();
     const terminal = document.createElement("div");
     terminal.dataset.terminalOwner = "drawer";
     const terminalInput = document.createElement("textarea");
@@ -152,13 +132,8 @@ describe("sidebar render isolation", () => {
     document.body.append(terminal);
     stack.defer(() => terminal.remove());
     stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, false));
-    await using screen = await render(
-      <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-      </SidebarProvider>,
-    );
+    await using screen = await render(sidebarElement());
     await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
-    const rowRenders = () => vi.mocked(SortableThreadRow).mock.calls.length;
 
     using _timers = fakeTimers();
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
@@ -188,4 +163,51 @@ describe("sidebar render isolation", () => {
     expect(rowRenders()).toBeGreaterThan(beforeRelease);
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
   });
+
+  // regression: every sidebar update re-rendered all thread rows, twice: the rows were not memoized
+  // and a new sortable id array rebuilt dnd-kit's context
+  it("does not re-render thread rows when the sidebar re-renders with the same threads", async () => {
+    const { threads } = mockFiveThreadSidebar();
+    await using screen = await render(sidebarElement());
+    await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
+
+    const beforeUpdate = rowRenders();
+    vi.mocked(useQuietThreadShells).mockReturnValue([...threads]);
+    await screen.rerender(sidebarElement());
+    await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
+    expect(rowRenders() - beforeUpdate, "thread rows re-rendered with unchanged props").toBe(0);
+  });
 });
+
+const ROUTE_REVEAL = { observedKey: null, pendingKey: null };
+const sidebarElement = () => (
+  <SidebarProvider>
+    <Sidebar routeReveal={ROUTE_REVEAL} />
+  </SidebarProvider>
+);
+const rowRenders = () => vi.mocked(SortableThreadRow).mock.calls.length;
+
+function mockFiveThreadSidebar() {
+  const activeProject = project("active");
+  const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
+  const routeThreadRef: ScopedThreadRef = {
+    environmentId: activeProject.environmentId,
+    threadId: threads[0]!.id,
+  };
+  vi.mocked(useProjects).mockReturnValue([activeProject]);
+  vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: {
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+    },
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn().mockResolvedValue(null),
+    routeDraftId: null,
+    routeThreadRef,
+  });
+  return { threads, routeThreadRef };
+}

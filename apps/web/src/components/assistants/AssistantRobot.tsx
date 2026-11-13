@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useState } from "react";
 
 import {
   assistantRobotSpec,
@@ -10,6 +10,7 @@ import {
   type AssistantRobotSpec,
 } from "@t3tools/client-runtime/assistantRobot";
 import { cn } from "~/lib/utils";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 
 function Eyes({ spec }: { readonly spec: AssistantRobotSpec }) {
   switch (spec.eyes) {
@@ -105,20 +106,6 @@ function Antenna({ spec }: { readonly spec: AssistantRobotSpec }) {
   }
 }
 
-function subscribeToMotion(notify: () => void) {
-  const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-  query.addEventListener("change", notify);
-  document.addEventListener("visibilitychange", notify);
-  return () => {
-    query.removeEventListener("change", notify);
-    document.removeEventListener("visibilitychange", notify);
-  };
-}
-
-const motionAllowed = () =>
-  document.visibilityState === "visible" &&
-  !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 /** "Done" is a brief beat: it shows for a few seconds, then the robot is simply idle. */
 function useFace(requested: AssistantFace): AssistantFace {
   const [doneOver, setDoneOver] = useState(false);
@@ -136,8 +123,8 @@ function useFace(requested: AssistantFace): AssistantFace {
 
 /**
  * The assistant's robot: an original drawing whose face follows what the assistant is doing.
- * `animated` is for avatars of 24px and up; it plays short, sparse CSS motion that stops while the
- * document is hidden or the user prefers reduced motion. Small robots stay still.
+ * `animated` is for avatars of 24px and up; it plays short, sparse CSS motion that pauses while the
+ * robot is off screen, the document is hidden or the user prefers reduced motion. Small robots stay still.
  */
 export function AssistantRobot(props: {
   readonly look: AssistantRobotLook;
@@ -147,8 +134,7 @@ export function AssistantRobot(props: {
 }) {
   const face = useFace(faceOfMood(props.mood ?? "idle"));
   const spec = assistantRobotSpec(props.look, face);
-  const canMove = useSyncExternalStore(subscribeToMotion, motionAllowed, () => false);
-  const motion = props.animated === true && canMove ? spec.motion : null;
+  const motion = props.animated === true ? spec.motion : null;
   const id = useId();
   return (
     <svg
@@ -156,6 +142,7 @@ export function AssistantRobot(props: {
       viewBox="0 0 72 72"
       data-assistant-robot={face}
       {...(motion === null ? {} : { "data-assistant-motion": motion })}
+      ref={motion === null ? undefined : observeVisibleAnimation}
       className={cn("size-6 shrink-0", props.className)}
     >
       <defs>

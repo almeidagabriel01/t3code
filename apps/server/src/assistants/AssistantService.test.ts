@@ -61,6 +61,7 @@ interface FakeThread {
 const harness = () => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
+  const inspected: string[] = [];
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
   const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
@@ -76,6 +77,7 @@ const harness = () => {
         const sql = yield* SqlClient.SqlClient;
         return {
           getThreadRecords: (threadId: string) => {
+            inspected.push(threadId);
             const thread = threads.get(threadId);
             return thread === undefined
               ? Effect.fail(new Error("missing") as never)
@@ -201,6 +203,7 @@ const harness = () => {
     secretValues,
     layer,
     threads,
+    inspected,
     launched,
     dispatched,
     pointers,
@@ -253,6 +256,40 @@ it.effect("a deleted conversation is replaced by the next generation", () => {
     assert.equal(jarvis.generation, 2);
     assert.equal((yield* assistants.ensureDefault).threadId, jarvisThread(2));
     assert.lengthOf(launched, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("listing healthy assistants inspects no thread and relaunches only deleted ones", () => {
+  const { layer, threads, launched, inspected } = harness();
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const assistants = yield* Assistants.AssistantService;
+    yield* assistants.ensureDefault;
+    const other = yield* assistants.create(create());
+    const third = yield* assistants.create(create({ name: "Third One" }));
+    const project = (threadId: string, deletedAt: string | null) =>
+      sql`INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, deleted_at, payload_json
+          ) VALUES (${threadId}, 'p', 't', 'codex', 'full-access', 'default', 'now', 'now', ${deletedAt}, '{}')`;
+    yield* project(jarvisThread(1), null);
+    yield* project(other.threadId!, null);
+    yield* project(third.threadId!, null);
+
+    inspected.length = 0;
+    const before = launched.length;
+    yield* assistants.list;
+    assert.lengthOf(inspected, 0);
+    assert.lengthOf(launched, before);
+
+    // Unknown to the projection stays put, as an unreadable thread always did.
+    yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${third.threadId!}`;
+    threads.get(other.threadId!)!.deletedAt = "now";
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'now' WHERE thread_id = ${other.threadId!}`;
+    const all = yield* assistants.list;
+    assert.lengthOf(launched, before + 1);
+    assert.equal(all.find((a) => a.id === other.id)!.generation, 2);
+    assert.equal(all.find((a) => a.id === third.id)!.threadId, third.threadId);
   }).pipe(Effect.provide(layer));
 });
 

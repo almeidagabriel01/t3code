@@ -17,7 +17,9 @@ import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
+import * as ToolOutputHistory from "./ToolOutputHistory.ts";
 import { forkParked } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 
 // Bound each reclaim pass to one minute of churn.
 const RECLAIM_PAGES_PER_PASS = 1024;
@@ -51,6 +53,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
   const restart = yield* ServerRestart;
+  const serverSettings = yield* ServerSettingsService;
   const reclaimFiles = DatabaseMaintenance.reclaimFiles(path, config.dbPath);
   let reclaimFailure = Option.getOrUndefined(
     yield* fs.readFileString(reclaimFiles.failure).pipe(Effect.option),
@@ -147,6 +150,17 @@ const make = Effect.gen(function* () {
     yield* fs.writeFileString(compactedAtPath, String(completedAt)).pipe(Effect.ignore);
     if (result.deletedEventCount > 0 || result.deletedReceiptCount > 0) {
       yield* Effect.logInfo("Compacted orchestration history", result);
+    }
+    // Freed pages show up as reclaimable space on the next status pass.
+    const toolOutput = yield* ToolOutputHistory.compactToolOutputHistory(betweenPages).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(ServerSettingsService, serverSettings),
+      Effect.catch((cause) =>
+        Effect.as(Effect.logWarning("Tool output history compaction failed", { cause }), null),
+      ),
+    );
+    if (toolOutput !== null && toolOutput.compactedRows > 0) {
+      yield* Effect.logInfo("Compacted old tool output", toolOutput);
     }
   }).pipe(
     Effect.catch((cause) =>
