@@ -37,7 +37,24 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 
-installFakeEnvironment([threadWithHistory("thread-a", 1)], { integrations: true });
+const linking = threadWithHistory("thread-link", 1);
+installFakeEnvironment(
+  [
+    threadWithHistory("thread-a", 1),
+    {
+      ...linking,
+      items: linking.items.map((item) =>
+        item.type === "assistant_message"
+          ? {
+              ...item,
+              text: `Connect [Notion](t3-settings://v1/${ENVIRONMENT_ID}/integrations#notion).`,
+            }
+          : item,
+      ),
+    },
+  ],
+  { integrations: true },
+);
 await page.viewport(1400, 900);
 __setClientSettingsForTests({
   ...DEFAULT_CLIENT_SETTINGS,
@@ -128,4 +145,24 @@ it("the command palette opens Integrations", async () => {
   openCommandPalette({ query: "Integrations" });
   await userEvent.click(page.getByRole("option", { name: /^Integrations/ }));
   await vi.waitFor(() => expect(router.state.location.pathname).toBe("/settings/integrations"));
+});
+
+it("a settings link in a message opens Integrations on its entry, in the app", async () => {
+  publishIntegrations({
+    catalog: [notion],
+    integrations: [],
+    ownApps: [],
+    loopbackRedirectUri: "http://127.0.0.1:43110/integrations/callback",
+    detected: [],
+    detectionSources: [],
+  });
+  using open = vi.spyOn(window, "open").mockReturnValue(null);
+  const { screen, router } = await openApp(`/${ENVIRONMENT_ID}/thread-link`);
+  await using _screen = screen;
+  await userEvent.click(page.getByRole("link", { name: "Notion" }));
+  await expect
+    .element(page.getByRole("searchbox", { name: "Search integrations" }))
+    .toHaveValue("Notion");
+  expect(router.state.location.pathname).toBe("/settings/integrations");
+  expect(open).not.toHaveBeenCalled();
 });
