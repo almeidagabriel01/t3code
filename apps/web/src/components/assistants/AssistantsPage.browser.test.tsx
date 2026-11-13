@@ -163,6 +163,10 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
   await using screen = await openApp();
   await expect.element(section("Needs you").getByText("Needs your approval")).toBeVisible();
   await expect.element(section("Needs you").getByText("CFO")).toBeVisible();
+  await expect
+    .element(section("Needs you").getByTestId("assistant-status"))
+    .toHaveAttribute("aria-label", "Approval");
+  expect(section("Leaders").getByTestId("group-status").query()).toBeNull();
   await expect.element(section("Leaders").getByText("Bo")).toBeVisible();
   await expect.element(section("Nobody yet").getByText("No members yet.")).toBeVisible();
   await expect.element(section("render").getByText("Revisor")).toBeVisible();
@@ -205,6 +209,8 @@ it("lists every assistant as a card under the sidebar's sections", async () => {
 });
 
 it("opens a group's chat and lists archived groups with a way back", async () => {
+  // A member waiting on the user shows on its group's header, in a thread row's words.
+  waiting.add("assistant:bo:1");
   fakeTeamEdits.updates = [];
   publishAssistants(
     [assistant("bo", "Bo")],
@@ -215,6 +221,10 @@ it("opens a group's chat and lists archived groups with a way back", async () =>
   );
   await using screen = await openApp();
   await expect.element(section("Leaders")).toBeVisible();
+  await expect
+    .element(section("Leaders").getByTestId("group-status"))
+    .toHaveAttribute("aria-label", "Approval");
+  waiting.clear();
   expect(section("Old crew").query()).toBeNull();
   await userEvent.click(section("Leaders").getByRole("button", { name: "Open chat" }));
   await eventually(() =>

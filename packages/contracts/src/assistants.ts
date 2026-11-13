@@ -328,6 +328,15 @@ export const AssistantTeamChat = Schema.Struct({
   working: Schema.Boolean,
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
+  /**
+   * Tasks of the current conversation that stopped without the user asking, such as at the hand-off
+   * limit, and wait on them to resume, reassign or cancel. Absent from older servers.
+   */
+  pausedTasks: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Failed tasks of the current conversation, still open to reassign or cancel. */
+  failedTasks: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  /** Each member's hidden thread for this group, where its group work runs. */
+  threadIds: Schema.Array(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
 

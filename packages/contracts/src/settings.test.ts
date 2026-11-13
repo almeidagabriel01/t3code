@@ -476,6 +476,21 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings removed keys", () => {
+  it("decodes settings saved with the removed Agents section keys", () => {
+    const stored = {
+      sidebarShowAgentsSection: false,
+      sidebarAgentsCollapsed: true,
+      sidebarAgentsDoneCollapsed: false,
+      sidebarShowAssistantsSection: false,
+    };
+    const settings = decodeClientSettings(stored);
+    expect(settings.sidebarShowAssistantsSection).toBe(false);
+    expect(settings).not.toHaveProperty("sidebarShowAgentsSection");
+    expect(decodeClientSettingsPatch(stored)).toEqual({ sidebarShowAssistantsSection: false });
+  });
+});
+
 describe("ClientSettings appearance", () => {
   it("defaults the appearance style and backdrop for new and older settings", () => {
     for (const payload of [{}, { glassOpacity: 60 }]) {

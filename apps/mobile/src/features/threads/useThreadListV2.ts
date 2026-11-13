@@ -53,6 +53,8 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  /** `env:threadId` of assistant-owned threads, drawn in Teams instead. */
+  readonly hiddenThreadKeys: ReadonlySet<string>;
 }) {
   const { threads, threadOrder } = input;
   const layoutTime = useMemo(
@@ -77,6 +79,7 @@ export function useThreadListV2(input: {
           settlementEnvironmentIds: input.settlementEnvironmentIds,
           snoozeEnvironmentIds: input.snoozeEnvironmentIds,
           queuedThreadKeys: input.queuedThreadKeys,
+          hiddenThreadKeys: input.hiddenThreadKeys,
         }),
       });
     return new Map([
@@ -92,6 +95,7 @@ export function useThreadListV2(input: {
     input.settlementEnvironmentIds,
     input.snoozeEnvironmentIds,
     input.queuedThreadKeys,
+    input.hiddenThreadKeys,
     threadOrder,
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
@@ -129,6 +133,7 @@ export function useThreadListV2(input: {
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
+        hiddenThreadKeys: input.hiddenThreadKeys,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
           threads.filter(
@@ -158,6 +163,7 @@ export function useThreadListV2(input: {
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.selectedThreadKey,
+      input.hiddenThreadKeys,
       isListed,
       unloadedCount,
       scopes,

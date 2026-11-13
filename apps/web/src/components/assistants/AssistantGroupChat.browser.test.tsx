@@ -805,6 +805,9 @@ const chatOf = (overrides: Partial<NonNullable<AssistantTeam["chat"]>> = {}) => 
   unreadCount: 2,
   working: false,
   preview: null,
+  pausedTasks: 0,
+  failedTasks: 0,
+  threadIds: [],
   ...overrides,
 });
 const unreadChat = () =>
@@ -819,7 +822,7 @@ it("shows the unread count, a New line above the first unread message, and marks
   unreadChat();
   await using _screen = await openChat({ team: team({ chat: chatOf() }) });
   const row = page.getByTestId("sidebar-assistant-fold");
-  await expect.element(row.getByTestId("group-unread")).toHaveTextContent("2");
+  await expect.element(row.getByTestId("zone-indicator")).toHaveAttribute("aria-label", "2 unread");
   await expect.element(main().getByTestId("group-new-divider")).toBeVisible();
   // The line sits directly above the first answer the user had not read, not above their own message.
   const feed = main().getByTestId("group-feed").element();
@@ -837,7 +840,9 @@ it("shows no badge and no New line and marks nothing when everything is read", a
   });
   await expect.element(main().getByText("second answer")).toBeVisible();
   await expect.element(main().getByTestId("group-new-divider")).not.toBeInTheDocument();
-  await expect.element(page.getByTestId("group-unread")).not.toBeInTheDocument();
+  await expect
+    .element(page.getByTestId("sidebar-assistant-fold").getByTestId("zone-indicator"))
+    .not.toBeInTheDocument();
   expect(fakeGroupChat.reads).toEqual([]);
 });
 

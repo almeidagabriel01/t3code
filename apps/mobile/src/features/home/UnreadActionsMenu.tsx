@@ -22,7 +22,7 @@ const MENU_ACTIONS: MenuAction[] = [
   { id: "clear", title: "Clear read", image: "xmark" },
 ];
 
-/** "Mark all as read" and "Clear read" for the finished threads a Home section lists. */
+/** "Mark all as read" and "Clear read" over the threads Home lists, with the selectors Activity uses on web. */
 export function UnreadActionsMenu(props: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly now: string;

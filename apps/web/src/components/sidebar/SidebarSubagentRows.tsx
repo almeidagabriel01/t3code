@@ -30,19 +30,35 @@ function subagentDotClass(thread: EnvironmentThreadShell): string {
 
 type SubagentContextMenu = (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
 
+/** Scrolls the row standing for the open thread into view; `key` is the route's row key. */
+interface SubagentReveal {
+  readonly row: (row: HTMLElement, key: string) => void;
+  readonly key: string;
+  /** The subagent that is open. */
+  readonly threadKey: string;
+}
+
 function SubagentRow(props: {
   thread: EnvironmentThreadShell;
   onOpen: (threadRef: ScopedThreadRef) => void;
   onContextMenu?: SubagentContextMenu | undefined;
   jumpLabel: string | null;
+  reveal?: SubagentReveal | undefined;
 }) {
-  const { thread, onContextMenu } = props;
+  const { thread, onContextMenu, reveal } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   return (
     <li className="relative list-none">
       <span aria-hidden className="absolute inset-y-0 start-9 w-px bg-sidebar-border" />
       <button
         type="button"
+        ref={
+          reveal === undefined
+            ? undefined
+            : (row) => {
+                if (row !== null) reveal.row(row, reveal.key);
+              }
+        }
         data-testid="sidebar-subagent-row"
         data-status={resolveSidebarThreadStatus(thread)}
         onClick={() => props.onOpen(threadRef)}
@@ -87,6 +103,7 @@ export function SubagentRows(props: {
   onContextMenu?: SubagentContextMenu | undefined;
   /** ⌘1–9 labels by thread key while the hints show. */
   jumpLabelByKey?: ReadonlyMap<string, string> | null | undefined;
+  reveal?: SubagentReveal | undefined;
 }) {
   const show = useClientSettings((settings) => settings.sidebarShowSubagents);
   const mode = useClientSettings((settings) => settings.sidebarAgentActivityDisplayMode);
@@ -129,6 +146,7 @@ export function SubagentRows(props: {
               onOpen={props.onOpen}
               onContextMenu={props.onContextMenu}
               jumpLabel={props.jumpLabelByKey?.get(threadKeyOf(child)) ?? null}
+              reveal={props.reveal?.threadKey === threadKeyOf(child) ? props.reveal : undefined}
             />
           ))
         : null}

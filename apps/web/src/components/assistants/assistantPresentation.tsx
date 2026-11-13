@@ -7,6 +7,8 @@ import {
   ASSISTANT_ICON_VIEWBOX,
   assistantIconFor,
 } from "@t3tools/client-runtime/assistantIcons";
+import type { AssistantAttention } from "@t3tools/client-runtime/assistantList";
+import { ASSISTANT_GROUP_STATUS_LABEL } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantClusterLayout,
   type AssistantClusterCell,
@@ -21,6 +23,11 @@ import {
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
 import { useAssistantEntries } from "~/state/assistants";
+import {
+  resolveSidebarTopStatus,
+  TopStatusIcon,
+  type SidebarTopStatus,
+} from "../sidebar/sidebarTopStatus";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { AssistantRobot } from "./AssistantRobot";
 
@@ -251,6 +258,50 @@ export function AssistantCluster(props: {
           +{layout.more.count}
         </span>
       ) : null}
+    </span>
+  );
+}
+
+/** An assistant's or a group's state in the words and colors a thread row uses for the same state. */
+function assistantTopStatus(attention: AssistantAttention): SidebarTopStatus {
+  if (attention === "paused") {
+    // A task stopped at a limit waits on the user like a question does; the label is the chat's own.
+    return {
+      label: ASSISTANT_GROUP_STATUS_LABEL.paused,
+      icon: "waiting",
+      className: "text-warning-foreground",
+    };
+  }
+  return resolveSidebarTopStatus({
+    status: attention === "decision" || attention === "done" ? "ready" : attention,
+    hasOpenDecision: attention === "decision",
+    isWoke: false,
+    isUnread: attention === "done",
+  })!;
+}
+
+/** An assistant's or a group's status in a thread row's words: its icon, then its label. */
+export function AssistantAttentionStatus(props: {
+  readonly attention: AssistantAttention;
+  /** Hides the label, for instance in a narrow row. */
+  readonly labelClassName?: string;
+  readonly testId?: string;
+}) {
+  const status = assistantTopStatus(props.attention);
+  return (
+    <span
+      data-testid={props.testId ?? "assistant-status"}
+      data-status={props.attention}
+      aria-label={status.label}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 text-xs font-medium",
+        status.className,
+      )}
+    >
+      <TopStatusIcon icon={status.icon} className="size-3" />
+      <span aria-hidden className={props.labelClassName}>
+        {status.label}
+      </span>
     </span>
   );
 }

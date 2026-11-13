@@ -144,7 +144,6 @@ const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "w
 const isActive = (task: { readonly status: string }) =>
   ACTIVE.includes(task.status as AssistantGroupTaskStatus);
 /** Everything the user can still act on. */
-const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
@@ -674,9 +673,8 @@ const make = Effect.gen(function* () {
         followup = ${next.followup}, updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
-    if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
-      yield* assistants.refreshTeamChat(task.team_id);
-    }
+    // Any status change can move the team's working, paused or failed counters.
+    if (task.status !== next.status) yield* assistants.refreshTeamChat(task.team_id);
     return rows[0]!;
   });
 

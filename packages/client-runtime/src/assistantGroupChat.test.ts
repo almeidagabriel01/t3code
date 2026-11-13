@@ -418,6 +418,9 @@ describe("read position", () => {
       unreadCount: 1,
       working,
       preview,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
     });
     const busy = { name: "Ops", chat: chatOf(true, null) };
     const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };

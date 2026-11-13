@@ -548,15 +548,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "sidebar-show-assistants-section",
-    title: "Show Assistants section",
+    title: "Show Teams section",
     to: "/settings/general",
-    searchTerms: ["sidebar assistants jarvis pinned hide"],
-  },
-  {
-    id: "sidebar-show-agents-section",
-    title: "Show Agents section",
-    to: "/settings/general",
-    searchTerms: ["sidebar working finished unread agents across projects pinned"],
+    searchTerms: ["sidebar assistants teams groups jarvis pinned hide"],
   },
   {
     id: "sidebar-show-subagents",

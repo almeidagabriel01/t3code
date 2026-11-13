@@ -1337,6 +1337,9 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       unreadCount: 0,
       working: false,
       preview: null,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
     });
     yield* sql`INSERT INTO assistant_group_messages
       (message_id, team_id, seq, author, kind, text, created_at)
@@ -1359,6 +1362,48 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
     );
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
   }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a team counts the requests of its current conversation that wait on the user", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* assistants.create(create({ name: "Ana" }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    const message = (id: string, seq: number, kind = "message") =>
+      sql`INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text, created_at)
+        VALUES (${id}, ${team.id}, ${seq}, 'user', ${kind}, 'x', '2026-01-01')`;
+    const task = (id: string, request: string, status: string, reason: string | null, root = id) =>
+      sql`INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+          owner_id, instruction, status, reason, created_at, updated_at)
+        VALUES (${id}, ${team.id}, ${root}, ${root === id ? "root" : "child"}, ${request}, ${ana.id},
+          'x', ${status}, ${reason}, '2026-01-01', '2026-01-01')`;
+    yield* message("old", 1);
+    yield* message("cut", 2, "boundary");
+    for (const seq of [3, 4, 5, 6, 7]) yield* message(`m${seq}`, seq);
+    // Before the boundary: no longer offered in the chat, so never counted.
+    yield* task("t-old-paused", "old", "paused", "handoff_limit");
+    yield* task("t-old-failed", "old", "failed", null);
+    // One paused request is one, however many of its tasks paused with it.
+    yield* task("t-hop", "m3", "paused", "handoff_limit");
+    yield* task("t-hop-child", "m3", "paused", "handoff_limit", "t-hop");
+    yield* task("t-unknown", "m4", "paused", "something_new");
+    // Paused by the user or by an archive: nothing to ask them.
+    yield* task("t-stopped", "m5", "paused", "stopped");
+    yield* task("t-archived", "m5", "paused", "group_archived");
+    yield* task("t-failed", "m6", "failed", "failed");
+    // A failed child is reported to its parent, which goes on.
+    yield* task("t-root", "m7", "running", null);
+    yield* task("t-child-failed", "m7", "failed", null, "t-root");
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id, seen_seq)
+      VALUES (${team.id}, ${ana.id}, 'assistant:ana:g-1', 0)`;
+    const [counted] = (yield* assistants.teams).filter((candidate) => candidate.id === team.id);
+    assert.deepEqual(
+      [counted?.chat?.pausedTasks, counted?.chat?.failedTasks, counted?.chat?.threadIds],
+      [2, 1, ["assistant:ana:g-1"]],
+    );
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect(
