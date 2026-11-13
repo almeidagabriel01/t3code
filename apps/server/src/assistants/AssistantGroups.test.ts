@@ -2,8 +2,11 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
+  ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   ASSISTANT_GROUP_REPLY_MAX_CHARS,
   type AssistantError,
+  AssistantId,
   type AssistantsEvent,
   AssistantTeamId,
   type AssistantGroupTask,
@@ -37,7 +40,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as Gate from "./AssistantGroupGate.ts";
 import * as Groups from "./AssistantGroups.ts";
-import { groupThreadId } from "./AssistantGroups.ts";
+import { groupThreadId, HANDOFF_PAUSES, taskMessageId } from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
 
 class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
@@ -72,6 +75,8 @@ interface FakeRun {
 interface Options {
   /** Members of the first team, in order. */
   readonly members?: ReadonlyArray<string>;
+  /** More assistants beside Ada, Beto and Cy, each named after its id. */
+  readonly assistants?: ReadonlyArray<string>;
   readonly lead?: string | null;
   /** Provider instances whose text generation offers routing. */
   readonly routable?: ReadonlyArray<ProviderInstanceId>;
@@ -138,6 +143,7 @@ const harness = (options: Options = {}) => {
   addThread("assistant:beto:1", "p1", selection(claude, "beto-model"));
   addThread("assistant:cy:1", "p1", selection(codex, "cy-model"));
   addThread("thread:outside", "p1", selection(codex), "Planning chat");
+  for (const id of options.assistants ?? []) addThread(`assistant:${id}:1`, "p1", selection(codex));
 
   const mocks = Layer.mergeAll(
     Layer.mock(Orchestrator.OrchestratorV2)({
@@ -278,6 +284,7 @@ const harness = (options: Options = {}) => {
     yield* assistant("ada", "Ada", "CFO", "read-only");
     yield* assistant("beto", "Beto", "Engineering");
     yield* assistant("cy", "Cy", "Design");
+    for (const id of options.assistants ?? []) yield* assistant(id, id, "Member");
     const team = (id: string, members: ReadonlyArray<string>, lead: string | null) =>
       sql`INSERT INTO assistant_teams (team_id, name, member_ids_json, lead_id, created_at, updated_at)
         VALUES (${id}, ${`Team ${id}`}, ${JSON.stringify(members)}, ${lead}, '2026-01-01', '2026-01-01')`;
@@ -315,11 +322,14 @@ const harness = (options: Options = {}) => {
   const tasks = sqlRows<{
     task_id: string;
     owner_id: string;
+    instruction: string;
     status: string;
     reason: string | null;
     revision: number;
     kind: string;
     hops: number;
+    undelivered_hops: number;
+    root_id: string;
     parent_id: string | null;
     followup: string | null;
     result_text: string | null;
@@ -335,6 +345,18 @@ const harness = (options: Options = {}) => {
     reply_to: string | null;
     task_id: string | null;
   }>("SELECT * FROM assistant_group_messages ORDER BY seq");
+
+  /** Ends the live run of a task's current revision. */
+  const finishTask = (taskId: string, status: string, answer?: string) =>
+    Effect.gen(function* () {
+      const task = (yield* tasks).find((row) => row.task_id === taskId)!;
+      const messageId = taskMessageId(task.task_id, task.revision);
+      yield* finish(
+        sent.findIndex((row) => row.messageId === messageId),
+        status,
+        answer,
+      );
+    });
 
   return {
     layer,
@@ -353,6 +375,7 @@ const harness = (options: Options = {}) => {
     summaryCalls,
     state,
     finish,
+    finishTask,
     tasks,
     messages,
     sqlRows,
@@ -1111,43 +1134,557 @@ it.effect("a failed child still lets the parent continue, and says it failed", (
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("assignments stop at the hand-off cap and wait for the user", () => {
-  const h = harness();
+/** One turn of a member: its hand-offs or a transfer, then the answer that ends it. */
+interface Turn {
+  readonly handOffs?: ReadonlyArray<string>;
+  readonly transferTo?: string;
+  readonly text?: string;
+  readonly answer: string;
+}
+type Member = (task: { readonly instruction: string }) => Turn;
+type Harness = ReturnType<typeof harness>;
+
+/** A run that never pauses or ends stops here, so a missing cap fails instead of hanging. */
+const PLAY_TURN_LIMIT = 500;
+
+/**
+ * Plays a group as its members would: the oldest live turn makes its hand-offs and ends, until
+ * nothing runs; `between` runs after each turn. Stops at the first refused hand-off, whose turn
+ * the provider then interrupts. Measures, over every request, the most hand-offs in a row without
+ * a delivery and since the user last acted, as the service counts them.
+ */
+const play = (
+  h: Harness,
+  members: Readonly<Record<string, Member>>,
+  between: (turn: number) => Effect.Effect<unknown, AssistantError, Groups.AssistantGroups> = () =>
+    Effect.void,
+) =>
+  Effect.gen(function* () {
+    const groups = yield* Groups.AssistantGroups;
+    const played = { handOffs: 0, undelivered: 0, sinceUser: 0, refused: undefined as unknown };
+    // A thread runs one turn at a time: its oldest live run, as the member tools see it.
+    const running = () =>
+      h.tasks.pipe(
+        Effect.map((rows) =>
+          h.sent
+            .filter((sent) =>
+              h.runs
+                .get(sent.threadId)
+                ?.some((run) => run.userMessageId === sent.messageId && run.status === "running"),
+            )
+            .map((sent) =>
+              rows.find(
+                (row) =>
+                  row.status === "running" &&
+                  taskMessageId(row.task_id, row.revision) === sent.messageId,
+              ),
+            )
+            .find((row) => row !== undefined),
+        ),
+      );
+    for (
+      let turn = 1, task = yield* running();
+      task !== undefined;
+      turn++, task = yield* running()
+    ) {
+      if (turn > PLAY_TURN_LIMIT) return { ...played, refused: "never stopped" };
+      const next = members[task.owner_id]!(task);
+      const callerThreadId = groupThreadId(task.owner_id, TEAM);
+      const handOffs = [
+        ...(next.handOffs ?? []).map((member) =>
+          groups.member.assign({
+            callerThreadId,
+            member,
+            instruction: next.text ?? `Work for ${member}`,
+          }),
+        ),
+        ...(next.transferTo === undefined
+          ? []
+          : [groups.member.transfer({ callerThreadId, member: next.transferTo, note: "" })]),
+      ];
+      for (const handOff of handOffs) {
+        const taken = yield* handOff.pipe(Effect.result);
+        if (taken._tag === "Failure") {
+          yield* h.finishTask(task.task_id, "interrupted");
+          return { ...played, refused: taken.failure.message };
+        }
+        played.handOffs += 1;
+        const root = (yield* h.tasks).find((row) => row.task_id === task!.root_id)!;
+        played.undelivered = Math.max(played.undelivered, root.undelivered_hops);
+        played.sinceUser = Math.max(played.sinceUser, root.hops);
+      }
+      yield* h.finishTask(task.task_id, "completed", next.answer);
+      yield* between(turn);
+    }
+    return played;
+  });
+
+/**
+ * Makers send their work to the reviewer; the reviewer finds a problem in the flawed ones on the
+ * first review and on every one before the last, and each fix goes back for review until
+ * `reviewRounds` reviews were done. A maker's work is named by its instruction.
+ */
+const reviewLoop = (
+  reviewer: string,
+  flawed: (work: string) => boolean,
+  reviewRounds: number,
+): { readonly maker: Member; readonly reviewer: Member } => {
+  const reviews = new Map<string, number>();
+  const verdicts = new Map<string, "fix" | "pass">();
+  return {
+    maker: (task) => {
+      const work = /^(?:Work for|Fix) (.+)$/.exec(task.instruction)?.[1] ?? task.instruction;
+      const done = reviews.get(work) ?? 0;
+      if (done === 0 || (verdicts.get(work) === "fix" && done < reviewRounds)) {
+        reviews.set(work, done + 1);
+        return { handOffs: [reviewer], text: `Review ${work}, round ${done + 1}`, answer: "Sent" };
+      }
+      return { answer: `${work} is done` };
+    },
+    reviewer: (task) => {
+      const [, work = "", round = "0"] = /^Review (.+), round (\d+)$/.exec(task.instruction) ?? [];
+      const fix = flawed(work) && (round === "1" || Number(round) < reviewRounds);
+      verdicts.set(work, fix ? "fix" : "pass");
+      return { answer: fix ? `${work} needs a fix (round ${round})` : `${work} passes` };
+    },
+  };
+};
+
+interface Team {
+  readonly lead: string;
+  readonly brief: string;
+  readonly makers: ReadonlyArray<string>;
+  readonly reviewer: string;
+  readonly flawed: ReadonlyArray<string>;
+}
+const DEV_TEAM: Team = {
+  lead: "techlead",
+  brief: "analyst",
+  makers: ["front", "back", "mobile"],
+  reviewer: "qa",
+  flawed: ["back", "front"],
+};
+/** The widest split a group of eight makes: five makers start before any review comes back. */
+const WIDE_DEV_TEAM: Team = { ...DEV_TEAM, makers: ["front", "back", "mobile", "web", "data"] };
+const CONTENT_TEAM: Team = {
+  lead: "editor",
+  brief: "researcher",
+  makers: ["writer", "designer"],
+  reviewer: "reviewer",
+  flawed: ["writer", "designer"],
+};
+const membersOf = (team: Team) => [team.lead, team.brief, ...team.makers, team.reviewer];
+
+/** One request: the lead gets a brief, splits the work across the makers, then delivers. */
+const teamFlow = (team: Team, reviewRounds: number): Record<string, Member> => {
+  const loop = reviewLoop(team.reviewer, (work) => team.flawed.includes(work), reviewRounds);
+  let leadTurns = 0;
+  return {
+    [team.lead]: () => {
+      leadTurns += 1;
+      if (leadTurns === 1)
+        return { handOffs: [team.brief], text: "Write the brief", answer: "Asked" };
+      if (leadTurns > 2) return { answer: "Delivered" };
+      return { handOffs: team.makers, answer: "Split" };
+    },
+    [team.brief]: () => ({ answer: "Brief ready" }),
+    ...Object.fromEntries(team.makers.map((name) => [name, loop.maker])),
+    [team.reviewer]: loop.reviewer,
+  };
+};
+
+const BUG_OWNERS = ["back", "front", "mobile", "back", "front"];
+
+/**
+ * One message that lists five bugs: the lead takes them one at a time, each analysed, fixed by its
+ * maker and reviewed, every review finding a problem until the last round.
+ */
+const bugListFlow = (reviewRounds: number): Record<string, Member> => {
+  const loop = reviewLoop("qa", () => true, reviewRounds);
+  let leadTurns = 0;
+  return {
+    techlead: () => {
+      leadTurns += 1;
+      const bug = Math.ceil(leadTurns / 2);
+      if (bug > BUG_OWNERS.length) return { answer: "All five fixed" };
+      return leadTurns % 2 === 1
+        ? { handOffs: ["analyst"], text: `Analyse bug ${bug}`, answer: "Asked" }
+        : { handOffs: [BUG_OWNERS[bug - 1]!], text: `Fix bug ${bug}`, answer: "Assigned" };
+    },
+    analyst: (task) => ({ answer: `Cause found: ${task.instruction}` }),
+    front: loop.maker,
+    back: loop.maker,
+    mobile: loop.maker,
+    qa: loop.reviewer,
+  };
+};
+
+/** The user reports five bugs to Back, one message every other turn, while the request runs. */
+const fiveBugMessages = (turn: number) =>
+  Groups.AssistantGroups.pipe(
+    Effect.flatMap((groups) =>
+      turn % 2 === 0 && turn <= 10
+        ? groups.post(
+            { teamId: TEAM, text: `@back bug ${turn / 2}: the form loses its input` },
+            { kind: "user" },
+          )
+        : Effect.void,
+    ),
+  );
+
+// Measured with both caps out of the way: the caps in contracts are sized from these numbers.
+it.effect.each([
+  { name: "dev, 1 review round", team: DEV_TEAM, flow: "team", rounds: 1, measured: [7, 6, 7] },
+  { name: "dev, 2 review rounds", team: DEV_TEAM, flow: "team", rounds: 2, measured: [9, 6, 9] },
+  { name: "dev, 3 review rounds", team: DEV_TEAM, flow: "team", rounds: 3, measured: [11, 6, 11] },
+  {
+    name: "dev with 5 makers, 3 rounds",
+    team: WIDE_DEV_TEAM,
+    flow: "team",
+    rounds: 3,
+    measured: [15, 10, 15],
+  },
+  {
+    name: "dev, 3 rounds, 5 bug messages",
+    team: DEV_TEAM,
+    flow: "bugs",
+    rounds: 3,
+    measured: [16, 3, 4],
+  },
+  {
+    name: "content, 1 review round",
+    team: CONTENT_TEAM,
+    flow: "team",
+    rounds: 1,
+    measured: [5, 4, 5],
+  },
+  {
+    name: "content, 2 review rounds",
+    team: CONTENT_TEAM,
+    flow: "team",
+    rounds: 2,
+    measured: [7, 4, 7],
+  },
+  {
+    name: "content, 3 review rounds",
+    team: CONTENT_TEAM,
+    flow: "team",
+    rounds: 3,
+    measured: [9, 4, 9],
+  },
+  {
+    name: "list of 5 bugs, 1 round",
+    team: DEV_TEAM,
+    flow: "list",
+    rounds: 1,
+    measured: [15, 2, 15],
+  },
+  {
+    name: "list of 5 bugs, 2 rounds",
+    team: DEV_TEAM,
+    flow: "list",
+    rounds: 2,
+    measured: [20, 2, 20],
+  },
+  {
+    name: "list of 5 bugs, 3 rounds",
+    team: DEV_TEAM,
+    flow: "list",
+    rounds: 3,
+    measured: [25, 2, 25],
+  },
+] as const)(
+  "a real team's request runs to the end without a pause: $name",
+  ({ team, flow, rounds, measured }) => {
+    const members = membersOf(team);
+    const h = harness({ assistants: members, members, lead: team.lead });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = flow === "list" ? "fix these five bugs" : "ship it";
+      yield* groups.post({ teamId: TEAM, text: `@${team.lead} ${request}` }, h.user);
+      const played = yield* play(
+        h,
+        flow === "list" ? bugListFlow(rounds) : teamFlow(team, rounds),
+        flow === "bugs" ? fiveBugMessages : undefined,
+      );
+      // [hand-offs, longest stretch without a delivery, most since the user last acted]
+      assert.deepEqual(
+        [played.handOffs, played.undelivered, played.sinceUser, played.refused],
+        [...measured, undefined],
+      );
+      assert.isAtMost(played.undelivered, ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY);
+      assert.isAtMost(played.sinceUser, ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION);
+      assert.equal((yield* h.tasks)[0]!.status, "completed");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+/** Members that pass work around for ever: by assignment, by transfer, or in a triangle. */
+const endlessLoop = (shape: "assign" | "transfer" | "triangle"): Record<string, Member> => {
+  const next = (to: string): Member =>
+    shape === "transfer"
+      ? () => ({ transferTo: to, answer: "Yours" })
+      : () => ({ handOffs: [to], answer: "Yours" });
+  return shape === "triangle"
+    ? { ada: next("beto"), beto: next("cy"), cy: next("ada") }
+    : { ada: next("beto"), beto: next("ada") };
+};
+
+/** Ada keeps sending Beto a review and Beto keeps answering: a new answer, the same one, or none. */
+const reviewForEver = (answer: "new" | "same" | "empty"): Record<string, Member> => {
+  let round = 0;
+  return {
+    ada: () => {
+      round += 1;
+      return { handOffs: ["beto"], text: `Review round ${round}`, answer: "Fixed" };
+    },
+    beto: (task) => ({
+      answer:
+        answer === "new"
+          ? `Found a bug in ${task.instruction}`
+          : answer === "same"
+            ? "Found a bug"
+            : "",
+    }),
+  };
+};
+
+const W = ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY;
+const C = ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION;
+
+it.effect.each([
+  {
+    name: "ping-pong by assignment",
+    members: endlessLoop("assign"),
+    handOffs: W,
+    cap: "no_delivery",
+  },
+  {
+    name: "ping-pong by transfer",
+    members: endlessLoop("transfer"),
+    handOffs: W,
+    cap: "no_delivery",
+  },
+  {
+    name: "triangle with no delivery",
+    members: endlessLoop("triangle"),
+    handOffs: W,
+    cap: "no_delivery",
+  },
+  {
+    name: "loop repeating one answer",
+    members: reviewForEver("same"),
+    handOffs: W + 1,
+    cap: "no_delivery",
+  },
+  {
+    name: "loop with empty answers",
+    members: reviewForEver("empty"),
+    handOffs: W,
+    cap: "no_delivery",
+  },
+  {
+    name: "loop that keeps delivering",
+    members: reviewForEver("new"),
+    handOffs: C,
+    cap: "handoff_limit",
+  },
+] as const)(
+  "a loop with nobody watching stops the whole request: $name",
+  ({ members, handOffs, cap }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada settle it" }, h.user);
+      const played = yield* play(h, members);
+      assert.deepEqual([played.handOffs, played.refused], [handOffs, HANDOFF_PAUSES[cap].refusal]);
+      // Everything in flight pauses, the refused turn is interrupted, and the chat says which cap.
+      const tasks = yield* h.tasks;
+      assert.deepEqual(
+        [
+          ...new Set(
+            tasks
+              .filter((task) => task.status !== "completed")
+              .map((task) => `${task.status}:${task.reason}`),
+          ),
+        ],
+        [`paused:${cap}`],
+      );
+      assert.deepEqual(
+        [(yield* h.messages).at(-1)!.kind, (yield* h.messages).at(-1)!.text],
+        ["notice", HANDOFF_PAUSES[cap].notice],
+      );
+      assert.isNotEmpty(h.dispatched.filter((command) => command.type === "run.interrupt"));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "only a task that finishes with an answer delivers; a question or a failure does not",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
+      const undelivered = h.tasks.pipe(Effect.map((rows) => rows[0]!.undelivered_hops));
+      const build = yield* groups.member.assign({
+        callerThreadId: adaThread,
+        member: "beto",
+        instruction: "Check the build",
+      });
+      const design = yield* groups.member.assign({
+        callerThreadId: adaThread,
+        member: "cy",
+        instruction: "Draw the logo",
+      });
+      assert.equal(yield* undelivered, 2);
+      yield* h.finishTask(build.taskId, "completed", "Build is green.");
+      assert.equal(yield* undelivered, 0);
+
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_group_tasks SET undelivered_hops = 5 WHERE parent_id IS NULL`;
+      yield* h.finishTask(design.taskId, "failed");
+      const answer = (yield* h.messages).find((row) => row.assistant_id === "beto")!;
+      yield* groups.member.reply({
+        callerThreadId: adaThread,
+        messageId: answer.message_id,
+        text: "Which branch?",
+      });
+      const question = (yield* h.tasks).find((row) => row.kind === "reply")!;
+      yield* h.finishTask(question.task_id, "completed", "Main.");
+      assert.equal(yield* undelivered, 5);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("every way the user lets a stopped request go on clears both counts", () => {
+  const h = harness({ members: ["ada", "beto"] });
+  const loop = endlessLoop("assign");
   return Effect.gen(function* () {
     const groups = yield* h.setup;
-    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE assistant_group_tasks SET hops = 8`;
-    const over = yield* groups.member.assign({
-      callerThreadId: adaThread,
-      member: "beto",
-      instruction: "One too many",
-    });
-    assert.equal(over.status, "paused");
-    const notice = (yield* h.messages).at(-1)!;
-    assert.deepEqual(
-      [notice.kind, notice.text],
-      ["notice", "Paused · hit 8 hand-offs for this request"],
-    );
-    assert.lengthOf(h.sent, 1);
-    const [root, child] = yield* h.tasks;
-    assert.deepEqual([root!.hops, child!.reason], [8, "handoff_limit"]);
-
-    // A transfer over the cap pauses the task with its new owner.
-    const moved = yield* groups.member.transfer({
-      callerThreadId: adaThread,
-      member: "cy",
-      note: "",
-    });
-    assert.equal(moved.status, "paused");
-    const [after] = yield* h.tasks;
-    assert.deepEqual([after!.owner_id, after!.reason], ["cy", "handoff_limit"]);
-
-    // Resuming the paused assignment is the user's call, so the cap does not stop it.
-    yield* groups.taskAction({ taskId: over.taskId, action: "resume" });
-    assert.equal((yield* h.tasks)[1]!.status, "running");
+    yield* groups.post({ teamId: TEAM, text: "@ada settle it with Beto" }, h.user);
+    yield* play(h, loop);
+    // Any card of the stopped request picks it up from its root, not only the root's own card.
+    const root = (yield* h.tasks)[0]!.task_id as never;
+    for (const goAhead of [
+      groups.taskAction({ taskId: root, action: "resume" }),
+      h.tasks.pipe(
+        Effect.flatMap((rows) =>
+          groups.taskAction({ taskId: rows.at(-1)!.task_id as never, action: "resume" }),
+        ),
+      ),
+      groups.taskAction({ taskId: root, action: "reassign", ownerId: AssistantId.make("ada") }),
+      groups.post({ teamId: TEAM, text: "continue" }, h.user),
+    ]) {
+      const [before] = yield* h.tasks;
+      assert.deepEqual([before!.hops, before!.undelivered_hops], [W, W]);
+      yield* goAhead;
+      const [after] = yield* h.tasks;
+      assert.deepEqual([after!.status, after!.hops, after!.undelivered_hops], ["waiting", 0, 0]);
+      assert.deepEqual((yield* play(h, loop)).refused, HANDOFF_PAUSES.no_delivery.refusal);
+    }
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect.each([
+  { name: "the user", author: { kind: "user" } as const, stops: false },
+  {
+    name: "an agent",
+    author: { kind: "agent", assistantId: null, label: "Planning chat" } as const,
+    stops: true,
+  },
+  { name: "a routine", author: { kind: "routine", label: "Monday report" } as const, stops: true },
+])("a loop between two members goes on only while $name writes to them", ({ author, stops }) => {
+  const h = harness({ members: ["ada", "beto"] });
+  let handOffs = 0;
+  const turn =
+    (other: string): Member =>
+    (task) => {
+      if (task.instruction.includes("question") || handOffs >= 2 * W) return { answer: "Done" };
+      handOffs += 1;
+      return { handOffs: [other], answer: "Your turn" };
+    };
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada settle it with Beto" }, h.user);
+    const played = yield* play(h, { ada: turn("beto"), beto: turn("ada") }, (at) =>
+      at % 3 === 0
+        ? groups.post({ teamId: TEAM, text: `@beto a question ${at}` }, author)
+        : Effect.void,
+    );
+    assert.deepEqual(
+      [played.handOffs, played.refused],
+      stops ? [W, HANDOFF_PAUSES.no_delivery.refusal] : [2 * W, undefined],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "a follow-up from the user", author: "user", via: "follow-up", restarts: true },
+  { name: "a reply from the user", author: "user", via: "reply", restarts: true },
+  { name: "a user message the lead routes", author: "user", via: "lead", restarts: true },
+  { name: "an agent message the lead routes", author: "agent", via: "lead", restarts: false },
+  { name: "a routine message the lead routes", author: "routine", via: "lead", restarts: false },
+] as const)(
+  "a message to a member of a live request clears both counts only from the user: $name",
+  ({ author, via, restarts }) => {
+    const h = harness({ lead: "cy", routable: [codex], route: () => ["beto"] });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada plan the launch" }, h.user);
+      const child = yield* groups.member.assign({
+        callerThreadId: adaThread,
+        member: "beto",
+        instruction: "Check the build",
+      });
+      yield* h.finishTask(child.taskId, "completed", "Build is green.");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_group_tasks SET hops = 5, undelivered_hops = 4 WHERE parent_id IS NULL`;
+      // With a second request open, a plain message goes to the lead.
+      if (via === "lead") yield* groups.post({ teamId: TEAM, text: "@cy the logo" }, h.user);
+      const betoAnswer = (yield* h.messages).find((row) => row.assistant_id === "beto")!;
+      yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "the build is red again",
+          ...(via === "reply" ? { replyToMessageId: betoAnswer.message_id as never } : {}),
+        },
+        author === "user"
+          ? h.user
+          : author === "agent"
+            ? { kind: "agent", assistantId: null, label: "Planning chat" }
+            : { kind: "routine", label: "Monday report" },
+      );
+      yield* groups.idle;
+      assert.lengthOf(h.routeCalls, via === "lead" ? 1 : 0);
+      const [root] = yield* h.tasks;
+      assert.deepEqual([root!.hops, root!.undelivered_hops], restarts ? [0, 0] : [5, 4]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each(["no_delivery", "handoff_limit"] as const)(
+  "a transfer past a cap is refused too and stops the request: %s",
+  (cap) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+      const sql = yield* SqlClient.SqlClient;
+      yield* cap === "no_delivery"
+        ? sql`UPDATE assistant_group_tasks SET undelivered_hops = ${W}`
+        : sql`UPDATE assistant_group_tasks SET hops = ${C}`;
+      const refused = yield* refusalError(
+        groups.member.transfer({ callerThreadId: adaThread, member: "cy", note: "" }),
+      );
+      assert.equal(refused.message, HANDOFF_PAUSES[cap].refusal);
+      assert.deepEqual(
+        (yield* h.tasks).map((task) => [task.owner_id, task.status, task.reason]),
+        [["ada", "paused", cap]],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("member tools refuse misuse with a reason the model can act on", () => {
   const h = harness();
@@ -1416,6 +1953,74 @@ it.effect("stop pauses a task and what it assigned, ends their runs, and frees t
     yield* h.finish(0, "interrupted");
     assert.equal((yield* h.tasks)[0]!.status, "paused");
     assert.equal((yield* h.tasks)[0]!.reason, "stopped");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { way: "resume", childFailed: false },
+  { way: "reassign", childFailed: false },
+  { way: "continue", childFailed: false },
+  { way: "reassign", childFailed: true },
+] as const)(
+  "a stopped request picks up with what it assigned, so the parent is not left waiting: $way",
+  ({ way, childFailed }) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+      yield* groups.member.assign({
+        callerThreadId: adaThread,
+        member: "beto",
+        instruction: "Part",
+      });
+      const [root, child] = yield* h.tasks;
+      if (childFailed) yield* h.finishTask(child!.task_id, "failed");
+      yield* groups.taskAction({ taskId: root!.task_id as never, action: "stop" });
+      if (way === "continue") yield* groups.post({ teamId: TEAM, text: "continue" }, h.user);
+      else if (way === "resume")
+        yield* groups.taskAction({ taskId: root!.task_id as never, action: "resume" });
+      else
+        yield* groups.taskAction({
+          taskId: root!.task_id as never,
+          action: "reassign",
+          ownerId: AssistantId.make("cy"),
+        });
+      const owner = way === "reassign" ? "cy" : "ada";
+      assert.deepEqual(statusesOf(yield* h.tasks), [`${owner}:waiting`, "beto:running"]);
+      yield* h.finishTask(child!.task_id, "completed", "Part done.");
+      assert.deepEqual(statusesOf(yield* h.tasks), [`${owner}:running`, "beto:completed"]);
+      assert.equal(h.sent.at(-1)!.threadId, groupThreadId(owner, TEAM));
+      assert.include(h.sent.at(-1)!.text, "- Beto (completed): Part done.");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { root: "paused", starts: false },
+  { root: "failed", starts: false },
+  { root: "cancelled", starts: false },
+  { root: "waiting", starts: true },
+] as const)("queued work starts only while its request is live: root $root", ({ root, starts }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    yield* groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "Part" });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE assistant_group_tasks SET status = ${root} WHERE parent_id IS NULL`;
+    yield* sql`UPDATE assistant_group_tasks SET status = 'queued' WHERE parent_id IS NOT NULL`;
+    const before = h.sent.length;
+    // Any new message runs the scheduler.
+    yield* groups.post({ teamId: TEAM, text: "@cy other" }, h.user);
+    assert.deepEqual(statusesOf(yield* h.tasks), [
+      `ada:${root}`,
+      `beto:${starts ? "running" : "queued"}`,
+      "cy:running",
+    ]);
+    assert.deepEqual(
+      h.sent.slice(before).map((row) => row.threadId),
+      starts ? [betoThread, cyThread] : [cyThread],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

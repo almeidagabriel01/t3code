@@ -1,6 +1,7 @@
 import {
   ASSISTANT_GROUP_EVERYONE,
-  ASSISTANT_GROUP_HANDOFF_LIMIT,
+  ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
+  ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   assistantGroupAddress,
   assistantGroupMentions,
   foldAssistantGroupText,
@@ -284,7 +285,8 @@ export const ASSISTANT_GROUP_STATUS_LABEL: Record<AssistantGroupTaskStatus, stri
 
 const PAUSE_REASON_LABEL: Record<string, string> = {
   stopped: "Stopped",
-  handoff_limit: `Hit ${ASSISTANT_GROUP_HANDOFF_LIMIT} hand-offs for this request`,
+  no_delivery: `${ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY} hand-offs without a delivery`,
+  handoff_limit: `${ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION} hand-offs since your last action`,
   member_removed: "Owner left the group",
   group_archived: "Group archived",
   routing_failed: "The lead could not route this",

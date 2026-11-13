@@ -2,7 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
-  ASSISTANT_GROUP_HANDOFF_LIMIT,
+  ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
+  ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   ASSISTANT_GROUP_PAGE_SIZE,
   ASSISTANT_GROUP_PARALLEL_LIMIT,
   ASSISTANT_GROUP_REPLY_LIMIT,
@@ -105,7 +106,18 @@ export const REPLY_LIMIT_MESSAGE = "Reply limit reached; do not mention this to 
 const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
 export const MENTION_REQUIRED_MESSAGE = "Mention a member with @, or set a lead that can route.";
-const HANDOFF_LIMIT_NOTICE = `Paused · hit ${ASSISTANT_GROUP_HANDOFF_LIMIT} hand-offs for this request`;
+const NO_ANSWER = "(no answer)";
+/** Why a hand-off was refused: what the chat says, and what the member that asked is told. */
+export const HANDOFF_PAUSES = {
+  no_delivery: {
+    notice: `Paused · ${ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY} hand-offs without a delivery`,
+    refusal: `This request made ${ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY} hand-offs without anyone delivering a result, so the group paused it and the user decides how it goes on. Do not retry; end your turn.`,
+  },
+  handoff_limit: {
+    notice: `Paused · ${ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION} hand-offs since your last action`,
+    refusal: `This request made ${ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION} hand-offs since the user last acted on it, so the group paused it and the user decides how it goes on. Do not retry; end your turn.`,
+  },
+} as const;
 const REPLY_TASK_REFUSAL = "This task only answers a question. Use t3_group result.";
 const RESULT_WAITS_FOR_REPLY =
   "You asked a teammate a question and it is not answered yet. Wait for the answer, then post your result.";
@@ -135,6 +147,7 @@ const isActive = (task: { readonly status: string }) =>
 const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
+const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const LIVE_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"] as const;
 const ACTIVE_RUN_STATUSES = ["preparing", "starting", "running", "waiting"] as const;
@@ -149,7 +162,8 @@ export const groupThreadId = (assistantId: string, teamId: string) =>
 const nextGroupThreadId = (assistantId: string, teamId: string, dead: string) =>
   ThreadId.make(`assistant:${assistantId}:g-${sha256(`${teamId}\n${dead}`).slice(0, 16)}`);
 
-const taskMessageId = (taskId: string, revision: number) => `group-task:${taskId}:${revision}`;
+export const taskMessageId = (taskId: string, revision: number) =>
+  `group-task:${taskId}:${revision}`;
 
 const parseTaskMessageId = (messageId: string) => {
   if (!messageId.startsWith("group-task:")) return null;
@@ -188,7 +202,10 @@ interface TaskRow {
   readonly reason: string | null;
   readonly revision: number;
   readonly result_text: string | null;
+  /** Root only: hand-offs since the user last acted on the request. */
   readonly hops: number;
+  /** Root only: hand-offs since a task of the request last delivered a result. */
+  readonly undelivered_hops: number;
   readonly followup: string | null;
   readonly expected_result: string | null;
   readonly source_seqs_json: string;
@@ -644,10 +661,7 @@ const make = Effect.gen(function* () {
   });
 
   type TaskPatch = Partial<
-    Pick<
-      TaskRow,
-      "status" | "reason" | "revision" | "owner_id" | "result_text" | "followup" | "hops"
-    >
+    Pick<TaskRow, "status" | "reason" | "revision" | "owner_id" | "result_text" | "followup">
   >;
   const patchTask = Effect.fn("AssistantGroups.patchTask")(function* (
     task: TaskRow,
@@ -657,7 +671,7 @@ const make = Effect.gen(function* () {
     const rows = yield* sql<TaskRow>`
       UPDATE assistant_group_tasks SET status = ${next.status}, reason = ${next.reason},
         revision = ${next.revision}, owner_id = ${next.owner_id}, result_text = ${next.result_text},
-        followup = ${next.followup}, hops = ${next.hops}, updated_at = ${yield* nowIso}
+        followup = ${next.followup}, updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
     if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
@@ -1050,10 +1064,13 @@ const make = Effect.gen(function* () {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
     yield* FiberSet.run(routing, summarize(teamId, false).pipe(quietly("summary")));
+    // Queued work of a request whose root is stopped waits until the user picks it up again.
     const live = yield* sql<TaskRow>`
-      SELECT * FROM assistant_group_tasks
-      WHERE team_id = ${teamId} AND status IN ('queued', 'running')
-      ORDER BY updated_at ASC, rowid ASC`;
+      SELECT t.* FROM assistant_group_tasks t
+      JOIN assistant_group_tasks r ON r.task_id = t.root_id
+      WHERE t.team_id = ${teamId} AND (t.status = 'running'
+        OR (t.status = 'queued' AND r.status NOT IN ${sql.in(STOPPED_ROOT)}))
+      ORDER BY t.updated_at ASC, t.rowid ASC`;
     let running = 0;
     const held = new Map<string, string>();
     const hold = (task: TaskRow, who: string) => {
@@ -1156,15 +1173,99 @@ const make = Effect.gen(function* () {
     return tasks;
   });
 
-  /** A paused or failed task runs again, with its owner or a new one. */
-  const requeue = (task: TaskRow, ownerId: string = task.owner_id) =>
-    patchTask(task, {
-      status: "queued",
-      reason: null,
-      owner_id: ownerId,
-      revision: task.revision + 1,
-      result_text: null,
-    });
+  const descendants = Effect.fn("AssistantGroups.descendants")(function* (task: TaskRow) {
+    const all = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks WHERE root_id = ${task.root_id}`;
+    const found: TaskRow[] = [];
+    const queue = [task.task_id];
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      for (const child of all.filter((row) => row.parent_id === next)) {
+        found.push(child);
+        queue.push(child.task_id);
+      }
+    }
+    return found;
+  });
+
+  /** Stops a task and everything under it that is still in flight. */
+  const pauseBranch = Effect.fn("AssistantGroups.pauseBranch")(function* (
+    task: TaskRow,
+    reason: string,
+  ) {
+    const paused = yield* pauseTask(task, reason);
+    for (const child of yield* descendants(task)) yield* pauseTask(child, reason);
+    return paused;
+  });
+
+  /**
+   * The user took part in these requests, so both hand-off counts start over: the caps stop loops
+   * that run unattended, not work the user is following. The counts are never shown, so changing
+   * them publishes nothing.
+   */
+  const restartHandoffs = Effect.fn("AssistantGroups.restartHandoffs")(function* (
+    rootIds: ReadonlyArray<string>,
+  ) {
+    if (rootIds.length === 0) return;
+    yield* sql`
+      UPDATE assistant_group_tasks SET hops = 0, undelivered_hops = 0
+      WHERE task_id IN ${sql.in(rootIds)}`;
+  });
+
+  /** A user's message reaches these members: it counts for the live requests they work in. */
+  const userReached = Effect.fn("AssistantGroups.userReached")(function* (
+    teamId: string,
+    memberIds: ReadonlyArray<string>,
+  ) {
+    if (memberIds.length === 0) return;
+    const roots = yield* sql<{ readonly root_id: string }>`
+      SELECT DISTINCT t.root_id FROM assistant_group_tasks t
+      JOIN assistant_group_tasks r ON r.task_id = t.root_id
+      WHERE t.team_id = ${teamId} AND t.owner_id IN ${sql.in(memberIds)}
+        AND r.status IN ${sql.in(ACTIVE)}`;
+    yield* restartHandoffs(roots.map((row) => row.root_id));
+  });
+
+  /**
+   * A paused or failed task runs again, with its owner or a new one, and so does the stopped work
+   * under it; a task with open subtasks waits for them. When the whole request is stopped, it picks
+   * up from its root whichever card the user chose. Only the user does this.
+   */
+  const requeue = Effect.fn("AssistantGroups.requeue")(function* (
+    task: TaskRow,
+    ownerId: string = task.owner_id,
+  ) {
+    const stopped = (row: TaskRow) => row.status === "paused" || row.status === "failed";
+    const root = task.root_id === task.task_id ? task : yield* getTask(task.root_id);
+    const top = root !== undefined && stopped(root) ? root : task;
+    const below = yield* descendants(top);
+    const branch = new Set([top.task_id, task.task_id]);
+    for (const row of below) {
+      if (stopped(row) && row.parent_id !== null && branch.has(row.parent_id)) {
+        branch.add(row.task_id);
+      }
+    }
+    const waitsForChildren = (row: TaskRow) =>
+      below.some(
+        (child) =>
+          child.parent_id === row.task_id &&
+          (branch.has(child.task_id) ||
+            !SETTLED.includes(child.status as AssistantGroupTaskStatus)),
+      );
+    let next = task;
+    for (const row of [top, ...below].filter((candidate) => branch.has(candidate.task_id))) {
+      const chosen = row.task_id === task.task_id;
+      const done = yield* patchTask(row, {
+        status: waitsForChildren(row) ? "waiting" : "queued",
+        reason: null,
+        owner_id: chosen ? ownerId : row.owner_id,
+        revision: row.revision + 1,
+        result_text: null,
+      });
+      if (chosen) next = done;
+    }
+    yield* restartHandoffs([task.root_id]);
+    return next;
+  });
 
   const routingNow = new Set<string>();
 
@@ -1276,6 +1377,7 @@ const make = Effect.gen(function* () {
           const recipients = ids.flatMap((id) =>
             prepared.members.filter((member) => member.assistant_id === id),
           );
+          if (author.kind === "user") yield* userReached(teamId, ids);
           yield* openRoots(team, prepared.message, recipients, instruction);
           if (!(ids.length === 1 && ids[0] === leadId)) {
             yield* insertMessage({
@@ -1507,6 +1609,12 @@ const make = Effect.gen(function* () {
                 replyTo: message.message_id,
               });
             } else if (recipients !== undefined) {
+              if (author.kind === "user") {
+                yield* userReached(
+                  team.id,
+                  recipients.map((row) => row.assistant_id),
+                );
+              }
               yield* openRoots(team, message, recipients, instructionFor(author, input.text));
             }
             yield* pump(team.id);
@@ -1542,6 +1650,26 @@ const make = Effect.gen(function* () {
     return records.messages.findLast((message) => message.text.trim() !== "")?.text.trim();
   });
 
+  /**
+   * A finished task moves its request on, unless it is a teammate's answer to a question, says
+   * nothing, or repeats word for word what the same member already told the same asker in it.
+   */
+  const isDelivery = Effect.fn("AssistantGroups.isDelivery")(function* (
+    task: TaskRow,
+    answer: string,
+  ) {
+    if (task.kind === "reply" || answer === NO_ANSWER) return false;
+    if (task.parent_id === null) return true;
+    const repeated = yield* sql`
+      SELECT 1 FROM assistant_group_tasks t
+      JOIN assistant_group_tasks p ON p.task_id = t.parent_id
+      WHERE t.root_id = ${task.root_id} AND t.task_id <> ${task.task_id}
+        AND t.status = 'completed' AND t.owner_id = ${task.owner_id} AND t.result_text = ${answer}
+        AND p.owner_id = (SELECT owner_id FROM assistant_group_tasks WHERE task_id = ${task.parent_id})
+      LIMIT 1`;
+    return repeated.length === 0;
+  });
+
   const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (
     event: Extract<OrchestrationV2DomainEvent, { readonly type: "run.created" | "run.updated" }>,
   ) {
@@ -1571,7 +1699,11 @@ const make = Effect.gen(function* () {
       yield* patchTask(task, { status: "waiting", reason: null });
     } else {
       const answer =
-        task.result_text?.trim() || (yield* answerOf(run.threadId, run.id)) || "(no answer)";
+        task.result_text?.trim() || (yield* answerOf(run.threadId, run.id)) || NO_ANSWER;
+      if (yield* isDelivery(task, answer)) {
+        yield* sql`
+          UPDATE assistant_group_tasks SET undelivered_hops = 0 WHERE task_id = ${task.root_id}`;
+      }
       yield* insertMessage({
         teamId: task.team_id,
         author: "assistant",
@@ -1614,20 +1746,6 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const descendants = Effect.fn("AssistantGroups.descendants")(function* (task: TaskRow) {
-    const all = yield* sql<TaskRow>`
-      SELECT * FROM assistant_group_tasks WHERE root_id = ${task.root_id}`;
-    const found: TaskRow[] = [];
-    const queue = [task.task_id];
-    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-      for (const child of all.filter((row) => row.parent_id === next)) {
-        found.push(child);
-        queue.push(child.task_id);
-      }
-    }
-    return found;
-  });
-
   const taskAction: AssistantGroups["Service"]["taskAction"] = Effect.fn(
     "AssistantGroups.taskAction",
   )(function* (input) {
@@ -1641,8 +1759,7 @@ const make = Effect.gen(function* () {
           switch (input.action) {
             case "stop": {
               if (!ACTIVE.includes(status)) return yield* wrong();
-              const stopped = yield* pauseTask(task, "stopped");
-              for (const child of yield* descendants(task)) yield* pauseTask(child, "stopped");
+              const stopped = yield* pauseBranch(task, "stopped");
               yield* pump(team.id);
               return (yield* wireTasks([stopped]))[0]!;
             }
@@ -1663,7 +1780,6 @@ const make = Effect.gen(function* () {
                     : "Its member is no longer in the group; reassign it.",
                 );
               }
-              // Resuming a task that hit the hand-off cap goes ahead: the user is the one deciding.
               const next = yield* requeue(task, ownerId);
               yield* pump(team.id);
               return (yield* wireTasks([(yield* getTask(next.task_id)) ?? next]))[0]!;
@@ -1722,6 +1838,41 @@ const make = Effect.gen(function* () {
   const rootOf = (task: TaskRow) =>
     task.root_id === task.task_id ? Effect.succeed(task) : requireTask(task.root_id);
 
+  /**
+   * Counts a hand-off on the request's root. Past either cap the hand-off is refused and the whole
+   * request stops, running turns included, until the user acts on it; the chat says which cap.
+   */
+  const chargeHandoff = Effect.fn("AssistantGroups.chargeHandoff")(function* (
+    team: AssistantTeam,
+    task: TaskRow,
+  ) {
+    const root = yield* rootOf(task);
+    const reason =
+      root.undelivered_hops >= ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY
+        ? "no_delivery"
+        : root.hops >= ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION
+          ? "handoff_limit"
+          : null;
+    if (reason === null) {
+      yield* sql`
+        UPDATE assistant_group_tasks
+        SET hops = hops + 1, undelivered_hops = undelivered_hops + 1
+        WHERE task_id = ${root.task_id}`;
+      return;
+    }
+    yield* pauseBranch(root, reason);
+    yield* insertMessage({
+      teamId: team.id,
+      author: "assistant",
+      assistantId: task.owner_id,
+      kind: "notice",
+      text: HANDOFF_PAUSES[reason].notice,
+      replyTo: task.request_message_id,
+    });
+    yield* pump(team.id);
+    return yield* invalid(HANDOFF_PAUSES[reason].refusal);
+  });
+
   const memberTools: AssistantGroups["Service"]["member"] = {
     history: Effect.fn("AssistantGroups.member.history")(function* (input) {
       const caller = yield* callerOf(input.callerThreadId);
@@ -1764,8 +1915,7 @@ const make = Effect.gen(function* () {
               status: repeat[0].status as AssistantGroupTaskStatus,
             };
           }
-          const root = yield* rootOf(task);
-          const over = root.hops + 1 > ASSISTANT_GROUP_HANDOFF_LIMIT;
+          yield* chargeHandoff(team, task);
           const expected = clip((input.expectedResult ?? "").trim(), EXPECTED_RESULT_CHARS);
           const sourceSeqs = [...new Set(input.sourceSeqs ?? [])]
             .filter((seq) => Number.isInteger(seq) && seq > 0)
@@ -1778,25 +1928,12 @@ const make = Effect.gen(function* () {
             requestMessageId: task.request_message_id,
             ownerId: target.assistant_id,
             instruction: input.instruction,
-            status: over ? "paused" : "queued",
-            reason: over ? "handoff_limit" : null,
+            status: "queued",
             expectedResult: expected === "" ? null : expected,
             sourceSeqs,
             resources: normalizeResources(input.resources ?? []),
           });
-          if (over) {
-            yield* insertMessage({
-              teamId: team.id,
-              author: "assistant",
-              assistantId: task.owner_id,
-              kind: "notice",
-              text: HANDOFF_LIMIT_NOTICE,
-              replyTo: task.request_message_id,
-            });
-          } else {
-            yield* patchTask(root, { hops: root.hops + 1 });
-            yield* pump(team.id);
-          }
+          yield* pump(team.id);
           const current = (yield* getTask(child.task_id)) ?? child;
           return {
             taskId: current.task_id as AssistantGroupTaskId,
@@ -1816,30 +1953,13 @@ const make = Effect.gen(function* () {
             status: row.status as AssistantGroupTaskStatus,
           });
           if (target.assistant_id === task.owner_id) return settled(task);
-          const root = yield* rootOf(task);
-          const over = root.hops + 1 > ASSISTANT_GROUP_HANDOFF_LIMIT;
+          yield* chargeHandoff(team, task);
           const from = yield* nameOf(task.owner_id);
+          // The new owner takes over when the caller's run ends.
           const moved = yield* patchTask(task, {
             owner_id: target.assistant_id,
             followup: handOverText(from, input.note),
-            ...(over ? { status: "paused" as const, reason: "handoff_limit" } : {}),
           });
-          if (over) {
-            yield* insertMessage({
-              teamId: team.id,
-              author: "assistant",
-              assistantId: task.owner_id,
-              kind: "notice",
-              text: HANDOFF_LIMIT_NOTICE,
-              replyTo: task.request_message_id,
-            });
-            yield* pump(team.id);
-          } else {
-            // The new owner takes over when the caller's run ends.
-            yield* patchTask(root.task_id === moved.task_id ? moved : root, {
-              hops: root.hops + 1,
-            });
-          }
           return settled((yield* getTask(moved.task_id)) ?? moved);
         }),
       );

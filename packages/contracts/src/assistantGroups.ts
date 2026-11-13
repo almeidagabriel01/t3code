@@ -23,8 +23,18 @@ export function splitAssistantTransferText(text: string): {
 }
 
 export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;
-/** Automatic assignments and transfers per request; the next one pauses until the user acts. */
-export const ASSISTANT_GROUP_HANDOFF_LIMIT = 8;
+/**
+ * Hand-offs a request may make while none of its tasks delivers a new, non-empty answer: stops
+ * members passing work around. Longest real stretch measured is 10 (five makers each asking for a
+ * review); each extra maker adds two. Scenarios: AssistantGroups.test.ts.
+ */
+export const ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY = 12;
+/**
+ * Hand-offs since the user last acted on the request (Resume, Reassign, "continue", a message to its
+ * members), deliveries or not: the backstop for a loop that keeps delivering. Longest real request
+ * measured is 25 (five bugs, three review rounds each); 30 leaves room for one more such item.
+ */
+export const ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION = 30;
 /** Member-to-member replies per request, whoever writes them. */
 export const ASSISTANT_GROUP_REPLY_LIMIT = 2;
 export const ASSISTANT_GROUP_REPLY_MAX_CHARS = 2_000;
@@ -106,7 +116,7 @@ export const AssistantGroupTask = Schema.Struct({
   ownerId: AssistantId,
   instruction: Schema.String,
   status: AssistantGroupTaskStatus,
-  /** Why it paused: stopped, handoff_limit, member_removed, group_archived. Unknown ones show as paused. A queued task blocked by a resource says "waiting for <resource> (used by <member>)". */
+  /** Why it paused: stopped, no_delivery, handoff_limit, member_removed, group_archived. Unknown ones show as paused. A queued task blocked by a resource says "waiting for <resource> (used by <member>)". */
   reason: Schema.NullOr(Schema.String),
   /** The owner's hidden thread for this group, where the work happens. */
   threadId: ThreadId,

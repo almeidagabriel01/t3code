@@ -1,12 +1,13 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import type {
-  Assistant,
-  AssistantGroupMessage,
-  AssistantGroupTask,
-  AssistantId,
-  AssistantTeam,
-  AssistantTeamId,
-  ThreadId,
+import {
+  ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
+  type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupTask,
+  type AssistantId,
+  type AssistantTeam,
+  type AssistantTeamId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -428,7 +429,13 @@ it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversat
   await eventually(() =>
     expect(fakeGroupChat.taskActions).toEqual([{ taskId: "run", action: "stop" }]),
   );
-  await expect.element(main().getByText("Hit 8 hand-offs for this request")).toBeVisible();
+  await expect
+    .element(
+      main().getByText(
+        `${ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION} hand-offs since your last action`,
+      ),
+    )
+    .toBeVisible();
   await expect.element(main().getByText("Paused", { exact: true }).first()).toBeVisible();
   const held = cards.nth(1);
   await userEvent.click(held.getByRole("button", { name: "Resume" }));
