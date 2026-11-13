@@ -210,6 +210,7 @@ export function createWorkspaceFocusController(doc: Document) {
               element.dataset.workspaceArea === "pull-requests" || element.matches("main"),
           ) ??
           areas.find((element) => element.dataset.workspaceArea === "conversation") ??
+          areas.find((element) => element.dataset.workspaceArea === "file") ??
           areas.find((element) => element.dataset.workspaceArea === "panel"))
         : areas.find((element) => element.dataset.workspaceArea === name);
     if (!area) return false;

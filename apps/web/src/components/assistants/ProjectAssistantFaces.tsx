@@ -1,15 +1,19 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
+import {
+  assistantWorkingHereLabel,
+  projectAssistantFaces,
+} from "@t3tools/client-runtime/assistantLiveWork";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { useAssistantEntries } from "../../state/assistants";
+import { useAssistantEntries, useAssistantLiveWork } from "../../state/assistants";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 
 const MAX_FACES = 2;
 
 /**
- * Faces of a project's assistants for its header row, which is itself a button: each face is a
+ * Faces of the assistants working in a project, then of its configured ones, for its header row, which is itself a button: each face is a
  * `role="button"` span and swallows the events that would fold the project or start a drag.
  */
 export function ProjectAssistantFaces(props: {
@@ -17,18 +21,28 @@ export function ProjectAssistantFaces(props: {
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
 }) {
   const { active } = useAssistantEntries();
-  const entries = projectAssistants(
-    active,
-    props.members.map((member) => ({ environmentId: member.environmentId, projectId: member.id })),
-  );
-  if (entries.length === 0) return null;
-  const shown = entries.slice(0, MAX_FACES);
-  const hidden = entries.length - shown.length;
+  const { sites } = useAssistantLiveWork();
+  const members = props.members.map((member) => ({
+    environmentId: member.environmentId,
+    projectId: member.id,
+  }));
+  const faces = projectAssistantFaces({
+    assistants: active,
+    configured: projectAssistants(active, members),
+    sites,
+    members,
+  });
+  if (faces.length === 0) return null;
+  const shown = faces.slice(0, MAX_FACES);
+  const hidden = faces.length - shown.length;
   return (
     <span data-testid="project-assistant-faces" className="flex shrink-0 items-center">
-      {shown.map(({ assistant, environmentId }) => {
+      {shown.map(({ entry: { assistant, environmentId }, site }) => {
+        const label =
+          site === null ? `Open ${assistant.name}` : assistantWorkingHereLabel(assistant.name);
         const open = () => {
-          if (assistant.threadId !== null)
+          if (site !== null) props.onOpen(scopeThreadRef(site.environmentId, site.threadId));
+          else if (assistant.threadId !== null)
             props.onOpen(scopeThreadRef(environmentId, assistant.threadId));
         };
         return (
@@ -38,8 +52,9 @@ export function ProjectAssistantFaces(props: {
                 <span
                   role="button"
                   tabIndex={0}
-                  aria-label={`Open ${assistant.name}`}
+                  aria-label={label}
                   data-testid="project-assistant-face"
+                  data-working={site === null ? undefined : true}
                   className="-ms-1 flex size-5 first:ms-0 cursor-pointer items-center justify-center rounded-full outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
@@ -58,10 +73,11 @@ export function ProjectAssistantFaces(props: {
               <AssistantAvatar
                 assistant={assistant}
                 environmentId={environmentId}
+                {...(site === null ? {} : { mood: site.face })}
                 className="size-3.5"
               />
             </TooltipTrigger>
-            <TooltipPopup side="top">Open {assistant.name}</TooltipPopup>
+            <TooltipPopup side="top">{label}</TooltipPopup>
           </Tooltip>
         );
       })}

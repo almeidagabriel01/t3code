@@ -13,6 +13,21 @@ export function useHomeSectionPreferences() {
     assistantsCollapsed: loaded && preferencesResult.value.homeAssistantsCollapsed === true,
     assistantsShowAll: loaded && preferencesResult.value.homeAssistantsShowAll === true,
     agentsDoneExpanded: loaded && preferencesResult.value.homeAgentsDoneExpanded === true,
+    /** Folded assistants, by `env:assistantId`; open by default, as a project's list is. */
+    assistantsFolded: new Set(loaded ? (preferencesResult.value.homeAssistantsFolded ?? []) : []),
+    toggleAssistantFolded: (key: string) => {
+      if (!loaded) return;
+      savePreferences({
+        transform: (current) => {
+          const folded = current.homeAssistantsFolded ?? [];
+          return {
+            homeAssistantsFolded: folded.includes(key)
+              ? folded.filter((candidate) => candidate !== key)
+              : [...folded, key],
+          };
+        },
+      });
+    },
     toggleAssistants: () => {
       if (!loaded) return;
       savePreferences({

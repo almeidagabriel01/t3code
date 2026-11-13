@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import { type OrchestrationV2DomainEvent, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -157,6 +157,19 @@ it.effect("a request that leaves pending withdraws its decision without a messag
     // A late replay of the old pending event does not bring it back.
     yield* reactor.handle(put(jarvisThread, "req-1", { status: "resolved" }));
     assert.lengthOf(yield* decisions.list({}), 1);
+    // A plain thread's mirror, made by the waiting notice, goes the same way.
+    const plain = yield* decisions.request({
+      fromThreadId: ThreadId.make("plain-thread"),
+      projectId: ProjectId.make("p1"),
+      threadTitle: "Fix login",
+      clientRequestId: "approval:req-2",
+      title: "Claude wants to run a command",
+      context: "",
+      options: [{ id: "accept", label: "Approve" }],
+      approvalRequestId: "req-2",
+    });
+    yield* reactor.handle(put("plain-thread", "req-2", { status: "cancelled" }));
+    assert.equal((yield* decisions.get(plain.id)).status, "withdrawn");
   }).pipe(Effect.provide(layer));
 });
 

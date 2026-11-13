@@ -1,5 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { heavyItemsInProject } from "@t3tools/client-runtime/state/heavyQueueModel";
+import {
+  heavyItemsInProject,
+  heavyWork,
+  heavyWorkItems,
+} from "@t3tools/client-runtime/state/heavyQueueModel";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { Settings2Icon } from "lucide-react";
@@ -8,31 +12,15 @@ import { useProjects, useThreadShells } from "../../state/entities";
 import { useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { RightPanelMessage } from "../chat/RightPanelStates";
-import { HeavyCommandRows, type HeavyCommandThreads } from "../statusBar/HeavyCommandsBody";
-import { HeavyQueueBody } from "../statusBar/HeavyQueueBody";
+import type { HeavyCommandThreads } from "../statusBar/HeavyCommandsBody";
+import { HeavyWorkList } from "../statusBar/HeavyQueueBody";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectPanelFrame } from "./ProjectPanelFrame";
 
-function Section(props: {
-  readonly title: string;
-  readonly count: number;
-  readonly children: React.ReactNode;
-}) {
-  return (
-    <section aria-label={props.title} className="pb-2">
-      <h3 className="flex h-7 items-center gap-2 px-2 text-xs font-medium text-muted-foreground">
-        {props.title}
-        <span className="text-2xs tabular-nums">{props.count}</span>
-      </h3>
-      {props.children}
-    </section>
-  );
-}
-
 /**
- * The project's heavy commands and queue entries, with the Resource Manager's own rows and
- * actions. The server samples processes only while this tab is visible.
+ * The project's heavy work, with the Resource Manager's own rows and actions: each job once, per
+ * machine. The server samples processes only while this tab is visible.
  */
 export function ProjectHeavyWorkPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -59,12 +47,11 @@ export function ProjectHeavyWorkPanel(props: {
   const { commands, cpuCount } = useHeavyCommands(props.visible ? environmentId : null);
   const queue = useHeavyQueue(environmentId);
   const match = { projectId, projects, projectIdOfThread: threads.projectIdOfThread };
-  const running = heavyItemsInProject(commands, match);
-  const queued = heavyItemsInProject(queue.entries, match);
+  const count = heavyItemsInProject(heavyWorkItems(heavyWork(queue, commands)), match).length;
   return (
     <ProjectPanelFrame
       title="Heavy work"
-      summary={running.length + queued.length > 0 ? String(running.length + queued.length) : null}
+      summary={count > 0 ? String(count) : null}
       actions={
         <Tooltip>
           <TooltipTrigger
@@ -83,36 +70,19 @@ export function ProjectHeavyWorkPanel(props: {
         </Tooltip>
       }
     >
-      {running.length === 0 && queued.length === 0 ? (
+      {count === 0 ? (
         <RightPanelMessage
           title="No heavy work in this project"
           detail="Tests, builds and other heavy commands from this project show here while they run or wait."
         />
       ) : (
-        <>
-          {running.length === 0 ? null : (
-            <Section title="Running now" count={running.length}>
-              <HeavyCommandRows
-                environmentId={environmentId}
-                commands={running}
-                cpuCount={cpuCount}
-                threads={threads}
-                scopeProjectId={projectId}
-              />
-            </Section>
-          )}
-          {queued.length === 0 ? null : (
-            <Section title="Queue" count={queued.length}>
-              <HeavyQueueBody
-                environmentId={environmentId}
-                projectId={projectId}
-                threadTitle={threads.threadTitle}
-                projectIdOfThread={threads.projectIdOfThread}
-                onOpenThread={threads.onOpenThread}
-              />
-            </Section>
-          )}
-        </>
+        <HeavyWorkList
+          environmentId={environmentId}
+          projectId={projectId}
+          commands={commands}
+          cpuCount={cpuCount}
+          threads={threads}
+        />
       )}
     </ProjectPanelFrame>
   );

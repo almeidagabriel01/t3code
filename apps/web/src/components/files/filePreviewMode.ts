@@ -7,6 +7,33 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
+/** The project tree path an open file surface reveals, or null for attachments and files outside the project. */
+export function fileTreeRevealTarget(
+  file: {
+    readonly relativePath: string;
+    readonly revealRequestId: number;
+    readonly attachment?: unknown;
+  } | null,
+  workspaceRoot: string | undefined,
+): { readonly path: string; readonly requestId: number } | null {
+  if (file === null || file.attachment !== undefined || !workspaceRoot) return null;
+  const relativePath = isHostPath(file.relativePath)
+    ? workspaceRelativeFilePath(file.relativePath, workspaceRoot)
+    : file.relativePath;
+  if (relativePath === null) return null;
+  const segments: string[] = [];
+  for (const segment of relativePath.split("/")) {
+    if (segment === "..") {
+      if (segments.pop() === undefined) return null;
+    } else if (segment !== "" && segment !== ".") {
+      segments.push(segment);
+    }
+  }
+  return segments.length === 0
+    ? null
+    : { path: segments.join("/"), requestId: file.revealRequestId };
+}
+
 export const isMarkdownPreviewFile = (path: string): boolean =>
   /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 

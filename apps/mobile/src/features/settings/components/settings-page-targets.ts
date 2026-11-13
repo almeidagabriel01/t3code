@@ -13,6 +13,7 @@ export const SETTINGS_PAGE_TARGETS = [
   "SettingsWorktrees",
   "SettingsLabs",
   "SettingsEnvironmentMaintenance",
+  "SettingsResourceManager",
   "SettingsProviderAccounts",
   "SettingsKeyboard",
   "SettingsVoice",

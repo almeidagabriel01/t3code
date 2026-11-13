@@ -8,6 +8,7 @@ import {
   hasSidebarNotification,
   hasUnseenCompletion,
   hasUnseenFailure,
+  sidebarStatusIsRunning,
   type SidebarThreadStatus,
 } from "@t3tools/client-runtime/state/thread-attention";
 import {
@@ -777,6 +778,12 @@ export function resolveSidebarNotificationDotClass(thread: ThreadStatusInput): s
     : null;
 }
 
+/** A tab's status: the thread is working, or needs attention as its sidebar dot shows. */
+export function resolveThreadTabStatus(thread: ThreadStatusInput): ThreadStatusPill | null {
+  const status = resolveThreadStatusPill({ thread });
+  return status && (status.pulse || hasSidebarNotification(thread)) ? status : null;
+}
+
 // Suppress trailing double-click navigation; keyboard and synthetic clicks use detail 0.
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
@@ -888,7 +895,7 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "working" || input.status === "waiting") {
+  if (sidebarStatusIsRunning(input.status)) {
     return true;
   }
   if (input.status === "ready" || input.status === "approval") {
@@ -1438,3 +1445,37 @@ export {
   sortPriorityThreadsForSidebar,
   type SidebarPriorityHolds,
 } from "@t3tools/client-runtime/state/thread-activity";
+
+/**
+ * The thread a sidebar menu acts on. Assistant rows and tasks of folded projects are not listed,
+ * so their shell answers, read as the thread menu in the chat header reads it.
+ */
+export function resolveSidebarMenuThread<
+  T extends Parameters<typeof effectiveSnoozed>[0] & { readonly settledOverride?: string | null },
+>(input: {
+  readonly listed: T | undefined;
+  readonly shell: T | null;
+  readonly section: SidebarSection | undefined;
+  readonly now: string;
+}): { readonly thread: T; readonly isSettled: boolean; readonly isSnoozed: boolean } | null {
+  const thread = input.listed ?? input.shell;
+  if (thread === null) return null;
+  if (input.section !== undefined) {
+    return {
+      thread,
+      isSettled: input.section === "settled",
+      isSnoozed: input.section === "snoozed",
+    };
+  }
+  return {
+    thread,
+    isSettled: thread.settledOverride === "settled",
+    isSnoozed: effectiveSnoozed(thread, { now: input.now }),
+  };
+}
+
+/** ⌘1–9 and next/previous order: the assistants section's rows, then the projects', each once. */
+export const sidebarNavigationThreadKeys = (
+  assistantKeys: ReadonlyArray<string>,
+  projectKeys: ReadonlyArray<string>,
+): ReadonlyArray<string> => [...new Set([...assistantKeys, ...projectKeys])];

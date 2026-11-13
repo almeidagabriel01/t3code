@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   MessageId,
   OrchestrationDispatchCommandError,
+  OrchestrationV2DispatchCommandError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -1332,5 +1333,17 @@ describe("thread outbox", () => {
         interrupted: false,
       }),
     ).toBe("restore");
+    // Only the user can clear a busy refusal, so the message goes back to the draft at any stage.
+    const busy = new OrchestrationV2DispatchCommandError({
+      commandId: CommandId.make("command-busy"),
+      commandType: "thread.runtime-mode.set",
+      message: "Can't switch mode while a command is running",
+      refusal: "session-busy",
+    });
+    for (const stage of ["settings-sync", "start-turn"] as const) {
+      expect(resolveThreadOutboxFailureAction({ stage, error: busy, interrupted: false })).toBe(
+        "restore",
+      );
+    }
   });
 });

@@ -20,6 +20,8 @@ export interface ReopenOwnerState {
   sideChatExists: boolean;
   shellLive: boolean;
   panel: ThreadRightPanelState;
+  /** Whether the thread already has a tab, for a closed thread tab. */
+  threadTabOpen?: boolean;
 }
 
 export function planNextReopen(
@@ -39,12 +41,14 @@ export function planNextReopen(
       break;
     }
     const alreadyOpen =
-      entry.kind === "panel-tab"
-        ? (owner.panel.isOpen || entry.surface.kind === "file") &&
-          owner.panel.surfaces.some((s) => s.id === entry.surface.id)
-        : owner.panel.surfaces.some(
-            (s) => s.kind === "preview" && s.resourceId === entry.snapshot.tabId,
-          );
+      entry.kind === "thread-tab"
+        ? owner.threadTabOpen === true
+        : entry.kind === "panel-tab"
+          ? (owner.panel.isOpen || entry.surface.kind === "file") &&
+            owner.panel.surfaces.some((s) => s.id === entry.surface.id)
+          : owner.panel.surfaces.some(
+              (s) => s.kind === "preview" && s.resourceId === entry.snapshot.tabId,
+            );
     if (alreadyOpen) {
       drop.push(entry);
       continue;
@@ -102,6 +106,8 @@ export async function reopenClosedView(
   const panels = useRightPanelStore.getState();
   const ref = view.threadRef;
 
+  // Routing to the thread opens its tab again.
+  if (view.kind === "thread-tab") return true;
   if (view.kind === "browser") {
     const url = view.snapshot.navStatus._tag === "Idle" ? undefined : view.snapshot.navStatus.url;
     const result = await openPreviewSession({

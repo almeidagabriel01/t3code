@@ -1,3 +1,5 @@
+import { collectComposerContextReferences } from "./composerContextReferences.ts";
+
 export type ComposerTriggerKind =
   | "path"
   | "pull-request"
@@ -74,7 +76,8 @@ export function detectComposerTrigger(
   isWhitespaceChar?: (char: string) => boolean,
 ): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
-  const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
+  const lineBegin = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
+  const lineStart = lineBegin + leadingContextChipsEnd(text.slice(lineBegin, cursor));
   const linePrefix = text.slice(lineStart, cursor);
 
   if (linePrefix.startsWith("/")) {
@@ -175,8 +178,26 @@ export function isClearComposerCommand(text: string): boolean {
   return /^\/clear\s*$/i.test(text.trim());
 }
 
-/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+/** End of the chips and whitespace that lead `text`; attaching to an empty draft puts chips first. */
+function leadingContextChipsEnd(text: string): number {
+  let end = 0;
+  for (const reference of collectComposerContextReferences(text)) {
+    if (text.slice(end, reference.start).trim() !== "") break;
+    end = reference.end;
+  }
+  return text.length - text.slice(end).trimStart().length;
+}
+
+/** A command at `offset` leads the message when only chips and whitespace come before it. */
+export function isAtMessageStart(text: string, offset: number): boolean {
+  const before = text.slice(0, offset);
+  return leadingContextChipsEnd(before) === before.length;
+}
+
+/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message; leading chips stay in the prompt. */
 export function parseSideChatCommand(text: string): { prompt: string } | null {
-  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
-  return match ? { prompt: match[1]?.trim() ?? "" } : null;
+  const chipsEnd = leadingContextChipsEnd(text);
+  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.slice(chipsEnd).trimEnd());
+  if (!match) return null;
+  return { prompt: `${text.slice(0, chipsEnd).trim()} ${match[1]?.trim() ?? ""}`.trim() };
 }

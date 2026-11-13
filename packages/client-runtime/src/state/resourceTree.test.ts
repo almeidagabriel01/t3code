@@ -3,18 +3,21 @@ import type {
   ResourceTelemetryProcess,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
+  formatCpu,
+  formatMemory,
   appBreakdown,
   attributeTerminalUsage,
   buildResourceTree,
   deviceRowLabel,
   deviceShutdownTargets,
   orderResourceTree,
+  outsideT3Usage,
   resourceTreeKeys,
   toMachineShare,
-} from "./resourceUsage.logic";
+} from "./resourceTree.ts";
 
 const proc = (
   pid: number,
@@ -215,9 +218,29 @@ describe("buildResourceTree", () => {
     ).toBe(false);
   });
 
+  const apps = (
+    [
+      ["Slack", 70, 1],
+      ["node", 60, 2],
+      ["Chrome", 50, 3],
+      ["Zoom", 40, 4],
+      ["Mail", 30, 5],
+      ["Docker", 20, 6],
+      ["Arc", 10, 7],
+    ] as const
+  ).map(([name, cpuPercent, rssBytes]) => ({ name, cpuPercent, rssBytes, processCount: 1 }));
+
+  it.each([
+    ["cpu", ["Slack", "node", "Chrome", "Zoom", "Mail"]],
+    ["memory", ["Arc", "Docker", "Mail", "Zoom", "Chrome"]],
+    ["name", ["Chrome", "Mail", "node", "Slack", "Zoom"]],
+  ] as const)("lists the five heaviest apps outside T3 for a %s sort", (sort, expected) => {
+    expect(run({ outsideApps: apps, sort }).outsideApps.map((row) => row.name)).toEqual(expected);
+  });
+
   it("holds projects, rows, devices, app groups and their processes in a kept order", () => {
-    const held = resourceTreeKeys(run());
-    const reranked = run({ sort: "name" });
+    const held = resourceTreeKeys(run({ outsideApps: apps.slice(0, 5) }));
+    const reranked = run({ sort: "name", outsideApps: apps.slice(0, 5) });
     expect(resourceTreeKeys(reranked)).not.toEqual(held);
     expect(resourceTreeKeys(orderResourceTree(reranked, held))).toEqual(held);
   });
@@ -348,12 +371,100 @@ describe("buildResourceTree", () => {
   });
 });
 
+describe("outsideT3Usage", () => {
+  const GiB = 1024 ** 3;
+  const usage = (cpuPercent: number, rssBytes: number) => ({
+    cpuPercent,
+    rssBytes,
+    processCount: 1,
+  });
+  const mac = { cpuPercent: 97, usedBytes: 14 * GiB };
+  const t3 = usage(0.5, 2 * GiB);
+
+  it.each([
+    {
+      case: "is This Mac minus the T3 total, the rest left to Other",
+      mac,
+      t3,
+      rows: [usage(30, 4 * GiB), usage(13, 2 * GiB)],
+      total: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+      other: { cpuPercent: 53.5, rssBytes: 6 * GiB },
+    },
+    {
+      case: "with no rows, puts everything in Other",
+      mac,
+      t3,
+      rows: [],
+      total: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+      other: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+    },
+    {
+      case: "never drops below rows a newer sample put ahead of the Mac",
+      mac: { cpuPercent: 40, usedBytes: 5 * GiB },
+      t3: usage(10, GiB),
+      rows: [usage(35, 6 * GiB)],
+      total: { cpuPercent: 35, rssBytes: 6 * GiB },
+      other: null,
+    },
+    {
+      case: "keeps Other at 0 for one metric the rows exceed",
+      mac: { cpuPercent: 40, usedBytes: 9 * GiB },
+      t3: usage(10, GiB),
+      rows: [usage(35, 6 * GiB)],
+      total: { cpuPercent: 35, rssBytes: 8 * GiB },
+      other: { cpuPercent: 0, rssBytes: 2 * GiB },
+    },
+    {
+      case: "hides an Other that rounds to nothing on screen",
+      mac: { cpuPercent: 10.04, usedBytes: GiB + 400 * 1024 },
+      t3: usage(0, 0),
+      rows: [usage(10, GiB)],
+      total: { cpuPercent: 10.04, rssBytes: GiB + 400 * 1024 },
+      other: null,
+    },
+    {
+      case: "sums the rows without a host CPU reading",
+      mac: { cpuPercent: null, usedBytes: 14 * GiB },
+      t3,
+      rows: [usage(30, 4 * GiB), usage(13, 2 * GiB)],
+      total: { cpuPercent: 43, rssBytes: 6 * GiB },
+      other: null,
+    },
+    {
+      case: "sums the rows without a memory reading",
+      mac: { cpuPercent: 97, usedBytes: null },
+      t3,
+      rows: [usage(30, 4 * GiB)],
+      total: { cpuPercent: 30, rssBytes: 4 * GiB },
+      other: null,
+    },
+    {
+      case: "sums the rows before T3's first sample",
+      mac,
+      t3: null,
+      rows: [usage(30, 4 * GiB)],
+      total: { cpuPercent: 30, rssBytes: 4 * GiB },
+      other: null,
+    },
+  ])("$case", ({ mac, t3, rows, total, other }) => {
+    const result = outsideT3Usage({ mac, t3, rows });
+    expect(result.total.rssBytes).toBe(total.rssBytes);
+    expect(result.total.cpuPercent).toBeCloseTo(total.cpuPercent);
+    if (other === null) expect(result.other).toBeNull();
+    else {
+      expect(result.other?.cpuPercent).toBeCloseTo(other.cpuPercent);
+      expect(result.other?.rssBytes).toBe(other.rssBytes);
+    }
+  });
+});
+
 describe("toMachineShare", () => {
   const aggregate = { currentCpuPercent: 300, currentRssBytes: 1, processCount: 2 };
   const snapshot = (cpuCount?: number) =>
     ({
       ...(cpuCount === undefined ? {} : { cpuCount }),
       processes: [proc(1, [], 10, 250)],
+      outsideApps: [{ name: "Slack", cpuPercent: 250, rssBytes: 1, processCount: 1 }],
       groups: { backend: aggregate, electron: aggregate, monitor: aggregate, allT3: aggregate },
     }) as unknown as ResourceTelemetrySnapshot;
 
@@ -364,11 +475,20 @@ describe("toMachineShare", () => {
   ])("on %s shows CPU as a share of the machine", (_case, cores, process, allT3) => {
     const shared = toMachineShare(snapshot(cores));
     expect(shared.processes[0]?.cpuPercent).toBe(process);
+    expect(shared.outsideApps?.[0]?.cpuPercent).toBe(process);
     expect(shared.groups.allT3.currentCpuPercent).toBe(allT3);
   });
 
   it("returns the same object for the same snapshot", () => {
     const source = snapshot(10);
     expect(toMachineShare(source)).toBe(toMachineShare(source));
+  });
+});
+
+describe("formatMemory and formatCpu", () => {
+  it("switches between MB and GB, and keeps a decimal for small shares", () => {
+    expect(formatMemory(4.04 * 1024 ** 3)).toBe("4.04 GB");
+    expect(formatMemory(512 * 1024 ** 2)).toBe("512 MB");
+    expect([formatCpu(0), formatCpu(2.345), formatCpu(12.6)]).toEqual(["0%", "2.3%", "13%"]);
   });
 });

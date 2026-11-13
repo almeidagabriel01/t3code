@@ -30,7 +30,16 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
-import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
+import { threadJumpTarget, useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+
+const { jump } = vi.hoisted(() => ({
+  jump: { handler: null as ((command: string) => boolean) | null },
+}));
+vi.mock("../keyboard/hardwareKeyboardCommands", () => ({
+  useHardwareKeyboardCommand: (_commands: unknown, handler: (command: string) => boolean) => {
+    jump.handler = handler;
+  },
+}));
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -210,6 +219,24 @@ describe("resolveThreadListV2Status", () => {
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
+  it.each([
+    ["a done or failed assistant task", "dismiss", true, "card", false],
+    ["a settled done task", "dismiss", true, "slim", false],
+    ["a snoozed done task", "dismiss", true, "slim", true],
+    ["any other task", "settle", false, "card", false],
+  ] as const)("swipes %s to %s", (_name, primary, dismissible, variant, snoozed) => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant,
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: false,
+        snoozed,
+        dismissible,
+      }).primary,
+    ).toBe(primary);
+  });
+
   it("offers snooze for a presented input request and moves it onto the snoozed shelf", () => {
     const raw = makeRawThreadShell({
       pendingRuntimeRequest: {
@@ -927,6 +954,20 @@ describe("buildThreadListV2ListItems", () => {
     expect(threadJumpTarget(items, "thread.jump.1")?.id).toBe("active");
     expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("settled");
     expect(threadJumpTarget(items, "thread.jump.3")).toBeNull();
+    // The assistants section counts first, and the list skips a thread it already numbered.
+    const chat = makeThread({ id: ThreadId.make("chat"), title: "chat" });
+    const active = threadJumpTarget(items, "thread.jump.1")!;
+    const leading = [chat, active];
+    expect(threadJumpTarget(items, "thread.jump.1", leading)?.id).toBe("chat");
+    expect(threadJumpTarget(items, "thread.jump.2", leading)?.id).toBe("active");
+    expect(threadJumpTarget(items, "thread.jump.3", leading)?.id).toBe("settled");
+    expect(threadJumpTarget(items, "thread.jump.4", leading)).toBeNull();
+    const onSelect = vi.fn();
+    useThreadJumpShortcuts(items, onSelect, leading);
+    for (const command of ["thread.jump.1", "thread.jump.3", "thread.jump.9"]) {
+      expect(jump.handler?.(command)).toBe(true);
+    }
+    expect(onSelect.mock.calls.map(([thread]) => thread.id)).toEqual(["chat", "settled"]);
   });
 });
 
@@ -1340,7 +1381,17 @@ it("excludes subagents from navigation, search and ordering while retaining user
     title: "Fork",
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "fork" },
   });
-  const threads = [root, child, fork];
+  // Pinning a subagent from its assistant's row must not surface it in the Pinned section.
+  const pinnedChild = makeThread({
+    id: ThreadId.make("pinned-child"),
+    title: "Pinned child",
+    pinnedAt: NOW,
+    lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "subagent" },
+  });
+  const threads = [root, child, fork, pinnedChild];
+  expect(
+    getThreadListV2OrderedSection({ threads, threadOrder: "fixed", section: "pinned", now: NOW }),
+  ).toEqual([]);
   expect(
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
       (item) => item.thread.id,

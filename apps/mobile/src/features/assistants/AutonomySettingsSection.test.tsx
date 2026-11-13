@@ -140,6 +140,19 @@ describe("autonomy settings", () => {
     });
   });
 
+  it("toggles the waiting notice and locks its delay while it is off", () => {
+    render();
+    toggle("Notify me when something is waiting for me");
+    expect(mocks.write).toHaveBeenLastCalledWith({
+      ...DEFAULT_AUTONOMY_SETTINGS,
+      notifyWaiting: false,
+    });
+    mocks.autonomy = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true, notifyWaiting: false };
+    render();
+    expect(input("Notify after").readOnly).toBe(true);
+    expect(input("Messages from assistants per day").readOnly).toBe(false);
+  });
+
   it("toggles a channel", () => {
     render();
     toggle("Notify on T3 Activity");
@@ -155,6 +168,8 @@ describe("autonomy settings", () => {
     ["Waiting for you after", "waitingMinutes", "45"],
     ["Stuck after", "stuckMinutes", "90"],
     ["Notifications per day", "maxWakesPerDay", "7"],
+    ["Notify after", "notifyWaitingAfterMinutes", "0"],
+    ["Messages from assistants per day", "maxUserMessagesPerDay", "50"],
   ] as const)("commits %s once it is a valid whole number", (label, key, value) => {
     render();
     type(label, value);

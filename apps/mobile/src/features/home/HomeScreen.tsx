@@ -61,7 +61,10 @@ import { useThreadListV2 } from "../threads/useThreadListV2";
 import { useThreadListNow } from "../threads/use-thread-list-now";
 import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
-import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import {
+  HomeAssistantsSection,
+  useAssistantSectionJumpThreads,
+} from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { HomeAgentsSection } from "./HomeAgentsSection";
 import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
@@ -527,7 +530,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     onSelectThread(thread);
   };
-  useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const hasAnyThreads =
+    props.threads.some((thread) => thread.archivedAt === null) ||
+    props.pendingTasks.length > 0 ||
+    threadListV2Layout.settledCount > 0;
+  useThreadJumpShortcuts(
+    threadListV2Items,
+    selectThread,
+    useAssistantSectionJumpThreads(!hasSearchQuery && hasAnyThreads),
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -609,6 +620,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onNewThreadOnBranch={props.onNewThreadOnBranch}
         thread={thread}
         variant={item.item.variant}
+        compact={item.compact === true}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
         pinned={item.item.pinned}
@@ -686,10 +698,6 @@ export function HomeScreen(props: HomeScreenProps) {
     threadOrder,
   };
 
-  const hasAnyThreads =
-    props.threads.some((thread) => thread.archivedAt === null) ||
-    props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -778,6 +786,7 @@ export function HomeScreen(props: HomeScreenProps) {
       {hasSearchQuery ? null : (
         <HomeAssistantsSection
           gutter={primaryColumn ? 8 : 16}
+          renderThread={(item) => renderV2Item({ item })}
           environmentLabelById={
             new Map(
               Object.values(props.savedConnectionsById).map((connection) => [

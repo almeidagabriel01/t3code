@@ -17,9 +17,13 @@ const entry = (name: string, scope: "all" | "project", projectId: string) => ({
   },
 });
 
-const state = vi.hoisted(() => ({ names: [] as Array<[string, "all" | "project", string]> }));
+const state = vi.hoisted(() => ({
+  names: [] as Array<[string, "all" | "project", string]>,
+  sites: [] as Array<Record<string, string>>,
+}));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: state.names.map(([n, s, p]) => entry(n, s, p)) }),
+  useAssistantLiveWork: () => ({ sites: state.sites }),
 }));
 
 const members = [{ environmentId: "env", id: "p1" }];
@@ -33,6 +37,7 @@ describe("ProjectAssistantFaces", () => {
       ["Dee", "project", "p2"],
       ["Eve", "all", "p1"],
     ];
+    state.sites = [];
     const onOpen = vi.fn();
     const onFold = vi.fn();
     await using screen = await render(
@@ -51,8 +56,31 @@ describe("ProjectAssistantFaces", () => {
     expect(onFold).not.toHaveBeenCalled();
   });
 
+  it("puts an assistant working here first and opens the thread it works on", async () => {
+    state.names = [
+      ["Ada", "project", "p1"],
+      ["Eve", "all", "p0"],
+    ];
+    const site = { environmentId: "env", assistantId: "Eve", face: "working" };
+    state.sites = [
+      { ...site, projectId: "p1", threadId: "task-1" },
+      { ...site, projectId: "p2", threadId: "task-2" },
+    ];
+    const onOpen = vi.fn();
+    await using screen = await render(<ProjectAssistantFaces members={members} onOpen={onOpen} />);
+    const faces = screen.container.querySelectorAll('[data-testid="project-assistant-face"]');
+    expect([...faces].map((f) => f.getAttribute("aria-label"))).toEqual([
+      "Eve is working here",
+      "Open Ada",
+    ]);
+    expect(faces[0]?.getAttribute("data-working")).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: "Eve is working here" }));
+    expect(onOpen).toHaveBeenCalledWith({ environmentId: "env", threadId: "task-1" });
+  });
+
   it("renders nothing without project assistants", async () => {
     state.names = [["Eve", "all", "p1"]];
+    state.sites = [];
     await using screen = await render(<ProjectAssistantFaces members={members} onOpen={vi.fn()} />);
     expect(screen.container.querySelector('[data-testid="project-assistant-faces"]')).toBeNull();
   });

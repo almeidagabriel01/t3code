@@ -36,11 +36,13 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentShell } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { hasThreadTab, restoreThreadTab } from "../threadTabsStore";
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { readThreadTabsProjectKey } from "./chat/threadTabsProject";
 import { toastManager } from "./ui/toast";
 
 const PREVIEW_FORWARDED_COMMANDS = [
@@ -109,6 +111,9 @@ export function ReopenClosedViewShortcut() {
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
+        threadTabOpen:
+          entry.kind === "thread-tab" &&
+          hasThreadTab(readThreadTabsProjectKey(ref), scopedThreadKey(ref)),
       };
     });
     for (const entry of drop) useClosedViewStore.getState().remove(entry.id);
@@ -124,6 +129,13 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (
+      restore.kind === "thread-tab" &&
+      typeof restore.layoutKey === "string" &&
+      typeof restore.groupId === "string"
+    ) {
+      restoreThreadTab(restore.layoutKey, restore.groupId, scopedThreadKey(ref));
+    }
     if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,

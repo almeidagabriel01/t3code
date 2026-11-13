@@ -6,8 +6,23 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
-import { labelOf, launchOf, parseHeavyArgs, selfPrefix, withWorkers } from "./heavyCli.ts";
-import { DEFAULT_MACHINE_CONFIG, DEFAULT_PROJECT_CONFIG } from "./runner.ts";
+import {
+  heavyLaunch,
+  jobOf,
+  labelOf,
+  launchOf,
+  linuxLine,
+  parseHeavyArgs,
+  selfPrefix,
+  withWorkers,
+} from "./heavyCli.ts";
+import { isQueued, queueBashCall } from "./heavyHook.ts";
+import {
+  DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
+  eligibilityOf,
+  NEEDS_GIT,
+} from "./runner.ts";
 import * as Queue from "./queueFile.ts";
 
 const BIN = NodeURL.fileURLToPath(new URL("../bin.ts", import.meta.url));
@@ -35,11 +50,13 @@ const heavy = (
   program: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv = {},
   options: ReadonlyArray<string> = ["--"],
+  cwd?: string,
 ) => {
   const child = NodeChildProcess.spawn(
     process.execPath,
     [BIN, "heavy", "--queue-dir", dir, ...options, ...program],
     {
+      cwd,
       stdio: ["pipe", "pipe", "pipe"],
       // Undefined drops a variable: a run of these tests inside a queue job must still queue.
       env: { ...process.env, T3CODE_HEAVY_JOB: undefined, ...env },
@@ -92,6 +109,45 @@ describe("t3 heavy", () => {
       "end 3",
     ]);
     expect(Queue.read(dir)).toEqual([]);
+  });
+
+  it("runs a repeated request once and answers every caller with its code", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "marker.txt");
+    const program = [
+      process.execPath,
+      "-e",
+      `require("fs").appendFileSync(${JSON.stringify(marker)},"ran\\n");console.log("started");` +
+        `process.stdin.resume();process.stdin.on("end",()=>process.exit(3))`,
+    ];
+    const options = ["--request-id", "toolu_same", "--"];
+    const first = heavy(dir, program, {}, options);
+    await first.until("out", "started");
+    const again = heavy(dir, program, {}, options);
+    first.child.stdin.end();
+    again.child.stdin.end();
+    expect(await Promise.all([first.exited, again.exited])).toEqual([3, 3]);
+    // After the job ended, a third call gets the code without running it.
+    const late = heavy(dir, program, {}, options);
+    late.child.stdin.end();
+    expect(await late.exited).toBe(3);
+    expect(NodeFS.readFileSync(marker, "utf8")).toBe("ran\n");
+  });
+
+  it("--now starts at once past a full slot, as the user's Start now does", async () => {
+    const dir = tempDir();
+    const marker = NodePath.join(dir, "marker.txt");
+    Queue.setMaxRunning(dir, 1);
+    const first = heavy(dir, [process.execPath, "-e", holdProgram(marker, "1")]);
+    await first.until("out", "started 1");
+    const now = heavy(dir, [process.execPath, "-e", holdProgram(marker, "2")], {}, ["--now", "--"]);
+    await now.until("out", "started 2");
+    expect(Queue.read(dir).find((entry) => entry.pid === now.child.pid)).toMatchObject({
+      forced: true,
+    });
+    first.child.stdin.end();
+    now.child.stdin.end();
+    expect(await Promise.all([first.exited, now.exited])).toEqual([0, 0]);
   });
 
   it("frees the place of a killed waiter and exits 125 when the user removes one", async () => {
@@ -212,6 +268,10 @@ describe("t3 heavy", () => {
     /** Heartbeats read as online; a stop check answers `gone`. */
     const setup = (remotoBody: string, config: Partial<typeof DEFAULT_PROJECT_CONFIG> = {}) => {
       const dir = tempDir();
+      // A checkout, so work started in it may go to Linux.
+      NodeFS.mkdirSync(NodePath.join(dir, ".git"));
+      NodeFS.mkdirSync(NodePath.join(dir, "bin"));
+      script(NodePath.join(dir, "bin"), "vp", 'echo "vp on mac: $*"');
       Queue.publishRunner(dir, {
         global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux", ...config },
         machine: DEFAULT_MACHINE_CONFIG,
@@ -219,7 +279,9 @@ describe("t3 heavy", () => {
         publisher: { pid: process.pid, home: dir, primary: true },
       });
       const env = {
-        T3CODE_REMOTO: script(dir, "remoto", remotoBody),
+        PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
+        // Past the PATH wrapper (runnerExec's tests cover it), to the command it runs.
+        T3CODE_REMOTO: script(dir, "remoto", `[ "$4" = t3 ] && shift 4\n${remotoBody}`),
         T3CODE_RUNNER_SSH: script(
           dir,
           "ssh",
@@ -246,11 +308,167 @@ describe("t3 heavy", () => {
       expect(Queue.read(dir)).toEqual([]);
     });
 
-    it("runs on the Mac when Linux is unavailable and the policy says so", async () => {
-      const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
-      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+    it("an agent's own remoto call runs once on Linux, from its cd folder", async () => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          `printf '%s|' "$@"; echo " in $(pwd -P)"`,
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const sub = NodePath.join(dir, "sub");
+      NodeFS.mkdirSync(sub);
+      const wrapped = heavy(dir, ["/bin/sh", "-c", `cd ${sub} && remoto vp test run`], env);
+      expect(await wrapped.exited).toBe(0);
+      expect(wrapped.stdout()).toBe(`vp|test|run| in ${NodeFS.realpathSync(sub)}\n`);
+      const bare = heavy(dir, ["remoto", "vp", "test", "run"], env);
+      expect(await bare.exited).toBe(0);
+      expect(bare.stdout()).toMatch(/^vp\|test\|run\| in /);
+    });
+
+    const echoArgs = [
+      `printf '${M} phase=running pgid=4\\n' >&2`,
+      `printf '%s|' "$@"; echo " in $(pwd -P)"`,
+      `printf '${M} exit=0\\n' >&2`,
+    ].join("\n");
+
+    it("a cd into another checkout runs on Linux from that folder, not the session's", async () => {
+      const { dir, env } = setup(echoArgs);
+      const session = NodePath.join(dir, "session-repo");
+      const web = NodePath.join(dir, "t3-runner-ui", "apps", "web");
+      NodeFS.mkdirSync(session);
+      NodeFS.mkdirSync(web, { recursive: true });
+      const line = `cd ${web} && vp test run src/x.browser.test.tsx`;
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], session);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("ran on mac\n");
+      expect(run.stdout()).toBe(
+        `vp|test|run|src/x.browser.test.tsx| in ${NodeFS.realpathSync(web)}\n`,
+      );
+    });
+
+    it("sends only the work to Linux: its log stays here, free of markers", async () => {
+      const { dir, env } = setup(echoArgs);
+      const log = NodePath.join(dir, "out.log");
+      const line = `L=${log}; vp test run src/a.test.ts > $L 2>&1; echo "log: $(cat $L)"`;
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(`log: vp|test|run|src/a.test.ts| in ${NodeFS.realpathSync(dir)}\n`);
+      expect(run.stderr()).toContain("Linux: running");
+    });
+
+    it("runs the line here when its expanded command turns out to need this Mac", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = "F=$(echo /etc/hosts); vp test run $F";
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run /etc/hosts\n");
+      expect(run.stderr()).toContain(
+        "Uses a file outside the project: /etc/hosts; running the line on this Mac",
+      );
+    });
+
+    it.each([
+      ["F=--changed; vp test run $F", "test run --changed"],
+      // A check:changed that doesn't read the inputs this Mac would hand it.
+      ["vp run check:changed", "run check:changed"],
+    ])("runs %j here when its expanded command turns out to need git", async (line, ran) => {
+      const { dir, env } = setup(echoArgs);
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(`vp on mac: ${ran}\n`);
+      expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
+    });
+
+    it("keeps a job on the Mac when Linux's pre-flight finds its tool missing", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
+        { runnerDropped: "mac" },
+      );
+      const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run\n");
+      expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+    });
+
+    it.each([1, 2, 3])(
+      "returns a plain failure's exit %i unchanged, never rerunning it",
+      async (code) => {
+        const { dir, env } = setup(
+          `printf '${M} phase=running pgid=4\\n${M} exit=${code}\\n' >&2; exit ${code}`,
+          { runnerDropped: "mac", runnerUnavailable: "mac" },
+        );
+        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).not.toContain("vp on mac");
+      },
+    );
+
+    // A lazy install that raced in a fresh copy is Linux's failure: once more there, never the Mac.
+    it.each([
+      ["output", 1, 0, 2, "linux-ok\n"],
+      ["output", 2, 0, 2, "vp on mac: test run\n"],
+      ["marker", 1, 0, 2, "linux-ok\n"],
+      ["marker", 2, 0, 2, "vp on mac: test run\n"],
+    ] as const)(
+      "an install failure seen in the %s %i time(s) ends %i after %i Linux runs",
+      async (seen, fails, code, runs, output) => {
+        const failure =
+          seen === "output"
+            ? "echo 'Error: Electron failed to install correctly.' >&2"
+            : `printf '${M} install=electron\\n' >&2`;
+        const { dir, env } = setup(
+          [
+            `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            `if [ $n -le ${fails} ]; then ${failure}; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+            "echo linux-ok",
+            `printf '${M} exit=0\\n' >&2`,
+          ].join("\n"),
+          { runnerDropped: "mac" },
+        );
+        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe(output);
+        expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe(
+          `${runs}`,
+        );
+        expect(run.stderr()).toContain("Dependency install on Linux failed");
+        expect(
+          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+        ).toBe(fails === 2);
+      },
+    );
+
+    it("sends a script outside the checkout to Linux as its text", async () => {
+      const { dir, env } = setup(echoArgs);
+      const scratch = tempDir();
+      const path = NodePath.join(scratch, "verify.sh");
+      NodeFS.writeFileSync(path, "vp test run");
+      const run = heavy(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(
+        `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
+      );
+    });
+
+    it("judges the whole line, not the label cut short for the row", async () => {
+      const { dir, env } = setup(echoArgs);
+      const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
+    });
+
+    it.each([
+      ["vp test run; echo after"],
+      // `timeout` runs its command in a process group of its own.
+      ["timeout 30 vp test run; echo after"],
+    ])("stops %j where Linux is unavailable and reruns it on the Mac by policy", async (line) => {
+      const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
+      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run\nafter\n");
+      expect(run.stderr()).toContain("Linux is unavailable");
     });
 
     it("reruns a dropped job on the Mac only after Linux confirms it stopped", async () => {
@@ -298,6 +516,30 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toBe("ran on mac\n");
     });
   });
+
+  it.each([
+    ["bare", ["remoto", "npm", "test"]],
+    ["shell-wrapped", ["/bin/sh", "-c", "remoto npm test"]],
+  ])(
+    "with the Runner off, a %s remoto call runs as written and holds no slot",
+    async (_, command) => {
+      const dir = tempDir();
+      const bin = NodePath.join(dir, "bin");
+      NodeFS.mkdirSync(bin);
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "remoto"),
+        '#!/bin/sh\necho "remoto: $*"\ncat >/dev/null\n',
+        {
+          mode: 0o755,
+        },
+      );
+      const run = heavy(dir, command, { PATH: `${bin}:${process.env.PATH}` });
+      await run.until("out", "remoto: npm test");
+      expect(Queue.read(dir)).toEqual([]);
+      run.child.stdin.end();
+      expect(await run.exited).toBe(0);
+    },
+  );
 
   it("queues agents' jobs low, the user's normal, and --priority high as asked", async () => {
     const dir = tempDir();
@@ -362,10 +604,283 @@ describe("t3 heavy", () => {
     expect(labelOf("/bin/zsh", ["-c", "cd x && vp test run"])).toBe("cd x && vp test run");
     expect(labelOf("vp", ["test", "run"])).toBe("vp test run");
     expect(labelOf("zsh", ["script.sh"])).toBe("zsh script.sh");
+    // Linux runs a program by its name, so a Mac path to it never keeps the job here.
+    expect(labelOf("/Users/me/.nvm/bin/node", ["--test"])).toBe("node --test");
     expect(selfPrefix("/q dir", { ELECTRON_RUN_AS_NODE: "1" })).toMatch(
       /^ELECTRON_RUN_AS_NODE=1 '.+' heavy --queue-dir '\/q dir'$/,
     );
     expect(selfPrefix("/q", {})).not.toContain("ELECTRON_RUN_AS_NODE");
+  });
+
+  describe("an agent's own remoto call and a leading cd", () => {
+    const SH = "/bin/zsh";
+    const shapes = [
+      ["bare remoto", ["remoto", "npm", "run", "test"], "/w", "npm", ["run", "test"], true],
+      ["wrapped remoto", [SH, "-c", "remoto npm run test"], "/w", SH, ["-c", "npm run test"], true],
+      [
+        "remoto after cd",
+        [SH, "-c", "cd apps/server && remoto vp test run"],
+        "/w/apps/server",
+        SH,
+        ["-c", "vp test run"],
+        true,
+      ],
+      [
+        "remoto after cd ~",
+        [SH, "-c", "cd ~/x && remoto vp test"],
+        "/home/me/x",
+        SH,
+        ["-c", "vp test"],
+        true,
+      ],
+      [
+        "cd alone",
+        [SH, "-c", "cd /abs/app && vp test run"],
+        "/abs/app",
+        SH,
+        ["-c", "vp test run"],
+        false,
+      ],
+      ["plain", ["vp", "test", "run"], "/w", "vp", ["test", "run"], false],
+      ["bare remoto, no command", ["remoto"], "/w", "remoto", [], false],
+    ] as const;
+    const modes = [
+      ["queue on, Runner on", true, true],
+      ["queue on, Runner off", true, false],
+      ["queue off, Runner on", false, true],
+      ["queue off, Runner off", false, false],
+    ] as const;
+
+    it.each(
+      shapes.flatMap((shape) => modes.map((mode) => [shape[0], mode[0], shape, mode] as const)),
+    )("%s, %s", (_shape, _mode, [, command, cwd, program, args, remoto], [, enabled, runner]) => {
+      const launch = heavyLaunch(
+        { program: command[0], args: command.slice(1), where: undefined },
+        "/w",
+        "/home/me",
+        () => ({ enabled, runner }),
+        false,
+      );
+      // `remoto` never holds a Mac slot: Linux with the Runner on, run as written with it off.
+      const direct = (!enabled && !runner) || (remoto && !runner);
+      expect(launch).toEqual(
+        direct
+          ? { kind: "direct" }
+          : { kind: "queue", cwd, program, args, where: remoto ? "linux" : undefined },
+      );
+    });
+
+    it("reads the Runner switch where the job runs, and runs direct inside a queue job", () => {
+      const seen: string[] = [];
+      const modeAt = (cwd: string) => (seen.push(cwd), { enabled: true, runner: true });
+      const remoto = { program: SH, args: ["-c", "cd /p && remoto vp test"], where: undefined };
+      heavyLaunch(remoto, "/w", "/h", modeAt, false);
+      expect(seen).toEqual(["/p"]);
+      expect(heavyLaunch(remoto, "/w", "/h", modeAt, true)).toEqual({ kind: "direct" });
+      expect(heavyLaunch({ ...remoto, where: "mac" }, "/w", "/h", modeAt, false)).toMatchObject({
+        where: "mac",
+      });
+    });
+
+    it("runs a commit with no hook as written, and queues a hooked one first", () => {
+      const parent = tempDir();
+      const root = NodePath.join(parent, "repo");
+      NodeFS.mkdirSync(root);
+      NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: root });
+      const modeAt = () => ({ enabled: true, runner: false });
+      const line = { program: SH, args: ["-c", "cd repo && git commit -m x"], where: undefined };
+      const direct = { program: "git", args: ["commit", "-m", "x"], where: undefined };
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      expect(heavyLaunch(direct, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toMatchObject({
+        kind: "queue",
+        cwd: root,
+        priority: "high",
+      });
+    });
+
+    const config = {
+      ...DEFAULT_PROJECT_CONFIG,
+      runnerEnabled: true,
+      runnerLinuxCommands: [...DEFAULT_PROJECT_CONFIG.runnerLinuxCommands, "effect-tsgo"],
+    };
+    const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
+    const rootOf = (cwd: string) =>
+      CHECKOUTS.find((root) => cwd === root || cwd.startsWith(`${root}/`)) ?? null;
+    const COMMITS = "Commits run here: the pre-commit edits this Mac's repository";
+    const OUTSIDE = "Uses a file outside the project: ";
+    /** What the hook, the queue and a Linux attempt each make of an agent's Bash line. */
+    const placed = (line: string) => {
+      const hooked = queueBashCall(
+        { tool_name: "Bash", tool_input: { command: line } },
+        "Q",
+        {},
+        { runner: true },
+      );
+      if (hooked === null) return [isQueued(line) ? "queued" : "light"];
+      const job = jobOf(SH, ["-c", line], "/w/repo", "/home/me");
+      const { reason } = eligibilityOf(
+        {
+          label: labelOf(job.program, job.args),
+          line: job.args[1]!,
+          cwd: job.cwd,
+          ...(job.remoto ? { where: "linux" as const } : {}),
+        },
+        { config, home: "/home/me", rootOf },
+      );
+      if (reason !== null) return [reason];
+      const run = linuxLine(job.program, job.args, "X").args[1];
+      return job.cwd === "/w/repo" ? ["linux", run] : ["linux", run, job.cwd];
+    };
+    const PINNED =
+      "A='/Applications/T3 Code (Beta).app/Contents'; ELECTRON_RUN_AS_NODE=1 \"$A/MacOS/T3 Code (Beta)\" " +
+      '"$A/Resources/app.asar/apps/server/dist/bin.mjs" heavy --queue-dir /q --runner mac --name x ' +
+      "-- sh -c 'cd /w/repo && vp test run > /private/tmp/x.log'";
+
+    it.each([
+      // Folders: a leading `cd` is where the job starts; any other is followed to its part.
+      ["vp test run", "linux", "X vp test run"],
+      ["cd /abs/app && vp test run", "linux", "X vp test run", "/abs/app"],
+      ["cd apps/web && vp test run", "linux", "X vp test run", "/w/repo/apps/web"],
+      ["cd ../other && vp test run", "linux", "X vp test run", "/w/other"],
+      ['cd "/a b/c" && vp test run', "linux", "X vp test run", "/a b/c"],
+      ["cd ~/code&&vp test run", "linux", "X vp test run", "/home/me/code"],
+      ["cd /abs && cd apps/web && vp test run", "linux", "X vp test run", "/abs/apps/web"],
+      ["  cd . && vp test run -t 'a b'", "linux", "X vp test run -t 'a b'"],
+      ["cd /abs; vp test run", "linux", "cd /abs; X vp test run"],
+      [
+        "(cd apps/web && vp test run) | tail -5",
+        "linux",
+        "(cd apps/web && X vp test run) | tail -5",
+      ],
+      // What only the shell knows passes here; `linux-part` checks it expanded.
+      ["cd $DIR && vp test run", "linux", "cd $DIR && X vp test run"],
+      [
+        "FILES=$(git diff --name-only); vp test run $FILES",
+        "linux",
+        "FILES=$(git diff --name-only); X vp test run $FILES",
+      ],
+      ["for f in a b; do vp test run $f; done", "linux", "for f in a b; do X vp test run $f; done"],
+      // Plumbing stays here: redirects, pipes, `;`, assignments, light commands.
+      [
+        "L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+        "linux",
+        "L=/private/tmp/x.log; X effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+      ],
+      [
+        "cd /w/repo/apps/server && L=/private/tmp/x.log; effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+        "linux",
+        "L=/private/tmp/x.log; X effect-tsgo tsrs --noEmit > $L 2>&1; tail -5 $L",
+        "/w/repo/apps/server",
+      ],
+      [
+        "vp test run a.test.ts > /private/tmp/out.log",
+        "linux",
+        "X vp test run a.test.ts > /private/tmp/out.log",
+      ],
+      ["vp test run 2>&1 | tail -20", "linux", "X vp test run 2>&1 | tail -20"],
+      ["vp run lint; vp test run", "linux", "X vp run lint; X vp test run"],
+      ["vp test run && git push", "linux", "X vp test run && git push"],
+      [
+        'grep -v "t3 heavy" log.txt && vp test run',
+        "linux",
+        'grep -v "t3 heavy" log.txt && X vp test run',
+      ],
+      [
+        "python3 - <<'EOF'\nprint('vp test run')\nEOF\nvp test run",
+        "linux",
+        "python3 - <<'EOF'\nprint('vp test run')\nEOF\nX vp test run",
+      ],
+      ["t3 heavy -- vp lint && vp test run", "linux", "t3 heavy -- vp lint && X vp test run"],
+      // Assignments travel as `env`; local prefixes wrap the executor.
+      ["VITEST_MAX_WORKERS=2 vp test run", "linux", "X env VITEST_MAX_WORKERS=2 vp test run"],
+      [
+        'NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
+        "linux",
+        'X env NODE_OPTIONS="--max-old-space-size=4096" vp run typecheck',
+      ],
+      ["time vp test run", "linux", "time X vp test run"],
+      ["vp test run < /dev/null", "linux", "X vp test run < /dev/null"],
+      ["timeout 110 vp test run", "linux", "X timeout 110 vp test run"],
+      // Wrappers run there as written.
+      ["npx vitest run", "linux", "X npx vitest run"],
+      ["pnpm exec playwright test", "linux", "X pnpm exec playwright test"],
+      ["pnpm dlx vitest run", "linux", "X pnpm dlx vitest run"],
+      ["npm exec vitest", "linux", "X npm exec vitest"],
+      ["yarn test", "linux", "X yarn test"],
+      ["bunx tsc --noEmit", "linux", "X bunx tsc --noEmit"],
+      ["vp run typecheck", "linux", "X vp run typecheck"],
+      // An agent's own `remoto` asks for Linux; T3 takes its word out and decides.
+      ["remoto vp test run", "linux", "X vp test run"],
+      ["cd apps/server && remoto vp run build", "linux", "X vp run build", "/w/repo/apps/server"],
+      ["ls && remoto vp test run", "linux", "ls && X vp test run"],
+      // Paths inside a checkout translate there; outside it, the part stays.
+      ["vp test run /w/repo/src/a.test.ts", "linux", "X vp test run /w/repo/src/a.test.ts"],
+      ["vp test run /Users/me/x/a.test.ts", `${OUTSIDE}/Users/me/x/a.test.ts`],
+      ["vp test run --config ~/vitest.config.ts", `${OUTSIDE}/home/me/vitest.config.ts`],
+      ["vp test run --outputFile=/private/tmp/r.json", `${OUTSIDE}/private/tmp/r.json`],
+      ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
+      ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
+      ["cd /nowhere && vp test run", "Runs outside a git checkout: /nowhere"],
+      // The rest of what keeps work here, each with its reason.
+      ["git commit -m 'fix: t3 heavy'", COMMITS],
+      ['git add a && git commit -m "x" && vp test run', COMMITS],
+      ["vp run build", "Not on the Can run on Linux list: vp run build"],
+      ["xcodebuild -scheme App test", "Always on this Mac: xcodebuild"],
+      ["vp run dev:desktop", "Always on this Mac: vp run dev:desktop"],
+      ["vp test run <<EOF\nx\nEOF", "Reads its input from this Mac: vp test run"],
+      ["echo a | vp test run", "Reads its input from this Mac: vp test run"],
+      ["vp test run a & vp test run b & wait", "Runs in the background: vp test run"],
+      ["eval vp test run", "Couldn't read this command safely (eval)"],
+      ["vp test run 'unbalanced", "Couldn't read this command safely (unbalanced quotes)"],
+      ["vp test run <<EOF\nnever ends", "Couldn't read this command safely (unterminated heredoc)"],
+      [
+        "nohup sh -c 'vp test run > /tmp/x.log 2>&1' &",
+        "Couldn't read this command safely (nested shell)",
+      ],
+      // Not heavy, or already queued: the hook leaves these alone.
+      ['grep "a\\|vitest" src/x.ts', "light"],
+      ["rg 'vp test run' docs", "light"],
+      ["git commit -n -m wip", "light"],
+      ["echo remoto && ls", "light"],
+      ["t3 heavy -- vp test run", "queued"],
+      ["ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q' -- vp test run", "queued"],
+      [PINNED, "queued"],
+    ])("%j: %s", (line, ...expected) => {
+      expect(placed(line)).toEqual(expected);
+    });
+
+    it("runs the plumbing here and only the work through the executor", () => {
+      const dir = tempDir();
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "t3-remote"),
+        '#!/bin/sh\necho "remote: $*"\necho remote-err >&2\n',
+        { mode: 0o755 },
+      );
+      const log = NodePath.join(dir, "x.log");
+      const line = `L=${log}; effect-tsgo tsrs --noEmit > $L 2>&1; echo "lines: $(wc -l < $L | tr -d ' ')"; tail -5 $L`;
+      const { shell, args } = linuxLine("/bin/sh", ["-c", line], "t3-remote");
+      const out = NodeChildProcess.execFileSync(shell, args, {
+        env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+        encoding: "utf8",
+      });
+      expect(out).toBe("lines: 2\nremote: effect-tsgo tsrs --noEmit\nremote-err\n");
+      // A program run without a shell becomes a line of its quoted words.
+      expect(linuxLine("vp", ["test", "it's"], "X")).toEqual({
+        shell: "/bin/sh",
+        args: ["-c", `X 'vp' 'test' 'it'\\''s'`],
+      });
+    });
+
+    it("leaves a program that is not a shell line as it is", () => {
+      expect(jobOf("zsh", ["script.sh"], "/w", "/h")).toEqual({
+        cwd: "/w",
+        program: "zsh",
+        args: ["script.sh"],
+        remoto: false,
+      });
+    });
   });
 
   it.each([
@@ -381,7 +896,7 @@ describe("t3 heavy", () => {
     {
       program: "/usr/bin/node",
       args: ["--test", "a.js"],
-      expected: ["--test", "a.js", "--test-concurrency=4"],
+      expected: ["--test-concurrency=4", "--test", "a.js"],
     },
     {
       program: "node",
@@ -391,16 +906,165 @@ describe("t3 heavy", () => {
     { program: "node", args: ["a.js"], expected: ["a.js"] },
     { program: "playwright", args: ["test"], expected: ["test", "--workers=4"] },
     { program: "playwright", args: ["test", "--workers=1"], expected: ["test", "--workers=1"] },
+    { program: "playwright", args: ["test", "-j2"], expected: ["test", "-j2"] },
     { program: "playwright", args: ["install"], expected: ["install"] },
-  ])("hands $program $args the admitted workers", ({ program, args, expected }) => {
-    const run = withWorkers(program, args, 4, { PATH: "/bin" });
-    expect(run.args).toEqual(expected);
-    expect(run.env).toEqual({
-      PATH: "/bin",
-      T3CODE_HEAVY_JOB: "1",
-      T3_HEAVY_WORKERS: "4",
-      VITEST_MAX_WORKERS: "4",
-    });
+    {
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      expected: ["--max-workers=4", "assembleRelease"],
+    },
+    {
+      program: "gradle",
+      args: ["build", "--max-workers", "2"],
+      expected: ["build", "--max-workers", "2"],
+    },
+    {
+      program: "gradlew",
+      args: ["build", "-Dorg.gradle.workers.max=2"],
+      expected: ["build", "-Dorg.gradle.workers.max=2"],
+    },
+    { program: "xcodebuild", args: ["-scheme", "App"], expected: ["-jobs", "4", "-scheme", "App"] },
+    { program: "xcodebuild", args: ["-jobs", "2"], expected: ["-jobs", "2"] },
+    { program: "swift", args: ["build"], expected: ["build", "-j", "4"] },
+    {
+      program: "swift",
+      args: ["run", "app", "--", "-x"],
+      expected: ["run", "-j", "4", "app", "--", "-x"],
+    },
+    { program: "swift", args: ["test", "--jobs=2"], expected: ["test", "--jobs=2"] },
+    { program: "swift", args: ["package", "resolve"], expected: ["package", "resolve"] },
+    { program: "cargo", args: ["test", "--", "-j", "9"], expected: ["test", "--", "-j", "9"] },
+    { program: "make", args: ["all"], expected: ["all"] },
+    // Shell lines: each tool in the line gets its flag; one that already sets a count keeps it.
+    {
+      program: "/bin/zsh",
+      args: ["-c", "cd android && ./gradlew assembleRelease | tail -5"],
+      expected: ["-c", "cd android && ./gradlew --max-workers=4 assembleRelease | tail -5"],
+    },
+    {
+      program: "bash",
+      args: ["-c", "swift build -c release && xcodebuild -jobs 2 test"],
+      expected: ["-c", "swift build -j 4 -c release && xcodebuild -jobs 2 test"],
+    },
+    {
+      program: "zsh",
+      args: ["-c", "FOO=1 node --test a.js; playwright test --workers=1"],
+      expected: ["-c", "FOO=1 node --test-concurrency=4 --test a.js; playwright test --workers=1"],
+    },
+    { program: "zsh", args: ["-c", "vp test run"], expected: ["-c", "vp test run"] },
+    // The cap is a ceiling: a lower count the project or user config sets wins, a higher one is capped.
+    {
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      files: {
+        "/repo/app/gradle.properties": "org.gradle.jvmargs=-Xmx2g\norg.gradle.workers.max=2\n",
+      },
+      expected: ["assembleRelease"],
+    },
+    {
+      program: "gradle",
+      args: ["build"],
+      files: {
+        "/repo/settings.gradle.kts": "",
+        "/repo/gradle.properties": "org.gradle.workers.max = 3",
+      },
+      expected: ["build"],
+    },
+    {
+      program: "gradle",
+      args: ["build"],
+      environment: { HOME: "/home/me" },
+      files: { "/home/me/.gradle/gradle.properties": "org.gradle.workers.max:2" },
+      expected: ["build"],
+    },
+    {
+      program: "zsh",
+      args: ["-c", "cd android && ./gradlew assembleRelease"],
+      environment: { JAVA_OPTS: "-Xmx1g -Dorg.gradle.workers.max=2" },
+      expected: ["-c", "cd android && ./gradlew assembleRelease"],
+    },
+    {
+      // Above the root project, and unparsable, values don't count; the user home's higher one is capped.
+      program: "./gradlew",
+      args: ["assembleRelease"],
+      environment: { GRADLE_USER_HOME: "/gh", GRADLE_OPTS: "-Dorg.gradle.workers.max=8" },
+      files: {
+        "/repo/settings.gradle": "",
+        "/gradle.properties": "org.gradle.workers.max=1",
+        "/repo/app/gradle.properties": "org.gradle.workers.max=lots",
+        "/gh/gradle.properties": "org.gradle.workers.max=16",
+      },
+      expected: ["--max-workers=4", "assembleRelease"],
+    },
+    {
+      program: "cargo",
+      args: ["build"],
+      files: { "/repo/.cargo/config.toml": "[build]\njobs = 2 # laptop\n" },
+      expected: ["build"],
+      env: { CARGO_BUILD_JOBS: undefined },
+    },
+    {
+      // Negative: all cores but that many.
+      program: "cargo",
+      args: ["build"],
+      environment: { CARGO_HOME: "/ch" },
+      files: { "/ch/config.toml": "build.jobs = -100000" },
+      expected: ["build"],
+      env: { CARGO_BUILD_JOBS: undefined },
+    },
+    {
+      program: "cargo",
+      args: ["build"],
+      files: { "/repo/app/.cargo/config": '[term]\njobs = 1\n[build]\njobs = 32\ntarget = "x"' },
+      expected: ["build"],
+    },
+    // CMake's level only reaches a generator that already runs in parallel.
+    {
+      program: "cmake",
+      args: ["--build", "build"],
+      files: { "/repo/app/build/CMakeCache.txt": "CMAKE_GENERATOR:INTERNAL=Unix Makefiles\n" },
+      expected: ["--build", "build"],
+    },
+    { program: "cmake", args: ["--build", "out"], expected: ["--build", "out"] },
+    {
+      program: "zsh",
+      args: ["-c", "cmake --build build -t app"],
+      files: {
+        "/repo/app/build/CMakeCache.txt":
+          "CMAKE_CACHEFILE_DIR:INTERNAL=/x\nCMAKE_GENERATOR:INTERNAL=Ninja\n",
+      },
+      expected: ["-c", "cmake --build build -t app"],
+      env: { CMAKE_BUILD_PARALLEL_LEVEL: "4" },
+    },
+  ])(
+    "hands $program $args the admitted workers",
+    ({ program, args, expected, files = {}, environment = {}, env = {} }) => {
+      const read = (path: string) => (files as Record<string, string>)[path] ?? null;
+      const run = withWorkers(
+        program,
+        args,
+        4,
+        { PATH: "/bin", ...environment },
+        { cwd: "/repo/app", read },
+      );
+      expect(run.args).toEqual(expected);
+      expect(run.env).toEqual({
+        PATH: "/bin",
+        ...environment,
+        T3CODE_HEAVY_JOB: "1",
+        T3_HEAVY_WORKERS: "4",
+        VITEST_MAX_WORKERS: "4",
+        CARGO_BUILD_JOBS: "4",
+        ...env,
+      });
+    },
+  );
+
+  it("keeps worker counts the environment already sets", () => {
+    const env = { VITEST_MAX_WORKERS: "1", CARGO_BUILD_JOBS: "2", CMAKE_BUILD_PARALLEL_LEVEL: "" };
+    expect(
+      withWorkers("cargo", ["build"], 4, env, { cwd: "/repo", read: () => null }).env,
+    ).toMatchObject(env);
   });
 
   it("parses the queue dir and the separator", () => {
@@ -408,11 +1072,22 @@ describe("t3 heavy", () => {
       dir: "/q",
       name: undefined,
       priority: undefined,
+      now: false,
       program: "vp",
       args: ["test"],
     });
+    expect(parseHeavyArgs(["--now", "--name", "Tests", "--now", "--", "vp"])).toMatchObject({
+      now: true,
+      name: "Tests",
+      program: "vp",
+    });
     expect(parseHeavyArgs(["--priority", "high", "--", "vp"]).priority).toBe("high");
     expect(parseHeavyArgs(["--priority", "urgent", "--", "vp"]).priority).toBeUndefined();
+    expect(parseHeavyArgs(["--request-id", "toolu_1", "--", "vp"])).toMatchObject({
+      requestId: "toolu_1",
+      program: "vp",
+    });
+    expect(parseHeavyArgs(["--request-id", " ", "--", "vp"])).not.toHaveProperty("requestId");
     expect(
       parseHeavyArgs(["--name", "Server tests", "--queue-dir", "/q", "--", "vp", "test"]),
     ).toMatchObject({
@@ -422,5 +1097,50 @@ describe("t3 heavy", () => {
     });
     expect(parseHeavyArgs(["--queue-dir", "/q", "--name", "  ", "--", "vp"]).name).toBeUndefined();
     expect(parseHeavyArgs(["vp"]).dir).toBe(Queue.defaultQueueDir());
+  });
+
+  it("skips options another T3 version added instead of running one as the program", () => {
+    // A hook from one T3 build hands its line to another build's CLI (`--request-id` once ran as a program).
+    const rows: ReadonlyArray<ReadonlyArray<string>> = [
+      ["--queue-dir", "/q", "--trace-id", "toolu_1", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--trace", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--name", "Tests", "--trace", "--", "vp", "test"],
+      ["--trace-id", "toolu_1", "--queue-dir", "/q", "--name", "Tests", "--", "vp", "test"],
+    ];
+    for (const row of rows) {
+      expect(parseHeavyArgs(row), row.join(" ")).toMatchObject({
+        dir: "/q",
+        name: "Tests",
+        program: "vp",
+        args: ["test"],
+      });
+    }
+  });
+
+  it("defaults a checkout's own T3 to that checkout's queue and an installed T3 to the machine's", () => {
+    const root = tempDir();
+    const worktree = NodePath.join(root, "worktree");
+    const main = NodePath.join(root, "main");
+    NodeFS.mkdirSync(worktree);
+    NodeFS.writeFileSync(NodePath.join(worktree, ".git"), "gitdir: /repo/.git/worktrees/w\n");
+    NodeFS.mkdirSync(NodePath.join(main, ".git"), { recursive: true });
+    const live = NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
+    const worktreeSource = NodePath.join(worktree, "apps", "server", "src", "bin.ts");
+    const rows: ReadonlyArray<[NodeJS.ProcessEnv, string | undefined, string]> = [
+      [{}, worktreeSource, NodePath.join(worktree, ".t3", "heavy-queue-dev")],
+      [{}, `${main}/apps/server/dist/bin.mjs`, NodePath.join(main, ".t3", "heavy-queue-dev")],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, worktreeSource, "/q"],
+      [{ T3CODE_HEAVY_QUEUE_DIR: " " }, worktreeSource, `${worktree}/.t3/heavy-queue-dev`],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, undefined, "/q"],
+      [{}, "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs", live],
+      [{}, `${main}/node_modules/t3/dist/bin.mjs`, live],
+      [{}, `${main}/node_modules/vitest/vitest.mjs`, live],
+      [{}, `${root}/unpacked/apps/server/dist/bin.mjs`, live],
+      [{}, "/usr/local/bin/t3", live],
+      [{}, undefined, live],
+    ];
+    for (const [environment, entry, dir] of rows) {
+      expect(Queue.defaultQueueDir(environment, entry), entry).toBe(dir);
+    }
   });
 });

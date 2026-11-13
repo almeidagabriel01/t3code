@@ -71,6 +71,7 @@ import { canHandoffThread } from "./thread-handoff";
 import { copyThreadMenuReference } from "./copyThreadMenuReference";
 import {
   buildSnoozePresetActions,
+  buildSubagentMenuActions,
   buildThreadMenuActions,
   resolveThreadMenuKind,
   runThreadMenuEvent,
@@ -347,52 +348,81 @@ export const ThreadListV2SubagentRow = memo(function ThreadListV2SubagentRow(pro
   readonly pane?: "screen" | "sidebar";
   readonly showTrailingDivider?: boolean;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
+  /** Gives the row a long-press menu (copy, pin); the project list leaves it out. */
+  readonly menu?: {
+    readonly pinningSupported: boolean;
+    readonly onSetPinned: (thread: EnvironmentThreadShell, pinned: boolean) => void;
+  };
 }) {
-  const { thread } = props;
+  const { thread, menu } = props;
   const sidebarPane = props.pane === "sidebar";
-  const statusLabel = STATUS_LABEL_BY_STATUS[resolveThreadListV2Status(thread)];
+  const status = resolveThreadListV2Status(thread);
+  // A pinned assistant subagent stays listed once it finishes; an unpinned ready one is still
+  // listed only for its working children, so it shows no Done.
+  const statusLabel =
+    STATUS_LABEL_BY_STATUS[status] ??
+    (status === "ready" && thread.pinnedAt != null ? DONE_STATUS_LABEL : undefined);
   const handlePress = useCallback(() => props.onSelectThread(thread), [props, thread]);
+  const row = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open subagent ${thread.title}`}
+      onPress={handlePress}
+      className={cn("flex-row items-center gap-2 pb-2 pl-9 pt-0.5", sidebarPane ? "pr-3" : "pr-5")}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      {statusLabel ? (
+        <SymbolView
+          name={statusLabel.icon}
+          size={12}
+          tintColorClassName={statusLabel.iconTintClassName}
+          type="monochrome"
+        />
+      ) : null}
+      <Text
+        numberOfLines={1}
+        className={cn(
+          "min-w-0 flex-1 text-xs",
+          sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
+        )}
+      >
+        {thread.title}
+      </Text>
+      <Text
+        className={cn(
+          "text-xs tabular-nums",
+          sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
+        )}
+      >
+        <ThreadListV2Duration
+          startedAt={resolveThreadWorkingStartedAt(thread)}
+          leadingSpace={false}
+        />
+      </Text>
+    </Pressable>
+  );
   return (
     <View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Open subagent ${thread.title}`}
-        onPress={handlePress}
-        className={cn(
-          "flex-row items-center gap-2 pb-2 pl-9 pt-0.5",
-          sidebarPane ? "pr-3" : "pr-5",
-        )}
-        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-      >
-        {statusLabel ? (
-          <SymbolView
-            name={statusLabel.icon}
-            size={12}
-            tintColorClassName={statusLabel.iconTintClassName}
-            type="monochrome"
-          />
-        ) : null}
-        <Text
-          numberOfLines={1}
-          className={cn(
-            "min-w-0 flex-1 text-xs",
-            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
-          )}
+      {menu ? (
+        <Menu
+          actions={buildSubagentMenuActions({
+            pinned: thread.pinnedAt != null,
+            pinningSupported: menu.pinningSupported,
+          })}
+          onPressAction={({ nativeEvent }) => {
+            if (nativeEvent.event === "pin") menu.onSetPinned(thread, true);
+            else if (nativeEvent.event === "unpin") menu.onSetPinned(thread, false);
+            else if (nativeEvent.event === "copy-thread") copyThreadMenuReference(thread);
+            else if (nativeEvent.event === "copy-thread-id")
+              copyTextWithHaptic(thread.id, { target: "thread-id" });
+          }}
+          shouldOpenOnLongPress
         >
-          {thread.title}
-        </Text>
-        <Text
-          className={cn(
-            "text-xs tabular-nums",
-            sidebarPane ? "text-drawer-foreground-muted" : "text-foreground-muted",
-          )}
-        >
-          <ThreadListV2Duration
-            startedAt={resolveThreadWorkingStartedAt(thread)}
-            leadingSpace={false}
-          />
-        </Text>
-      </Pressable>
+          {row}
+        </Menu>
+      ) : (
+        row
+      )}
       {props.showTrailingDivider ? (
         <View className={cn("ml-5 h-px", sidebarPane ? "bg-drawer-border" : "bg-border")} />
       ) : null}
@@ -686,6 +716,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  /** One line whatever the variant, outside the project list (assistants section): no arranging. */
+  readonly compact?: boolean;
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
@@ -878,12 +910,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // The window is inclusive, so wake just past it.
   const snoozeGateNowMs = useNowAfter(snoozeGateExpiryMs === null ? null : snoozeGateExpiryMs + 1);
   const snoozeGateNow = new Date(snoozeGateNowMs).toISOString();
+  const assistantTask = useAssistantTask(thread.environmentId, thread.id);
+  const taskMenu = useMemo(
+    () => assistantTaskMenuState(assistantTask, thread),
+    [assistantTask, thread],
+  );
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
+    dismissible: props.compact === true && taskMenu?.canDismiss === true && !taskMenu.dismissed,
   });
   const snoozePresets = resolveThreadListV2SnoozePresets({
     secondary: swipeActions.secondary,
@@ -894,7 +932,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => buildSnoozePresetActions(snoozePresets),
     [snoozePresets],
   );
-  const assistantTask = useAssistantTask(thread.environmentId, thread.id);
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const menuKind = resolveThreadMenuKind({
     snoozed: snoozedRow,
@@ -911,7 +948,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           : null,
         pinned: thread.pinnedAt != null,
         pinningSupported: props.pinningSupported,
-        ...(props.reorderSupported === true
+        ...(props.reorderSupported === true && props.compact !== true
           ? {
               reorder: {
                 canMoveUp: props.canMoveUp === true,
@@ -932,17 +969,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           ? { archivable: threadCanArchive(thread.runtime) }
           : null,
         snoozePresetActions,
-        assistantTask: assistantTaskMenuState(assistantTask, thread),
+        assistantTask: taskMenu,
       }),
     [
       menuKind,
-      assistantTask,
+      taskMenu,
       thread,
       isRegeneratingTitle,
       canTurnIntoProject,
       snoozePresetActions,
       props.pinningSupported,
       props.reorderSupported,
+      props.compact,
       props.canMoveUp,
       props.canMoveDown,
       props.autoSettleOptOutSupported,
@@ -1006,6 +1044,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
   );
   const primaryAction = useMemo(() => {
+    if (swipeActions.primary === "dismiss") {
+      return {
+        accessibilityLabel: `Dismiss ${thread.title}`,
+        icon: "xmark" as const,
+        label: "Dismiss",
+        onPress: (): void => void setTaskDismissed(thread.environmentId, thread.id, true),
+      };
+    }
     if (swipeActions.primary === "archive") {
       return {
         accessibilityLabel: `Archive ${thread.title}`,
@@ -1041,6 +1087,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     handleUnsettle,
     handleUnsnooze,
     swipeActions.primary,
+    thread.environmentId,
+    thread.id,
     thread.title,
   ]);
   const secondaryAction = useMemo(
@@ -1333,7 +1381,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
 
   const rowContent = (close: () => void) =>
-    variant === "card" ? (
+    variant === "card" && props.compact !== true ? (
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={rowAppearance.interactionClassName}
@@ -1406,7 +1454,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 "text-base",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.mutedForegroundClassName,
+                  : variant === "card"
+                    ? rowAppearance.foregroundClassName
+                    : rowAppearance.mutedForegroundClassName,
                 isRegeneratingTitle && "opacity-55",
               )}
               numberOfLines={1}
@@ -1437,6 +1487,25 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          {pinnedRow ? (
+            <SymbolView
+              name="pin"
+              size={11}
+              tintColorClassName={rowAppearance.mutedIconTintClassName}
+              type="monochrome"
+            />
+          ) : null}
+          {variant === "card" && statusLabel ? (
+            <SymbolView
+              name={statusLabel.icon}
+              size={13}
+              tintColorClassName={
+                selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
+              }
+              type="monochrome"
+              weight="semibold"
+            />
+          ) : null}
           <Text
             className={cn(
               "text-sm tabular-nums",
@@ -1468,7 +1537,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         dormant={dormant}
         threadKey={`${thread.environmentId}:${thread.id}`}
         backgroundColor={rowAppearance.swipeBackgroundColor}
-        compactActions={variant === "slim"}
+        compactActions={variant === "slim" || props.compact === true}
         containerStyle={rowAppearance.swipeContainerStyle}
         enableTrackpadSwipe
         fullSwipeAction="primary"

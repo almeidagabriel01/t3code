@@ -1,5 +1,6 @@
 import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
+import { filterTerminalContextsWithText } from "../../lib/terminalContext";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
 export function referencedThreadContexts(draft: {
@@ -78,4 +79,26 @@ export function approvalRedirectNotice(input: {
     return "Another approval arrived, so your message wasn't sent.";
   }
   return null;
+}
+
+/** Side chats take text, images and files; any other added context keeps `/side` from sending. */
+export function sideChatContextBlock(context: {
+  readonly terminalContexts: ReadonlyArray<{ readonly text: string }>;
+  readonly previewAnnotations: ReadonlyArray<unknown>;
+  readonly reviewComments: ReadonlyArray<unknown>;
+  readonly threadContexts: ReadonlyArray<unknown>;
+  readonly environmentContexts: ReadonlyArray<unknown>;
+}) {
+  const hasContext =
+    filterTerminalContextsWithText(context.terminalContexts).length > 0 ||
+    context.previewAnnotations.length > 0 ||
+    context.reviewComments.length > 0 ||
+    context.threadContexts.length > 0 ||
+    context.environmentContexts.length > 0;
+  return hasContext
+    ? {
+        title: "Side chats take text, images and files",
+        description: "Remove the added context, then send it again.",
+      }
+    : null;
 }

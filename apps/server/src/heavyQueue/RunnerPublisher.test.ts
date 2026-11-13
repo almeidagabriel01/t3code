@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -20,7 +21,13 @@ import { ServerConfig } from "../config.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
-import { layer, runnerBlockOf, runnerOnAnywhere } from "./RunnerPublisher.ts";
+import {
+  copyRemovalFor,
+  drainCopyRemovals,
+  layer,
+  runnerBlockOf,
+  runnerOnAnywhere,
+} from "./RunnerPublisher.ts";
 import type { HealthCheck } from "./runner.ts";
 
 const publisher = { pid: 1, home: "/home", primary: true };
@@ -31,12 +38,13 @@ describe("the Runner block a server publishes", () => {
   it("carries global and machine settings, and each project's override over them", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
-      runnerOverflow: 4,
+      runnerAskMinutes: 4,
       runnerHost: "pc",
+      heavySlowAgentJobs: false,
       projectSettingsOverrides: {
         [app]: {
           runnerEnabled: true,
-          runnerOverflow: 1,
+          runnerAskMinutes: 1,
           runnerMacOnly: ["CaptureDevices.test.ts"],
         },
       },
@@ -49,7 +57,7 @@ describe("the Runner block a server publishes", () => {
       ],
       publisher,
     );
-    expect(block.global).toMatchObject({ runnerEnabled: false, runnerOverflow: 4 });
+    expect(block.global).toMatchObject({ runnerEnabled: false, runnerAskMinutes: 4 });
     expect(block.machine).toEqual({
       runnerHost: "pc",
       runnerLinuxSlots: RUNNER_DEFAULTS.runnerLinuxSlots,
@@ -57,12 +65,15 @@ describe("the Runner block a server publishes", () => {
       runnerOfflineAfterFailures: RUNNER_DEFAULTS.runnerOfflineAfterFailures,
       runnerSshTimeoutSeconds: RUNNER_DEFAULTS.runnerSshTimeoutSeconds,
       runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
+      runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
+      runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+      heavySlowAgentJobs: false,
     });
     expect(block.projects[0]).toEqual({
       root: "/code/app",
       config: expect.objectContaining({
         runnerEnabled: true,
-        runnerOverflow: 1,
+        runnerAskMinutes: 1,
         runnerMacOnly: ["CaptureDevices.test.ts"],
         runnerWhere: RUNNER_DEFAULTS.runnerWhere,
       }),
@@ -70,6 +81,82 @@ describe("the Runner block a server publishes", () => {
     expect(block.projects[1]!.config).toEqual(block.global);
     expect(runnerOnAnywhere(block)).toBe(true);
     expect(runnerOnAnywhere({ ...block, projects: [block.projects[1]!] })).toBe(false);
+  });
+});
+
+describe("Linux copies of removed worktrees", () => {
+  const block = (runnerEnabled: boolean, runnerHost = "pc") =>
+    runnerBlockOf(
+      { ...DEFAULT_SERVER_SETTINGS, runnerEnabled, runnerHost },
+      [{ id: app, workspaceRoot: "/code/app" }],
+      publisher,
+    );
+
+  it("queues a copy only while the Runner is on with a host", () => {
+    expect(copyRemovalFor(block(false), "/wt/feature", 5)).toBeNull();
+    expect(copyRemovalFor(block(true, " "), "/wt/feature", 5)).toBeNull();
+    expect(copyRemovalFor(block(true), "/wt/feature", 5)).toEqual({
+      host: "pc",
+      id: expect.stringMatching(/^feature-[0-9a-f]{8}$/),
+      path: "/wt/feature",
+      at: 5,
+    });
+  });
+
+  it("deletes pending copies once the host answers, keeping the rest for later", async () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-copy-removals-"));
+    try {
+      const recreated = NodeFS.mkdtempSync(NodePath.join(dir, "recreated-"));
+      // Later than any real clock, so only the entry at 0 has expired when the drain settles.
+      const now = 4_000_000_000_000;
+      const removal = (id: string, path = `/gone/${id}`, host = "pc", at = now) => ({
+        host,
+        id,
+        path,
+        at,
+      });
+      for (const entry of [
+        removal("old-00000000", "/gone/old", "pc", 0),
+        removal("busy-11111111"),
+        removal("other-22222222", "/gone/other", "laptop"),
+        removal("back-33333333", recreated),
+        removal("done-44444444"),
+        removal("done-44444444"),
+      ])
+        QueueFile.addCopyRemoval(dir, entry);
+      // Newest first and one per host and id.
+      expect(QueueFile.readDoc(dir).copyRemovals.map((entry) => entry.id)).toEqual([
+        "done-44444444",
+        "back-33333333",
+        "other-22222222",
+        "busy-11111111",
+        "old-00000000",
+      ]);
+      const asked: string[] = [];
+      const remove = async (_machine: unknown, _env: unknown, id: string) => {
+        asked.push(id);
+        return id.startsWith("busy") ? ("busy" as const) : ("removed" as const);
+      };
+      const machine = block(true).machine;
+      expect(await drainCopyRemovals(dir, machine, {}, remove)).toBe(3);
+      expect(asked).toEqual(["done-44444444", "busy-11111111", "old-00000000"]);
+      expect(QueueFile.readDoc(dir).copyRemovals.map((entry) => entry.id)).toEqual([
+        "other-22222222",
+        "busy-11111111",
+      ]);
+
+      const unreachable = async () => "unreachable" as const;
+      expect(await drainCopyRemovals(dir, machine, {}, unreachable)).toBe(0);
+      expect(QueueFile.readDoc(dir).copyRemovals).toHaveLength(2);
+
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "queue.json"),
+        JSON.stringify({ copyRemovals: [{ host: "pc", id: 1 }, removal("ok-55555555")] }),
+      );
+      expect(QueueFile.readDoc(dir).copyRemovals.map((entry) => entry.id)).toEqual(["ok-55555555"]);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -107,6 +194,7 @@ describe("the publisher layer", () => {
               ]),
           } as unknown as ProjectStoreV2["Service"]),
           Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
+          NodeServices.layer,
         );
         yield* Effect.gen(function* () {
           yield* Layer.build(layer(dir, check).pipe(Layer.provide(services)));
@@ -153,6 +241,7 @@ describe("the publisher layer", () => {
           list: () => Effect.succeed([]),
         } as unknown as ProjectStoreV2["Service"]),
         Layer.succeed(ServerConfig, { baseDir: dir } as unknown as ServerConfig["Service"]),
+        NodeServices.layer,
       );
       yield* Effect.gen(function* () {
         yield* Layer.build(layer(dir, check).pipe(Layer.provide(services)));

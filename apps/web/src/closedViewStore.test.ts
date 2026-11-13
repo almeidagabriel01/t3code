@@ -61,6 +61,7 @@ describe("closedViewStore", () => {
       surface: { kind: "side-chat", id: "side-chat:x" },
     },
     { id: "bad", kind: "panel-tab", threadRef: refA, surface: { kind: "memory", id: "notes" } },
+    { id: "bad", kind: "thread-tab", threadRef: {} },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
     const id = useClosedViewStore.getState().remember(diff(refA));
     const { storage, name } = useClosedViewStore.persist.getOptions();
@@ -92,6 +93,9 @@ describe("closedViewStore", () => {
 
   it("removes private metadata and malformed entries from history saved by earlier versions", async () => {
     const store = useClosedViewStore.getState();
+    store.remember({ kind: "thread-tab", threadRef: refB });
+    // Closing the same thread tab again keeps one entry, the newest.
+    const threadTabId = store.remember({ kind: "thread-tab", threadRef: refB });
     const sideChatId = store.remember({
       kind: "panel-tab",
       threadRef: refA,
@@ -128,6 +132,7 @@ describe("closedViewStore", () => {
       browserId,
       publicId,
       sideChatId,
+      threadTabId,
     ]);
     const saved = JSON.stringify(await storage!.getItem(name!));
     expect(saved).not.toContain("private.example");

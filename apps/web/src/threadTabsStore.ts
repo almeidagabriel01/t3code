@@ -2,9 +2,10 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import type { RightPanelSurface, ThreadRightPanelState } from "./rightPanelStore";
 
 /**
- * Thread tabs and tab groups for one project, after Orca's editor groups: each group is a tab
+ * Thread tabs and tab groups for one project's thread area, after Orca's editor groups: each group is a tab
  * strip, the layout is a binary tree of groups, and a group left without tabs collapses. Tabs are
  * scoped thread keys. The routed thread is always the active tab of its group.
  */
@@ -12,6 +13,8 @@ export interface ThreadTabGroup {
   readonly id: string;
   readonly tabs: ReadonlyArray<string>;
   readonly active: string;
+  /** A tab a pick opened here instead of the focused group, and the tab it covered: closing it returns there. */
+  readonly returnTo?: { readonly tab: string; readonly to: string };
 }
 
 export type ThreadTabLayout =
@@ -31,6 +34,8 @@ export interface ThreadTabWorkspace {
   readonly layout: ThreadTabLayout;
   /** The group a sidebar pick opens its thread in. */
   readonly focusedGroupId: string;
+  /** Groups by last focus, most recent first. */
+  readonly recentGroupIds?: ReadonlyArray<string>;
 }
 
 export type TabDropZone = "left" | "right" | "up" | "down" | "center";
@@ -103,20 +108,24 @@ function collapse(workspace: ThreadTabWorkspace): ThreadTabWorkspace | null {
 function withoutTab(group: ThreadTabGroup, tabKey: string): ThreadTabGroup {
   const index = group.tabs.indexOf(tabKey);
   if (index < 0) return group;
+  const { returnTo, ...rest } = group;
   const tabs = group.tabs.filter((tab) => tab !== tabKey);
+  const back = returnTo?.tab === tabKey && tabs.includes(returnTo.to) ? returnTo.to : undefined;
   // The tab to the right takes over, like closing an editor tab; else the one to the left.
   const active =
-    group.active === tabKey ? (tabs[Math.min(index, tabs.length - 1)] ?? "") : group.active;
-  return { ...group, tabs, active };
+    group.active === tabKey ? (back ?? tabs[Math.min(index, tabs.length - 1)] ?? "") : group.active;
+  const kept = returnTo && returnTo.tab !== tabKey && returnTo.to !== tabKey ? { returnTo } : {};
+  return { ...rest, tabs, active, ...kept };
 }
 
 /**
  * Commits a route change: a thread that is already a tab activates and focuses its group; any
- * other opens after the focused group's active tab.
+ * other opens after the active tab of `groupId`, else of the focused group.
  */
 export function reconcileRouteTab(
   workspace: ThreadTabWorkspace | undefined,
   routeKey: string,
+  groupId?: string,
 ): ThreadTabWorkspace {
   if (!workspace) {
     return {
@@ -136,8 +145,11 @@ export function reconcileRouteTab(
       ),
     };
   }
+  const picked = workspace.groups.find((group) => group.id === groupId);
   const focused =
-    workspace.groups.find((group) => group.id === workspace.focusedGroupId) ?? workspace.groups[0];
+    picked ??
+    workspace.groups.find((group) => group.id === workspace.focusedGroupId) ??
+    workspace.groups[0];
   if (!focused) return reconcileRouteTab(undefined, routeKey);
   return {
     ...workspace,
@@ -146,7 +158,8 @@ export function reconcileRouteTab(
       if (group.id !== focused.id) return group;
       const tabs = [...group.tabs];
       tabs.splice(tabs.indexOf(group.active) + 1, 0, routeKey);
-      return { ...group, tabs, active: routeKey };
+      const returnTo = picked ? { returnTo: { tab: routeKey, to: group.active } } : {};
+      return { ...group, tabs, active: routeKey, ...returnTo };
     }),
   };
 }
@@ -245,6 +258,54 @@ export function closeThreadTab(
     workspace: heir ? { ...next, focusedGroupId: heir.id } : next,
     navigateTo,
   };
+}
+
+export type ThreadFileSurface = Extract<RightPanelSurface, { kind: "file" }>;
+
+export type ThreadTabRowEntry =
+  | { readonly kind: "thread"; readonly threadKey: string; readonly active: boolean }
+  | {
+      readonly kind: "file";
+      readonly threadKey: string;
+      readonly surface: ThreadFileSurface;
+      readonly active: boolean;
+    };
+
+/**
+ * A thread's tab followed by its file tabs, in the order they opened. The group's active thread
+ * shows its chat unless its main area shows one of these files.
+ */
+export function threadTabBlock(
+  threadKey: string,
+  panel: Pick<ThreadRightPanelState, "surfaces" | "activeMainId"> | undefined,
+  groupActive: string,
+): ThreadTabRowEntry[] {
+  const files = (panel?.surfaces ?? []).filter(
+    (surface): surface is ThreadFileSurface => surface.kind === "file",
+  );
+  const selected = groupActive === threadKey;
+  const activeFileId = files.some((file) => file.id === panel?.activeMainId)
+    ? panel?.activeMainId
+    : undefined;
+  return [
+    { kind: "thread", threadKey, active: selected && activeFileId === undefined },
+    ...files.map((surface): ThreadTabRowEntry => ({
+      kind: "file",
+      threadKey,
+      surface,
+      active: selected && surface.id === activeFileId,
+    })),
+  ];
+}
+
+/** One strip: each thread tab with its own file tabs beside it. */
+export function threadTabRow(
+  group: ThreadTabGroup,
+  panels: Readonly<Record<string, Pick<ThreadRightPanelState, "surfaces" | "activeMainId">>>,
+): ThreadTabRowEntry[] {
+  return group.tabs.flatMap((threadKey) =>
+    threadTabBlock(threadKey, panels[threadKey], group.active),
+  );
 }
 
 export function focusThreadTabGroup(
@@ -357,7 +418,12 @@ export function parsePersistedWorkspace(value: unknown): ThreadTabWorkspace | nu
     if (typeof group?.id !== "string" || tabs.length === 0) return [];
     const active =
       typeof group.active === "string" && tabs.includes(group.active) ? group.active : tabs[0]!;
-    return [{ id: group.id, tabs, active }];
+    const back = group.returnTo as Record<string, unknown> | undefined;
+    const returnTo =
+      typeof back?.tab === "string" && typeof back.to === "string"
+        ? { returnTo: { tab: back.tab, to: back.to } }
+        : {};
+    return [{ id: group.id, tabs, active, ...returnTo }];
   });
   const ids = new Set(groups.map((group) => group.id));
   const readLayout = (raw: unknown): ThreadTabLayout | null => {
@@ -385,7 +451,7 @@ export function parsePersistedWorkspace(value: unknown): ThreadTabWorkspace | nu
   // A thread belongs to one group, and only groups the layout shows survive.
   const placed = new Set<string>();
   const shown = new Set(layoutGroupIds(layout));
-  return collapse({
+  const restored = collapse({
     layout,
     focusedGroupId: typeof record.focusedGroupId === "string" ? record.focusedGroupId : "",
     groups: groups
@@ -393,32 +459,58 @@ export function parsePersistedWorkspace(value: unknown): ThreadTabWorkspace | nu
       .map((group) => {
         const tabs = group.tabs.filter((tab) => !placed.has(tab));
         for (const tab of tabs) placed.add(tab);
+        const { returnTo, ...rest } = group;
+        const kept =
+          returnTo && tabs.includes(returnTo.tab) && tabs.includes(returnTo.to) ? { returnTo } : {};
         return {
-          ...group,
+          ...rest,
           tabs,
           active: tabs.includes(group.active) ? group.active : (tabs[0] ?? ""),
+          ...kept,
         };
       }),
   });
+  if (!restored || !Array.isArray(record.recentGroupIds)) return restored;
+  const recentGroupIds = record.recentGroupIds.filter((id): id is string => typeof id === "string");
+  return withFocusHistory({ ...restored, recentGroupIds }, restored);
+}
+
+/** Keeps `recentGroupIds` of `previous` up to date with the focus of `next`. */
+function withFocusHistory(
+  previous: ThreadTabWorkspace | undefined,
+  next: ThreadTabWorkspace,
+): ThreadTabWorkspace {
+  const ids = new Set(next.groups.map((group) => group.id));
+  const recentGroupIds = [
+    ...new Set([
+      next.focusedGroupId,
+      previous?.focusedGroupId,
+      ...(previous?.recentGroupIds ?? []),
+    ]),
+  ].filter((id): id is string => typeof id === "string" && ids.has(id));
+  return { ...next, recentGroupIds };
 }
 
 interface ThreadTabsState {
-  /** By `environmentId:projectId`. */
+  /** By `environmentId:projectId` of the project the workspace opened for; tabs may be any project's. */
   readonly byProject: Readonly<Record<string, ThreadTabWorkspace>>;
+  /** The workspace the thread area showed last; it may have closed since. */
+  readonly visibleKey: string | null;
 }
 
 const THREAD_TABS_STORAGE_KEY = "t3code:thread-tabs:v1";
 
 // One layout per project and browser profile, shared by its tabs and windows like the right panel.
 export const useThreadTabsStore = create<ThreadTabsState>()(
-  persist((): ThreadTabsState => ({ byProject: {} }), {
+  persist((): ThreadTabsState => ({ byProject: {}, visibleKey: null }), {
     name: THREAD_TABS_STORAGE_KEY,
     version: 1,
     storage: createJSONStorage(() =>
       resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
     ),
     merge: (persisted, current) => {
-      const raw = (persisted as { byProject?: unknown } | null)?.byProject;
+      const stored = persisted as { byProject?: unknown; visibleKey?: unknown } | null;
+      const raw = stored?.byProject;
       const byProject: Record<string, ThreadTabWorkspace> = {};
       if (typeof raw === "object" && raw !== null) {
         for (const [key, value] of Object.entries(raw)) {
@@ -426,7 +518,8 @@ export const useThreadTabsStore = create<ThreadTabsState>()(
           if (workspace) byProject[key] = workspace;
         }
       }
-      return { ...current, byProject };
+      const visibleKey = typeof stored?.visibleKey === "string" ? stored.visibleKey : null;
+      return { ...current, byProject, visibleKey };
     },
   }),
 );
@@ -441,7 +534,9 @@ export function updateThreadTabs(
   const result = next(current);
   if (result === current) return;
   const { [projectKey]: _replaced, ...rest } = byProject;
-  useThreadTabsStore.setState({ byProject: result ? { ...rest, [projectKey]: result } : rest });
+  useThreadTabsStore.setState({
+    byProject: result ? { ...rest, [projectKey]: withFocusHistory(current, result) } : rest,
+  });
 }
 
 function newThreadTabId(): string {
@@ -452,10 +547,117 @@ function newThreadTabId(): string {
 export function withRouteTab(
   workspace: ThreadTabWorkspace | undefined,
   routeKey: string,
+  groupId?: string,
 ): ThreadTabWorkspace {
   return workspace && groupOfTab(workspace, routeKey)
     ? workspace
-    : reconcileRouteTab(workspace, routeKey);
+    : reconcileRouteTab(workspace, routeKey, groupId);
+}
+
+/** The project key of a thread key's thread; null for threads that open without tabs. */
+type ThreadKeyProject = (threadKey: string) => string | null;
+
+/**
+ * Where `threadKey` shows: the workspace holding its tab, even for a thread with no project of its
+ * own (an assistant chat dropped into a split); untabbed, the visible layout's group
+ * showing its project `ownKey` (focused, else focused last), else its own project's focused group.
+ * `groupId` is set only where it differs from that last choice.
+ */
+export function threadTabPlacement(
+  state: Pick<ThreadTabsState, "byProject" | "visibleKey">,
+  threadKey: string,
+  ownKey: string | null,
+  projectOf: ThreadKeyProject,
+): { readonly key: string; readonly groupId?: string } | null {
+  const { byProject, visibleKey } = state;
+  const own = ownKey === null ? undefined : byProject[ownKey];
+  if (ownKey !== null && own && groupOfTab(own, threadKey)) return { key: ownKey };
+  const home = Object.keys(byProject).find((key) => groupOfTab(byProject[key]!, threadKey));
+  if (home !== undefined) return { key: home };
+  if (ownKey === null) return null;
+  const visible = visibleKey === null ? undefined : byProject[visibleKey];
+  if (visibleKey === null || !visible) return { key: ownKey };
+  const showing = new Set(
+    visible.groups.filter((group) => projectOf(group.active) === ownKey).map((group) => group.id),
+  );
+  const groupId = [
+    visible.focusedGroupId,
+    ...(visible.recentGroupIds ?? []),
+    ...layoutGroupIds(visible.layout),
+  ].find((id) => showing.has(id));
+  if (groupId === undefined) return { key: ownKey };
+  return visibleKey === ownKey && groupId === visible.focusedGroupId
+    ? { key: ownKey }
+    : { key: visibleKey, groupId };
+}
+
+export function threadTabsWorkspaceKey(
+  state: Pick<ThreadTabsState, "byProject" | "visibleKey">,
+  threadKey: string,
+  ownKey: string | null,
+  projectOf: ThreadKeyProject,
+): string | null {
+  return threadTabPlacement(state, threadKey, ownKey, projectOf)?.key ?? null;
+}
+
+/** Opens or focuses the routed thread's tab where `threadTabPlacement` puts it, and shows that layout. */
+export function commitRouteTab(
+  routeKey: string,
+  ownKey: string | null,
+  projectOf: ThreadKeyProject,
+): void {
+  const state = useThreadTabsStore.getState();
+  const placement = threadTabPlacement(state, routeKey, ownKey, projectOf);
+  if (placement === null) return;
+  const current = state.byProject[placement.key];
+  const next = reconcileRouteTab(current, routeKey, placement.groupId);
+  if (next === current && state.visibleKey === placement.key) return;
+  useThreadTabsStore.setState({
+    byProject:
+      next === current
+        ? state.byProject
+        : { ...state.byProject, [placement.key]: withFocusHistory(current, next) },
+    visibleKey: placement.key,
+  });
+}
+
+/** Stores `next` for `projectKey`, taking `threadKey` out of every other workspace it was open in. */
+function commitThreadTabMove(
+  projectKey: string,
+  threadKey: string,
+  next: ThreadTabWorkspace,
+): void {
+  const { byProject } = useThreadTabsStore.getState();
+  const rest: Record<string, ThreadTabWorkspace> = {};
+  for (const [key, workspace] of Object.entries(byProject)) {
+    if (key === projectKey) continue;
+    const left = groupOfTab(workspace, threadKey)
+      ? collapse({ ...workspace, groups: workspace.groups.map((g) => withoutTab(g, threadKey)) })
+      : workspace;
+    if (left) rest[key] = left;
+  }
+  useThreadTabsStore.setState({
+    byProject: { ...rest, [projectKey]: withFocusHistory(byProject[projectKey], next) },
+  });
+}
+
+/**
+ * Reopens a closed tab in the layout it closed from: in its group, or the focused one when that
+ * group closed with it. When the layout is gone, the route opens it as any other pick.
+ */
+export function restoreThreadTab(layoutKey: string, groupId: string, threadKey: string): void {
+  const workspace = useThreadTabsStore.getState().byProject[layoutKey];
+  if (!workspace) return;
+  const target = workspace.groups.some((group) => group.id === groupId)
+    ? groupId
+    : workspace.focusedGroupId;
+  const next = dropThreadTab(
+    workspace,
+    threadKey,
+    { groupId: target, zone: "center" },
+    newThreadTabId,
+  );
+  if (next) commitThreadTabMove(layoutKey, threadKey, next);
 }
 
 /** Drops `threadKey` onto `target`; true when the layout changed. */
@@ -465,18 +667,23 @@ export function applyThreadTabDrop(
   threadKey: string,
   target: TabDropTarget | { readonly beside: true },
 ): boolean {
-  let moved = false;
-  updateThreadTabs(projectKey, (current) => {
-    const base = withRouteTab(current, routeKey);
-    const resolved =
-      "beside" in target
-        ? { groupId: groupOfTab(base, routeKey)?.id ?? FIRST_GROUP_ID, zone: "right" as const }
-        : target;
-    const next = dropThreadTab(base, threadKey, resolved, newThreadTabId);
-    moved = next !== null;
-    return next ?? current;
-  });
-  return moved;
+  const { byProject } = useThreadTabsStore.getState();
+  const base = withRouteTab(byProject[projectKey], routeKey);
+  const resolved =
+    "beside" in target
+      ? { groupId: groupOfTab(base, routeKey)?.id ?? FIRST_GROUP_ID, zone: "right" as const }
+      : target;
+  const next = dropThreadTab(base, threadKey, resolved, newThreadTabId);
+  if (next === null) return false;
+  commitThreadTabMove(projectKey, threadKey, next);
+  return true;
+}
+
+/** Whether the thread has a tab in its workspace's groups. */
+export function hasThreadTab(projectKey: string | null, threadKey: string): boolean {
+  const workspace =
+    projectKey === null ? undefined : useThreadTabsStore.getState().byProject[projectKey];
+  return workspace !== undefined && groupOfTab(workspace, threadKey) !== undefined;
 }
 
 export function joinThreadTabGroups(projectKey: string): void {

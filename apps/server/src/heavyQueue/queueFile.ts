@@ -6,28 +6,48 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import type {
-  HeavyQueueEntry,
-  HeavyQueueRule,
-  HeavyRunner,
-  RunnerProjectConfig,
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  heavyQueueLimitError,
+  HEAVY_QUEUE_LIMITS,
+  type HeavyQueueEntry,
+  type HeavyQueueLimitKey,
+  type HeavyQueueRule,
+  type HeavyRunner,
+  type RunnerProjectConfig,
 } from "@t3tools/contracts";
 
 import {
   DEFAULT_MAX_RUNNING,
   hasHeadroom,
   HISTORY_RUNS,
+  estimate,
+  medianDuration,
   signatureOf,
   type History,
+  type LinuxHistory,
   type Run,
   type Sample,
   SAMPLE_FRESH_MS,
+  sustain,
   workersFor,
 } from "./admission.ts";
-import { interceptBashCall } from "./heavyHook.ts";
+import { sourceCheckout } from "./claudeSettingsHook.ts";
+import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
+import { interceptBashCall, lineParts, SCRIPT_MAX_BYTES, type ReadScript } from "./heavyHook.ts";
+import {
+  deadlineRecord,
+  endedRecord,
+  type HeavyEventRecord,
+  parseLog,
+  requeueRecord,
+  startRecord,
+  withRecord,
+} from "./heavyNotices.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   eligibilityOf,
+  intentOf,
   mayPublish,
   nextHealth,
   planRoutes,
@@ -35,6 +55,7 @@ import {
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
+  type QueuedEntry,
   type RoutePlan,
   type RunnerBlock,
   type WorkContext,
@@ -45,9 +66,22 @@ const LOCK_STALE_MS = 10_000;
 /** A longer silence between readings restarts the steady-headroom window. */
 const SAMPLE_GAP_MS = 10_000;
 
-/** Machine-wide on purpose, so it is outside any server's userdata. The env override isolates a dev server under test. */
-export const defaultQueueDir = () =>
-  process.env.T3CODE_HEAVY_QUEUE_DIR ?? NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
+/**
+ * Machine-wide on purpose, so it is outside any server's userdata. A T3 running from a checkout
+ * gets that checkout's own queue, so it never drives the installed T3's jobs; the env var wins.
+ */
+export const defaultQueueDir = (
+  environment: NodeJS.ProcessEnv = process.env,
+  entry: string | undefined = process.argv[1],
+) => {
+  const checkout = sourceCheckout(entry);
+  return (
+    environment.T3CODE_HEAVY_QUEUE_DIR?.trim() ||
+    (checkout === undefined
+      ? NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue")
+      : NodePath.join(checkout, ".t3", "heavy-queue-dev"))
+  );
+};
 
 export const isAlive = (pid: number) => {
   try {
@@ -97,17 +131,57 @@ interface QueueDoc {
   readonly paused: boolean;
   readonly rules: ReadonlyArray<HeavyQueueRule>;
   readonly maxRunning: number;
+  /** This Mac's finished runs: Linux runs only show the local `remoto` wrapper's usage. */
   readonly history: History;
+  /** How long each command took on Linux, newest last; usage there is not measured. */
+  readonly linuxHistory: LinuxHistory;
   /** The latest machine reading a server published; waiters cannot measure free memory themselves. */
   readonly sample: Sample | null;
   readonly lastStartAt: number | null;
   readonly holding: boolean;
   /** Minutes without use before T3 shuts an idle simulator or emulator down; 0 never. */
   readonly deviceIdleMinutes: number;
+  readonly macMemoryFloorPercent: number;
+  readonly macCpuCeilingPercent: number;
+  readonly heavyOverLimitSeconds: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
+  /** Recently ended jobs' codes, so a repeated request answers the same without running again. */
+  readonly results: ReadonlyArray<JobResult>;
+  /** Linux copies of removed worktrees still to delete, waiting for the host to come back. */
+  readonly copyRemovals: ReadonlyArray<CopyRemoval>;
+  /** Recent transitions that may need a notice, newest last. */
+  readonly events: ReadonlyArray<HeavyEventRecord>;
+  /** Daemons outside any job tree that T3 lowered to background CPU priority, to restore later. */
+  readonly slowedDaemons: ReadonlyArray<ProcessIdentity>;
 }
+
+/** A pid with its start time, so a reused pid never reads as the same process. */
+export interface ProcessIdentity {
+  readonly pid: number;
+  readonly startTimeMs: number;
+}
+
+export interface CopyRemoval {
+  readonly host: string;
+  /** The `runs/<id>` name, already validated by `runnerCopyId`. */
+  readonly id: string;
+  /** The removed worktree; a checkout recreated there syncs to the same copy again. */
+  readonly path: string;
+  readonly at: number;
+}
+
+interface JobResult {
+  readonly id: string;
+  readonly code: number;
+  readonly at: number;
+}
+const MAX_RESULTS = 200;
+const RESULT_TTL_MS = 3_600_000;
+
+const MAX_COPY_REMOVALS = 200;
+const COPY_REMOVAL_TTL_MS = 30 * 86_400_000;
 
 const DEFAULT_DEVICE_IDLE_MINUTES = 20;
 
@@ -118,25 +192,45 @@ const EMPTY_DOC: QueueDoc = {
   rules: [],
   maxRunning: DEFAULT_MAX_RUNNING,
   history: {},
+  linuxHistory: {},
   sample: null,
   lastStartAt: null,
   holding: false,
   deviceIdleMinutes: DEFAULT_DEVICE_IDLE_MINUTES,
+  results: [],
+  ...HEAVY_QUEUE_DEFAULTS,
   runner: null,
   linux: UNKNOWN_HEALTH,
+  copyRemovals: [],
+  events: [],
+  slowedDaemons: [],
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** A block missing any part reads as no block, so a half-written one never routes anything. */
+/** A stored queue setting, or its default when it is missing or out of range. */
+const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey) => {
+  const value = parsed?.[key];
+  return typeof value === "number" && heavyQueueLimitError(key, value) === null
+    ? value
+    : HEAVY_QUEUE_DEFAULTS[key];
+};
+
+/**
+ * A block missing any part reads as no block, so a half-written one never routes anything. An
+ * older publisher's machine settings lack newer keys, which read as their defaults.
+ */
 const parseRunner = (value: unknown): RunnerBlock | null =>
   isObject(value) &&
   isObject(value.global) &&
   isObject(value.machine) &&
   Array.isArray(value.projects) &&
   isObject(value.publisher)
-    ? (value as unknown as RunnerBlock)
+    ? ({
+        ...value,
+        machine: { ...DEFAULT_MACHINE_CONFIG, ...value.machine },
+      } as unknown as RunnerBlock)
     : null;
 
 const loadDoc = (dir: string): QueueDoc => {
@@ -148,13 +242,19 @@ const loadDoc = (dir: string): QueueDoc => {
       rules?: unknown;
       maxRunning?: unknown;
       history?: unknown;
+      linuxHistory?: unknown;
       sample?: unknown;
       lastStartAt?: unknown;
       holding?: unknown;
       deviceIdleMinutes?: unknown;
       runner?: unknown;
+      events?: unknown;
       linux?: unknown;
+      copyRemovals?: unknown;
+      slowedDaemons?: unknown;
+      results?: unknown;
     } | null;
+    const record = isObject(parsed) ? parsed : null;
     return {
       // Keys this version does not know stay in the file for the versions that do.
       ...(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}),
@@ -170,6 +270,7 @@ const loadDoc = (dir: string): QueueDoc => {
         parsed?.history !== null && typeof parsed?.history === "object"
           ? (parsed.history as History)
           : {},
+      linuxHistory: isObject(parsed?.linuxHistory) ? (parsed.linuxHistory as LinuxHistory) : {},
       sample:
         parsed?.sample !== null && typeof parsed?.sample === "object"
           ? (parsed.sample as Sample)
@@ -180,8 +281,39 @@ const loadDoc = (dir: string): QueueDoc => {
         typeof parsed?.deviceIdleMinutes === "number" && parsed.deviceIdleMinutes >= 0
           ? Math.floor(parsed.deviceIdleMinutes)
           : DEFAULT_DEVICE_IDLE_MINUTES,
+      macMemoryFloorPercent: limitOf(record, "macMemoryFloorPercent"),
+      macCpuCeilingPercent: limitOf(record, "macCpuCeilingPercent"),
+      heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
+      copyRemovals: Array.isArray(parsed?.copyRemovals)
+        ? (parsed.copyRemovals as unknown[]).filter(
+            (entry): entry is CopyRemoval =>
+              isObject(entry) &&
+              typeof entry.host === "string" &&
+              typeof entry.id === "string" &&
+              typeof entry.path === "string" &&
+              typeof entry.at === "number",
+          )
+        : [],
+      events: parseLog(parsed?.events),
+      results: Array.isArray(record?.results)
+        ? record.results.filter(
+            (value: unknown): value is JobResult =>
+              isObject(value) &&
+              typeof value.id === "string" &&
+              typeof value.code === "number" &&
+              typeof value.at === "number",
+          )
+        : [],
+      slowedDaemons: Array.isArray(record?.slowedDaemons)
+        ? record.slowedDaemons.filter(
+            (value: unknown): value is ProcessIdentity =>
+              isObject(value) &&
+              typeof value.pid === "number" &&
+              typeof value.startTimeMs === "number",
+          )
+        : [],
     };
   } catch {
     return EMPTY_DOC;
@@ -210,8 +342,11 @@ export type StartResult =
     }
   | {
       readonly status: "waiting";
+      /** Place among the waiters for its machine, and that machine's first running job. */
       readonly position: number;
       readonly running?: HeavyQueueEntry;
+      /** The machine it waits for; absent while no project uses the Runner. */
+      readonly runner?: HeavyRunner;
       readonly paused?: true;
       /** Why it is not starting, for people; changes as the machine does. */
       readonly reason?: string;
@@ -270,12 +405,32 @@ export const modeFor = (doc: Pick<QueueDoc, "enabled" | "runner">, cwd: string) 
   runner: configFor(doc, cwd).runnerEnabled,
 });
 
+const gitRoots = new Map<string, string | null>();
+/** The git checkout holding `cwd`, or null when none does. */
+export const gitRootOf = (cwd: string) => {
+  let found = gitRoots.get(cwd);
+  if (found === undefined) {
+    const { root } = cachedCheckout(cwd);
+    found = NodeFS.existsSync(NodePath.join(root, ".git")) ? root : null;
+    gitRoots.set(cwd, found);
+  }
+  return found;
+};
+
 const contextOf =
   (doc: QueueDoc) =>
   (cwd: string): WorkContext => ({
     config: configFor(doc, cwd),
     worktree: cachedCheckout(cwd).root,
+    home: NodeOS.homedir(),
+    rootOf: gitRootOf,
   });
+
+/** Some project uses the Runner, so jobs can wait on either machine. */
+const runnerOn = (doc: QueueDoc) =>
+  doc.runner !== null &&
+  (doc.runner.global.runnerEnabled ||
+    doc.runner.projects.some((project) => project.config.runnerEnabled));
 
 const planOf = (doc: QueueDoc, now: number): RoutePlan =>
   planRoutes({
@@ -287,10 +442,13 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     sample: doc.sample,
     lastStartAt: doc.lastStartAt,
     holding: doc.holding,
+    macMemoryFloorPercent: doc.macMemoryFloorPercent,
+    macCpuCeilingPercent: doc.macCpuCeilingPercent,
     now,
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
+    runnerOn: runnerOn(doc),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -335,7 +493,11 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
   const canceled = decision.cancels[id];
   if (canceled !== undefined) {
     return {
-      doc: { ...doc, entries: entries.filter((e) => e.id !== id) },
+      doc: {
+        ...doc,
+        entries: entries.filter((e) => e.id !== id),
+        events: withRecord(doc.events, deadlineRecord(entry, now)),
+      },
       result: { status: "canceled", reason: canceled },
     };
   }
@@ -370,6 +532,10 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Only a gated Mac start makes the next Mac waiter let it ramp up.
         lastStartAt: gated ? now : doc.lastStartAt,
         holding: decision.holding,
+        events: withRecord(
+          doc.events,
+          startRecord(entry, intentOf(entry, contextOf(doc)(entry.cwd)).intent, admit.runner, now),
+        ),
       },
       result: {
         status: "started",
@@ -396,12 +562,19 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
               }
             : e,
         );
+  // Counted on the machine it waits for, as the Resource Manager groups rows.
+  const runner = decision.routes[id] ?? "mac";
+  const machineOf = (e: HeavyQueueEntry) =>
+    e.startedAt === null ? (decision.routes[e.id] ?? "mac") : (e.runner ?? "mac");
+  const there = entries.filter((e) => machineOf(e) === runner);
+  const runningThere = there.find((e) => e.startedAt !== null);
   return {
     doc: { ...doc, entries: asked, holding: decision.holding },
     result: {
       status: "waiting",
-      position: index - active.length + 1,
-      ...(active[0] === undefined ? {} : { running: active[0] }),
+      position: there.filter((e) => e.startedAt === null).findIndex((e) => e.id === id) + 1,
+      ...(runningThere === undefined ? {} : { running: runningThere }),
+      ...(runnerOn(doc) ? { runner } : {}),
       ...(doc.enabled && doc.paused ? { paused: true as const } : {}),
       ...(decision.reasons[id] === undefined ? {} : { reason: decision.reasons[id] }),
     },
@@ -496,23 +669,45 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
   return { doc, result: "ok" };
 };
 
+/** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
 const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): QueueDoc => {
   const kept = new Set(after.entries.map((entry) => entry.id));
   const history: Record<string, ReadonlyArray<Run>> = { ...after.history };
+  const linuxHistory: Record<string, LinuxHistory[string]> = { ...after.linuxHistory };
   let changed = false;
   for (const gone of before.entries) {
-    if (gone.startedAt === null || kept.has(gone.id) || gone.peakMemory === undefined) continue;
+    if (gone.startedAt === null || kept.has(gone.id)) continue;
     const signature = signatureOf(gone.label);
-    const run = {
-      cpu: gone.peakCpu ?? 0,
-      memoryBytes: gone.peakMemory,
-      durationMs: Math.max(0, now - Date.parse(gone.startedAt)),
-    };
-    history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
+    const durationMs = Math.max(0, now - Date.parse(gone.startedAt));
+    if (gone.runner === "linux") {
+      // A run that never got past syncing says nothing about how long the command takes.
+      if (gone.phase !== "running") continue;
+      linuxHistory[signature] = [...(linuxHistory[signature] ?? []), { durationMs }].slice(
+        -HISTORY_RUNS,
+      );
+    } else {
+      if (gone.peakMemory === undefined) continue;
+      const run = {
+        ...(gone.peakCpu === undefined ? {} : { cpu: gone.peakCpu }),
+        memoryBytes: gone.peakMemory,
+        durationMs,
+      };
+      history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
+    }
     changed = true;
   }
-  return changed ? { ...after, history } : after;
+  return changed ? { ...after, history, linuxHistory } : after;
 };
+
+/** How long `entry`'s command usually takes on `runner`, from that machine's runs; null without any. */
+export const usualMs = (
+  doc: Pick<QueueDoc, "history" | "linuxHistory">,
+  entry: Pick<HeavyQueueEntry, "label">,
+  runner: HeavyRunner,
+) =>
+  medianDuration(
+    (runner === "linux" ? doc.linuxHistory : doc.history)[signatureOf(entry.label)] ?? [],
+  );
 
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {
@@ -530,8 +725,23 @@ export const readDoc = (dir: string): QueueDoc => {
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
 
-export const enqueue = (dir: string, entry: HeavyQueueEntry) =>
-  mutate(dir, (doc) => ({ doc: insertNew(doc, entry), result: undefined }));
+/**
+ * Adds `entry`, or, for an id already known, attaches to its job: still waiting or running, or
+ * ended recently with the code it returns again.
+ */
+export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc): Decided<"added" | "attached" | { readonly code: number }> => {
+      if (doc.entries.some((each) => each.id === entry.id)) return { doc, result: "attached" };
+      const ended = doc.results.find(
+        (each) => each.id === entry.id && now - each.at < RESULT_TTL_MS,
+      );
+      if (ended !== undefined) return { doc, result: { code: ended.code } };
+      return { doc: insertNew(doc, entry), result: "added" };
+    },
+    now,
+  );
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
   mutate(dir, (doc) => decideStart(doc, id, now), now);
@@ -542,41 +752,142 @@ export const readPlan = (dir: string, now = Date.now()) => {
   return { doc, plan: planOf(doc, now) };
 };
 
+/**
+ * Where `line`, started now from `cwd`, would run and whether it would start at once: the plan a
+ * real job gets, with nothing queued. `linuxFull`: Linux is offline, over its limits, or its jobs
+ * and waiters ahead fill its slots.
+ */
+export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
+  const doc = readDoc(dir);
+  const parts = lineParts(line);
+  const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
+  const commit = commitRoute(parts.command, at);
+  if (commit === "direct") {
+    return {
+      runsOn: "direct" as const,
+      reason: COMMIT_RUNS_DIRECT,
+      startsNow: true,
+      linuxFull: false,
+    };
+  }
+  const id = `probe-${now}`;
+  const withProbe = insertNew(doc, {
+    id,
+    pid: process.pid,
+    threadId: null,
+    label: parts.command,
+    cwd: at,
+    createdAt: new Date(now).toISOString(),
+    startedAt: null,
+    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
+    priority: commit === "first" ? "high" : "low",
+    ...(parts.remoto ? { where: "linux" as const } : {}),
+  });
+  const plan = planOf(withProbe, now);
+  const slots = (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerLinuxSlots;
+  // Running there or waiting for it ahead of this command: what fills Linux before it.
+  const ahead = withProbe.entries
+    .slice(
+      0,
+      withProbe.entries.findIndex((e) => e.id === id),
+    )
+    .filter((e) => (e.startedAt === null ? plan.routes[e.id] : e.runner) === "linux").length;
+  return {
+    runsOn: plan.routes[id] ?? ("mac" as const),
+    reason: plan.reasons[id] ?? null,
+    startsNow: plan.admits[id] !== undefined,
+    linuxFull: doc.linux.online === false || doc.linux.overLimit || ahead >= slots,
+  };
+};
+
 /** A server publishes the machine reading and each running job's process-tree peak. */
 export const recordSample = (
   dir: string,
   reading: Omit<Sample, "headroomSince">,
-  peaks: Readonly<Record<string, { readonly cpu: number; readonly memoryBytes: number }>>,
+  peaks: Readonly<
+    Record<
+      string,
+      {
+        /** Null when the job's processes could not be read: unknown, never 0. */
+        readonly cpu: number | null;
+        readonly memoryBytes: number;
+        readonly daemons?: ReadonlyArray<number>;
+      }
+    >
+  > | null,
 ) =>
   mutate(dir, (doc) => {
-    const sample: Sample = {
-      ...reading,
-      headroomSince: !hasHeadroom(reading)
-        ? null
-        : doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS
-          ? (doc.sample.headroomSince ?? reading.at)
-          : reading.at,
-    };
-    return {
-      doc: {
-        ...doc,
-        sample,
-        entries: doc.entries.map((entry) => {
-          const peak = peaks[entry.id];
-          return entry.startedAt === null || peak === undefined
-            ? entry
-            : {
-                ...entry,
-                cpu: peak.cpu,
-                memory: peak.memoryBytes,
-                peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
-                peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
-              };
-        }),
-      },
-      result: undefined,
-    };
+    const continuous = doc.sample !== null && reading.at - doc.sample.at < SAMPLE_GAP_MS;
+    const limit = sustain(
+      continuous ? doc.sample : null,
+      !hasHeadroom(reading, doc),
+      reading.at,
+      doc.heavyOverLimitSeconds * 1000,
+    );
+    const entries = doc.entries.map((entry): HeavyQueueEntry => {
+      // On Linux the local tree is only `remoto`'s wrapper, not the job. Null: processes not read.
+      if (peaks === null || entry.startedAt === null || entry.runner === "linux") return entry;
+      const peak = peaks[entry.id];
+      const { daemons: _daemons, cpu: _cpu, memory: _memory, ...rest } = entry;
+      // A job this sample could not read keeps its peaks but shows no current usage.
+      if (peak === undefined) return rest;
+      return {
+        ...rest,
+        ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
+        ...(peak.cpu === null
+          ? {}
+          : { cpu: peak.cpu, peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu) }),
+        memory: peak.memoryBytes,
+        peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
+      };
+    });
+    // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
+    const comeback = entries
+      .filter((entry) => entry.slowed === true)
+      .reduce((sum, entry) => {
+        const full = Math.max(
+          entry.peakCpu ?? 0,
+          estimate(doc.history, entry, reading.cpuCount).cpu,
+        );
+        // An unread job counts as using nothing now, so restoring waits rather than flaps.
+        return sum + Math.max(0, full - (entry.cpu ?? 0));
+      }, 0);
+    const slow = sustain(
+      continuous ? (doc.sample?.slow ?? null) : null,
+      reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
+      reading.at,
+      doc.heavyOverLimitSeconds * 1000,
+    );
+    // Admission's short headroom check uses the same unbroken run of readings under the limits.
+    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+    const next: QueueDoc = { ...doc, sample, entries };
+    return { doc: next, result: next };
   });
+
+/** Records a slowdown step the sampler applied: entries slowed or restored, daemons held lowered. */
+export const recordSlowdown = (
+  dir: string,
+  step: {
+    readonly slowed: ReadonlyArray<string>;
+    readonly restored: ReadonlyArray<string>;
+    readonly slowedDaemons: ReadonlyArray<ProcessIdentity>;
+  },
+) =>
+  mutate(dir, (doc) => ({
+    doc: {
+      ...doc,
+      slowedDaemons: step.slowedDaemons,
+      entries: doc.entries.map((entry) => {
+        if (step.slowed.includes(entry.id) && entry.startedAt !== null) {
+          return { ...entry, slowed: true, qos: "background" as const };
+        }
+        if (!step.restored.includes(entry.id)) return entry;
+        const { slowed: _slowed, ...rest } = entry;
+        return { ...rest, qos: "normal" as const };
+      }),
+    },
+    result: undefined,
+  }));
 
 /** Waiter-side election: the first caller under the lock to find the reading stale becomes the sampler. */
 export const recordSampleIfStale = (
@@ -586,7 +897,7 @@ export const recordSampleIfStale = (
 ) => {
   const current = readDoc(dir).sample;
   if (current !== null && reading.at - current.at < staleMs) return false;
-  recordSample(dir, reading, {});
+  recordSample(dir, reading, null);
   return true;
 };
 
@@ -601,6 +912,32 @@ export const remove = (dir: string, id: string) =>
     doc: { ...doc, entries: doc.entries.filter((entry) => entry.id !== id) },
     result: undefined,
   }));
+
+/** A `t3 heavy` job's process exiting with `code`: frees its entry and logs a failure. */
+export const finish = (dir: string, id: string, code: number, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        entries: doc.entries.filter((entry) => entry.id !== id),
+        results: [
+          ...doc.results.filter((each) => each.id !== id && now - each.at < RESULT_TTL_MS),
+          { id, code, at: now },
+        ].slice(-MAX_RESULTS),
+        events: withRecord(
+          doc.events,
+          endedRecord(
+            doc.entries.find((entry) => entry.id === id),
+            code,
+            now,
+          ),
+        ),
+      },
+      result: undefined,
+    }),
+    now,
+  );
 
 export const move = (dir: string, id: string, beforeId: string | null, note?: string) =>
   mutate(dir, (doc) => decideMove(doc, id, beforeId, note));
@@ -634,7 +971,15 @@ export const setPriority = (dir: string, id: string, priority: "low" | "high") =
   mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: { result: "not-found" } };
-    if (target.startedAt !== null) return { doc, result: { result: "ok", entry: target } };
+    if (target.startedAt !== null) {
+      // The user's choice for a running job stands: T3 stops slowing or restoring it on its own.
+      const { slowed: _slowed, ...rest } = target;
+      const running: HeavyQueueEntry = { ...rest, priority };
+      return {
+        doc: { ...doc, entries: doc.entries.map((entry) => (entry.id === id ? running : entry)) },
+        result: { result: "ok", entry: running },
+      };
+    }
     const { forced: _forced, ...rest } = target;
     const updated: HeavyQueueEntry = {
       ...rest,
@@ -669,6 +1014,16 @@ export const setPaused = (dir: string, paused: boolean) =>
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
+/** Stores a queue setting, clamped to its range. */
+export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+  mutate(dir, (doc) => {
+    const { min, max } = HEAVY_QUEUE_LIMITS[key];
+    return {
+      doc: { ...doc, [key]: Math.max(min, Math.min(max, Math.floor(value))) },
+      result: undefined,
+    };
+  });
+
 export const setDeviceIdleMinutes = (dir: string, minutes: number) =>
   mutate(dir, (doc) => ({
     doc: { ...doc, deviceIdleMinutes: Math.max(0, Math.min(24 * 60, Math.floor(minutes))) },
@@ -689,8 +1044,8 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
   });
 
 /** Exclusive work and its project's Mac-only list never leave this Mac. */
-export const staysOnMac = (doc: Pick<QueueDoc, "runner">, entry: HeavyQueueEntry) => {
-  const eligibility = eligibilityOf(entry, configFor(doc, entry.cwd));
+export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
+  const { eligibility } = eligibilityOf(entry, contextOf(doc)(entry.cwd));
   return eligibility === "exclusive" || eligibility === "mac-only";
 };
 
@@ -712,7 +1067,8 @@ export const recordHealth = (dir: string, check: HealthCheck, now = Date.now()) 
         linux: nextHealth(
           doc.linux,
           check,
-          (doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG).runnerOfflineAfterFailures,
+          doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
+          doc.heavyOverLimitSeconds * 1000,
           now,
         ),
       },
@@ -777,18 +1133,27 @@ export const setProgress = (
 export const requeue = (
   dir: string,
   id: string,
-  next: Pick<HeavyQueueEntry, "route" | "dropped" | "unconfirmed" | "linuxFailedAt">,
+  next: Pick<QueuedEntry, "route" | "routeReason" | "dropped" | "unconfirmed" | "linuxFailedAt">,
 ) =>
   mutate(dir, (doc) => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: false };
     const active = runningOf(doc.entries).filter((entry) => entry.id !== id);
     const waiters = doc.entries.filter((entry) => entry.startedAt === null && entry.id !== id);
-    const again: HeavyQueueEntry = {
-      ...withoutAttempt(target),
+    const { routeReason: _reason, ...previous }: QueuedEntry = withoutAttempt(target);
+    const again: QueuedEntry = {
+      ...previous,
       ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
     };
-    return { doc: { ...doc, entries: [...active, again, ...waiters] }, result: true };
+    const record = requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    return {
+      doc: {
+        ...doc,
+        entries: [...active, again, ...waiters],
+        events: withRecord(doc.events, record),
+      },
+      result: true,
+    };
   });
 
 /** The remote run is confirmed stopped: the entry may run again. */
@@ -805,6 +1170,20 @@ export const confirmStopped = (dir: string, id: string) =>
     result: undefined,
   }));
 
+/** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
+export const scriptReader =
+  (cwd: string, home = NodeOS.homedir()): ReadScript =>
+  (word) => {
+    const path = NodePath.resolve(cwd, word.replace(/^~(?=\/|$)/, home));
+    try {
+      const stat = NodeFS.statSync(path);
+      if (!stat.isFile() || stat.size > SCRIPT_MAX_BYTES) return null;
+      return NodeFS.readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  };
+
 /**
  * The one gate every Bash hook goes through (the `t3 heavy hook` CLI and the in-process Claude
  * callback): with the queue and the Runner both off for the call's folder, nothing is touched.
@@ -818,5 +1197,63 @@ export const answerBashCall = (
   const doc = readDoc(dir);
   const cwd =
     isObject(hookInput) && typeof hookInput.cwd === "string" ? hookInput.cwd : process.cwd();
-  return interceptBashCall(hookInput, prefix, modeFor(doc, cwd), environment);
+  const command =
+    isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
+  const at =
+    typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
+  const answer = interceptBashCall(
+    hookInput,
+    prefix,
+    modeFor(doc, at),
+    environment,
+    scriptReader(at),
+  );
+  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
+    ? null
+    : answer;
 };
+
+/** Remembers a Linux copy to delete once its host answers; newest first, bounded in count and age. */
+export const addCopyRemoval = (dir: string, removal: CopyRemoval) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        copyRemovals: [
+          removal,
+          ...doc.copyRemovals.filter(
+            (entry) => entry.host !== removal.host || entry.id !== removal.id,
+          ),
+        ].slice(0, MAX_COPY_REMOVALS),
+      },
+      result: undefined,
+    }),
+    removal.at,
+  );
+
+/** Drops removals that are done, and ones older than the bound, which no host answered for. */
+export const settleCopyRemovals = (
+  dir: string,
+  done: ReadonlyArray<Pick<CopyRemoval, "host" | "id">>,
+  now = Date.now(),
+) =>
+  mutate(
+    dir,
+    (doc) => ({
+      doc: {
+        ...doc,
+        copyRemovals: doc.copyRemovals.filter(
+          (entry) =>
+            now - entry.at < COPY_REMOVAL_TTL_MS &&
+            !done.some((settled) => settled.host === entry.host && settled.id === entry.id),
+        ),
+      },
+      result: undefined,
+    }),
+    now,
+  );
+
+/** Where a shell line's leading `cd` folders (from `lineParts`) land, starting at `cwd`. */
+export const startFolder = (dirs: ReadonlyArray<string>, cwd: string, home: string) =>
+  dirs.reduce((at, dir) => NodePath.resolve(at, dir.replace(/^~(?=$|\/)/, home)), cwd);

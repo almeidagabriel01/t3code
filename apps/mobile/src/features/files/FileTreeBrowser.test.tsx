@@ -1,9 +1,20 @@
 import type { ProjectEntry } from "@t3tools/contracts";
-import { act, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
+import {
+  act,
+  cloneElement,
+  isValidElement,
+  useImperativeHandle,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({ menus: [] as unknown[] }));
+const mocks = vi.hoisted(() => ({
+  menus: [] as unknown[],
+  scrollIndexIntoView: (_params: { index: number; animated: boolean }) => Promise.resolve(),
+}));
 
 vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
@@ -27,18 +38,25 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("@legendapp/list/react-native", () => ({
   LegendList: <T,>(props: {
+    ref?: Ref<unknown>;
     data: readonly T[];
     keyExtractor: (item: T) => string;
     renderItem: (input: { item: T }) => ReactNode;
     ListHeaderComponent?: ReactNode;
-  }) => (
-    <div>
-      {props.ListHeaderComponent}
-      {props.data.map((item) => (
-        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-      ))}
-    </div>
-  ),
+  }) => {
+    useImperativeHandle(props.ref, () => ({
+      scrollIndexIntoView: (params: { index: number; animated: boolean }) =>
+        mocks.scrollIndexIntoView(params),
+    }));
+    return (
+      <div>
+        {props.ListHeaderComponent}
+        {props.data.map((item) => (
+          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+        ))}
+      </div>
+    );
+  },
 }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: () => null }));
 vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
@@ -107,6 +125,7 @@ function mount(props: Partial<Parameters<typeof FileTreeBrowser>[0]>) {
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.menus = [];
+  mocks.scrollIndexIntoView = () => Promise.resolve();
 });
 
 it("opens each row's explorer menu on long press and skips rows with no actions", () => {
@@ -135,4 +154,50 @@ it("shows the folder a search is limited to with a way back to all files", () =>
   expect(view.host.textContent).toContain("Searching in src/");
   act(() => view.host.querySelector<HTMLButtonElement>('[aria-label="Search all files"]')!.click());
   expect(onClear).toHaveBeenCalledOnce();
+});
+
+it("scrolls a revealed file into view once, after its folders open", () => {
+  const scroll = vi.fn((_params: { index: number; animated: boolean }) => Promise.resolve());
+  mocks.scrollIndexIntoView = scroll;
+  const nested: ReadonlyArray<ProjectEntry> = [
+    ...entries,
+    { path: "src/lib", kind: "directory" },
+    { path: "src/lib/a.ts", kind: "file" },
+  ];
+  const host = document.createElement("div");
+  const root = createRoot(host);
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const render = (expandedPaths: ReadonlySet<string>, selectedPath: string | null) =>
+    act(() =>
+      root.render(
+        <FileTreeBrowser
+          revealSelection={() => {}}
+          expandedPaths={expandedPaths}
+          setExpandedPaths={() => {}}
+          error={null}
+          isPending={false}
+          isRefreshing={false}
+          searchQuery=""
+          searchResultPaths={null}
+          searchTruncated={false}
+          loadingDirectories={new Set()}
+          onLoadDirectory={() => {}}
+          onRefresh={() => {}}
+          onSelectFile={() => {}}
+          entries={nested}
+          selectedPath={selectedPath}
+        />,
+      ),
+    );
+
+  render(new Set(), "src/lib/a.ts");
+  expect(scroll).not.toHaveBeenCalled();
+  const open = new Set(["src", "src/lib"]);
+  render(open, "src/lib/a.ts");
+  expect(scroll.mock.calls).toEqual([[{ index: 2, animated: false }]]);
+  render(new Set(open), "src/lib/a.ts");
+  expect(scroll).toHaveBeenCalledOnce();
+  render(open, null);
+  render(open, "src/lib/a.ts");
+  expect(scroll).toHaveBeenCalledTimes(2);
 });

@@ -241,6 +241,7 @@ import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSet
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyQueueSampler from "./heavyQueue/HeavyQueueSampler.ts";
 import * as RunnerPublisher from "./heavyQueue/RunnerPublisher.ts";
+import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
@@ -723,6 +724,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
 const layerChannels = AutonomyService.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       ImessageChannelSettings.layer.pipe(Layer.provideMerge(ImessageChannelRuntime.layer)),
@@ -764,6 +766,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeavyQueueSampler.layer(),
   RunnerPublisher.layer(),
   HeavyCommands.layer(),
+  HeavyQueueNotices.layer(),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),

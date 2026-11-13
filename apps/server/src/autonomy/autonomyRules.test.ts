@@ -117,10 +117,28 @@ it.each([
   expect(watchMatches(w, s, 1_000)).toBe(ok);
 });
 
-it("a watch wakes only an assistant in reply-and-notify mode", () => {
+it("a watch wakes its assistant in either mode; watchesOnly keeps the rules out", () => {
   const s = signal({ event: "pr_checks_passed", prNumber: 7 });
   expect(wakes({ signal: s, autonomy: awake(), watches: [watch()] })).toBe(1);
-  expect(wakes({ signal: s, autonomy: awake({ mode: "reply-only" }), watches: [watch()] })).toBe(0);
+  expect(wakes({ signal: s, autonomy: awake({ mode: "reply-only" }), watches: [watch()] })).toBe(1);
+  // Another assistant's watch, or one whose assistant is gone, wakes nobody here.
+  expect(wakes({ signal: s, autonomy: awake(), watches: [watch({ assistantId: "ghost" })] })).toBe(
+    0,
+  );
+  const failed = signal();
+  const both = {
+    signal: failed,
+    assistants: [{ id: "a1", autonomy: awake() }],
+    settings,
+    nowMs: 1,
+  };
+  const onFail = watch({ filter: { event: "run_failed" } });
+  expect(candidatesFor({ ...both, watches: [onFail] })).toHaveLength(2);
+  expect(
+    candidatesFor({ ...both, watches: [onFail], watchesOnly: true }).map(
+      (c) => "watch" in c.source,
+    ),
+  ).toEqual([true]);
 });
 
 it("the wake message carries the context and ends with the do-not-change instruction", () => {

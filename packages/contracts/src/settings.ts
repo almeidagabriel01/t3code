@@ -40,7 +40,9 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { ForkUpdateChannelSetting } from "./forkUpdates.ts";
+import { HeavyNoticesMode } from "./heavyNotices.ts";
 import {
+  HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   RunnerAskMinutes,
   RunnerDeadlineAction,
@@ -48,10 +50,11 @@ import {
   RunnerHost,
   RunnerLinuxSlots,
   RunnerOfflineAfterFailures,
-  RunnerOverflow,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
   RunnerStopWaitSeconds,
+  RunnerLinuxMemoryFloorPercent,
+  RunnerLinuxCpuCeilingPercent,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
@@ -1277,6 +1280,29 @@ export const WorktreeKeepWhen = Schema.Literals([
 ]);
 export type WorktreeKeepWhen = typeof WorktreeKeepWhen.Type;
 
+/** When worktrees whose commits are already in the default branch are removed. */
+export const WorktreeMergedCleanup = Schema.Literals(["off", "right-away", "after-days"]);
+export type WorktreeMergedCleanup = typeof WorktreeMergedCleanup.Type;
+export const MERGED_WORKTREE_DAYS = { minimum: 1, maximum: 365, fallback: 7 } as const;
+const MergedWorktreeDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MERGED_WORKTREE_DAYS.minimum,
+    maximum: MERGED_WORKTREE_DAYS.maximum,
+  }),
+);
+// Replaces the retired worktreeOnMerge and worktreeUnchanged switches; stored files still carry
+// them and decoding drops them, so either one on, or neither, reads as the "right-away" default.
+const mergedWorktreeFields = {
+  worktreeMerged: WorktreeMergedCleanup.pipe(
+    Schema.withDecodingDefault(Effect.succeed("right-away" as const)),
+  ),
+  worktreeMergedAfterDays: MergedWorktreeDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(MERGED_WORKTREE_DAYS.fallback)),
+  ),
+  /** Also delete the worktree's copy on the Runner's Linux host. */
+  worktreeRunnerCopy: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+};
+
 export const WorktreeCleanupRules = Schema.Struct({
   worktreeKeepWhen: WorktreeKeepWhen.pipe(
     Schema.withDecodingDefault(Effect.succeed("uncommitted-changes")),
@@ -1285,11 +1311,21 @@ export const WorktreeCleanupRules = Schema.Struct({
   worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  worktreeOnMerge: Schema.Boolean,
   worktreeOnDelete: Schema.Boolean,
-  worktreeUnchanged: Schema.Boolean,
+  ...mergedWorktreeFields,
 });
 export type WorktreeCleanupRules = typeof WorktreeCleanupRules.Type;
+
+/** The worktree rules a project's custom cleanup copies from the machine's storage settings. */
+export const pickWorktreeCleanupRules = (
+  source: WorktreeCleanupRules & Readonly<Record<string, unknown>>,
+): WorktreeCleanupRules =>
+  Object.fromEntries(
+    Object.keys(WorktreeCleanupRules.fields).map((key) => [
+      key,
+      source[key as keyof WorktreeCleanupRules],
+    ]),
+  ) as WorktreeCleanupRules;
 
 export const WorktreeCleanup = Schema.NullOr(
   Schema.Union([
@@ -1329,7 +1365,6 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "speechProjectCustomWords",
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
@@ -1398,7 +1433,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
@@ -1508,9 +1542,8 @@ export const StorageCleanupSettings = Schema.Struct({
   worktreeSettledAfterDays: SettledWorktreeRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ...mergedWorktreeFields,
   browserArtifactsAfterDays: StorageRetentionDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1683,9 +1716,6 @@ export const ServerSettings = Schema.Struct({
   runnerWhere: RunnerWhere.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerWhere)),
   ),
-  runnerOverflow: RunnerOverflow.pipe(
-    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerOverflow)),
-  ),
   runnerUnavailable: RunnerUnavailablePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
   ),
@@ -1721,6 +1751,17 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerStopWaitSeconds: RunnerStopWaitSeconds.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerStopWaitSeconds)),
+  ),
+  runnerLinuxMemoryFloorPercent: RunnerLinuxMemoryFloorPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent)),
+  ),
+  runnerLinuxCpuCeilingPercent: RunnerLinuxCpuCeilingPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent)),
+  ),
+  /** Which heavy job notices clients get: problems, machine changes, or none. */
+  heavyNotices: HeavyNoticesMode.pipe(Schema.withDecodingDefault(Effect.succeed("unexpected"))),
+  heavySlowAgentJobs: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_SLOW_AGENT_JOBS_DEFAULT)),
   ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2132,9 +2173,10 @@ const ServerSettingsPatchFields = Schema.Struct({
             worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
             worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
             worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-            worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
             worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-            worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+            worktreeMerged: Schema.optionalKey(WorktreeMergedCleanup),
+            worktreeMergedAfterDays: Schema.optionalKey(MergedWorktreeDays),
+            worktreeRunnerCopy: Schema.optionalKey(Schema.Boolean),
           }),
         }),
       ]),
@@ -2145,9 +2187,10 @@ const ServerSettingsPatchFields = Schema.Struct({
       worktreeKeepWhen: Schema.optionalKey(WorktreeKeepWhen),
       worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeSettledAfterDays: Schema.optionalKey(SettledWorktreeRetentionDays),
-      worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
       worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-      worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
+      worktreeMerged: Schema.optionalKey(WorktreeMergedCleanup),
+      worktreeMergedAfterDays: Schema.optionalKey(MergedWorktreeDays),
+      worktreeRunnerCopy: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
       worktreeSnapshotsAfterDays: Schema.optionalKey(StorageRetentionDays),
@@ -2208,7 +2251,6 @@ const ServerSettingsPatchFields = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
@@ -2221,6 +2263,10 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerOfflineAfterFailures: Schema.optionalKey(RunnerOfflineAfterFailures),
   runnerSshTimeoutSeconds: Schema.optionalKey(RunnerSshTimeoutSeconds),
   runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
+  runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
+  runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
+  heavyNotices: Schema.optionalKey(HeavyNoticesMode),
+  heavySlowAgentJobs: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

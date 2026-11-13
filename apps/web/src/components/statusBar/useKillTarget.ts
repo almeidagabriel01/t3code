@@ -94,6 +94,24 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const enabledCommand = useAtomCommand(heavyQueueEnvironment.setEnabled, { reportFailure: false });
   const ruleCommand = useAtomCommand(heavyQueueEnvironment.setRule, { reportFailure: false });
   const maxCommand = useAtomCommand(heavyQueueEnvironment.setMaxRunning, { reportFailure: false });
+  const macMemoryFloorPercentCommand = useAtomCommand(
+    heavyQueueEnvironment.setMacMemoryFloorPercent,
+    {
+      reportFailure: false,
+    },
+  );
+  const macCpuCeilingPercentCommand = useAtomCommand(
+    heavyQueueEnvironment.setMacCpuCeilingPercent,
+    {
+      reportFailure: false,
+    },
+  );
+  const heavyOverLimitSecondsCommand = useAtomCommand(
+    heavyQueueEnvironment.setHeavyOverLimitSeconds,
+    {
+      reportFailure: false,
+    },
+  );
   const priorityCommand = useAtomCommand(heavyQueueEnvironment.setPriority, {
     reportFailure: false,
   });
@@ -154,6 +172,21 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       report(
         "Could not change the limit",
         await maxCommand({ environmentId, input: { maxRunning } }),
+      ),
+    setMacMemoryFloorPercent: async (macMemoryFloorPercent: number) =>
+      report(
+        "Could not change the memory limit",
+        await macMemoryFloorPercentCommand({ environmentId, input: { macMemoryFloorPercent } }),
+      ),
+    setMacCpuCeilingPercent: async (macCpuCeilingPercent: number) =>
+      report(
+        "Could not change the CPU limit",
+        await macCpuCeilingPercentCommand({ environmentId, input: { macCpuCeilingPercent } }),
+      ),
+    setHeavyOverLimitSeconds: async (heavyOverLimitSeconds: number) =>
+      report(
+        "Could not change how long a limit must hold",
+        await heavyOverLimitSecondsCommand({ environmentId, input: { heavyOverLimitSeconds } }),
       ),
     setPriority: async (id: string, priority: "low" | "high") =>
       report(

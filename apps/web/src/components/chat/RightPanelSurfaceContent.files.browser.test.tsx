@@ -13,7 +13,13 @@ vi.mock("./ThreadWorkspaceCleaned", () => ({
 vi.mock("../files/FilePreviewPanel", () => ({
   default: (props: {
     onNavigateFolder: (path: string, trail: string[], keep: boolean) => void;
-  }) => <button onClick={() => props.onNavigateFolder("src", ["src"], false)}>Open folder</button>,
+    treeSelection: { path: string; requestId: number } | null;
+  }) => (
+    <>
+      <button onClick={() => props.onNavigateFolder("src", ["src"], false)}>Open folder</button>
+      <output aria-label="Tree selection">{JSON.stringify(props.treeSelection)}</output>
+    </>
+  ),
 }));
 vi.mock("./SideChatPane", () => ({ default: () => null }));
 vi.mock("../PersistentThreadTerminals", () => ({ PersistentThreadTerminalPanel: () => null }));
@@ -39,7 +45,7 @@ const environmentId = EnvironmentId.make("env-1");
 const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
 const bare = { router: false } as const;
 
-function content(surface: unknown) {
+function content(surface: unknown, activeFile: unknown = null) {
   return (
     <RightPanelSurfaceContent
       surface={surface as never}
@@ -63,6 +69,7 @@ function content(surface: unknown) {
         workspaceRoot: "/worktrees/p/feat",
         availableEditors: [],
         pendingSurfaceIds: new Set(),
+        activeFile: activeFile as never,
         onOpenFile: () => {},
         onPendingChange: () => {},
       }}
@@ -71,11 +78,24 @@ function content(surface: unknown) {
   );
 }
 
-it("gates the file explorer on the thread's workspace and routes folder navigation to the panel store", async () => {
-  await using screen = await render(content({ id: "files", kind: "files", folderTrail: [] }), bare);
+it("gates the file explorer on the thread's workspace, reveals the open file and routes folder navigation to the panel store", async () => {
+  const activeFile = {
+    id: "file:/worktrees/p/feat/src/a.ts",
+    kind: "file",
+    relativePath: "/worktrees/p/feat/src/a.ts",
+    revealLine: null,
+    revealRequestId: 2,
+  };
+  await using screen = await render(
+    content({ id: "files", kind: "files", folderTrail: [] }, activeFile),
+    bare,
+  );
   await expect
     .element(screen.getByRole("region", { name: "Gate cwd /worktrees/p/feat" }))
     .toBeVisible();
+  await expect
+    .element(screen.getByRole("status", { name: "Tree selection" }))
+    .toHaveTextContent('{"path":"src/a.ts","requestId":2}');
   await screen.getByRole("button", { name: "Open folder" }).click();
   expect(state.navigateFolder).toHaveBeenCalledWith(threadRef, "files", "src", ["src"], false);
 });
@@ -93,4 +113,7 @@ it("does not gate an attachment preview on the workspace", async () => {
     bare,
   );
   await expect.element(screen.getByRole("region", { name: "Gate cwd none" })).toBeVisible();
+  await expect
+    .element(screen.getByRole("status", { name: "Tree selection" }))
+    .toHaveTextContent("null");
 });

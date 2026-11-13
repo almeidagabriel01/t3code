@@ -16,13 +16,14 @@ export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
 export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
 
 export const RUNNER_LIMITS = {
-  runnerOverflow: { min: 0, max: 20, unit: "jobs" },
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
   runnerLinuxSlots: { min: 1, max: 16, unit: "jobs" },
   runnerHeartbeatSeconds: { min: 5, max: 600, unit: "seconds" },
   runnerOfflineAfterFailures: { min: 1, max: 10, unit: "failures" },
   runnerSshTimeoutSeconds: { min: 1, max: 30, unit: "seconds" },
   runnerStopWaitSeconds: { min: 1, max: 60, unit: "seconds" },
+  runnerLinuxMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
+  runnerLinuxCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
 } as const;
 export type RunnerNumberKey = keyof typeof RUNNER_LIMITS;
 
@@ -32,7 +33,6 @@ export const RUNNER_PATTERN_CHARS = 200;
 export const RUNNER_DEFAULTS = {
   runnerEnabled: false,
   runnerWhere: "mac" as RunnerWhere,
-  runnerOverflow: 3,
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
@@ -54,6 +54,8 @@ export const RUNNER_DEFAULTS = {
     "test",
     "vitest",
     "jest",
+    "mocha",
+    "pytest",
     "e2e",
     "playwright",
     "coverage",
@@ -61,8 +63,11 @@ export const RUNNER_DEFAULTS = {
     "oxlint",
     "eslint",
     "check",
+    "clippy",
     "typecheck",
     "tsc",
+    "tsgo",
+    "effect-tsgo",
     "knip",
   ] as ReadonlyArray<string>,
   runnerHost: "remoto",
@@ -71,13 +76,15 @@ export const RUNNER_DEFAULTS = {
   runnerOfflineAfterFailures: 2,
   runnerSshTimeoutSeconds: 3,
   runnerStopWaitSeconds: 5,
+  // A Linux job starts only while the PC keeps this much memory free and stays under this CPU use.
+  runnerLinuxMemoryFloorPercent: 20,
+  runnerLinuxCpuCeilingPercent: 70,
 } as const;
 
 /** Settings a project can override; the rest belong to the machine. */
 export const RUNNER_PROJECT_KEYS = [
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
@@ -92,7 +99,12 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerOfflineAfterFailures",
   "runnerSshTimeoutSeconds",
   "runnerStopWaitSeconds",
+  "runnerLinuxMemoryFloorPercent",
+  "runnerLinuxCpuCeilingPercent",
+  "heavySlowAgentJobs",
 ] as const;
+/** Agents' running jobs drop to background CPU priority while this Mac stays over its CPU ceiling. */
+export const HEAVY_SLOW_AGENT_JOBS_DEFAULT = true;
 export type RunnerKey = keyof typeof RUNNER_DEFAULTS;
 
 /** Why `value` is not a valid `key`, for people; null when it is. */
@@ -127,13 +139,14 @@ export const runnerPatternsError = (values: ReadonlyArray<string>): string | nul
 const between = (key: RunnerNumberKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => runnerNumberError(key, value) ?? true));
 
-export const RunnerOverflow = between("runnerOverflow");
 export const RunnerAskMinutes = between("runnerAskMinutes");
 export const RunnerLinuxSlots = between("runnerLinuxSlots");
 export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
 export const RunnerOfflineAfterFailures = between("runnerOfflineAfterFailures");
 export const RunnerSshTimeoutSeconds = between("runnerSshTimeoutSeconds");
 export const RunnerStopWaitSeconds = between("runnerStopWaitSeconds");
+export const RunnerLinuxMemoryFloorPercent = between("runnerLinuxMemoryFloorPercent");
+export const RunnerLinuxCpuCeilingPercent = between("runnerLinuxCpuCeilingPercent");
 export const RunnerHost = Schema.String.check(
   Schema.makeFilter((value: string) => runnerHostError(value) ?? true),
 );
@@ -145,7 +158,6 @@ export const RunnerPatterns = Schema.Array(Schema.String).check(
 export const RunnerProjectConfig = Schema.Struct({
   runnerEnabled: Schema.Boolean,
   runnerWhere: RunnerWhere,
-  runnerOverflow: Schema.Int,
   runnerUnavailable: RunnerUnavailablePolicy,
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,
@@ -162,5 +174,8 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerOfflineAfterFailures: Schema.Int,
   runnerSshTimeoutSeconds: Schema.Int,
   runnerStopWaitSeconds: Schema.Int,
+  runnerLinuxMemoryFloorPercent: Schema.Int,
+  runnerLinuxCpuCeilingPercent: Schema.Int,
+  heavySlowAgentJobs: Schema.Boolean,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

@@ -67,9 +67,8 @@ vi.mock("../kanban/ProjectBoardView", () => ({
 vi.mock("../settings/ProjectScheduledTasksView", () => ({
   ProjectScheduledTasksView: (props: { projectId: string }) => `scheduled:${props.projectId}`,
 }));
-vi.mock("../settings/components/HeavyQueueSection", () => ({
-  HeavyCommandsSection: (props: { projectId: string }) => `commands:${props.projectId}`,
-  HeavyQueueSection: (props: { projectId: string }) => `queue:${props.projectId}`,
+vi.mock("../resources/HeavyWork", () => ({
+  ProjectHeavyWork: (props: { projectId: string }) => `heavy:${props.projectId}`,
 }));
 vi.mock("./ProjectActivityView", () => ({
   ProjectActivityView: (props: { projectId: string; onOpenThread: (id: string) => void }) => (
@@ -113,7 +112,7 @@ describe("ProjectViewSheet", () => {
     expect(view.host.textContent).toContain("memory:p1");
     expect(view.button("Memory").getAttribute("aria-selected")).toBe("true");
     act(() => view.button("Heavy work").click());
-    expect(view.host.textContent).toContain("commands:p1queue:p1");
+    expect(view.host.textContent).toContain("heavy:p1");
     act(() => view.button("Close Alpha").click());
     expect(mocks.goBack).toHaveBeenCalledTimes(1);
     await view.unmount();

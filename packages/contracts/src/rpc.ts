@@ -570,12 +570,16 @@ import {
   HeavyQueueSetDeviceIdleMinutesInput,
   HeavyQueueSetEnabledInput,
   HeavyQueueSetMaxRunningInput,
+  HeavyQueueSetMacMemoryFloorPercentInput,
+  HeavyQueueSetMacCpuCeilingPercentInput,
+  HeavyQueueSetHeavyOverLimitSecondsInput,
   HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
   HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
+import { HeavyNoticeBatch } from "./heavyNotices.ts";
 import {
   NoteConflictError,
   NoteDocument,
@@ -878,10 +882,14 @@ export const WS_METHODS = {
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueRoute: "heavyQueue.route",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
+  heavyQueueSetMacMemoryFloorPercent: "heavyQueue.setMacMemoryFloorPercent",
+  heavyQueueSetMacCpuCeilingPercent: "heavyQueue.setMacCpuCeilingPercent",
+  heavyQueueSetHeavyOverLimitSeconds: "heavyQueue.setHeavyOverLimitSeconds",
   heavyQueueSetPriority: "heavyQueue.setPriority",
   heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
   heavyQueueSetDeviceIdleMinutes: "heavyQueue.setDeviceIdleMinutes",
   heavyQueueSubscribeCommands: "heavyQueue.subscribeCommands",
+  heavyQueueSubscribeNotices: "heavyQueue.subscribeNotices",
   heavyQueueStopCommand: "heavyQueue.stopCommand",
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
@@ -2729,6 +2737,30 @@ const WsHeavyQueueSetMaxRunningRpc = Rpc.make(WS_METHODS.heavyQueueSetMaxRunning
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueSetMacMemoryFloorPercentRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
+  {
+    payload: HeavyQueueSetMacMemoryFloorPercentInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsHeavyQueueSetMacCpuCeilingPercentRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
+  {
+    payload: HeavyQueueSetMacCpuCeilingPercentInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsHeavyQueueSetHeavyOverLimitSecondsRpc = Rpc.make(
+  WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+  {
+    payload: HeavyQueueSetHeavyOverLimitSecondsInput,
+    error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsHeavyQueueSetPriorityRpc = Rpc.make(WS_METHODS.heavyQueueSetPriority, {
   payload: HeavyQueueSetPriorityInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -2747,6 +2779,13 @@ const WsHeavyQueueSetDeviceIdleMinutesRpc = Rpc.make(WS_METHODS.heavyQueueSetDev
 const WsHeavyQueueSubscribeCommandsRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeCommands, {
   payload: Schema.Struct({}),
   success: HeavyCommandsState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsHeavyQueueSubscribeNoticesRpc = Rpc.make(WS_METHODS.heavyQueueSubscribeNotices, {
+  payload: Schema.Struct({}),
+  success: HeavyNoticeBatch,
   error: EnvironmentAuthorizationError,
   stream: true,
 });
@@ -3176,10 +3215,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueRouteRpc,
   WsHeavyQueueSetMaxRunningRpc,
+  WsHeavyQueueSetMacMemoryFloorPercentRpc,
+  WsHeavyQueueSetMacCpuCeilingPercentRpc,
+  WsHeavyQueueSetHeavyOverLimitSecondsRpc,
   WsHeavyQueueSetPriorityRpc,
   WsHeavyQueueSetClaudeHookRpc,
   WsHeavyQueueSetDeviceIdleMinutesRpc,
   WsHeavyQueueSubscribeCommandsRpc,
+  WsHeavyQueueSubscribeNoticesRpc,
   WsHeavyQueueStopCommandRpc,
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,

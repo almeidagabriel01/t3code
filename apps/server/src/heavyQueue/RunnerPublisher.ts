@@ -4,6 +4,8 @@
  * effective values so admission resolves a folder without a server.
  */
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import {
@@ -21,11 +23,12 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../config.ts";
+import { devWorktreeCleanupBlocked } from "../devWorktreeCleanupGuard.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
-import type { RunnerBlock } from "./runner.ts";
-import { checkLinux } from "./runnerExec.ts";
+import { runnerCopyId, type RunnerBlock } from "./runner.ts";
+import { checkLinux, removeRunnerCopy } from "./runnerExec.ts";
 
 const pick = <K extends string>(
   source: Readonly<Record<string, unknown>>,
@@ -55,10 +58,56 @@ const fingerprint = (block: RunnerBlock) => JSON.stringify(block);
 export const runnerOnAnywhere = (block: RunnerBlock) =>
   block.global.runnerEnabled || block.projects.some((project) => project.config.runnerEnabled);
 
+const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+
+/**
+ * The Linux copy to delete with a removed worktree, or null when no Runner is set up here. `remoto`
+ * also runs by hand outside the Runner, so any project with the Runner on counts.
+ */
+export const copyRemovalFor = (
+  block: RunnerBlock,
+  realWorktreePath: string,
+  now: number,
+): QueueFile.CopyRemoval | null =>
+  runnerOnAnywhere(block) && block.machine.runnerHost.trim() !== ""
+    ? {
+        host: block.machine.runnerHost,
+        id: runnerCopyId(realWorktreePath, sha1),
+        path: realWorktreePath,
+        at: now,
+      }
+    : null;
+
+/**
+ * Tries the pending Linux copy removals for this host. A worktree recreated at the same path syncs
+ * to the same copy again, so its removal is dropped. Stops at the first unreachable answer.
+ */
+export const drainCopyRemovals = async (
+  dir: string,
+  machine: RunnerBlock["machine"],
+  environment: Readonly<Record<string, string | undefined>>,
+  remove: typeof removeRunnerCopy = removeRunnerCopy,
+) => {
+  const done: QueueFile.CopyRemoval[] = [];
+  for (const entry of QueueFile.readDoc(dir).copyRemovals) {
+    if (entry.host !== machine.runnerHost) continue;
+    if (NodeFS.existsSync(entry.path)) {
+      done.push(entry);
+      continue;
+    }
+    const result = await remove(machine, environment, entry.id);
+    if (result === "removed") done.push(entry);
+    if (result === "unreachable") break;
+  }
+  QueueFile.settleCopyRemovals(dir, done);
+  return done.length;
+};
+
 export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLinux) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const settingsService = yield* ServerSettingsService;
+      const removalsBlocked = yield* devWorktreeCleanupBlocked();
       const projectStore = yield* ProjectStoreV2;
       const config = yield* ServerConfig;
       const publisher: RunnerBlock["publisher"] = {
@@ -106,6 +155,12 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
           try: () => QueueFile.recordHealth(dir, reading),
           catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
         }).pipe(Effect.ignore);
+        if (reading.ok && !removalsBlocked && QueueFile.readDoc(dir).copyRemovals.length > 0)
+          yield* Effect.tryPromise({
+            try: () => drainCopyRemovals(dir, block.machine, process.env),
+            catch: (cause) =>
+              new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+          }).pipe(Effect.ignore({ log: true }));
       });
 
       yield* settingsService.streamChanges.pipe(

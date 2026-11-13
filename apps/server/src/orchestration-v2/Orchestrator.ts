@@ -179,6 +179,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { endNativeSubagentTree } from "./processBoundWork.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { isRuntimePolicyAboveCeilingError, RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -295,12 +296,35 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+const SessionWorkKind = Schema.Literals([
+  "turn",
+  "request",
+  "command",
+  "tool call",
+  "subagent",
+  "background task",
+]);
+type SessionWorkKind = typeof SessionWorkKind.Type;
+const SESSION_WORK_PHRASES: Record<SessionWorkKind, string> = {
+  turn: "the agent is working",
+  request: "a request is waiting for your answer",
+  command: "a command is running",
+  "tool call": "a tool is running",
+  subagent: "a subagent is running",
+  "background task": "a background task is running",
+};
+
 export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<OrchestratorProviderSelectionBusyError>()(
   "OrchestratorProviderSelectionBusyError",
-  { commandId: CommandId, threadId: ThreadId },
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    change: Schema.optional(Schema.Literals(["provider", "model", "mode"])),
+    holding: Schema.optional(SessionWorkKind),
+  },
 ) {
   override get message(): string {
-    return `Thread ${this.threadId} has an active turn. Wait for it to finish, then retry the provider selection change.`;
+    return `Can't switch ${this.change ?? "model"} while ${SESSION_WORK_PHRASES[this.holding ?? "turn"]}`;
   }
 }
 
@@ -3873,20 +3897,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 targetModelSelection: command.modelSelection,
               })
               .pipe(mapDispatchError(command));
-            if (plan.instanceChanged || plan.releaseProviderSessionIds.length > 0) {
-              const projection = yield* loadProjectionForCommand(command, ["runs"], {
-                turnItemTypes: [],
+            const holding =
+              plan.instanceChanged || plan.releaseProviderSessionIds.length > 0
+                ? yield* heldSessionWork(
+                    command,
+                    liveSessionIds(providerContext, (session) =>
+                      plan.releaseProviderSessionIds.includes(session.id),
+                    ),
+                  )
+                : undefined;
+            if (holding !== undefined) {
+              return yield* new OrchestratorProviderSelectionBusyError({
+                commandId: command.commandId,
+                threadId: command.threadId,
+                change: plan.instanceChanged ? "provider" : "model",
+                holding,
               });
-              if (projection.runs.some(isActiveRun)) {
-                return yield* new OrchestratorProviderSelectionBusyError({
-                  commandId: command.commandId,
-                  threadId: command.threadId,
-                });
-              }
             }
             return plan;
           })
         : null;
+    const modeDetachedSessionIds =
+      command.type === "thread.runtime-mode.set"
+        ? liveSessionIds(
+            providerContext,
+            (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+          )
+        : new Set<ProviderSessionId>();
+    const modeHolding =
+      command.type === "thread.runtime-mode.set" && modeDetachedSessionIds.size > 0
+        ? yield* heldSessionWork(command, modeDetachedSessionIds)
+        : undefined;
+    if (modeHolding !== undefined) {
+      return yield* new OrchestratorProviderSelectionBusyError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+        change: "mode",
+        holding: modeHolding,
+      });
+    }
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -10705,6 +10754,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
+  const liveSessionIds = (
+    context: { readonly providerSessions: ReadonlyArray<OrchestrationV2ProviderSession> } | null,
+    released: (session: OrchestrationV2ProviderSession) => boolean,
+  ) =>
+    new Set(
+      (context?.providerSessions ?? [])
+        .filter(
+          (session) =>
+            session.status !== "stopped" && session.status !== "error" && released(session),
+        )
+        .map((session) => session.id),
+    );
+
+  /**
+   * What releasing these sessions now would kill: a turn, a request waiting on the user, or work
+   * their process runs in the background. Work no live session holds cannot be lost, so it never blocks.
+   */
+  const heldSessionWork = (
+    command: OrchestrationV2Command,
+    releasedSessionIds: ReadonlySet<ProviderSessionId>,
+  ) =>
+    loadProjectionForCommand(command, ["runs", "turnItems", "providerThreads", "runtimeRequests"], {
+      turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+      turnItemStatuses: ["pending", "running", "waiting"],
+      runtimeRequestStatuses: ["pending"],
+    }).pipe(
+      Effect.map((projection): SessionWorkKind | undefined => {
+        if (
+          projection.runtimeRequests.some(
+            (request) =>
+              request.responseCapability.type === "live" &&
+              releasedSessionIds.has(request.responseCapability.providerSessionId),
+          )
+        ) {
+          return "request";
+        }
+        if (projection.runs.some(isActiveRun)) return "turn";
+        const releasedProviderThreadIds = new Set(
+          projection.providerThreads
+            .filter(
+              (providerThread) =>
+                providerThread.providerSessionId != null &&
+                releasedSessionIds.has(providerThread.providerSessionId),
+            )
+            .map((providerThread) => providerThread.id),
+        );
+        const item = pendingBackgroundTurnItems({
+          turnItems: projection.turnItems,
+          runs: projection.runs,
+        }).find(
+          (candidate) =>
+            candidate.providerThreadId != null &&
+            releasedProviderThreadIds.has(candidate.providerThreadId) &&
+            // A delegated task runs in its own thread and session.
+            (candidate.type !== "subagent" || candidate.origin === "provider_native"),
+        );
+        if (item !== undefined) {
+          return item.type === "command_execution"
+            ? "command"
+            : item.type === "subagent"
+              ? "subagent"
+              : "tool call";
+        }
+        return projection.providerThreads.some(
+          (providerThread) =>
+            releasedProviderThreadIds.has(providerThread.id) &&
+            (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        )
+          ? "background task"
+          : undefined;
+      }),
+    );
+
   const preparedRunState = (
     command: Extract<
       OrchestrationV2Command,
@@ -11149,76 +11271,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       });
       if (item.type !== "subagent") continue;
-      // A native subagent died with the process too: end its record, its own
-      // thread's runless root turn, and the subagents it started there, which
-      // a provider can record on that thread rather than this one.
-      const dying: Array<{
-        readonly projection: Pick<
-          OrchestrationV2ThreadProjection,
-          "nodes" | "subagents" | "turnItems"
-        >;
-        readonly subagent: Pick<
-          Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>,
-          "subagentId" | "origin" | "childThreadId" | "providerInstanceId"
-        >;
-      }> = [{ projection: input.projection, subagent: item }];
-      for (const { projection, subagent } of dying) {
-        const ended = yield* endOrphanedNativeSubagent({
-          projection,
-          subagentId: subagent.subagentId,
-          status: "interrupted",
-          now: input.now,
-          emitted: yield* Ref.get(input.events),
-          allocateEventId,
-        }).pipe(mapDispatchError(input.command));
-        yield* Ref.update(input.events, (events) => [...events, ...ended]);
-        const childThreadId = subagent.childThreadId;
-        if (
-          subagent.origin !== "provider_native" ||
-          childThreadId === null ||
-          childThreadIds.has(childThreadId)
-        ) {
-          continue;
-        }
-        childThreadIds.add(childThreadId);
-        const child = yield* projectionStore
-          .getThreadRecords(childThreadId, ["nodes", "providerTurns", "subagents", "turnItems"], {
-            // Runless items are the subagent's; any run there is the user's own.
-            turnItemRunIds: [null],
-            turnItemStatuses: ["pending", "running", "waiting"],
-          })
-          .pipe(
-            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
-            mapDispatchError(input.command),
-          );
-        if (child === null) continue;
-        const childEnded = yield* endRunlessRootTurns({
-          threadId: childThreadId,
-          providerInstanceId: subagent.providerInstanceId,
-          projection: child,
-          status: "interrupted",
-          now: input.now,
-          emitted: yield* Ref.get(input.events),
-          allocateEventId,
-        }).pipe(mapDispatchError(input.command));
-        yield* Ref.update(input.events, (events) => [...events, ...childEnded]);
-        for (const nested of child.turnItems) {
-          if (nested.type === "subagent") dying.push({ projection: child, subagent: nested });
-        }
-        for (const nested of child.subagents) {
-          if (nested.origin === "provider_native" && nested.runId === null) {
-            dying.push({
-              projection: child,
-              subagent: {
-                subagentId: nested.id,
-                origin: nested.origin,
-                childThreadId: nested.childThreadId,
-                providerInstanceId: nested.providerInstanceId,
-              },
-            });
-          }
-        }
-      }
+      const ended = yield* endNativeSubagentTree({
+        projection: input.projection,
+        subagent: item,
+        status: "interrupted",
+        now: input.now,
+        emitted: yield* Ref.get(input.events),
+        visitedChildThreadIds: childThreadIds,
+        readChild: (childThreadId) =>
+          projectionStore
+            .getThreadRecords(childThreadId, ["nodes", "providerTurns", "subagents", "turnItems"], {
+              // Runless items are the subagent's; any run there is the user's own.
+              turnItemRunIds: [null],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            })
+            .pipe(
+              Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+            ),
+        allocateEventId,
+      }).pipe(mapDispatchError(input.command));
+      yield* Ref.update(input.events, (events) => [...events, ...ended]);
     }
     for (const providerThread of input.projection.providerThreads) {
       if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) continue;

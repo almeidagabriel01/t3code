@@ -12,7 +12,9 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
   type Project,
+  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -2953,6 +2955,120 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
     });
     yield* Effect.forEach(providerThreads, writeProviderThread);
+    const itemBase = {
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerTurnId: null,
+      parentItemId: null,
+      status: "running" as const,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    const openItems: ReadonlyArray<OrchestrationV2TurnItem> = [
+      ...providerThreads.map((providerThread, index) => ({
+        ...itemBase,
+        id: idAllocator.derive.turnItemFromProviderItem({
+          driver: CODEX_DRIVER,
+          nativeItemId: `open-command-${index}`,
+        }),
+        providerThreadId: providerThread.id,
+        nativeItemRef: null,
+        ordinal: index * 3,
+        type: "command_execution" as const,
+        input: "cd ~/DEV; for p in *; do echo $p; done",
+      })),
+      ...providerThreads.map((providerThread, index) => ({
+        ...itemBase,
+        id: idAllocator.derive.turnItemFromProviderItem({
+          driver: CODEX_DRIVER,
+          nativeItemId: `open-tool-${index}`,
+        }),
+        providerThreadId: providerThread.id,
+        nativeItemRef: null,
+        ordinal: index * 3 + 1,
+        type: "dynamic_tool" as const,
+        toolName: "mcp__t3-code__t3_docs",
+        input: { action: "read" },
+      })),
+      ...providerThreads.map((providerThread, index) => ({
+        ...itemBase,
+        id: idAllocator.derive.turnItemFromProviderItem({
+          driver: CODEX_DRIVER,
+          nativeItemId: `open-subagent-${index}`,
+        }),
+        providerThreadId: providerThread.id,
+        nativeItemRef: null,
+        ordinal: index * 3 + 2,
+        type: "subagent" as const,
+        subagentId: NodeId.make(`subagent:${fixtureName}:${index}`),
+        origin: "provider_native" as const,
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        childThreadId: null,
+        prompt: "Review the change",
+        result: null,
+      })),
+    ];
+    const subagents = openItems.flatMap((item) =>
+      item.type === "subagent"
+        ? [
+            {
+              id: item.subagentId,
+              threadId,
+              runId: null,
+              parentNodeId: NodeId.make(`root:${fixtureName}`),
+              origin: item.origin,
+              createdBy: "agent" as const,
+              driver: CODEX_DRIVER,
+              providerInstanceId: item.providerInstanceId,
+              providerThreadId: item.providerThreadId ?? null,
+              childThreadId: null,
+              nativeTaskRef: null,
+              prompt: item.prompt,
+              title: null,
+              model: null,
+              status: "running" as const,
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          ]
+        : [],
+    );
+    yield* eventSink.write({
+      events: yield* Effect.forEach(openItems, (payload) =>
+        Effect.gen(function* () {
+          return {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "turn-item.updated" as const,
+            threadId,
+            driver: CODEX_DRIVER,
+            occurredAt: now,
+            payload,
+          };
+        }),
+      ),
+    });
+    yield* eventSink.write({
+      events: yield* Effect.forEach(subagents, (payload) =>
+        Effect.gen(function* () {
+          return {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "subagent.updated" as const,
+            threadId,
+            nodeId: payload.id,
+            driver: CODEX_DRIVER,
+            providerInstanceId: payload.providerInstanceId,
+            occurredAt: now,
+            payload,
+          };
+        }),
+      ),
+    });
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
     const rosters = Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -2964,7 +3080,27 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         ).map((task) => task.taskId),
       );
     });
-    return { threadId, providerSessionId, providerThreads, writeProviderThread, rosters };
+    // Per provider thread: [command, tool, subagent item, subagent record] statuses.
+    const itemStatuses = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return providerThreads.map((providerThread) => [
+        ...projection.turnItems
+          .filter((item) => item.providerThreadId === providerThread.id)
+          .map((item) => item.status),
+        ...projection.subagents
+          .filter((subagent) => subagent.providerThreadId === providerThread.id)
+          .map((subagent) => subagent.status),
+      ]);
+    });
+    return {
+      threadId,
+      providerSessionId,
+      providerThreads,
+      writeProviderThread,
+      rosters,
+      itemStatuses,
+    };
   });
 
 it.effect(
@@ -2974,15 +3110,19 @@ it.effect(
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { threadId, providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
-          "provider-session-manager-detach-roster",
-        );
+        const { threadId, providerSessionId, rosters, itemStatuses } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
         assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
 
         yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
 
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
         assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+        // Its process ran them, so nothing can end them later; the other session's stay open.
+        assert.deepStrictEqual(yield* itemStatuses, [
+          ["cancelled", "cancelled", "cancelled", "cancelled"],
+          ["running", "running", "running", "running"],
+        ]);
       });
 
       yield* effect.pipe(
@@ -2998,13 +3138,17 @@ it.effect("ProviderSessionManagerV2 keeps the roster of a runtime whose tasks ca
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
       const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+      const { providerSessionId, rosters, itemStatuses } = yield* openSessionWithBackgroundCommand(
         "provider-session-manager-outliving-roster",
       );
 
       yield* manager.close(providerSessionId);
 
       assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+      assert.deepStrictEqual(yield* itemStatuses, [
+        ["running", "running", "running", "running"],
+        ["running", "running", "running", "running"],
+      ]);
     });
 
     yield* effect.pipe(
@@ -3753,6 +3897,57 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 never idle-releases a session waiting on a user's answer", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = yield* idAllocator.allocate.project({
+        fixtureName: "provider-session-manager-idle-request",
+      });
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: "provider-session-manager-idle-request",
+        projectId,
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const pendingRequest = yield* makePendingRuntimeRequestEvents({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        providerThread,
+        now,
+      });
+      yield* eventSink.write({ events: pendingRequest.events });
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+      yield* TestClock.adjust("5 seconds");
+
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      const request = (yield* projectionStore.getThreadProjection(threadId)).runtimeRequests.find(
+        (candidate) => candidate.id === pendingRequest.requestId,
+      );
+      assert.equal(request?.status, "pending");
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 1_000, capabilities: ExclusiveCapabilities }),
+      ),
+    );
+  }),
 );
 
 it.effect(

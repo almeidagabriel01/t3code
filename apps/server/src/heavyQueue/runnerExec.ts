@@ -10,15 +10,18 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { RunnerMachineConfig } from "@t3tools/contracts";
 
+import { shellQuote } from "./heavyHook.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
   MARKER,
   NO_PROGRESS,
   parseHeartbeat,
+  installFailure,
   platformFailures,
   remoteOutcome,
   remoteStopScript,
+  removeCopyScript,
   sshArgs,
   type HealthCheck,
   type RemoteOutcome,
@@ -29,11 +32,170 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
-/** The Mac's `$SHELL -c` becomes `bash -c` there, and a Mac path to a program becomes its name. */
-export const remoteCommand = (program: string, args: ReadonlyArray<string>) => {
+/**
+ * The command as Linux runs it from the same folder of its synced copy: a path inside `root`
+ * becomes relative to `cwd` (alone or as `--flag=<path>`), the Mac's `$SHELL` becomes `bash`, and
+ * a program elsewhere on the Mac goes by its name.
+ */
+export const remoteCommand = (
+  program: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+) => {
+  const local = (path: string) => {
+    if (!NodePath.isAbsolute(path)) return null;
+    const relative = NodePath.relative(root, path);
+    if (relative.startsWith("..") || NodePath.isAbsolute(relative)) return null;
+    return NodePath.relative(cwd, path) || ".";
+  };
+  const arg = (value: string) => {
+    const flag = /^(-[\w.-]*=)(.+)$/.exec(value);
+    if (flag !== null) return flag[1]! + (local(flag[2]!) ?? flag[2]!);
+    return local(value) ?? value;
+  };
   const name = NodePath.basename(program);
-  if (SHELLS.has(name)) return ["bash", ...args];
-  return [program.includes("/") ? name : program, ...args];
+  if (SHELLS.has(name)) return ["bash", ...args.map(arg)];
+  const inside = local(program);
+  const remote =
+    inside === null
+      ? program.includes("/") && NodePath.isAbsolute(program)
+        ? name
+        : program
+      : inside.startsWith(".")
+        ? inside
+        : `./${inside}`;
+  return [remote, ...args.map(arg)];
+};
+
+/**
+ * Runs `command` with each `node_modules/.bin` from its folder up to the checkout first on PATH,
+ * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
+ * `remoto-rodar` sets its own PATH. Before it starts, a lazy install left unfinished in the copy
+ * (Electron fetches its binary on first use) runs once, so the command's workers never race on it.
+ */
+export const withProjectBins = (
+  command: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  env: ReadonlyArray<string> = [],
+) => {
+  const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
+  const folders = Array.from({ length: depth + 1 }, (_, up) =>
+    up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`,
+  );
+  const bins = folders.map((folder) => `${folder}/node_modules/.bin`);
+  // ponytail: Electron's install.js + path.txt only; add a row when another package fetches lazily.
+  const electrons = folders.flatMap((folder) => [
+    `"${folder}"/node_modules/electron`,
+    `"${folder}"/node_modules/.pnpm/electron@*/node_modules/electron`,
+  ]);
+  const settle = `for e in ${electrons.join(" ")}; do [ -f "$e/install.js" ] || continue; [ -f "$e/path.txt" ] && [ -e "$e/dist/$(cat "$e/path.txt")" ] && continue; printf '\\036remoto phase=installing\\n' >&2; (cd "$e" && node install.js) >&2 || { printf '\\036remoto install=electron\\n' >&2; exit 1; }; printf '\\036remoto phase=running\\n' >&2; done`;
+  // The pre-flight: a program Linux can't find never starts, and says which one it was.
+  const program = shellQuote(command[0] ?? "");
+  return [
+    "bash",
+    "-c",
+    `export PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle}; exec "$@"`,
+    "t3",
+    ...(env.length === 0 ? [] : ["env", ...env]),
+    ...command,
+  ];
+};
+
+type Git = (args: ReadonlyArray<string>) => string | null;
+
+const gitIn =
+  (root: string): Git =>
+  (args) => {
+    try {
+      return NodeChildProcess.execFileSync("git", ["-c", "core.quotePath=false", ...args], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+
+const CHANGED_SCRIPT = "check:changed";
+
+/** The project's `check:changed` reads the inputs the Runner hands it, so it runs without git. */
+const takesChangedInputs = (cwd: string, root: string) => {
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    try {
+      const scripts = JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "package.json"), "utf8"))
+        ?.scripts as Record<string, unknown> | undefined;
+      const script = scripts?.[CHANGED_SCRIPT];
+      if (typeof script === "string") {
+        return script
+          .split(/\s+/)
+          .filter((word) => /\.[cm]?[jt]s$/.test(word))
+          .some((file) => {
+            try {
+              return NodeFS.readFileSync(NodePath.join(dir, file), "utf8").includes(
+                "CHECK_CHANGED_FILES",
+              );
+            } catch {
+              return false;
+            }
+          });
+      }
+    } catch {
+      // No package.json here: look further up.
+    }
+    if (dir === root || dir === NodePath.dirname(dir)) return false;
+  }
+};
+
+/**
+ * What `check:changed` would ask git, answered on this Mac for a Linux copy without `.git`: the
+ * merge base with the closest `<remote>/main` (or the ref it names) and the changed and untracked
+ * files, as `env` assignments. Null when it is not that check, or Linux can't run it.
+ */
+export const changedInputs = (
+  args: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  git: Git = gitIn(root),
+): ReadonlyArray<string> | null => {
+  const at = args.indexOf(CHANGED_SCRIPT);
+  if (at < 0 || !takesChangedInputs(cwd, root)) return null;
+  // Its own `--timeout 3300` and `--concurrency 4` take a value; any other word is the ref.
+  const explicit = args
+    .slice(at + 1)
+    .find(
+      (arg, index, rest) =>
+        !arg.startsWith("-") && !/^--(timeout|concurrency)$/.test(rest[index - 1] ?? ""),
+    );
+  const candidates =
+    explicit === undefined
+      ? (git(["remote"]) ?? "")
+          .split("\n")
+          .filter(Boolean)
+          .map((name) => ({ ref: `${name}/main`, rev: `refs/remotes/${name}/main` }))
+      : [{ ref: explicit, rev: explicit }];
+  let best: { ref: string; base: string; ahead: number } | undefined;
+  for (const { ref, rev } of candidates) {
+    const base = git(["merge-base", "HEAD", rev]);
+    if (!base) continue;
+    const ahead = Number(git(["rev-list", "--count", `${base}..HEAD`]));
+    if (best === undefined || ahead < best.ahead) best = { ref, base, ahead };
+  }
+  if (best === undefined) return null;
+  const listed = (more: ReadonlyArray<string>) => (git(more) ?? "").split("\n").filter(Boolean);
+  const files = [
+    ...new Set([
+      ...listed(["diff", "--name-only", "--no-renames", best.base, "--"]),
+      ...listed(["ls-files", "--others", "--exclude-standard"]),
+    ]),
+  ].sort();
+  return [
+    `CHECK_CHANGED_BASE=${best.base}`,
+    `CHECK_CHANGED_REF=${best.ref}`,
+    `CHECK_CHANGED_FILES=${files.join("\n")}`,
+  ];
 };
 
 const executable = (path: string) => {
@@ -94,6 +256,24 @@ export const checkLinux = async (
   return { ok: false, error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why };
 };
 
+export type CopyRemovalResult = "removed" | "busy" | "unreachable";
+
+/** Deletes the Linux copy of a removed worktree; anything but a confirmed answer leaves it pending. */
+export const removeRunnerCopy = async (
+  machine: RunnerMachineConfig,
+  environment: Env,
+  id: string,
+): Promise<CopyRemovalResult> => {
+  const result = await ssh(
+    machine,
+    environment,
+    removeCopyScript(id),
+    (machine.runnerSshTimeoutSeconds + 60) * 1000,
+  );
+  const said = result.stdout.trim().split("\n").pop();
+  return result.code === 0 && (said === "removed" || said === "busy") ? said : "unreachable";
+};
+
 export type StopResult = "gone" | "stopped" | "killed" | "alive" | "unreachable";
 
 /** Ends whatever is left of run `id` there; only "alive" and "unreachable" leave it unconfirmed. */
@@ -123,9 +303,13 @@ export interface LinuxRunOptions {
   readonly program: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+  /** The checkout `remoto` syncs from `cwd`. */
+  readonly root: string;
   readonly environment: Env;
   readonly machine: RunnerMachineConfig;
   readonly macOnly: ReadonlyArray<string>;
+  /** `NAME=value` pairs the command runs with there. */
+  readonly env?: ReadonlyArray<string>;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -137,6 +321,8 @@ export interface LinuxRun {
     readonly progress: RemoteProgress;
     /** Output lines naming Mac-only files, for a failed run. */
     readonly platform: ReadonlyArray<string>;
+    /** A package whose install was unfinished there, from the wrapper or the output. */
+    readonly install: string | null;
   }>;
   /** Ends the local `remoto`; the caller then confirms the remote side with `stopRemote`. */
   readonly kill: (signal: NodeJS.Signals) => void;
@@ -169,7 +355,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const { machine } = options;
   const child = NodeChildProcess.spawn(
     options.remoto,
-    remoteCommand(options.program, options.args),
+    withProjectBins(
+      remoteCommand(options.program, options.args, options.cwd, options.root),
+      options.cwd,
+      options.root,
+      options.env,
+    ),
     {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],
@@ -184,8 +375,10 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   );
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
+  let install: string | null = null;
   const scan = (line: string) => {
     for (const hit of platformFailures(line, options.macOnly)) platform.add(hit);
+    install ??= installFailure(line);
   };
   const out = lineSplitter(scan);
   const err = lineSplitter((line, newline) => {
@@ -209,6 +402,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
     outcome: RemoteOutcome;
     progress: RemoteProgress;
     platform: ReadonlyArray<string>;
+    install: string | null;
   }>((resolve) => {
     let settled = false;
     const finish = () => {
@@ -216,7 +410,12 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       settled = true;
       out.end();
       err.end();
-      resolve({ outcome: remoteOutcome(progress), progress, platform: [...platform] });
+      resolve({
+        outcome: remoteOutcome(progress),
+        progress,
+        platform: [...platform],
+        install: progress.install ?? install,
+      });
     };
     child.on("error", (error) => {
       options.stderr(`[t3 heavy] cannot run remoto: ${error.message}\n`);

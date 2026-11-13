@@ -10,11 +10,19 @@ import {
   ThreadId,
   type EnvironmentId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type RuntimeMode,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { prepareTurnAttachments } from "../../lib/attachmentUpload";
+import {
+  serializeComposerMessageForServer,
+  uploadedComposerContext,
+} from "../../lib/composerContext";
+import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { setStartingSideChat } from "../../state/starting-side-chats";
@@ -57,6 +65,12 @@ export function useStartSideChat(environmentId: EnvironmentId) {
   };
 }
 
+/** The composer's attachments and their context records, which the side chat's message carries. */
+export interface SideChatMessageAttachments {
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly context: OrchestrationMessageContext | undefined;
+}
+
 /**
  * Forks `source` at its latest stable point into a side chat and sends `prompt` there. Its
  * screen opens with the message at once and shows a failed start; resolves false when it did
@@ -74,20 +88,30 @@ export function useStartSideChatWithPrompt() {
     source: ScopedThreadRef,
     prompt: string,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+    message: SideChatMessageAttachments = { attachments: [], context: undefined },
   ): Promise<boolean> => {
+    const { attachments } = message;
     const targetThreadId = ThreadId.make(uuidv4());
-    setStartingSideChat(targetThreadId, { prompt, error: null });
+    // The screen shows inline attachment references by their names, as the sent message does.
+    const shownPrompt =
+      replaceComposerContextReferences(prompt, (reference) => reference.label).trim() ||
+      attachments.map((attachment) => attachment.name).join(", ");
+    const showError = (error: unknown, fallback: string) =>
+      setStartingSideChat(targetThreadId, {
+        prompt: shownPrompt,
+        error: error instanceof Error ? error.message : fallback,
+      });
+    setStartingSideChat(targetThreadId, { prompt: shownPrompt, error: null });
     openLinkedThread({ environmentId: source.environmentId, threadId: targetThreadId });
     const fail = (
       failure: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
       fallback: string,
       created: boolean,
     ) => {
-      const error = isAtomCommandInterrupted(failure) ? null : squashAtomCommandFailure(failure);
-      setStartingSideChat(targetThreadId, {
-        prompt,
-        error: error instanceof Error ? error.message : fallback,
-      });
+      showError(
+        isAtomCommandInterrupted(failure) ? null : squashAtomCommandFailure(failure),
+        fallback,
+      );
       // Drops the empty side chat a failed start leaves behind; one that got its message stays.
       if (created) {
         void deleteThread({
@@ -97,6 +121,20 @@ export function useStartSideChatWithPrompt() {
       }
       return false;
     };
+    // Uploads settle first, so one that cannot go out leaves no side chat behind.
+    const prepared = await prepareTurnAttachments({
+      environmentId: source.environmentId,
+      attachments,
+      supportsImageUploads: true,
+    }).catch((error: unknown) => {
+      showError(error, "Could not upload the attachments.");
+      return null;
+    });
+    if (prepared === null) return false;
+    if (prepared.status === "abandoned") {
+      showError(null, "Could not upload the attachments.");
+      return false;
+    }
     const fork = await forkSideChat({
       environmentId: source.environmentId,
       input: {
@@ -129,11 +167,14 @@ export function useStartSideChatWithPrompt() {
         message: {
           messageId: MessageId.make(uuidv4()),
           role: "user",
-          text: prompt,
-          attachments: [],
+          ...serializeComposerMessageForServer(
+            prompt,
+            uploadedComposerContext(message.context, attachments, prepared.attachments),
+          ),
+          attachments: prepared.attachments,
         },
         modelSelection: settings.modelSelection,
-        titleSeed: deriveThreadTitleSeed({ text: prompt, attachments: [] }),
+        titleSeed: deriveThreadTitleSeed({ text: prompt, attachments }),
         runtimeMode: settings.runtimeMode,
         interactionMode: "default",
         createdAt: new Date().toISOString(),

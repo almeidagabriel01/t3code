@@ -60,6 +60,10 @@ const defaults = () => ({
     },
   ],
 });
+vi.mock("./AssistantTaskRows", () => ({
+  AssistantTaskRows: () => null,
+  useAssistantTaskSections: () => ({ pinned: [], open: [], snoozed: [], settled: [] }),
+}));
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: (props: { label: string; onPress: () => void }) => (
     <button aria-label={props.label} onClick={props.onPress} />

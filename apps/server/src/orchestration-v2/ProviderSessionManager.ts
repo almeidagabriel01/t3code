@@ -55,6 +55,11 @@ import { effectiveMemoryGrant } from "../memory/MemoryAccess.ts";
 import type { MemorySnapshotPolicy } from "../memory/MemorySnapshot.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
+import {
+  endNativeSubagentTree,
+  endProcessBoundTurnItems,
+  processBoundTurnItems,
+} from "./processBoundWork.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -866,6 +871,105 @@ export const layerWithOptions = (
         }
       });
 
+      // The closed process ran these, so no provider event can end them. Shutdown leaves them to
+      // restart recovery, which tells the continuation what was cut.
+      const writeReleasedTurnItemEvents = Effect.fn(
+        "ProviderSessionManager.writeReleasedTurnItemEvents",
+      )(function* (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
+      }) {
+        if (
+          input.reason === "server_shutdown" ||
+          input.entry.runtime.backgroundTasksEndWithProcess !== true
+        ) {
+          return;
+        }
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const status = input.reason === "runtime_error" ? "failed" : "cancelled";
+        const now = yield* DateTime.now;
+        const events: Array<OrchestrationV2DomainEvent> = [];
+        const visitedChildThreadIds = new Set<ThreadId>();
+        for (const threadId of releasedThreadIds(input)) {
+          const allocateEventId = () => idAllocator.allocate.event({ threadId, providerSessionId });
+          const projection = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["providerThreads", "turnItems", "subagents"],
+            {
+              turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          );
+          const sessionProviderThreadIds = new Set(
+            projection.providerThreads
+              .filter((providerThread) => providerThread.providerSessionId === providerSessionId)
+              .map((providerThread) => providerThread.id),
+          );
+          // Session ids survive a restart, so only work that predates this release is ours.
+          const ours = projection.turnItems.filter(
+            (item) =>
+              item.providerThreadId != null &&
+              sessionProviderThreadIds.has(item.providerThreadId) &&
+              (item.startedAt === null ||
+                DateTime.isLessThanOrEqualTo(item.startedAt, input.releasedAt)),
+          );
+          const items = processBoundTurnItems(ours);
+          const subagents = ours.flatMap((item) =>
+            item.type === "subagent" && item.origin === "provider_native" ? [item] : [],
+          );
+          if (items.length === 0 && subagents.length === 0) continue;
+          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
+            nodeIds: [
+              ...items.flatMap((item) => item.nodeId ?? []),
+              ...subagents.map((item) => item.subagentId),
+            ],
+          });
+          events.push(
+            ...(yield* endProcessBoundTurnItems({
+              items,
+              nodes,
+              status,
+              now,
+              owner: { driver: input.entry.runtime.driver },
+              allocateEventId,
+            })),
+          );
+          for (const subagent of subagents) {
+            events.push(
+              ...(yield* endNativeSubagentTree({
+                projection: { ...projection, nodes },
+                subagent,
+                status,
+                now,
+                emitted: events,
+                visitedChildThreadIds,
+                readChild: (childThreadId) =>
+                  projectionStore
+                    .getThreadRecords(
+                      childThreadId,
+                      ["nodes", "providerTurns", "subagents", "turnItems"],
+                      {
+                        turnItemRunIds: [null],
+                        turnItemStatuses: ["pending", "running", "waiting"],
+                      },
+                    )
+                    .pipe(
+                      Effect.catchTags({
+                        ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                      }),
+                    ),
+                allocateEventId,
+              })),
+            );
+          }
+        }
+        if (events.length > 0) {
+          yield* eventSink.write({ events });
+        }
+      });
+
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
       // Keep OpenCode's roster: its background subagents share a server and can outlive the session.
       const readReleasedBackgroundTasks = Effect.fn(
@@ -987,6 +1091,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedTurnItemEvents(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
@@ -1245,6 +1350,40 @@ export const layerWithOptions = (
           ),
         );
 
+      /**
+       * A live request nobody answered yet, plus with `withRoster` the tasks the provider still lists.
+       * Checked under the request permit so a runless request mid-persist is not cancelled.
+       */
+      const holdsUnfinishedRecords = (
+        entry: LiveSessionEntry,
+        options: { readonly withRoster: boolean },
+      ) => {
+        const providerSessionId = entry.runtime.providerSessionId;
+        return Effect.forEach(entry.attachedThreadIds, (threadId) =>
+          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
+            runtimeRequestStatuses: ["pending"],
+          }),
+        ).pipe(
+          Effect.map((projections) =>
+            projections.some(
+              (projection) =>
+                projection.runtimeRequests.some(
+                  (request) =>
+                    request.responseCapability.type === "live" &&
+                    request.responseCapability.providerSessionId === providerSessionId,
+                ) ||
+                (options.withRoster &&
+                  projection.providerThreads.some(
+                    (providerThread) =>
+                      providerThread.providerSessionId === providerSessionId &&
+                      (providerThread.pendingBackgroundTasks ?? []).length > 0,
+                  )),
+            ),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+      };
+
       const releaseIfStillIdle = Effect.fn("ProviderSessionManager.releaseIfStillIdle")(
         function* (input: {
           readonly providerSessionId: ProviderSessionId;
@@ -1308,6 +1447,8 @@ export const layerWithOptions = (
             reason: "idle_timeout",
             cancelIdleFiber: false,
             onlyIfIdleGeneration: input.generation,
+            // Waiting on the user is never idle; the answer brings activity that rearms the timer.
+            keepIf: holdsUnfinishedRecords(entry, { withRoster: false }),
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
@@ -1913,35 +2054,12 @@ export const layerWithOptions = (
                 Effect.catchCause(() => Effect.succeed(true)),
               );
         if (hasPendingWork) return;
-        // Checked under the request permit so a runless request mid-persist is not cancelled.
-        const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
-          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
-            runtimeRequestStatuses: ["pending"],
-          }),
-        ).pipe(
-          Effect.map((projections) =>
-            projections.some(
-              (projection) =>
-                projection.runtimeRequests.some(
-                  (request) =>
-                    request.responseCapability.type === "live" &&
-                    request.responseCapability.providerSessionId === providerSessionId,
-                ) ||
-                projection.providerThreads.some(
-                  (providerThread) =>
-                    providerThread.providerSessionId === providerSessionId &&
-                    (providerThread.pendingBackgroundTasks ?? []).length > 0,
-                ),
-            ),
-          ),
-          Effect.orElseSucceed(() => true),
-        );
         yield* releaseEntry({
           providerSessionId,
           reason: "idle_timeout",
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords,
+          keepIf: holdsUnfinishedRecords(entry, { withRoster: true }),
         }).pipe(logReleaseFailure(providerSessionId));
       });
 

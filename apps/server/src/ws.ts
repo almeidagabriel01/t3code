@@ -192,7 +192,10 @@ import { dedupeSnapshotBodies } from "@t3tools/shared/orchestrationV2DedupedBodi
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
-import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
+import {
+  dispatchRefusal,
+  userFacingDispatchErrorMessage,
+} from "./orchestration-v2/UserFacingErrors.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import { runClaudeChrome } from "./provider/claudeChromeRpc.ts";
@@ -280,6 +283,7 @@ import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
+import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
 import * as InstanceSpend from "./usage/InstanceSpend.ts";
@@ -1540,6 +1544,7 @@ export const layerWsRpc = (
       const keepAwake = yield* KeepAwake.KeepAwake;
       const heavyQueue = yield* HeavyQueue.HeavyQueue;
       const heavyCommands = yield* HeavyCommands.HeavyCommands;
+      const heavyNotices = yield* HeavyQueueNotices.HeavyQueueNotices;
       const telegramChannelSettings = yield* TelegramChannelSettings.TelegramChannelSettings;
       const noteWork = yield* NoteWork.NoteWorkService;
       const secretRequests = yield* SecretRequests.SecretRequests;
@@ -2333,11 +2338,13 @@ export const layerWsRpc = (
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
+                    const refusal = dispatchRefusal(cause);
                     return new OrchestrationV2DispatchCommandError({
                       commandId: command.commandId,
                       commandType: command.type,
                       message: detail ?? "Failed to dispatch orchestration V2 command",
                       ...(detail === undefined ? {} : { detail }),
+                      ...(refusal === undefined ? {} : { refusal }),
                       cause,
                     });
                   }),
@@ -2713,6 +2720,7 @@ export const layerWsRpc = (
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueueSubscribeCommands]: () => heavyCommands.stream,
+        [WS_METHODS.heavyQueueSubscribeNotices]: () => heavyNotices.stream,
         [WS_METHODS.heavyQueueStopCommand]: (input) => heavyCommands.stop(input),
         [WS_METHODS.heavyQueuePromote]: ({ id }) => heavyQueue.promote(id),
         [WS_METHODS.heavyQueueStartNow]: ({ id }) => heavyQueue.startNow(id),
@@ -2722,6 +2730,12 @@ export const layerWsRpc = (
         [WS_METHODS.heavyQueueSetEnabled]: ({ enabled }) => heavyQueue.setEnabled(enabled),
         [WS_METHODS.heavyQueueSetMaxRunning]: ({ maxRunning }) =>
           heavyQueue.setMaxRunning(maxRunning),
+        [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: ({ macMemoryFloorPercent }) =>
+          heavyQueue.setMacMemoryFloorPercent(macMemoryFloorPercent),
+        [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: ({ macCpuCeilingPercent }) =>
+          heavyQueue.setMacCpuCeilingPercent(macCpuCeilingPercent),
+        [WS_METHODS.heavyQueueSetHeavyOverLimitSeconds]: ({ heavyOverLimitSeconds }) =>
+          heavyQueue.setHeavyOverLimitSeconds(heavyOverLimitSeconds),
         [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),
         [WS_METHODS.heavyQueueRoute]: ({ id, runner, force }) =>
           heavyQueue.route(id, runner, force === true),

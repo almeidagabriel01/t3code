@@ -84,7 +84,22 @@ vi.mock("../threads/thread-settings-options", () => ({
   withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
-vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: ({ children }: { children?: ReactNode }) => <p>{children}</p>,
+  AppTextInput: (props: {
+    accessibilityLabel: string;
+    value: string;
+    onChangeText: (text: string) => void;
+    onEndEditing: () => void;
+  }) => (
+    <input
+      aria-label={props.accessibilityLabel}
+      value={props.value}
+      onChange={(event) => props.onChangeText(event.target.value)}
+      onBlur={props.onEndEditing}
+    />
+  ),
+}));
 vi.mock("../../components/ui/Button", () => ({
   Button: ({
     label,
@@ -110,7 +125,23 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
-vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
+vi.mock("../../components/ui/ListChoiceRow", () => ({
+  ListChoiceRow: (props: {
+    label: string;
+    selected: boolean;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button
+      role="radio"
+      aria-checked={props.selected}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
+      {props.label}
+    </button>
+  ),
+}));
 vi.mock("./components/SettingsSwitchRow", () => ({
   SettingsSwitchRow: ({
     label,
@@ -158,12 +189,18 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyCommandsSection: () => null,
-  HeavyQueueSection: (props: { environmentId: string; runner: object; machine?: string }) => (
-    <i
+  HeavyQueueSection: (props: {
+    environmentId: string;
+    runner: object;
+    machine?: string;
+    slowAgentJobs: { onChange: (value: boolean) => void };
+  }) => (
+    <button
       aria-label="heavy queue"
       data-env={props.environmentId}
       data-machine={props.machine}
       data-runner={JSON.stringify(props.runner)}
+      onClick={() => props.slowAgentJobs.onChange(false)}
     />
   ),
 }));
@@ -222,7 +259,13 @@ function environment(environmentId: string, label: string) {
         sidebarAutoSettleOnMerge: false,
       },
       environment: {
-        capabilities: { projectSettingsOverrides: true, threadAutoSettlement: true },
+        capabilities: {
+          projectSettingsOverrides: true,
+          threadAutoSettlement: true,
+          projectWorktreeCleanup: true,
+          settledWorktreeCleanup: true,
+          mergedWorktreeCleanup: true,
+        } as Record<string, boolean>,
       },
     },
   };
@@ -322,13 +365,15 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.runner!.severalMachines).toBe(true);
   });
 
-  it("passes the effective Runner mode to the heavy-work queue", () => {
+  it("passes the effective Runner mode to the heavy-work queue and saves its slow-down switch", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
-    expect(
-      JSON.parse(
-        container.querySelector<HTMLElement>('[aria-label="heavy queue"]')!.dataset.runner!,
-      ),
-    ).toEqual({ enabled: false, where: "mac", overflow: 3 });
+    const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
+    expect(JSON.parse(queue.dataset.runner!)).toEqual({ enabled: false, where: "mac" });
+    act(() => queue.click());
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { patch: { heavySlowAgentJobs: false } },
+    });
   });
 
   it("saves Runner settings for the environment, or as project overrides it can reset", async () => {
@@ -346,7 +391,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     project.serverConfig.settings = {
       ...project.serverConfig.settings,
       projectSettingsOverrides: {
-        ["project" as ProjectId]: { runnerWhere: "linux", runnerOverflow: 5 },
+        ["project" as ProjectId]: { runnerWhere: "linux", runnerAskMinutes: 7 },
       },
     };
     mocks.targets = [project];
@@ -362,7 +407,7 @@ describe("SettingsServerControlsRouteScreen", () => {
       input: {
         patch: {
           projectSettingsOverrides: {
-            project: { runnerWhere: "linux", runnerOverflow: 5, runnerEnabled: true },
+            project: { runnerWhere: "linux", runnerAskMinutes: 7, runnerEnabled: true },
           },
         },
       },
@@ -370,7 +415,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     await act(async () => mocks.runner!.reset("runnerWhere"));
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
       environmentId: "local",
-      input: { patch: { projectSettingsOverrides: { project: { runnerOverflow: 5 } } } },
+      input: { patch: { projectSettingsOverrides: { project: { runnerAskMinutes: 7 } } } },
     });
   });
 
@@ -439,5 +484,227 @@ describe("SettingsServerControlsRouteScreen", () => {
       (button) => button.textContent === "Auto-settle merged threads",
     )!;
     expect(autoSettle.disabled).toBe(true);
+  });
+
+  describe("worktree cleanup", () => {
+    const control = (selector: string, text: string) =>
+      [...container.querySelectorAll<HTMLElement>(selector)].find(
+        (node) => node.textContent === text || node.getAttribute("aria-label") === text,
+      )!;
+    const radio = (text: string) => control('[role="radio"]', text);
+    const toggle = (text: string) => control('[role="switch"]', text);
+    const type = (label: string, text: string) => {
+      const input = control("input", label) as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      act(() => {
+        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      });
+    };
+    const lastPatch = () => mocks.updateSettings.mock.lastCall![0].input.patch;
+    const withSettings = (
+      env: ReturnType<typeof environment>,
+      cleanup: Record<string, unknown>,
+      override?: unknown,
+    ) => {
+      env.serverConfig.settings = {
+        ...env.serverConfig.settings,
+        storageCleanup: { ...env.serverConfig.settings.storageCleanup, ...cleanup },
+        ...(override === undefined
+          ? {}
+          : { projectSettingsOverrides: { ["project" as ProjectId]: override } }),
+      } as typeof env.serverConfig.settings;
+      return env;
+    };
+    const customProject = (rules: Record<string, unknown> = {}) => {
+      mocks.projectSelected = true;
+      mocks.targets = [
+        withSettings(
+          environment("local", "Local"),
+          {},
+          {
+            worktreeCleanup: {
+              mode: "custom",
+              rules: {
+                ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+                worktreeMerged: "after-days",
+                ...rules,
+              },
+            },
+          },
+        ),
+      ];
+    };
+
+    it("writes each merged option and a valid day count machine-wide", async () => {
+      mocks.targets = [
+        withSettings(environment("local", "Local"), { worktreeMerged: "after-days" }),
+      ];
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      for (const [label, value] of [
+        ["Off", "off"],
+        ["Right away", "right-away"],
+        ["After 7 days", "after-days"],
+      ]) {
+        await act(async () => radio(label!).click());
+        expect(lastPatch()).toEqual({ storageCleanup: { worktreeMerged: value } });
+      }
+      mocks.updateSettings.mockClear();
+      for (const bad of ["0", "366", "1.5", ""]) {
+        type("Days unused", bad);
+        expect(container.textContent).toContain("Enter a whole number of days from 1 to 365.");
+      }
+      expect(mocks.updateSettings).not.toHaveBeenCalled();
+      type("Days unused", "30");
+      expect(lastPatch()).toEqual({ storageCleanup: { worktreeMergedAfterDays: 30 } });
+    });
+
+    it("writes merged options and days per project through a custom override", async () => {
+      customProject();
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      // The project mode row has an Off too; the merged choices come after it.
+      const offs = container.querySelectorAll<HTMLElement>('[role="radio"]');
+      await act(async () => [...offs].filter((node) => node.textContent === "Off")[1]!.click());
+      expect(lastPatch().projectSettingsOverrides.project.worktreeCleanup).toEqual({
+        mode: "custom",
+        rules: expect.objectContaining({ worktreeMerged: "off" }),
+      });
+      type("Days unused", "12");
+      expect(
+        lastPatch().projectSettingsOverrides.project.worktreeCleanup.rules.worktreeMergedAfterDays,
+      ).toBe(12);
+    });
+
+    it("writes the Linux copy, deleted-threads, inactive, settled and keep-when controls", async () => {
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      const expectPatch = (cleanup: object) =>
+        expect(lastPatch()).toEqual({ storageCleanup: cleanup });
+      await act(async () => toggle("Delete the Linux copy too").click());
+      expectPatch({ worktreeRunnerCopy: false });
+      await act(async () => toggle("Delete worktrees with deleted threads").click());
+      expectPatch({ worktreeOnDelete: true });
+      await act(async () => toggle("Delete inactive worktrees").click());
+      const inactive = DEFAULT_SERVER_SETTINGS.storageCleanup.worktreeAfterDays;
+      expectPatch({ worktreeAfterDays: inactive === null ? 8 : null });
+      await act(async () => toggle("Delete settled worktrees").click());
+      expectPatch({ worktreeSettledAfterDays: 8 });
+      await act(async () => radio("Edited tracked files").click());
+      expectPatch({ worktreeKeepWhen: "tracked-changes" });
+    });
+
+    it("edits and clears the day counts of enabled retention rules", async () => {
+      mocks.targets = [
+        withSettings(environment("local", "Local"), {
+          worktreeAfterDays: 30,
+          worktreeSettledAfterDays: 2,
+        }),
+      ];
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      const days = [...container.querySelectorAll<HTMLInputElement>('input[aria-label="Days"]')];
+      expect(days.map((input) => input.value)).toEqual(["30", "2"]);
+      await act(async () => toggle("Delete settled worktrees").click());
+      expect(lastPatch()).toEqual({ storageCleanup: { worktreeSettledAfterDays: null } });
+    });
+
+    it("sets Inherit, Off and Custom per project", async () => {
+      mocks.projectSelected = true;
+      mocks.targets = [environment("local", "Local")];
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      expect(radio("Inherit").getAttribute("aria-checked")).toBe("true");
+      await act(async () => radio("Off").click());
+      expect(lastPatch().projectSettingsOverrides.project).toEqual({
+        worktreeCleanup: { mode: "off" },
+      });
+      await act(async () => radio("Custom").click());
+      expect(lastPatch().projectSettingsOverrides.project).toEqual({
+        worktreeCleanup: { mode: "custom", rules: {} },
+      });
+      act(() => root.unmount());
+
+      customProject();
+      root = createRoot(container);
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      expect(radio("Custom").getAttribute("aria-checked")).toBe("true");
+      await act(async () => radio("Inherit").click());
+      expect(JSON.stringify(lastPatch())).not.toContain("worktreeCleanup");
+    });
+
+    const noRules = {
+      worktreeOnDelete: false,
+      worktreeMerged: "off",
+      worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
+    };
+    it.each([
+      ["every rule off", [{}], false],
+      ["deleted threads", [{ worktreeOnDelete: true }], true],
+      ["merged", [{ worktreeMerged: "after-days" }], true],
+      ["inactive", [{ worktreeAfterDays: 8 }], true],
+      ["settled", [{ worktreeSettledAfterDays: 0 }], true],
+      ["mixed across machines", [{}, { worktreeOnDelete: true }], true],
+    ])(
+      "shows the Linux copy switch after the rules only when one deletes: %s",
+      (_, rules, shown) => {
+        mocks.targets = rules.map((rule, index) =>
+          withSettings(environment(`env-${index}`, `Env ${index}`), { ...noRules, ...rule }),
+        );
+        act(() => root.render(<SettingsWorktreesRouteScreen />));
+        const text = container.textContent ?? "";
+        expect(text.includes("Delete the Linux copy too")).toBe(shown);
+        if (shown)
+          expect(text.indexOf("Delete the Linux copy too")).toBeGreaterThan(
+            text.indexOf("Delete settled worktrees"),
+          );
+      },
+    );
+
+    it("shows mixed values when machines differ", () => {
+      mocks.targets = [
+        withSettings(environment("local", "Local"), { worktreeMerged: "off" }),
+        withSettings(environment("remote", "Remote"), {
+          worktreeMerged: "right-away",
+          worktreeOnDelete: true,
+          worktreeKeepWhen: "any-local-files",
+        }),
+      ];
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      expect(
+        [...container.querySelectorAll('[role="radio"]')].some(
+          (node) => node.getAttribute("aria-checked") === "true" && node.textContent === "Off",
+        ),
+      ).toBe(false);
+      expect(toggle("Delete worktrees with deleted threads").getAttribute("aria-checked")).toBe(
+        "mixed",
+      );
+      expect(radio("Any local files").getAttribute("aria-checked")).toBe("false");
+    });
+
+    it("hides what a selected machine cannot do and says so", () => {
+      const old = environment("old", "Old");
+      old.serverConfig.environment.capabilities = {
+        ...old.serverConfig.environment.capabilities,
+        mergedWorktreeCleanup: false,
+        settledWorktreeCleanup: false,
+      };
+      mocks.targets = [environment("local", "Local"), old];
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      expect(container.textContent).toContain(
+        "Update the selected machines to change merged worktree cleanup.",
+      );
+      expect(container.textContent).not.toContain("Delete the Linux copy too");
+      expect(container.textContent).not.toContain("Delete settled worktrees");
+      act(() => root.unmount());
+
+      old.serverConfig.environment.capabilities.projectWorktreeCleanup = false;
+      mocks.projectSelected = true;
+      root = createRoot(container);
+      act(() => root.render(<SettingsWorktreesRouteScreen />));
+      expect(container.textContent).toContain(
+        "Update the selected machines to configure project worktree cleanup.",
+      );
+    });
   });
 });

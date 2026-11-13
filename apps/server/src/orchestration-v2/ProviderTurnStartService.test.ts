@@ -302,6 +302,9 @@ function makeLocalCommandHarness(input: {
     readonly liveSession?: boolean;
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
+    readonly openCommand?: boolean;
+    readonly roster?: boolean;
+    readonly backgroundTasksEndWithProcess?: true;
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -713,6 +716,9 @@ function makeLocalCommandHarness(input: {
             nativeId: "existing-native-conversation",
             strength: "strong",
           },
+          ...(input.previousTurn.roster === true
+            ? { pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const }] }
+            : {}),
         },
       ],
       providerTurns: [
@@ -728,6 +734,28 @@ function makeLocalCommandHarness(input: {
           completedAt: input.previousTurn.turnStatus === "running" ? null : now,
         },
       ],
+      turnItems: input.previousTurn.openCommand
+        ? [
+            {
+              id: "previous-open-command",
+              threadId,
+              runId: previousRunId,
+              nodeId: null,
+              providerThreadId: previousProviderThreadId,
+              providerTurnId: previousTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "command_execution",
+              input: "cd ~/DEV; ls",
+            } as OrchestrationV2ThreadProjection["turnItems"][number],
+          ]
+        : projection.turnItems,
     };
   }
   let providerBusy =
@@ -1041,6 +1069,8 @@ function makeLocalCommandHarness(input: {
                     driver: providerThread.driver,
                     providerSessionId,
                     interruptTurn,
+                    backgroundTasksEndWithProcess:
+                      input.previousTurn?.backgroundTasksEndWithProcess,
                   } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
             ),
         }),
@@ -1369,6 +1399,42 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
       "existing-native-conversation",
     );
   }),
+);
+
+effectIt.effect.each([
+  { liveSession: true, endsWithProcess: true, roster: [] },
+  // Its tasks can outlive the restart, as on release.
+  { liveSession: true, endsWithProcess: false, roster: ["dev-server"] },
+  // Release or boot recovery owns the roster of a session that is already gone.
+  { liveSession: false, endsWithProcess: true, roster: ["dev-server"] },
+] as const)(
+  "recovering an abandoned turn ends its open commands and the restarted roster: %j",
+  ({ liveSession, endsWithProcess, roster }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        previousTurn: {
+          runStatus: "failed",
+          turnStatus: "running",
+          openCommand: true,
+          roster: true,
+          liveSession,
+          ...(endsWithProcess ? { backgroundTasksEndWithProcess: true as const } : {}),
+        },
+      });
+
+      yield* harness.start;
+
+      expect(harness.projection().turnItems[0]).toMatchObject({
+        id: "previous-open-command",
+        status: "interrupted",
+      });
+      expect(
+        (harness.projection().providerThreads[0]?.pendingBackgroundTasks ?? []).map(
+          (task) => task.taskId,
+        ),
+      ).toEqual(roster);
+    }),
 );
 
 effectIt.effect.each([

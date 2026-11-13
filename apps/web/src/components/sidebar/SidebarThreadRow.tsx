@@ -21,10 +21,8 @@ import {
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import {
-  formatWorkingDurationLabel,
-  resolveThreadProviderStack,
-} from "@t3tools/client-runtime/state/models";
+import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
+import { WorkingDuration } from "./WorkingDuration";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
@@ -70,7 +68,6 @@ import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import { useNowSecond } from "../../hooks/useNowSecond";
 import { useHasOpenDecision } from "../../state/decisions";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
@@ -121,13 +118,14 @@ import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
-import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Spinner } from "../ui/spinner";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { JumpHintBadge } from "./JumpHintBadge";
+import { startThreadDrag } from "../threadDrag";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -159,31 +157,8 @@ function RelativeTimeLabel(props: { timestamp: string | null }) {
       );
 }
 
-function JumpHintBadge(props: { label: string }) {
-  return (
-    <Kbd aria-hidden data-jump-hint>
-      {props.label}
-    </Kbd>
-  );
-}
-
 const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
-
-export function WorkingDuration(props: { startedAt: string | null }) {
-  const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
-  if (Number.isNaN(startedMs)) return null;
-  return <WorkingDurationLabel startedMs={startedMs} />;
-}
-
-// Self-ticking so only this span re-renders each second, not the whole row;
-// the shared tick lands every working row's update in the same frame.
-function WorkingDurationLabel(props: { startedMs: number }) {
-  const nowMs = useNowSecond();
-  return (
-    <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
-  );
-}
 
 function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
@@ -484,20 +459,51 @@ export function SortableThreadRow(
     transition: contextDrag && isDragging ? "transform 150ms ease-out" : transition,
     isDragging: isDragging && !contextDrag,
   };
-  // The sidebar arranges rows from quiet shells, which hold still while a
-  // thread streams; reading the live shell here re-renders only this row.
-  const liveThread = useThreadShell(
-    scopeThreadRef(rowProps.thread.environmentId, rowProps.thread.id),
-  );
-  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
-  const thread =
-    liveThread === null
-      ? rowProps.thread
-      : rowProps.thread.runtime !== null
-        ? asLaunchingThread(liveThread)
-        : liveThread;
+  const thread = useLiveRowThread(rowProps.thread);
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+}
+
+// The sidebar arranges rows from quiet shells, which hold still while a
+// thread streams; reading the live shell here re-renders only this row.
+function useLiveRowThread(arranged: SidebarThreadSummary): SidebarThreadSummary {
+  const liveThread = useThreadShell(scopeThreadRef(arranged.environmentId, arranged.id));
+  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
+  return liveThread === null
+    ? arranged
+    : arranged.runtime !== null
+      ? asLaunchingThread(liveThread)
+      : liveThread;
+}
+
+const noNodeRef = () => {};
+
+/**
+ * A second row for a thread its project already lists (the assistants section). It never joins
+ * the sortable list: two sortables with one id break dnd-kit. Dragging it out splits the pane.
+ */
+export function StaticThreadRow(
+  props: Omit<SidebarThreadRowProps, "sortable" | "revealRef"> & { sectionRowKey: string },
+) {
+  const thread = useLiveRowThread(props.thread);
+  const bag = {
+    listeners: {
+      onPointerDown: (event: ReactPointerEvent) => {
+        // Selecting text in the title input must not start a drag.
+        if (props.isRenaming) return;
+        startThreadDrag(
+          event.nativeEvent,
+          scopeThreadRef(thread.environmentId, thread.id),
+          thread.title,
+        );
+      },
+    },
+    setNodeRef: noNodeRef,
+    transform: null,
+    transition: undefined,
+    isDragging: false,
+  };
+  return <SidebarThreadRow key={props.variant} {...props} thread={thread} sortable={bag} />;
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
@@ -572,6 +578,12 @@ type SidebarThreadRowProps = {
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
   revealRef?: ((row: HTMLElement, threadKey: string) => void) | undefined;
+  // A finished assistant task: a folder row's Settle slot dismisses the task instead, which
+  // needs no settlement support.
+  onDismissTask?: ((threadRef: ScopedThreadRef) => void) | undefined;
+  // A second copy of the row (the assistants section) has its own tree key, and the list's
+  // geometry queries skip it.
+  sectionRowKey?: string | undefined;
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
@@ -587,13 +599,17 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
-  onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
+  onStartRename: (threadRef: ScopedThreadRef, title: string, rowKey: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string, originalTitle: string) => void;
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    rowKey: string,
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
@@ -675,6 +691,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
+  const rowKey = props.sectionRowKey ?? threadKey;
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const { revealRef } = props;
@@ -875,7 +892,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    onContextMenu(threadRef, { x: event.clientX, y: event.clientY }, rowKey);
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
@@ -885,7 +902,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
     ) {
       event.preventDefault();
-      onStartRename(threadRef, thread.title);
+      onStartRename(threadRef, thread.title, rowKey);
       return;
     }
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -905,7 +922,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     }
     if ((event.target as HTMLElement).closest("button, a, input")) return;
     event.preventDefault();
-    onStartRename(threadRef, thread.title);
+    onStartRename(threadRef, thread.title, rowKey);
   };
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = onFileDropThreads
@@ -921,6 +938,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.preventDefault();
     event.stopPropagation();
     onSettle(threadRef);
+  };
+  const handleDismissClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    props.onDismissTask?.(threadRef);
   };
   const handleActionPointerDown = (event: ReactPointerEvent) => {
     if (!event.isPrimary || event.button !== 0) return;
@@ -1241,7 +1263,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     const inFolder = variant === "folder" || multiline;
     return (
       <li
-        data-thread-item={threadKey}
+        data-thread-item={props.sectionRowKey === undefined ? threadKey : undefined}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1257,7 +1279,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
-                data-sidebar-row={threadKey}
+                data-sidebar-row={rowKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
@@ -1397,6 +1419,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockOffIcon className="mb-px size-3" />
                       </button>
                     )
+                  ) : props.onDismissTask ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="Dismiss task"
+                            onClick={handleDismissClick}
+                            className={cn(
+                              "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
+                              isWoke && "group-any-hover/sidebar-row:static",
+                            )}
+                          />
+                        }
+                      >
+                        <XIcon className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">Dismiss task</TooltipPopup>
+                    </Tooltip>
                   ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -1453,7 +1494,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   return (
     <li
-      data-thread-item={threadKey}
+      data-thread-item={props.sectionRowKey === undefined ? threadKey : undefined}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -1469,7 +1510,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ref={rowRef}
               role="button"
               tabIndex={0}
-              data-sidebar-row={threadKey}
+              data-sidebar-row={rowKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}

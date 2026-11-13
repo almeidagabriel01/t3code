@@ -3,10 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   askRemaining,
+  heavyLimitIdle,
   heavyModeLine,
   linuxLine,
   routeActions,
   runnerBadge,
+  runnerFieldIdle,
+  type RunnerChoices,
 } from "./runnerModel.ts";
 
 const entry = (extra: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -36,7 +39,7 @@ describe("the queue × Runner line", () => {
     queuePaused: boolean,
     runnerEnabled: boolean,
     where: "mac" | "linux" | "automatic",
-  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, overflow: 3 });
+  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
 
   it.each([
     [true, false, false, "mac", "Heavy jobs wait their turn on this Mac."],
@@ -56,7 +59,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "automatic",
-      "Heavy jobs queue on this Mac; past 3 jobs, listed commands go to Linux.",
+      "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.",
     ],
     [false, false, true, "mac", "No queue: heavy jobs start on this Mac right away."],
     [
@@ -71,22 +74,10 @@ describe("the queue × Runner line", () => {
       true,
       true,
       "automatic",
-      "No queue: jobs start here right away until 3 jobs run, then listed commands go to Linux.",
+      "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.",
     ],
   ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
     expect(line(queue, paused, runner, where)).toBe(text);
-  });
-
-  it("says one job, not one jobs", () => {
-    expect(
-      heavyModeLine({
-        queueEnabled: true,
-        queuePaused: false,
-        runnerEnabled: true,
-        where: "automatic",
-        overflow: 1,
-      }),
-    ).toContain("past 1 job,");
   });
 });
 
@@ -118,7 +109,7 @@ describe("a row's runner", () => {
     [
       entry({ startedAt: "x", runner: "linux", phase: "installing" }),
       { linux: null, routes: {} },
-      { runner: "linux", label: "Linux · Installing deps" },
+      { runner: "linux", label: "Linux · Installing" },
     ],
     [entry({ startedAt: "x", runner: "linux" }), state, { runner: "linux", label: "Linux" }],
     [entry({ startedAt: "x" }), state, { runner: "mac", label: "This Mac" }],
@@ -154,4 +145,56 @@ describe("a row's runner", () => {
     const [mac] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
   });
+});
+
+describe("Runner fields that do nothing under the current choices", () => {
+  const on: RunnerChoices = {
+    runnerEnabled: true,
+    runnerWhere: "linux",
+    runnerUnavailable: "ask",
+    runnerDropped: "mac",
+  };
+
+  it.each([
+    ["runnerEnabled", { runnerEnabled: false }, null],
+    ["runnerHost", { runnerEnabled: false }, "Only applies while the Runner is on."],
+    ["runnerHost", {}, null],
+    [
+      "runnerLinuxCommands",
+      { runnerWhere: "mac" },
+      "Only applies when jobs run on Linux or Hybrid.",
+    ],
+    ["runnerLinuxCommands", { runnerWhere: null }, null],
+    ["runnerAskMinutes", {}, null],
+    ["runnerDeadlineAction", { runnerUnavailable: null }, null],
+    [
+      "runnerAskMinutes",
+      { runnerUnavailable: "wait" },
+      "Only applies when a choice above is Ask me.",
+    ],
+  ] as const)("%s with %o: %s", (key, choices, idle) => {
+    expect(runnerFieldIdle(key, { ...on, ...choices })).toBe(idle);
+  });
+});
+
+describe("heavyLimitIdle", () => {
+  const QUEUE_OFF = "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+  const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
+  it.each([
+    ["macCpuCeilingPercent", true, false, "mac", null],
+    ["macCpuCeilingPercent", false, true, "automatic", null],
+    ["macCpuCeilingPercent", false, true, null, null],
+    ["macCpuCeilingPercent", false, null, "automatic", null],
+    ["macCpuCeilingPercent", false, true, "linux", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, true, "mac", QUEUE_OFF],
+    ["macMemoryFloorPercent", false, false, "automatic", QUEUE_OFF],
+    ["heavyOverLimitSeconds", false, true, "linux", null],
+    ["heavyOverLimitSeconds", true, false, "mac", null],
+    ["heavyOverLimitSeconds", false, false, "automatic", BOTH_OFF],
+  ] as const)(
+    "%s with queue %s, Runner %s, %s",
+    (key, queueEnabled, runnerEnabled, runnerWhere, idle) => {
+      expect(heavyLimitIdle(key, { queueEnabled, runnerEnabled, runnerWhere })).toBe(idle);
+    },
+  );
 });

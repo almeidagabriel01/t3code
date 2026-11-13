@@ -15,7 +15,7 @@ import {
   type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
-import { Fragment, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -46,8 +46,10 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
-import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
+import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
+import { HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
+import { WorktreeCleanupSections } from "./components/WorktreeCleanupSections";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
@@ -75,6 +77,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
   worktrees: [
+    "worktreeCleanup",
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
     "branchNamingMode",
@@ -538,6 +541,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   }}
                   onChange={write}
                 />
+                <WorktreeCleanupSections
+                  targets={displayTargets}
+                  projectSelected={projectSelected}
+                  disabledFor={disabledFor}
+                  managed={managed}
+                  write={write}
+                  clearProjectCleanup={() => clearProjectOverrides(["worktreeCleanup"])}
+                />
               </>
             ) : null}
 
@@ -576,30 +587,45 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onChange={(mode) => write({ keepAwake: mode })}
                   />
                 ) : null}
+                {!projectSelected ? (
+                  <SettingsSection>
+                    <SettingsRow
+                      icon="gauge.with.dots.needle.50percent"
+                      label="Resource Manager"
+                      target="SettingsResourceManager"
+                    />
+                  </SettingsSection>
+                ) : null}
                 {/* Each machine has its own queue, so several environments get one section each. */}
                 {!projectSelected
                   ? displayTargets.map((target) => {
                       const machine =
                         displayTargets.length > 1 ? target.environment.label : undefined;
                       return (
-                        <Fragment key={target.environment.environmentId}>
-                          <HeavyCommandsSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                          />
-                          <HeavyQueueSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                            runner={{
-                              enabled: target.settings.runnerEnabled,
-                              where: target.settings.runnerWhere,
-                              overflow: target.settings.runnerOverflow,
-                            }}
-                          />
-                        </Fragment>
+                        <HeavyQueueSection
+                          key={target.environment.environmentId}
+                          environmentId={target.environment.environmentId}
+                          {...(machine === undefined ? {} : { machine })}
+                          runner={{
+                            enabled: target.settings.runnerEnabled,
+                            where: target.settings.runnerWhere,
+                          }}
+                          slowAgentJobs={{
+                            value: target.settings.heavySlowAgentJobs,
+                            disabled: disabledFor("heavySlowAgentJobs"),
+                            onChange: (value) => write({ heavySlowAgentJobs: value }),
+                          }}
+                        />
                       );
                     })
                   : null}
+                {!projectSelected ? (
+                  <HeavyNoticesSection
+                    value={isMixed("heavyNotices") ? null : uniform("heavyNotices")}
+                    disabled={disabledFor("heavyNotices")}
+                    onChange={(mode) => write({ heavyNotices: mode })}
+                  />
+                ) : null}
                 <RunnerSection
                   environmentId={reference.environment.environmentId}
                   settings={reference.settings}

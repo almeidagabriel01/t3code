@@ -343,15 +343,23 @@ back the standard rows.
 
 ## Thread tabs and side-by-side groups
 
-On web and desktop, threads you open show as tabs under the thread header, like open files.
-Picking a thread in the sidebar opens its tab, or switches to it when it is already open. Close a
-tab with its **×**, a middle click, or `mod+w`. Each project keeps its own tabs and layout, and
-they come back after a reload.
+On web and desktop, threads you open show as tabs under the thread header. A thread's tab is its
+chat, and files you open from that thread get their own tabs right beside it, in the same row.
+Picking a thread in the sidebar opens its tab, or switches to it when it is already open, and
+always shows its chat, even when one of its files was showing. Close a tab with its **×**, a middle
+click, or `mod+w`; `mod+w` closes the file you are looking at before the thread. Closing a thread's
+tab also hides its file tabs, and they come back with the thread. **Reopen Closed Tab** brings
+back the last tab you closed, thread or file. Each project keeps its own tabs and layout, and they
+come back after a reload.
 
 Drag a tab, or a thread from the sidebar, over the thread area and keep holding: an overlay shows
 where it will go. Drop it on an edge to open a new group on that side, in the middle to add it to
-that group, or between tabs to place it there. Each group shows its own thread with its own
-composer; the thread you picked last is the full one, with the header, right panel and terminal.
+that group, or between tabs to place it there. A thread's file tabs move with it and always stay
+beside it. A thread from another project splits the same way and stays in that layout until you
+close its tab. Picking another thread of that project, from the sidebar or anywhere else, opens it
+in the group showing that project, so the split stays; closing it returns that group to the tab it
+showed before. **Reopen Closed Tab** puts a thread tab back in the layout and group it closed from. Each group shows its own thread with its own composer; the thread you picked last is
+the full one, with the header, right panel and terminal.
 Clicking a group's title makes its thread the full one. Drag the line between groups to resize
 them, or double-click it to even them. Dragging a group's last tab elsewhere, or closing it,
 removes the group. **Open side by side** in a thread's menu or the command palette opens a thread
@@ -366,7 +374,9 @@ A side chat lets you ask a question about a thread without adding to it. It star
 with what the thread knows, and the thread keeps working while you ask.
 
 On web and desktop, start a message with `/side` or `/btw`, then your question.
-You can also choose **Side chat** from the **+** menu in the right panel. The side
+Images and files attached to that message go to the side chat with it, even when you
+attach them before typing `/side`. Other added
+context, such as terminal output or attached threads, cannot start a side chat. You can also choose **Side chat** from the **+** menu in the right panel. The side
 chat opens as a tab there, with its own composer. Side chats do not show in the
 sidebar. Find one again under **Side chats** in thread details.
 

@@ -291,6 +291,18 @@
       "types": "./src/state/heavyQueueModel.ts",
       "default": "./src/state/heavyQueueModel.ts"
     },
+    "./state/resourceTree": {
+      "types": "./src/state/resourceTree.ts",
+      "default": "./src/state/resourceTree.ts"
+    },
+    "./state/processLabel": {
+      "types": "./src/state/processLabel.ts",
+      "default": "./src/state/processLabel.ts"
+    },
+    "./list-order": {
+      "types": "./src/listOrder.ts",
+      "default": "./src/listOrder.ts"
+    },
     "./state/runnerModel": {
       "types": "./src/state/runnerModel.ts",
       "default": "./src/state/runnerModel.ts"
@@ -338,6 +350,10 @@
     "./assistantList": {
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"
+    },
+    "./assistantLiveWork": {
+      "types": "./src/assistantLiveWork.ts",
+      "default": "./src/assistantLiveWork.ts"
     },
     "./assistantSections": {
       "types": "./src/assistantSections.ts",

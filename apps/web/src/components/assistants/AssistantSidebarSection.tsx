@@ -1,10 +1,8 @@
 import { listedProjects } from "@t3tools/client-runtime/assistantSections";
+import { assistantSites, type AssistantWorkSite } from "@t3tools/client-runtime/assistantLiveWork";
+import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  assistantMetaLabel,
-  rankAssistants,
-  visibleAssistants,
-} from "@t3tools/client-runtime/assistantList";
+import { assistantMetaLabel } from "@t3tools/client-runtime/assistantList";
 import {
   assistantGroupThreadsOf,
   assistantPresence,
@@ -36,16 +34,19 @@ import { useParams } from "@tanstack/react-router";
 import { Fragment, memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { cn } from "~/lib/utils";
-import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
+import { updateClientSettings } from "../../hooks/useSettings";
 import {
   type AssistantEntry,
   type AssistantTeamEntry,
-  useAssistantEntries,
+  useAssistantLiveWork,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
+import { SubagentRows } from "../sidebar/SidebarSubagentRows";
+import { JumpHintBadge } from "../sidebar/JumpHintBadge";
+import { startThreadDrag } from "../threadDrag";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -53,7 +54,11 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import {
+  assistantFoldKey,
+  AssistantTaskRows,
+  type AssistantTaskRowRenderer,
+} from "./AssistantTaskRows";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import {
@@ -63,6 +68,7 @@ import {
 } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import type { AssistantSidebarItem, AssistantSidebarModel } from "./useAssistantSidebarModel";
 
 const MOOD_TEXT: Record<AssistantMood, string> = {
   idle: "text-muted-foreground",
@@ -100,8 +106,58 @@ function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThre
   const open = () => {
     if (threadRef !== null) onOpen(threadRef);
   };
-  return { presence, dotClass, open };
+  return { presence, dotClass, open, threadRef };
 }
+
+const MAX_WORK_SITES = 2;
+
+/** The projects an assistant is working in now; each favicon opens the thread it works on there. */
+function AssistantWorkSites(props: {
+  readonly sites: ReadonlyArray<{
+    readonly site: AssistantWorkSite;
+    readonly project: ProjectFaviconProject;
+  }>;
+  readonly onOpen: (threadRef: ScopedThreadRef) => void;
+}) {
+  const shown = props.sites.slice(0, MAX_WORK_SITES);
+  const hidden = props.sites.length - shown.length;
+  return (
+    <span data-testid="assistant-work-sites" className="flex shrink-0 items-center gap-0.5">
+      {shown.map(({ site, project }) => (
+        <Tooltip key={`${site.environmentId}:${site.projectId}`}>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label={`Working in ${project.title}`}
+                data-testid="assistant-work-site"
+                className={cn(
+                  "inline-flex size-5 cursor-pointer items-center justify-center rounded-sm hover:bg-foreground/8",
+                  FOCUS_RING,
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onOpen(scopeThreadRef(site.environmentId, site.threadId));
+                }}
+              />
+            }
+          >
+            <ProjectFavicon project={project} className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{`Working in ${project.title}`}</TooltipPopup>
+        </Tooltip>
+      ))}
+      {hidden > 0 ? (
+        <span className="text-xs tabular-nums text-muted-foreground">+{hidden}</span>
+      ) : null}
+    </span>
+  );
+}
+
+type SubagentContextMenu = (
+  threadRef: ScopedThreadRef,
+  position: { readonly x: number; readonly y: number },
+) => void;
 
 const STATUS_DOT: Partial<Record<AssistantMood, string>> = {
   needs: "bg-warning",
@@ -119,10 +175,33 @@ const AssistantRow = memo(function AssistantRow(props: {
   readonly projectLabel?: string | null;
   readonly project?: ProjectFaviconProject | undefined;
   readonly nested?: boolean;
+  readonly workSites?: ReadonlyArray<{
+    readonly site: AssistantWorkSite;
+    readonly project: ProjectFaviconProject;
+  }>;
+  readonly item: AssistantSidebarItem;
+  readonly jumpLabelByKey: ReadonlyMap<string, string> | null | undefined;
+  readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;
+  readonly onThreadContextMenu?: SubagentContextMenu | undefined;
 }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
-  const { presence, dotClass, open } = useAssistantState(props.entry, props.onOpen);
+  const { presence, dotClass, open, threadRef } = useAssistantState(props.entry, props.onOpen);
+  const jumpLabel =
+    threadRef === null ? null : (props.jumpLabelByKey?.get(scopedThreadKey(threadRef)) ?? null);
+  const { sections, expanded, subagents } = props.item;
+  // Folds persist beside the project folds, under a key no project can take.
+  const foldKey = assistantFoldKey(props.entry);
+  const setExpanded = useUiStateStore((state) => state.setProjectExpanded);
+  // Right-click opens the row's own menu, anchored to its ⋯ button.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const foldable =
+    sections.pinned.length +
+      sections.open.length +
+      sections.snoozed.length +
+      sections.settled.length +
+      subagents.length >
+    0;
   const working = presence.mood === "working";
   const meta = assistantMetaLabel(presence);
   const statusDot = STATUS_DOT[presence.mood];
@@ -134,11 +213,16 @@ const AssistantRow = memo(function AssistantRow(props: {
     }
   };
   return (
-    <li className={cn("list-none py-px", props.nested && "ms-3.5 border-s border-foreground/10")}>
+    <li
+      className={cn(
+        "@container/assistant-row list-none py-px",
+        props.nested && "ms-3.5 border-s border-foreground/10",
+      )}
+    >
       <div
         role="button"
         tabIndex={0}
-        data-sidebar-row={`assistant:${environmentId}:${assistant.id}`}
+        data-sidebar-row={foldKey}
         aria-label={`${assistant.name}${working ? ", working" : ""}`}
         aria-current={props.isActive ? "page" : undefined}
         data-testid="sidebar-assistant-row"
@@ -149,24 +233,35 @@ const AssistantRow = memo(function AssistantRow(props: {
         )}
         onClick={open}
         onKeyDown={onKeyDown}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setMenuOpen(true);
+        }}
+        onPointerDown={(event) => {
+          if (threadRef === null || (event.target as HTMLElement).closest("button")) return;
+          startThreadDrag(event.nativeEvent, threadRef, assistant.name);
+        }}
       >
-        <span className="relative inline-flex shrink-0">
-          <AssistantAvatar
-            assistant={assistant}
-            mood={assistantFace(presence)}
-            className="size-5"
-          />
-          {statusDot ? (
-            <span
-              aria-hidden
-              data-testid="assistant-status-dot"
-              className={cn(
-                "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
-                statusDot,
-              )}
+        <Tooltip disabled={!statusDot || meta === null}>
+          <TooltipTrigger render={<span className="relative inline-flex shrink-0" />}>
+            <AssistantAvatar
+              assistant={assistant}
+              mood={assistantFace(presence)}
+              className="size-5"
             />
-          ) : null}
-        </span>
+            {statusDot ? (
+              <span
+                aria-hidden
+                data-testid="assistant-status-dot"
+                className={cn(
+                  "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
+                  statusDot,
+                )}
+              />
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{meta}</TooltipPopup>
+        </Tooltip>
         <span className="max-w-[55%] shrink-0 truncate">{assistant.name}</span>
         {assistant.role === "" ? null : (
           <Badge variant="outline" size="sm" data-testid="assistant-role">
@@ -179,18 +274,23 @@ const AssistantRow = memo(function AssistantRow(props: {
           </Badge>
         ) : null}
         <span className="flex-1" />
+        {props.workSites && props.workSites.length > 0 ? (
+          <AssistantWorkSites sites={props.workSites} onOpen={props.onOpen} />
+        ) : null}
         {meta !== null ? (
           <span
             data-testid="assistant-status"
             data-mood={presence.mood}
             className={cn(
               "min-w-0 max-w-[45%] truncate text-xs font-normal",
+              // The dot carries the status where the row is too narrow for its text.
+              statusDot && "@max-[19rem]/assistant-row:hidden",
               MOOD_TEXT[presence.mood],
             )}
           >
             {meta}
           </span>
-        ) : props.projectLabel ? (
+        ) : props.projectLabel && !props.workSites?.length ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -211,7 +311,26 @@ const AssistantRow = memo(function AssistantRow(props: {
           </Tooltip>
         ) : null}
         <SidebarNotificationDot dotClass={dotClass} />
-        <Menu>
+        {jumpLabel ? <JumpHintBadge label={jumpLabel} /> : null}
+        {foldable ? (
+          <button
+            type="button"
+            aria-label={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
+            aria-expanded={expanded}
+            data-testid="assistant-fold"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded(foldKey, !expanded);
+            }}
+            className={cn(
+              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
+              FOCUS_RING,
+            )}
+          >
+            <ChevronDownIcon aria-hidden className={cn("size-3", !expanded && "-rotate-90")} />
+          </button>
+        ) : null}
+        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -264,11 +383,28 @@ const AssistantRow = memo(function AssistantRow(props: {
           </MenuPopup>
         </Menu>
       </div>
-      <AssistantTaskRows
-        entry={props.entry}
-        activeThreadKey={props.activeThreadKey}
-        onOpen={props.onOpen}
-      />
+      {expanded ? (
+        <>
+          <AssistantTaskRows
+            entry={props.entry}
+            sections={sections}
+            activeThreadKey={props.activeThreadKey}
+            onOpen={props.onOpen}
+            renderRow={props.renderTaskRow}
+          />
+          {subagents.length > 0 ? (
+            <ul aria-label={`${assistant.name} subagents`} className="m-0 p-0">
+              <SubagentRows
+                onOpen={props.onOpen}
+                onContextMenu={props.onThreadContextMenu}
+                jumpLabelByKey={props.jumpLabelByKey}
+              >
+                {subagents}
+              </SubagentRows>
+            </ul>
+          ) : null}
+        </>
+      ) : null}
     </li>
   );
 });
@@ -502,27 +638,37 @@ function GroupRow(props: {
 
 /** Pinned above the projects: every group on a row, then one flat list of assistants. */
 export const AssistantSidebarSection = memo(function AssistantSidebarSection(props: {
+  readonly model: AssistantSidebarModel;
   readonly routeThreadKey: string | null;
   readonly environmentLabelById: ReadonlyMap<string, string>;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
   readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
+  /** ⌘1–9 labels by thread key while the hints show. */
+  readonly jumpLabelByKey?: ReadonlyMap<string, string> | null | undefined;
+  readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;
+  readonly onThreadContextMenu?: SubagentContextMenu | undefined;
 }) {
-  const { active, activeTeams: teams } = useAssistantEntries();
+  const {
+    enabled,
+    collapsed,
+    showAll,
+    expandedGroups: expandedKeys,
+    active,
+    teams,
+    ranked,
+    shown,
+    hidden,
+    items,
+  } = props.model;
   const routeEnvironmentId = useParams({ strict: false, select: (params) => params.environmentId });
   const routeTeamId = useParams({ strict: false, select: (params) => params.teamId });
-  const enabled = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
-  const collapsed = useClientSettings((settings) => settings.sidebarAssistantsCollapsed);
-  const expandedKeys = useClientSettings((settings) => settings.sidebarAssistantsExpandedGroups);
-  const showAll = useClientSettings((settings) => settings.sidebarAssistantsShowAll);
-  const shells = useQuietThreadShells();
   const projects = useProjects();
+  const work = useAssistantLiveWork();
   const [describing, setDescribing] = useState(false);
   if (!enabled || (active.length === 0 && teams.length === 0)) return null;
   const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
-  const ranked = rankAssistants(active, shells);
   const strip = ranked.slice(0, COLLAPSED_AVATARS);
   const overflow = ranked.length - strip.length;
-  const { shown, hidden } = visibleAssistants(ranked, showAll);
   const foldable = showAll || hidden > 0;
   const toggle = () => void updateClientSettings({ sidebarAssistantsCollapsed: !collapsed });
   const toggleExpanded = (foldKey: string) =>
@@ -540,6 +686,12 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
     entry.assistant.threadId
       ? scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId))
       : null;
+
+  const workSitesOf = ({ environmentId, assistant }: AssistantEntry) =>
+    assistantSites(work, environmentId, assistant.id, (projectId) => {
+      const project = projectOf(environmentId, projectId);
+      return project !== undefined && hasProjectPanels(project);
+    }).map((site) => ({ site, project: projectOf(environmentId, site.projectId)! }));
 
   const row = (entry: AssistantEntry, nested = false) => {
     const key = keyOf(entry);
@@ -568,6 +720,11 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
         isActive={key !== null && key === props.routeThreadKey}
         activeThreadKey={props.routeThreadKey}
         onOpen={props.onOpenThread}
+        workSites={workSitesOf(entry)}
+        item={items.get(`${entry.environmentId}:${entry.assistant.id}`)!}
+        jumpLabelByKey={props.jumpLabelByKey}
+        renderTaskRow={props.renderTaskRow}
+        onThreadContextMenu={props.onThreadContextMenu}
       />
     );
   };

@@ -15,6 +15,7 @@ import {
   type AssistantGroupChatState,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -49,6 +50,7 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
+import { environmentThreadShells } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -115,6 +117,20 @@ const assistantEntriesAtom = Atom.make((get) => {
   return { active, archived, teams, activeTeams, archivedTeams, environmentIds };
 }).pipe(Atom.withLabel("mobile-assistant-entries"));
 
+const assistantLiveWorkAtom = Atom.make((get) =>
+  assistantLiveWork({
+    tasks: get(assistantStatesAtom).flatMap(([environmentId, state]) =>
+      [...state.tasks.values()].map((task) => ({ environmentId, task })),
+    ),
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+  }),
+).pipe(Atom.withLabel("mobile-assistant-live-work"));
+
+/** Where each assistant works right now and its live delegated children, derived once for every row. */
+export function useAssistantLiveWork() {
+  return useAtomValue(assistantLiveWorkAtom);
+}
+
 /** What an assistant spent across its conversations; idle (null) when it has no budget to show. */
 export function useAssistantSpend(
   environmentId: EnvironmentId,
@@ -170,6 +186,24 @@ export function useAssistantTasks(
 }
 
 const NO_TASKS: ReadonlyArray<AssistantTask> = [];
+
+const assistantTasksByAssistantAtom = Atom.make((get) => {
+  const byAssistant = new Map<string, ReadonlyArray<AssistantTask>>();
+  for (const [environmentId, state] of get(assistantStatesAtom)) {
+    for (const assistant of selectActiveAssistants(state)) {
+      byAssistant.set(
+        `${environmentId}:${assistant.id}`,
+        selectAssistantTasks(state, assistant.id),
+      );
+    }
+  }
+  return byAssistant;
+}).pipe(Atom.withLabel("mobile-assistant-tasks-by-assistant"));
+
+/** Every active assistant's tasks by `env:assistantId`, so Home derives its whole section at once. */
+export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
+  return useAtomValue(assistantTasksByAssistantAtom);
+}
 
 /** The assistant that launched this thread as a task, or null for any other thread. */
 export function useTaskAssistant(

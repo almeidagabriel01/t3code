@@ -1,3 +1,5 @@
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 
@@ -6,6 +8,11 @@ vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+  useThreadSearch: vi.fn(),
+}));
+vi.mock("@effect/atom-react", () => ({
+  useAtomRefresh: () => () => undefined,
+  useAtomValue: () => undefined,
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
   getComposerDraftSnapshot: vi.fn(),
@@ -27,6 +34,7 @@ import {
   buildComposerSlashCommandItems,
   resolveComposerCommandSelection,
   resolveComposerMenuSelection,
+  useComposerCommandMenu,
 } from "./use-composer-command-menu";
 
 describe("resolveComposerMenuSelection", () => {
@@ -105,6 +113,46 @@ describe("mobile slash commands", () => {
     expect(build(true)).toEqual(["cmd:clear"]);
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
+  });
+
+  it.each([
+    ["after leading chips", "[note.txt](t3-context://v1/file/file_a1) /", ["cmd:side", "cmd:btw"]],
+    ["after text", "Use /", []],
+  ])("offers /side and /btw, never /clear or provider commands, %s", (_case, draft, side) => {
+    const renders: string[][] = [];
+    const Probe = () => {
+      const { items } = useComposerCommandMenu({
+        draftMessage: draft,
+        ownerKey: "draft",
+        environmentId: null,
+        projectCwd: null,
+        selectedProviderStatus: {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          models: [],
+          slashCommands: [{ name: "review", description: "Review changes" }],
+          skills: [],
+        },
+        hasThread: true,
+        hasCompactableConversation: false,
+        onChangeDraftMessage: () => undefined,
+        onFreshSession: () => undefined,
+        offersSideChat: true,
+      });
+      renders.push(items.map((item) => item.id));
+      return null;
+    };
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(window.document.createElement("div"));
+    act(() => root.render(createElement(Probe)));
+    act(() => root.unmount());
+    expect(renders.at(-1)).toEqual(["cmd:model", ...side]);
   });
 });
 

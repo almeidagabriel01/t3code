@@ -284,11 +284,20 @@ it.effect("holds a pick for a recreated window and drops stale rows when the ren
       await call(menu);
       expect(second.send).toHaveBeenCalledOnce();
 
-      second.emit("did-start-navigation", { isMainFrame: false, isSameDocument: false });
-      expect(labels()[0]).toBe("Needs you");
-      second.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
-      expect(labels()[0]).toBe("Needs you");
+      // A navigation that starts and is then cancelled (a blocked external link, a dropped file)
+      // keeps the renderer, which only publishes again when its menu changes.
       second.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      expect(labels()[0]).toBe("Needs you");
+      second.emit("did-navigate");
+      expect(labels()[0]).toBe("Nothing running");
+
+      // The reloaded document publishes again; an aborted load keeps it, a failed one does not.
+      await call(menu);
+      expect(labels()[0]).toBe("Needs you");
+      second.emit("did-fail-load", {}, -3, "ERR_ABORTED", "u", true);
+      second.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "u", false);
+      expect(labels()[0]).toBe("Needs you");
+      second.emit("did-fail-load", {}, -102, "ERR_CONNECTION_REFUSED", "u", true);
       expect(labels()[0]).toBe("Nothing running");
     }),
   ),

@@ -31,6 +31,7 @@ import { ProjectHeavyWorkPanel } from "../projectPanels/ProjectHeavyWorkPanel";
 import { ProjectMemoryPanel } from "../projectPanels/ProjectMemoryPanel";
 import { KanbanSurface } from "../kanban/KanbanSurface";
 import { ScheduledTasksSurface } from "../scheduledTasks/ScheduledTasksSurface";
+import { fileTreeRevealTarget } from "../files/filePreviewMode";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -62,6 +63,8 @@ interface RightPanelFileProps {
   readonly workspaceRoot: string | undefined;
   readonly availableEditors: ReadonlyArray<EditorId>;
   readonly pendingSurfaceIds: ReadonlySet<string>;
+  /** The file open in the main area, which the Files tab's tree reveals. */
+  readonly activeFile: Extract<RightPanelSurface, { kind: "file" }> | null;
   readonly onOpenFile: (relativePath: string) => void;
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
 }
@@ -265,6 +268,11 @@ export function RightPanelSurfaceContent(props: {
               }
               workspaceMutationId={props.workspaceMutationId}
               hideExplorer={props.inMainArea === true}
+              treeSelection={
+                surface.kind === "files"
+                  ? fileTreeRevealTarget(files.activeFile, files.workspaceRoot)
+                  : null
+              }
             />
           </ThreadWorkspaceCleanedGate>
         </Suspense>

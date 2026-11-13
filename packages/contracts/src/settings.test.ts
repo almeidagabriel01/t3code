@@ -18,12 +18,14 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   requiredScopesForProjectMutation,
   requiredScopesForServerSettingsPatch,
+  pickWorktreeCleanupRules,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
   withIdleCompaction,
+  WorktreeCleanupRules,
 } from "./settings.ts";
 
 const decodeMemoryHubSettings = Schema.decodeSync(MemoryHubSettings);
@@ -55,6 +57,23 @@ describe("autonomy settings", () => {
     const patch = decodeServerSettingsPatch({ autonomy: { ...settings, enabled: true } });
     expect(patch.autonomy?.enabled).toBe(true);
   });
+
+  it("keeps settings saved before the waiting notice existed, with its defaults", () => {
+    const saved = {
+      enabled: true,
+      rules: { runFailed: true, waitingTooLong: true, stuck: true, ciFailed: true },
+      waitingMinutes: 30,
+      stuckMinutes: 15,
+      channels: ["telegram"],
+      maxWakesPerDay: 20,
+    };
+    expect(decodeServerSettings({ autonomy: saved }).autonomy).toMatchObject({
+      enabled: true,
+      notifyWaiting: true,
+      notifyWaitingAfterMinutes: 1,
+      maxUserMessagesPerDay: 20,
+    });
+  });
 });
 
 describe("channel language setting", () => {
@@ -75,14 +94,15 @@ describe("channel language setting", () => {
 });
 
 describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
+  it("deletes merged worktrees right away and keeps the other rules off by default", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
       worktreeAfterDays: null,
       worktreeSettledAfterDays: null,
-      worktreeOnMerge: false,
       worktreeOnDelete: false,
-      worktreeUnchanged: false,
+      worktreeMerged: "right-away",
+      worktreeMergedAfterDays: 7,
+      worktreeRunnerCopy: true,
       worktreeKeepWhen: "uncommitted-changes",
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
@@ -111,9 +131,7 @@ describe("storage cleanup settings", () => {
               mode: "custom",
               rules: {
                 worktreeAfterDays: null,
-                worktreeOnMerge: false,
                 worktreeOnDelete: false,
-                worktreeUnchanged: false,
               },
             },
           },
@@ -131,9 +149,7 @@ describe("storage cleanup settings", () => {
         mode: "custom",
         rules: {
           worktreeAfterDays: 8,
-          worktreeOnMerge: false,
           worktreeOnDelete: false,
-          worktreeUnchanged: false,
         },
       },
     });
@@ -146,6 +162,57 @@ describe("storage cleanup settings", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeKeepWhen: "unknown" } }),
     ).toThrow();
+  });
+});
+
+describe("merged worktree cleanup", () => {
+  it.each([
+    ["no legacy switches", {}, "right-away"],
+    ["delete merged worktrees on", { worktreeOnMerge: true }, "right-away"],
+    ["delete unchanged worktrees on", { worktreeUnchanged: true }, "right-away"],
+    [
+      "both legacy switches off",
+      { worktreeOnMerge: false, worktreeUnchanged: false },
+      "right-away",
+    ],
+    ["an explicit choice", { worktreeOnMerge: true, worktreeMerged: "off" }, "off"],
+  ] as const)("reads %s", (_name, stored, expected) => {
+    const settings = decodeServerSettings({
+      storageCleanup: stored,
+      worktreeCleanup: {
+        mode: "custom",
+        rules: { worktreeAfterDays: 8, worktreeOnDelete: false, ...stored },
+      },
+    });
+    expect(settings.storageCleanup.worktreeMerged).toBe(expected);
+    expect(settings.worktreeCleanup).toMatchObject({ rules: { worktreeMerged: expected } });
+    expect(Object.keys(settings.storageCleanup)).not.toContain("worktreeOnMerge");
+  });
+
+  it("validates the days field", () => {
+    for (const days of [1, 365])
+      expect(
+        decodeServerSettingsPatch({ storageCleanup: { worktreeMergedAfterDays: days } }),
+      ).toEqual({ storageCleanup: { worktreeMergedAfterDays: days } });
+    for (const days of [0, 366, 1.5])
+      expect(() =>
+        decodeServerSettingsPatch({ storageCleanup: { worktreeMergedAfterDays: days } }),
+      ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ storageCleanup: { worktreeMerged: "sometimes" } }),
+    ).toThrow();
+  });
+
+  it("copies only worktree rules from the machine's storage settings", () => {
+    const { storageCleanup } = decodeServerSettings({
+      storageCleanup: { worktreeMerged: "after-days", worktreeMergedAfterDays: 4 },
+    });
+    const rules = pickWorktreeCleanupRules(storageCleanup);
+    expect(rules).toMatchObject({ worktreeMerged: "after-days", worktreeMergedAfterDays: 4 });
+    expect(Object.keys(rules).toSorted()).toEqual(
+      Object.keys(WorktreeCleanupRules.fields).toSorted(),
+    );
+    expect(Object.keys(storageCleanup).length).toBeGreaterThan(Object.keys(rules).length);
   });
 });
 
@@ -537,6 +604,18 @@ describe("ServerSettings project overrides across versions", () => {
       defaultAutoPull: false,
       addedByNewerServer: { mode: "kept" },
     });
+  });
+
+  it("still reads settings saved with the removed Runner overflow", () => {
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      runnerWhere: "automatic",
+      runnerOverflow: 3,
+      projectSettingsOverrides: { [projectId]: { runnerWhere: "linux", runnerOverflow: 5 } },
+    });
+    expect(settings.runnerWhere).toBe("automatic");
+    expect(settings.projectSettingsOverrides[projectId]?.runnerWhere).toBe("linux");
+    expect(decodeServerSettingsPatch({ runnerOverflow: 3 })).toEqual({});
   });
 });
 

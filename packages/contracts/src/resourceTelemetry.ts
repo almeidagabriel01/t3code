@@ -176,6 +176,15 @@ export const ResourceMonitorHelloEvent = Schema.Struct({
 });
 export type ResourceMonitorHelloEvent = typeof ResourceMonitorHelloEvent.Type;
 
+/** Processes outside every tracked tree, summed per process name. Linux sidecars send none. */
+export const ResourceMonitorUntrackedUsage = Schema.Struct({
+  name: Schema.String,
+  cpuPercent: Schema.Number,
+  residentBytes: NonNegativeInt,
+  processCount: PositiveInt,
+});
+export type ResourceMonitorUntrackedUsage = typeof ResourceMonitorUntrackedUsage.Type;
+
 export const ResourceMonitorSnapshotEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("snapshot"),
@@ -188,6 +197,7 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
   requestId: Schema.optionalKey(TrimmedNonEmptyString),
   externalProcesses: Schema.optionalKey(Schema.Array(ResourceMonitorExternalProcess)),
   processes: Schema.Array(ResourceMonitorProcessSample),
+  untracked: Schema.optionalKey(Schema.Array(ResourceMonitorUntrackedUsage)),
 });
 export type ResourceMonitorSnapshotEvent = typeof ResourceMonitorSnapshotEvent.Type;
 
@@ -496,6 +506,15 @@ export const ResourceTelemetryOwner = Schema.Union([
 ]);
 export type ResourceTelemetryOwner = typeof ResourceTelemetryOwner.Type;
 
+/** An app outside T3's process tree, its helper processes summed into it. */
+export const ResourceTelemetryOutsideApp = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cpuPercent: Schema.Number,
+  rssBytes: NonNegativeInt,
+  processCount: PositiveInt,
+});
+export type ResourceTelemetryOutsideApp = typeof ResourceTelemetryOutsideApp.Type;
+
 export const ResourceTelemetrySnapshot = Schema.Struct({
   readAt: Schema.DateTimeUtc,
   sampleIntervalMs: NonNegativeInt,
@@ -503,6 +522,8 @@ export const ResourceTelemetrySnapshot = Schema.Struct({
   cpuCount: Schema.optionalKey(PositiveInt),
   processes: Schema.Array(ResourceTelemetryProcess),
   owners: Schema.optionalKey(Schema.Array(ResourceTelemetryOwner)),
+  /** The heaviest apps outside T3, by CPU and by memory; absent where the host cannot read them. */
+  outsideApps: Schema.optionalKey(Schema.Array(ResourceTelemetryOutsideApp)),
   groups: ResourceTelemetryGroups,
   power: HostPowerSnapshot,
   speedLimitPercent: Schema.Option(Schema.Number),

@@ -41,7 +41,7 @@ import { AssistantIntegrationChips } from "./AssistantIntegrationsSection";
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySettingsSection } from "./AutonomySettingsSection";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
@@ -60,6 +60,7 @@ function AssistantCard(props: {
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
   const archived = assistant.archivedAt !== null;
+  const taskSections = useAssistantTaskSections(props.entry);
   const thread = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
@@ -135,7 +136,7 @@ function AssistantCard(props: {
           </View>
         )}
       </View>
-      {archived ? null : <AssistantTaskRows entry={props.entry} />}
+      {archived ? null : <AssistantTaskRows entry={props.entry} sections={taskSections} />}
       {archived ? null : (
         <AssistantIntegrationChips
           environmentId={environmentId}

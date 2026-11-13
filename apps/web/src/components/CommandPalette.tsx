@@ -1625,11 +1625,12 @@ function OpenCommandPaletteDialog(props: {
           items: splitThreadItems(
             allThreadItems,
             routeKey,
-            (ref) => readThreadTabsProjectKey(ref) === projectKey,
+            (ref) => readThreadTabsProjectKey(ref) !== null,
             async (ref) => {
               if (
                 applyThreadTabDrop(projectKey, routeKey, scopedThreadKey(ref), { beside: true })
               ) {
+                useRightPanelStore.getState().showChat(ref);
                 await navigate({
                   to: "/$environmentId/$threadId",
                   params: buildThreadRouteParams(ref),

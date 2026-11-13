@@ -1,5 +1,8 @@
 import { useActiveNewTask } from "../../state/active-new-task";
-import { HomeAssistantsSection } from "../assistants/HomeAssistantsSection";
+import {
+  HomeAssistantsSection,
+  useAssistantSectionJumpThreads,
+} from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
 import { HomeAgentsSection } from "../home/HomeAgentsSection";
 import { HomeNeedsYouSection } from "../home/HomeNeedsYouSection";
@@ -367,7 +370,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     threadSearchMatchByKey,
     threadOrder,
   };
-  useThreadJumpShortcuts(listItems, handleSelectThread);
+  useThreadJumpShortcuts(
+    listItems,
+    handleSelectThread,
+    useAssistantSectionJumpThreads(props.searchQuery.trim().length === 0),
+  );
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
       return threadListV2ListItemsAreEqual(previous, item);
@@ -422,6 +429,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
             variant={item.item.variant}
+            compact={item.compact === true}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
             pinned={item.item.pinned}
@@ -540,6 +548,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         <HomeAssistantsSection
           sidebar
           gutter={4}
+          renderThread={(item) => renderListItem({ item })}
           environmentLabelById={
             new Map(
               environments.map((environment) => [environment.environmentId, environment.label]),

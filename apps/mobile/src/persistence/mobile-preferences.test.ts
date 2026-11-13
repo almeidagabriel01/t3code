@@ -49,6 +49,7 @@ describe("mobile preferences parser", () => {
           homeAssistantsCollapsed: true,
           homeAgentsDoneExpanded: false,
           homeAssistantsShowAll: true,
+          homeAssistantsFolded: ["hub:a1", 3, null, "hub:a2"],
           // Saved by builds that had a Working shelf; still loads, and is dropped.
           workingShelfEnabled: true,
           threadListWorkingShelfExpanded: true,
@@ -57,12 +58,14 @@ describe("mobile preferences parser", () => {
         homeAssistantsCollapsed: true,
         homeAgentsDoneExpanded: false,
         homeAssistantsShowAll: true,
+        homeAssistantsFolded: ["hub:a1", "hub:a2"],
       });
       expect(
         yield* loadFrom({
           homeAssistantsCollapsed: "yes",
           homeAgentsDoneExpanded: 1,
           homeAssistantsShowAll: "x",
+          homeAssistantsFolded: "hub:a1",
         }),
       ).toEqual({});
     }),

@@ -67,6 +67,8 @@ export interface SettingsSearchItem {
   readonly to: SettingsPath;
   readonly targetId?: string;
   readonly searchTerms?: ReadonlyArray<string>;
+  /** The machine a setting belongs to, beside the page name, where titles repeat across machines. */
+  readonly machine?: "This Mac" | "Linux PC";
   readonly scope?: SettingsSearchScope;
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
@@ -1245,7 +1247,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-max",
-    title: "Run up to N heavy jobs at once",
+    machine: "This Mac",
+    title: "Jobs at once on this Mac",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue concurrency parallel slots tests builds simulators"],
   },
@@ -1254,6 +1257,37 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Pause heavy work queue",
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue hold stop starting"],
+  },
+  {
+    id: "heavy-work-cpu-ceiling",
+    machine: "This Mac",
+    title: "CPU limit",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue mac cpu limit ceiling busy percent room"],
+  },
+  {
+    id: "heavy-work-memory-floor",
+    machine: "This Mac",
+    title: "Keep memory free",
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue mac memory ram free floor percent low"],
+  },
+  {
+    id: "heavy-work-slow-agents",
+    machine: "This Mac",
+    title: "Slow down agent jobs when the Mac is busy",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue agent jobs background priority throttle slow cpu busy limit qos taskpolicy",
+    ],
+  },
+  {
+    id: "heavy-work-over-limit",
+    title: "Over the limit for",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue runner hybrid sustained spike seconds limit wait move linux mac",
+    ],
   },
   {
     id: "heavy-work-claude-hook",
@@ -1268,6 +1302,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue emulator simulator idle power off shut down minutes"],
   },
   {
+    id: "heavy-work-notices",
+    title: "Heavy job notices",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue runner notices notifications toast alerts failed failure linux offline online moved machine mac",
+    ],
+  },
+  {
     id: "runner-enabled",
     title: RUNNER_SETTING_COPY.runnerEnabled.title,
     to: "/settings/maintenance",
@@ -1277,13 +1319,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "runner-where",
     title: RUNNER_SETTING_COPY.runnerWhere.title,
     to: "/settings/maintenance",
-    searchTerms: ["runner this mac linux automatic offload"],
-  },
-  {
-    id: "runner-overflow",
-    title: RUNNER_SETTING_COPY.runnerOverflow.title,
-    to: "/settings/maintenance",
-    searchTerms: ["runner automatic overflow busy jobs threshold linux"],
+    searchTerms: ["runner this mac linux hybrid automatic offload balance both queues"],
   },
   {
     id: "runner-linux-commands",
@@ -1323,6 +1359,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-host",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerHost.title,
     to: "/settings/maintenance",
     scope: "environment",
@@ -1330,10 +1367,27 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "runner-linux-slots",
+    machine: "Linux PC",
     title: RUNNER_SETTING_COPY.runnerLinuxSlots.title,
     to: "/settings/maintenance",
     scope: "environment",
     searchTerms: ["runner linux slots concurrency parallel"],
+  },
+  {
+    id: "runner-linux-cpu-ceiling",
+    machine: "Linux PC",
+    title: RUNNER_SETTING_COPY.runnerLinuxCpuCeilingPercent.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner linux cpu limit ceiling load busy percent"],
+  },
+  {
+    id: "runner-linux-memory-floor",
+    machine: "Linux PC",
+    title: RUNNER_SETTING_COPY.runnerLinuxMemoryFloorPercent.title,
+    to: "/settings/maintenance",
+    scope: "environment",
+    searchTerms: ["runner linux memory ram free floor percent"],
   },
   {
     id: "runner-heartbeat",
@@ -2042,6 +2096,7 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        ...(item.machine === undefined ? [] : [normalizeSearchText(item.machine)]),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

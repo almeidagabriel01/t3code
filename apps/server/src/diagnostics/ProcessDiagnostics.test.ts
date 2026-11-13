@@ -133,6 +133,7 @@ describe("ProcessDiagnostics", () => {
             }),
           ),
           retry: Effect.die("unused"),
+          setJobRoots: () => Effect.void,
         }),
       );
       const layer = ProcessDiagnostics.layer.pipe(Layer.provide(layerTelemetry));

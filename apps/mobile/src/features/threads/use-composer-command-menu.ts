@@ -33,6 +33,7 @@ import { CLAUDE_CHROME_COMMAND_NAME } from "@t3tools/shared/claudeChrome";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
+  isAtMessageStart,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -132,6 +133,8 @@ export function resolveComposerMenuSelection(input: {
 export function buildComposerSlashCommandItems(input: {
   readonly query: string;
   readonly atMessageStart: boolean;
+  /** Only chips come before the command; `/side` and `/btw` take attachments, so they still work. */
+  readonly afterLeadingChips?: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly offersUsageLimits?: boolean;
@@ -168,10 +171,7 @@ export function buildComposerSlashCommandItems(input: {
     });
   }
 
-  // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction, except `/clear`.
-  if (!input.atMessageStart) return items;
-  if (input.offersSideChat) {
+  if (input.offersSideChat && (input.afterLeadingChips ?? input.atMessageStart)) {
     for (const [command, description] of [
       ["side", "Ask a side question in a new side chat"],
       ["btw", "Same as /side"],
@@ -186,6 +186,9 @@ export function buildComposerSlashCommandItems(input: {
       });
     }
   }
+  // Providers expand commands only at the start of a message. T3 commands
+  // change local state and do not have this restriction, except `/clear`.
+  if (!input.atMessageStart) return items;
   if (input.offersFreshSession && "clear".includes(query)) {
     items.push({
       id: "cmd:clear",
@@ -447,6 +450,7 @@ export function useComposerCommandMenu({
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
+        afterLeadingChips: isAtMessageStart(draftMessage, trigger.rangeStart),
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,

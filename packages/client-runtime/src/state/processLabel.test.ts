@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
-import { processLabel } from "./processLabel.logic";
+import { processLabel } from "./processLabel.ts";
 
 describe("processLabel", () => {
   it.each([

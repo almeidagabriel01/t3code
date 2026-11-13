@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AssistantId,
+  CommandId,
   type AssistantError,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
@@ -22,6 +23,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -66,6 +68,7 @@ const harness = () => {
   const taskDeletes: string[] = [];
   const tasks: Array<{ threadId: string | null; prompt: string; [key: string]: unknown }> = [];
   const failingTaskDeletes = new Set<string>();
+  const refusedCommands = new Set<string>();
   const pointers: Array<{ type: string; threadId: string; pointer: string | null; rows: number }> =
     [];
 
@@ -95,27 +98,35 @@ const harness = () => {
                   }
                 : null) as never,
             ),
-          dispatch: (command: { type: string; threadId: string }) =>
-            Effect.gen(function* () {
-              const row = yield* sql<{
-                thread_id: string | null;
-              }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`;
-              const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`;
-              dispatched.push(command);
-              pointers.push({
-                type: command.type,
-                threadId: command.threadId,
-                pointer: row[0]?.thread_id ?? null,
-                rows: all[0]!.n,
-              });
-              const thread = threads.get(command.threadId);
-              if (thread !== undefined) {
-                if (command.type === "thread.archive") thread.archivedAt = "now";
-                if (command.type === "thread.unarchive") thread.archivedAt = null;
-                if (command.type === "thread.delete") thread.deletedAt = "now";
-              }
-              return {} as never;
-            }).pipe(Effect.orDie),
+          dispatch: (command: { type: string; threadId: string; commandId: CommandId }) =>
+            refusedCommands.has(command.type)
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorProviderSelectionBusyError({
+                    commandId: command.commandId,
+                    threadId: ThreadId.make(command.threadId),
+                    change: "mode",
+                  }),
+                )
+              : Effect.gen(function* () {
+                  const row = yield* sql<{
+                    thread_id: string | null;
+                  }>`SELECT thread_id FROM assistants WHERE thread_id = ${command.threadId}`;
+                  const all = yield* sql<{ n: number }>`SELECT count(*) AS n FROM assistants`;
+                  dispatched.push(command);
+                  pointers.push({
+                    type: command.type,
+                    threadId: command.threadId,
+                    pointer: row[0]?.thread_id ?? null,
+                    rows: all[0]!.n,
+                  });
+                  const thread = threads.get(command.threadId);
+                  if (thread !== undefined) {
+                    if (command.type === "thread.archive") thread.archivedAt = "now";
+                    if (command.type === "thread.unarchive") thread.archivedAt = null;
+                    if (command.type === "thread.delete") thread.deletedAt = "now";
+                  }
+                  return {} as never;
+                }).pipe(Effect.orDie),
         } as never;
       }),
     ),
@@ -203,6 +214,7 @@ const harness = () => {
     threads,
     launched,
     dispatched,
+    refusedCommands,
     pointers,
     retargets,
     taskDeletes,
@@ -479,7 +491,7 @@ it.effect("an install that already had Jarvis keeps him archived and never resee
 });
 
 it.effect("update writes the row, then renames, switches access and archives the thread", () => {
-  const { layer, dispatched, pointers } = harness();
+  const { layer, dispatched, pointers, refusedCommands } = harness();
   return Effect.gen(function* () {
     const assistants = yield* Assistants.AssistantService;
     const made = yield* assistants.create(create());
@@ -493,17 +505,40 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.deepEqual(
       dispatched.map((command) => command.type),
       [
+        "thread.runtime-mode.set",
         "thread.metadata.update",
         "thread.notice.record",
         "thread.model-selection.set",
-        "thread.runtime-mode.set",
       ],
     );
-    assert.equal((dispatched[1] as unknown as { message: string }).message, "Renamed to Renamed");
+    assert.equal((dispatched[2] as unknown as { message: string }).message, "Renamed to Renamed");
     assert.equal(
-      (dispatched[3] as unknown as { runtimeMode: string }).runtimeMode,
+      (dispatched[0] as unknown as { runtimeMode: string }).runtimeMode,
       "approval-required",
     );
+
+    // A busy thread refuses the mode change; the row keeps the access the thread still runs with.
+    refusedCommands.add("thread.runtime-mode.set");
+    const refused = yield* assistants
+      .update({ assistantId: made.id, toolAccess: "full" })
+      .pipe(Effect.flip);
+    assert.match(refused.message, /while the agent is working/);
+    assert.equal(
+      (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
+      "read-only",
+    );
+    refusedCommands.clear();
+    // A refusal after the mode change leaves the row on the access the thread now runs with.
+    refusedCommands.add("thread.model-selection.set");
+    yield* assistants
+      .update({ assistantId: made.id, toolAccess: "full", modelSelection: model("m3") })
+      .pipe(Effect.flip);
+    assert.equal(dispatched.at(-1)!.type, "thread.runtime-mode.set");
+    assert.equal(
+      (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
+      "full",
+    );
+    refusedCommands.clear();
 
     pointers.length = 0;
     yield* assistants.update({ assistantId: made.id, archived: true });

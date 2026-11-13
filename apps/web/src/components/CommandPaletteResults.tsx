@@ -1,4 +1,6 @@
-import { startPaletteThreadDrag } from "./CommandPalette.drag";
+import { flushSync } from "react-dom";
+import { dispatchCommandPalette } from "../commandPaletteStore";
+import { startThreadDrag } from "./threadDrag";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -252,11 +254,12 @@ function CommandPaletteResultRow(props: {
       active={props.isActive}
       onPointerDown={(event) => {
         if (props.item.threadRef) {
-          startPaletteThreadDrag(
+          startThreadDrag(
             event.nativeEvent,
             props.item.threadRef,
             props.item.searchTitle ??
               (typeof props.item.title === "string" ? props.item.title : "Thread"),
+            () => flushSync(() => dispatchCommandPalette({ _tag: "SetOpen", open: false })),
           );
         }
       }}

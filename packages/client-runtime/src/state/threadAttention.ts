@@ -50,6 +50,11 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
   return "ready";
 }
 
+/** Doing work without needing the user, including waiting on its own children or background work. */
+export function sidebarStatusIsRunning(status: SidebarThreadStatus): boolean {
+  return status === "working" || status === "waiting";
+}
+
 type ThreadAttentionFields = Pick<
   EnvironmentThreadShell,
   "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest"
@@ -100,12 +105,10 @@ function isActiveSubagentChild(thread: EnvironmentThreadShell): boolean {
   if (thread.archivedAt !== null) return false;
   const status = resolveSidebarThreadStatus(thread);
   return (
-    status === "working" ||
+    sidebarStatusIsRunning(status) ||
     status === "approval" ||
     status === "input" ||
-    status === "request" ||
-    // Blocked on a thread wait, or a finished run parked on awaited background work.
-    status === "waiting"
+    status === "request"
   );
 }
 

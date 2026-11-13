@@ -178,6 +178,8 @@ export interface Preferences {
   readonly homeAssistantsCollapsed?: boolean;
   readonly homeAgentsDoneExpanded?: boolean;
   readonly homeAssistantsShowAll?: boolean;
+  /** `env:assistantId` of assistants whose task and subagent rows are folded on Home. */
+  readonly homeAssistantsFolded?: ReadonlyArray<string>;
   readonly kanbanPanel?: KanbanPanelPreferences;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
@@ -268,6 +270,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     homeAssistantsCollapsed?: boolean;
     homeAgentsDoneExpanded?: boolean;
     homeAssistantsShowAll?: boolean;
+    homeAssistantsFolded?: ReadonlyArray<string>;
     kanbanPanel?: KanbanPanelPreferences;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
@@ -440,6 +443,11 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     "homeAssistantsShowAll",
   ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
+  if (Array.isArray(parsed.homeAssistantsFolded)) {
+    preferences.homeAssistantsFolded = parsed.homeAssistantsFolded.filter(
+      (key): key is string => typeof key === "string",
+    );
   }
   const kanbanPanel = sanitizeKanbanPanel(parsed.kanbanPanel);
   if (kanbanPanel !== undefined) preferences.kanbanPanel = kanbanPanel;

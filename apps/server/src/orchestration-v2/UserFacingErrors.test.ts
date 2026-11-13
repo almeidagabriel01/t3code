@@ -8,7 +8,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
-import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
+import { CommandId, ThreadId } from "@t3tools/contracts";
+import { OrchestratorProviderSelectionBusyError } from "./Orchestrator.ts";
+import { dispatchRefusal, userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 
 describe("userFacingDispatchErrorMessage", () => {
   it.effect("explains a real database open failure through dispatch and persistence wrappers", () =>
@@ -79,5 +81,22 @@ describe("userFacingDispatchErrorMessage", () => {
     assert.include(message, "server could not complete this database request");
     assert.include(message, "server logs");
     assert.notInclude(message, "private-query-data");
+  });
+});
+
+describe("dispatchRefusal", () => {
+  it("marks a busy session refusal through dispatch wrappers and nothing else", () => {
+    const busy = new OrchestratorProviderSelectionBusyError({
+      commandId: CommandId.make("command"),
+      threadId: ThreadId.make("thread"),
+      change: "mode",
+      holding: "command",
+    });
+    assert.equal(busy.message, "Can't switch mode while a command is running");
+    assert.equal(
+      dispatchRefusal({ cause: { errors: [new Error("other"), busy] } }),
+      "session-busy",
+    );
+    assert.isUndefined(dispatchRefusal({ cause: new Error("Run is not queued.") }));
   });
 });

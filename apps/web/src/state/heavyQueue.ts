@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createHeavyQueueEnvironmentAtoms } from "@t3tools/client-runtime/state/heavyQueue";
-import type { EnvironmentId, HeavyCommandsState, HeavyQueueState } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type EnvironmentId,
+  type HeavyCommandsState,
+  type HeavyQueueState,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -14,6 +19,7 @@ const EMPTY_QUEUE: HeavyQueueState = {
   paused: false,
   rules: [],
   maxRunning: 1,
+  ...HEAVY_QUEUE_DEFAULTS,
   reasons: {},
   room: true,
   claudeHookInstalled: false,
@@ -56,3 +62,9 @@ const heavyCommandsAtom = Atom.family((environmentId: EnvironmentId) =>
 export function useHeavyCommands(environmentId: EnvironmentId | null): HeavyCommandsState {
   return useAtomValue(environmentId === null ? NO_COMMANDS_ATOM : heavyCommandsAtom(environmentId));
 }
+
+/** The status bar's Resource Manager popover, so a toast can open it. */
+export const resourceManagerOpenAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-resource-manager-open"),
+);
