@@ -39,6 +39,7 @@ describe("the Runner block a server publishes", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
       runnerAskMinutes: 4,
+      runnerMacFirstAfter: 6,
       runnerHost: "pc",
       heavySlowAgentJobs: false,
       projectSettingsOverrides: {
@@ -46,6 +47,10 @@ describe("the Runner block a server publishes", () => {
           runnerEnabled: true,
           runnerAskMinutes: 1,
           runnerMacOnly: ["CaptureDevices.test.ts"],
+          runnerWhere: "macFirst" as const,
+          runnerDropped: "ask" as const,
+          runnerLinuxEverything: true,
+          runnerBringBack: true,
         },
       },
     };
@@ -57,7 +62,14 @@ describe("the Runner block a server publishes", () => {
       ],
       publisher,
     );
-    expect(block.global).toMatchObject({ runnerEnabled: false, runnerAskMinutes: 4 });
+    expect(block.global).toMatchObject({
+      runnerEnabled: false,
+      runnerAskMinutes: 4,
+      runnerDropped: "agent",
+      runnerMacFirstAfter: 6,
+      runnerLinuxEverything: false,
+      runnerBringBack: false,
+    });
     expect(block.machine).toEqual({
       runnerHost: "pc",
       runnerLinuxSlots: RUNNER_DEFAULTS.runnerLinuxSlots,
@@ -75,7 +87,11 @@ describe("the Runner block a server publishes", () => {
         runnerEnabled: true,
         runnerAskMinutes: 1,
         runnerMacOnly: ["CaptureDevices.test.ts"],
-        runnerWhere: RUNNER_DEFAULTS.runnerWhere,
+        runnerWhere: "macFirst",
+        runnerDropped: "ask",
+        runnerMacFirstAfter: 6,
+        runnerLinuxEverything: true,
+        runnerBringBack: true,
       }),
     });
     expect(block.projects[1]!.config).toEqual(block.global);

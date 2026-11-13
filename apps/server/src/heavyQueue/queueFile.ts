@@ -48,6 +48,7 @@ import {
 } from "./heavyNotices.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
+  DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   intentOf,
   mayPublish,
@@ -220,10 +221,13 @@ const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey
     : HEAVY_QUEUE_DEFAULTS[key];
 };
 
-/**
- * A block missing any part reads as no block, so a half-written one never routes anything. An
- * older publisher's machine settings lack newer keys, which read as their defaults.
- */
+/** An older publisher's settings lack newer keys, which read as their defaults. */
+const projectConfigOf = (value: unknown) => ({
+  ...DEFAULT_PROJECT_CONFIG,
+  ...(isObject(value) ? value : {}),
+});
+
+/** A block missing any part reads as no block, so a half-written one never routes anything. */
 const parseRunner = (value: unknown): RunnerBlock | null =>
   isObject(value) &&
   isObject(value.global) &&
@@ -232,7 +236,11 @@ const parseRunner = (value: unknown): RunnerBlock | null =>
   isObject(value.publisher)
     ? ({
         ...value,
+        global: projectConfigOf(value.global),
         machine: { ...DEFAULT_MACHINE_CONFIG, ...value.machine },
+        projects: (value.projects as unknown[]).map((project) =>
+          isObject(project) ? { ...project, config: projectConfigOf(project.config) } : project,
+        ),
       } as unknown as RunnerBlock)
     : null;
 

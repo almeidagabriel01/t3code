@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import type { HeavyQueueEntry } from "@t3tools/contracts";
+import type { HeavyQueueEntry, RunnerProjectConfig } from "@t3tools/contracts";
 
 import * as Queue from "./queueFile.ts";
 import {
@@ -865,7 +865,13 @@ describe("Runner in the queue file", () => {
       runnerLinuxCpuCeilingPercent: _c,
       ...machine
     } = DEFAULT_MACHINE_CONFIG;
-    const old = config({ runnerWhere: "automatic", runnerOverflow: 0 } as never);
+    const {
+      runnerMacFirstAfter: _m,
+      runnerLinuxEverything: _e,
+      runnerBringBack: _b,
+      ...older
+    } = config({ runnerWhere: "automatic", runnerOverflow: 0 } as never);
+    const old = older as unknown as RunnerProjectConfig;
     NodeFS.writeFileSync(
       file,
       JSON.stringify({
@@ -887,6 +893,14 @@ describe("Runner in the queue file", () => {
     // A busy Linux in an old heartbeat is not over its limits until a new one says so.
     expect(doc.linux.overLimit).toBe(false);
     expect(Queue.configFor(doc, "/w/a").runnerWhere).toBe("automatic");
+    // Settings added since read as their defaults, globally and per project.
+    for (const cwd of ["/w/a", "/elsewhere"]) {
+      expect(Queue.configFor(doc, cwd)).toMatchObject({
+        runnerMacFirstAfter: 4,
+        runnerLinuxEverything: false,
+        runnerBringBack: false,
+      });
+    }
     Queue.enqueue(dir, test("a"));
     // Hybrid with room on the Mac keeps it here, however low the old overflow was.
     expect(Queue.tryStart(dir, "a", NOW)).toEqual({
