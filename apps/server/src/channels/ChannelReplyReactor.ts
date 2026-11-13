@@ -19,7 +19,6 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { decodeReplyAddress } from "./ChannelBridge.ts";
-import { redactChannelText } from "./channelRedaction.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import {
@@ -157,9 +156,7 @@ const make = Effect.gen(function* () {
           deliveryId,
           destination: target.address,
           senderName: target.assistantName,
-          text: redactChannelText(
-            [shown.title, shown.context].filter((part) => part !== "").join("\n\n"),
-          ),
+          text: [shown.title, shown.context].filter((part) => part !== "").join("\n\n"),
           choices: shown.options.map((option) => ({
             label: option.label,
             value: option.id,

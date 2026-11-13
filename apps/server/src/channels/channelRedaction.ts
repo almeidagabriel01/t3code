@@ -1,14 +1,14 @@
 import { MEMORY_REDACTION_MARKER, redactMemoryText } from "../memory/MemorySecretScanner.ts";
 
 const MARK = MEMORY_REDACTION_MARKER;
-// Chat apps are third-party servers: on top of the token formats memory blocks, T3's own notices
-// drop credentials written as assignments, auth headers and URL userinfo.
+// Chat apps are third-party servers: on top of the token formats memory blocks, everything the
+// outbox sends drops credentials written as assignments, auth headers and URL userinfo.
 const ASSIGNMENT =
   /\b([A-Za-z0-9_.-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]*)(["']?\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/gi;
 const AUTH_HEADER = /\b(Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]+@/gi;
 
-/** T3-written channel text with every credential it can recognize replaced by a fixed marker. */
+/** Channel text with every credential it can recognize replaced by a fixed marker. */
 export function redactChannelText(text: string): string {
   return redactMemoryText({ text })
     .text.replace(
