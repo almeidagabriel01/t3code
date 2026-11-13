@@ -3552,7 +3552,7 @@ it.effect("only a member that may work in the request's project gets its work", 
     yield* groups.post({ teamId: TEAM, text: "@beto fix the app", projectId: app }, h.user);
     assert.deepEqual(yield* notices(), [
       "Beto cannot work in Mobile App, so only Ada got this.",
-      "Beto cannot work in Mobile App, so nobody got this. Mention a member who works there.",
+      "Beto cannot work in Mobile App, so nobody got this. Send it again mentioning a member who works there.",
     ]);
     assert.deepEqual(
       h.launched.map((launch) => [launch.threadId.split(":")[1], launch.projectId]),
@@ -3624,9 +3624,41 @@ it.effect.each([
         "notice",
         "beto",
         reached.length === 0
-          ? "Beto cannot work in Mobile App, so nobody got this. Mention a member who works there."
+          ? "Beto cannot work in Mobile App, so nobody got this. Send it again mentioning a member who works there."
           : "Beto cannot work in Mobile App, so only Ada got this.",
       ],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the lead does not route a request nobody may work in any more", () => {
+  const h = harness({
+    members: ["ada", "beto"],
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: ["ada"] }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    const app = yield* groups.post(
+      { teamId: TEAM, text: "@ada fix the app", projectId: ProjectId.make("p2") },
+      h.user,
+    );
+    yield* h.finishTask(app.tasks[0]!.id, "completed", "Fixed.");
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1"]' WHERE assistant_id = 'ada'`;
+    // An agent's follow-up goes through the lead, which has nobody left to pick.
+    yield* groups.post(
+      { teamId: TEAM, text: "one more fix", replyToMessageId: app.message.id },
+      { kind: "agent", assistantId: null, label: "Planner" },
+    );
+    yield* groups.idle;
+    assert.lengthOf(h.routeCalls, 0);
+    assert.lengthOf(yield* h.tasks, 1);
+    assert.equal(
+      (yield* h.messages).at(-1)!.text,
+      "Nobody in the group can work in Mobile App, so nobody got this.",
     );
   }).pipe(Effect.provide(h.layer));
 });

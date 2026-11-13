@@ -351,7 +351,7 @@ const outsideProjectText = (
 ) =>
   `${joinNames(left.map((row) => row.name))} cannot work in ${project}, so ${
     reached.length === 0
-      ? "nobody got this. Mention a member who works there."
+      ? "nobody got this. Send it again mentioning a member who works there."
       : `only ${joinNames(reached.map((row) => row.name))} got this.`
   }`;
 
@@ -1505,6 +1505,13 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** A project's title for the chat, even when no member lists it any more. */
+  const projectTitle = (projectId: string | null) =>
+    sql<{ readonly title: string }>`
+      SELECT title FROM projection_projects WHERE project_id = ${projectId ?? ""}`.pipe(
+      Effect.map((rows) => rows[0]?.title ?? "this project"),
+    );
+
   /** Sets a request's project (and the lead's title) on its first message, for every client. */
   const setRequestProject = Effect.fn("AssistantGroups.setRequestProject")(function* (
     request: MessageRow,
@@ -1599,8 +1606,9 @@ const make = Effect.gen(function* () {
     if (prepared === undefined) return;
     // The model call runs outside the lock: it takes seconds and nothing else should wait on it.
     const routeCall = textGeneration.routeAssistantGroup;
+    const nobodyCan = !prepared.needsProject && prepared.candidates.length === 0;
     const picked =
-      prepared.named !== null && !prepared.needsProject
+      (prepared.named !== null && !prepared.needsProject) || nobodyCan
         ? undefined
         : yield* (
             routeCall === undefined
@@ -1682,6 +1690,19 @@ const make = Effect.gen(function* () {
               WHERE message_id = ${request.message_id} RETURNING *`;
             if (rows[0] !== undefined) yield* publishMessage(rows[0]);
           }
+          if (nobodyCan && prepared.named === null) {
+            const projectId = current.project_id ?? decided?.id ?? null;
+            yield* insertMessage({
+              teamId,
+              author: "assistant",
+              assistantId: leadId,
+              kind: "notice",
+              text: `Nobody in the group can work in ${yield* projectTitle(projectId)}, so nobody got this.`,
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
+            });
+            return;
+          }
           const ids = prepared.named ?? [
             ...new Set((answer?.assistantIds ?? []).filter((id) => known.has(id))),
           ];
@@ -1735,8 +1756,7 @@ const make = Effect.gen(function* () {
               kind: "notice",
               text: outsideProjectText(
                 named.filter((member) => !recipients.includes(member)),
-                prepared.projects.find((project) => project.id === projectId)?.name ??
-                  "this project",
+                yield* projectTitle(projectId),
                 recipients,
               ),
               replyTo: trigger.message_id,
@@ -2069,7 +2089,7 @@ const make = Effect.gen(function* () {
                   kind: "notice",
                   text: outsideProjectText(
                     recipients.filter((row) => !allowed.includes(row)),
-                    projectList.find((project) => project.id === projectId)?.name ?? "this project",
+                    yield* projectTitle(projectId),
                     allowed,
                   ),
                   replyTo: message.message_id,
