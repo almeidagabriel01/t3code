@@ -43,18 +43,23 @@ const UNATTRIBUTED = "Unattributed";
 const SORTS: ReadonlyArray<ResourceSort> = ["name", "cpu", "memory"];
 
 /**
- * The order rows had when the screen opened or the sort last changed, so a row never moves under
- * a finger as samples arrive. Rows that appear later join at the end and then hold their place.
+ * The order rows had at the first sample or the last sort change, so a row never moves under a
+ * finger as samples arrive. Rows that appear later join at the end and then hold their place.
+ * Before the first sample nothing holds: terminals load first, with no usage to rank them by.
  */
-function useHeldOrder(keys: ReadonlyArray<string>, sort: ResourceSort): ReadonlyArray<string> {
+function useHeldOrder(
+  keys: ReadonlyArray<string>,
+  sort: ResourceSort,
+  live: boolean,
+): ReadonlyArray<string> {
   const [held, setHeld] = useState<{
     readonly sort: ResourceSort;
     readonly order: ReadonlyArray<string> | null;
   }>({ sort, order: null });
   const base = held.sort === sort ? held.order : null;
-  const order = withArrivedKeys(base, keys) ?? keys;
+  const order = live ? (withArrivedKeys(base, keys) ?? keys) : null;
   if (held.sort !== sort || order !== held.order) setHeld({ sort, order });
-  return order;
+  return order ?? keys;
 }
 
 /**
@@ -105,7 +110,10 @@ function EnvironmentResources(props: {
       projectKey === null ? UNATTRIBUTED : (projects.get(projectKey) ?? UNATTRIBUTED),
     threadTitle: (threadId) => threads.get(threadId)?.title || "Agent",
   });
-  const tree = orderResourceTree(ranked, useHeldOrder(resourceTreeKeys(ranked), props.sort));
+  const tree = orderResourceTree(
+    ranked,
+    useHeldOrder(resourceTreeKeys(ranked), props.sort, snapshot !== null),
+  );
   const live = snapshot !== null;
   const cores = snapshot?.cpuCount ?? 1;
   const work = heavyWork(state, commands);

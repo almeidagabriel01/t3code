@@ -982,7 +982,13 @@ describe("ResourceManagerRouteScreen", () => {
         runtime: { status: "running" },
       },
     ];
+    // Terminals usually load before the first sample; the order holds only from the first sample.
+    const sample = mocks.telemetry;
+    mocks.telemetry = null;
     const view = await screen();
+    expect(sections(view.host)).toEqual([null, "App Project"]);
+    mocks.telemetry = sample;
+    await view.rerender(<ResourceManagerRouteScreen />);
     expect(sections(view.host)).toEqual([null, "App Project", "Devices", "T3 Code", "Outside T3"]);
     expect(view.host.textContent).not.toContain("Nothing running right now");
     expect(view.host.textContent).toContain("T3 total · 10% · ");
