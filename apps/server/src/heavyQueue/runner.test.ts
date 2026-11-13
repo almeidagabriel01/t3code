@@ -444,6 +444,29 @@ describe("Mac first, Hybrid and Everything", () => {
     },
   );
 
+  it.each(
+    QUEUE.flatMap((enabled) => [
+      [enabled, 1, "Mac first: this Mac has 1 job"],
+      [enabled, 3, "Mac first: this Mac has 3 jobs"],
+    ]),
+  )(
+    "Mac first counts this Mac's jobs in the waiting reason (queue on: %s, %i)",
+    (enabled, count, reason) => {
+      const entries = [
+        ...Array.from({ length: count as number }, (_, at) => runningOn(`m${at}`, "mac")),
+        job("a", "vp test run"),
+        job("b", "vp test run"),
+      ];
+      const plan = planned(
+        entries,
+        { runnerWhere: "macFirst", runnerMacFirstAfter: count as number },
+        { enabled: enabled as boolean },
+      );
+      expect(plan.routes).toEqual({ a: "linux", b: "linux" });
+      expect(plan.reasons.b).toBe(reason);
+    },
+  );
+
   interface ModeRow {
     readonly enabled: boolean;
     readonly name: string;

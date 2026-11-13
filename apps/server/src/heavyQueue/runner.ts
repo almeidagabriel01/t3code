@@ -878,7 +878,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       else {
         toLinux(entry, busy);
         if (hybrid && macOver) reasons[entry.id] = "Hybrid: this Mac is over its limits";
-        if (!hybrid && past) reasons[entry.id] = `Mac first: this Mac has ${macCount} jobs`;
+        if (!hybrid && past) {
+          reasons[entry.id] = `Mac first: this Mac has ${macCount} job${macCount === 1 ? "" : "s"}`;
+        }
       }
       continue;
     }

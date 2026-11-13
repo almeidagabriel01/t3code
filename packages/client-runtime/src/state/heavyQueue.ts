@@ -59,6 +59,10 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:route",
       tag: WS_METHODS.heavyQueueRoute,
     }),
+    routeAll: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:route-all",
+      tag: WS_METHODS.heavyQueueRouteAll,
+    }),
     setMaxRunning: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:set-max-running",
       tag: WS_METHODS.heavyQueueSetMaxRunning,

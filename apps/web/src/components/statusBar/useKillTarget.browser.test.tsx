@@ -20,6 +20,7 @@ vi.mock("../../state/heavyQueue", async () => {
     heavyQueueEnvironment: {
       move: { permissionAtom: () => allowed, name: "move" },
       route: { permissionAtom: () => allowed, name: "route" },
+      routeAll: { permissionAtom: () => allowed, name: "routeAll" },
       cancel: { permissionAtom: () => allowed, name: "cancel" },
       stopCommand: { permissionAtom: () => allowed, name: "stopCommand" },
       setPaused: { permissionAtom: () => allowed, name: "setPaused" },
@@ -73,6 +74,7 @@ function Probe() {
       >
         rerun
       </button>
+      <button onClick={() => void actions.moveAll("linux")}>move all</button>
       <button onClick={() => void actions.cancel("b", false)}>cancel</button>
       <button onClick={() => void actions.cancel("c", true)}>stop</button>
       <button onClick={() => void actions.setPaused(true)}>pause</button>
@@ -197,6 +199,14 @@ describe("useHeavyQueueActions", () => {
       ["route", { environmentId, input: { id: "w", runner: "mac", force: true } }],
     ]);
     expect(mocks.confirm.mock.calls.map(([message]) => message)).toEqual(["Run it twice?"]);
+  });
+
+  it("moves every waiting job to a machine with one command", async () => {
+    await using screen = await setup();
+    await userEvent.click(screen.getByRole("button", { name: "move all" }));
+    expect(mocks.calls.mock.calls).toEqual([
+      ["routeAll", { environmentId, input: { runner: "linux" } }],
+    ]);
   });
 
   it("does not move when the confirmation is declined", async () => {

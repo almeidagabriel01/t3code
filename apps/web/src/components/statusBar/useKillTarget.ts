@@ -9,6 +9,7 @@ import {
   type DeviceShutdownInput,
   type EnvironmentId,
   type HeavyCommand,
+  type HeavyRunner,
   type ListeningPort,
   type TerminalCloseInput,
 } from "@t3tools/contracts";
@@ -86,6 +87,8 @@ export function useShutDownDevice(environmentId: EnvironmentId) {
 export function useHeavyQueueActions(environmentId: EnvironmentId) {
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const canRouteAll = useAtomValue(heavyQueueEnvironment.routeAll.permissionAtom(environmentId));
+  const routeAllCommand = useAtomCommand(heavyQueueEnvironment.routeAll, { reportFailure: false });
   const routeCommand = useAtomCommand(heavyQueueEnvironment.route, { reportFailure: false });
   const moveCommand = useAtomCommand(heavyQueueEnvironment.move, { reportFailure: false });
   const startNowCommand = useAtomCommand(heavyQueueEnvironment.startNow, { reportFailure: false });
@@ -129,6 +132,12 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
   return {
     canChange,
     canRoute,
+    canRouteAll,
+    moveAll: async (runner: HeavyRunner) =>
+      report(
+        "Could not move it",
+        await routeAllCommand({ environmentId, input: { runner } }),
+      ),
     route: async (id: string, action: Pick<RouteAction, "runner" | "confirm" | "force">) => {
       if (action.confirm !== null && !(await confirmKill(action.confirm))) return;
       report(

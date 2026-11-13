@@ -32,11 +32,13 @@ import {
 import {
   ASK_TITLE,
   askRemaining,
+  moveAllActions,
   routeActions,
   RUNNER_DEADLINE_LABEL,
   RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_UNCONFIRMED_NOTE,
+  type MoveAllAction,
 } from "@t3tools/client-runtime/state/runnerModel";
 import type {
   EnvironmentId,
@@ -502,6 +504,7 @@ function MachineGroup({
   children,
   renderWaiter,
   actions,
+  moveAll,
 }: {
   readonly runner: HeavyRunner;
   /** Already narrowed to what this list shows; `line` keeps every waiter for places and moves. */
@@ -510,6 +513,8 @@ function MachineGroup({
   readonly children: ReactNode;
   readonly renderWaiter: (entry: HeavyQueueEntry, position: number) => ReactNode;
   readonly actions: Actions;
+  /** The Move all that sends waiting jobs to the other machine, when one would move. */
+  readonly moveAll: MoveAllAction | undefined;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -521,9 +526,22 @@ function MachineGroup({
   return (
     <div role="group" aria-label={name}>
       {showName ? (
-        <div className="flex items-center gap-1.5 pt-2 pb-0.5 pl-3 text-3xs font-medium tracking-wide text-muted-foreground uppercase [&>svg]:size-3">
-          <Icon aria-hidden />
-          {name}
+        <div className="flex items-center gap-1.5 pt-2 pb-0.5 pl-3">
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-3xs font-medium tracking-wide text-muted-foreground uppercase [&>svg]:size-3">
+            <Icon aria-hidden />
+            {name}
+          </span>
+          {moveAll === undefined ? null : (
+            <Button
+              size="micro"
+              variant="ghost-muted"
+              disabled={!actions.canRouteAll}
+              onClick={() => void actions.moveAll(moveAll.runner)}
+            >
+              {moveAll.runner === "mac" ? <LaptopIcon aria-hidden /> : <ServerIcon aria-hidden />}
+              {moveAll.label}
+            </Button>
+          )}
         </div>
       ) : null}
       {children}
@@ -597,6 +615,7 @@ export function HeavyWorkList({
       };
     })
     .filter(({ work: rows }) => rows.running.length + rows.direct.length + rows.waiting.length > 0);
+  const moveAlls = moveAllActions(state);
   const showNames =
     state.linux !== null || work.linux.running.length + work.linux.waiting.length > 0;
   const row = (
@@ -626,6 +645,7 @@ export function HeavyWorkList({
           work={rows}
           showName={showNames}
           actions={actions}
+          moveAll={moveAlls.find((action) => action.runner !== runner)}
           renderWaiter={(entry, position) => row(entry, position, rows.line)}
         >
           {rows.running.map((entry) => row(entry, null, rows.line))}
