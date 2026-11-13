@@ -14,9 +14,7 @@ import {
 } from "@t3tools/client-runtime/state/resourceTree";
 
 export const CPU_COLUMN = "w-12 text-right";
-// The user chose an em dash for a CPU the sample could not read; "--" already means not sampled yet.
-// oxlint-disable-next-line t3code/no-em-dash-copy
-const UNREAD_CPU = "—";
+const UNREAD_CPU = "--";
 export const MEM_COLUMN = "w-16 text-right";
 export const GUTTER = "flex w-5 shrink-0 items-center justify-end";
 export const METRICS = "flex shrink-0 items-center tabular-nums";
