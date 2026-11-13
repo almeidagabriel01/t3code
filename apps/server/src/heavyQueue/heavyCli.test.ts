@@ -290,6 +290,14 @@ describe("t3 heavy", () => {
       };
       return { dir, env };
     };
+    // From inside the fake checkout: run from a copy without .git, the work stays on the Mac.
+    const heavyHere = (
+      dir: string,
+      program: ReadonlyArray<string>,
+      env: NodeJS.ProcessEnv = {},
+      options: ReadonlyArray<string> = ["--"],
+      cwd = dir,
+    ) => heavy(dir, program, env, options, cwd);
     const onMac = [process.execPath, "-e", "console.log('ran on mac')"];
 
     it("passes the command's output and exit code through, without the markers", async () => {
@@ -301,7 +309,7 @@ describe("t3 heavy", () => {
           "exit 3",
         ].join("\n"),
       );
-      const run = heavy(dir, ["vp", "test", "run"], env, ["--runner", "linux", "--"]);
+      const run = heavyHere(dir, ["vp", "test", "run"], env, ["--runner", "linux", "--"]);
       expect(await run.exited).toBe(3);
       expect(run.stdout()).toBe("remote-out\n");
       expect(run.stderr()).not.toContain("remoto phase");
@@ -318,10 +326,10 @@ describe("t3 heavy", () => {
       );
       const sub = NodePath.join(dir, "sub");
       NodeFS.mkdirSync(sub);
-      const wrapped = heavy(dir, ["/bin/sh", "-c", `cd ${sub} && remoto vp test run`], env);
+      const wrapped = heavyHere(dir, ["/bin/sh", "-c", `cd ${sub} && remoto vp test run`], env);
       expect(await wrapped.exited).toBe(0);
       expect(wrapped.stdout()).toBe(`vp|test|run| in ${NodeFS.realpathSync(sub)}\n`);
-      const bare = heavy(dir, ["remoto", "vp", "test", "run"], env);
+      const bare = heavyHere(dir, ["remoto", "vp", "test", "run"], env);
       expect(await bare.exited).toBe(0);
       expect(bare.stdout()).toMatch(/^vp\|test\|run\| in /);
     });
@@ -339,7 +347,7 @@ describe("t3 heavy", () => {
       NodeFS.mkdirSync(session);
       NodeFS.mkdirSync(web, { recursive: true });
       const line = `cd ${web} && vp test run src/x.browser.test.tsx`;
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], session);
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], session);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(
         `vp|test|run|src/x.browser.test.tsx| in ${NodeFS.realpathSync(web)}\n`,
@@ -350,7 +358,7 @@ describe("t3 heavy", () => {
       const { dir, env } = setup(echoArgs);
       const log = NodePath.join(dir, "out.log");
       const line = `L=${log}; vp test run src/a.test.ts > $L 2>&1; echo "log: $(cat $L)"`;
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(`log: vp|test|run|src/a.test.ts| in ${NodeFS.realpathSync(dir)}\n`);
       expect(run.stderr()).toContain("Linux: running");
@@ -359,7 +367,7 @@ describe("t3 heavy", () => {
     it("runs the line here when its expanded command turns out to need this Mac", async () => {
       const { dir, env } = setup(echoArgs);
       const line = "F=$(echo /etc/hosts); vp test run $F";
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run /etc/hosts\n");
       expect(run.stderr()).toContain(
@@ -373,7 +381,7 @@ describe("t3 heavy", () => {
       ["vp run check:changed", "run check:changed"],
     ])("runs %j here when its expanded command turns out to need git", async (line, ran) => {
       const { dir, env } = setup(echoArgs);
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(`vp on mac: ${ran}\n`);
       expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
@@ -392,7 +400,7 @@ describe("t3 heavy", () => {
         `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
         { runnerDropped: "mac" },
       );
-      const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("vp on mac: test run\n");
       expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
@@ -408,7 +416,7 @@ describe("t3 heavy", () => {
           `printf '${M} phase=running pgid=4\\n${M} exit=${code}\\n' >&2; exit ${code}`,
           { runnerDropped: "mac", runnerUnavailable: "mac" },
         );
-        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
         expect(await run.exited).toBe(code);
         expect(run.stdout()).not.toContain("vp on mac");
       },
@@ -427,7 +435,7 @@ describe("t3 heavy", () => {
         `printf '${M} phase=running pgid=4\\n' >&2; echo '${error}' >&2; printf '${M} exit=${code}\\n' >&2; exit ${code}`,
         { runnerDropped: policy },
       );
-      const run = heavy(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run; echo after"], env, ["--"], dir);
       expect(await run.exited).toBe(exit);
       expect(run.stdout()).toBe(stdout);
       expect(run.stderr()).toContain(`${error}\n`);
@@ -459,7 +467,7 @@ describe("t3 heavy", () => {
           ].join("\n"),
           { runnerDropped: policy },
         );
-        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        const run = heavyHere(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
         expect(await run.exited).toBe(code);
         expect(run.stdout()).toBe(output);
         expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe(
@@ -506,7 +514,7 @@ describe("t3 heavy", () => {
             (_, start: string) => `${start}/${NodePath.basename(dir)}`,
           )
           .replaceAll(/(?<=[ ="]|^)D(?=\/| |"|$)/g, dir);
-      const run = heavy(
+      const run = heavyHere(
         dir,
         ["/bin/sh", "-c", real(line)],
         { ...env, HOME: NodePath.dirname(dir) },
@@ -522,7 +530,7 @@ describe("t3 heavy", () => {
       const scratch = tempDir();
       const path = NodePath.join(scratch, "verify.sh");
       NodeFS.writeFileSync(path, "vp test run");
-      const run = heavy(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe(
         `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
@@ -532,7 +540,7 @@ describe("t3 heavy", () => {
     it("judges the whole line, not the label cut short for the row", async () => {
       const { dir, env } = setup(echoArgs);
       const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--runner", "linux", "--"], dir);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
     });
@@ -559,7 +567,7 @@ describe("t3 heavy", () => {
       "stops %j where Linux was unreachable and runs it there once the link is back",
       async (line) => {
         const { dir, env } = setup(failingOnce("exit 75"), { runnerUnavailable: "mac" });
-        const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+        const run = heavyHere(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
         expect(await run.exited).toBe(0);
         expect(run.stdout()).toBe("on-linux\nafter\n");
         expect(run.stderr()).toContain("Linux is unavailable");
@@ -574,7 +582,7 @@ describe("t3 heavy", () => {
         ),
         { runnerDropped: "mac" },
       );
-      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toBe("on-linux\n");
       expect(runs(dir)).toBe("2");
@@ -599,7 +607,7 @@ describe("t3 heavy", () => {
         "rsync-fake",
         `for a; do case "$a" in --files-from=*) l="\${a#--files-from=}";; esac; done; eval "d=\\\${$#}"; while read -r f; do echo from-linux > "$d$f"; done < "$l"`,
       );
-      const run = heavy(
+      const run = heavyHere(
         dir,
         ["/bin/sh", "-c", "vp test run"],
         { ...env, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
@@ -636,7 +644,7 @@ describe("t3 heavy", () => {
         { at: 4e12, busyCores: 0, cpuCount: 10, availableMemoryBytes: 30, totalMemoryBytes: 32 },
         null,
       );
-      const run = heavy(
+      const run = heavyHere(
         dir,
         ["/bin/sh", "-c", "vp test run; echo after"],
         { ...env, T3CODE_RUNNER_SSH: ssh },
@@ -662,7 +670,7 @@ describe("t3 heavy", () => {
 
     it("Stop during a Linux run ends remoto, confirms Linux stopped, and leaves the queue", async () => {
       const { dir, env } = setup(longRun);
-      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
       await run.until("err", "Linux: running");
       run.child.kill("SIGTERM");
       expect(await run.exited).toBe(143);
@@ -672,7 +680,7 @@ describe("t3 heavy", () => {
 
     it("a running Linux job the user moves stops there and runs again on the Mac", async () => {
       const { dir, env } = setup(longRun);
-      const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
+      const run = heavyHere(dir, onMac, env, ["--runner", "linux", "--"]);
       await run.until("err", "Linux: running");
       expect(Queue.route(dir, Queue.read(dir)[0]!.id, "mac")).toBe("ok");
       expect(await run.exited).toBe(0);
@@ -682,7 +690,7 @@ describe("t3 heavy", () => {
 
     it("without remoto installed, Linux counts as unavailable", async () => {
       const { dir, env } = setup("exit 0", { runnerUnavailable: "mac" });
-      const run = heavy(
+      const run = heavyHere(
         dir,
         onMac,
         { ...env, T3CODE_REMOTO: undefined, HOME: dir, PATH: "/usr/bin:/bin" },
