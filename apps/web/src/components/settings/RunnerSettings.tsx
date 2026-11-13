@@ -208,7 +208,7 @@ function SegmentedRow<K extends ChoiceKey>({
         <ToggleGroup
           aria-label={title}
           variant="segmented"
-          className="w-full @min-[32rem]/settings-row:w-fit"
+          className="w-full flex-wrap @min-[32rem]/settings-row:w-fit"
           value={mixed ? [] : [value]}
           onValueChange={(next) => {
             const option = options.find((candidate) => candidate === next[0]);
@@ -219,7 +219,7 @@ function SegmentedRow<K extends ChoiceKey>({
             <Toggle
               key={option}
               value={option}
-              className="flex-1 @min-[32rem]/settings-row:flex-none"
+              className="flex-auto @min-[32rem]/settings-row:flex-none"
             >
               {labels[option]}
             </Toggle>
