@@ -81,7 +81,20 @@ const conversions: ReadonlyArray<readonly [string, string, string]> = [
     'go to <a href="https://x.dev">https://x.dev</a> now',
   ],
   ["javascript link is only its label", "[run](javascript:alert(1))", "run"],
-  ["mailto link is only its label", "[mail](mailto:a@b.dev)", "mail"],
+  ["mailto link shows its address as text", "[mail](mailto:a@b.dev)", "mail (a@b.dev)"],
+  ["file link is only its label", "[notes](file:///etc/passwd)", "notes"],
+  ["bold is never nested in bold", "# **hi** there", "<b>hi there</b>"],
+  [
+    "thread link in a heading",
+    "## See [Fix](t3-thread://v2/env-1/thread-1)",
+    `<b>See <a href="${WEB_THREAD}">Fix</a></b>`,
+  ],
+  ["nested quote joins its parent", "> a\n>\n> > b", "<blockquote>a\nb</blockquote>"],
+  [
+    "code in a quote is set apart",
+    "> look\n>\n> ```\n> x\n> ```",
+    "<blockquote>look</blockquote>\n<pre>x</pre>",
+  ],
   ["escapes text", "a < b && c > d", "a &lt; b &amp;&amp; c &gt; d"],
   ["raw html is text", "<div>x</div> <b>y</b>", "&lt;div&gt;x&lt;/div&gt; &lt;b&gt;y&lt;/b&gt;"],
   ["inline code", "run `a<b> && *c*`", "run <code>a&lt;b&gt; &amp;&amp; *c*</code>"],
@@ -115,6 +128,13 @@ describe("formatTelegramMessages conversion", () => {
       markdown: true,
     });
     expect(piece!.html).toBe("<b>Fix login</b>");
+  });
+
+  it("never sends an empty message", () => {
+    expect(formatTelegramMessages({ text: "", senderName: "Bot" })).toEqual([]);
+    expect(formatTelegramMessages({ text: "[x]: https://a.dev", markdown: true })).toEqual([
+      { html: "[x]: https://a.dev", plain: "[x]: https://a.dev" },
+    ]);
   });
 
   it("leaves a short message's content unchanged, after the speaker's name", () => {
@@ -212,6 +232,31 @@ describe("formatTelegramMessages size", () => {
     expect(piece!.html).toContain(strings.codeSummary(1));
     expect(piece!.html).toContain(strings.summaryNote);
     expect(piece!.plain.endsWith(waiting.replace("## ", "").replace(/^- /gm, "• "))).toBe(true);
+  });
+
+  it("keeps emoji whole in the outline", () => {
+    const text = `# ${"😀".repeat(300)}\n\n${paragraphs(12, 120).join("\n\n")}\n\n## Esperando você\n\nPosso seguir?`;
+    const pieces = formatTelegramMessages({ text, markdown: true });
+    expect(pieces).toHaveLength(1);
+    expectSendable(pieces);
+  });
+
+  it("does not treat a heading that reports decisions as waiting on you", () => {
+    const text = `${paragraphs(12, 120).join("\n\n")}\n\n## Decisões tomadas\n\nUsei HTML.`;
+    const pieces = formatTelegramMessages({ text, markdown: true });
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces[0]!.plain).not.toContain(strings.summaryNote);
+  });
+
+  it("keeps a split table one row per line", () => {
+    const rows = Array.from({ length: 200 }, (_, i) => `| row ${i} | ${"v".repeat(20)} |`);
+    const pieces = formatTelegramMessages({
+      text: `| Name | Value |\n| --- | --- |\n${rows.join("\n")}`,
+      markdown: true,
+    });
+    expect(pieces.length).toBeGreaterThan(1);
+    expectSendable(pieces);
+    expect(pieces[0]!.html).not.toContain("\n\n");
   });
 
   it("keeps the choices whole after an outline of a long decision", () => {

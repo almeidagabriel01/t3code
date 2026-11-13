@@ -33,8 +33,9 @@ const PART_MARKER_ROOM = 8;
 /** Below this, the outline of the rest goes in a message of its own. */
 const MIN_SUMMARY_ROOM = 300;
 const SUMMARY_LINE_LIMIT = 200;
+/** Headings that hand something to the user, not ones that report on it ("Decisões tomadas"). */
 const WAITING_HEADING =
-  /esperando|aguardando|waiting|preciso de (?:você|vc)|needs? (?:you|your)|decis(?:ão|ao|ões|oes|ion)|pergunta|question|ação necessária|acao necessaria|action (?:needed|required)/i;
+  /esperando (?:por )?(?:você|vc|sua|seu)|aguardando (?:você|vc|sua|seu)|preciso de (?:você|vc|sua|seu)|waiting (?:on|for) you|needs? (?:you|your)|decis(?:ão|ao|ões|oes) pendentes?|pending decisions?|decision needed|^\s*perguntas?\b|questions? for you|^\s*open questions?\b|ação necessária|acao necessaria|action (?:needed|required)/i;
 
 export interface TelegramText {
   readonly html: string;
@@ -60,7 +61,13 @@ interface TelegramFormatOptions {
 interface Context {
   readonly strings: ChannelStrings;
   readonly hostedAppUrl: string | undefined;
+  /** Telegram refuses a tag nested in itself, so bold and quotes are never reopened inside one. */
+  readonly bold?: boolean;
+  readonly quote?: boolean;
 }
+
+const bold = (inner: (ctx: Context) => string, ctx: Context) =>
+  ctx.bold === true ? inner(ctx) : `<b>${inner({ ...ctx, bold: true })}</b>`;
 
 interface Unit {
   readonly html: string;
@@ -132,12 +139,19 @@ function linkHtml(url: string, labelHtml: string, labelText: string, ctx: Contex
             { environmentId: thread.environmentId, threadId: thread.threadId },
             ctx.hostedAppUrl,
           );
-    return href === undefined
-      ? `<b>${title}</b>`
-      : `<b><a href="${escapeAttribute(href)}">${title}</a></b>`;
+    return bold(
+      () => (href === undefined ? title : `<a href="${escapeAttribute(href)}">${title}</a>`),
+      ctx,
+    );
   }
   const href = webHref(url);
-  if (href === undefined) return labelHtml;
+  if (href === undefined) {
+    // An address or a phone number is still worth reading; it is never made a link.
+    const contact = /^(?:mailto|tel):(.+)$/i.exec(url)?.[1];
+    return contact === undefined || labelText.trim() === contact
+      ? labelHtml
+      : `${labelHtml} (${escapeHtml(contact)})`;
+  }
   return `<a href="${escapeAttribute(href)}">${labelHtml === "" ? escapeHtml(url) : labelHtml}</a>`;
 }
 
@@ -150,7 +164,7 @@ function phrasing(node: PhrasingContent, ctx: Context): string {
     case "html":
       return escapeHtml(node.value);
     case "strong":
-      return `<b>${inline(node.children, ctx)}</b>`;
+      return bold((inner) => inline(node.children, inner), ctx);
     case "emphasis":
       return `<i>${inline(node.children, ctx)}</i>`;
     case "delete":
@@ -206,16 +220,36 @@ function tableRowsHtml(table: Table, ctx: Context): ReadonlyArray<string> {
   });
 }
 
+/** A nested quote joins its parent; a code block inside one is set apart, since a quote cannot hold it. */
+function quoteHtml(children: ReadonlyArray<RootContent>, ctx: Context): string {
+  if (ctx.quote === true) return children.map((child) => blockHtml(child, ctx)).join("\n");
+  const inner = { ...ctx, quote: true };
+  const parts: Array<string> = [];
+  let quoted: Array<string> = [];
+  const close = () => {
+    if (quoted.length > 0) parts.push(`<blockquote>${quoted.join("\n")}</blockquote>`);
+    quoted = [];
+  };
+  for (const child of children) {
+    if (child.type === "code") {
+      close();
+      parts.push(codeHtml(child.value, child.lang));
+    } else quoted.push(blockHtml(child, inner));
+  }
+  close();
+  return parts.join("\n");
+}
+
 function blockHtml(node: RootContent, ctx: Context, depth = 0): string {
   switch (node.type) {
     case "paragraph":
       return inline(node.children, ctx);
     case "heading":
-      return `<b>${inline(node.children, ctx)}</b>`;
+      return bold((inner) => inline(node.children, inner), ctx);
     case "code":
       return codeHtml(node.value, node.lang);
     case "blockquote":
-      return `<blockquote>${node.children.map((child) => blockHtml(child, ctx)).join("\n")}</blockquote>`;
+      return quoteHtml(node.children, ctx);
     case "list":
       return node.children
         .map((item, index) => listItemHtml(item, listMarker(node, index), ctx, depth))
@@ -238,8 +272,10 @@ function blockHtml(node: RootContent, ctx: Context, depth = 0): string {
 const clip = (text: string, limit: number) => {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= limit) return flat;
-  const cut = flat.lastIndexOf(" ", limit - 1);
-  return `${flat.slice(0, cut > limit / 2 ? cut : limit - 1)}…`;
+  const space = flat.lastIndexOf(" ", limit - 1);
+  let cut = space > limit / 2 ? space : limit - 1;
+  if (/[\uD800-\uDBFF]/.test(flat.charAt(cut - 1))) cut -= 1;
+  return `${flat.slice(0, cut)}…`;
 };
 const firstSentence = (text: string) => {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -271,7 +307,7 @@ function summaryOf(node: RootContent, ctx: Context): string {
 }
 
 /** Splits near the middle, at a line break or a space when there is one; never inside a surrogate pair. */
-function halve(source: string): readonly [string, string] {
+function halve(source: string, trim = true): readonly [string, string] {
   const middle = Math.floor(source.length / 2);
   const nearest = (separator: string) => {
     const before = source.lastIndexOf(separator, middle);
@@ -281,7 +317,8 @@ function halve(source: string): readonly [string, string] {
   };
   let cut = nearest("\n") ?? nearest(" ") ?? Math.max(1, middle);
   if (/[\uD800-\uDBFF]/.test(source.charAt(cut - 1)) && cut > 1) cut -= 1;
-  return [source.slice(0, cut).trimEnd(), source.slice(cut).trimStart()];
+  const [head, tail] = [source.slice(0, cut), source.slice(cut)];
+  return trim ? [head.trimEnd(), tail.trimStart()] : [head, tail];
 }
 
 /** Each half is shorter than `source`, so the recursion ends. */
@@ -328,7 +365,7 @@ function fitCode(code: string, lang: string | null | undefined, budget: number) 
     }
     flush();
     if (codeHtml(line, lang).length <= budget) current.push(line);
-    else if (line.length > 1) lines.unshift(...halve(line));
+    else if (line.length > 1) lines.unshift(...halve(line, false));
     else pieces.push(codeHtml(line, lang));
   }
   flush();
@@ -346,15 +383,21 @@ function markdownUnits(text: string, ctx: Context): ReadonlyArray<Unit> {
         case "code":
           return fitCode(node.value, node.lang, budget);
         case "list":
-          return node.children.flatMap((item, index) => {
-            const itemHtml = listItemHtml(item, listMarker(node, index), ctx, 0);
-            if (itemHtml.length <= budget) return [itemHtml];
-            const itemSource = text.slice(item.position?.start.offset, item.position?.end.offset);
-            return fitByHalves(itemSource, (half) => markdownUnits(half, ctx), budget);
-          });
+          return joinLines(
+            node.children.flatMap((item, index) => {
+              const itemHtml = listItemHtml(item, listMarker(node, index), ctx, 0);
+              if (itemHtml.length <= budget) return [itemHtml];
+              const itemSource = text.slice(item.position?.start.offset, item.position?.end.offset);
+              return fitByHalves(itemSource, (half) => markdownUnits(half, ctx), budget);
+            }),
+            budget,
+          );
         case "table":
-          return tableRowsHtml(node, ctx).flatMap((row) =>
-            row.length <= budget ? [row] : plainUnit(telegramPlainText(row)).fit(budget),
+          return joinLines(
+            tableRowsHtml(node, ctx).flatMap((row) =>
+              row.length <= budget ? [row] : plainUnit(telegramPlainText(row)).fit(budget),
+            ),
+            budget,
           );
         default:
           return fitByHalves(source, (half) => markdownUnits(half, ctx), budget);
@@ -364,15 +407,24 @@ function markdownUnits(text: string, ctx: Context): ReadonlyArray<Unit> {
   });
 }
 
+/** Rejoins the rows of a split list or table one per line, as they read before the split. */
+function joinLines(rows: ReadonlyArray<string>, budget: number): ReadonlyArray<string> {
+  return pack(rows, budget, "\n").map((group) => group.join("\n"));
+}
+
 /** Groups fragments, in order, into messages of at most `budget` characters. */
-function pack(fragments: ReadonlyArray<string>, budget: number): Array<Array<string>> {
+function pack(
+  fragments: ReadonlyArray<string>,
+  budget: number,
+  separator = "\n\n",
+): Array<Array<string>> {
   const groups: Array<Array<string>> = [];
   let size = 0;
   for (const fragment of fragments) {
     const last = groups.at(-1);
-    if (last !== undefined && size + 2 + fragment.length <= budget) {
+    if (last !== undefined && size + separator.length + fragment.length <= budget) {
       last.push(fragment);
-      size += 2 + fragment.length;
+      size += separator.length + fragment.length;
     } else {
       groups.push([fragment]);
       size = fragment.length;
@@ -423,13 +475,16 @@ export function formatTelegramMessages(
 ): Array<TelegramText> {
   const strings = channelStrings(input.language ?? "en");
   const ctx: Context = { strings, hostedAppUrl: options.hostedAppUrl };
-  const units = input.markdown === true ? markdownUnits(input.text, ctx) : plainUnits(input.text);
+  // Markdown that renders to nothing (only link definitions) is sent as written, not as an empty message.
+  const parsed = input.markdown === true ? markdownUnits(input.text, ctx) : [];
+  const units = parsed.length > 0 ? parsed : plainUnits(input.text);
   const choices =
     input.choices !== undefined && input.choices.length > 0
       ? plainUnit(numberedChoices(input.choices, strings.replyWithNumber))
       : undefined;
   const prefix = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
   const all = choices === undefined ? units : [...units, choices];
+  if (all.length === 0) return [];
   const whole = all.map((unit) => unit.html).join("\n\n");
   if (prefix.length + whole.length <= TELEGRAM_MESSAGE_LIMIT) return [piece(prefix + whole)];
 
