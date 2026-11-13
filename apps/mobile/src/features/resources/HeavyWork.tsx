@@ -24,6 +24,7 @@ import {
 import {
   ASK_TITLE,
   askRemaining,
+  moveAllActions,
   RUNNER_NAME,
   RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
@@ -121,6 +122,8 @@ function useProjectFilter(environmentId: EnvironmentId, projectId: string | unde
 interface QueueActions {
   readonly canChange: boolean;
   readonly canRoute: boolean;
+  readonly canRouteAll: boolean;
+  readonly moveAll: (runner: HeavyRunner) => void;
   readonly move: (id: string, beforeId: string | null) => void;
   readonly startNow: (entry: HeavyQueueEntry) => void;
   readonly cancel: (entry: HeavyQueueEntry) => void;
@@ -135,6 +138,8 @@ interface QueueActions {
 function useHeavyQueueActions(environmentId: EnvironmentId, state: HeavyQueueState): QueueActions {
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
   const canRoute = useAtomValue(heavyQueueEnvironment.route.permissionAtom(environmentId));
+  const canRouteAll = useAtomValue(heavyQueueEnvironment.routeAll.permissionAtom(environmentId));
+  const routeAll = useAtomCommand(heavyQueueEnvironment.routeAll);
   const route = useAtomCommand(heavyQueueEnvironment.route);
   const move = useAtomCommand(heavyQueueEnvironment.move);
   const startNow = useAtomCommand(heavyQueueEnvironment.startNow);
@@ -147,6 +152,8 @@ function useHeavyQueueActions(environmentId: EnvironmentId, state: HeavyQueueSta
   return {
     canChange,
     canRoute,
+    canRouteAll,
+    moveAll: (runner) => void routeAll({ environmentId, input: { runner } }),
     setPriority: (id, priority) => void setPriority({ environmentId, input: { id, priority } }),
     move: (id, beforeId) => void move({ environmentId, input: { id, beforeId } }),
     setRule: (root, priority) => void setRule({ environmentId, input: { root, priority } }),
@@ -733,6 +740,7 @@ function HeavyWorkList(props: {
   const work = heavyWork(state, props.commands);
   const showNames =
     state.linux !== null || work.linux.running.length + work.linux.waiting.length > 0;
+  const moveAlls = moveAllActions(state);
   const groups = (["mac", "linux"] as const)
     .map((runner) => ({
       runner,
@@ -756,38 +764,59 @@ function HeavyWorkList(props: {
       scopeProjectId={projectId}
     />
   );
-  return groups.map((group) => (
-    <Fragment key={group.runner}>
-      {showNames ? (
-        <View
-          accessible
-          accessibilityRole="header"
-          accessibilityLabel={MACHINE[group.runner].name}
-          className="flex-row items-center gap-1.5 px-4 pt-3 pb-1"
-        >
-          <Glyph name={MACHINE[group.runner].icon} />
-          <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
-            {MACHINE[group.runner].name}
-          </Text>
-        </View>
-      ) : null}
-      {group.running.map((entry) => row(group, entry, null))}
-      {group.direct.map((command) => (
-        <HeavyCommandRow
-          key={heavyCommandKey(command)}
-          environmentId={environmentId}
-          command={command}
-          cpuCount={props.cpuCount}
-          stop={stop}
-          now={now}
-          scopeProjectId={projectId}
-        />
-      ))}
-      {group.waiting.map((entry) =>
-        row(group, entry, group.line.findIndex((waiter) => waiter.id === entry.id) + 1),
-      )}
-    </Fragment>
-  ));
+  return groups.map((group) => {
+    const moveAll = moveAlls.find((action) => action.runner !== group.runner);
+    return (
+      <Fragment key={group.runner}>
+        {showNames ? (
+          <View className="flex-row items-center gap-1.5 px-4 pt-3 pb-1">
+            <View
+              accessible
+              accessibilityRole="header"
+              accessibilityLabel={MACHINE[group.runner].name}
+              className="min-w-0 flex-1 flex-row items-center gap-1.5"
+            >
+              <Glyph name={MACHINE[group.runner].icon} />
+              <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
+                {MACHINE[group.runner].name}
+              </Text>
+            </View>
+            {moveAll === undefined ? null : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={moveAll.label}
+                accessibilityState={{ disabled: !actions.canRouteAll }}
+                disabled={!actions.canRouteAll}
+                hitSlop={8}
+                onPress={() => actions.moveAll(moveAll.runner)}
+                className="flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1 active:opacity-70"
+              >
+                <Glyph name={MACHINE[moveAll.runner].icon} />
+                <Text textRole="footnote" className="font-t3-medium text-foreground">
+                  {moveAll.label}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+        {group.running.map((entry) => row(group, entry, null))}
+        {group.direct.map((command) => (
+          <HeavyCommandRow
+            key={heavyCommandKey(command)}
+            environmentId={environmentId}
+            command={command}
+            cpuCount={props.cpuCount}
+            stop={stop}
+            now={now}
+            scopeProjectId={projectId}
+          />
+        ))}
+        {group.waiting.map((entry) =>
+          row(group, entry, group.line.findIndex((waiter) => waiter.id === entry.id) + 1),
+        )}
+      </Fragment>
+    );
+  });
 }
 
 /** "Mac 1/3 · Linux 2/2": each machine's running jobs against its slots, as the rows count them. */

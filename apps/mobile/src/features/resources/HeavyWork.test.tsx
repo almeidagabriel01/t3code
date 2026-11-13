@@ -118,6 +118,7 @@ vi.mock("../../state/heavyQueue", () => {
       setPriority: command("setPriority"),
       stopCommand: command("stopCommand"),
       route: command("route"),
+      routeAll: command("routeAll"),
     },
     useHeavyQueueState: () => mocks.state,
     useHeavyCommandsState: () => mocks.heavy,
@@ -681,6 +682,40 @@ describe("HeavyWorkSection", () => {
       input: { id: "c", runner: "mac", force: false },
     });
     await view.unmount();
+  });
+
+  it("moves every waiting job to the other machine from each machine's header, and back", async () => {
+    setup([entry("a", { startedAt: NOW }), entry("b"), entry("c")], {
+      linux: LINUX,
+      routes: { c: "linux" },
+    });
+    const view = await mount();
+    const moveAll = (name: string) =>
+      view.host.querySelector<HTMLElement>(`[role="button"][aria-label="${name}"]`);
+    // Screen order: This Mac header with Move all to Linux, then Linux with Move all to this Mac.
+    await act(async () => moveAll("Move all to Linux")!.click());
+    await act(async () => moveAll("Move all to this Mac")!.click());
+    expect(mocks.commands.routeAll!.mock.calls.map(([call]) => call)).toEqual([
+      { environmentId: "env", input: { runner: "linux" } },
+      { environmentId: "env", input: { runner: "mac" } },
+    ]);
+    await view.unmount();
+
+    mocks.can = false;
+    setup([entry("b")], { linux: LINUX });
+    const greyed = await mount();
+    expect(
+      greyed.host
+        .querySelector('[role="button"][aria-label="Move all to Linux"]')!
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
+    expect(greyed.host.querySelector('[aria-label="Move all to this Mac"]')).toBeNull();
+    await greyed.unmount();
+
+    setup([entry("b", { where: "mac" })], { linux: LINUX });
+    const none = await mount();
+    expect(none.host.textContent).not.toContain("Move all");
+    await none.unmount();
   });
 
   it("asks where a job runs with a live countdown, and answers or cancels it", async () => {
