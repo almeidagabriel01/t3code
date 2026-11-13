@@ -33,6 +33,7 @@ import {
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
+import { forgetDeletedProjects } from "../assistants/AssistantTeamProjects.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
@@ -635,6 +636,15 @@ export const make = Effect.gen(function* () {
       if (isFirstDelete) {
         yield* clearProjectSettingsOverrides(projectId);
       }
+      // Not first-delete only: a retry finishes a sweep a crash cut short; startup sweeps too.
+      yield* forgetDeletedProjects(sql).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(
+            `Failed to take deleted project ${projectId} off assistant lists.`,
+            cause,
+          ),
+        ),
+      );
       yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);
       return yield* readCommitted(projectId);
     },

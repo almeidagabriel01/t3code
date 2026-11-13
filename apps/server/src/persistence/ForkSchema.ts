@@ -1,6 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
-import { backfillTeamProjects } from "../assistants/AssistantTeamProjects.ts";
+import {
+  backfillTeamProjects,
+  forgetDeletedProjects,
+} from "../assistants/AssistantTeamProjects.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -517,6 +520,7 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       }),
     );
   }
+  yield* forgetDeletedProjects(sql);
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_messages (
       message_id TEXT PRIMARY KEY,

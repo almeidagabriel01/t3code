@@ -184,7 +184,6 @@ it.effect("gives each existing group the projects all its members list, and no o
         VALUES (${id}, ${id}, ${JSON.stringify(members)}, 't', 't')`;
     }
     const lists = sql`SELECT assistant_id, project_ids_json FROM assistants ORDER BY assistant_id`;
-    const before = yield* lists;
 
     yield* ensureForkSchema();
     yield* ensureForkSchema();
@@ -195,7 +194,14 @@ it.effect("gives each existing group the projects all its members list, and no o
       const row = rows.find((candidate) => candidate.team_id === id);
       assert.deepStrictEqual([id, JSON.parse(row?.project_ids_json ?? "null")], [id, expected]);
     }
-    assert.deepStrictEqual(yield* lists, before);
+    // Only the deleted project leaves the members' own lists.
+    assert.deepStrictEqual(yield* lists, [
+      { assistant_id: "a1", project_ids_json: '["p1","p2"]' },
+      { assistant_id: "a2", project_ids_json: '["p2","p1"]' },
+      { assistant_id: "all", project_ids_json: '["home"]' },
+      { assistant_id: "old", project_ids_json: '["p1"]' },
+      { assistant_id: "unset", project_ids_json: '["p3"]' },
+    ]);
   }).pipe(Effect.provide(database)),
 );
 
@@ -224,6 +230,47 @@ it.effect("adds a group's project list only together with its backfill", () =>
     assert.deepStrictEqual(yield* sql`SELECT team_id, project_ids_json FROM assistant_teams`, [
       { team_id: "g", project_ids_json: '["p1"]' },
     ]);
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("drops deleted projects from assistant and group lists on start", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+    yield* sql`INSERT INTO projection_projects VALUES ('live', NULL), ('dead', 'then')`;
+    // [table, id, saved list, list after start]
+    const rows = [
+      ["assistants", "both", '["live","dead"]', '["live"]'],
+      ["assistants", "only-dead", '["dead"]', "[]"],
+      ["assistants", "unknown", '["live","elsewhere"]', '["live","elsewhere"]'],
+      ["assistants", "broken", "not json", "not json"],
+      ["assistant_teams", "group", '["dead","live"]', '["live"]'],
+      ["assistant_teams", "broken-group", "{", "{"],
+    ] as const;
+    for (const [table, id, saved] of rows) {
+      yield* table === "assistants"
+        ? sql`
+          INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json)
+          VALUES (${id}, ${id}, ${id}, 'dead', 'full', 't', 't', 'project', ${saved})`
+        : sql`
+          INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at, project_ids_json)
+          VALUES (${id}, ${id}, '[]', 't', 't', ${saved})`;
+    }
+
+    yield* ensureForkSchema();
+
+    const lists = new Map(
+      (yield* sql<{ readonly id: string; readonly list: string }>`
+        SELECT assistant_id AS id, project_ids_json AS list FROM assistants
+        UNION ALL SELECT team_id, project_ids_json FROM assistant_teams`).map((row) => [
+        row.id,
+        row.list,
+      ]),
+    );
+    for (const [, id, , expected] of rows) {
+      assert.deepStrictEqual([id, lists.get(id)], [id, expected]);
+    }
   }).pipe(Effect.provide(database)),
 );
 

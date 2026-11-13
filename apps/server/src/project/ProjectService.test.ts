@@ -554,6 +554,40 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("takes a deleted project off every assistant's and group's list", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const sql = yield* SqlClient.SqlClient;
+      for (const name of ["kept", "gone"]) {
+        yield* service.create({
+          commandId: CommandId.make(`command:lists-${name}:create`),
+          projectId: ProjectId.make(name),
+          title: name,
+          workspaceRoot: `/work/lists-${name}`,
+        });
+      }
+      yield* sql`
+        INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json)
+        VALUES ('a', 'a', 'A', 'kept', 'full', 't', 't', 'project', '["kept","gone"]')`;
+      yield* sql`
+        INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at, project_ids_json)
+        VALUES ('g', 'g', '["a"]', 't', 't', '["gone","kept"]')`;
+
+      yield* service.delete({
+        commandId: CommandId.make("command:lists-gone:delete"),
+        projectId: ProjectId.make("gone"),
+      });
+
+      assert.deepEqual(
+        yield* sql`SELECT project_ids_json FROM assistants WHERE assistant_id = 'a'`,
+        [{ project_ids_json: '["kept"]' }],
+      );
+      assert.deepEqual(yield* sql`SELECT project_ids_json FROM assistant_teams`, [
+        { project_ids_json: '["kept"]' },
+      ]);
+    }),
+  );
+
   it.effect("treats a deleted project as missing for updates and new deletes", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

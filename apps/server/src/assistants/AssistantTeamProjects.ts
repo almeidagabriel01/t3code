@@ -44,3 +44,39 @@ export const backfillTeamProjects = Effect.fn("AssistantTeams.backfillProjects")
       WHERE team_id = ${team.team_id}`;
   }
 });
+
+/** Takes deleted projects off every assistant's and group's list; unreadable lists stay as they are. */
+export const forgetDeletedProjects = Effect.fn("AssistantTeams.forgetDeletedProjects")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const hasProjects =
+    (yield* sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projection_projects'`)
+      .length > 0;
+  if (!hasProjects) return;
+  const deleted = new Set(
+    (yield* sql<{ readonly project_id: string }>`
+      SELECT project_id FROM projection_projects WHERE deleted_at IS NOT NULL`).map(
+      (row) => row.project_id,
+    ),
+  );
+  if (deleted.size === 0) return;
+  const pruned = (json: string | null) => {
+    const ids = json === null ? [] : Option.getOrElse(decodeIds(json), () => []);
+    const kept = ids.filter((id) => !deleted.has(id));
+    return kept.length === ids.length ? null : encodeMemberIds(kept);
+  };
+  const assistants = yield* sql<{ readonly id: string; readonly list: string | null }>`
+    SELECT assistant_id AS id, project_ids_json AS list FROM assistants`;
+  for (const row of assistants) {
+    const list = pruned(row.list);
+    if (list !== null)
+      yield* sql`UPDATE assistants SET project_ids_json = ${list} WHERE assistant_id = ${row.id}`;
+  }
+  const teams = yield* sql<{ readonly id: string; readonly list: string }>`
+    SELECT team_id AS id, project_ids_json AS list FROM assistant_teams`;
+  for (const row of teams) {
+    const list = pruned(row.list);
+    if (list !== null)
+      yield* sql`UPDATE assistant_teams SET project_ids_json = ${list} WHERE team_id = ${row.id}`;
+  }
+});
