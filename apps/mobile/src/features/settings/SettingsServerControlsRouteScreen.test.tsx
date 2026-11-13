@@ -59,7 +59,13 @@ vi.mock("../../state/preferences", () => ({
   updateMobilePreferencesAtom: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
-vi.mock("../../components/ui/NumberField", () => ({ NumberField: () => null }));
+vi.mock("../../components/ui/NumberField", () => ({
+  NumberField: (props: {
+    label: string;
+    value: number;
+    onValueChange: (value: number) => void;
+  }) => <button aria-label={props.label} onClick={() => props.onValueChange(props.value + 1)} />,
+}));
 vi.mock("./components/SourceControlSignInSection", () => ({
   SourceControlSignInSection: () => null,
 }));
@@ -397,6 +403,15 @@ describe("SettingsServerControlsRouteScreen", () => {
       environmentId: "local",
       input: { patch: { keepAwake: "always" } },
     });
+  });
+
+  it.each([
+    { label: "Days to keep tool output", patch: { toolOutputHistoryDays: 31 } },
+    { label: "Minutes before an idle agent closes", patch: { providerIdleTimeoutMinutes: 11 } },
+  ])("saves $label on the Maintenance page", ({ label, patch }) => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    act(() => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ environmentId: "local", input: { patch } });
   });
 
   it("saves the snapshot retention picked on the Maintenance page", () => {
