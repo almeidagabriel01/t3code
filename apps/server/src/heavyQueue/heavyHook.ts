@@ -82,14 +82,45 @@ const programAt = (values: ReadonlyArray<string>, from = 0, local = false) => {
   return at;
 };
 
+/** Git's own options before its subcommand that take the next word as their value. */
+const GIT_VALUE_OPTIONS = new Set([
+  "-c",
+  "-C",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--config-env",
+  "--super-prefix",
+]);
+
+/**
+ * Where git's subcommand sits past git's own options (`git -c k=v -C dir commit`), and the folders
+ * its `-C` options move to, in order. `at` is the word of the program itself.
+ */
+export const gitCommand = (values: ReadonlyArray<string>, at: number) => {
+  let sub = at + 1;
+  const dirs: string[] = [];
+  while (sub < values.length && values[sub]!.startsWith("-")) {
+    if (!GIT_VALUE_OPTIONS.has(values[sub]!)) {
+      sub += 1;
+      continue;
+    }
+    if (values[sub] === "-C" && values[sub + 1] !== undefined) dirs.push(values[sub + 1]!);
+    sub += 2;
+  }
+  return { sub, dirs };
+};
+
 /** Program and subcommand words with assignments, prefixes and flags removed. */
 const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
+  const program = values[at] === undefined ? "" : base(values[at]!);
+  const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
   return {
     at,
-    program: values[at] === undefined ? "" : base(values[at]!),
-    words: values.slice(at + 1).filter((value) => !value.startsWith("-")),
-    flags: values.slice(at + 1).filter((value) => value.startsWith("-")),
+    program,
+    words: rest.filter((value) => !value.startsWith("-")),
+    flags: rest.filter((value) => value.startsWith("-")),
   };
 };
 
@@ -285,6 +316,19 @@ export const workParts = (parts: ReadonlyArray<Part>) => {
   return work.length > 0
     ? work
     : parts.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
+};
+
+/** The `git commit` parts of a line whose only work is committing, or null for any other line. */
+export const commitOnly = (line: string) => {
+  const work = readLine(line).parts.filter((part) => part.heavy);
+  const commits = work.every(
+    (part) =>
+      part.nested === null &&
+      part.remoto === null &&
+      part.program === "git" &&
+      part.words[0] === "commit",
+  );
+  return work.length > 0 && commits ? work : null;
 };
 
 /** Every part of a shell command line that is heavy work, in order. */

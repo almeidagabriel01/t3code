@@ -121,6 +121,31 @@ describe("commitRoute", () => {
       "direct",
     ],
     ["a commit inside a longer line", () => {}, "git add . && git commit -m x", "direct"],
+    [
+      "git's own -c before commit",
+      (root) => write(`${root}/.git/hooks/pre-commit`, "exit 0"),
+      "git -c user.name=t -c core.quotePath=off commit -m x",
+      "first",
+    ],
+    [
+      "-C names a repository with a hook",
+      (root) => {
+        git(root, "init", "-q", "inner");
+        write(`${root}/inner/.git/hooks/pre-commit`, "exit 0");
+      },
+      "git -C inner commit -m x",
+      "first",
+    ],
+    [
+      "-C names a hookless repository inside a hooked one",
+      (root) => {
+        write(`${root}/.git/hooks/pre-commit`, "exit 0");
+        git(root, "init", "-q", "inner");
+      },
+      "git -C inner -c k=v commit -m x",
+      "direct",
+    ],
+    ["-n after git's own options", () => {}, "git -C . commit -n -m x", null],
     // Not a commit-only line: the queue decides as before.
     [
       "--no-verify skips the hooks",

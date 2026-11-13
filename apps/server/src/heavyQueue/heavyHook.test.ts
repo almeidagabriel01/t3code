@@ -43,6 +43,8 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["bunx tsc --noEmit", "bunx tsc --noEmit"],
   ["node --test test/*.mjs", "node --test test/*.mjs"],
   ["git add a && git commit -m 'fix: x'", "git commit -m 'fix: x'"],
+  // git's own options take a value before the subcommand.
+  ["git -C apps/web -c user.name=t commit -m x", "git -C apps/web -c user.name=t commit -m x"],
   ["time ./gradlew assembleDebug", "time ./gradlew assembleDebug"],
   ["xcrun xcodebuild -scheme App build", "xcrun xcodebuild -scheme App build"],
   ["xcrun simctl boot 'iPhone 17'", "xcrun simctl boot 'iPhone 17'"],
@@ -64,6 +66,8 @@ const LIGHT = [
   "git checkout -b fix-build",
   "git commit --no-verify -m 'wip'",
   "git commit -n -m 'wip'",
+  "git -C web commit -n -m wip",
+  "git -c commit.gpgsign=false log",
   "cat build.md",
   "rg docker apps/server",
   "rg 'vp test run' docs",
@@ -124,6 +128,7 @@ describe("heavy Bash commands", () => {
   it.each([
     ["vp test run src/a.test.ts --watch", "vp test run"],
     ["git commit -m 'fix build'", "git commit"],
+    ["git -C web commit -m 'fix build'", "git commit"],
     ["npx vitest", "npx vitest"],
   ])("names %s as %s", (segment, name) => {
     expect(nameOf(segment)).toBe(name);

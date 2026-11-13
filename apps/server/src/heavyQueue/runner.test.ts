@@ -565,8 +565,16 @@ describe("runtime toggles", () => {
     expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false })).toMatchObject({
       build: "Runner off for this project",
     });
-    // With every Runner off, rows read as they always did.
-    expect(at({}).build).toBe("waiting its turn");
+    // With every Runner off, rows read as they always did, but a commit still says why it waits.
+    const hook = "Commit hook runs checks";
+    expect(at({}, { runnerEnabled: false })).toEqual({
+      run: hook,
+      commit: `${hook} · next in line`,
+      build: "waiting its turn",
+      moved: "waiting its turn",
+      back: "waiting its turn",
+    });
+    expect(at({ runnerOn: true, enabled: false }, { runnerEnabled: false }).commit).toBe(hook);
   });
 });
 

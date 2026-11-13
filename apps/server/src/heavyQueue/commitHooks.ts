@@ -1,9 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off - The Bash hook decides synchronously, before the call runs.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { readLine } from "./heavyHook.ts";
+import { commitOnly, gitCommand, type Part } from "./heavyHook.ts";
 
 /** The hooks a plain `git commit` runs before it records anything. */
 const COMMIT_HOOKS = ["pre-commit", "prepare-commit-msg", "commit-msg"];
@@ -56,16 +57,15 @@ export const COMMIT_RUNS_DIRECT = "No commit hook in this repository: runs direc
  * queue handles as usual. `git commit -n` is not work, so it never reaches here.
  */
 export const commitRoute = (line: string, cwd: string): "direct" | "first" | null => {
-  const work = readLine(line).parts.filter((part) => part.heavy);
-  const commitsOnly =
-    work.length > 0 &&
-    work.every(
-      (part) =>
-        part.nested === null &&
-        part.remoto === null &&
-        part.program === "git" &&
-        part.words[0] === "commit",
+  const commits = commitOnly(line);
+  if (commits === null) return null;
+  // `git -C <dir> commit` commits in that folder.
+  const folder = (part: Part) =>
+    NodePath.resolve(
+      cwd,
+      ...gitCommand(part.values, part.programAt).dirs.map((dir) =>
+        dir.replace(/^~(?=$|\/)/, NodeOS.homedir()),
+      ),
     );
-  if (!commitsOnly) return null;
-  return commitHookRuns(cwd) ? "first" : "direct";
+  return commits.some((part) => commitHookRuns(folder(part))) ? "first" : "direct";
 };
