@@ -94,7 +94,11 @@ import {
 } from "./AssistantGroupPacket.ts";
 import { AssistantService } from "./AssistantService.ts";
 import { AssistantDirectory, type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
-import { assistantWorksIn, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
+import {
+  assistantProjects,
+  assistantWorksIn,
+  projectScopeRefusal,
+} from "./AssistantSandboxPolicy.ts";
 import { type AssistantTeamRow, toAssistantTeam } from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
 
@@ -2733,6 +2737,13 @@ const make = Effect.gen(function* () {
         projectId,
       });
       if (Option.isSome(outside)) return yield* invalid(outside.value);
+      if (projectId === undefined) {
+        const poster = yield* directory.forThread(input.callerThreadId);
+        // A project assistant's work stays in its home project unless it names another of its own.
+        if (Option.isSome(poster) && assistantProjects(poster.value.assistant) !== "all") {
+          projectId = poster.value.assistant.projectId as ProjectId;
+        }
+      }
       const assistantId = assistantIdFromThreadId(input.callerThreadId);
       const sender = assistantId === null ? [] : yield* assistantRows([assistantId]);
       const title = yield* inspectThread(input.callerThreadId);

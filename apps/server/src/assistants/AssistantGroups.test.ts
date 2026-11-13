@@ -3596,6 +3596,14 @@ it.effect("only a member that may work in the request's project gets its work", 
       })
       .pipe(Effect.flip);
     assert.include(outside.message, "You are a project assistant");
+    // With no project named, its work stays in its home project instead of going to the lead.
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1","p3"]' WHERE assistant_id = 'beto'`;
+    const home = yield* groups.agentPost({
+      callerThreadId: ThreadId.make("assistant:beto:1"),
+      group: TEAM,
+      text: "@ada check the core",
+    });
+    assert.equal(home.message.projectId, "p1");
   }).pipe(Effect.provide(h.layer));
 });
 
