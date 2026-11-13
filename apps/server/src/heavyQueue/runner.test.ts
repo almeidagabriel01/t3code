@@ -599,6 +599,9 @@ describe("patterns and eligibility", () => {
     ["npx expo run:ios", "expo run", true],
     ["EXPO run:ios", "expo run", true],
     ["vp test", "  ", false],
+    ["pnpm exec effect-tsgo tsrs --noEmit", "typecheck", true],
+    ["vue-tsc --noEmit", "tsc", true],
+    ["tsgo --noEmit", "test", false],
   ])("%s matches %s: %s", (text, pattern, result) => {
     expect(matchesAny(text, [pattern])).toBe(result);
   });

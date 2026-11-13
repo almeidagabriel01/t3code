@@ -28,6 +28,7 @@ import {
   commitOnly,
   nameOf,
   readLine,
+  TYPE_CHECKERS,
   UNREADABLE_SCRIPT,
   workParts,
   type Part,
@@ -123,8 +124,16 @@ const patternRegex = (pattern: string) =>
     "i",
   );
 
+/** A list entry naming a kind of work stands for its tools, so a saved list keeps up with them. */
+const KIND_TOOLS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  typecheck: TYPE_CHECKERS,
+  tsc: TYPE_CHECKERS,
+};
+
 export const matchesAny = (text: string, patterns: ReadonlyArray<string>) =>
-  patterns.some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
+  patterns
+    .flatMap((pattern) => [pattern, ...(KIND_TOOLS[pattern.trim().toLowerCase()] ?? [])])
+    .some((pattern) => pattern.trim() !== "" && patternRegex(pattern).test(text));
 
 export type Eligibility = "linux" | "exclusive" | "mac-only" | "not-listed";
 

@@ -703,7 +703,22 @@ describe("t3 heavy", () => {
     const config = {
       ...DEFAULT_PROJECT_CONFIG,
       runnerEnabled: true,
-      runnerLinuxCommands: [...DEFAULT_PROJECT_CONFIG.runnerLinuxCommands, "effect-tsgo"],
+      // The list as 0.1.9-fork.1 saved it: no tsgo or effect-tsgo, only `typecheck` and `tsc`.
+      runnerLinuxCommands: [
+        "test",
+        "vitest",
+        "jest",
+        "e2e",
+        "playwright",
+        "coverage",
+        "lint",
+        "oxlint",
+        "eslint",
+        "check",
+        "typecheck",
+        "tsc",
+        "knip",
+      ],
     };
     const CHECKOUTS = ["/w/repo", "/w/other", "/abs", "/a b", "/home/me/code"];
     const rootOf = (cwd: string) =>
@@ -811,6 +826,15 @@ describe("t3 heavy", () => {
       ["yarn test", "linux", "X yarn test"],
       ["bunx tsc --noEmit", "linux", "X bunx tsc --noEmit"],
       ["vp run typecheck", "linux", "X vp run typecheck"],
+      // A list naming `typecheck` or `tsc` covers every type checker.
+      ["pnpm exec effect-tsgo tsrs --noEmit", "linux", "X pnpm exec effect-tsgo tsrs --noEmit"],
+      [
+        "cd apps/server && pnpm exec effect-tsgo tsrs --noEmit",
+        "linux",
+        "X pnpm exec effect-tsgo tsrs --noEmit",
+        "/w/repo/apps/server",
+      ],
+      ["npx vue-tsc --noEmit", "linux", "X npx vue-tsc --noEmit"],
       // An agent's own `remoto` asks for Linux; T3 takes its word out and decides.
       ["remoto vp test run", "linux", "X vp test run"],
       ["cd apps/server && remoto vp run build", "linux", "X vp run build", "/w/repo/apps/server"],
