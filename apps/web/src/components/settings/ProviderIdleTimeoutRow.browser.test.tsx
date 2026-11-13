@@ -56,6 +56,9 @@ it("saves whole minutes clamped to the allowed range and keeps the saved value w
   await expect.element(screen.getByText("Close idle Claude agents")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reset close idle Claude agents" }).query()).toBeNull();
 
+  // regression: every keystroke saved, so typing 120 closed idle sessions after 1 minute
+  await userEvent.fill(field(screen), "120");
+  expect(mocks.update).not.toHaveBeenCalled();
   await userEvent.fill(field(screen), "25");
   field(screen).blur();
   await expect
