@@ -36,7 +36,7 @@ import {
   assistantGroupMentionHref,
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
-  assistantGroupPauseReasonLabel,
+  assistantGroupTaskReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
   insertAssistantGroupMention,
@@ -422,16 +422,22 @@ describe("group feed", () => {
     assert.isNull(assistantGroupNewSeq(state, 5));
   });
 
-  it("labels pauses in words and an unknown reason as paused", () => {
-    assert.strictEqual(assistantGroupPauseReasonLabel("stopped"), "Stopped");
-    assert.strictEqual(
-      assistantGroupPauseReasonLabel("routing_failed"),
-      "The lead could not route this",
-    );
-    assert.match(assistantGroupPauseReasonLabel("handoff_limit"), /since your last action/);
-    assert.match(assistantGroupPauseReasonLabel("no_delivery"), /without a delivery/);
-    assert.strictEqual(assistantGroupPauseReasonLabel("brand_new"), "Paused");
-    assert.strictEqual(assistantGroupPauseReasonLabel(null), "Paused");
+  it.each([
+    ["paused", "stopped", "Stopped"],
+    ["paused", "routing_failed", "The lead could not route this"],
+    ["paused", "handoff_limit", /since your last action/],
+    ["paused", "no_delivery", /without a delivery/],
+    ["paused", "brand_new", "Paused"],
+    ["paused", null, "Paused"],
+    ["failed", "outside_project", "Owner cannot work in this request's project"],
+    ["failed", "thread_unavailable", "Could not open the owner's conversation"],
+    ["failed", "failed", null],
+    ["failed", null, null],
+    ["running", "stopped", null],
+  ] as const)("labels a %s task's reason %s", (status, reason, expected) => {
+    const label = assistantGroupTaskReasonLabel({ status, reason });
+    if (expected instanceof RegExp) assert.match(label ?? "", expected);
+    else assert.strictEqual(label, expected);
   });
 });
 

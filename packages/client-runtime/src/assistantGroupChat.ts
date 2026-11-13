@@ -610,9 +610,24 @@ const PAUSE_REASON_LABEL: Record<string, string> = {
   routing_failed: "The lead could not route this",
 };
 
-/** The reason a paused task shows in words; unknown reasons read as "Paused". */
-export function assistantGroupPauseReasonLabel(reason: string | null): string {
-  return (reason !== null ? PAUSE_REASON_LABEL[reason] : undefined) ?? "Paused";
+const FAILURE_REASON_LABEL: Record<string, string> = {
+  outside_project: "Owner cannot work in this request's project",
+  thread_unavailable: "Could not open the owner's conversation",
+  request_missing: "The request is gone",
+  could_not_start: "Could not start the owner's turn",
+};
+
+/**
+ * Why a paused or failed task stopped, in words: an unknown pause reads as "Paused", an unknown
+ * failure as nothing (the status already says it failed).
+ */
+export function assistantGroupTaskReasonLabel(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): string | null {
+  const known = task.reason === null ? undefined : task.reason;
+  if (task.status === "paused") return (known && PAUSE_REASON_LABEL[known]) || "Paused";
+  if (task.status === "failed") return (known && FAILURE_REASON_LABEL[known]) || null;
+  return null;
 }
 
 /** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
