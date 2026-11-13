@@ -11,12 +11,15 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const HeavyTool = Tool.make("t3_heavy", {
   description:
-    "Call before heavy work: test suites, builds, bundling, simulators or emulators, Docker, e2e runs, large installs, repo-wide checks. Action `status` with `commandLine` (the exact line you will run, `cd` included) returns `runsOn` (`mac` or `linux`: where the Runner sends it now), `reason`, and `askUser` for that machine alone: true when the command would wait there, so ask the user whether to run now or queue. Without `commandLine`, `askUser` covers this Mac. Also: `mac` (this Mac's `pressure`, `reading`, `running` and `maxRunning` slots), `linux` (the Linux runner, when on), `running` and `waiting` (with `runsOn`; `position` counts per machine), `yours` (this thread's entries), `commands` (heavy commands running now; usage is this Mac's) and `command`. Run every heavy command by prefixing it with `command` and adding `--name \"<what it is, 2-4 words>\"` before the final `--`; it runs on the machine the Runner picks, waiting for a slot there. Add `--now` there when the user chose run now: it starts at once on that same machine. Add `--runner mac` for a command that needs something only this Mac has. Action `promote` with an `id` moves a waiting entry to run next. Use it only when the user explicitly asks in this conversation; never reorder on your own.",
+    "Call before heavy work: test suites, builds, bundling, simulators or emulators, Docker, e2e runs, large installs, repo-wide checks. Action `status` with `commandLine` (the exact line you will run, `cd` included) returns `runsOn` (`mac` or `linux`: where the Runner sends it now; `direct`: it skips the queue, as a commit with no commit hook does, so run it as written, without `command`), `reason`, and `askUser` for that machine alone: true when the command would wait there, so ask the user whether to run now or queue. Without `commandLine`, `askUser` covers this Mac. Also: `mac` (this Mac's `pressure`, `reading`, `running` and `maxRunning` slots), `linux` (the Linux runner, when on), `running` and `waiting` (with `runsOn`; `position` counts per machine), `yours` (this thread's entries), `commands` (heavy commands running now; usage is this Mac's) and `command`. Run every heavy command by prefixing it with `command` and adding `--name \"<what it is, 2-4 words>\"` before the final `--`; it runs on the machine the Runner picks, waiting for a slot there. Add `--now` there when the user chose run now: it starts at once on that same machine. Add `--runner mac` for a command that needs something only this Mac has. Action `promote` with an `id` moves a waiting entry to run next. Use it only when the user explicitly asks in this conversation; never reorder on your own.",
   parameters: Schema.Struct({
     action: Schema.Literals(["status", "promote"]),
     id: Schema.optionalKey(Schema.String),
     commandLine: Schema.optionalKey(
-      Schema.String.annotate({ description: "With `status`: the command line you will run." }),
+      Schema.String.annotate({
+        description:
+          "With `status`: the command line you will run. The answer's `runsOn` is `mac`, `linux`, or `direct` (run it as written).",
+      }),
     ),
   }),
   success: Schema.Record(Schema.String, Schema.Unknown),
