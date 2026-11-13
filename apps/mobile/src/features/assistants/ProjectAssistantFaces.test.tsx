@@ -36,9 +36,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
-  assistantGroupThreadsOf: () => [],
   assistantFace: () => "idle",
-  assistantPresence: () => ({ mood: "idle", detail: "Idle", since: null }),
+  assistantPresenceOf: () => ({ mood: "idle", detail: "Idle", since: null }),
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode; testID?: string }) => (
@@ -67,16 +66,19 @@ vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active }),
   useAssistantLiveWork: () => ({ sites: mocks.sites }),
 }));
-vi.mock("../../state/entities", () => ({
-  useThreadShell: () => null,
-  useQuietThreadShells: () => [],
-}));
+vi.mock("../../state/entities", () => ({ useQuietThreadShells: () => [] }));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));
 vi.mock("./assistantPresentation", () => ({
-  AssistantAvatar: (props: { assistant: { name: string }; mood?: string }) => (
-    <i data-mood={props.mood}>{`av:${props.assistant.name}`}</i>
+  AssistantCluster: (props: {
+    faces: ReadonlyArray<{ key: string; assistant: { name: string }; mood?: string }>;
+  }) => (
+    <b data-testid="cluster">
+      {props.faces.map((face) => (
+        <i key={face.key} data-mood={face.mood}>{`av:${face.assistant.name}`}</i>
+      ))}
+    </b>
   ),
 }));
 
@@ -116,18 +118,18 @@ const click = (container: HTMLElement, label: string) =>
 
 describe("ProjectAssistantFaces", () => {
   it.each([
-    { names: [], faces: [], more: null },
-    { names: ["Atlas"], faces: ["Atlas"], more: null },
-    { names: ["Atlas", "Nova"], faces: ["Atlas", "Nova"], more: null },
-    { names: ["Atlas", "Nova", "Echo", "Pip"], faces: ["Atlas", "Nova"], more: "+2" },
-  ])("shows $faces and $more for $names", ({ names, faces, more }) => {
+    { names: [] },
+    { names: ["Atlas"] },
+    { names: ["Atlas", "Nova"] },
+    { names: ["Atlas", "Nova", "Echo", "Pip", "Rex"] },
+  ])("hands every one of $names to one cluster", ({ names }) => {
     const container = render(names.map((name) => bot(name)));
-    expect([...container.querySelectorAll("i")].map((face) => face.textContent)).toEqual(
-      faces.map((name) => `av:${name}`),
+    expect(container.querySelectorAll('[data-testid="cluster"]').length).toBe(
+      names.length > 0 ? 1 : 0,
     );
-    expect(
-      container.querySelector('[data-testid="project-assistant-more"]')?.textContent ?? null,
-    ).toBe(more);
+    expect([...container.querySelectorAll("i")].map((face) => face.textContent)).toEqual(
+      names.map((name) => `av:${name}`),
+    );
     expect(container.textContent?.includes("Alpha")).toBe(names.length > 0);
   });
 
