@@ -1,9 +1,17 @@
+import * as NodeSqlite from "node:sqlite";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as M from "@t3tools/contracts";
 import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Statement from "effect/sql/Statement";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as Settings from "../serverSettings.ts";
@@ -40,6 +48,32 @@ import {
   recordedFailures,
 } from "./MemoryWorker.testkit.ts";
 import { countingTracer } from "../observability/countingTracer.testkit.ts";
+
+/** Runs on a file database, whose read-only transactions take the reader connection. */
+const onFileDatabase = <A, E>(
+  effect: Effect.Effect<A, E, Layer.Success<ReturnType<typeof live>>>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "memory-catch-up-" });
+    const filename = path.join(directory, "state.sqlite");
+    return yield* effect.pipe(
+      Effect.provide(
+        live(
+          false,
+          undefined,
+          false,
+          0,
+          false,
+          undefined,
+          undefined,
+          undefined,
+          NodeSqliteClient.layer({ filename, readerWorker: true }),
+        ),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 describe("MemoryWorker", () => {
   it.effect("started idle worker drains without waking itself", () =>
     Effect.scoped(
@@ -898,6 +932,174 @@ describe("MemoryWorker", () => {
         [],
       );
     }).pipe(Effect.provide(live())),
+  );
+  it.effect("a thread deleted earlier in a catch-up batch takes no work from its later runs", () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const run = yield* decodeRun(
+        (yield* sql<{
+          payload_json: string;
+        }>`SELECT payload_json FROM orchestration_events WHERE sequence=2`)[0]!.payload_json,
+      );
+      yield* sql`INSERT INTO orchestration_events VALUES (3,${id(12)},${threadId},'thread.deleted','{}',${now},2,'thread')`;
+      yield* sql`INSERT INTO orchestration_events VALUES (4,${id(13)},${threadId},'run.updated',${encodeRun({ ...run, status: "interrupted" })},${now},2,'thread')`;
+      const worker = yield* Worker.MemoryWorker;
+      const store = yield* Store.MemoryStore;
+      yield* worker.sweepDue();
+      assert.strictEqual(yield* store.readThreadHookWatermark(), 4);
+      assert.deepStrictEqual(
+        yield* sql`SELECT id FROM memory_outbox WHERE kind IN ('summary','consolidate')`,
+        [],
+      );
+    }).pipe(Effect.provide(live())),
+  );
+  it.effect("catch-up reads thread events and sources only on the reader", () =>
+    onFileDatabase(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* Store.MemoryStore;
+        const run = yield* decodeRun(
+          (yield* sql<{
+            payload_json: string;
+          }>`SELECT payload_json FROM orchestration_events WHERE sequence=2`)[0]!.payload_json,
+        );
+        // The completed run is past the hook, so only the continuation scan reaches its source.
+        yield* store.commitThreadHook({ expectedWatermark: 0, throughWatermark: 2, work: [] });
+        yield* sql`INSERT INTO orchestration_events VALUES (3,${id(12)},'gone','thread.deleted','{}',${now},2,'thread')`;
+        yield* sql`INSERT INTO orchestration_events VALUES (4,${id(13)},'rolled','run.updated',${encodeRun({ ...run, status: "rolled_back" })},${now},2,'thread')`;
+        const queries: Array<{ query: string; connection: unknown; failed: boolean }> = [];
+        const tracer = Tracer.make({
+          span(options) {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (endTime, exit) => {
+              end(endTime, exit);
+              const query = span.attributes.get("db.query.text");
+              if (typeof query !== "string") return;
+              let connection: unknown;
+              let inCatchUp = false;
+              for (
+                let owner: Tracer.AnySpan | undefined = span;
+                owner?._tag === "Span";
+                owner = Option.getOrUndefined(owner.parent)
+              ) {
+                connection ??= owner.attributes.get("db.connection");
+                if (owner.name === "MemoryWorker.catchUp") inCatchUp = true;
+              }
+              if (inCatchUp) queries.push({ query, connection, failed: exit._tag === "Failure" });
+            };
+            return span;
+          },
+        });
+        yield* (yield* Worker.MemoryWorker)
+          .sweepDue()
+          .pipe(
+            Effect.withTracer(tracer),
+            Effect.provideService(Statement.SpanPropagationEnabled, true),
+          );
+        assert.strictEqual(yield* store.readThreadHookWatermark(), 4);
+        const sourceReads = queries.filter(({ query }) =>
+          /orchestration_events|orchestration_v2_projection_threads|memory_import_keys/.test(query),
+        );
+        // Every plan branch ran: the hook page, the continuation scan, and the source read.
+        for (const marker of [
+          "sequence>?",
+          "WITH progress",
+          "sequence<=? ORDER BY sequence",
+          "FROM orchestration_v2_projection_threads WHERE thread_id",
+          "FROM memory_import_keys",
+        ])
+          assert.isTrue(
+            sourceReads.some(({ query }) => query.includes(marker)),
+            marker,
+          );
+        assert.deepStrictEqual(
+          sourceReads.filter(({ connection }) => connection !== "reader"),
+          [],
+        );
+        assert.deepStrictEqual(
+          queries.filter(({ failed }) => failed),
+          [],
+        );
+      }),
+    ),
+  );
+  it.effect("a summary completed while catch-up plans voids the batch until the next sweep", () =>
+    onFileDatabase(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient.SqlClient;
+        const store = yield* Store.MemoryStore;
+        const run = yield* decodeRun(
+          (yield* sql<{
+            payload_json: string;
+          }>`SELECT payload_json FROM orchestration_events WHERE sequence=2`)[0]!.payload_json,
+        );
+        yield* store.enqueueWork({
+          ...work(),
+          id: "rolled-work",
+          status: "retry",
+          nextAttemptAt: Number.MAX_SAFE_INTEGER,
+          claimedBy: null,
+          claimedUntil: null,
+          metadata: {
+            ...(work().metadata as Extract<Store.MemoryWork["metadata"], { kind: "summary" }>),
+            sourceThread: { environmentId, threadId: M.ThreadId.make("rolled") },
+          },
+        });
+        yield* sql`INSERT INTO orchestration_events VALUES (3,${id(13)},'rolled','run.updated',${encodeRun({ ...run, status: "rolled_back" })},${now},2,'thread')`;
+        const filename = (yield* sql<{ file: string }>`PRAGMA database_list`)[0]!.file;
+        let planned = false;
+        let completed = false;
+        // Another connection completes the thread's summary once the plan has read its progress.
+        const interfere: Statement.Transformer = (statement) =>
+          Effect.sync(() => {
+            if (planned && !completed) {
+              completed = true;
+              const other = new NodeSqlite.DatabaseSync(filename);
+              other
+                .prepare(
+                  `INSERT INTO memory_outbox (id,space,memory_id,kind,status,metadata_json,attempt,next_attempt_at)
+                  VALUES ('concurrent',?,?,'summary','completed',json_object('kind','summary','sourceThread',json_object('environmentId',?,'threadId',?),
+                  'observedThroughSequence',2,'sourceWatermark',json_object('fromEventId',?,'toEventId',?,'throughSequence',2),
+                  'memoryId',?,'operationId',?,'revisionId',?,'modelSelection',json_object('instanceId','codex','model','fixture')),1,0)`,
+                )
+                .run(
+                  space,
+                  memoryId,
+                  environmentId,
+                  threadId,
+                  id(10),
+                  id(11),
+                  memoryId,
+                  id(4),
+                  id(5),
+                );
+              other.close();
+            }
+            if (statement.compile()[0].includes("AS consolidated_at FROM memory_outbox"))
+              planned = true;
+            return statement;
+          });
+        const worker = yield* Worker.MemoryWorker;
+        yield* worker
+          .sweepDue()
+          .pipe(Effect.provideService(Statement.CurrentTransformer, interfere));
+        assert.isTrue(completed);
+        assert.strictEqual(yield* store.readThreadHookWatermark(), 0);
+        assert.strictEqual((yield* store.readWork("rolled-work"))?.status, "retry");
+        yield* worker.sweepDue();
+        assert.strictEqual(yield* store.readThreadHookWatermark(), 3);
+        assert.strictEqual((yield* store.readWork("rolled-work"))?.status, "cancelled");
+        // Replanned on the completed summary, the run has nothing left to summarize.
+        assert.deepStrictEqual(
+          yield* sql`SELECT id FROM memory_outbox WHERE kind IN ('summary','consolidate') AND id NOT IN ('concurrent','rolled-work')`,
+          [],
+        );
+      }),
+    ),
   );
   it.effect("drains a summary work history far above the store budget to its live threads", () =>
     Effect.gen(function* () {
