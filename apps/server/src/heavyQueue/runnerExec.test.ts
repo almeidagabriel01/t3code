@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
+  changedInputs,
   checkLinux,
   confirmed,
   remoteCommand,
@@ -121,6 +122,18 @@ describe("running on Linux through remoto", () => {
     ]);
   });
 
+  it("runs with the env it is handed, ahead of the command", () => {
+    expect(withProjectBins(["vp", "run", "x"], "/w", "/w", ["A=1", "B=x y"]).slice(3)).toEqual([
+      "t3",
+      "env",
+      "A=1",
+      "B=x y",
+      "vp",
+      "run",
+      "x",
+    ]);
+  });
+
   it("runs the nearest project tool from the job's folder, then the checkout's", async () => {
     const web = NodePath.join(dir, "apps", "web");
     const tool = (folder: string, name: string, text: string) => {
@@ -217,5 +230,73 @@ describe("ssh calls around a Linux run", () => {
     expect(await removeRunnerCopy(DEFAULT_MACHINE_CONFIG, env(fake(body)), "app-0123abcd")).toBe(
       result,
     );
+  });
+});
+
+describe("check:changed's inputs, computed on this Mac", () => {
+  const repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-changed-"));
+  const write = (file: string, text: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(repo, file)), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(repo, file), text);
+  };
+  write("package.json", JSON.stringify({ scripts: { "check:changed": "node scripts/cc.ts" } }));
+  write("scripts/cc.ts", "process.env.CHECK_CHANGED_FILES");
+  write("apps/web/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+  /** Answers git as a repo whose origin/main is 3 ahead-of-base and upstream/main 1. */
+  const git = (args: ReadonlyArray<string>) => {
+    const line = args.join(" ");
+    if (line === "remote") return "origin\nupstream";
+    if (line === "merge-base HEAD refs/remotes/origin/main") return "aaa";
+    if (line === "merge-base HEAD refs/remotes/upstream/main") return "bbb";
+    if (line === "merge-base HEAD v1") return "ccc";
+    if (line.startsWith("rev-list")) return line.includes("aaa") ? "3" : "1";
+    if (line.startsWith("diff")) return `b.ts\na.ts\n${args[3]}.ts`;
+    if (line.startsWith("ls-files")) return "new.ts\na.ts";
+    return null;
+  };
+  it.each([
+    [
+      ["run", "check:changed"],
+      repo,
+      [
+        "CHECK_CHANGED_BASE=bbb",
+        "CHECK_CHANGED_REF=upstream/main",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nbbb.ts\nnew.ts",
+      ],
+    ],
+    // An explicit ref after the script wins over the closest remote main.
+    [
+      ["run", "check:changed", "--", "--timeout", "3300", "--concurrency", "4", "v1"],
+      NodePath.join(repo, "apps/web"),
+      [
+        "CHECK_CHANGED_BASE=ccc",
+        "CHECK_CHANGED_REF=v1",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nccc.ts\nnew.ts",
+      ],
+    ],
+    // Not that check, or a ref git doesn't know.
+    [["test", "run"], repo, null],
+    [
+      ["run", "check:changed", "--timeout", "3300"],
+      repo,
+      [
+        "CHECK_CHANGED_BASE=bbb",
+        "CHECK_CHANGED_REF=upstream/main",
+        "CHECK_CHANGED_FILES=a.ts\nb.ts\nbbb.ts\nnew.ts",
+      ],
+    ],
+    [["run", "check:changed", "nope"], repo, null],
+  ] as const)("%j from %s hands over %j", (args, cwd, expected) => {
+    expect(changedInputs(args, cwd, repo, git)).toEqual(expected);
+  });
+
+  it("is null when the project's check:changed doesn't read the inputs", () => {
+    const other = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-changed-"));
+    NodeFS.writeFileSync(
+      NodePath.join(other, "package.json"),
+      JSON.stringify({ scripts: { "check:changed": "node ci.mjs" } }),
+    );
+    NodeFS.writeFileSync(NodePath.join(other, "ci.mjs"), "git diff");
+    expect(changedInputs(["run", "check:changed"], other, other, git)).toBeNull();
   });
 });

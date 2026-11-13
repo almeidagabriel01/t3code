@@ -166,7 +166,7 @@ describe("the PreToolUse answer", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         updatedInput: {
-          command: `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
+          command: `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
           description: "Server tests",
           timeout: 600_000,
           run_in_background: false,
@@ -176,6 +176,15 @@ describe("the PreToolUse answer", () => {
       },
     });
     expect(answer!.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+
+  it.each([
+    ["toolu_9", " --request-id 'toolu_9' --name"],
+    ["", " --name"],
+    [42, " --name"],
+  ])("passes the call's tool-use id %j on, so a repeat attaches to its job", (id, expected) => {
+    const answer = queueBashCall({ ...bash({ command: "vp build" }), tool_use_id: id }, PREFIX);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toContain(`${PREFIX}${expected} 'vp build'`);
   });
 
   it("never lowers a longer timeout and leaves a background call's limit alone", () => {
@@ -231,7 +240,7 @@ describe("an agent's own remoto call", () => {
       { runner: true },
     );
     expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
-      `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
+      `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
     );
     const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
     expect(script!.hookSpecificOutput.updatedInput.command).toContain("--name 'x.sh'");

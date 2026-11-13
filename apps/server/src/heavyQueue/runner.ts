@@ -197,6 +197,8 @@ const GIT_DRIVEN = /(^|[^a-z])(only)?(changed|staged)(since)?($|[^a-z])/i;
 export const needsGit = (values: ReadonlyArray<string>) =>
   values[0]?.split("/").pop() === "git" ||
   values.some((value, at) => {
+    // The Runner computes its changed files here and hands them over (`changedInputs`).
+    if (value === "check:changed") return false;
     const flag = value.startsWith("-");
     if (!flag && (values[at - 1]?.startsWith("-") || /[\s/.]/.test(value))) return false;
     return GIT_DRIVEN.test(flag ? value.replace(/=.*$/, "") : value);

@@ -491,13 +491,18 @@ export const queueBashCall = (
     : heavySegment(command);
   if (segment === null) return null;
   const currentTimeout = typeof toolInput.timeout === "number" ? toolInput.timeout : 0;
+  // A repeat of the same call attaches to its job instead of running it twice.
+  const request =
+    typeof hookInput.tool_use_id === "string" && hookInput.tool_use_id !== ""
+      ? ` --request-id ${shellQuote(hookInput.tool_use_id)}`
+      : "";
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse" as const,
       // Replaces the whole input, so every field Claude sent stays.
       updatedInput: {
         ...toolInput,
-        command: `${queuePrefix} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
+        command: `${queuePrefix}${request} --name ${shellQuote(nameOf(segment))} -- "\${SHELL:-/bin/sh}" -c ${shellQuote(command)}`,
         // Waiting counts toward the Bash timeout; a background call keeps its own, longer limit.
         ...(toolInput.run_in_background === true
           ? {}

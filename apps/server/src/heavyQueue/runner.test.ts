@@ -611,8 +611,10 @@ describe("patterns and eligibility", () => {
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
     ["echo hi", "mac-only", "Nothing in it runs on Linux"],
     ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
-    // The Linux copy has no `.git`: what diffs against it stays here.
-    ["vp run check:changed", "mac-only", NEEDS_GIT],
+    // The Linux copy has no `.git`: what diffs against it stays here, except check:changed,
+    // whose changed files this Mac computes and hands over.
+    ["vp run check:changed", "linux", null],
+    ["timeout 3500 vp run check:changed origin/main", "linux", null],
     ["vp test run --changed", "mac-only", NEEDS_GIT],
     ["npx jest --onlyChanged", "mac-only", NEEDS_GIT],
     ["vp test run --changedSince=origin/main", "mac-only", NEEDS_GIT],
@@ -623,7 +625,7 @@ describe("patterns and eligibility", () => {
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
     ["vp test run -t staged", "linux", null],
     ["vp test run --reporter=changed", "linux", null],
-    ["pnpm --filter web check:changed", "mac-only", NEEDS_GIT],
+    ["pnpm --filter web check:changed", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });

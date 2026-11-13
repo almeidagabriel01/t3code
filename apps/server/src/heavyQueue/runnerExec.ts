@@ -71,13 +71,120 @@ export const remoteCommand = (
  * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
  * `remoto-rodar` sets its own PATH.
  */
-export const withProjectBins = (command: ReadonlyArray<string>, cwd: string, root: string) => {
+export const withProjectBins = (
+  command: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  env: ReadonlyArray<string> = [],
+) => {
   const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
   const bins = Array.from(
     { length: depth + 1 },
     (_, up) => `${up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`}/node_modules/.bin`,
   );
-  return ["bash", "-c", `export PATH="${bins.join(":")}:$PATH"; exec "$@"`, "t3", ...command];
+  return [
+    "bash",
+    "-c",
+    `export PATH="${bins.join(":")}:$PATH"; exec "$@"`,
+    "t3",
+    ...(env.length === 0 ? [] : ["env", ...env]),
+    ...command,
+  ];
+};
+
+type Git = (args: ReadonlyArray<string>) => string | null;
+
+const gitIn =
+  (root: string): Git =>
+  (args) => {
+    try {
+      return NodeChildProcess.execFileSync("git", ["-c", "core.quotePath=false", ...args], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+
+const CHANGED_SCRIPT = "check:changed";
+
+/** The project's `check:changed` reads the inputs the Runner hands it, so it runs without git. */
+const takesChangedInputs = (cwd: string, root: string) => {
+  for (let dir = cwd; ; dir = NodePath.dirname(dir)) {
+    try {
+      const scripts = JSON.parse(NodeFS.readFileSync(NodePath.join(dir, "package.json"), "utf8"))
+        ?.scripts as Record<string, unknown> | undefined;
+      const script = scripts?.[CHANGED_SCRIPT];
+      if (typeof script === "string") {
+        return script
+          .split(/\s+/)
+          .filter((word) => /\.[cm]?[jt]s$/.test(word))
+          .some((file) => {
+            try {
+              return NodeFS.readFileSync(NodePath.join(dir, file), "utf8").includes(
+                "CHECK_CHANGED_FILES",
+              );
+            } catch {
+              return false;
+            }
+          });
+      }
+    } catch {
+      // No package.json here: look further up.
+    }
+    if (dir === root || dir === NodePath.dirname(dir)) return false;
+  }
+};
+
+/**
+ * What `check:changed` would ask git, answered on this Mac for a Linux copy without `.git`: the
+ * merge base with the closest `<remote>/main` (or the ref it names) and the changed and untracked
+ * files, as `env` assignments. Null when it is not that check, or Linux can't run it.
+ */
+export const changedInputs = (
+  args: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  git: Git = gitIn(root),
+): ReadonlyArray<string> | null => {
+  const at = args.indexOf(CHANGED_SCRIPT);
+  if (at < 0 || !takesChangedInputs(cwd, root)) return null;
+  // Its own `--timeout 3300` and `--concurrency 4` take a value; any other word is the ref.
+  const explicit = args
+    .slice(at + 1)
+    .find(
+      (arg, index, rest) =>
+        !arg.startsWith("-") && !/^--(timeout|concurrency)$/.test(rest[index - 1] ?? ""),
+    );
+  const candidates =
+    explicit === undefined
+      ? (git(["remote"]) ?? "")
+          .split("\n")
+          .filter(Boolean)
+          .map((name) => ({ ref: `${name}/main`, rev: `refs/remotes/${name}/main` }))
+      : [{ ref: explicit, rev: explicit }];
+  let best: { ref: string; base: string; ahead: number } | undefined;
+  for (const { ref, rev } of candidates) {
+    const base = git(["merge-base", "HEAD", rev]);
+    if (!base) continue;
+    const ahead = Number(git(["rev-list", "--count", `${base}..HEAD`]));
+    if (best === undefined || ahead < best.ahead) best = { ref, base, ahead };
+  }
+  if (best === undefined) return null;
+  const listed = (more: ReadonlyArray<string>) => (git(more) ?? "").split("\n").filter(Boolean);
+  const files = [
+    ...new Set([
+      ...listed(["diff", "--name-only", "--no-renames", best.base, "--"]),
+      ...listed(["ls-files", "--others", "--exclude-standard"]),
+    ]),
+  ].sort();
+  return [
+    `CHECK_CHANGED_BASE=${best.base}`,
+    `CHECK_CHANGED_REF=${best.ref}`,
+    `CHECK_CHANGED_FILES=${files.join("\n")}`,
+  ];
 };
 
 const executable = (path: string) => {
@@ -190,6 +297,8 @@ export interface LinuxRunOptions {
   readonly environment: Env;
   readonly machine: RunnerMachineConfig;
   readonly macOnly: ReadonlyArray<string>;
+  /** `NAME=value` pairs the command runs with there. */
+  readonly env?: ReadonlyArray<string>;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -237,6 +346,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       remoteCommand(options.program, options.args, options.cwd, options.root),
       options.cwd,
       options.root,
+      options.env,
     ),
     {
       cwd: options.cwd,
