@@ -7,7 +7,7 @@ and it can't be archived or deleted.
 
 ## Create and edit
 
-Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar. Each assistant has:
+Open **Settings → Assistants**, or use **+** next to Teams in the sidebar. Each assistant has:
 
 - **Name** and **handle**. The handle is a short lowercase name that agents use to find it.
 - **Avatar**. A robot in a color you pick, or your own PNG, JPEG or WebP image up to 2 MB. Until you
@@ -155,8 +155,8 @@ starts a thread in the right project with a full brief, using its instructions, 
 are not asked to wait: when the thread finishes, the assistant wakes up, checks the result, runs the
 tests, asks a teammate to review when that helps, sends fixes back, and only then tells you.
 
-The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
-their state (running, waiting, done or failed). Open one to see the work; the thread shows the
+The threads an assistant launched are listed under it in the sidebar, instead of in their project's
+list, and on the Assistants page with their state (running, waiting, done or failed). Open one to see the work; the thread shows the
 assistant's face in the mood of the task, and tapping it returns to the assistant. A project assistant
 can only start tasks in its own project. You can dismiss a finished task from the list, and restore it later; an assistant does the same when you ask it to.
 
@@ -183,9 +183,24 @@ needs to be recreated to see the folder.
 ## Groups
 
 A group is a set of assistants that work together. Create one from the sidebar (**+** next to
-Groups) or under **Settings > Assistants > Groups**: give it a name, then add members now or later. A
-group can be empty or hold a single assistant. An assistant can be in several groups. The sidebar and
-Home list your groups under the assistants.
+Teams, then **New group**) or under **Settings > Assistants > Groups**: give it a name, then add members now or later. A
+group can be empty or hold a single assistant. An assistant can be in several groups.
+
+The sidebar and Home list the assistants that are in no group first, then each group, folded. An
+assistant in a group is listed only inside it, and one in several groups is listed once, in the first
+of them. Use the arrow beside a group's name to show or hide its members, and click the name to open
+its chat; each group stays open or closed the way you left it on that device.
+
+In the sidebar, each assistant and each group shows one mark: waiting on you, failed, paused, how many
+are running, or a group's unread messages, in that order. What waits on you is answered from
+**Needs you** at the top of the sidebar.
+
+On the Assistants page, each assistant and each group shows its status in the same words as a thread: Approval, Input,
+Request, Decision, Paused, Limited, Failed, Working or Done. A group shows the most urgent one across
+its members' conversations and its tasks, folded or open, so nothing waiting on you hides inside a
+closed group. **Paused** means a group task stopped on its own, for instance at the hand-off limit,
+and waits for you to resume it. A group's **Done** means its chat has messages you have not read; it
+clears when you open the chat.
 
 - Any assistant may message any other. Each member's instructions list its groupmates with their
   handle and role and tell it that it may hand work to them. Ask one to "check with the group" and it
