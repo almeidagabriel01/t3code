@@ -1,7 +1,12 @@
 import * as Effect from "effect/Effect";
 import { getWindowMaterialState, relaunchForWindowMaterial } from "./methods/windowMaterial.ts";
 
-import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
+import {
+  receiveProviderAuthCallback,
+  cancelProviderAuthCallback,
+  receiveIntegrationCallback,
+  cancelIntegrationCallback,
+} from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
 import { installDesktopTray } from "../tray/DesktopTray.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
@@ -158,6 +163,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(readMedia);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
+  yield* ipc.handle(receiveIntegrationCallback);
+  yield* ipc.handle(cancelIntegrationCallback);
   yield* ipc.handle(openSystemSettings);
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(requestMicrophoneAccess);
