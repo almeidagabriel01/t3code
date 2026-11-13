@@ -240,11 +240,13 @@ const baseState = () => ({
 
 let root: Root;
 let container: HTMLDivElement;
-const render = () =>
+const render = (entry?: string) =>
   act(() =>
     root.render(
       <RegistryContext.Provider value={appAtomRegistry}>
-        <SettingsIntegrationsRouteScreen />
+        <SettingsIntegrationsRouteScreen
+          route={{ params: entry === undefined ? undefined : { entry } }}
+        />
       </RegistryContext.Provider>,
     ),
   );
@@ -358,6 +360,24 @@ describe("integrations directory", () => {
     mocks.environmentIds = [];
     render();
     expect(container.textContent).toContain("No integrations match your search.");
+  });
+
+  it("a link opens the entry's detail once connected, otherwise searches for it", () => {
+    render("linear");
+    expect(mocks.navigate).toHaveBeenCalledOnce();
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsIntegration", {
+      environmentId: "hub",
+      form: "detail",
+      name: "linear",
+    });
+    act(() => root.unmount());
+    root = createRoot(container);
+    render("github");
+    expect(
+      container.querySelector<HTMLInputElement>('input[aria-label="Search integrations"]')!.value,
+    ).toBe("GitHub");
+    expect(container.textContent).not.toContain("Linear");
+    expect(mocks.navigate).toHaveBeenCalledOnce();
   });
 
   it("opens the detail, the custom servers page and Added in T3 rows", async () => {

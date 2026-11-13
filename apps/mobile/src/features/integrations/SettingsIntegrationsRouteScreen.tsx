@@ -1,14 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
+import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import {
   integrationCategoryLabel,
   integrationDirectory,
+  integrationLinkTarget,
   type IntegrationDirectoryRow,
   type IntegrationMenuAction,
   type IntegrationSourceNote,
 } from "@t3tools/client-runtime/integrations";
 import { IntegrationCategory, type EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ScrollView as HorizontalScroll, View } from "react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -153,10 +154,23 @@ function IntegrationsDirectory(props: {
   readonly title: string | undefined;
   readonly query: string;
   readonly category: Category | null;
+  /** A catalog id from a link: opens its detail, or searches for it when T3 does not hold it. */
+  readonly entry: string | undefined;
+  readonly onSearch: (query: string) => void;
 }) {
   const navigation = useNavigation();
   const state = useIntegrationsState(props.environmentId);
   const flows = useIntegrationFlows(props.environmentId, state);
+  const linked = useRef<string | undefined>(undefined);
+  const { entry, onSearch } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a linked entry resolves once this environment's integrations arrive from the server
+  useEffect(() => {
+    if (entry === undefined || state === null || linked.current === entry) return;
+    linked.current = entry;
+    const target = integrationLinkTarget(state, entry);
+    if (target?.kind === "detail") flows.runPrimary({ kind: "open", name: target.name });
+    else if (target?.kind === "search") onSearch(target.query);
+  }, [entry, state, flows, onSearch]);
   if (state === null) {
     return (
       <View className="items-center py-6">
@@ -259,7 +273,9 @@ function ConnectedNotice() {
 }
 
 /** Settings → Integrations: the catalog, what is connected, and servers found elsewhere. */
-export function SettingsIntegrationsRouteScreen() {
+export function SettingsIntegrationsRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly entry?: string } | undefined>) {
   const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const environmentIds = useIntegrationsEnvironmentIds();
@@ -315,6 +331,8 @@ export function SettingsIntegrationsRouteScreen() {
                 title={targets.length > 1 ? target.label : undefined}
                 query={query}
                 category={category}
+                entry={route.params?.entry}
+                onSearch={setQuery}
               />
             ))
           )}
