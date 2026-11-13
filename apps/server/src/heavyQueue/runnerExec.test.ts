@@ -417,7 +417,6 @@ describe("bringing results back", () => {
     NodeFS.mkdirSync(copy, { recursive: true });
     const marker = `${copy}.t3-start-job-1`;
     NodeFS.writeFileSync(marker, "");
-    NodeFS.utimesSync(marker, T0, T0);
     const root = NodeFS.mkdtempSync(NodePath.join(dir, "mac-"));
     const environment = {
       ...process.env,
@@ -460,7 +459,11 @@ describe("bringing results back", () => {
     ["in .git", ".git/HEAD", "after", null, "left"],
   ] as const)("a file %s (%s) is %s", async (_, path, linux, mac, result) => {
     const { copy, marker, root, back } = setup();
-    write(NodePath.join(copy, path), "linux", linux === "after" ? T0 + 10 : T0 - 10);
+    // Linux compares change times, which only the clock sets: the marker moves instead. The
+    // file's own time is older than either, as a synced or `cp -p` file keeps it.
+    write(NodePath.join(copy, path), "linux", 500_000_000);
+    const start = linux === "after" ? 1_000_000_000 : 4_000_000_000;
+    NodeFS.utimesSync(marker, start, start);
     if (mac !== null) write(NodePath.join(root, path), "mac", mac === "after" ? T0 + 5 : T0 - 100);
     expect(await back()).toEqual({
       copied: result === "copied" ? [path] : [],
@@ -476,6 +479,7 @@ describe("bringing results back", () => {
   it("is null when Linux can't list or send them, and leaves this Mac alone", async () => {
     const { copy, root, marker, environment } = setup();
     write(NodePath.join(copy, "new.txt"), "linux", T0 + 10);
+    NodeFS.utimesSync(marker, 1_000_000_000, 1_000_000_000);
     const args = { machine: DEFAULT_MACHINE_CONFIG, copyId: COPY, job: "job-1", root, since: 0 };
     const down = { ...environment, T3CODE_RUNNER_SSH: fake("exit 255") };
     expect(await bringBack({ ...args, environment: down })).toBeNull();
@@ -514,8 +518,12 @@ describe("bringing results back", () => {
     },
   );
 
-  it("refuses ids that could escape the runs folder", () => {
+  it("refuses ids that could escape the runs folder", async () => {
     expect(() => withProjectBins(["vp"], "/w", "/w", [], "../x")).toThrow(/Unsafe/);
+    const { environment } = setup();
+    const args = { machine: DEFAULT_MACHINE_CONFIG, environment, root: dir, since: 0 };
+    expect(await bringBack({ ...args, copyId: "..", job: "job-1" })).toBeNull();
+    expect(await bringBack({ ...args, copyId: COPY, job: "../x" })).toBeNull();
   });
 });
 

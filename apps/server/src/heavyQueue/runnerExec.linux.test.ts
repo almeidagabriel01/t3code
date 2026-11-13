@@ -250,7 +250,7 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     const cwd = project();
     NodeFS.writeFileSync(
       NodePath.join(cwd, "job.sh"),
-      "sleep 2; echo linux > a.txt; mkdir -p out node_modules; echo made > out/made.txt; echo dep > node_modules/dep.txt; echo linux > mine.txt\n",
+      "echo quick > quick.txt; sleep 2; echo linux > a.txt; mkdir -p out node_modules; echo made > out/made.txt; echo dep > node_modules/dep.txt; echo linux > mine.txt\n",
     );
     const child = heavy(cwd, queueWith({ runnerBringBack: true }), "sh job.sh");
     const result = finished(child);
@@ -265,6 +265,8 @@ describe.runIf(enabled)("Runner against a disposable Linux", () => {
     const read = (path: string) => NodeFS.readFileSync(NodePath.join(cwd, path), "utf8");
     expect(read("a.txt")).toBe("linux\n");
     expect(read("out/made.txt")).toBe("made\n");
+    // Written in the same instant the wrapper marked the start.
+    expect(read("quick.txt")).toBe("quick\n");
     expect(read("mine.txt")).toBe("mac\n");
     expect(NodeFS.existsSync(NodePath.join(cwd, "node_modules"))).toBe(false);
     expect(stderr).toContain("Not copied back (changed on this Mac): mine.txt\n");

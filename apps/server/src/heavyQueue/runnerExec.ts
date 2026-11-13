@@ -291,7 +291,7 @@ const ssh = (
     NodeChildProcess.execFile(
       sshProgram(environment),
       sshArgs(machine, environment, command),
-      { timeout: timeoutMs, env: { ...process.env, ...environment } },
+      { timeout: timeoutMs, env: { ...process.env, ...environment }, maxBuffer: 64 * 1024 * 1024 },
       (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
         resolve({ code, stdout: String(stdout), stderr: String(stderr) });
@@ -325,7 +325,7 @@ const run = (
     NodeChildProcess.execFile(
       program,
       args,
-      { env: { ...process.env, ...environment }, maxBuffer: 64 * 1024 * 1024 },
+      { env: { ...process.env, ...environment } },
       (error, stdout) => {
         const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
         resolve({ code, stdout: String(stdout) });
@@ -340,10 +340,9 @@ export interface BroughtBack {
 }
 
 /**
- * Copies back to `root` the files job `job` created or changed in copy `copyId` there: those
- * newer than its start marker, never under `node_modules` or `.git`. A file this Mac changed
- * after `since` (when the run's sync began) stays as it is. Null when Linux couldn't list or
- * send them.
+ * Copies to `root` what job `job` changed in copy `copyId` after its start marker, outside
+ * `node_modules` and `.git`, except files this Mac changed after `since`; null when that fails.
+ * Each side reads its own clock: change times there (synced files keep this Mac's mtimes).
  */
 export const bringBack = async (options: {
   readonly machine: RunnerMachineConfig;
@@ -354,14 +353,14 @@ export const bringBack = async (options: {
   readonly since: number;
 }): Promise<BroughtBack | null> => {
   const { machine, environment, copyId, root } = options;
-  if (!SAFE_NAME.test(copyId)) throw new Error(`Unsafe run id: ${copyId}`);
+  if (!SAFE_NAME.test(copyId) || !SAFE_NAME.test(options.job)) return null;
   const marker = `../${copyId}${markerSuffix(options.job)}`;
   const listed = await ssh(
     machine,
     environment,
     [
       `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
-      `find . \\( -name node_modules -o -name .git \\) -prune -o -type f -newer ${marker} -print || exit 1`,
+      `find . \\( -name node_modules -o -name .git \\) -prune -o -type f -cnewer ${marker} -print || exit 1`,
       `rm -f ${marker}`,
     ].join("\n"),
     (machine.runnerSshTimeoutSeconds + 60) * 1000,
@@ -383,11 +382,17 @@ export const bringBack = async (options: {
   if (copied.length > 0) {
     const list = NodePath.join(NodeOS.tmpdir(), `t3-bring-back-${process.pid}-${copyId}`);
     NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
-    const shell = [sshProgram(environment), ...sshArgs(machine, environment, "").slice(0, -2)];
+    const shell = [
+      sshProgram(environment),
+      // A link lost mid-copy ends it, as `remoto` does, instead of hanging the job.
+      "-o",
+      "ServerAliveInterval=30",
+      ...sshArgs(machine, environment, "").slice(0, -2),
+    ];
     const sent = await run(
-      environment.T3CODE_RUNNER_RSYNC ?? "rsync",
+      // The one `remoto` uses (openrsync on macOS).
+      environment.T3CODE_RUNNER_RSYNC ?? "/usr/bin/rsync",
       [
-        "-a",
         "-e",
         shell.join(" "),
         `--files-from=${list}`,
