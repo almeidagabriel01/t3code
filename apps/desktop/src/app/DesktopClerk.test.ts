@@ -317,8 +317,10 @@ it.effect(
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
       currentMainOrFirst: Effect.succeedSome(window),
-      reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
+    const desktopWindow = {
+      activate: Effect.sync(() => revealed.resolve()),
+    } as unknown as DesktopWindow.DesktopWindow["Service"];
     return Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -342,10 +344,7 @@ it.effect(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
-      Effect.provideService(
-        DesktopWindow.DesktopWindow,
-        {} as DesktopWindow.DesktopWindow["Service"],
-      ),
+      Effect.provideService(DesktopWindow.DesktopWindow, desktopWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
     );
   },

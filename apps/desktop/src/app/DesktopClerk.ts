@@ -208,7 +208,7 @@ export const make = Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
             if (Option.isNone(mainWindow)) return;
             yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            yield* desktopWindow.activate;
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),

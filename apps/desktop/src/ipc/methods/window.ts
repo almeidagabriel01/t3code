@@ -39,6 +39,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { resolveMicrophoneAccess } from "../../permissions/MicrophoneAccess.ts";
@@ -484,7 +485,8 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
     ) {
       return;
     }
-    yield* electronWindow.reveal(window.value);
+    // Through DesktopWindow, so a window kept hidden at login gets its full first reveal.
+    yield* (yield* DesktopWindow.DesktopWindow).activate.pipe(Effect.ignore);
   }),
 });
 
