@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks } = vi.hoisted(() => ({
-  mocks: { task: null as unknown, setTaskDismissed: vi.fn() },
+  mocks: { task: null as unknown, setTaskDismissed: vi.fn(), copyText: vi.fn() },
 }));
 
 vi.mock("react-native", () => ({
@@ -17,7 +17,9 @@ vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/RowPressable", () => ({
   RowPressable: (props: { children?: ReactNode }) => <div>{props.children}</div>,
 }));
-vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/AppSymbol", () => ({
+  SymbolView: (props: { name: string }) => <s>{props.name}</s>,
+}));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
 }));
@@ -69,7 +71,7 @@ vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./use-visible-second-clock", () => ({ useVisibleSecondClock: () => 0 }));
 vi.mock("../../lib/clock", () => ({ useNowAfter: () => 0 }));
-vi.mock("../../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
+vi.mock("../../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: mocks.copyText }));
 vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => "light" }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/pending-new-tasks-model", () => ({
@@ -103,7 +105,7 @@ vi.mock("../settings/appearance/useScaledTextRole", () => ({
 vi.mock("../pull-requests/pullRequestGlyphs", () => ({ PullRequestGlyph: {} }));
 vi.mock("../pull-requests/pullRequestStatus", () => ({ pullRequestStatus: () => ({}) }));
 
-import { ThreadListV2Row } from "./thread-list-v2-items";
+import { ThreadListV2Row, ThreadListV2SubagentRow } from "./thread-list-v2-items";
 
 const thread = {
   environmentId: "env",
@@ -120,7 +122,7 @@ const thread = {
   settledOverride: null,
 } as never;
 
-async function mount() {
+async function mount(overrides: Record<string, unknown> = {}) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const container = window.document.createElement("div");
   const noop = vi.fn();
@@ -154,6 +156,7 @@ async function mount() {
           onSwipeableWillOpen: noop,
           onSwipeableClose: noop,
           wokeAt: null,
+          ...overrides,
         } as unknown as Parameters<typeof ThreadListV2Row>[0])}
       />,
     ),
@@ -189,5 +192,58 @@ describe("ThreadListV2Row assistant task menu", () => {
     mocks.task = null;
     const container = await mount();
     expect(container.textContent).not.toMatch(/Dismiss task|Restore task/);
+  });
+});
+
+describe("ThreadListV2Row compact", () => {
+  it("keeps the menu but drops arranging, and shows the pin and live status on one line", async () => {
+    mocks.task = null;
+    const list = await mount({ pinningSupported: true, reorderSupported: true });
+    expect(list.textContent).toContain("Arrange threads…");
+    const working = {
+      ...(thread as object),
+      pinnedAt: "2026-11-01T00:00:00.000Z",
+      runtime: { status: "running" },
+      latestRun: { requestedAt: "2026-11-01T00:00:00.000Z", completedAt: null },
+    };
+    const compact = await mount({
+      thread: working,
+      pinned: true,
+      compact: true,
+      pinningSupported: true,
+      reorderSupported: true,
+    });
+    expect(compact.textContent).not.toContain("Arrange threads…");
+    expect(compact.textContent).toContain("Unpin");
+    const symbols = [...compact.querySelectorAll("s")].map((symbol) => symbol.textContent);
+    expect(symbols).toContain("pin");
+    expect(symbols).toContain("circle.dashed");
+  });
+});
+
+describe("ThreadListV2SubagentRow menu", () => {
+  it("pins, unpins and copies from the long-press menu, and has none in the project list", async () => {
+    const onSetPinned = vi.fn();
+    const mountChild = async (child: object, menu: boolean) => {
+      const container = window.document.createElement("div");
+      await act(() =>
+        createRoot(container).render(
+          <ThreadListV2SubagentRow
+            thread={{ ...(thread as object), ...child } as never}
+            onSelectThread={vi.fn()}
+            {...(menu ? { menu: { pinningSupported: true, onSetPinned } } : {})}
+          />,
+        ),
+      );
+      return container;
+    };
+    const loose = await mountChild({}, true);
+    await press(loose, "Pin");
+    await press(loose, "Copy thread");
+    await press(loose, "Copy thread ID");
+    expect(mocks.copyText).toHaveBeenCalledWith("t1", { target: "thread-id" });
+    await press(await mountChild({ pinnedAt: "2026-11-01T00:00:00.000Z" }, true), "Unpin");
+    expect(onSetPinned.mock.calls.map(([, pinned]) => pinned)).toEqual([true, false]);
+    expect((await mountChild({}, false)).querySelector("button")).toBeNull();
   });
 });

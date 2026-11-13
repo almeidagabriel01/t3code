@@ -38,7 +38,7 @@ export function buildSnoozePresetActions(
 }
 
 /** Which of the list's menus a thread gets; the open thread uses the same rules. */
-export type ThreadMenuKind = "snoozed" | "legacy" | "slim" | "snoozableCard" | "card";
+export type ThreadMenuKind = "snoozed" | "legacy" | "slim" | "snoozableCard" | "card" | "subagent";
 
 export function resolveThreadMenuKind(input: {
   readonly snoozed: boolean;
@@ -82,7 +82,11 @@ export interface ThreadMenuInput {
   readonly assistantTask?: { readonly dismissed: boolean; readonly canDismiss: boolean } | null;
 }
 
+// An assistant's chat lives in no project of its own, so project actions are hidden too.
 const ASSISTANT_HIDDEN_IDS = new Set([
+  "new-thread-on-branch",
+  "notes",
+  "project",
   "rename",
   "regenerate-title",
   "turn-into-project",
@@ -104,6 +108,23 @@ export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
     { id: "assistant-work", title: `${input.assistant.name} work`, image: "briefcase" },
     { id: "assistant-settings", title: `${input.assistant.name} settings`, image: "gearshape" },
   ];
+}
+
+/** A subagent working under an assistant: copy and pin, no project or lifecycle actions. */
+export function buildSubagentMenuActions(input: {
+  readonly pinned: boolean;
+  readonly pinningSupported: boolean;
+}): MenuAction[] {
+  return buildThreadMenuActions({
+    ...input,
+    kind: "subagent",
+    newThreadOnBranchTitle: null,
+    autoSettle: { supported: false, enabled: true },
+    titleRegeneration: { supported: false, regenerating: false },
+    canHandoff: false,
+    turnIntoProject: null,
+    snoozePresetActions: [],
+  });
 }
 
 function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
@@ -243,6 +264,8 @@ function buildBaseThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
         ];
       case "card":
         return [settle, ...arrangement, ...title, ...autoSettle, ARCHIVE, DELETE];
+      case "subagent":
+        return arrangement;
     }
   })();
   return [...head, ...body];

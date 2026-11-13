@@ -187,6 +187,24 @@ export function useAssistantTasks(
 
 const NO_TASKS: ReadonlyArray<AssistantTask> = [];
 
+const assistantTasksByAssistantAtom = Atom.make((get) => {
+  const byAssistant = new Map<string, ReadonlyArray<AssistantTask>>();
+  for (const [environmentId, state] of get(assistantStatesAtom)) {
+    for (const assistant of selectActiveAssistants(state)) {
+      byAssistant.set(
+        `${environmentId}:${assistant.id}`,
+        selectAssistantTasks(state, assistant.id),
+      );
+    }
+  }
+  return byAssistant;
+}).pipe(Atom.withLabel("mobile-assistant-tasks-by-assistant"));
+
+/** Every active assistant's tasks by `env:assistantId`, so Home derives its whole section at once. */
+export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
+  return useAtomValue(assistantTasksByAssistantAtom);
+}
+
 /** The assistant that launched this thread as a task, or null for any other thread. */
 export function useTaskAssistant(
   environmentId: EnvironmentId | null,

@@ -32,6 +32,7 @@ import {
   useAssistantSandboxActions,
   useAssistantSpend,
   useAssistantTask,
+  useAssistantTasksByAssistant,
   setAssistantTaskDismissed,
 } from "./assistants";
 
@@ -208,6 +209,10 @@ describe("useAssistantLiveWork", () => {
     const atom = vi.mocked(useAtomValue).mock.calls[0]![0];
     const work = AtomRegistry.make().get(atom) as ReturnType<typeof useAssistantLiveWork>;
     expect([work.sites, [...work.subagents]]).toEqual([[], []]);
+    vi.mocked(useAtomValue).mockClear();
+    useAssistantTasksByAssistant();
+    const tasks = vi.mocked(useAtomValue).mock.calls[0]![0];
+    expect(AtomRegistry.make().get(tasks)).toEqual(new Map());
   });
 });
 

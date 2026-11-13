@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   buildSnoozePresetActions,
+  buildSubagentMenuActions,
   canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
@@ -139,8 +140,13 @@ describe("thread menu", () => {
     const assistantIds = ids({
       assistant: { name: "Jarvis" },
       turnIntoProject: { archivable: true },
+      notes: true,
+      projectViews: true,
     });
     for (const removed of [
+      "new-thread-on-branch",
+      "notes",
+      "project",
       "rename",
       "regenerate-title",
       "turn-into-project",
@@ -158,6 +164,14 @@ describe("thread menu", () => {
       "Jarvis settings",
     );
     expect(ids()).not.toContain("reset-assistant");
+  });
+
+  it("gives a subagent row copy and pin only, swapping pin for unpin", () => {
+    const idsOf = (pinned: boolean, pinningSupported: boolean) =>
+      buildSubagentMenuActions({ pinned, pinningSupported }).map((action) => action.id);
+    expect(idsOf(false, true)).toEqual(["copy-thread", "copy-thread-id", "pin"]);
+    expect(idsOf(true, true)).toEqual(["copy-thread", "copy-thread-id", "unpin"]);
+    expect(idsOf(false, false)).toEqual(["copy-thread", "copy-thread-id"]);
   });
 
   it.each([

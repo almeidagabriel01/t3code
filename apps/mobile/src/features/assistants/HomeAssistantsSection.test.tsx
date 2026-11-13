@@ -1,3 +1,4 @@
+import { RegistryProvider } from "@effect/atom-react";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -37,14 +38,20 @@ const { mocks } = vi.hoisted(() => ({
       dismissedAt?: string | null;
     }>,
     dismissTask: vi.fn(),
+    pin: vi.fn(),
+    unpin: vi.fn(),
     liveWork: {
       sites: [] as Array<Record<string, string>>,
-      subagents: new Map<string, Array<{ id: string; title: string }>>(),
+      subagents: new Map<
+        string,
+        Array<{ id: string; title: string; environmentId?: string; pinnedAt?: string | null }>
+      >(),
     },
     toggleShowAll: vi.fn(),
     toggleFold: vi.fn(),
     folded: new Set<string>(),
     settled: new Set<string>(),
+    snoozed: new Set<string>(),
     presence: {} as Record<string, Presence>,
     notified: new Set<string>(),
     projects: [] as Array<{ environmentId: string; id: string; title: string }>,
@@ -156,6 +163,7 @@ vi.mock("../../state/entities", () => ({
         ? []
         : [{ environmentId: entry.environmentId, id: entry.assistant.threadId }],
     ),
+    ...[...mocks.liveWork.subagents.values()].flat(),
     ...mocks.tasks.map((task) => {
       const mood = mocks.presence[task.threadId]?.mood;
       return {
@@ -164,6 +172,7 @@ vi.mock("../../state/entities", () => ({
         title: task.title,
         settledOverride: mocks.settled.has(task.threadId) ? "settled" : null,
         settledAt: null,
+        snoozedUntil: mocks.snoozed.has(task.threadId) ? "2026-12-01T00:00:00.000Z" : null,
         updatedAt: task.createdAt,
         runtime:
           mood === "working"
@@ -179,11 +188,25 @@ vi.mock("../../state/entities", () => ({
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
   useAssistantLiveWork: () => mocks.liveWork,
-  useAssistantTasks: (_environmentId: string, assistantId: string) =>
-    assistantId === "a0" ? mocks.tasks : [],
+  useAssistantTasksByAssistant: () => new Map([["hub:a0", mocks.tasks]]),
+}));
+vi.mock("../../state/presentation", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { threadListEnvironmentsAtom: Atom.make({ pinningEnvironmentIds: new Set(["hub"]) }) };
+});
+vi.mock("../home/useThreadListActions", () => ({
+  useThreadListActions: () => ({ pinThread: mocks.pin, unpinThread: mocks.unpin }),
 }));
 vi.mock("../threads/threadListV2", () => ({
   sortActiveThreadsForRows: (threads: ReadonlyArray<unknown>) => [...threads],
+  buildThreadListV2ListItems: (input: {
+    items: ReadonlyArray<{ thread: { environmentId: string; id: string } }>;
+  }) =>
+    input.items.map((item) => ({
+      type: "v2-thread",
+      key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
+      item,
+    })),
 }));
 vi.mock("../threads/use-thread-list-v2-shelf-preferences", () => ({
   useThreadListV2ShelfPreferences: () => ({ threadOrder: "activity" }),
@@ -200,15 +223,38 @@ vi.mock("../threads/thread-list-v2-items", () => ({
       onClick={props.onToggle}
     />
   ),
-  ThreadListV2SubagentRow: (props: {
-    thread: { id: string; title: string };
-    pane: string;
-    onSelectThread: (thread: { id: string }) => void;
+  ThreadListV2SnoozedShelfHeader: (props: {
+    count: number;
+    expanded: boolean;
+    onToggle: () => void;
   }) => (
     <button
-      aria-label={`subagent:${props.thread.title}:${props.pane}`}
-      onClick={() => props.onSelectThread(props.thread)}
+      aria-label={`snoozed:${props.count}`}
+      aria-expanded={props.expanded}
+      onClick={props.onToggle}
     />
+  ),
+  ThreadListV2SubagentRow: (props: {
+    thread: { id: string; title: string; pinnedAt?: string | null };
+    pane: string;
+    onSelectThread: (thread: { id: string }) => void;
+    menu: {
+      pinningSupported: boolean;
+      onSetPinned: (thread: { id: string }, pinned: boolean) => void;
+    };
+  }) => (
+    <>
+      <button
+        aria-label={`subagent:${props.thread.title}:${props.pane}`}
+        onClick={() => props.onSelectThread(props.thread)}
+      />
+      {props.menu.pinningSupported ? (
+        <button
+          aria-label={`pin:${props.thread.title}`}
+          onClick={() => props.menu.onSetPinned(props.thread, props.thread.pinnedAt == null)}
+        />
+      ) : null}
+    </>
   ),
 }));
 vi.mock("../../components/ProjectFavicon", () => ({
@@ -254,7 +300,7 @@ vi.mock("../home/useHomeSectionPreferences", () => ({
   }),
 }));
 
-import { HomeAssistantsSection } from "./HomeAssistantsSection";
+import { HomeAssistantsSection, useAssistantSectionJumpThreads } from "./HomeAssistantsSection";
 
 const bot = (i: number, extra: object = {}) => ({
   environmentId: "hub",
@@ -283,12 +329,41 @@ const team = (
 
 let root: Root;
 let container: HTMLDivElement;
-const render = (sidebar = true, labels = new Map<string, string>()) =>
+function JumpProbe(props: { drawn: boolean }) {
+  const threads = useAssistantSectionJumpThreads(props.drawn);
+  return <output data-testid="jump">{threads.map((thread) => thread.id).join(",")}</output>;
+}
+type HostItem = {
+  item: { thread: { id: string }; variant: string; snoozed: boolean; pinned: boolean };
+  compact?: boolean;
+};
+const hostRow = (item: HostItem) => (
+  <i data-testid="host-row">
+    {`${item.item.thread.id}:${item.item.variant}${item.item.snoozed ? ":snoozed" : ""}:${item.compact ? "compact" : "full"}`}
+  </i>
+);
+const render = (
+  sidebar = true,
+  labels = new Map<string, string>(),
+  extra: { renderThread?: (item: never) => ReactNode; drawn?: boolean } = {},
+) =>
   act(() =>
     root.render(
-      <HomeAssistantsSection gutter={4} sidebar={sidebar} environmentLabelById={labels} />,
+      // A fresh registry per test: open groups and shelves live in a session atom.
+      <RegistryProvider>
+        <HomeAssistantsSection
+          gutter={4}
+          sidebar={sidebar}
+          environmentLabelById={labels}
+          {...(extra.renderThread ? { renderThread: extra.renderThread } : {})}
+        />
+        {extra.drawn === undefined ? null : <JumpProbe drawn={extra.drawn} />}
+      </RegistryProvider>,
     ),
   );
+const hostRows = () =>
+  [...container.querySelectorAll('[data-testid="host-row"]')].map((row) => row.textContent);
+const jump = () => container.querySelector('[data-testid="jump"]')?.textContent;
 const byLabel = (label: string) =>
   container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
 const click = (label: string) => act(async () => byLabel(label)?.click());
@@ -308,6 +383,7 @@ beforeEach(() => {
     liveWork: { sites: [], subagents: new Map() },
     folded: new Set(),
     settled: new Set(),
+    snoozed: new Set(),
     projects: [{ environmentId: "hub", id: "p1", title: "Website" }],
   });
   for (const fn of [
@@ -324,6 +400,8 @@ beforeEach(() => {
     mocks.markUnread,
     mocks.toggleShowAll,
     mocks.toggleFold,
+    mocks.pin,
+    mocks.unpin,
   ]) {
     fn.mockReset();
   }
@@ -385,6 +463,84 @@ describe("HomeAssistantsSection", () => {
     render();
     expect(titles()).toEqual([]);
     expect(byLabel("Show Bot0 tasks")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("draws tasks with the host list's row, lighter, and keeps open shelves for the session", async () => {
+    mocks.active = [bot(0)];
+    mocks.tasks = [
+      { threadId: "w1", title: "Add retry", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "w2", title: "Old chore", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "w3", title: "Later", createdAt: "2026-11-01T00:00:00.000Z" },
+    ];
+    mocks.settled = new Set(["w2"]);
+    mocks.snoozed = new Set(["w3"]);
+    const renderThread = vi.fn(hostRow);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(hostRows()).toEqual(["w1:card:compact"]);
+    // The compact face rows are the Settings fallback only.
+    expect(container.querySelector('[aria-label="Add retry, Running"]')).toBeNull();
+    await click("snoozed:1");
+    await click("settled:1");
+    expect(hostRows()).toEqual(["w1:card:compact", "w3:slim:snoozed:compact", "w2:slim:compact"]);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(hostRows()).toHaveLength(3);
+    await click("settled:1");
+    expect(hostRows()).toEqual(["w1:card:compact", "w3:slim:snoozed:compact"]);
+  });
+
+  it("lists pinned subagents first and pins or unpins one from its menu", async () => {
+    mocks.active = [bot(0)];
+    mocks.liveWork = {
+      sites: [],
+      subagents: new Map([
+        [
+          "hub:a0",
+          [
+            { id: "c1", title: "Loose", environmentId: "hub", pinnedAt: null },
+            { id: "c2", title: "Kept", environmentId: "hub", pinnedAt: "2026-11-01T00:00:00.000Z" },
+          ],
+        ],
+      ]),
+    };
+    await render();
+    const order = [...container.querySelectorAll('[aria-label^="subagent:"]')].map((row) =>
+      row.getAttribute("aria-label"),
+    );
+    expect(order).toEqual(["subagent:Kept:sidebar", "subagent:Loose:sidebar"]);
+    await click("pin:Loose");
+    expect(mocks.pin).toHaveBeenCalledWith(expect.objectContaining({ id: "c1" }));
+    await click("pin:Kept");
+    expect(mocks.unpin).toHaveBeenCalledWith(expect.objectContaining({ id: "c2" }));
+  });
+
+  it("numbers for ⌘1–9 exactly the rows the section draws, each thread once", async () => {
+    mocks.active = make(2);
+    mocks.tasks = [
+      { threadId: "w1", title: "Add retry", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "w2", title: "Old chore", createdAt: "2026-11-01T00:00:00.000Z" },
+    ];
+    mocks.settled = new Set(["w2"]);
+    mocks.teams = [team("g1", "Finance", ["a1"])];
+    mocks.liveWork = {
+      sites: [],
+      subagents: new Map([["hub:a1", [{ id: "c1", title: "Child", environmentId: "hub" }]]]),
+    };
+    await render(true, new Map(), { drawn: true });
+    expect(jump()).toBe("t0,w1,t1,c1");
+    await click("settled:1");
+    expect(jump()).toBe("t0,w1,w2,t1,c1");
+    // An open group draws its members first; the list's copy is not numbered twice.
+    await click("Show Finance members");
+    expect(jump()).toBe("t1,c1,t0,w1,w2");
+    mocks.folded = new Set(["hub:a0"]);
+    await render(true, new Map(), { drawn: true });
+    expect(jump()).toBe("t1,c1,t0");
+    mocks.collapsed = true;
+    await render(true, new Map(), { drawn: true });
+    expect(jump()).toBe("");
+    mocks.collapsed = false;
+    await render(true, new Map(), { drawn: false });
+    expect(jump()).toBe("");
   });
 
   it("keeps the project pill and no subagent rows once the work ends", () => {
@@ -605,6 +761,8 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.work).toHaveBeenCalledWith("hub", "a0");
     await click("menu:Archive assistant");
     expect(mocks.archive).toHaveBeenCalledWith(expect.objectContaining({ id: "a0" }));
+    // A long press on the row offers the same menu as its ⋯ button.
+    expect(container.querySelectorAll('[aria-label="menu:Bot0 work"]')).toHaveLength(2);
     mocks.presence.t0 = { mood: "working", detail: "Working", since: null };
     render();
     expect(byLabel("menu:Reset conversation")?.disabled).toBe(true);

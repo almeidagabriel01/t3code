@@ -372,6 +372,8 @@ export interface ThreadListV2ThreadListItem {
   readonly hasQueuedMessages: boolean;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
+  /** Drawn by the assistants section, as a lighter one-line row. */
+  readonly compact?: boolean;
 }
 
 export interface ThreadListV2PendingListItem {

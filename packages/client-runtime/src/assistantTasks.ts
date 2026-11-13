@@ -123,3 +123,38 @@ export function assistantTaskRows<S extends TaskShell & SectionShell>(
     settled: rowsOf(sortSettledThreads(settled)),
   };
 }
+
+export interface AssistantSectionRows {
+  /** The assistant's own chat; null before its thread exists. */
+  readonly chatKey: string | null;
+  readonly folded: boolean;
+  readonly sections: AssistantTaskSections<TaskShell & { readonly environmentId: string }>;
+  readonly snoozedOpen: boolean;
+  readonly settledOpen: boolean;
+  readonly subagentKeys: ReadonlyArray<string>;
+}
+
+/**
+ * The thread keys the assistants section shows, in render order, so ⌘1–9 numbers its rows from the
+ * same list the sidebar draws: each chat, then its unfolded tasks shelf by shelf, then its subagents.
+ */
+export function assistantSectionThreadKeys(
+  assistants: ReadonlyArray<AssistantSectionRows>,
+): ReadonlyArray<string> {
+  const keys: string[] = [];
+  const add = (
+    rows: ReadonlyArray<AssistantTaskRow<TaskShell & { readonly environmentId: string }>>,
+  ) => {
+    for (const { shell } of rows) keys.push(`${shell.environmentId}:${shell.id}`);
+  };
+  for (const assistant of assistants) {
+    if (assistant.chatKey !== null) keys.push(assistant.chatKey);
+    if (assistant.folded) continue;
+    add(assistant.sections.pinned);
+    add(assistant.sections.open);
+    if (assistant.snoozedOpen) add(assistant.sections.snoozed);
+    if (assistant.settledOpen) add(assistant.sections.settled);
+    keys.push(...assistant.subagentKeys);
+  }
+  return keys;
+}

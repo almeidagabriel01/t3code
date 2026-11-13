@@ -12,6 +12,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ASSISTANT_TASK_FACE,
+  assistantSectionThreadKeys,
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
@@ -147,5 +148,48 @@ describe("assistantTaskRows", () => {
         { now: "2026-11-12T00:00:00.000Z" },
       ),
     ).toEqual({ pinned: [], open: [], snoozed: [], settled: [] });
+  });
+});
+
+describe("assistantSectionThreadKeys", () => {
+  const rowsOf = (...ids: string[]) =>
+    ids.map((id) => ({ shell: { environmentId: "env", id } })) as never;
+  const sections = {
+    pinned: rowsOf("pin"),
+    open: rowsOf("open"),
+    snoozed: rowsOf("snoozed"),
+    settled: rowsOf("settled"),
+  };
+
+  it.each([
+    {
+      name: "an unfolded assistant numbers its chat, tasks in shelf order, then its subagents",
+      row: { folded: false, snoozedOpen: true, settledOpen: true },
+      keys: ["env:chat", "env:pin", "env:open", "env:snoozed", "env:settled", "env:child"],
+    },
+    {
+      name: "closed shelves hide their rows from the numbering",
+      row: { folded: false, snoozedOpen: false, settledOpen: false },
+      keys: ["env:chat", "env:pin", "env:open", "env:child"],
+    },
+    {
+      name: "a folded assistant numbers only its chat",
+      row: { folded: true, snoozedOpen: true, settledOpen: true },
+      keys: ["env:chat"],
+    },
+  ])("$name", ({ row, keys }) => {
+    expect(
+      assistantSectionThreadKeys([
+        { chatKey: "env:chat", sections, subagentKeys: ["env:child"], ...row },
+        {
+          chatKey: null,
+          sections: { ...sections, open: [] },
+          subagentKeys: [],
+          folded: true,
+          snoozedOpen: false,
+          settledOpen: false,
+        },
+      ]),
+    ).toEqual(keys);
   });
 });
