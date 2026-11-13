@@ -206,7 +206,9 @@ nothing starts a new **request**; it does not run an agent by itself.
   box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
   or leave **Lead decides**: the lead picks it from the request, and when it could be more than one
   (or the text names two projects) it asks you in the chat. Answer in words or click a project under
-  the question. When the menu and the text disagree, the menu wins and the lead says so.
+  the question. When the menu and the text disagree, the menu wins and the lead says so. Only members that may work in the
+  request's project take part: a member you mention who cannot work there is left out, and the chat
+  says so.
 - The message box is the same editor as a project's: lists, code blocks, pasted images and files,
   dictation, Enter to send and Shift+Enter for a new line. **Reply** on a message (or **Reply to
   request**) shows what you answer above the box; click it to jump to the original.

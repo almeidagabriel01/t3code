@@ -52,9 +52,10 @@ export function sandboxNoteLine(environmentId: string | null): string {
  * The projects an assistant may work in, or "all" when its scope is not limited. The one source of
  * that answer: every project permission check goes through it, never a group's project union.
  */
-export const assistantProjects = (
+const assistantProjects = (
   assistant: Pick<Assistant, "scope" | "projectIds">,
-): ReadonlyArray<ProjectId> | "all" => (assistant.scope === "project" ? assistant.projectIds : "all");
+): ReadonlyArray<ProjectId> | "all" =>
+  assistant.scope === "project" ? assistant.projectIds : "all";
 
 export const assistantWorksIn = (
   assistant: Pick<Assistant, "scope" | "projectIds">,

@@ -43,6 +43,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import * as Gate from "./AssistantGroupGate.ts";
+import * as Directory from "./AssistantDirectory.ts";
 import * as Groups from "./AssistantGroups.ts";
 import {
   groupThreadId,
@@ -310,6 +311,7 @@ const harness = (options: Options = {}) => {
           }),
     }),
     Layer.mock(DocumentText.DocumentText)({ ensure: () => Effect.undefined }),
+    Directory.layer,
     Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
       cleanupScheduledTasks: () => Effect.void,
       cleanupTerminals: () => Effect.void,
@@ -3521,6 +3523,107 @@ it.effect("two requests in different projects run together, each seeing only its
     const unplaced = yield* groups.post({ teamId: TEAM, text: "@ada x" }, h.user).pipe(Effect.flip);
     assert.include(unplaced.message, "Pick the project for this request");
     assert.lengthOf(yield* h.messages, 2);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("only a member that may work in the request's project gets its work", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"], beto: ["p1"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    const notices = () =>
+      h.messages.pipe(
+        Effect.map((rows) => rows.filter((row) => row.kind === "notice").map((row) => row.text)),
+      );
+    const app = ProjectId.make("p2");
+    // Mentions: the members outside the project are left out, and the chat says why.
+    const both = yield* groups.post(
+      { teamId: TEAM, text: "@ada @beto fix the app", projectId: app },
+      h.user,
+    );
+    assert.deepEqual(
+      both.tasks.map((task) => task.ownerId),
+      ["ada"],
+    );
+    yield* groups.post({ teamId: TEAM, text: "@beto fix the app", projectId: app }, h.user);
+    assert.deepEqual(yield* notices(), [
+      "Beto cannot work in Mobile App, so only Ada got this.",
+      "Beto cannot work in Mobile App, so nobody got this. Mention a member who works there.",
+    ]);
+    assert.deepEqual(
+      h.launched.map((launch) => [launch.threadId.split(":")[1], launch.projectId]),
+      [["ada", "p2"]],
+    );
+    // Hand-offs and reassigning refuse a member outside the project.
+    const adaThread = requestThreadId("ada", TEAM, both.message.id);
+    for (const refused of [
+      groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "test" }),
+      groups.member.transfer({ callerThreadId: adaThread, member: "beto", note: "yours" }),
+    ]) {
+      assert.include((yield* Effect.flip(refused)).message, "Beto cannot work in");
+    }
+    yield* h.finishTask(both.tasks[0]!.id, "failed");
+    const reassigned = yield* groups
+      .taskAction({ taskId: both.tasks[0]!.id, action: "reassign", ownerId: "beto" as never })
+      .pipe(Effect.flip);
+    assert.include(reassigned.message, "Beto cannot work in");
+    // A member whose list changed after it started is refused at launch too.
+    const core = yield* groups.post(
+      { teamId: TEAM, text: "@beto fix the core", projectId: ProjectId.make("p1") },
+      h.user,
+    );
+    yield* h.finishTask(core.tasks[0]!.id, "failed");
+    yield* sql`UPDATE assistants SET project_ids_json = '["p3"]' WHERE assistant_id = 'beto'`;
+    yield* groups.post(
+      { teamId: TEAM, text: "continue", replyToMessageId: core.message.id },
+      h.user,
+    );
+    assert.deepEqual(
+      (yield* h.tasks).find((task) => task.task_id === core.tasks[0]!.id)!.reason,
+      "outside_project",
+    );
+    // An assistant held to its projects cannot post work into another one.
+    const outside = yield* groups
+      .agentPost({
+        callerThreadId: ThreadId.make("assistant:beto:1"),
+        group: TEAM,
+        text: "@ada fix the app",
+        project: "Mobile App",
+      })
+      .pipe(Effect.flip);
+    assert.include(outside.message, "You are a project assistant");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "the lead picks a member outside the project", pick: ["beto"], left: ["beto"] },
+  { name: "the lead takes it outside its project", pick: ["beto", "ada"], left: ["beto"] },
+] as const)("$name: the chat says who was left out", ({ pick, left }) => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: pick, projectId: "p2" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "fix the login on the phone" }, h.user);
+    yield* groups.idle;
+    const reached = pick.filter((id) => !left.includes(id as never));
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => task.owner_id),
+      reached,
+    );
+    assert.deepInclude(
+      (yield* h.messages).map((row) => [row.kind, row.assistant_id, row.text]),
+      [
+        "notice",
+        "beto",
+        reached.length === 0
+          ? "Beto cannot work in Mobile App, so nobody got this. Mention a member who works there."
+          : "Beto cannot work in Mobile App, so only Ada got this.",
+      ],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

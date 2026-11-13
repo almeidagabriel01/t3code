@@ -93,7 +93,8 @@ import {
   type PacketMember,
 } from "./AssistantGroupPacket.ts";
 import { AssistantService } from "./AssistantService.ts";
-import { type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import { AssistantDirectory, type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import { assistantWorksIn, projectScopeRefusal } from "./AssistantSandboxPolicy.ts";
 import { type AssistantTeamRow, toAssistantTeam } from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
 
@@ -338,6 +339,22 @@ const joinNames = (names: ReadonlyArray<string>, conjunction = "and") =>
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} ${conjunction} ${names[names.length - 1]}`;
 
+/** A request without a project (from before requests had one) runs in the member's home. */
+const worksIn = (member: AssistantRow, projectId: string | null) =>
+  projectId === null || assistantWorksIn(toAssistant(member), projectId as ProjectId);
+
+/** The notice when members a message named or the lead picked cannot work in its project. */
+const outsideProjectText = (
+  left: ReadonlyArray<AssistantRow>,
+  project: string,
+  reached: ReadonlyArray<AssistantRow>,
+) =>
+  `${joinNames(left.map((row) => row.name))} cannot work in ${project}, so ${
+    reached.length === 0
+      ? "nobody got this. Mention a member who works there."
+      : `only ${joinNames(reached.map((row) => row.name))} got this.`
+  }`;
+
 export class AssistantGroups extends Context.Service<
   AssistantGroups,
   {
@@ -466,6 +483,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const assistants = yield* AssistantService;
+  const directory = yield* AssistantDirectory;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const textGeneration = yield* TextGeneration;
@@ -884,6 +902,9 @@ const make = Effect.gen(function* () {
       thread = yield* inspectThread(threadId);
     }
     const projectId = (thread?.projectId ?? request.project_id ?? member.project_id) as ProjectId;
+    if (!assistantWorksIn(toAssistant(member), projectId)) {
+      return yield* invalid(`${member.name} cannot work in this request's project.`);
+    }
     if (thread === undefined) {
       const current =
         member.thread_id === null ? undefined : yield* inspectThread(member.thread_id as ThreadId);
@@ -1049,7 +1070,11 @@ const make = Effect.gen(function* () {
     const request = yield* getMessage(requestId);
     if (request === undefined) return yield* failed("request_missing");
     const exec = yield* ensureRequestThread(team, owner, request).pipe(Effect.result);
-    if (exec._tag === "Failure") return yield* failed("thread_unavailable");
+    if (exec._tag === "Failure") {
+      return yield* failed(
+        exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
+      );
+    }
     const seen =
       (yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_request_threads
@@ -1513,6 +1538,9 @@ const make = Effect.gen(function* () {
         const projects = yield* groupProjects(members);
         // A request that already ran without one (from before requests had projects) keeps going.
         const needsProject = !started && request.project_id === null && projects.length > 1;
+        // With the project known the lead only sees who can work there; otherwise it is checked after.
+        const knownProject = needsProject ? null : (request.project_id ?? projects[0]?.id ?? null);
+        const candidates = members.filter((member) => worksIn(member, knownProject));
         const names = new Map(members.map((member) => [member.assistant_id, member.name]));
         const recent = yield* sql<MessageRow>`
           SELECT * FROM assistant_group_messages
@@ -1541,6 +1569,7 @@ const make = Effect.gen(function* () {
         return {
           team,
           members,
+          candidates,
           lead,
           trigger,
           request,
@@ -1579,7 +1608,7 @@ const make = Effect.gen(function* () {
                   cwd: config.baseDir,
                   modelSelection: selection,
                   groupName: prepared.team.name,
-                  members: prepared.members.map((member) => ({
+                  members: prepared.candidates.map((member) => ({
                     id: member.assistant_id,
                     handle: member.handle,
                     name: member.name,
@@ -1687,9 +1716,28 @@ const make = Effect.gen(function* () {
             });
             return;
           }
-          const recipients = ids.flatMap((id) =>
+          const named = ids.flatMap((id) =>
             prepared.members.filter((member) => member.assistant_id === id),
           );
+          const projectId = current.project_id ?? decided?.id ?? null;
+          const recipients = named.filter((member) => worksIn(member, projectId));
+          if (recipients.length < named.length) {
+            yield* insertMessage({
+              teamId,
+              author: "assistant",
+              assistantId: leadId,
+              kind: "notice",
+              text: outsideProjectText(
+                named.filter((member) => !recipients.includes(member)),
+                prepared.projects.find((project) => project.id === projectId)?.name ??
+                  "this project",
+                recipients,
+              ),
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
+            });
+            if (recipients.length === 0) return;
+          }
           if (author.kind === "user" || trigger.author === "user") {
             yield* userReached(request.message_id);
           }
@@ -2004,8 +2052,28 @@ const make = Effect.gen(function* () {
                 requestId: message.request_id,
               });
             } else if (recipients !== undefined) {
-              if (author.kind === "user") yield* userReached(message.request_id!);
-              yield* openRoots(team, message, recipients, instructionFor(author, input.text));
+              const allowed = recipients.filter((row) => worksIn(row, projectId));
+              if (allowed.length < recipients.length) {
+                yield* insertMessage({
+                  teamId: team.id,
+                  author: "assistant",
+                  assistantId: members.some((member) => member.assistant_id === team.leadId)
+                    ? team.leadId
+                    : null,
+                  kind: "notice",
+                  text: outsideProjectText(
+                    recipients.filter((row) => !allowed.includes(row)),
+                    projectList.find((project) => project.id === projectId)?.name ?? "this project",
+                    allowed,
+                  ),
+                  replyTo: message.message_id,
+                  requestId: message.request_id,
+                });
+              }
+              if (allowed.length > 0) {
+                if (author.kind === "user") yield* userReached(message.request_id!);
+                yield* openRoots(team, message, allowed, instructionFor(author, input.text));
+              }
             }
             yield* pump(team.id);
             return { message, lead: undefined };
@@ -2244,13 +2312,15 @@ const make = Effect.gen(function* () {
               const ownerId = input.action === "reassign" ? input.ownerId : task.owner_id;
               if (ownerId === undefined)
                 return yield* invalid("Choose the member that takes the task.");
-              if (!members.some((member) => member.assistant_id === ownerId)) {
+              const owner = members.find((member) => member.assistant_id === ownerId);
+              if (owner === undefined) {
                 return yield* invalid(
                   input.action === "reassign"
                     ? "That member is not in the group."
                     : "Its member is no longer in the group; reassign it.",
                 );
               }
+              yield* refuseOutsideProject(owner, task.request_id ?? task.request_message_id);
               const next = yield* requeue(task, ownerId);
               yield* pump(team.id);
               return (yield* wireTasks([(yield* getTask(next.task_id)) ?? next]))[0]!;
@@ -2344,6 +2414,20 @@ const make = Effect.gen(function* () {
     return yield* invalid(HANDOFF_PAUSES[reason].refusal);
   });
 
+  /** Work in a request goes only to a member that may work in its project. */
+  const refuseOutsideProject = Effect.fn("AssistantGroups.refuseOutsideProject")(function* (
+    member: AssistantRow,
+    requestId: string | null,
+  ) {
+    const projectId =
+      requestId === null ? null : ((yield* getMessage(requestId))?.project_id ?? null);
+    if (!worksIn(member, projectId)) {
+      return yield* invalid(
+        `${member.name} cannot work in this request's project; give it to a member who does.`,
+      );
+    }
+  });
+
   const memberTools: AssistantGroups["Service"]["member"] = {
     history: Effect.fn("AssistantGroups.member.history")(function* (input) {
       const caller = yield* callerOf(input.callerThreadId);
@@ -2383,6 +2467,7 @@ const make = Effect.gen(function* () {
           if (target.assistant_id === task.owner_id) {
             return yield* invalid("Do not assign a task to yourself.");
           }
+          yield* refuseOutsideProject(target, task.request_id);
           // A repeat of the same assignment lands on the same task.
           const repeat = yield* sql<TaskRow>`
               SELECT * FROM assistant_group_tasks
@@ -2433,6 +2518,7 @@ const make = Effect.gen(function* () {
             status: row.status as AssistantGroupTaskStatus,
           });
           if (target.assistant_id === task.owner_id) return settled(task);
+          yield* refuseOutsideProject(target, task.request_id);
           yield* chargeHandoff(team, task);
           const from = yield* nameOf(task.owner_id);
           // The new owner takes over when the caller's run ends.
@@ -2474,9 +2560,11 @@ const make = Effect.gen(function* () {
             return yield* invalid("You cannot ask yourself.");
           }
           const members = yield* activeMembers(team);
-          if (!members.some((member) => member.assistant_id === target.assistant_id)) {
+          const asked = members.find((member) => member.assistant_id === target.assistant_id);
+          if (asked === undefined) {
             return yield* invalid("That member is no longer in the group.");
           }
+          yield* refuseOutsideProject(asked, task.request_id);
           const root = yield* rootOf(task);
           const accepted = (taskId: string): GroupToolResult => ({
             accepted: true,
@@ -2614,6 +2702,11 @@ const make = Effect.gen(function* () {
         }
         projectId = found[0]!.id as ProjectId;
       }
+      const outside = yield* projectScopeRefusal(Option.some(directory), {
+        threadId: input.callerThreadId,
+        projectId,
+      });
+      if (Option.isSome(outside)) return yield* invalid(outside.value);
       const assistantId = assistantIdFromThreadId(input.callerThreadId);
       const sender = assistantId === null ? [] : yield* assistantRows([assistantId]);
       const title = yield* inspectThread(input.callerThreadId);
