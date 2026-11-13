@@ -5,6 +5,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AUTONOMY_MINUTES_BOUNDS,
+  AUTONOMY_NOTIFY_AFTER_BOUNDS,
+  AUTONOMY_USER_MESSAGES_BOUNDS,
   EMPTY_WATCH_DRAFT,
   type AutonomyWatchDraft,
   parseBoundedInt,
@@ -27,6 +29,11 @@ describe("autonomy helpers", () => {
     for (const bad of ["", "0", "1441", "1.5", "-3", "abc"]) {
       expect(parseBoundedInt(bad, AUTONOMY_MINUTES_BOUNDS)).toBeNull();
     }
+    expect(parseBoundedInt("0", AUTONOMY_NOTIFY_AFTER_BOUNDS)).toBe(0);
+    expect(parseBoundedInt("60", AUTONOMY_NOTIFY_AFTER_BOUNDS)).toBe(60);
+    expect(parseBoundedInt("61", AUTONOMY_NOTIFY_AFTER_BOUNDS)).toBeNull();
+    expect(parseBoundedInt("0", AUTONOMY_USER_MESSAGES_BOUNDS)).toBeNull();
+    expect(parseBoundedInt("1000", AUTONOMY_USER_MESSAGES_BOUNDS)).toBe(1000);
   });
 
   it("keeps canonical order when toggling lists", () => {

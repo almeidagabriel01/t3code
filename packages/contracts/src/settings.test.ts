@@ -55,6 +55,23 @@ describe("autonomy settings", () => {
     const patch = decodeServerSettingsPatch({ autonomy: { ...settings, enabled: true } });
     expect(patch.autonomy?.enabled).toBe(true);
   });
+
+  it("keeps settings saved before the waiting notice existed, with its defaults", () => {
+    const saved = {
+      enabled: true,
+      rules: { runFailed: true, waitingTooLong: true, stuck: true, ciFailed: true },
+      waitingMinutes: 30,
+      stuckMinutes: 15,
+      channels: ["telegram"],
+      maxWakesPerDay: 20,
+    };
+    expect(decodeServerSettings({ autonomy: saved }).autonomy).toMatchObject({
+      enabled: true,
+      notifyWaiting: true,
+      notifyWaitingAfterMinutes: 1,
+      maxUserMessagesPerDay: 20,
+    });
+  });
 });
 
 describe("channel language setting", () => {

@@ -38,6 +38,17 @@ export const AutonomySettings = Schema.Struct({
   stuckMinutes: Minutes,
   channels: Schema.Array(AutonomyChannel),
   maxWakesPerDay: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 })),
+  // The keys below came after the first release: settings saved before them decode to defaults.
+  /** Tells the user directly, with no model, when an agent waits on them. */
+  notifyWaiting: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** How long a request may wait before that notice; one answered sooner is never sent. */
+  notifyWaitingAfterMinutes: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 60 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(1)),
+  ),
+  /** Messages each assistant may send the user per day with `t3_assistant` `notify_user`. */
+  maxUserMessagesPerDay: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 })).pipe(
+    Schema.withDecodingDefault(Effect.succeed(20)),
+  ),
 });
 export type AutonomySettings = typeof AutonomySettings.Type;
 
@@ -54,6 +65,9 @@ export const DEFAULT_AUTONOMY_SETTINGS: AutonomySettings = {
   stuckMinutes: 15,
   channels: ["telegram", "t3"],
   maxWakesPerDay: 20,
+  notifyWaiting: true,
+  notifyWaitingAfterMinutes: 1,
+  maxUserMessagesPerDay: 20,
 };
 
 export const AUTONOMY_MODES = ["reply-only", "reply-and-notify"] as const;

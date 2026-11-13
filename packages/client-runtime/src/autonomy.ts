@@ -15,6 +15,8 @@ import { squashAtomCommandFailure } from "./state/runtime.ts";
 
 export const AUTONOMY_MINUTES_BOUNDS = { min: 1, max: 24 * 60 } as const;
 export const AUTONOMY_WAKES_BOUNDS = { min: 1, max: 1000 } as const;
+export const AUTONOMY_NOTIFY_AFTER_BOUNDS = { min: 0, max: 60 } as const;
+export const AUTONOMY_USER_MESSAGES_BOUNDS = { min: 1, max: 1000 } as const;
 
 export const AUTONOMY_RULE_OPTIONS: ReadonlyArray<{
   readonly rule: AutonomyRule;
