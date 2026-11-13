@@ -9,11 +9,16 @@ const state = vi.hoisted(() => ({
   assistants: [] as ReadonlyArray<unknown>,
   working: new Set<string>(),
   update: vi.fn(async (_input: unknown) => ({ ok: true as const, value: undefined })),
+  owner: null as unknown,
+  taskShell: null as unknown,
+  task: null as null | { dismissedAt: string | null },
+  flows: { openConversation: vi.fn(), dismissTask: vi.fn(), restoreTask: vi.fn() },
 }));
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useQuietThreadProjection: (() => ({ projection: { messages: state.messages } })) as never,
   useQuietThreadShells: (() => []) as never,
+  useThreadShell: (() => state.taskShell) as never,
 }));
 vi.mock(import("@t3tools/client-runtime/assistantRobot"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -36,6 +41,11 @@ vi.mock(import("../../state/assistants"), async (importOriginal) => ({
     environmentIds: [],
   })) as never,
   useAssistantActions: (() => ({ canAct: true, update: state.update })) as never,
+  useTaskAssistant: (() => state.owner) as never,
+  useAssistantTask: (() => state.task) as never,
+}));
+vi.mock(import("../assistants/useAssistantFlows"), () => ({
+  useAssistantFlows: (() => ({ canAct: true, ...state.flows })) as never,
 }));
 
 import { render } from "../../../test/render";
@@ -63,6 +73,10 @@ function assistant(id: string, name: string, toolAccess: Assistant["toolAccess"]
 function setup() {
   closeAssistantInfo();
   state.update.mockClear();
+  state.owner = null;
+  state.taskShell = null;
+  state.task = null;
+  for (const fn of Object.values(state.flows)) fn.mockClear();
   state.working = new Set(["jarvis"]);
   state.assistants = [assistant("jarvis", "Jarvis", "full"), assistant("owl", "Owl", "read-only")];
   state.messages = [
@@ -158,4 +172,63 @@ it("renders nothing when no assistant wrote in the thread", async () => {
   );
   expect(screen.container.textContent).toBe("");
   expect(screen.container.querySelector("button")).toBeNull();
+});
+
+it("the assistant that launched the thread joins the one control in the task's mood, with the task's actions", async () => {
+  setup();
+  const jarvis = state.assistants[0] as ReturnType<typeof assistant>;
+  state.owner = { environmentId: ENVIRONMENT_ID, assistant: jarvis };
+  state.task = { dismissedAt: null };
+  state.messages = [];
+  await using screen = await renderStack();
+  const trigger = screen.getByRole("button", { name: "Assistants in this thread: 1" });
+  await trigger.click();
+  await expect
+    .element(
+      page
+        .getByRole("region", { name: "Working" })
+        .getByRole("button", { name: "Jarvis, Assistant info" }),
+    )
+    .toBeVisible();
+  expect(document.querySelector("[data-assistant-presence-status]")?.textContent).toBe("Working");
+  expect(page.getByRole("button", { name: "Jump to Jarvis's last message" }).query()).toBeNull();
+  await page.getByRole("button", { name: "Jarvis actions" }).click();
+  await expect.element(page.getByRole("menuitem", { name: "Dismiss task" })).toBeDisabled();
+  await page.getByRole("menuitem", { name: "Open chat" }).click();
+  expect(state.flows.openConversation).toHaveBeenCalledWith(jarvis);
+
+  state.messages = [{ id: "m1", senderThreadId: "assistant:jarvis:1" }];
+  state.taskShell = {
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingSubagentRequest: null,
+    pendingGuestMessageCount: 0,
+    queuedMessageCount: 0,
+    blockedOnThreadWait: false,
+    latestRun: null,
+    runtime: { status: "failed" },
+    source: { latestVisibleMessage: null },
+  };
+  await screen.rerender(
+    <div className="@container/header w-[800px]">
+      <AssistantPresenceStack environmentId={ENVIRONMENT_ID} threadId={THREAD_ID} />
+    </div>,
+  );
+  await trigger.click();
+  await expect
+    .element(page.getByRole("region", { name: "Idle" }).getByText("Idle · 1 message here"))
+    .toBeVisible();
+  await page.getByRole("button", { name: "Jarvis actions" }).click();
+  await page.getByRole("menuitem", { name: "Dismiss task" }).click();
+  expect(state.flows.dismissTask).toHaveBeenCalledWith(THREAD_ID);
+
+  state.task = { dismissedAt: "2026-11-06T00:00:00.000Z" };
+  await screen.rerender(
+    <div className="@container/header w-[800px]">
+      <AssistantPresenceStack environmentId={ENVIRONMENT_ID} threadId={THREAD_ID} />
+    </div>,
+  );
+  await page.getByRole("button", { name: "Jarvis actions" }).click();
+  await page.getByRole("menuitem", { name: "Restore task" }).click();
+  expect(state.flows.restoreTask).toHaveBeenCalledWith(THREAD_ID);
 });
