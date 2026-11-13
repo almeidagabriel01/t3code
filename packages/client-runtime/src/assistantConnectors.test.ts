@@ -81,14 +81,17 @@ it("typed values are sent, blank keys and blank args are dropped", () => {
 it("reports the first unusable draft and compares by value", () => {
   const [a] = connectorDraftsFrom([docs]);
   assert.isNull(connectorDraftsProblem([a!]));
-  assert.match(connectorDraftsProblem([{ ...a!, name: "Bad Name" }]) ?? "", /Name each connector/);
+  assert.match(
+    connectorDraftsProblem([{ ...a!, name: "Bad Name" }]) ?? "",
+    /Name each custom server/,
+  );
   assert.match(connectorDraftsProblem([{ ...a!, url: "nope" }]) ?? "", /needs an https URL/);
   // The saved list exempts a URL the user left as it was.
   const lan = { ...docs, url: "http://192.168.1.5/mcp" };
   const [b] = connectorDraftsFrom([lan]);
   assert.match(connectorDraftsProblem([b!]) ?? "", /needs an https URL/);
   assert.isNull(connectorDraftsProblem([b!], [lan]));
-  assert.match(connectorDraftsProblem([a!, a!]) ?? "", /Two connectors/);
+  assert.match(connectorDraftsProblem([a!, a!]) ?? "", /Two custom servers/);
   assert.isTrue(connectorsEqual([a!], [{ ...a! }]));
   assert.isFalse(connectorsEqual([a!], [{ ...a!, enabled: false }]));
 });

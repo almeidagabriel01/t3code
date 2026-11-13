@@ -573,7 +573,7 @@ describe("assistant connectors", () => {
 
   it("adds an HTTP connector with a header and refuses a bad URL before saving", async () => {
     render(assistant());
-    expect(container.textContent).toContain("Connectors work with Claude, Codex, Cursor");
+    expect(container.textContent).toContain("Custom servers work with Claude, Codex, Cursor");
     pick("Add connector");
     type("Connector name", "Docs");
     expect(field("Connector name")?.value).toBe("docs");

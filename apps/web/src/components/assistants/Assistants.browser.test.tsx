@@ -725,7 +725,7 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   fakeAssistantEdits.updates = [];
   await using _screen = await openEditDialog("Jarvis");
   await expect
-    .element(page.getByText("Connectors work with Claude", { exact: false }))
+    .element(page.getByText("Custom servers work with Claude", { exact: false }))
     .toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Add connector" }));
   await userEvent.fill(page.getByLabelText("Connector name"), "docs");

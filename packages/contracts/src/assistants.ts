@@ -217,12 +217,12 @@ export function assistantMcpServersProblem(
   saved: ReadonlyArray<Pick<AssistantMcpServer, "name" | "transport" | "url">> = [],
 ): string | null {
   if (servers.length > ASSISTANT_MCP_MAX_SERVERS)
-    return `At most ${ASSISTANT_MCP_MAX_SERVERS} connectors.`;
+    return `At most ${ASSISTANT_MCP_MAX_SERVERS} custom servers.`;
   const names = new Set<string>();
   for (const server of servers) {
     if (ASSISTANT_MCP_RESERVED_NAMES.includes(server.name))
       return `"${server.name}" is reserved for T3's own tools.`;
-    if (names.has(server.name)) return `Two connectors are named "${server.name}".`;
+    if (names.has(server.name)) return `Two custom servers are named "${server.name}".`;
     names.add(server.name);
     if (server.transport === "http") {
       const url = (server.url ?? "").trim();

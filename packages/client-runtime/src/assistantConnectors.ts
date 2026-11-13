@@ -10,7 +10,7 @@ export const CONNECTOR_TRANSPORT_LABELS = { http: "HTTP", stdio: "Command" } as 
 
 /** Which providers take them: Grok and Kiro skip http connectors, OpenCode takes none. */
 export const CONNECTORS_PROVIDER_NOTE =
-  "Connectors work with Claude, Codex, Cursor and Antigravity assistants. Grok and Kiro run command connectors only; OpenCode, Pi and Muse ignore them.";
+  "Custom servers work with Claude, Codex, Cursor and Antigravity assistants. Grok and Kiro run command servers only; OpenCode, Pi and Muse ignore them.";
 
 /** A header or variable. `saved` rows hold a secret the server never sends back. */
 export interface ConnectorRowDraft {
@@ -115,7 +115,7 @@ export const connectorDraftsProblem = (
 ): string | null => {
   const bad = drafts.find((draft) => !isName(draft.name.trim()));
   if (bad !== undefined)
-    return "Name each connector with lowercase letters, numbers, dashes or underscores (up to 32).";
+    return "Name each custom server with lowercase letters, numbers, dashes or underscores (up to 32).";
   return assistantMcpServersProblem(connectorInputsFrom(drafts), saved);
 };
 

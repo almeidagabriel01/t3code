@@ -192,7 +192,7 @@ describe("assistant connectors", () => {
       [{ ...http, name: "t3-code-direct" }],
       '"t3-code-direct" is reserved for T3\'s own tools.',
     ],
-    ["a repeated name", [http, { ...stdio, name: "docs" }], 'Two connectors are named "docs".'],
+    ["a repeated name", [http, { ...stdio, name: "docs" }], 'Two custom servers are named "docs".'],
     ["an http connector without a URL", [{ ...http, url: undefined }], URL_PROBLEM],
     ["a non-http URL", [{ ...http, url: "ftp://x.test" }], URL_PROBLEM],
     ["a garbage URL", [{ ...http, url: "not a url" }], URL_PROBLEM],
@@ -214,7 +214,7 @@ describe("assistant connectors", () => {
     [
       "too many connectors",
       Array.from({ length: 21 }, (_, i) => ({ ...http, name: `s${i}` })),
-      "At most 20 connectors.",
+      "At most 20 custom servers.",
     ],
   ] as const)("%s", (_label, servers, problem) => {
     expect(assistantMcpServersProblem(servers)).toBe(problem);
