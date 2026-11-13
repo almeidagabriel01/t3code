@@ -1305,7 +1305,27 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "runner-where",
     title: RUNNER_SETTING_COPY.runnerWhere.title,
     to: "/settings/maintenance",
-    searchTerms: ["runner this mac linux hybrid automatic offload balance both queues"],
+    searchTerms: [
+      "runner this mac linux mac first hybrid automatic offload balance both queues everything",
+    ],
+  },
+  {
+    id: "runner-mac-first-after",
+    title: RUNNER_SETTING_COPY.runnerMacFirstAfter.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner mac first jobs running waiting threshold overflow linux"],
+  },
+  {
+    id: "runner-linux-everything",
+    title: RUNNER_SETTING_COPY.runnerLinuxEverything.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux all every heavy command except stay on mac"],
+  },
+  {
+    id: "runner-bring-back",
+    title: RUNNER_SETTING_COPY.runnerBringBack.title,
+    to: "/settings/maintenance",
+    searchTerms: ["runner linux copy files created changed back results output sync"],
   },
   {
     id: "runner-linux-commands",
@@ -1329,7 +1349,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "runner-dropped",
     title: RUNNER_SETTING_COPY.runnerDropped.title,
     to: "/settings/maintenance",
-    searchTerms: ["runner linux dropped disconnected mid run ask wait"],
+    searchTerms: [
+      "runner linux run failed fails dropped disconnected mid run tool missing agent ask wait",
+    ],
   },
   {
     id: "runner-ask-minutes",

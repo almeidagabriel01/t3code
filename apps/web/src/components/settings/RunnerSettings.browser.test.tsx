@@ -132,6 +132,36 @@ it("writes each Runner control to its own setting", async () => {
   ]);
 });
 
+it("saves the Mac first, Everything, failure and bring-back choices", async () => {
+  await using screen = await setup({ ...ON, runnerWhere: "macFirst" });
+  const where = screen.getByRole("group", { name: "Where heavy work runs" });
+  await expect
+    .element(where.getByRole("button", { name: "Mac first" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(where.getByRole("button", { name: "Linux" }));
+  await userEvent.click(screen.getByRole("button", { name: "Increase Send to Linux after" }));
+  await userEvent.click(screen.getByRole("switch", { name: "Bring results back" }));
+  const failed = screen.getByRole("group", { name: "If a Linux run fails" });
+  await expect
+    .element(failed.getByRole("button", { name: "Tell the agent" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await userEvent.click(failed.getByRole("button", { name: "Wait for Linux" }));
+  expect(patches()).toEqual([
+    { runnerWhere: "linux" },
+    { runnerMacFirstAfter: 5 },
+    { runnerBringBack: true },
+    { runnerDropped: "wait" },
+  ]);
+  await expect.element(screen.getByText("jobs", { exact: true }).first()).toBeVisible();
+
+  await using linux = await setup({ ...ON, runnerWhere: "linux", runnerLinuxEverything: true });
+  expect(linux.container.textContent).not.toContain("Send to Linux after");
+  const everything = linux.getByRole("switch", { name: "Everything" });
+  await expect.element(everything).toBeChecked();
+  await userEvent.click(everything);
+  expect(patches()).toEqual([{ runnerLinuxEverything: false }]);
+});
+
 it("clamps numbers to their range and rejects a bad host inline", async () => {
   await using screen = await setup(ON);
   const slots = screen.getByLabelText("Jobs at once on Linux");
@@ -188,6 +218,12 @@ it("shows only the fields the current choices use", async () => {
   }
   await expect.element(mac.getByText("Always on this Mac")).toBeVisible();
 
+  for (const where of ["mac", "automatic"] as const) {
+    await using other = await setup({ ...ON, runnerWhere: where });
+    expect(other.container.textContent).not.toContain("Send to Linux after");
+    expect(other.container.querySelector('[aria-label="Everything"]')).toBeNull();
+  }
+
   await using hybrid = await setup({ ...ON, runnerWhere: "automatic", runnerDropped: "ask" });
   await expect.element(hybrid.getByText("Can run on Linux")).toBeVisible();
   await expect.element(hybrid.getByText("Wait for an answer")).toBeVisible();
@@ -200,6 +236,9 @@ it("shows a hidden field a search lands on, with why it does nothing now", async
     .element(screen.getByText("Only applies while the Runner is on.").first())
     .toBeVisible();
   expect(screen.container.textContent).not.toContain("Linux host");
+
+  await using everything = await setup(ON, { target: "runner-linux-everything" });
+  await expect.element(everything.getByRole("switch", { name: "Everything" })).toBeVisible();
 
   await using folded = await setup(ON, { target: "runner-ssh-timeout" });
   await expect.element(folded.getByLabelText("SSH timeout")).toBeVisible();
@@ -233,8 +272,8 @@ it("resets to the built-in value, but leaves machine rows alone in a project", a
     { ...ON, runnerWhere: "linux", runnerLinuxSlots: 4, runnerHost: "pc" },
     { scope: "project", mixed: ["runnerDropped", "runnerMacOnly"] },
   );
-  const dropped = project.getByRole("group", { name: "When Linux drops a job" });
-  for (const name of ["Ask me", "Run on this Mac", "Wait for Linux"]) {
+  const dropped = project.getByRole("group", { name: "If a Linux run fails" });
+  for (const name of ["Tell the agent", "Ask me", "Run on this Mac", "Wait for Linux"]) {
     await expect
       .element(dropped.getByRole("button", { name }))
       .toHaveAttribute("aria-pressed", "false");

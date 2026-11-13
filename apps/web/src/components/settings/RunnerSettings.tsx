@@ -8,6 +8,7 @@ import {
   RUNNER_WHERE_DESCRIPTION,
   RUNNER_WHERE_LABEL,
   runnerFieldIdle,
+  runnerModeFieldApplies,
   type RunnerChoices,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
@@ -315,6 +316,38 @@ function NumberRow({
   );
 }
 
+function SwitchRow({
+  settingKey,
+  searchId,
+  idle = null,
+}: {
+  readonly settingKey: "runnerLinuxEverything" | "runnerBringBack";
+  readonly searchId: SettingsSearchItemId;
+  readonly idle?: string | null;
+}) {
+  const value = useScopedSettings((settings) => settings[settingKey]);
+  const update = useUpdateScopedSettings();
+  const { title } = searchableSetting(searchId);
+  return (
+    <SettingsRow
+      {...searchableSetting(searchId)}
+      serverScoped
+      settingKeys={[settingKey]}
+      description={RUNNER_SETTING_COPY[settingKey].description}
+      status={idle === null ? undefined : <IdleNote>{idle}</IdleNote>}
+      resetAction={useResetAction(settingKey, title)}
+      control={
+        <ScopedSwitch
+          settingKeys={[settingKey]}
+          checked={value}
+          onCheckedChange={(checked) => update({ [settingKey]: Boolean(checked) })}
+          aria-label={title}
+        />
+      }
+    />
+  );
+}
+
 /** Commands as removable chips, with a field that adds one on Enter. */
 function CommandsRow({
   settingKey,
@@ -509,6 +542,9 @@ const CONNECTION_SEARCH_IDS = [
 
 const SEARCH_ID: Partial<Record<RunnerKey, SettingsSearchItemId>> = {
   runnerWhere: "runner-where",
+  runnerMacFirstAfter: "runner-mac-first-after",
+  runnerLinuxEverything: "runner-linux-everything",
+  runnerBringBack: "runner-bring-back",
   runnerLinuxCommands: "runner-linux-commands",
   runnerMacOnly: "runner-mac-only",
   runnerHost: "runner-host",
@@ -538,8 +574,11 @@ export function RunnerSettingsSection() {
   /** A field shows when it applies, or when a search lands on it (then with why it is idle). */
   const field = (key: RunnerKey) => {
     const idle = runnerFieldIdle(key, choices);
-    return { shown: idle === null || target === SEARCH_ID[key], idle };
+    const applies = runnerModeFieldApplies(key, choices.runnerWhere);
+    return { shown: (idle === null && applies) || target === SEARCH_ID[key], idle };
   };
+  const macFirstAfter = field("runnerMacFirstAfter");
+  const everything = field("runnerLinuxEverything");
   const linuxCommands = field("runnerLinuxCommands");
   const askMinutes = field("runnerAskMinutes");
   const deadline = field("runnerDeadlineAction");
@@ -584,6 +623,20 @@ export function RunnerSettingsSection() {
                   : RUNNER_WHERE_DESCRIPTION[value]
               }
             />
+            {macFirstAfter.shown ? (
+              <NumberRow
+                settingKey="runnerMacFirstAfter"
+                searchId="runner-mac-first-after"
+                idle={macFirstAfter.idle}
+              />
+            ) : null}
+            {everything.shown ? (
+              <SwitchRow
+                settingKey="runnerLinuxEverything"
+                searchId="runner-linux-everything"
+                idle={everything.idle}
+              />
+            ) : null}
             {linuxCommands.shown ? (
               <CommandsRow
                 settingKey="runnerLinuxCommands"
@@ -595,6 +648,11 @@ export function RunnerSettingsSection() {
               settingKey="runnerMacOnly"
               searchId="runner-mac-only"
               idle={field("runnerMacOnly").idle}
+            />
+            <SwitchRow
+              settingKey="runnerBringBack"
+              searchId="runner-bring-back"
+              idle={field("runnerBringBack").idle}
             />
           </RunnerGroup>
         ) : null}
