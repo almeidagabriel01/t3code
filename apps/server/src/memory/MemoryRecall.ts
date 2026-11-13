@@ -51,10 +51,15 @@ export const makeRecall = (deps: {
     const space = input.memorySpaceId;
     // ponytail: capped at MAX_PROJECTS; past that, search project keys in one query.
     const named = (input.projectIds ?? []).slice(0, MAX_PROJECTS);
+    const overCap = (input.projectIds ?? []).slice(MAX_PROJECTS);
+    const unresolved: Array<M.ProjectId> = [];
     const namedKeys = yield* Effect.forEach(named, (projectId) =>
-      deps
-        .resolveProjectKey(space, { environmentId: deps.environmentId, projectId })
-        .pipe(Effect.orElseSucceed(() => null)),
+      deps.resolveProjectKey(space, { environmentId: deps.environmentId, projectId }).pipe(
+        Effect.orElseSucceed(() => {
+          unresolved.push(projectId);
+          return null;
+        }),
+      ),
     );
     const project =
       named.length > 0
@@ -122,12 +127,24 @@ export const makeRecall = (deps: {
       )
       .slice(0, input.limit ?? 8)
       .map((entry) => entry.hit);
+    const skipped = [
+      ...(unresolved.length > 0
+        ? [`${unresolved.join(", ")} (its memory could not be resolved)`]
+        : []),
+      ...(overCap.length > 0
+        ? [`${overCap.join(", ")} (over the ${MAX_PROJECTS}-project limit)`]
+        : []),
+    ];
+    const notes = [
+      ...(items.length === 0
+        ? ["No matches. Rephrase or try single keywords before concluding it is not saved."]
+        : partial
+          ? ["Memory index is still building; results may be incomplete."]
+          : []),
+      ...(skipped.length > 0 ? [`Projects not searched: ${skipped.join("; ")}.`] : []),
+    ];
     return {
       items,
-      ...(items.length === 0
-        ? { note: "No matches. Rephrase or try single keywords before concluding it is not saved." }
-        : partial
-          ? { note: "Memory index is still building; results may be incomplete." }
-          : {}),
+      ...(notes.length > 0 ? { note: notes.join(" ") } : {}),
     } satisfies M.MemoryRecallResult;
   });
