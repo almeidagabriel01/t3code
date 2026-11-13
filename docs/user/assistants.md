@@ -37,6 +37,13 @@ the project when it starts work, and asks you when your request does not make it
 delegated tasks would run in its own conversation's project, so it starts a thread in the right
 project instead. Editing an assistant shows the projects it gets from its groups apart from its own.
 
+Only you can change which projects an assistant works in. An assistant may do it for you in a
+conversation you started, but not from another assistant's message, a schedule or a group task.
+
+A scheduled task that a project assistant makes stays inside its projects. If the assistant later
+loses the task's project, or is deleted, the task stops starting work and its last run says why.
+Tasks made before this check existed don't know which assistant made them, so they keep running.
+
 ## Tool access
 
 | Access          | What the assistant can do                                                      |

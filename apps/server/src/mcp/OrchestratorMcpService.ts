@@ -2081,8 +2081,15 @@ const make = Effect.gen(function* () {
           failure("invalid_request", "Caller memory authority is no longer available."),
         ),
       );
+      const owner =
+        Option.isSome(assistantDirectory) && scope.thread !== undefined
+          ? yield* assistantDirectory.value.forThread(scope.thread.threadId)
+          : Option.none();
       const { task } = yield* scheduledTasks
-        .upsert(upsertInput, { memoryGrantCeiling })
+        .upsert(upsertInput, {
+          memoryGrantCeiling,
+          ownerAssistantId: Option.isSome(owner) ? owner.value.assistant.id : null,
+        })
         .pipe(
           Effect.mapError((error) =>
             failure("orchestration_error", `Could not schedule task: ${error.message}`),

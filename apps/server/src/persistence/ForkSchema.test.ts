@@ -72,9 +72,14 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
     assert.deepStrictEqual(yield* sql`SELECT team_id, archived_at FROM assistant_teams`, [
       { team_id: "g1", archived_at: null },
     ]);
-    assert.deepStrictEqual(yield* sql`SELECT task_id, assistant_team_id FROM scheduled_tasks`, [
-      { task_id: "t1", assistant_team_id: null },
-    ]);
+    assert.deepStrictEqual(
+      yield* sql`SELECT task_id, assistant_team_id, owner_assistant_id FROM scheduled_tasks`,
+      [{ task_id: "t1", assistant_team_id: null, owner_assistant_id: null }],
+    );
+    assert.strictEqual(
+      (yield* columnsOf("scheduled_tasks")).filter((name) => name === "owner_assistant_id").length,
+      1,
+    );
 
     const cards = yield* columnsOf("kanban_cards");
     for (const name of ["parent_card_id", "attachments_json", "cover_attachment_id"]) {

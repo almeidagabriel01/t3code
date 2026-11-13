@@ -1912,6 +1912,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("assistant:boxed:1");
       const shell = liveThreadShell(threadId);
+      let owner: string | null | undefined;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -1933,11 +1934,17 @@ describe("OrchestratorMcpService provider resolution", () => {
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-          upsert: () => Effect.fail({ message: "stop here" } as never),
+          upsert: (_, captured) => {
+            owner = captured?.ownerAssistantId;
+            return Effect.fail({ message: "stop here" } as never);
+          },
         }),
         Layer.mock(AssistantDirectory)({
           forThread: () =>
-            Effect.succeedSome({ assistant: { workspace: "sandbox" } as never, current: true }),
+            Effect.succeedSome({
+              assistant: { id: "boxed", workspace: "sandbox" } as never,
+              current: true,
+            }),
           sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
         }),
       );
@@ -1965,6 +1972,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           )
           .pipe(Effect.flip);
         assert.equal(failure.message.includes("environmentId=environment-sandbox"), refused);
+        // The task remembers the assistant that made it, so its runs stay in that one's projects.
+        assert.equal(owner, refused ? undefined : "boxed");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
