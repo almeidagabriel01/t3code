@@ -310,3 +310,69 @@ it.effect("an assistant in several projects replaces a project memory by id alon
     ]);
   }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
 );
+
+it.effect("a project assistant reaches only its own projects' memories", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    yield* seedSecondProject;
+    const service = yield* MemoryService.MemoryService;
+    const outsideScope = {
+      kind: "project",
+      projectKey: { kind: "explicit", sharedProjectId: "shared-9" },
+    } as const;
+    const outsideId = M.MemoryId.make(Fixture.id(50));
+    yield* service.upsert(
+      { ...Fixture.upsert(51), memoryId: outsideId, scope: outsideScope },
+      Effect.void,
+    );
+    const inside = (yield* decodeReceipt(
+      (yield* Fixture.call(
+        "memory_remember",
+        { text: "Apotek deploys on Mondays", scope: "project", projectId: "project-2" },
+        assistantCaller,
+      )).body,
+    )).memoryId;
+    const insideScope = {
+      kind: "project",
+      projectKey: { kind: "explicit", sharedProjectId: "shared-2" },
+    } as const;
+    const refused = (name: string, input: object) =>
+      Effect.gen(function* () {
+        const out = yield* Fixture.call(name, input, assistantCaller);
+        expect(out.result.isError).toBe(true);
+        expect((yield* decodeRefusal(out.body)).message).toContain("not one of yours");
+      });
+    const allowed = (name: string, input: object) =>
+      Effect.map(Fixture.call(name, input, assistantCaller), (out) =>
+        expect(out.result.isError).not.toBe(true),
+      );
+    yield* refused("memory_list", { scope: outsideScope, includeQuarantined: false });
+    yield* refused("memory_read", { memoryId: outsideId });
+    yield* refused("memory_remember", { text: "Overwritten", memoryId: outsideId });
+    expect(yield* projectMemories("shared-9")).toMatchObject([
+      { memoryId: outsideId, payload: { text: "synthetic memory" } },
+    ]);
+    yield* allowed("memory_list", { scope: insideScope, includeQuarantined: false });
+    yield* allowed("memory_read", { memoryId: inside });
+    yield* allowed("memory_remember", { text: "Apotek deploys on Fridays", memoryId: inside });
+    expect(yield* projectMemories("shared-2")).toMatchObject([
+      { memoryId: inside, payload: { text: "Apotek deploys on Fridays" } },
+    ]);
+    // A forget retried after it landed still answers with its receipt.
+    yield* service.upsert(Fixture.upsert(52), Effect.void);
+    const user = yield* service.read(
+      { memorySpaceId: Fixture.space, memoryId: Fixture.memoryId },
+      Effect.void,
+    );
+    const forget = {
+      memorySpaceId: Fixture.space,
+      memoryId: Fixture.memoryId,
+      operationId: M.MemoryOperationId.make(Fixture.id(53)),
+      expectedHeads: user.status === "active" ? [user.revision.revisionId] : [],
+    };
+    const first = yield* Fixture.call("memory_forget", forget, assistantCaller);
+    const retried = yield* Fixture.call("memory_forget", forget, assistantCaller);
+    expect(retried.result.isError).not.toBe(true);
+    expect(retried.body).toEqual(first.body);
+  }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
+);
