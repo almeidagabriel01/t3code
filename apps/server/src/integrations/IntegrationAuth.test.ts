@@ -496,9 +496,16 @@ it.effect("the server route reports the outcome without revealing it, and cancel
         returnScheme: undefined,
       });
 
+      // Started on web, cancelled from another client that never saw the flow id.
       const begun = yield* env.auth.beginConnect({ catalogId: "linear", client: web });
-      yield* env.auth.cancelConnect({ flowId: begun.flowId });
-      yield* env.auth.cancelConnect({ flowId: begun.flowId });
+      const statusOf = Effect.map(
+        env.auth.state,
+        (state) => state.integrations.find((view) => view.name === begun.name)?.status,
+      );
+      expect(yield* statusOf).toBe("connecting");
+      yield* env.auth.cancelConnect({ name: begun.name });
+      yield* env.auth.cancelConnect({ name: begun.name });
+      expect(yield* statusOf).toBe("connected");
       expect(
         yield* reasonOf(
           env.auth.completeConnect({ callbackUrl: env.fake.approve(begun.authorizationUrl) }),

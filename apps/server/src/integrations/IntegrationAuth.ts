@@ -204,7 +204,8 @@ export class IntegrationAuth extends Context.Service<
     readonly completeCallback: (
       params: URLSearchParams,
     ) => Effect.Effect<IntegrationCallbackOutcome>;
-    readonly cancelConnect: (input: { readonly flowId: string }) => Effect.Effect<void>;
+    /** Any client may cancel, not only the one that started the sign-in. */
+    readonly cancelConnect: (input: { readonly name: string }) => Effect.Effect<void>;
     readonly disconnect: (input: {
       readonly name: string;
     }) => Effect.Effect<void, IntegrationError>;
@@ -840,10 +841,10 @@ const make = Effect.gen(function* () {
 
   const cancelConnect: IntegrationAuth["Service"]["cancelConnect"] = Effect.fn(
     "IntegrationAuth.cancelConnect",
-  )(function* ({ flowId }) {
+  )(function* ({ name }) {
     let removed = false;
     for (const [state, flow] of flows) {
-      if (flow.flowId === flowId) removed = flows.delete(state);
+      if (flow.name === name) removed = flows.delete(state) || removed;
     }
     if (removed) yield* publish;
   });

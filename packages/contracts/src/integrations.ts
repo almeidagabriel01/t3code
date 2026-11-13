@@ -328,7 +328,7 @@ export const WsIntegrationsCompleteConnectRpc = Rpc.make(
 );
 export const WsIntegrationsCancelConnectRpc = Rpc.make(
   INTEGRATIONS_WS_METHODS.integrationsCancelConnect,
-  { payload: Schema.Struct({ flowId: Schema.String }), error: errors },
+  { payload: Schema.Struct({ name: McpServerName }), error: errors },
 );
 export const WsIntegrationsDisconnectRpc = Rpc.make(
   INTEGRATIONS_WS_METHODS.integrationsDisconnect,
