@@ -558,7 +558,8 @@ export function withRouteTab(
 type ThreadKeyProject = (threadKey: string) => string | null;
 
 /**
- * Where `threadKey` shows: the workspace holding its tab; untabbed, the visible layout's group
+ * Where `threadKey` shows: the workspace holding its tab, even for a thread with no project of its
+ * own (an assistant chat dropped into a split); untabbed, the visible layout's group
  * showing its project `ownKey` (focused, else focused last), else its own project's focused group.
  * `groupId` is set only where it differs from that last choice.
  */
@@ -568,12 +569,12 @@ export function threadTabPlacement(
   ownKey: string | null,
   projectOf: ThreadKeyProject,
 ): { readonly key: string; readonly groupId?: string } | null {
-  if (ownKey === null) return null;
   const { byProject, visibleKey } = state;
-  const own = byProject[ownKey];
-  if (own && groupOfTab(own, threadKey)) return { key: ownKey };
+  const own = ownKey === null ? undefined : byProject[ownKey];
+  if (ownKey !== null && own && groupOfTab(own, threadKey)) return { key: ownKey };
   const home = Object.keys(byProject).find((key) => groupOfTab(byProject[key]!, threadKey));
   if (home !== undefined) return { key: home };
+  if (ownKey === null) return null;
   const visible = visibleKey === null ? undefined : byProject[visibleKey];
   if (visibleKey === null || !visible) return { key: ownKey };
   const showing = new Set(

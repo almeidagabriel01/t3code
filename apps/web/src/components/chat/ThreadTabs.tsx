@@ -187,10 +187,12 @@ export function useThreadTabsLayout(input: {
   const routeKey = scopedThreadKey(input.routeThreadRef);
   const ownKey = input.enabled ? threadTabsProjectKey(routeShell) : null;
   const projectKey = useThreadTabsStore((state) =>
-    threadTabsWorkspaceKey(state, routeKey, ownKey, threadKeyProject),
+    input.enabled ? threadTabsWorkspaceKey(state, routeKey, ownKey, threadKeyProject) : null,
   );
-  const placedGroupId = useThreadTabsStore(
-    (state) => threadTabPlacement(state, routeKey, ownKey, threadKeyProject)?.groupId,
+  const placedGroupId = useThreadTabsStore((state) =>
+    input.enabled
+      ? threadTabPlacement(state, routeKey, ownKey, threadKeyProject)?.groupId
+      : undefined,
   );
   const stored = useThreadTabsStore((state) =>
     projectKey === null ? undefined : state.byProject[projectKey],

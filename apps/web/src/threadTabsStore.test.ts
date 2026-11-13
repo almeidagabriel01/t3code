@@ -184,6 +184,14 @@ describe("threadTabPlacement", () => {
       { key: "P" },
     ],
     ["no tabs for a thread that opens without them", { P: mixed("main") }, "P", "qn", null, null],
+    [
+      "the layout a projectless thread was dropped into",
+      { P: mixed("main"), Q: one(["an"]) },
+      "P",
+      "an",
+      null,
+      { key: "Q" },
+    ],
   ])(
     "puts an untabbed or tabbed thread in %s",
     (_name, byProject, visibleKey, threadKey, ownKey, expected) => {
