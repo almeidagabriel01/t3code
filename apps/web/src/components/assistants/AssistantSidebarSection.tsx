@@ -1,46 +1,33 @@
-import { listedProjects } from "@t3tools/client-runtime/assistantSections";
-import { assistantSites, type AssistantWorkSite } from "@t3tools/client-runtime/assistantLiveWork";
-import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
+import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { assistantMetaLabel } from "@t3tools/client-runtime/assistantList";
-import {
-  assistantGroupThreadsOf,
-  assistantPresence,
-  assistantFace,
-  type AssistantMood,
-} from "@t3tools/client-runtime/assistantRobot";
+import type { ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
   BriefcaseIcon,
   CalendarClockIcon,
   ChevronDownIcon,
-  MessagesSquareIcon,
   ChevronRightIcon,
+  CircleAlertIcon,
+  CirclePauseIcon,
   EllipsisIcon,
-  FolderIcon,
-  HashIcon,
   MailIcon,
   MailOpenIcon,
+  MessageSquareTextIcon,
+  MessagesSquareIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SettingsIcon,
-  MessageSquareTextIcon,
-  UserRoundIcon,
   UsersIcon,
 } from "lucide-react";
 import { useParams } from "@tanstack/react-router";
-import { Fragment, memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { updateClientSettings } from "../../hooks/useSettings";
-import {
-  type AssistantEntry,
-  type AssistantTeamEntry,
-  useAssistantLiveWork,
-} from "../../state/assistants";
-import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
+import type { AssistantEntry, AssistantTeamEntry } from "../../state/assistants";
+import { useThreadShell } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
@@ -50,9 +37,7 @@ import { startThreadDrag } from "../threadDrag";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
 import {
   assistantFoldKey,
@@ -68,88 +53,71 @@ import {
 } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
-import type { AssistantSidebarItem, AssistantSidebarModel } from "./useAssistantSidebarModel";
-
-const MOOD_TEXT: Record<AssistantMood, string> = {
-  idle: "text-muted-foreground",
-  working: "text-info-foreground",
-  needs: "text-warning-foreground",
-  failed: "text-destructive-foreground",
-};
+import {
+  sameItem,
+  type AssistantSidebarItem,
+  type AssistantSidebarModel,
+} from "./useAssistantSidebarModel";
 
 const FOCUS_RING =
   "outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+const ICON_BUTTON = cn(
+  "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
+  FOCUS_RING,
+);
 
-/** What a row and a collapsed avatar both show: the presence, the attention dot, and how to open. */
-function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThreadRef) => void) {
-  const { assistant, environmentId } = entry;
-  const threadRef =
-    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
-  const thread = useThreadShell(threadRef);
-  const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
-  const localLastVisitedAt = useUiStateStore((state) =>
-    threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
-  );
-  const shells = useQuietThreadShells();
-  const presence = assistantPresence(
-    thread,
-    assistantGroupThreadsOf(shells, environmentId, assistant.id),
-  );
-  const dotClass =
-    thread === null
-      ? null
-      : resolveSidebarNotificationDotClass({
-          ...thread,
-          lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
-          hasOpenDecision: false,
-        });
-  const open = () => {
-    if (threadRef !== null) onOpen(threadRef);
-  };
-  return { presence, dotClass, open, threadRef };
-}
+type IndicatorKind = ZoneIndicator["kind"];
 
-const MAX_WORK_SITES = 2;
+const INDICATOR_LABEL: Record<IndicatorKind, (count: number) => string> = {
+  needs: (count) => `${count} waiting on you`,
+  failed: () => "Failed",
+  paused: (count) => `${count} paused`,
+  running: (count) => `${count} running`,
+  unread: (count) => `${count} unread`,
+};
 
-/** The projects an assistant is working in now; each favicon opens the thread it works on there. */
-function AssistantWorkSites(props: {
-  readonly sites: ReadonlyArray<{
-    readonly site: AssistantWorkSite;
-    readonly project: ProjectFaviconProject;
-  }>;
-  readonly onOpen: (threadRef: ScopedThreadRef) => void;
-}) {
-  const shown = props.sites.slice(0, MAX_WORK_SITES);
-  const hidden = props.sites.length - shown.length;
+/** A row's one status, drawn still: a dot or an icon, and the count as text. */
+function ZoneIndicatorMark(props: { readonly kind: IndicatorKind; readonly count: number }) {
+  const { kind, count } = props;
+  const label = INDICATOR_LABEL[kind](count);
+  if (kind === "unread") {
+    return (
+      <Badge
+        variant="info"
+        size="sm"
+        data-testid="zone-indicator"
+        data-kind={kind}
+        aria-label={label}
+      >
+        {count > 99 ? "99+" : count}
+      </Badge>
+    );
+  }
   return (
-    <span data-testid="assistant-work-sites" className="flex shrink-0 items-center gap-0.5">
-      {shown.map(({ site, project }) => (
-        <Tooltip key={`${site.environmentId}:${site.projectId}`}>
-          <TooltipTrigger
-            render={
-              <button
-                type="button"
-                aria-label={`Working in ${project.title}`}
-                data-testid="assistant-work-site"
-                className={cn(
-                  "inline-flex size-5 cursor-pointer items-center justify-center rounded-sm hover:bg-foreground/8",
-                  FOCUS_RING,
-                )}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  props.onOpen(scopeThreadRef(site.environmentId, site.threadId));
-                }}
-              />
-            }
-          >
-            <ProjectFavicon project={project} className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{`Working in ${project.title}`}</TooltipPopup>
-        </Tooltip>
-      ))}
-      {hidden > 0 ? (
-        <span className="text-xs tabular-nums text-muted-foreground">+{hidden}</span>
-      ) : null}
+    <span
+      role="img"
+      aria-label={label}
+      data-testid="zone-indicator"
+      data-kind={kind}
+      className={cn(
+        "flex shrink-0 items-center gap-1 text-xs font-normal tabular-nums",
+        kind === "needs" && "text-warning-foreground",
+        kind === "failed" && "text-destructive-foreground",
+        kind === "paused" && "text-warning-foreground",
+        kind === "running" && "text-info-foreground",
+      )}
+    >
+      {kind === "failed" ? (
+        <CircleAlertIcon aria-hidden className="size-3.5" />
+      ) : kind === "paused" ? (
+        <CirclePauseIcon aria-hidden className="size-3.5" />
+      ) : (
+        <span
+          aria-hidden
+          className={cn("size-2 rounded-full", kind === "needs" ? "bg-warning" : "bg-info")}
+        />
+      )}
+      {kind === "failed" || (kind === "running" && count === 1) ? null : count}
     </span>
   );
 }
@@ -159,36 +127,71 @@ type SubagentContextMenu = (
   position: { readonly x: number; readonly y: number },
 ) => void;
 
-const STATUS_DOT: Partial<Record<AssistantMood, string>> = {
-  needs: "bg-warning",
-  working: "bg-info",
-};
+type RevealRow = (row: HTMLElement, threadKey: string) => void;
 
-const AssistantRow = memo(function AssistantRow(props: {
+/** The model rebuilds each item on every derivation, so the row compares it by content. */
+function sameAssistantRowProps(previous: AssistantRowProps, next: AssistantRowProps): boolean {
+  return (Object.keys(next) as Array<keyof AssistantRowProps>).every((key) => {
+    if (key === "item") return sameItem(previous.item, next.item);
+    if (key === "reveal") {
+      return (
+        previous.reveal === next.reveal ||
+        (previous.reveal !== undefined &&
+          next.reveal !== undefined &&
+          previous.reveal.key === next.reveal.key &&
+          previous.reveal.subagentKey === next.reveal.subagentKey &&
+          previous.reveal.row === next.reveal.row)
+      );
+    }
+    return Object.is(previous[key], next[key]);
+  });
+}
+
+interface AssistantRowProps {
   readonly entry: AssistantEntry;
+  readonly mood: AssistantMood;
+  readonly indicatorKind: IndicatorKind | null;
+  readonly indicatorCount: number;
+  readonly item: AssistantSidebarItem;
+  readonly nested: boolean;
   readonly environmentLabel: string | null;
   readonly isActive: boolean;
-  /** The open thread, so a task row of it can show as current. */
-  readonly activeThreadKey?: string | null;
+  /** The open thread, so a task row of it shows as current; set only on a row with tasks. */
+  readonly activeThreadKey: string | null;
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
-  /** Shown as a pill when the assistant is project-scoped and has no status to show. */
-  readonly projectLabel?: string | null;
-  readonly project?: ProjectFaviconProject | undefined;
-  readonly nested?: boolean;
-  readonly workSites?: ReadonlyArray<{
-    readonly site: AssistantWorkSite;
-    readonly project: ProjectFaviconProject;
-  }>;
-  readonly item: AssistantSidebarItem;
   readonly jumpLabelByKey: ReadonlyMap<string, string> | null | undefined;
+  /** Set only on a row with tasks, so a new renderer never re-renders the others. */
   readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;
   readonly onThreadContextMenu?: SubagentContextMenu | undefined;
-}) {
+  /** Set only on the row that stands for the open thread: its chat, or one of its subagents. */
+  readonly reveal?:
+    | { readonly row: RevealRow; readonly key: string; readonly subagentKey: string | null }
+    | undefined;
+}
+
+const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
-  const { presence, dotClass, open, threadRef } = useAssistantState(props.entry, props.onOpen);
-  const jumpLabel =
-    threadRef === null ? null : (props.jumpLabelByKey?.get(scopedThreadKey(threadRef)) ?? null);
+  const threadRef =
+    assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
+  const threadKey = threadRef === null ? null : scopedThreadKey(threadRef);
+  const thread = useThreadShell(threadRef);
+  const localLastVisitedAt = useUiStateStore((state) =>
+    threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
+  );
+  // Unread news shows only when the row has no status, so a row never carries two marks.
+  const dotClass =
+    thread === null || props.indicatorKind !== null
+      ? null
+      : resolveSidebarNotificationDotClass({
+          ...thread,
+          lastVisitedAt: resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt),
+          hasOpenDecision: false,
+        });
+  const open = () => {
+    if (threadRef !== null) props.onOpen(threadRef);
+  };
+  const jumpLabel = threadKey === null ? null : (props.jumpLabelByKey?.get(threadKey) ?? null);
   const { sections, expanded, subagents } = props.item;
   // Folds persist beside the project folds, under a key no project can take.
   const foldKey = assistantFoldKey(props.entry);
@@ -202,9 +205,10 @@ const AssistantRow = memo(function AssistantRow(props: {
       sections.settled.length +
       subagents.length >
     0;
-  const working = presence.mood === "working";
-  const meta = assistantMetaLabel(presence);
-  const statusDot = STATUS_DOT[presence.mood];
+  const working = props.mood === "working";
+  const fullName = [assistant.name, assistant.role, props.environmentLabel]
+    .filter(Boolean)
+    .join(" · ");
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if ((event.target as HTMLElement).closest("button")) return;
     if (event.key === "Enter" || event.key === " ") {
@@ -212,6 +216,7 @@ const AssistantRow = memo(function AssistantRow(props: {
       open();
     }
   };
+  const reveal = props.reveal;
   return (
     <li
       className={cn(
@@ -219,170 +224,121 @@ const AssistantRow = memo(function AssistantRow(props: {
         props.nested && "ms-3.5 border-s border-foreground/10",
       )}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        data-sidebar-row={foldKey}
-        aria-label={`${assistant.name}${working ? ", working" : ""}`}
-        aria-current={props.isActive ? "page" : undefined}
-        data-testid="sidebar-assistant-row"
-        className={cn(
-          "group/sidebar-row flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
-          FOCUS_RING,
-          props.isActive && "bg-sidebar-row-active",
-        )}
-        onClick={open}
-        onKeyDown={onKeyDown}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuOpen(true);
-        }}
-        onPointerDown={(event) => {
-          if (threadRef === null || (event.target as HTMLElement).closest("button")) return;
-          startThreadDrag(event.nativeEvent, threadRef, assistant.name);
-        }}
-      >
-        <Tooltip disabled={!statusDot || meta === null}>
-          <TooltipTrigger render={<span className="relative inline-flex shrink-0" />}>
-            <AssistantAvatar
-              assistant={assistant}
-              mood={assistantFace(presence)}
-              className="size-5"
-            />
-            {statusDot ? (
-              <span
-                aria-hidden
-                data-testid="assistant-status-dot"
-                className={cn(
-                  "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
-                  statusDot,
-                )}
-              />
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{meta}</TooltipPopup>
-        </Tooltip>
-        <span className="max-w-[55%] shrink-0 truncate">{assistant.name}</span>
-        {assistant.role === "" ? null : (
-          <Badge variant="outline" size="sm" data-testid="assistant-role">
-            <span className="max-w-16 truncate">{assistant.role}</span>
-          </Badge>
-        )}
-        {props.environmentLabel ? (
-          <Badge variant="outline" size="sm">
-            <span className="max-w-24 truncate">{props.environmentLabel}</span>
-          </Badge>
-        ) : null}
-        <span className="flex-1" />
-        {props.workSites && props.workSites.length > 0 ? (
-          <AssistantWorkSites sites={props.workSites} onOpen={props.onOpen} />
-        ) : null}
-        {meta !== null ? (
-          <span
-            data-testid="assistant-status"
-            data-mood={presence.mood}
-            className={cn(
-              "min-w-0 max-w-[45%] truncate text-xs font-normal",
-              // The dot carries the status where the row is too narrow for its text.
-              statusDot && "@max-[19rem]/assistant-row:hidden",
-              MOOD_TEXT[presence.mood],
-            )}
-          >
-            {meta}
-          </span>
-        ) : props.projectLabel && !props.workSites?.length ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  data-testid="assistant-project"
-                  aria-label={`Project: ${props.projectLabel}`}
-                  className="inline-flex shrink-0 items-center"
-                />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div
+              role="button"
+              tabIndex={0}
+              ref={
+                reveal !== undefined && reveal.subagentKey === null
+                  ? (row) => {
+                      if (row !== null) reveal.row(row, reveal.key);
+                    }
+                  : undefined
               }
-            >
-              {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4" />
-              ) : (
-                <FolderIcon aria-hidden className="size-4 text-muted-foreground" />
+              data-sidebar-row={foldKey}
+              aria-label={`${assistant.name}${working ? ", working" : ""}`}
+              aria-current={props.isActive ? "page" : undefined}
+              data-testid="sidebar-assistant-row"
+              className={cn(
+                "group/sidebar-row flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
+                FOCUS_RING,
+                props.isActive && "bg-sidebar-row-active",
               )}
-            </TooltipTrigger>
-            <TooltipPopup side="top">{props.projectLabel}</TooltipPopup>
-          </Tooltip>
-        ) : null}
-        <SidebarNotificationDot dotClass={dotClass} />
-        {jumpLabel ? <JumpHintBadge label={jumpLabel} /> : null}
-        {foldable ? (
-          <button
-            type="button"
-            aria-label={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
-            aria-expanded={expanded}
-            data-testid="assistant-fold"
-            onClick={(event) => {
-              event.stopPropagation();
-              setExpanded(foldKey, !expanded);
-            }}
-            className={cn(
-              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
-              FOCUS_RING,
+              onClick={open}
+              onKeyDown={onKeyDown}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenuOpen(true);
+              }}
+              onPointerDown={(event) => {
+                if (threadRef === null || (event.target as HTMLElement).closest("button")) return;
+                startThreadDrag(event.nativeEvent, threadRef, assistant.name);
+              }}
+            />
+          }
+        >
+          <AssistantAvatar assistant={assistant} mood={props.mood} className="size-5 shrink-0" />
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <span className="max-w-full shrink-0 truncate">{assistant.name}</span>
+            {assistant.role === "" ? null : (
+              <span
+                data-testid="assistant-role"
+                className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground @max-[14rem]/assistant-row:hidden"
+              >
+                {assistant.role}
+              </span>
             )}
-          >
-            <ChevronDownIcon aria-hidden className={cn("size-3", !expanded && "-rotate-90")} />
-          </button>
-        ) : null}
-        <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-          <Tooltip>
-            <TooltipTrigger
+          </span>
+          {props.indicatorKind === null ? null : (
+            <ZoneIndicatorMark kind={props.indicatorKind} count={props.indicatorCount} />
+          )}
+          <SidebarNotificationDot dotClass={dotClass} />
+          {jumpLabel ? <JumpHintBadge label={jumpLabel} /> : null}
+          {foldable ? (
+            <button
+              type="button"
+              aria-label={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
+              aria-expanded={expanded}
+              data-testid="assistant-fold"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded(foldKey, !expanded);
+              }}
+              className={ICON_BUTTON}
+            >
+              <ChevronDownIcon aria-hidden className={cn("size-3", !expanded && "-rotate-90")} />
+            </button>
+          ) : null}
+          <Menu open={menuOpen} onOpenChange={setMenuOpen}>
+            <MenuTrigger
               render={
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="ghost-muted"
-                      aria-label={`${assistant.name} actions`}
-                      onClick={(event) => event.stopPropagation()}
-                    />
-                  }
+                <Button
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label={`${assistant.name} actions`}
+                  onClick={(event) => event.stopPropagation()}
                 />
               }
             >
               <EllipsisIcon className="size-4" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{assistant.name} actions</TooltipPopup>
-          </Tooltip>
-          <MenuPopup
-            align="end"
-            // The popup is portaled but its events still bubble to the row, which would open it.
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={(event) => event.stopPropagation()}
-          >
-            <MenuItem
-              disabled={!flows.canAct || working}
-              onClick={() => void flows.reset(assistant, { openAfter: true })}
+            </MenuTrigger>
+            <MenuPopup
+              align="end"
+              // The popup is portaled but its events still bubble to the row, which would open it.
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
             >
-              <RefreshCwIcon />
-              Reset conversation
-            </MenuItem>
-            <MenuItem
-              onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
-            >
-              <BriefcaseIcon />
-              Assistant work
-            </MenuItem>
-            <MenuItem
-              onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}
-            >
-              <SettingsIcon />
-              Assistant settings
-            </MenuItem>
-            <MenuSeparator />
-            <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(assistant)}>
-              <ArchiveIcon />
-              Archive assistant
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
-      </div>
+              <MenuItem
+                disabled={!flows.canAct || working}
+                onClick={() => void flows.reset(assistant, { openAfter: true })}
+              >
+                <RefreshCwIcon />
+                Reset conversation
+              </MenuItem>
+              <MenuItem
+                onClick={() => openAssistantWork({ environmentId, assistantId: assistant.id })}
+              >
+                <BriefcaseIcon />
+                Assistant work
+              </MenuItem>
+              <MenuItem
+                onClick={() => openAssistantDialog({ environmentId, assistantId: assistant.id })}
+              >
+                <SettingsIcon />
+                Assistant settings
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem disabled={!flows.canAct} onClick={() => void flows.archive(assistant)}>
+                <ArchiveIcon />
+                Archive assistant
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </TooltipTrigger>
+        <TooltipPopup side="top">{fullName}</TooltipPopup>
+      </Tooltip>
       {expanded ? (
         <>
           <AssistantTaskRows
@@ -398,6 +354,11 @@ const AssistantRow = memo(function AssistantRow(props: {
                 onOpen={props.onOpen}
                 onContextMenu={props.onThreadContextMenu}
                 jumpLabelByKey={props.jumpLabelByKey}
+                reveal={
+                  reveal !== undefined && reveal.subagentKey !== null
+                    ? { row: reveal.row, key: reveal.key, threadKey: reveal.subagentKey }
+                    : undefined
+                }
               >
                 {subagents}
               </SubagentRows>
@@ -407,190 +368,91 @@ const AssistantRow = memo(function AssistantRow(props: {
       ) : null}
     </li>
   );
-});
+}, sameAssistantRowProps);
 
-const COLLAPSED_AVATARS = 5;
-
-/** One assistant in the collapsed strip: its initial, its state, and one click to its chat. */
-const AssistantAvatarButton = memo(function AssistantAvatarButton(props: {
-  readonly entry: AssistantEntry;
-  readonly isActive: boolean;
-  readonly onOpen: (threadRef: ScopedThreadRef) => void;
-}) {
-  const { assistant } = props.entry;
-  const { presence, dotClass, open } = useAssistantState(props.entry, props.onOpen);
-  const working = presence.mood === "working";
-  const label = `Open ${assistant.name}${working ? ", working" : dotClass ? ", unread" : ""}`;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={label}
-            aria-current={props.isActive ? "page" : undefined}
-            disabled={assistant.threadId === null}
-            onClick={(event) => {
-              event.stopPropagation();
-              open();
-            }}
-            className={cn(
-              "relative inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default",
-              props.isActive && "ring-1 ring-foreground/30",
-            )}
-          />
-        }
-      >
-        <AssistantAvatar assistant={assistant} mood={assistantFace(presence)} className="size-5" />
-        {working ? (
-          <span className="absolute -right-0.5 -bottom-0.5 inline-flex rounded-full bg-sidebar">
-            <Spinner size="xs" tone="muted" aria-hidden />
-          </span>
-        ) : (
-          <SidebarNotificationDot
-            dotClass={dotClass}
-            className="absolute top-0 right-0 ring-2 ring-sidebar"
-          />
-        )}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{assistant.name}</TooltipPopup>
-    </Tooltip>
-  );
-});
-
-const MAX_STACKED_AVATARS = 4;
-
-/** One group on one line: opens its chat on click; the chevron shows or hides its members. */
-function GroupRow(props: {
+/** A group as a folder: the chevron shows its members, the name opens its chat. */
+const FolderRow = memo(function FolderRow(props: {
   readonly entry: AssistantTeamEntry;
-  readonly members: ReadonlyArray<AssistantEntry>;
-  readonly running: number;
+  readonly memberCount: number;
   readonly expanded: boolean;
+  readonly indicatorKind: IndicatorKind | null;
+  readonly indicatorCount: number;
   readonly active: boolean;
   readonly onToggle: (foldKey: string) => void;
-  readonly onOpen: () => void;
+  readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
 }) {
   const { environmentId, team } = props.entry;
   const teamId: AssistantTeamId = team.id;
   const flows = useAssistantTeamFlows(environmentId);
   const foldKey = `group:${environmentId}:${teamId}`;
-  const shown = props.members.slice(0, MAX_STACKED_AVATARS);
-  const more = props.members.length - shown.length;
   const unread = team.chat?.unreadCount ?? 0;
+  const open = () => props.onOpenGroup(environmentId, teamId);
+  const empty = props.memberCount === 0;
   return (
-    <li className="@container/group-row list-none py-px">
+    <li className="list-none py-px">
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={team.name}
-        aria-current={props.active ? "page" : undefined}
         data-testid="sidebar-assistant-fold"
         className={cn(
-          "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-sm font-medium text-sidebar-foreground select-none hover:bg-sidebar-row-hover",
-          FOCUS_RING,
+          "flex h-8 w-full items-center gap-1 rounded-md ps-1 pe-(--sidebar-row-content-inset) text-sm font-medium text-sidebar-foreground hover:bg-sidebar-row-hover",
           props.active && "bg-sidebar-row-active",
         )}
-        onClick={props.onOpen}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            props.onOpen();
-          }
-        }}
       >
-        <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
-        <span className="min-w-0 truncate">{team.name}</span>
-        {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
-        <span
-          className={cn(
-            "flex shrink-0 items-center ps-0.5",
-            props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
-          )}
-          data-testid="group-avatars"
-        >
-          {shown.map(({ assistant }) => (
-            <AssistantAvatar
-              key={assistant.id}
-              assistant={assistant}
-              className="-ms-1 size-4 shrink-0 first:ms-0"
-            />
-          ))}
-          {more > 0 ? (
-            <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
-              +{more}
-            </span>
-          ) : null}
-        </span>
-        <span className="flex-1" />
-        {props.running > 0 ? (
-          <span
-            data-testid="group-status"
-            aria-label={`${props.running} running`}
-            className="flex shrink-0 items-center gap-1 text-xs font-normal text-info-foreground tabular-nums"
+        {empty ? (
+          <span aria-hidden className="size-5 shrink-0" />
+        ) : (
+          <button
+            type="button"
+            aria-label={`${props.expanded ? "Hide" : "Show"} ${team.name} members`}
+            aria-expanded={props.expanded}
+            data-testid="group-fold"
+            onClick={() => props.onToggle(foldKey)}
+            className={ICON_BUTTON}
           >
-            <Spinner size="xs" tone="muted" aria-hidden />
-            {props.running}
-            {/* The word goes first on a narrow row: the count and the group's name stay. */}
-            <span className="@max-[19rem]/group-row:hidden">{" running"}</span>
-          </span>
-        ) : props.members.length === 0 ? (
+            <ChevronRightIcon
+              aria-hidden
+              className={cn("size-3.5", props.expanded && "rotate-90")}
+            />
+          </button>
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-current={props.active ? "page" : undefined}
+                data-testid="group-name"
+                onClick={open}
+                className={cn(
+                  "flex h-7 min-w-0 flex-1 cursor-pointer items-center rounded-md px-1 text-left select-none",
+                  FOCUS_RING,
+                )}
+              />
+            }
+          >
+            <span className="min-w-0 truncate">{team.name}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">{`Open ${team.name}`}</TooltipPopup>
+        </Tooltip>
+        {empty ? (
           <span
             data-testid="group-status"
             className="shrink-0 text-xs font-normal text-muted-foreground"
           >
             empty
           </span>
-        ) : null}
-        {unread > 0 ? (
-          <Badge
-            variant="info"
-            size="sm"
-            data-testid="group-unread"
-            aria-label={`${unread} unread`}
-          >
-            {unread > 99 ? "99+" : unread}
-          </Badge>
-        ) : null}
-        {props.members.length === 0 ? null : (
-          <button
-            type="button"
-            aria-label={`${props.expanded ? "Hide" : "Show"} ${team.name} members`}
-            aria-expanded={props.expanded}
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onToggle(foldKey);
-            }}
-            className={cn(
-              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
-              FOCUS_RING,
-            )}
-          >
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3", !props.expanded && "-rotate-90")}
-            />
-          </button>
+        ) : props.indicatorKind === null ? null : (
+          <ZoneIndicatorMark kind={props.indicatorKind} count={props.indicatorCount} />
         )}
         <Menu>
           <MenuTrigger
             render={
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                aria-label={`${team.name} actions`}
-                onClick={(event) => event.stopPropagation()}
-              />
+              <Button size="icon-xs" variant="ghost-muted" aria-label={`${team.name} actions`} />
             }
           >
             <EllipsisIcon className="size-4" />
           </MenuTrigger>
-          <MenuPopup
-            align="end"
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={(event) => event.stopPropagation()}
-          >
-            <MenuItem onClick={props.onOpen}>
+          <MenuPopup align="end">
+            <MenuItem onClick={open}>
               <MessagesSquareIcon />
               Open chat
             </MenuItem>
@@ -634,13 +496,25 @@ function GroupRow(props: {
       </div>
     </li>
   );
-}
+});
 
-/** Pinned above the projects: every group on a row, then one flat list of assistants. */
+const toggleGroup = (expandedKeys: ReadonlyArray<string>, foldKey: string) =>
+  void updateClientSettings({
+    sidebarAssistantsExpandedGroups: expandedKeys.includes(foldKey)
+      ? expandedKeys.filter((key) => key !== foldKey)
+      : [...expandedKeys, foldKey],
+  });
+
+/** The Teams zone: ungrouped assistants first, then one folder per group, each assistant once. */
 export const AssistantSidebarSection = memo(function AssistantSidebarSection(props: {
   readonly model: AssistantSidebarModel;
-  readonly routeThreadKey: string | null;
   readonly environmentLabelById: ReadonlyMap<string, string>;
+  /** The open thread's key. */
+  readonly routeThreadKey: string | null;
+  /** The key of the row that stands for the open thread (a subagent's listed ancestor). */
+  readonly routeRowThreadKey?: string | null | undefined;
+  /** Scrolls the row that stands for the open thread into view once. */
+  readonly revealRow?: RevealRow | undefined;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
   readonly onOpenGroup: (environmentId: EnvironmentId, teamId: AssistantTeamId) => void;
   /** ⌘1–9 labels by thread key while the hints show. */
@@ -648,164 +522,75 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   readonly renderTaskRow?: AssistantTaskRowRenderer | undefined;
   readonly onThreadContextMenu?: SubagentContextMenu | undefined;
 }) {
-  const {
-    enabled,
-    collapsed,
-    showAll,
-    expandedGroups: expandedKeys,
-    active,
-    teams,
-    ranked,
-    shown,
-    hidden,
-    items,
-  } = props.model;
+  const { enabled, collapsed, expandedGroups, count, empty, rows } = props.model;
   const routeEnvironmentId = useParams({ strict: false, select: (params) => params.environmentId });
   const routeTeamId = useParams({ strict: false, select: (params) => params.teamId });
-  const projects = useProjects();
-  const work = useAssistantLiveWork();
   const [describing, setDescribing] = useState(false);
-  if (!enabled || (active.length === 0 && teams.length === 0)) return null;
-  const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
-  const strip = ranked.slice(0, COLLAPSED_AVATARS);
-  const overflow = ranked.length - strip.length;
-  const foldable = showAll || hidden > 0;
+  if (!enabled || empty) return null;
+  const environmentCount = new Set(
+    rows.flatMap((row) => (row.kind === "assistant" ? [row.entry.environmentId] : [])),
+  ).size;
+  const routeRowThreadKey = props.routeRowThreadKey ?? props.routeThreadKey;
   const toggle = () => void updateClientSettings({ sidebarAssistantsCollapsed: !collapsed });
-  const toggleExpanded = (foldKey: string) =>
-    void updateClientSettings({
-      sidebarAssistantsExpandedGroups: expandedKeys.includes(foldKey)
-        ? expandedKeys.filter((key) => key !== foldKey)
-        : [...expandedKeys, foldKey],
-    });
-  const rankedByKey = new Map(
-    ranked.map((item) => [`${item.entry.environmentId}:${item.entry.assistant.id}`, item]),
-  );
-  const projectOf = (environmentId: string, projectId: string) =>
-    projects.find((project) => project.environmentId === environmentId && project.id === projectId);
-  const keyOf = (entry: AssistantEntry) =>
-    entry.assistant.threadId
-      ? scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId))
-      : null;
+  const onToggleGroup = (foldKey: string) => toggleGroup(expandedGroups, foldKey);
 
-  const workSitesOf = ({ environmentId, assistant }: AssistantEntry) =>
-    assistantSites(work, environmentId, assistant.id, (projectId) => {
-      const project = projectOf(environmentId, projectId);
-      return project !== undefined && hasProjectPanels(project);
-    }).map((site) => ({ site, project: projectOf(environmentId, site.projectId)! }));
-
-  const row = (entry: AssistantEntry, nested = false) => {
-    const key = keyOf(entry);
-    return (
-      <AssistantRow
-        key={`${entry.environmentId}:${entry.assistant.id}`}
-        entry={entry}
-        nested={nested}
-        environmentLabel={
-          environmentCount > 1
-            ? (props.environmentLabelById.get(entry.environmentId) ?? null)
-            : null
-        }
-        projectLabel={
-          entry.assistant.scope === "project"
-            ? listedProjects(entry.assistant)
-                .map((projectId) => projectOf(entry.environmentId, projectId)?.title ?? "Project")
-                .join(", ")
-            : null
-        }
-        project={
-          entry.assistant.scope === "project"
-            ? projectOf(entry.environmentId, entry.assistant.projectId)
-            : undefined
-        }
-        isActive={key !== null && key === props.routeThreadKey}
-        activeThreadKey={props.routeThreadKey}
-        onOpen={props.onOpenThread}
-        workSites={workSitesOf(entry)}
-        item={items.get(`${entry.environmentId}:${entry.assistant.id}`)!}
-        jumpLabelByKey={props.jumpLabelByKey}
-        renderTaskRow={props.renderTaskRow}
-        onThreadContextMenu={props.onThreadContextMenu}
-      />
-    );
+  const revealFor = (row: Extract<(typeof rows)[number], { kind: "assistant" }>) => {
+    const { entry, item } = row;
+    if (props.revealRow === undefined || routeRowThreadKey === null) return undefined;
+    const chatKey =
+      entry.assistant.threadId === null
+        ? null
+        : scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId));
+    if (chatKey !== routeRowThreadKey) return undefined;
+    // An open subagent is drawn under its assistant; that row reveals instead of the chat's.
+    const subagentKey =
+      item.expanded &&
+      props.routeThreadKey !== routeRowThreadKey &&
+      item.subagents.some(
+        (thread) => `${thread.environmentId}:${thread.id}` === props.routeThreadKey,
+      )
+        ? props.routeThreadKey
+        : null;
+    return { row: props.revealRow, key: routeRowThreadKey, subagentKey };
   };
+  const hasTasks = (item: AssistantSidebarItem) =>
+    item.sections.pinned.length +
+      item.sections.open.length +
+      item.sections.snoozed.length +
+      item.sections.settled.length >
+    0;
 
   return (
     <>
       <li
-        role="button"
-        tabIndex={0}
-        aria-expanded={!collapsed}
-        aria-label={`Assistants, ${active.length}`}
+        className="flex list-none items-center gap-1 px-(--sidebar-row-content-inset) pt-3 pb-1"
         data-sidebar-row="section:assistants"
-        className={cn(
-          "flex h-7 cursor-pointer list-none items-center gap-1 rounded-md px-(--sidebar-row-content-inset) hover:bg-sidebar-row-hover",
-          FOCUS_RING,
-        )}
-        onClick={(event) => {
-          if ((event.target as HTMLElement).closest("button")) return;
-          toggle();
-        }}
-        onKeyDown={(event) => {
-          if (event.target !== event.currentTarget) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            toggle();
-          }
-        }}
       >
-        <UserRoundIcon aria-hidden className="size-3.5 shrink-0 text-(--sidebar-icon-color)" />
-        <span className="shrink-0 truncate text-xs font-medium text-secondary-label">
-          Assistants
-        </span>
-        <span className="flex min-w-0 flex-1 items-center gap-0.5 ps-1.5">
-          {collapsed
-            ? strip.map(({ entry }) => {
-                const key = keyOf(entry);
-                return (
-                  <AssistantAvatarButton
-                    key={`${entry.environmentId}:${entry.assistant.id}`}
-                    entry={entry}
-                    isActive={key !== null && key === props.routeThreadKey}
-                    onOpen={props.onOpenThread}
-                  />
-                );
-              })
-            : null}
-          {collapsed && overflow > 0 ? (
-            <button
-              type="button"
-              aria-label={`Show all ${ranked.length} assistants`}
-              onClick={toggle}
-              className={cn(
-                "inline-flex h-6 shrink-0 cursor-pointer items-center rounded-md px-1 text-2xs text-muted-foreground tabular-nums hover:bg-foreground/8 hover:text-foreground",
-                FOCUS_RING,
-              )}
-            >
-              +{overflow}
-            </button>
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? `Teams, ${count}. Expand` : "Collapse teams"}
+          onClick={toggle}
+          className={cn(
+            "flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md text-left text-xs font-medium text-secondary-label hover:text-foreground",
+            FOCUS_RING,
+          )}
+        >
+          <span className="truncate">Teams</span>
+          {collapsed ? (
+            <span className="shrink-0 font-normal text-muted-foreground tabular-nums">{count}</span>
           ) : null}
-        </span>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3 shrink-0", !collapsed && "rotate-90")}
+          />
+        </button>
         {collapsed ? null : (
           <Menu>
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label="Add"
-                  className={cn(
-                    "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
-                    FOCUS_RING,
-                  )}
-                />
-              }
-            >
-              <PlusIcon className="size-4" />
+            <MenuTrigger render={<button type="button" aria-label="Add" className={ICON_BUTTON} />}>
+              <PlusIcon className="size-3.5" />
             </MenuTrigger>
-            <MenuPopup
-              align="end"
-              onClick={(event) => event.stopPropagation()}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
+            <MenuPopup align="end">
               <MenuItem onClick={() => openAssistantDialog()}>
                 <PlusIcon />
                 New assistant
@@ -821,52 +606,35 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
             </MenuPopup>
           </Menu>
         )}
-        <button
-          type="button"
-          aria-label={collapsed ? "Expand assistants" : "Collapse assistants"}
-          aria-expanded={!collapsed}
-          onClick={toggle}
-          className={cn(
-            "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:text-foreground",
-            FOCUS_RING,
-          )}
-        >
-          <ChevronRightIcon
-            aria-hidden
-            className={cn("size-3.5 shrink-0", !collapsed && "rotate-90")}
-          />
-        </button>
       </li>
-      {collapsed ? null : (
-        <>
-          {teams.map((team) => {
-            const foldKey = `group:${team.environmentId}:${team.team.id}`;
-            const members = team.team.memberIds.flatMap((id) => {
-              const item = rankedByKey.get(`${team.environmentId}:${id}`);
-              return item === undefined ? [] : [item];
-            });
-            const expanded = expandedKeys.includes(foldKey);
-            return (
-              <Fragment key={foldKey}>
-                <GroupRow
-                  entry={team}
-                  members={members.map((item) => item.entry)}
-                  running={members.filter((item) => item.presence.mood === "working").length}
-                  expanded={expanded}
-                  active={routeTeamId === team.team.id && routeEnvironmentId === team.environmentId}
-                  onToggle={toggleExpanded}
-                  onOpen={() => props.onOpenGroup(team.environmentId, team.team.id)}
-                />
-                {expanded ? members.map((item) => row(item.entry, true)) : null}
-              </Fragment>
-            );
-          })}
-          {shown.map((item) => row(item.entry))}
-          {foldable ? (
-            <li className="list-none">
+      {rows.map((row) => {
+        if (row.kind === "folder") {
+          return (
+            <FolderRow
+              key={row.key}
+              entry={row.team}
+              memberCount={row.memberCount}
+              expanded={row.expanded}
+              indicatorKind={row.indicator?.kind ?? null}
+              indicatorCount={
+                row.indicator !== null && "count" in row.indicator ? row.indicator.count : 0
+              }
+              active={
+                routeTeamId === row.team.team.id && routeEnvironmentId === row.team.environmentId
+              }
+              onToggle={onToggleGroup}
+              onOpenGroup={props.onOpenGroup}
+            />
+          );
+        }
+        if (row.kind === "more") {
+          return (
+            <li key={row.key} className="list-none">
               <button
                 type="button"
-                onClick={() => void updateClientSettings({ sidebarAssistantsShowAll: !showAll })}
+                onClick={() =>
+                  void updateClientSettings({ sidebarAssistantsShowAll: !row.showAll })
+                }
                 className={cn(
                   "flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
                   FOCUS_RING,
@@ -874,20 +642,46 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
               >
                 <ChevronDownIcon
                   aria-hidden
-                  className={cn("size-3 shrink-0", showAll && "rotate-180")}
+                  className={cn("size-3 shrink-0", row.showAll && "rotate-180")}
                 />
-                {showAll ? "Show less" : `Show all (${ranked.length})`}
+                {row.showAll ? "Show less" : `Show all (${row.total})`}
               </button>
             </li>
-          ) : null}
-        </>
-      )}
+          );
+        }
+        const chatKey =
+          row.entry.assistant.threadId === null
+            ? null
+            : scopedThreadKey(
+                scopeThreadRef(row.entry.environmentId, row.entry.assistant.threadId),
+              );
+        return (
+          <AssistantRow
+            key={row.key}
+            entry={row.entry}
+            mood={row.mood}
+            indicatorKind={row.indicator?.kind ?? null}
+            indicatorCount={
+              row.indicator !== null && "count" in row.indicator ? row.indicator.count : 0
+            }
+            item={row.item}
+            nested={row.nested}
+            environmentLabel={
+              environmentCount > 1
+                ? (props.environmentLabelById.get(row.entry.environmentId) ?? null)
+                : null
+            }
+            isActive={chatKey !== null && chatKey === props.routeThreadKey}
+            activeThreadKey={hasTasks(row.item) ? props.routeThreadKey : null}
+            onOpen={props.onOpenThread}
+            jumpLabelByKey={props.jumpLabelByKey}
+            renderTaskRow={hasTasks(row.item) ? props.renderTaskRow : undefined}
+            onThreadContextMenu={props.onThreadContextMenu}
+            reveal={revealFor(row)}
+          />
+        );
+      })}
       <DescribeAssistantDialog open={describing} onOpenChange={setDescribing} />
-      <li
-        aria-hidden
-        data-testid="sidebar-assistants-divider"
-        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-      />
     </>
   );
 });

@@ -7,8 +7,10 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { Profiler, useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import { useRouterState } from "@tanstack/react-router";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -17,27 +19,34 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { selectActiveMainFileSurface, useRightPanelStore } from "../rightPanelStore";
-import { readThreadShell, useProjects, useQuietThreadShells } from "../state/entities";
+import {
+  readThreadShell,
+  useProjects,
+  useQuietThreadShells,
+  useThreadShell,
+} from "../state/entities";
+import {
+  useAssistantEntries,
+  useAssistantLiveWork,
+  useAssistantTasksByAssistant,
+} from "../state/assistants";
 import * as session from "../state/session";
-import { setTaskDismissed } from "./assistants/useAssistantFlows";
+import { setTaskDismissed, useAssistantTeamFlows } from "./assistants/useAssistantFlows";
 import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "./chat/threadContextDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow, StaticThreadRow } from "./sidebar/SidebarThreadRow";
-import {
-  type AssistantSidebarModel,
-  useAssistantSidebarModel,
-} from "./assistants/useAssistantSidebarModel";
 import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
-vi.mock("./assistants/useAssistantSidebarModel", { spy: true });
 vi.mock("../state/session", { spy: true });
+vi.mock("../state/assistants", { spy: true });
 vi.mock("./assistants/useAssistantFlows", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
@@ -247,57 +256,118 @@ describe("sidebar thread pick", () => {
   });
 });
 
-/** One assistant whose task is also its project's thread, so the sidebar draws it twice. */
-function mockTaskCopy(
-  options: { readonly state?: "running" | "done"; readonly routed?: boolean } = {},
-) {
+interface AssistantSpec {
+  readonly id: string;
+  readonly archived?: boolean;
+  readonly role?: string;
+}
+
+/**
+ * Assistants, groups and their tasks as the state hooks return them, with live shells pushed per
+ * thread key the way a stream updates them. The route follows the test router when `route` is
+ * "router".
+ */
+function mockAssistantState(input: {
+  readonly assistants: ReadonlyArray<AssistantSpec>;
+  readonly teams?: ReadonlyArray<{ id: string; name: string; memberIds: string[] }>;
+  readonly tasks?: ReadonlyArray<{
+    readonly owner: string;
+    readonly shell: EnvironmentThreadShell;
+  }>;
+  readonly projectThreads?: ReadonlyArray<EnvironmentThreadShell>;
+  /** Assistants whose task list starts open. */
+  readonly expanded?: ReadonlyArray<string>;
+  readonly route?: "router" | ScopedThreadRef | null;
+}) {
+  const environmentId = EnvironmentId.make("local");
   const activeProject = project("active");
-  const task = threadShell(activeProject.id, 1);
-  const environmentId = activeProject.environmentId;
-  const routeThreadRef = options.routed ? { environmentId, threadId: task.id } : null;
-  const entry = {
+  const entryOf = (spec: AssistantSpec) => ({
     environmentId,
     assistant: {
-      id: "jarvis",
-      name: "Jarvis",
-      threadId: ThreadId.make("assistant:jarvis:1"),
-      role: "",
+      id: spec.id,
+      name: spec.id === "jarvis" ? "Jarvis" : `Assistant ${spec.id}`,
+      handle: spec.id,
+      role: spec.role ?? "",
+      threadId: ThreadId.make(`assistant:${spec.id}:1`),
       scope: "all",
+      projectId: activeProject.id,
+      projectIds: [],
+      isDefault: spec.id === "jarvis",
+      avatar: null,
+      icon: null,
+      archivedAt: spec.archived ? "2026-01-02T00:00:00.000Z" : null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
     },
-  } as never as AssistantSidebarModel["active"][number];
-  vi.mocked(useAssistantSidebarModel).mockReturnValue({
-    enabled: true,
-    collapsed: false,
-    showAll: false,
-    expandedGroups: [],
-    active: [entry],
-    teams: [],
-    ranked: [],
-    shown: [{ entry, presence: { mood: "idle" } }],
-    hidden: 0,
-    items: new Map([
-      [
-        "local:jarvis",
-        {
-          sections: {
-            pinned: [],
-            open: [{ task: { threadId: task.id }, shell: task, state: options.state ?? "running" }],
-            snoozed: [],
-            settled: [],
-          },
-          expanded: true,
-          subagents: [],
-        },
-      ],
+  });
+  const active = input.assistants.filter((spec) => !spec.archived).map(entryOf);
+  const archived = input.assistants.filter((spec) => spec.archived).map(entryOf);
+  const teams = (input.teams ?? []).map((team) => ({
+    environmentId,
+    team: { ...team, chat: null, updatedAt: "2026-01-01T00:00:00.000Z" },
+  }));
+  const tasks = input.tasks ?? [];
+  const live = new Map<string, EnvironmentThreadShell>(
+    [...(input.projectThreads ?? []), ...tasks.map((task) => task.shell)].map((shell) => [
+      shell.id,
+      shell,
     ]),
-    threadKeys: ["local:assistant:jarvis:1", `local:${task.id}`],
-  } as never as AssistantSidebarModel);
+  );
+  let quiet: ReadonlyArray<EnvironmentThreadShell> = [...live.values()];
+  const listeners = new Set<() => void>();
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const entries = { active, archived, teams, activeTeams: teams, environmentIds: [] };
+  // As the state atom does, only active assistants list tasks.
+  const tasksByAssistant = new Map(
+    active.map(({ assistant }) => [
+      `local:${assistant.id}`,
+      tasks
+        .filter((task) => task.owner === assistant.id)
+        .map((task) => ({
+          threadId: task.shell.id,
+          assistantId: assistant.id,
+          projectId: activeProject.id,
+          title: task.shell.title,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          dismissedAt: null,
+        })),
+    ]),
+  );
+  const work = { sites: [], subagents: new Map(), taskThreadKeys: new Set<string>() };
+  vi.mocked(useAssistantEntries).mockReturnValue(entries as never);
+  vi.mocked(useAssistantTasksByAssistant).mockReturnValue(tasksByAssistant as never);
+  vi.mocked(useAssistantLiveWork).mockReturnValue(work as never);
   vi.mocked(useProjects).mockReturnValue([activeProject]);
-  vi.mocked(useQuietThreadShells).mockReturnValue([threadShell(activeProject.id, 0), task]);
-  vi.mocked(useThreadRouteTarget).mockReturnValue({
-    kind: "server",
-    threadRef: routeThreadRef,
-  } as never);
+  vi.mocked(useQuietThreadShells).mockImplementation(() =>
+    useSyncExternalStore(subscribe, () => quiet),
+  );
+  const shellCalls = new Map<string, number>();
+  vi.mocked(useThreadShell).mockImplementation((ref) => {
+    const id = ref?.threadId ?? "";
+    shellCalls.set(id, (shellCalls.get(id) ?? 0) + 1);
+    return useSyncExternalStore(subscribe, () => live.get(id) ?? null);
+  });
+  const route = input.route ?? null;
+  if (route === "router") {
+    vi.mocked(useThreadRouteTarget).mockImplementation(() => {
+      const path = useRouterState({ select: (state) => state.location.pathname });
+      const match = /^\/([^/]+)\/([^/]+)$/.exec(decodeURIComponent(path));
+      return {
+        kind: "server",
+        threadRef:
+          match === null
+            ? null
+            : { environmentId: EnvironmentId.make(match[1]!), threadId: ThreadId.make(match[2]!) },
+      } as never;
+    });
+  } else {
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: route } as never);
+  }
   vi.mocked(useHandleNewThread).mockReturnValue({
     activeDraftThread: null,
     activeThread: null,
@@ -305,10 +375,67 @@ function mockTaskCopy(
     defaultProjectFallbackReady: true,
     handleNewThread: vi.fn().mockResolvedValue(null),
     routeDraftId: null,
-    routeThreadRef,
+    routeThreadRef: route === "router" ? null : route,
   });
-  return task;
+  useUiStateStore.setState({
+    projectExpandedById: Object.fromEntries(
+      (input.expanded ?? []).map((id) => [`assistant:local:${id}`, true]),
+    ),
+  });
+  return {
+    shellCalls,
+    /** A streaming tick: the live shell moves, the quiet list holds still. */
+    push: (shell: EnvironmentThreadShell) => {
+      live.set(shell.id, shell);
+      notify();
+    },
+    /** A change the quiet list sees too, such as a run ending. */
+    settle: (shell: EnvironmentThreadShell) => {
+      live.set(shell.id, shell);
+      quiet = quiet.map((candidate) => (candidate.id === shell.id ? shell : candidate));
+      notify();
+    },
+    [Symbol.dispose]: () => {
+      for (const mock of [
+        useThreadShell,
+        useQuietThreadShells,
+        useAssistantEntries,
+        useAssistantTasksByAssistant,
+        useAssistantLiveWork,
+        useThreadRouteTarget,
+      ] as const) {
+        vi.mocked(mock).mockReset();
+      }
+      useUiStateStore.setState({ projectExpandedById: {} });
+    },
+  };
 }
+
+const taskShell = (index: number, status: "running" | "completed" = "running", tick = 0) => ({
+  ...makeThreadFixture({
+    environmentId: EnvironmentId.make("local"),
+    id: ThreadId.make(`task-${index}`),
+    projectId: ProjectId.make("active"),
+    title: `Task ${index}`,
+    runtime: { status, activeRunId: status === "running" ? "run-1" : null } as never,
+  }),
+  updatedAt: `2026-01-01T00:00:${String(tick % 60).padStart(2, "0")}.000Z`,
+});
+
+/** Jarvis with one task in the project "active", beside one thread of the user's own. */
+const jarvisWithTask = (
+  options: {
+    readonly state?: "running" | "completed";
+    readonly route?: ScopedThreadRef | null;
+  } = {},
+) =>
+  mockAssistantState({
+    assistants: [{ id: "jarvis" }],
+    tasks: [{ owner: "jarvis", shell: taskShell(1, options.state) }],
+    projectThreads: [threadShell(ProjectId.make("active"), 0)],
+    expanded: ["jarvis"],
+    route: options.route ?? null,
+  });
 
 const sidebarElement = () => (
   <SidebarProvider>
@@ -316,98 +443,31 @@ const sidebarElement = () => (
   </SidebarProvider>
 );
 
-describe("sidebar assistants section", () => {
-  it("numbers its rows before the projects' and draws a task as a second, unsortable row", async () => {
-    const activeProject = project("active");
-    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
-    const task = threads[1]!;
-    const environmentId = activeProject.environmentId;
-    const entry = {
-      environmentId,
-      assistant: {
-        id: "jarvis",
-        name: "Jarvis",
-        handle: "jarvis",
-        threadId: ThreadId.make("assistant:jarvis:1"),
-        role: "",
-        scope: "all",
-        projectId: "p0",
-        avatar: null,
-        icon: null,
-      },
-    } as never as AssistantSidebarModel["active"][number];
-    vi.mocked(useAssistantSidebarModel).mockReturnValue({
-      enabled: true,
-      collapsed: false,
-      showAll: false,
-      expandedGroups: [],
-      active: [entry],
-      teams: [],
-      ranked: [],
-      shown: [{ entry, presence: { mood: "idle" } }],
-      hidden: 0,
-      items: new Map([
-        [
-          "local:jarvis",
-          {
-            sections: {
-              pinned: [],
-              open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
-              snoozed: [],
-              settled: [],
-            },
-            expanded: true,
-            subagents: [],
-          },
-        ],
-      ]),
-      threadKeys: ["local:assistant:jarvis:1", `local:${task.id}`],
-    } as never as AssistantSidebarModel);
-    vi.mocked(useProjects).mockReturnValue([activeProject]);
-    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
-    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: { environmentId, projectId: activeProject.id },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef: null,
-    });
-    await using screen = await render(
-      <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-      </SidebarProvider>,
-    );
+const TASK_COPY = "assistant:local:jarvis/local:task-1";
+
+describe("sidebar teams zone", () => {
+  it("numbers Teams rows before the projects' and draws an assistant's task only under it", async () => {
+    using _state = jarvisWithTask();
+    await using screen = await render(sidebarElement());
     await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
-    const copy = screen.container.querySelector(
-      `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
+    const copy = await vi.waitUntil(() =>
+      screen.container.querySelector(`[data-sidebar-row="${TASK_COPY}"]`),
     );
-    expect(copy?.getAttribute("data-sidebar-parent")).toBe("assistant:local:jarvis");
-    // The list's geometry reads only the project's own row of the thread.
-    expect(screen.container.querySelectorAll(`[data-thread-item="local:${task.id}"]`)).toHaveLength(
-      1,
-    );
+    expect(copy.getAttribute("data-sidebar-parent")).toBe("assistant:local:jarvis");
+    // The project list leaves the assistant's task out.
+    expect(screen.container.querySelectorAll('[data-thread-item="local:task-1"]')).toHaveLength(0);
+    expect(screen.container.querySelectorAll('[data-sidebar-row="local:task-1"]')).toHaveLength(0);
 
     using _timers = fakeTimers();
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
-    const before = vi.mocked(StaticThreadRow).mock.calls.length;
     await userEvent.keyboard(`{${modifier}>}`);
     await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
     const hints = () =>
       [...screen.container.querySelectorAll("[data-jump-hint]")].map((hint) =>
         hint.closest("[data-sidebar-row]")?.getAttribute("data-sidebar-row"),
       );
-    // Two shortcuts: the assistant's chat, then its task, on both rows of the task.
-    expect(hints().toSorted()).toEqual(
-      [
-        "assistant:local:jarvis",
-        `assistant:local:jarvis/local:${task.id}`,
-        `local:${task.id}`,
-      ].toSorted(),
-    );
-    expect(vi.mocked(StaticThreadRow).mock.calls.length).toBeGreaterThan(before);
+    // The assistant's chat, then its task; the project's own thread comes after them.
+    expect(hints()).toEqual(["assistant:local:jarvis", TASK_COPY]);
     await userEvent.keyboard(`{/${modifier}}`);
     await userEvent.keyboard(`{${modifier}>}1{/${modifier}}`);
     await vi.waitFor(() =>
@@ -417,22 +477,82 @@ describe("sidebar assistants section", () => {
     );
   });
 
-  it("offers Dismiss in a finished task copy's action slot instead of Settle", async () => {
-    const task = mockTaskCopy({ state: "done" });
+  it.each([
+    { archived: false, listedInProject: false },
+    { archived: true, listedInProject: true },
+  ])(
+    "an assistant archived=$archived leaves its task in the project list: $listedInProject",
+    async ({ archived, listedInProject }) => {
+      using _state = mockAssistantState({
+        assistants: [{ id: "jarvis" }, { id: "nova", archived }],
+        tasks: [{ owner: "nova", shell: taskShell(1) }],
+        projectThreads: [threadShell(ProjectId.make("active"), 0)],
+        expanded: ["nova"],
+      });
+      await using screen = await render(sidebarElement());
+      await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+      await vi.waitFor(() =>
+        expect(screen.container.querySelectorAll('[data-thread-item="local:task-1"]').length).toBe(
+          listedInProject ? 1 : 0,
+        ),
+      );
+      expect(
+        screen.container.querySelectorAll('[data-sidebar-row="assistant:local:nova/local:task-1"]'),
+      ).toHaveLength(listedInProject ? 0 : 1);
+      // The Agents section is gone; Teams and Projects are the only lists.
+      expect(screen.container.querySelector('[data-sidebar-row="section:agents"]')).toBeNull();
+      expect(screen.container.textContent).not.toContain("Agents");
+    },
+  );
+
+  it("keeps a clicked task row still while its thread opens", async () => {
+    using _state = mockAssistantState({
+      assistants: [{ id: "jarvis" }],
+      tasks: [{ owner: "jarvis", shell: taskShell(1) }],
+      // Pinned, so they list above where the project would list the task, far off-screen.
+      projectThreads: Array.from({ length: 60 }, (_, index) => ({
+        ...threadShell(ProjectId.make("active"), index),
+        pinnedAt: "2026-01-01T00:00:00.000Z",
+        pinOrderKey: `a${String(index).padStart(2, "0")}`,
+      })),
+      expanded: ["jarvis"],
+      route: "router",
+    });
+    await using screen = await render(sidebarElement());
+    const copy = await vi.waitUntil(() =>
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${TASK_COPY}"]`),
+    );
+    const top = copy.getBoundingClientRect().top;
+    await userEvent.click(copy);
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/local/task-1"));
+    // The route reached the sidebar once the row shows as current.
+    await vi.waitFor(() =>
+      expect(
+        screen.container
+          .querySelector(`[data-sidebar-row="${TASK_COPY}"]`)
+          ?.getAttribute("aria-current"),
+      ).toBe("page"),
+    );
+    const after = screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${TASK_COPY}"]`)!;
+    expect(after.getBoundingClientRect().top).toBe(top);
+  });
+
+  it("offers Dismiss in a finished task's action slot instead of Settle", async () => {
+    using _state = jarvisWithTask({ state: "completed" });
     vi.mocked(setTaskDismissed).mockResolvedValue(undefined);
     await using screen = await render(sidebarElement());
     const copy = await vi.waitUntil(() =>
-      screen.container.querySelector<HTMLElement>(
-        `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
-      ),
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${TASK_COPY}"]`),
     );
     expect(copy.querySelector('[aria-label="Settle thread"]')).toBeNull();
     copy.querySelector<HTMLElement>('[aria-label="Dismiss task"]')!.click();
-    expect(setTaskDismissed).toHaveBeenCalledWith("local", task.id, true);
+    expect(setTaskDismissed).toHaveBeenCalledWith("local", "task-1", true);
   });
 
-  it("walks to the previous thread through the assistants section, as ⌘1–9 numbers it", async () => {
-    mockTaskCopy({ routed: true });
+  it("walks to the previous thread through the Teams zone, as ⌘1–9 numbers it", async () => {
+    using _state = jarvisWithTask({
+      route: { environmentId: EnvironmentId.make("local"), threadId: ThreadId.make("task-1") },
+    });
     await using screen = await render(sidebarElement());
     await vi.waitUntil(() =>
       screen.container.querySelector('[data-sidebar-row="assistant:local:jarvis"]'),
@@ -446,31 +566,28 @@ describe("sidebar assistants section", () => {
     );
   });
 
-  it("renames a task in place on the row acted on, not on its project's row", async () => {
-    const task = mockTaskCopy();
+  it("renames a task in place on its row under the assistant", async () => {
+    using _state = jarvisWithTask();
     using _scope = vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true);
     using _liveScope = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
     await using screen = await render(sidebarElement());
-    const copyKey = `assistant:local:jarvis/local:${task.id}`;
     const copy = await vi.waitUntil(() =>
-      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${copyKey}"]`),
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${TASK_COPY}"]`),
     );
     await userEvent.dblClick(copy);
     const inputs = () =>
       [...screen.container.querySelectorAll('input[aria-label="Thread title"]')].map((input) =>
         input.closest("li")?.querySelector("[data-sidebar-row]")?.getAttribute("data-sidebar-row"),
       );
-    await vi.waitFor(() => expect(inputs()).toEqual([copyKey]));
+    await vi.waitFor(() => expect(inputs()).toEqual([TASK_COPY]));
   });
 
-  it("drags a task's second row into a split of its project", async () => {
-    const task = mockTaskCopy();
-    vi.mocked(readThreadShell).mockReturnValue(task);
+  it("drags a task row into a split of its project", async () => {
+    using _state = jarvisWithTask();
+    vi.mocked(readThreadShell).mockReturnValue(taskShell(1));
     await using screen = await render(sidebarElement());
     const copy = await vi.waitUntil(() =>
-      screen.container.querySelector(
-        `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
-      ),
+      screen.container.querySelector(`[data-sidebar-row="${TASK_COPY}"]`),
     );
     const pointer = (type: string, x: number, y: number) =>
       new PointerEvent(type, {
@@ -497,6 +614,84 @@ describe("sidebar assistants section", () => {
     );
     document.dispatchEvent(pointer("pointermove", 40, 40));
     document.dispatchEvent(pointer("pointerup", 40, 40));
-    expect(drops.map((drop) => drop.threadKey)).toEqual([`local:${task.id}`]);
+    expect(drops.map((drop) => drop.threadKey)).toEqual(["local:task-1"]);
+  });
+});
+
+describe("sidebar teams render cost", () => {
+  it("re-renders only the rows of a streaming task, with 37 assistants in 7 groups", async () => {
+    const owners = [1, 5, 9, 13, 17];
+    using state = mockAssistantState({
+      assistants: Array.from({ length: 37 }, (_, index) => ({
+        id: `a${index}`,
+        role: index % 3 === 0 ? "Engineer" : "",
+      })),
+      // Five members each; the last of each group also sits in the next one.
+      teams: Array.from({ length: 7 }, (_, index) => ({
+        id: `g${index}`,
+        name: `Group ${index}`,
+        memberIds: [0, 1, 2, 3, 4].map((offset) => `a${(index * 4 + offset) % 37}`),
+      })),
+      tasks: owners.map((owner, index) => ({ owner: `a${owner}`, shell: taskShell(index) })),
+      expanded: owners.map((owner) => `a${owner}`),
+    });
+    const previousSettings = getClientSettings();
+    using _settings = { [Symbol.dispose]: () => __setClientSettingsForTests(previousSettings) };
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarAssistantsExpandedGroups: Array.from(
+        { length: 7 },
+        (_, index) => `group:local:g${index}`,
+      ),
+      sidebarAssistantsShowAll: true,
+    });
+    let commits = 0;
+    await using screen = await render(
+      <Profiler id="sidebar" onRender={() => (commits += 1)}>
+        {sidebarElement()}
+      </Profiler>,
+    );
+    await vi.waitUntil(() =>
+      screen.container.querySelector('[data-sidebar-row="assistant:local:a36"]'),
+    );
+    const ownerChat = (id: string) => owners.some((owner) => id === `assistant:a${owner}:1`);
+    const chatRenders = (filter: (id: string) => boolean) =>
+      [...state.shellCalls]
+        .filter(([id]) => id.startsWith("assistant:") && filter(id))
+        .reduce((sum, [, count]) => sum + count, 0);
+    const snapshot = () => ({
+      commits,
+      assistantRows: chatRenders(() => true),
+      unrelatedAssistantRows: chatRenders((id) => !ownerChat(id)),
+      folderRows: vi.mocked(useAssistantTeamFlows).mock.calls.length,
+      taskRows: vi.mocked(StaticThreadRow).mock.calls.length,
+      projectRows: vi.mocked(SortableThreadRow).mock.calls.length,
+    });
+    const delta = (from: ReturnType<typeof snapshot>) =>
+      Object.fromEntries(
+        Object.entries(snapshot()).map(([key, value]) => [
+          key,
+          value - from[key as keyof typeof from],
+        ]),
+      ) as ReturnType<typeof snapshot>;
+    const UPDATES = 50;
+    // A first push flushes whatever the mount left pending, so the count starts from rest.
+    await act(() => state.push(taskShell(0, "running", 0)));
+    const mounted = snapshot();
+    for (let tick = 0; tick < UPDATES; tick += 1) {
+      await act(() => state.push(taskShell(tick % 5, "running", tick + 1)));
+    }
+    const streamed = delta(mounted);
+    const beforeSettle = snapshot();
+    await act(() => state.settle(taskShell(0, "completed", 59)));
+    const settled = delta(beforeSettle);
+    console.info("teams render cost", JSON.stringify({ UPDATES, streamed, settled }));
+    expect(streamed.unrelatedAssistantRows).toBe(0);
+    expect(streamed.folderRows).toBe(0);
+    expect(streamed.taskRows).toBeLessThanOrEqual(UPDATES);
+    expect(streamed.assistantRows).toBe(0);
+    expect(streamed.commits).toBeLessThanOrEqual(UPDATES);
+    expect(settled.unrelatedAssistantRows).toBe(0);
+    expect(settled.folderRows).toBe(0);
   });
 });

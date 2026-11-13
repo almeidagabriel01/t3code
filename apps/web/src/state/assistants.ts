@@ -50,6 +50,7 @@ import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentsWithScope } from "./session";
 import { environmentThreadShells } from "./threads";
+import { reuseEntries, sameStamped } from "./stableEntries";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -119,7 +120,39 @@ const assistantEntriesAtom = Atom.family((key: string) =>
         archived.push({ environmentId, assistant });
       }
     }
-    return { active, archived, teams, activeTeams, archivedTeams, environmentIds };
+    // Rows memoize on their entry, so an entry whose record did not change keeps its identity.
+    const prior = Option.getOrUndefined(
+      get.self<{
+        readonly active: ReadonlyArray<AssistantEntry>;
+        readonly archived: ReadonlyArray<AssistantEntry>;
+        readonly teams: ReadonlyArray<AssistantTeamEntry>;
+        readonly activeTeams: ReadonlyArray<AssistantTeamEntry>;
+        readonly archivedTeams: ReadonlyArray<AssistantTeamEntry>;
+        readonly environmentIds: ReadonlyArray<EnvironmentId>;
+      }>(),
+    );
+    const assistantKey = (entry: AssistantEntry) => `${entry.environmentId}:${entry.assistant.id}`;
+    const sameAssistant = (a: AssistantEntry, b: AssistantEntry) =>
+      a.environmentId === b.environmentId && sameStamped(a.assistant, b.assistant);
+    const teamKey = (entry: AssistantTeamEntry) => `${entry.environmentId}:${entry.team.id}`;
+    // Chat counters move without a new stamp.
+    const sameTeam = (a: AssistantTeamEntry, b: AssistantTeamEntry) =>
+      a.team === b.team ||
+      (a.environmentId === b.environmentId &&
+        sameStamped(a.team, b.team) &&
+        JSON.stringify(a.team.chat) === JSON.stringify(b.team.chat));
+    const next = {
+      active: reuseEntries(prior?.active, active, assistantKey, sameAssistant),
+      archived: reuseEntries(prior?.archived, archived, assistantKey, sameAssistant),
+      teams: reuseEntries(prior?.teams, teams, teamKey, sameTeam),
+      activeTeams: reuseEntries(prior?.activeTeams, activeTeams, teamKey, sameTeam),
+      archivedTeams: reuseEntries(prior?.archivedTeams, archivedTeams, teamKey, sameTeam),
+      environmentIds: reuseEntries(prior?.environmentIds, environmentIds, String, Object.is),
+    };
+    return prior !== undefined &&
+      (Object.keys(next) as Array<keyof typeof next>).every((field) => next[field] === prior[field])
+      ? prior
+      : next;
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
 

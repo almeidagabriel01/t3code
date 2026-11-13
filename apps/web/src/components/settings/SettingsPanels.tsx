@@ -509,7 +509,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Two-line thread rows"]
       : []),
     ...(settings.sidebarShowSubagents !== DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents ||
-    settings.sidebarShowAgentsSection !== DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection ||
     settings.sidebarShowAssistantsSection !==
       DEFAULT_UNIFIED_SETTINGS.sidebarShowAssistantsSection ||
     settings.sidebarAgentActivityDisplayMode !==
@@ -716,7 +715,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadOrder,
       boringSidebarMultilineRows: DEFAULT_UNIFIED_SETTINGS.boringSidebarMultilineRows,
       sidebarShowSubagents: DEFAULT_UNIFIED_SETTINGS.sidebarShowSubagents,
-      sidebarShowAgentsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAgentsSection,
       sidebarShowAssistantsSection: DEFAULT_UNIFIED_SETTINGS.sidebarShowAssistantsSection,
       sidebarAgentActivityDisplayMode: DEFAULT_UNIFIED_SETTINGS.sidebarAgentActivityDisplayMode,
       projectHoverCardProperties: DEFAULT_UNIFIED_SETTINGS.projectHoverCardProperties,

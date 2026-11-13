@@ -39,18 +39,13 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
-  MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
-  ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
-  UserRoundIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -120,7 +115,7 @@ import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Spinner } from "../ui/spinner";
+import { resolveSidebarTopStatus, TopStatusIcon } from "./sidebarTopStatus";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
@@ -479,11 +474,11 @@ function useLiveRowThread(arranged: SidebarThreadSummary): SidebarThreadSummary 
 const noNodeRef = () => {};
 
 /**
- * A second row for a thread its project already lists (the assistants section). It never joins
- * the sortable list: two sortables with one id break dnd-kit. Dragging it out splits the pane.
+ * A thread row outside the project lists (an assistant's task). It never joins the sortable list,
+ * which holds only project rows. Dragging it out splits the pane.
  */
 export function StaticThreadRow(
-  props: Omit<SidebarThreadRowProps, "sortable" | "revealRef"> & { sectionRowKey: string },
+  props: Omit<SidebarThreadRowProps, "sortable"> & { sectionRowKey: string },
 ) {
   const thread = useLiveRowThread(props.thread);
   const bag = {
@@ -538,25 +533,6 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
     </>
   ),
 };
-
-const TOP_STATUS_ICONS = {
-  working: CircleDashedIcon,
-  waiting: CircleDotDashedIcon,
-  input: MessageCircleQuestionIcon,
-  request: UserRoundIcon,
-  approval: ShieldQuestionIcon,
-  failed: CircleAlertIcon,
-  done: CircleCheckIcon,
-  woke: AlarmClockIcon,
-} as const;
-
-function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: string }) {
-  if (props.icon === "working") {
-    return <Spinner aria-hidden role="presentation" size="md" className="shrink-0" />;
-  }
-  const Icon = TOP_STATUS_ICONS[props.icon];
-  return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
-}
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
@@ -770,74 +746,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       isActive: props.isActive,
       isSelected,
     });
-  // Approval and input already say the thread needs the user; a decision says it too, over the rest.
-  const topStatus =
-    hasOpenDecision && status !== "approval" && status !== "input"
-      ? {
-          label: "Decision",
-          icon: "input" as const,
-          className: "text-warning-foreground",
-        }
-      : status === "working"
-        ? {
-            label:
-              thread.runtime?.status === "preparing"
-                ? "Setting up"
-                : thread.goal?.status === "active"
-                  ? "Goal"
-                  : "Working",
-            icon: "working" as const,
-            className: "text-info-foreground",
-          }
-        : status === "waiting"
-          ? {
-              label: "Waiting",
-              icon: "waiting" as const,
-              className: "text-muted-foreground",
-            }
-          : status === "approval"
-            ? {
-                label: "Approval",
-                icon: "approval" as const,
-                className: "text-warning-foreground",
-              }
-            : status === "input"
-              ? {
-                  label: "Input",
-                  icon: "input" as const,
-                  className: "text-warning-foreground",
-                }
-              : status === "request"
-                ? {
-                    label: "Request",
-                    icon: "request" as const,
-                    className: "text-guest-foreground",
-                  }
-                : status === "limited"
-                  ? {
-                      label: "Limited",
-                      icon: "failed" as const,
-                      className: "text-warning-foreground",
-                    }
-                  : status === "failed"
-                    ? {
-                        label: "Failed",
-                        icon: "failed" as const,
-                        className: "text-error-foreground",
-                      }
-                    : isWoke
-                      ? {
-                          label: "Woke",
-                          icon: "woke" as const,
-                          className: "text-warning-foreground",
-                        }
-                      : isUnread
-                        ? {
-                            label: "Done",
-                            icon: "done" as const,
-                            className: "text-success-foreground",
-                          }
-                        : null;
+  const topStatus = resolveSidebarTopStatus({
+    status,
+    hasOpenDecision,
+    isWoke,
+    isUnread,
+    runtimeStatus: thread.runtime?.status,
+    goalActive: thread.goal?.status === "active",
+  });
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
