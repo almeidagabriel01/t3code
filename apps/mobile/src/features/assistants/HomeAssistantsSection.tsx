@@ -134,7 +134,13 @@ function AssistantRow(props: {
   const { assistantsFolded, toggleAssistantFolded } = useHomeSectionPreferences();
   const foldKey = `${environmentId}:${assistant.id}`;
   const expanded = !assistantsFolded.has(foldKey);
-  const foldable = sections.open.length + sections.settled.length + subagents.length > 0;
+  const foldable =
+    sections.pinned.length +
+      sections.open.length +
+      sections.snoozed.length +
+      sections.settled.length +
+      subagents.length >
+    0;
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
   const state = useAssistantState(props.entry);

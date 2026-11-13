@@ -7,9 +7,16 @@ import {
 
 import type { assistantPresence, AssistantFace } from "./assistantRobot.ts";
 import type { EnvironmentThreadShell } from "./state/models.ts";
-import { sortSettledThreads, type SettledThreadTimestampInput } from "./state/threadSort.ts";
+import { effectiveSnoozed } from "./state/threadSettled.ts";
+import {
+  sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
+  type SettledThreadTimestampInput,
+} from "./state/threadSort.ts";
 
-type SettledShell = SettledThreadTimestampInput & Pick<EnvironmentThreadShell, "settledOverride">;
+type SectionShell = SettledThreadTimestampInput &
+  Parameters<typeof effectiveSnoozed>[0] &
+  Pick<EnvironmentThreadShell, "settledOverride" | "pinnedAt" | "pinOrderKey" | "createdAt">;
 
 /** What a task row says, read from the task thread's own shell. */
 export type AssistantTaskState = AssistantTaskStatus;
@@ -69,20 +76,25 @@ export interface AssistantTaskRow<S extends TaskShell> {
 }
 
 export interface AssistantTaskSections<S extends TaskShell> {
+  /** Pinned threads, in their pin order, above the rest as a project's Pinned shelf. */
+  readonly pinned: ReadonlyArray<AssistantTaskRow<S>>;
   /** Ordered by the caller's project-list sort, so the rows rank as its project rows do. */
   readonly open: ReadonlyArray<AssistantTaskRow<S>>;
+  /** Snoozed threads, soonest wake first, as a project's Snoozed shelf. */
+  readonly snoozed: ReadonlyArray<AssistantTaskRow<S>>;
   /** Threads the server settled (finished and seen), newest first, as a project's Settled shelf. */
   readonly settled: ReadonlyArray<AssistantTaskRow<S>>;
 }
 
 /**
- * An assistant's task rows split as a project splits its threads. Dismissed tasks, deleted threads
- * and archived threads drop out, as archived threads leave project lists.
+ * An assistant's task rows split as a project splits its threads: snooze wins until its wake time,
+ * then settlement, then a pin. Dismissed tasks, deleted threads and archived threads drop out.
  */
-export function assistantTaskRows<S extends TaskShell & SettledShell>(
+export function assistantTaskRows<S extends TaskShell & SectionShell>(
   tasks: ReadonlyArray<AssistantTask>,
   shellOf: (threadId: string) => S | null | undefined,
   sortOpen: (shells: ReadonlyArray<S>) => ReadonlyArray<S>,
+  options: { readonly now: string },
 ): AssistantTaskSections<S> {
   const rowByShell = new Map<S, AssistantTaskRow<S>>();
   for (const task of tasks) {
@@ -91,12 +103,23 @@ export function assistantTaskRows<S extends TaskShell & SettledShell>(
     if (shell == null || shell.archivedAt != null) continue;
     rowByShell.set(shell, { task, shell, state: assistantTaskState(shell) });
   }
-  const shells = [...rowByShell.keys()];
+  const pinned: S[] = [];
+  const open: S[] = [];
+  const snoozed: S[] = [];
+  const settled: S[] = [];
+  for (const shell of rowByShell.keys()) {
+    if (effectiveSnoozed(shell, options)) snoozed.push(shell);
+    else if (shell.settledOverride === "settled") settled.push(shell);
+    else if (shell.pinnedAt != null) pinned.push(shell);
+    else open.push(shell);
+  }
   const rowsOf = (ordered: ReadonlyArray<S>) => ordered.map((shell) => rowByShell.get(shell)!);
   return {
-    open: rowsOf(sortOpen(shells.filter((shell) => shell.settledOverride !== "settled"))),
-    settled: rowsOf(
-      sortSettledThreads(shells.filter((shell) => shell.settledOverride === "settled")),
+    pinned: rowsOf(sortPinnedThreadsByOrderKey(pinned)),
+    open: rowsOf(sortOpen(open)),
+    snoozed: rowsOf(
+      [...snoozed].sort((a, b) => Date.parse(a.snoozedUntil!) - Date.parse(b.snoozedUntil!)),
     ),
+    settled: rowsOf(sortSettledThreads(settled)),
   };
 }

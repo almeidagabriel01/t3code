@@ -97,6 +97,7 @@ describe("assistantTaskRows", () => {
         sorted.push(open.map((s) => [...shells].find(([, v]) => v === s)![0]));
         return open.toReversed();
       },
+      { now: "2026-11-12T00:00:00.000Z" },
     );
     // A finished thread stays open until the server settles it; archived and deleted ones leave.
     expect(sorted).toEqual([["running-a", "waiting-a", "done-unseen"]]);
@@ -105,19 +106,46 @@ describe("assistantTaskRows", () => {
     expect(rows.open.map((row) => row.state)).toEqual(["done", "waiting", "running"]);
   });
 
+  it("puts pinned and snoozed tasks in their own sections, as a project does", () => {
+    const pinned = (key: string) => ({ ...running, pinnedAt: at.toString(), pinOrderKey: key });
+    const snoozed = (until: string) => ({ ...done, snoozedAt: at.toString(), snoozedUntil: until });
+    const byId = new Map<string, ReturnType<typeof shell>>([
+      ["pin-b", pinned("b")],
+      ["pin-a", pinned("a")],
+      ["open", running],
+      ["snooze-late", snoozed("2099-01-02T00:00:00.000Z")],
+      ["snooze-soon", snoozed("2099-01-01T00:00:00.000Z")],
+      ["snooze-over", snoozed("2000-01-01T00:00:00.000Z")],
+      ["pinned-settled", { ...settled("2026-11-05T00:00:00.000Z"), pinnedAt: at.toString() }],
+    ]);
+    const rows = assistantTaskRows(
+      [...byId.keys()].map((id) => task(id, "2026-11-02T00:00:00.000Z")),
+      (threadId) => byId.get(threadId),
+      (open) => open,
+      { now: "2026-11-12T00:00:00.000Z" },
+    );
+    expect(ids(rows.pinned)).toEqual(["pin-a", "pin-b"]);
+    // A snooze past its wake time is over; settlement wins over a stale pin.
+    expect(ids(rows.open)).toEqual(["open", "snooze-over"]);
+    expect(ids(rows.snoozed)).toEqual(["snooze-soon", "snooze-late"]);
+    expect(ids(rows.settled)).toEqual(["pinned-settled"]);
+  });
+
   it("hides dismissed tasks and lists nothing for no tasks", () => {
     const rows = assistantTaskRows(
       [{ ...task("running-a", "2026-11-05T00:00:00.000Z"), dismissedAt: at.toString() }],
       (threadId) => shells.get(threadId),
       (open) => open,
+      { now: "2026-11-12T00:00:00.000Z" },
     );
-    expect(rows).toEqual({ open: [], settled: [] });
+    expect(rows).toEqual({ pinned: [], open: [], snoozed: [], settled: [] });
     expect(
       assistantTaskRows(
         [],
         () => undefined,
         (open) => open,
+        { now: "2026-11-12T00:00:00.000Z" },
       ),
-    ).toEqual({ open: [], settled: [] });
+    ).toEqual({ pinned: [], open: [], snoozed: [], settled: [] });
   });
 });

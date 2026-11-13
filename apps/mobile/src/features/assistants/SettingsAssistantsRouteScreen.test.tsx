@@ -61,7 +61,7 @@ const defaults = () => ({
 });
 vi.mock("./AssistantTaskRows", () => ({
   AssistantTaskRows: () => null,
-  useAssistantTaskSections: () => ({ open: [], settled: [] }),
+  useAssistantTaskSections: () => ({ pinned: [], open: [], snoozed: [], settled: [] }),
 }));
 vi.mock("../../components/ui/ListActionRow", () => ({
   ListActionRow: (props: { label: string; onPress: () => void }) => (

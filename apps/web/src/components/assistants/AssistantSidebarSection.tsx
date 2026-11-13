@@ -187,7 +187,13 @@ const AssistantRow = memo(function AssistantRow(props: {
   );
   const setExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const subagents = props.subagents ?? [];
-  const foldable = sections.open.length + sections.settled.length + subagents.length > 0;
+  const foldable =
+    sections.pinned.length +
+      sections.open.length +
+      sections.snoozed.length +
+      sections.settled.length +
+      subagents.length >
+    0;
   const working = presence.mood === "working";
   const meta = assistantMetaLabel(presence);
   const statusDot = STATUS_DOT[presence.mood];

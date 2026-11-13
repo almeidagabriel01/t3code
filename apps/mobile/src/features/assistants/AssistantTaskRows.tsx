@@ -12,6 +12,7 @@ import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
+import { useNowMinuteMs } from "../../lib/clock";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -23,7 +24,10 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows } from "./useAssistantFlows";
 import { sortActiveThreadsForRows } from "../threads/threadListV2";
-import { ThreadListV2SettledShelfHeader } from "../threads/thread-list-v2-items";
+import {
+  ThreadListV2SettledShelfHeader,
+  ThreadListV2SnoozedShelfHeader,
+} from "../threads/thread-list-v2-items";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 
 const MOOD_OF_STATE: Record<AssistantTaskState, AssistantMood> = {
@@ -37,7 +41,12 @@ const DISMISS_ACTIONS = (canAct: boolean): MenuAction[] => [
   { id: "dismiss", title: "Dismiss task", image: "xmark", attributes: { disabled: !canAct } },
 ];
 
-const NO_SECTIONS: AssistantTaskSections<EnvironmentThreadShell> = { open: [], settled: [] };
+const NO_SECTIONS: AssistantTaskSections<EnvironmentThreadShell> = {
+  pinned: [],
+  open: [],
+  snoozed: [],
+  settled: [],
+};
 
 /** The assistant's task threads split and ordered exactly as the thread list orders a project's. */
 export function useAssistantTaskSections(
@@ -47,6 +56,7 @@ export function useAssistantTaskSections(
   const tasks = useAssistantTasks(environmentId, assistant.id);
   const shells = useQuietThreadShells();
   const { threadOrder } = useThreadListV2ShelfPreferences();
+  const nowMs = useNowMinuteMs();
   return useMemo(() => {
     if (tasks.length === 0) return NO_SECTIONS;
     const byId = new Map(
@@ -56,8 +66,9 @@ export function useAssistantTaskSections(
       tasks,
       (threadId) => byId.get(threadId as never),
       (open) => sortActiveThreadsForRows(open, threadOrder),
+      { now: new Date(nowMs).toISOString() },
     );
-  }, [tasks, shells, environmentId, threadOrder]);
+  }, [tasks, shells, environmentId, threadOrder, nowMs]);
 }
 
 /**
@@ -73,8 +84,9 @@ export function AssistantTaskRows(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const [settledExpanded, setSettledExpanded] = useState(false);
-  const { open, settled } = props.sections;
-  if (open.length === 0 && settled.length === 0) return null;
+  const [snoozedExpanded, setSnoozedExpanded] = useState(false);
+  const { pinned, open, snoozed, settled } = props.sections;
+  if (pinned.length + open.length + snoozed.length + settled.length === 0) return null;
   const renderRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => (
     <View key={task.threadId} className="flex-row items-center">
       <Pressable
@@ -131,7 +143,17 @@ export function AssistantTaskRows(props: {
   );
   return (
     <View testID="assistant-task-list" className="ml-3.5 border-l border-border pl-1">
+      {pinned.map(renderRow)}
       {open.map(renderRow)}
+      {snoozed.length === 0 ? null : (
+        <ThreadListV2SnoozedShelfHeader
+          count={snoozed.length}
+          expanded={snoozedExpanded}
+          onToggle={() => setSnoozedExpanded((value) => !value)}
+          {...(props.sidebar ? { pane: "sidebar" as const } : {})}
+        />
+      )}
+      {snoozedExpanded ? snoozed.map(renderRow) : null}
       {settled.length === 0 ? null : (
         <ThreadListV2SettledShelfHeader
           count={settled.length}

@@ -17,6 +17,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useAssistantTasks, type AssistantEntry } from "../../state/assistants";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
@@ -33,7 +34,12 @@ const STATE_TEXT: Record<AssistantTaskState, string> = {
   done: "text-muted-foreground",
 };
 
-const NO_SECTIONS: AssistantTaskSections<EnvironmentThreadShell> = { open: [], settled: [] };
+const NO_SECTIONS: AssistantTaskSections<EnvironmentThreadShell> = {
+  pinned: [],
+  open: [],
+  snoozed: [],
+  settled: [],
+};
 
 /** The assistant's task threads split and ordered exactly as a project's thread list. */
 export function useAssistantTaskSections(
@@ -45,6 +51,7 @@ export function useAssistantTaskSections(
   const threadOrder = useClientSettings((settings) => settings.sidebarThreadOrder);
   const lastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const openDecisionKeys = useOpenDecisionThreadKeys();
+  const nowMs = useNowMinuteMs();
   if (tasks.length === 0) return NO_SECTIONS;
   const byId = new Map(
     shells.filter((shell) => shell.environmentId === environmentId).map((s) => [s.id, s]),
@@ -54,6 +61,7 @@ export function useAssistantTaskSections(
     (threadId) => byId.get(threadId as never),
     (open) =>
       sortOpenThreadsForSidebar(open, threadOrder, { lastVisitedAtByKey, openDecisionKeys }),
+    { now: new Date(nowMs).toISOString() },
   );
 }
 
@@ -72,8 +80,9 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const [settledExpanded, setSettledExpanded] = useState(false);
-  const { open, settled } = props.sections;
-  if (open.length === 0 && settled.length === 0) return null;
+  const [snoozedExpanded, setSnoozedExpanded] = useState(false);
+  const { pinned, open, snoozed, settled } = props.sections;
+  if (pinned.length + open.length + snoozed.length + settled.length === 0) return null;
   const renderRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => (
     <li
       key={task.threadId}
@@ -129,7 +138,21 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
       data-testid="assistant-task-list"
       className={cn("m-0 p-0", !props.roomy && "ms-3.5 border-s border-foreground/10")}
     >
+      {pinned.map(renderRow)}
       {open.map(renderRow)}
+      {snoozed.length === 0 ? null : (
+        <li className="list-none">
+          <CollapsibleSectionHeader
+            expanded={snoozedExpanded}
+            data-testid="assistant-snoozed-toggle"
+            onClick={() => setSnoozedExpanded((value) => !value)}
+            accessory={<span className="font-normal tabular-nums">{snoozed.length}</span>}
+          >
+            Snoozed
+          </CollapsibleSectionHeader>
+        </li>
+      )}
+      {snoozedExpanded ? snoozed.map(renderRow) : null}
       {settled.length === 0 ? null : (
         <li className="list-none">
           <CollapsibleSectionHeader
