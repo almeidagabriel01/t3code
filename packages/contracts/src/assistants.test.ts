@@ -118,7 +118,16 @@ describe("Assistant", () => {
       rules: null,
       projectIds: null,
       channels: null,
+      onProblem: "offer",
     });
+  });
+
+  it("reads autonomy saved before problem levels existed as offering to fix", () => {
+    const saved = { mode: "reply-and-notify", rules: [], projectIds: null, channels: ["t3"] };
+    expect(decode({ ...row, autonomy: saved }).autonomy.onProblem).toBe("offer");
+    expect(
+      decode({ ...row, autonomy: { ...saved, onProblem: "fix-small" } }).autonomy.onProblem,
+    ).toBe("fix-small");
   });
 
   it("keeps a budget, filling the provider budget defaults", () => {

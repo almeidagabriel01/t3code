@@ -152,8 +152,14 @@ system service has no screen to use, and the page says so.
 
 An assistant answers quick things itself. For real work that takes several steps in code, it
 starts a thread in the right project with a full brief, using its instructions, model and access. You
-are not asked to wait: when the thread finishes, the assistant wakes up, checks the result, runs the
+are not asked to wait: when the thread finishes (not when it only pauses for its own subagents or
+background work), the assistant wakes up, checks the result, runs the
 tests, asks a teammate to review when that helps, sends fixes back, and only then tells you.
+If the thread stops to ask you something (an approval, a question or a decision), the assistant
+tells you in its chat right away what it needs and where to answer. It never answers for you. The
+same goes for approvals and decisions in tasks it hands off with `delegate_task`; a question from
+such a task goes to the assistant first, which answers it only when the answer follows from the task
+or your instructions, and otherwise asks you.
 
 The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
 their state (running, waiting, done or failed). Open one to see the work; the thread shows the
@@ -307,6 +313,35 @@ setting for you; it can only do that in a message you sent.
 An assistant can also send you a short message of its own, with a link to a conversation when it
 has one. It reaches Activity and Telegram (or iMessage when Telegram is off), never carries files or
 secrets, and stops while autonomy is paused.
+
+### Problems
+
+T3 Code watches every project for failures: a command that is not installed, an expired sign-in, a
+network, disk or memory failure, a Linux Runner job that could not sync or install, a provider
+session that fails, failing checks on a pull request, a scheduled task that fails, an unreachable
+linked environment, and the same failure three times in 24 hours. Each cause gets **one card** on
+its project's board (or the No-project board), titled by its kind, with what happened, where, and
+the conversations it came from. A repeat updates that card and shows **Seen N times**; once the card
+is done, archived or deleted, the next failure files a new card that links the old one.
+
+One assistant handles each card: the project assistant that has the project, or else one that works
+on all projects. The card shows **Handled by** its name. If none can work on the project, you get a
+notice saying so. The assistant's **When it finds a problem** setting decides what it does:
+
+- **Tell me**: a notice, nothing started.
+- **Offer to fix** (the default): a notice with a proposed fix; it starts after you agree.
+- **Fix small things**: starts small fixes on its own, such as a re-run, a sign-in, a dependency
+  reinstall or a few-line change in a new worktree, and asks before anything bigger.
+
+At every level it never pushes, merges, deploys, deletes or opens a pull request without your OK.
+A started fix runs in its own conversation, linked to the card, and moves the card to review when
+it ends. While autonomy is paused or past its daily limit, cards are still filed and the assistant
+catches up later.
+
+**Ignore this problem** on a card stops new reports of that cause; **Stop ignoring** undoes it.
+Turn detection off with **Detect problems** in **Settings → Assistants → Autonomy**, or for one
+project with **Detect problems in this project** in that project's settings (**Maintenance →
+Diagnostics**). You can also ask an agent to do any of these for you.
 
 ### Reminders and watches
 

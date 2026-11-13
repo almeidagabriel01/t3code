@@ -135,6 +135,10 @@ import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadR
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGroupChatRouteScreen";
+import {
+  AssistantGroupInfoRouteScreen,
+  AssistantInfoRouteScreen,
+} from "./features/assistants/AssistantInfoRouteScreen";
 import { AssistantGroupSettingsRouteScreen } from "./features/assistants/AssistantGroupSettingsRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
@@ -721,6 +725,16 @@ const RootStackConfig = createWorkspaceStackNavigator({
     AssistantGroupChat: createNativeStackScreen({
       screen: AssistantGroupChatRouteScreen,
       linking: "assistant-groups/:environmentId/:teamId",
+      options: pageRoute(),
+    }),
+    AssistantInfo: createNativeStackScreen({
+      screen: AssistantInfoRouteScreen,
+      linking: "assistants/:environmentId/:assistantId/info",
+      options: pageRoute(),
+    }),
+    AssistantGroupInfo: createNativeStackScreen({
+      screen: AssistantGroupInfoRouteScreen,
+      linking: "assistant-groups/:environmentId/:teamId/info",
       options: pageRoute(),
     }),
     NewTaskProject: createNativeStackScreen({

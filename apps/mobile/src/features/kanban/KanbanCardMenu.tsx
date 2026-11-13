@@ -4,6 +4,7 @@ import {
   definitionOfDoneWarning,
   dueAtToInput,
   inputToDueAt,
+  problemIgnoreLabel,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import type { EnvironmentId, KanbanCard, KanbanColumnId, KanbanLabelId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
@@ -18,7 +19,7 @@ const LABEL = "label:";
 /** Open, rename and the rest of Trello's quick editor; the other columns and the board's labels are submenus. */
 export function kanbanCardMenuActions(
   board: Pick<KanbanBoardState, "columns" | "labels">,
-  card: Pick<KanbanCard, "columnId" | "labelIds">,
+  card: Pick<KanbanCard, "columnId" | "labelIds"> & Partial<Pick<KanbanCard, "problem">>,
 ): MenuAction[] {
   const columns = board.columns.filter((column) => column.id !== card.columnId);
   return [
@@ -49,6 +50,15 @@ export function kanbanCardMenuActions(
           },
         ]),
     { id: "due", title: "Due date…", image: "calendar" },
+    ...(card.problem
+      ? [
+          {
+            id: "problem",
+            title: problemIgnoreLabel(card.problem.ignored),
+            image: card.problem.ignored ? "bell.badge" : "eye.slash",
+          },
+        ]
+      : []),
     { id: "archive", title: "Archive", image: "archivebox" },
     { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
   ];
@@ -118,6 +128,8 @@ export function KanbanCardMenu(props: {
       });
     } else if (id === "due") {
       promptDueDate(card.dueAt, (dueAt) => void actions.updateCard({ cardId, dueAt }));
+    } else if (id === "problem" && card.problem) {
+      void actions.setCardProblemIgnored({ cardId, ignored: !card.problem.ignored });
     } else if (id === "archive") {
       void actions.archiveCard({ cardId });
     } else if (id === "delete") {

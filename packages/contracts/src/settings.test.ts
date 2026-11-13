@@ -74,6 +74,17 @@ describe("autonomy settings", () => {
       maxUserMessagesPerDay: 20,
     });
   });
+
+  it("detects problems by default, and a project may turn detection off for itself", () => {
+    expect(decodeServerSettings({}).detectProblems).toBe(true);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("detectProblems");
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { [projectId]: { detectProblems: false } },
+    });
+    expect(settings.projectSettingsOverrides[projectId]?.detectProblems).toBe(false);
+    expect(decodeServerSettingsPatch({ detectProblems: false }).detectProblems).toBe(false);
+  });
 });
 
 describe("retention and idle timeout settings", () => {

@@ -435,6 +435,7 @@ import {
   KanbanCardIdInput,
   KanbanCardMoveInput,
   KanbanCardThreadLinkInput,
+  KanbanCardSetProblemIgnoredInput,
   KanbanCardUpdateInput,
   KanbanColumnCreateInput,
   KanbanColumnDeleteInput,
@@ -810,6 +811,7 @@ export const WS_METHODS = {
   kanbanCardComment: "kanban.cardComment",
   kanbanCardLinkThread: "kanban.cardLinkThread",
   kanbanCardUnlinkThread: "kanban.cardUnlinkThread",
+  kanbanCardSetProblemIgnored: "kanban.cardSetProblemIgnored",
 
   notesList: "notes.list",
   notesRead: "notes.read",
@@ -2952,6 +2954,12 @@ const WsKanbanCardUnlinkThreadRpc = Rpc.make(WS_METHODS.kanbanCardUnlinkThread, 
   error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
 });
 
+const WsKanbanCardSetProblemIgnoredRpc = Rpc.make(WS_METHODS.kanbanCardSetProblemIgnored, {
+  payload: KanbanCardSetProblemIgnoredInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -3141,6 +3149,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsKanbanCardCommentRpc,
   WsKanbanCardLinkThreadRpc,
   WsKanbanCardUnlinkThreadRpc,
+  WsKanbanCardSetProblemIgnoredRpc,
   WsNotesListRpc,
   WsNotesReadRpc,
   WsNotesWriteRpc,

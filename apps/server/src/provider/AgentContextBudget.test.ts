@@ -43,6 +43,7 @@ import { AssistantService } from "../assistants/AssistantService.ts";
 import { ComputerUse } from "../computerUse/ComputerUse.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
+import { ProblemDetector } from "../problems/ProblemDetector.ts";
 import { NoteWorkService } from "../notes/NoteWorkService.ts";
 import { NotesService } from "../notes/NotesService.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
@@ -78,6 +79,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(KanbanService)({}),
+  Layer.mock(ProblemDetector)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(MemoryService)({ importPorts: {} as MemoryService["Service"]["importPorts"] }),

@@ -699,48 +699,63 @@ it.effect("a user turn, including a channel or decision answer, may change a gro
   }),
 );
 
-it.effect("only the user turns an assistant's notifications on, and only the mode changes", () =>
-  Effect.gen(function* () {
-    const fromRoutine = yield* harness("full-access", {
-      id: "m2",
-      createdBy: "user",
-      scheduledTaskId: "task-1",
-    });
-    expect(
-      yield* fromRoutine.call({
+it.effect(
+  "only the user changes an assistant's notifications or problem level, and only that changes",
+  () =>
+    Effect.gen(function* () {
+      const fromRoutine = yield* harness("full-access", {
+        id: "m2",
+        createdBy: "user",
+        scheduledTaskId: "task-1",
+      });
+      expect(
+        yield* fromRoutine.call({
+          action: "update",
+          handle: "eng",
+          notifications: "reply-and-notify",
+        }),
+      ).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringContaining("this turn came from a scheduled task"),
+      });
+      expect(
+        yield* fromRoutine.call({ action: "update", handle: "eng", onProblem: "fix-small" }),
+      ).toMatchObject({ code: "capability_denied" });
+      expect(fromRoutine.writes).toEqual([]);
+      // Other changes from that turn need no user.
+      expect(
+        yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
+      ).toMatchObject({
+        status: "updated",
+      });
+
+      const { call, writes } = yield* harness("full-access");
+      const updated = yield* call({
         action: "update",
         handle: "eng",
         notifications: "reply-and-notify",
-      }),
-    ).toMatchObject({
-      code: "capability_denied",
-      message: expect.stringContaining("this turn came from a scheduled task"),
-    });
-    expect(fromRoutine.writes).toEqual([]);
-    // Other changes from that turn need no user.
-    expect(
-      yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
-    ).toMatchObject({
-      status: "updated",
-    });
-
-    const { call, writes } = yield* harness("full-access");
-    const updated = yield* call({
-      action: "update",
-      handle: "eng",
-      notifications: "reply-and-notify",
-    });
-    expect(updated).toMatchObject({ status: "updated" });
-    expect(writes).toEqual([
-      {
+      });
+      expect(updated).toMatchObject({ status: "updated" });
+      expect(writes).toEqual([
+        {
+          update: {
+            assistantId: "eng",
+            autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" },
+          },
+        },
+      ]);
+      expect(yield* call({ action: "read", handle: "ceo" })).toMatchObject({
+        notifications: "reply-only",
+        onProblem: "offer",
+      });
+      yield* call({ action: "update", handle: "eng", onProblem: "tell" });
+      expect(writes.at(-1)).toEqual({
         update: {
           assistantId: "eng",
-          autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" },
+          autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify", onProblem: "tell" },
         },
-      },
-    ]);
-    expect((yield* call({ action: "read", handle: "ceo" })).notifications).toBe("reply-only");
-  }),
+      });
+    }),
 );
 
 it.effect("notify_user is for an assistant's own turn, and a retry in the turn sends once", () =>

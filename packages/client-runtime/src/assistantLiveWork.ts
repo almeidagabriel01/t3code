@@ -27,6 +27,8 @@ export interface AssistantWorkSite {
 export interface AssistantLiveWork {
   /** Newest first; one per assistant and project, pointing at the newest live thread there. */
   readonly sites: ReadonlyArray<AssistantWorkSite>;
+  /** Every live task and delegated child, newest first: `sites` before it keeps one per project. */
+  readonly threads: ReadonlyArray<AssistantWorkSite>;
   /** Live delegated children of each assistant's own and group threads, by `env:assistantId`, oldest first. */
   readonly subagents: ReadonlyMap<string, ReadonlyArray<EnvironmentThreadShell>>;
   /** `env:threadId` of every task an assistant still lists, live or finished. */
@@ -99,16 +101,26 @@ export function assistantLiveWork(input: {
   for (const list of subagents.values())
     list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   found.sort((a, b) => b.at.localeCompare(a.at) || a.threadId.localeCompare(b.threadId));
+  const threads = found.map(({ at: _at, ...site }) => site);
   const seen = new Set<string>();
-  const sites: AssistantWorkSite[] = [];
-  for (const { at: _at, ...site } of found) {
+  const sites = threads.filter((site) => {
     const key = `${site.environmentId}:${site.assistantId}:${site.projectId}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return false;
     seen.add(key);
-    sites.push(site);
-  }
-  return { sites, subagents, taskThreadKeys };
+    return true;
+  });
+  return { sites, threads, subagents, taskThreadKeys };
 }
+
+/** What one assistant is doing right now, every live thread of it, newest first. */
+export const assistantWorkingNow = (
+  work: AssistantLiveWork,
+  environmentId: string,
+  assistantId: string,
+): ReadonlyArray<AssistantWorkSite> =>
+  work.threads.filter(
+    (site) => site.environmentId === environmentId && site.assistantId === assistantId,
+  );
 
 /** The assistant's sites, keeping only projects the caller lists (the assistants' home is none). */
 export const assistantSites = (

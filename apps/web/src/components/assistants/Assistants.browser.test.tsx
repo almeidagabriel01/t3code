@@ -89,7 +89,13 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
-  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+  autonomy: {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
@@ -398,13 +404,20 @@ it("writes the whole autonomy object when a switch changes", async () => {
   await userEvent.click(
     page.getByRole("switch", { name: "Notify me when something is waiting for me" }),
   );
-  await eventually(() => expect(fakeSettings.patches).toHaveLength(4));
+  await expect
+    .element(
+      page.getByText("Assistants watch every project for failures and file one card per cause."),
+    )
+    .toBeVisible();
+  await userEvent.click(page.getByRole("switch", { name: "Detect problems" }));
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(5));
   // Each patch carries every field, so a write never drops a sibling setting.
   expect(fakeSettings.patches).toEqual([
     { autonomy: { ...on, enabled: false } },
     { autonomy: { ...on, rules: { ...on.rules, stuck: false } } },
     { autonomy: { ...on, channels: ["t3"] } },
     { autonomy: { ...on, notifyWaiting: false } },
+    { detectProblems: false },
   ]);
 });
 
@@ -483,7 +496,15 @@ it("saves the assistant's notification choices, inherited or custom", async () =
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([
-      { autonomy: { mode: "reply-and-notify", rules: null, projectIds: null, channels: null } },
+      {
+        autonomy: {
+          mode: "reply-and-notify",
+          rules: null,
+          projectIds: null,
+          channels: null,
+          onProblem: "offer",
+        },
+      },
     ]),
   );
 
@@ -496,6 +517,14 @@ it("saves the assistant's notification choices, inherited or custom", async () =
   await userEvent.click(page.getByRole("radio", { name: "Only these projects" }));
   await userEvent.click(page.getByRole("radio", { name: "Only on these" }));
   await userEvent.click(page.getByRole("checkbox", { name: "Telegram" }));
+  await expect
+    .element(
+      page
+        .getByRole("radiogroup", { name: "When it finds a problem" })
+        .getByText("Starts small fixes on its own and tells you. Asks before anything bigger."),
+    )
+    .toBeVisible();
+  await userEvent.click(page.getByRole("radio", { name: "Fix small things" }));
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([
@@ -505,6 +534,7 @@ it("saves the assistant's notification choices, inherited or custom", async () =
           rules: ["runFailed", "waitingTooLong", "ciFailed", "reviewIncomplete"],
           projectIds: ["project-1"],
           channels: ["t3"],
+          onProblem: "fix-small",
         },
       },
     ]),
@@ -853,7 +883,13 @@ it("a command connector takes arguments and variables", async () => {
 it("keeps an unchanged assistant's autonomy out of the update", async () => {
   publishAssistants([
     assistant("jarvis", "Jarvis", {
-      autonomy: { mode: "reply-and-notify", rules: [], projectIds: null, channels: null },
+      autonomy: {
+        mode: "reply-and-notify",
+        rules: [],
+        projectIds: null,
+        channels: null,
+        onProblem: "offer",
+      },
     }),
   ]);
   fakeAssistantEdits.updates = [];

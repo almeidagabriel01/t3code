@@ -15,6 +15,7 @@ import {
   type KanbanCardCreateInput,
   type KanbanCardIdInput,
   type KanbanCardMoveInput,
+  type KanbanCardSetProblemIgnoredInput,
   type KanbanCardThreadLinkInput,
   type KanbanCardUpdateInput,
   type KanbanColumnCreateInput,
@@ -102,6 +103,8 @@ export function useKanbanActions(environmentId: EnvironmentId) {
       run(k.linkCardThread, input, "Could not link thread"),
     unlinkCardThread: (input: Without<KanbanCardThreadLinkInput>) =>
       run(k.unlinkCardThread, input, "Could not unlink thread"),
+    setCardProblemIgnored: (input: Without<KanbanCardSetProblemIgnoredInput>) =>
+      run(k.setCardProblemIgnored, input, "Could not update card"),
   };
 }
 

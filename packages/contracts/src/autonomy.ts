@@ -74,6 +74,11 @@ export const AUTONOMY_MODES = ["reply-only", "reply-and-notify"] as const;
 export const AutonomyMode = Schema.Literals(AUTONOMY_MODES);
 export type AutonomyMode = typeof AutonomyMode.Type;
 
+/** What an assistant does with a problem the detector hands it; read-only assistants only tell. */
+export const PROBLEM_LEVELS = ["tell", "offer", "fix-small"] as const;
+export const ProblemLevel = Schema.Literals(PROBLEM_LEVELS);
+export type ProblemLevel = typeof ProblemLevel.Type;
+
 /** Stored with the assistant. A null list inherits; an explicit list (even empty) overrides. */
 export const AssistantAutonomy = Schema.Struct({
   mode: AutonomyMode,
@@ -83,6 +88,7 @@ export const AssistantAutonomy = Schema.Struct({
   projectIds: Schema.NullOr(Schema.Array(ProjectId)),
   /** Null inherits the global channels. */
   channels: Schema.NullOr(Schema.Array(AutonomyChannel)),
+  onProblem: ProblemLevel.pipe(Schema.withDecodingDefault(Effect.succeed("offer" as const))),
 });
 export type AssistantAutonomy = typeof AssistantAutonomy.Type;
 
@@ -91,6 +97,7 @@ export const DEFAULT_ASSISTANT_AUTONOMY: AssistantAutonomy = {
   rules: null,
   projectIds: null,
   channels: null,
+  onProblem: "offer",
 };
 
 export const AUTONOMY_WATCH_EVENTS = [

@@ -26,6 +26,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     alert: vi.fn(),
     dispatch: vi.fn(),
     goBack: vi.fn(),
+    navigate: vi.fn(),
     selectDetail: vi.fn(),
     openTeam: { edit: vi.fn(), settings: vi.fn() },
     openEditor: vi.fn(),
@@ -129,7 +130,11 @@ vi.mock("@legendapp/list/react-native", () => ({
   },
 }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: mocks.goBack, dispatch: mocks.dispatch }),
+  useNavigation: () => ({
+    goBack: mocks.goBack,
+    dispatch: mocks.dispatch,
+    navigate: mocks.navigate,
+  }),
   StackActions: { push: (name: string, params: unknown) => ({ name, params }) },
 }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -163,9 +168,15 @@ vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
     subtitle?: string;
+    titlePress?: { accessibilityLabel: string; leading?: ReactNode; onPress: () => void };
     menus?: Array<{ items: Array<{ title: string; disabled?: boolean; onPress: () => void }> }>;
   }) => (
     <header>
+      {props.titlePress ? (
+        <button aria-label={props.titlePress.accessibilityLabel} onClick={props.titlePress.onPress}>
+          {props.titlePress.leading}
+        </button>
+      ) : null}
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
       {props.menus?.[0]?.items.map((item) => (
@@ -260,6 +271,10 @@ vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { assistant: { name: string } }) => (
     <i>{`av:${props.assistant.name}`}</i>
   ),
+  AssistantCluster: (props: { faces: Array<{ key: string }> }) => (
+    <i data-testid="cluster">{props.faces.map((face) => face.key).join(",")}</i>
+  ),
+  removedAssistantFace: (id: string) => ({ id, name: "Assistant", avatar: null, icon: null }),
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
@@ -399,6 +414,7 @@ beforeEach(() => {
     mocks.olderThan,
     mocks.alert,
     mocks.dispatch,
+    mocks.navigate,
     mocks.selectDetail,
     mocks.openEditor,
     mocks.archive,
@@ -712,6 +728,19 @@ describe("task cards", () => {
 });
 
 describe("group header and archive", () => {
+  it("its title shows every member's face, a removed one too, and opens Group info", async () => {
+    mocks.teams = [team({ memberIds: ["ada", "beto", "jarvis", "gone"] })];
+    render();
+    expect(container.querySelector('[data-testid="cluster"]')?.textContent).toBe(
+      "ada,beto,jarvis,gone",
+    );
+    await click("Crew, Group info");
+    expect(mocks.navigate).toHaveBeenCalledWith("AssistantGroupInfo", {
+      environmentId: "hub",
+      teamId: "g1",
+    });
+  });
+
   it("its menu edits, adds an assistant, schedules and archives", async () => {
     render();
     await click("header:Edit group");

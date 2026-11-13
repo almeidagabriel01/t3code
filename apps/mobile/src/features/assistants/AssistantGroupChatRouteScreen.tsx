@@ -51,7 +51,8 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import { GroupMessageAttachments } from "./GroupAttachments";
 import { MENTION_REQUIRED_COPY, GroupComposer, type GroupSendResult } from "./GroupComposer";
 import { GroupTaskCard } from "./GroupTaskCard";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster, removedAssistantFace } from "./assistantPresentation";
+import { useOpenAssistantInfo } from "./openAssistantInfo";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
@@ -301,6 +302,7 @@ export function AssistantGroupChatRouteScreen({
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const teamId = AssistantTeamId.make(route.params.teamId);
   const navigation = useNavigation();
+  const openInfo = useOpenAssistantInfo();
   const selectDetail = useSelectWorkspaceDetail();
   const entries = useAssistantEntries();
   const live = useAssistantGroupChat(environmentId, teamId);
@@ -428,6 +430,21 @@ export function AssistantGroupChatRouteScreen({
     <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
       <AppBar
         title={team.name}
+        titlePress={{
+          accessibilityLabel: `${team.name}, Group info`,
+          leading: (
+            <AssistantCluster
+              environmentId={environmentId}
+              size={24}
+              faces={team.memberIds.map((id) => ({
+                key: id,
+                assistant:
+                  everyone.find((candidate) => candidate.id === id) ?? removedAssistantFace(id),
+              }))}
+            />
+          ),
+          onPress: () => openInfo.group(environmentId, team.id),
+        }}
         subtitle={[teamSummary(team, everyone), running > 0 ? `${running} running` : null]
           .filter((part) => part !== null)
           .join(" · ")}

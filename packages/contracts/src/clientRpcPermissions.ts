@@ -131,6 +131,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.kanbanCardComment]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardLinkThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.kanbanCardUnlinkThread]: AuthOrchestrationOperateScope,
+  [WS_METHODS.kanbanCardSetProblemIgnored]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesUpdate]: AuthOrchestrationOperateScope,
   [WS_METHODS.notesMove]: AuthOrchestrationOperateScope,

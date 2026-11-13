@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
+import { DetectProblemsSettingsRow } from "./DetectProblemsSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -2314,6 +2315,7 @@ export function MaintenanceSettingsPanel() {
       <StorageCleanupSections />
 
       <SettingsSection id="diagnostics-section" title="Diagnostics">
+        <DetectProblemsSettingsRow />
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={

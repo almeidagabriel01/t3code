@@ -63,6 +63,9 @@ describe("HeavyQueueNotices", () => {
           const fiber = yield* Effect.forkChild(
             notices.stream.pipe(Stream.take(1), Stream.runCollect),
           );
+          const logged = yield* Effect.forkChild(
+            notices.records.pipe(Stream.take(1), Stream.runCollect),
+          );
           yield* Effect.yieldNow;
           QueueFile.enqueue(dir, job("new"));
           QueueFile.tryStart(dir, "new");
@@ -80,6 +83,9 @@ describe("HeavyQueueNotices", () => {
             },
           ]);
           expect(QueueFile.readDoc(dir).entries).toEqual([]);
+          // The problem detector reads the same new records, never the ones from before the baseline.
+          const [record] = yield* Fiber.join(logged);
+          expect(record).toMatchObject({ kind: "ended", code: 2, job: { id: "new" } });
         }),
     ),
   );

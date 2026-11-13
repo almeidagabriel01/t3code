@@ -8,6 +8,8 @@ const { mocks, Children } = vi.hoisted(() => ({
   mocks: {
     autonomy: null as unknown as AutonomySettings,
     write: vi.fn(),
+    detectProblems: true,
+    writeDetectProblems: vi.fn(),
     navigate: vi.fn(),
     telegramIds: [] as string[],
     telegram: null as null | { enabled: boolean; tokenConfigured: boolean },
@@ -66,7 +68,12 @@ vi.mock("../../components/ui/ListToggleRow", () => ({
   ),
 }));
 vi.mock("../../state/autonomy", () => ({
-  useAutonomySettings: () => ({ autonomy: mocks.autonomy, write: mocks.write }),
+  useAutonomySettings: () => ({
+    autonomy: mocks.autonomy,
+    write: mocks.write,
+    detectProblems: mocks.detectProblems,
+    writeDetectProblems: mocks.writeDetectProblems,
+  }),
 }));
 vi.mock("../../state/telegramChannel", () => ({
   useTelegramEnvironmentIds: () => mocks.telegramIds,
@@ -100,6 +107,8 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.autonomy = DEFAULT_AUTONOMY_SETTINGS;
   mocks.write.mockReset();
+  mocks.detectProblems = true;
+  mocks.writeDetectProblems.mockReset();
   mocks.navigate.mockReset();
   mocks.telegramIds = [];
   mocks.telegram = null;
@@ -112,6 +121,18 @@ describe("autonomy settings", () => {
     toggle("Assistants can notify you");
     expect(mocks.write).toHaveBeenLastCalledWith({ ...DEFAULT_AUTONOMY_SETTINGS, enabled: true });
   });
+
+  it.each([true, false])(
+    "turns problem detection the other way, apart from the autonomy object (on: %s)",
+    (on) => {
+      mocks.detectProblems = on;
+      render();
+      expect(input("Detect problems").checked).toBe(on);
+      toggle("Detect problems");
+      expect(mocks.writeDetectProblems).toHaveBeenLastCalledWith(!on);
+      expect(mocks.write).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     [false, true],

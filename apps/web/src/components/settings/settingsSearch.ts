@@ -1445,6 +1445,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
+    id: "detect-problems",
+    title: "Detect problems",
+    to: "/settings/maintenance",
+    scope: "project-defaults",
+    searchTerms: ["problem cards failures assistants watch errors ignore noisy project"],
+  },
+  {
     id: "open-source-licenses",
     title: "Open source licenses",
     to: "/settings/about",

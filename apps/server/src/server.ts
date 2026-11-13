@@ -222,6 +222,7 @@ import * as AssistantTaskReactor from "./assistants/AssistantTaskReactor.ts";
 import * as AssistantTasks from "./assistants/AssistantTasks.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as NeedsUser from "./autonomy/NeedsUser.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
 import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
@@ -236,6 +237,7 @@ import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyQueueSampler from "./heavyQueue/HeavyQueueSampler.ts";
 import * as RunnerPublisher from "./heavyQueue/RunnerPublisher.ts";
 import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
+import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
@@ -718,6 +720,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
 const layerChannels = AutonomyService.layer.pipe(
+  Layer.provide(NeedsUser.layer),
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -745,6 +748,9 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+// Layers memoize by reference: the problem detector reads the same notices the server starts.
+const layerHeavyQueueNotices = HeavyQueueNotices.layer();
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMemoryStarted,
   layerMemorySync,
@@ -760,7 +766,19 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeavyQueueSampler.layer(),
   RunnerPublisher.layer(),
   HeavyCommands.layer(),
-  HeavyQueueNotices.layer(),
+  layerHeavyQueueNotices,
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* ProblemDetector.ProblemDetector).start();
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ProblemDetector.layer.pipe(
+        Layer.provide(layerHeavyQueueNotices),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+    ),
+  ),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
@@ -829,6 +847,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provide(AssistantTaskReactor.layer),
     Layer.provide(AssistantTasks.layer),
+    Layer.provide(NeedsUser.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   Layer.effectDiscard(

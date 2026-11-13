@@ -15,6 +15,7 @@ import { Button } from "./Button";
 import { SearchField } from "./SearchField";
 import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
+import { AppBarTitleButton } from "./AppBarTitleButton";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
@@ -111,13 +112,18 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       />
     ) : null;
 
+  const titleContent =
+    props.titleContent ??
+    (props.titlePress ? (
+      <AppBarTitleButton title={props.title} {...props.titlePress} />
+    ) : undefined);
   if (inWorkspace) {
     const menu = props.menus?.[0];
     const icon = typeof menu?.icon === "string" ? menu.icon : menu?.icon.android;
     return (
       <WorkspaceAppBar
         title={props.title}
-        titleContent={props.titleContent}
+        titleContent={titleContent}
         search={
           search
             ? {
@@ -181,7 +187,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const header = (
     <AndroidScreenHeader
       title={props.title}
-      titleContent={props.titleContent}
+      titleContent={titleContent}
       subtitle={props.subtitle}
       onBack={props.onClose ? undefined : props.onBack}
       leading={

@@ -1,6 +1,8 @@
 import {
   AUTONOMY_CHANNEL_LABELS,
   AUTONOMY_RULE_OPTIONS,
+  PROBLEM_LEVEL_LEGEND,
+  PROBLEM_LEVEL_OPTIONS,
   toggleInList,
 } from "@t3tools/client-runtime/autonomy";
 import type {
@@ -9,6 +11,7 @@ import type {
   AutonomyMode,
   AutonomyRule,
   AutonomySettings,
+  ProblemLevel,
   ProjectId,
 } from "@t3tools/contracts";
 
@@ -145,6 +148,26 @@ export function AssistantNotifications(props: {
           />
         </>
       ) : null}
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="text-sm font-medium">{PROBLEM_LEVEL_LEGEND}</legend>
+        <RadioGroup
+          aria-label={PROBLEM_LEVEL_LEGEND}
+          value={value.onProblem}
+          onValueChange={(level) => onChange({ ...value, onProblem: level as ProblemLevel })}
+        >
+          {PROBLEM_LEVEL_OPTIONS.map((option) => (
+            <label key={option.level} className={`${ROW} items-start`}>
+              <span className="pt-0.5">
+                <Radio value={option.level} aria-label={option.label} />
+              </span>
+              <span className="flex flex-col">
+                {option.label}
+                <span className="text-xs text-muted-foreground">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
+      </fieldset>
     </div>
   );
 }

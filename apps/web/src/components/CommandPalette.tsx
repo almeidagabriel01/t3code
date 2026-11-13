@@ -97,6 +97,7 @@ import {
   CalendarClockIcon,
   Columns2Icon,
   PanelRightCloseIcon,
+  InfoIcon,
 } from "lucide-react";
 import { useAutonomyPause } from "./assistants/useAutonomyPause";
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
@@ -108,6 +109,7 @@ import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { projectPanelPaletteItems } from "./projectPanels/projectPanelPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
 import { openAssistantWork } from "./assistants/assistantWorkState";
+import { openAssistantInfo } from "./assistants/assistantInfoState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
 import {
@@ -235,6 +237,7 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
+  buildAssistantInfoActionItems,
   buildAssistantWorkActionItems,
   RECENT_THREAD_LIMIT,
   createCommandPaletteSearchState,
@@ -1925,6 +1928,14 @@ function OpenCommandPaletteDialog(props: {
     });
   }
   actionItems.push(
+    ...buildAssistantInfoActionItems({
+      pathname,
+      activeThread: activeThread ?? null,
+      assistants: assistantEntries.active,
+      teams: assistantEntries.activeTeams,
+      icon: <InfoIcon className={ITEM_ICON_CLASS} />,
+      open: openAssistantInfo,
+    }),
     ...buildAssistantWorkActionItems({
       entries: assistantEntries.active,
       environmentLabel: (environmentId) =>

@@ -69,6 +69,14 @@ describe("decision client guards", () => {
   });
 });
 
+describe("kanban problem client guards", () => {
+  it("guards ignoring and un-ignoring a problem like other card writes", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.kanbanCardSetProblemIgnored, {})).toEqual([
+      "orchestration:operate",
+    ]);
+  });
+});
+
 describe("device client guards", () => {
   it("guards takeover and phone input as driving a device, and access policies and Wi-Fi pairing as settings", () => {
     for (const method of [WS_METHODS.deviceSetHold, WS_METHODS.deviceInput])

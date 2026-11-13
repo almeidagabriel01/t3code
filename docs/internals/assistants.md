@@ -182,7 +182,7 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
 project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
 takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
-Three things follow the row, none of them a new mechanism:
+These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not
   flagging threads) lets `assistantNote` prepend a short `<t3_assistant_task>` block with
@@ -191,6 +191,21 @@ Three things follow the row, none of them a new mechanism:
 - `AssistantTaskReactor` queues a message to the owner's current conversation when a run of the task
   thread ends. The message id derives from the run, so a replay wakes once, and it carries the task
   thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
+  A completed run whose thread goes on by itself does not wake: a newer run is already lined up,
+  or `backgroundWorkHoldsCompletion` holds it (the same rule as the task's parked status), minus
+  pull request watches, which end silently on merge. The run that really ends reports. A failed,
+  cancelled or interrupted run always reports.
+- The same reactor wakes the owner when the task (or a `delegate_task` child of an assistant
+  conversation) starts waiting on the user, from `NeedsUser.changes` (`autonomy/NeedsUser.ts`, the one
+  definition of "waits on the user": pending non-machine requests and open decisions that are neither
+  notices nor approval mirrors; the Telegram/Activity notice reads `NeedsUser.pending`). The id
+  derives from the wait, a resolution cancels the wake if it is still queued, and a delegated child's
+  question is left to `DelegatedTaskQuestionReactor`, which already wakes its parent. The owner is
+  found up the subagent chain, so a task's own workers count. Each (re)subscription of
+  `NeedsUser.changes` subscribes first and then emits what already waits as `opened` (requests
+  through `subscribeDomainEvents`, which anchors on the event sink's sequence; decisions through
+  the snapshot their service takes after subscribing). So a start, or a wait that opened while a
+  stream was down, still wakes; the deterministic wake ids absorb the overlap. Assistant and group member threads are never followed this way.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
@@ -296,6 +311,29 @@ whose request id starts with `autonomy:`; `DecisionService` settles such a notic
 the assistant anything, otherwise dismissing it would wake the assistant again. Telegram goes to the
 first allowed user's chat, unless a reply target already points at Telegram (the reply reactor posts
 the run there).
+
+## Problem detection
+
+`ProblemDetector` (`apps/server/src/problems/`) files one kanban card per failure cause, with no
+model. Sources only `report` an occurrence, keyed by what happened (a run id, an outage, a check
+result), never by its delivery, so a replayed event or a restart is a no-op. `tick` then processes
+each pending occurrence on its own and records a skip reason for the ones it drops, so one bad row
+never stops the rest. Every kanban write uses a command id derived from the occurrence key, which
+makes a crash between the card and the bookkeeping safe to retry.
+
+- **Cause.** The fingerprint is source, project, subject, the normalized command and the first line
+  of the normalized error (numbers, paths, ids, hashes and times stripped). A cause has one open
+  card; when that card is done, archived or deleted, the next occurrence starts a new generation
+  that names the previous card. A card never carries another project's data.
+- **Owner.** `selectOwner` is the single rule (project assistant with the project, then scope all;
+  ties go to notifying, then the oldest) and agrees with `projectScopeRefusal`. Each tick re-checks
+  the owner of every open card, so removing an assistant's access hands the card on.
+- **Wake.** A filed card queues a wake for its owner; a burst across projects becomes one message
+  per owner. It reuses `autonomy_wakes` (source `problem`), the daily limits, the pause switch and
+  the spending gate, so a held wake waits instead of being dropped. The owner's final answer is
+  the user's notice, prefixed with the approved header line.
+- **Replaces the fan-out.** With detection on for a project, the `run_failed` and `pr_checks_failed`
+  rules no longer wake every assistant there; watches still fire.
 
 ## iMessage channel
 

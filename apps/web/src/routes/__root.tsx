@@ -20,6 +20,7 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { AssistantDialogHost } from "../components/assistants/AssistantDialog";
+import { AssistantInfoPanel } from "../components/assistants/AssistantInfoPanel";
 import { AssistantWorkHost } from "../components/assistants/AssistantWorkDialog";
 import { AssistantTeamDialogHost } from "../components/assistants/AssistantTeamDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
@@ -198,6 +199,7 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <AssistantDialogHost />
+      <AssistantInfoPanel />
       <AssistantWorkHost />
       <AssistantTeamDialogHost />
       <ThreadHandoffDialogHost />
