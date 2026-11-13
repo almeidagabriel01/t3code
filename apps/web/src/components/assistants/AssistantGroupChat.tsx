@@ -60,7 +60,8 @@ import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantDialog } from "./assistantDialogState";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster, removedAssistantFace } from "./assistantPresentation";
+import { toggleAssistantInfo } from "./assistantInfoState";
 import {
   openAssistantGroupRoutines,
   openAssistantGroupSettings,
@@ -71,8 +72,6 @@ import { GroupComposer, MENTION_REQUIRED_COPY, type GroupSendResult } from "./Gr
 import { GroupTaskCard } from "./GroupTaskCard";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
-
-const MAX_STACKED_AVATARS = 4;
 
 /** The text with each `@mention` of a member picked out, as the user typed it. */
 function MentionText(props: {
@@ -104,22 +103,36 @@ function GroupHeader(props: {
   const { environmentId, team } = props;
   const flows = useAssistantTeamFlows(environmentId);
   const archived = team.archivedAt !== null;
-  const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   return (
     <WorkspacePageHeader electron={isElectron} className="relative bg-background" data-glass-layer>
       <WorkspaceBreadcrumb ariaLabel="Group chat" className="flex-1">
         <li className="flex min-w-0 items-center gap-2">
-          <span className="flex shrink-0 items-center" data-testid="group-avatars">
-            {shown.map((member) => (
-              <AssistantAvatar
-                key={member.id}
-                assistant={member}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`${team.name}, Group info`}
+                  onClick={() =>
+                    toggleAssistantInfo({ kind: "group", environmentId, teamId: team.id })
+                  }
+                  className="flex min-w-0 cursor-pointer items-center gap-2 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                />
+              }
+            >
+              <AssistantCluster
                 environmentId={environmentId}
-                className="-ms-1.5 size-5 first:ms-0"
+                className="size-6"
+                faces={team.memberIds.map((id) => ({
+                  key: id,
+                  assistant:
+                    props.members.find((member) => member.id === id) ?? removedAssistantFace(id),
+                }))}
               />
-            ))}
-          </span>
-          <h1 className="min-w-0 truncate font-medium">{team.name}</h1>
+              <h1 className="min-w-0 truncate font-medium">{team.name}</h1>
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Group info</TooltipPopup>
+          </Tooltip>
           <span className="truncate text-xs font-normal text-muted-foreground @max-lg/group-chat:hidden">
             · {teamSummary(team, props.allAssistants)}
           </span>

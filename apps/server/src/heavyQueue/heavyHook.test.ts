@@ -15,6 +15,9 @@ import {
   nameOf,
   lineParts,
   queueBashCall,
+  readLine,
+  rewriteLine,
+  workParts,
 } from "./heavyHook.ts";
 
 const PREFIX = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy --queue-dir '/q'";
@@ -212,6 +215,55 @@ describe("the PreToolUse answer", () => {
   });
 });
 
+describe("scripts the line runs", () => {
+  const files: Record<string, string | null> = {
+    "/tmp/s/verify.sh": "cd /w && vp test run",
+    "./verify": "#!/bin/bash\nset -e\nvp run typecheck\n",
+    "./env-verify": "#!/usr/bin/env zsh\nnpx tsc --noEmit\n",
+    "./tool": "#!/usr/bin/env node\nrequire('x')\n",
+    "light.sh": "echo hi\nls\n",
+    "./light.sh": "echo hi\n",
+    "missing.sh": null,
+  };
+  const read = (word: string) => files[word] ?? null;
+  const command = (line: string) =>
+    queueBashCall(bash({ command: line }), PREFIX, {}, { readScript: read })?.hookSpecificOutput
+      .updatedInput.command ?? null;
+
+  it.each([
+    ["bash /tmp/s/verify.sh", "bash /tmp/s/verify.sh"],
+    ["sh -e /tmp/s/verify.sh a b", "sh /tmp/s/verify.sh a"],
+    ["/tmp/s/verify.sh", "verify.sh"],
+    ["./verify", "verify"],
+    ["./env-verify --fast", "env-verify"],
+    ["cd /w && ./verify", "verify"],
+  ])("queues %j, whose script runs heavy work, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
+  });
+
+  it.each(["bash light.sh", "./tool", "./light.sh", "bash -c 'echo hi'", "sh -s < light.sh"])(
+    "leaves %j alone: its script runs nothing heavy, or it is no script",
+    (line) => {
+      expect(command(line)).toBeNull();
+    },
+  );
+
+  it.each(["bash missing.sh", "./missing.sh"])(
+    "queues %j on this Mac when the script can't be read",
+    (line) => {
+      expect(command(line)).toContain(
+        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
+      );
+    },
+  );
+
+  it("reads no script without a reader, as before", () => {
+    expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();
+  });
+});
+
 describe("an agent's own remoto call", () => {
   it.each([
     ["remoto vp test run", [], true, "vp test run"],
@@ -253,6 +305,48 @@ describe("an agent's own remoto call", () => {
     ["the Runner off, after another command", "ls && remoto vp test run", false],
   ])("is left to remoto with %s, so it never runs twice", (_why, command, runner) => {
     expect(queueBashCall(bash({ command }), PREFIX, {}, { runner })).toBeNull();
+  });
+
+  // Queued or left to the agent's remoto; then the line Linux mode runs here, one remoto per call.
+  it.each([
+    [
+      `cd /w/s && remoto sh -c 'vp test run'`,
+      true,
+      null,
+      true,
+      `cd /w/s && remoto sh -c 'vp test run'`,
+    ],
+    [`cd /w/s && remoto sh -c 'vp test run'`, false, null, false, null],
+    [`remoto sh -c 'cd /w && remoto vp test'`, true, null, true, `sh -c 'cd /w && remoto vp test'`],
+    [`sh -c 'cd /w && remoto vp test run'`, true, null, false, null],
+    [`cd /w && bash -lc "remoto pnpm exec vp test run"`, true, null, false, null],
+    [
+      `vp lint && sh -c 'remoto vp test'`,
+      true,
+      null,
+      true,
+      `remoto vp lint && sh -c 'remoto vp test'`,
+    ],
+    [
+      `cd /w && vp lint && remoto vp test`,
+      true,
+      null,
+      true,
+      `cd /w && remoto vp lint && remoto vp test`,
+    ],
+    // Local heavy work beside the inner remoto still queues, and the part is never wrapped again.
+    [`sh -c 'vp lint && remoto vp test'`, true, null, true, `sh -c 'vp lint && remoto vp test'`],
+    [`sh -c 'vp lint && remoto vp test'`, false, null, true, `sh -c 'vp lint && remoto vp test'`],
+    ["sh ./check.sh", true, "cd /w && remoto vp test run", false, null],
+    ["sh ./check.sh", true, "vp lint && remoto vp test run", true, null],
+    ["remoto vp test run", false, null, false, null],
+  ])("%j (Runner %s, script %j) queued %s, runs %j", (command, runner, body, queued, linux) => {
+    const readScript = () => body;
+    const answer = queueBashCall(bash({ command }), PREFIX, {}, { runner, readScript });
+    expect(answer !== null).toBe(queued);
+    if (linux !== null) expect(rewriteLine(command, "remoto")).toBe(linux);
+    // A script that calls remoto is never Linux work, so it is never wrapped in another.
+    if (body !== null) expect(workParts(readLine(command, readScript).parts)).toEqual([]);
   });
 });
 
@@ -310,6 +404,13 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
     "hands %j to T3, as the classifier calls it heavy",
     (command) => {
       expect(heavySegment(command)).not.toBeNull();
+      expect(run(reached, command)).toBe("T3");
+    },
+  );
+
+  it.each(["bash verify.sh", "./verify", "sh /tmp/s/check.sh --all", "zsh -e run.zsh"])(
+    "hands %j to T3, which reads the script it runs",
+    (command) => {
       expect(run(reached, command)).toBe("T3");
     },
   );

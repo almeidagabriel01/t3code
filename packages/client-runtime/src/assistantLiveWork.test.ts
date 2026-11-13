@@ -8,7 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantLiveWork, projectAssistantFaces } from "./assistantLiveWork.ts";
+import {
+  assistantLiveWork,
+  assistantWorkingNow,
+  projectAssistantFaces,
+} from "./assistantLiveWork.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
 
@@ -128,6 +132,23 @@ describe("assistantLiveWork", () => {
     expect(
       work.sites.map((s) => `${s.assistantId}@${s.projectId}:${s.threadId}:${s.face}`).toSorted(),
     ).toEqual(sites.toSorted());
+  });
+
+  it("Working now keeps every live thread of one assistant, newest first", () => {
+    const work = assistantLiveWork({
+      tasks: [
+        task("old", "ada", { createdAt: "2026-11-12T09:00:00.000Z" }),
+        task("new", "ada", { createdAt: "2026-11-12T12:00:00.000Z" }),
+        task("bo1", "bo"),
+      ],
+      shells: [shell("old"), shell("new"), shell("bo1")],
+    });
+    expect(work.sites.map((site) => site.threadId)).not.toContain("old");
+    expect(assistantWorkingNow(work, env, "ada").map((site) => site.threadId)).toEqual([
+      "new",
+      "old",
+    ]);
+    expect(assistantWorkingNow(work, "other-env", "ada")).toEqual([]);
   });
 
   it("groups live children under their assistant, oldest first, across its threads", () => {

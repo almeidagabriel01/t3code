@@ -2,7 +2,7 @@ import { AssistantId, type Assistant } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
-import { AssistantAccentAvatar, AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster, removedAssistantFace } from "./assistantPresentation";
 
 type AssistantAvatarValue = Assistant["avatar"];
 
@@ -80,16 +80,25 @@ describe("assistant avatars", () => {
     });
   });
 
-  it("accent avatar draws the icon, or the initial without one", async () => {
-    await using withIcon = await render(
-      <AssistantAccentAvatar assistantId="a1" name="Jarvis" icon="spark" />,
-      { router: false }, // renders no routed content
-    );
-    expect(withIcon.container.querySelector('[data-assistant-icon="spark"]')).not.toBeNull();
-    expect(withIcon.container.textContent).toBe("");
-    await using without = await render(<AssistantAccentAvatar assistantId="a1" name="Jarvis" />, {
+  it.each([
+    [1, 1, null],
+    [2, 2, null],
+    [3, 3, null],
+    [4, 4, null],
+    [5, 3, "+2"],
+    [6, 3, "+3"],
+    [12, 3, "+9"],
+  ])("a cluster of %i draws %i faces and %s", async (count, drawn, more) => {
+    const faces = Array.from({ length: count }, (_, index) => ({
+      key: `a${index}`,
+      assistant: removedAssistantFace(`a${index}`),
+    }));
+    await using screen = await render(<AssistantCluster faces={faces} />, {
       router: false, // renders no routed content
     });
-    expect(without.container.textContent).toBe("J");
+    const cluster = screen.container.querySelector("[data-assistant-cluster]");
+    expect(cluster?.getAttribute("data-assistant-cluster")).toBe(String(count));
+    expect(cluster?.querySelectorAll("[data-assistant-robot]")).toHaveLength(drawn);
+    expect(cluster?.querySelector("[data-assistant-cluster-more]")?.textContent ?? null).toBe(more);
   });
 });

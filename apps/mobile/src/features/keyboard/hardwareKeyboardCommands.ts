@@ -74,6 +74,23 @@ export function dispatchHardwareKeyboardCommand(command: HardwareKeyboardCommand
   return false;
 }
 
+/** The group chat on screen, from its "/assistant-groups/:environmentId/:teamId" path. */
+export function parseActiveGroupChatPath(pathname: string): {
+  readonly environmentId: string;
+  readonly teamId: string;
+} | null {
+  const match = /^\/assistant-groups\/([^/]+)\/([^/]+)\/?$/.exec(pathname);
+  if (!match?.[1] || !match[2]) return null;
+  try {
+    return {
+      environmentId: decodeURIComponent(match[1]),
+      teamId: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function parseActiveThreadPath(pathname: string): {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;

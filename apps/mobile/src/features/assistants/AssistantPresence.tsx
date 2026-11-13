@@ -1,63 +1,45 @@
 import {
   assistantAccent,
-  assistantInitial,
+  assistantPresenceSections,
+  assistantPresenceStatus,
+  assistantSenderLook,
   assistantSenders,
+  assistantThreadSenders,
 } from "@t3tools/client-runtime/assistantPresence";
-import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
+import { assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
+import {
+  assistantTaskState,
+  canDismissAssistantTask,
+  type AssistantTaskState,
+} from "@t3tools/client-runtime/assistantTasks";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { Assistant, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
-import { useAssistantActions, useAssistantEntries } from "../../state/assistants";
-import { useThreadShells } from "../../state/entities";
+import {
+  useAssistantActions,
+  useAssistantEntries,
+  useAssistantTask,
+  useTaskAssistant,
+} from "../../state/assistants";
+import { useThreadShell, useThreadShells } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import * as Dialog from "../../components/ui/Dialog";
+import { accentWash, presenceBadgeLabel } from "./assistantPresenceLabels";
 import {
-  accentWash,
-  presenceMessageCount,
-  presenceBadgeLabel,
-  presenceStatusLabel,
-  splitPresenceStack,
-} from "./assistantPresenceLabels";
-import { AssistantIconGlyph, TOOL_ACCESS_OPTIONS, toolAccessLabel } from "./assistantPresentation";
-import { assistantIconFor } from "@t3tools/client-runtime/assistantIcons";
-
-type Who = {
-  readonly name: string;
-  readonly accent: string;
-  readonly icon?: string | null | undefined;
-};
-
-function PresenceAvatar(props: {
-  readonly who: Who;
-  readonly size: number;
-  readonly ring?: boolean;
-}) {
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      className="items-center justify-center rounded-full"
-      style={{
-        width: props.size,
-        height: props.size,
-        backgroundColor: props.who.accent,
-      }}
-    >
-      {assistantIconFor(props.who.icon) ? (
-        <AssistantIconGlyph icon={props.who.icon} size={props.size * 0.62} color="#ffffff" />
-      ) : (
-        <Text className="font-t3-bold" style={{ fontSize: props.size * 0.5, color: "#ffffff" }}>
-          {assistantInitial(props.who.name)}
-        </Text>
-      )}
-    </View>
-  );
-}
+  AssistantAvatar,
+  AssistantCluster,
+  removedAssistantFace,
+  TOOL_ACCESS_OPTIONS,
+  toolAccessLabel,
+} from "./assistantPresentation";
+import { useAssistantFlows } from "./useAssistantFlows";
+import { useOpenAssistantInfo } from "./openAssistantInfo";
 
 /** Who wrote in this agent's conversation: the assistant's own avatar, name, and access, in its color. */
 export function AssistantFeedMessage(props: {
@@ -75,6 +57,7 @@ export function AssistantFeedMessage(props: {
     )?.assistant ?? null;
   const name = assistant?.name ?? "Assistant";
   const accent = assistantAccent(props.assistantId);
+  const face = assistant ?? removedAssistantFace(props.assistantId);
   const access = assistant ? toolAccessLabel(assistant.toolAccess) : null;
   return (
     <View className="mb-4 gap-3 px-1">
@@ -85,7 +68,7 @@ export function AssistantFeedMessage(props: {
           className="flex-row items-center gap-2"
         >
           <View className="h-px flex-1 bg-border" />
-          <PresenceAvatar who={{ name, accent, icon: assistant?.icon }} size={16} />
+          <AssistantAvatar assistant={face} environmentId={props.environmentId} size={16} />
           <Text className="text-xs text-foreground-muted">
             {name} joined the conversation · {props.joinedAtLabel}
           </Text>
@@ -93,7 +76,7 @@ export function AssistantFeedMessage(props: {
         </View>
       ) : null}
       <View className="flex-row items-start gap-2.5">
-        <PresenceAvatar who={{ name, accent, icon: assistant?.icon }} size={28} />
+        <AssistantAvatar assistant={face} environmentId={props.environmentId} size={28} />
         <View className="min-w-0 shrink gap-1">
           <View className="flex-row items-center gap-1.5">
             <Text className="font-t3-bold text-xs text-foreground" numberOfLines={1}>
@@ -123,8 +106,24 @@ export function AssistantFeedMessage(props: {
 
 const ACCESS_PREFIX = "access:";
 const JUMP_PREFIX = "jump:";
+const CHAT_PREFIX = "chat:";
+const INFO_PREFIX = "info:";
+const DISMISS_TASK = "task:dismiss";
+const RESTORE_TASK = "task:restore";
 
-/** Overlapping avatars of the assistants that wrote in this thread; one menu lists them. */
+type Sender = ReturnType<typeof assistantSenders>[number];
+type SenderLook = ReturnType<typeof assistantSenderLook>;
+/** The task this thread is, when an assistant launched it; its owner's row carries the task's actions. */
+export interface PresenceTask {
+  readonly assistantId: string;
+  readonly state: AssistantTaskState;
+  readonly dismissed: boolean;
+}
+
+/**
+ * The thread's one assistant control: who wrote here and the assistant that launched it as a task,
+ * as one cluster; its menu lists Working, then Idle.
+ */
 export function ThreadAssistantStack(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -133,17 +132,49 @@ export function ThreadAssistantStack(props: {
   const { messages } = props;
   const { active, archived } = useAssistantEntries();
   const actions = useAssistantActions(props.environmentId);
+  const flows = useAssistantFlows(props.environmentId);
+  const openInfo = useOpenAssistantInfo();
+  const shells = useThreadShells();
+  const owner = useTaskAssistant(props.environmentId, props.threadId);
+  const taskShell = useThreadShell(
+    owner === null ? null : scopeThreadRef(props.environmentId, props.threadId),
+  );
+  const taskRecord = useAssistantTask(props.environmentId, props.threadId);
   const known = [...active, ...archived]
     .filter((entry) => entry.environmentId === props.environmentId)
     .map((entry) => entry.assistant);
-  const senders = props.threadId.startsWith("assistant:") ? [] : assistantSenders(messages, known);
+  const senders = props.threadId.startsWith("assistant:")
+    ? []
+    : assistantThreadSenders(assistantSenders(messages, known), owner?.assistant ?? null);
   if (senders.length === 0) return null;
+  const task: PresenceTask | null =
+    owner === null
+      ? null
+      : {
+          assistantId: owner.assistant.id,
+          state: taskShell === null ? "running" : assistantTaskState(taskShell),
+          dismissed: taskRecord?.dismissedAt != null,
+        };
+  const looks = new Map(
+    senders.map((sender) => [
+      sender.assistantId,
+      assistantSenderLook(
+        sender,
+        assistantPresenceOf(sender.assistant, props.environmentId, shells),
+        task,
+      ),
+    ]),
+  );
   return (
     <PresenceStackView
       environmentId={props.environmentId}
       threadId={props.threadId}
       senders={senders}
+      looks={looks}
+      task={task}
       canAct={actions.canAct}
+      onDismissTask={() => void flows.dismissTask(props.threadId)}
+      onRestoreTask={() => void flows.restoreTask(props.threadId)}
       onAccess={async (assistantId, toolAccess) => {
         const reply = await actions.update({
           assistantId: assistantId as Assistant["id"],
@@ -151,52 +182,52 @@ export function ThreadAssistantStack(props: {
         });
         if (!reply.ok) Dialog.alert("Could not change access", reply.message);
       }}
+      onOpenChat={(assistant) => flows.openConversation(assistant)}
+      onOpenInfo={(assistantId) =>
+        openInfo.assistant(props.environmentId, assistantId as Assistant["id"])
+      }
     />
   );
 }
 
-function StackAvatar(props: {
-  readonly sender: ReturnType<typeof assistantSenders>[number];
-  readonly working: boolean;
-  readonly overlap: boolean;
-}) {
-  const { sender } = props;
-  return (
-    <View
-      className="rounded-full border-2 border-screen"
-      style={{ marginLeft: props.overlap ? -7 : 0 }}
-    >
-      <PresenceAvatar
-        who={{
-          name: sender.assistant?.name ?? "Assistant",
-          icon: sender.assistant?.icon,
-          accent: assistantAccent(sender.assistantId),
-        }}
-        size={22}
-      />
-      <View
-        className={`absolute -bottom-0.5 -right-0.5 size-2 rounded-full border border-screen ${props.working ? "bg-success-foreground" : "bg-foreground-muted"}`}
-      />
-    </View>
-  );
+function taskAction(task: PresenceTask, canAct: boolean): MenuAction {
+  return task.dismissed
+    ? {
+        id: RESTORE_TASK,
+        title: "Restore task",
+        image: "arrow.uturn.backward",
+        attributes: { disabled: !canAct },
+      }
+    : {
+        id: DISMISS_TASK,
+        title: "Dismiss task",
+        image: "xmark",
+        attributes: { disabled: !canAct || !canDismissAssistantTask(task.state) },
+      };
 }
 
-function menuActions(
-  senders: ReadonlyArray<ReturnType<typeof assistantSenders>[number]>,
-  workingById: ReadonlyMap<string, boolean>,
+function senderActions(
+  sender: Sender,
+  working: boolean,
   canAct: boolean,
-): MenuAction[] {
-  return senders.map((sender) => ({
+  task: PresenceTask | null,
+): MenuAction {
+  const { assistant } = sender;
+  return {
     id: `assistant:${sender.assistantId}`,
-    title: sender.assistant?.name ?? "Assistant",
-    subtitle: `${presenceStatusLabel(workingById.get(sender.assistantId) === true)} · ${presenceMessageCount(sender)}`,
+    title: assistant?.name ?? "Assistant",
+    subtitle: assistantPresenceStatus(working, sender, assistant?.askBeforeActing === true),
     subactions: [
-      {
-        id: `${JUMP_PREFIX}${sender.assistantId}`,
-        title: "Jump to last message",
-        image: "arrow.down.to.line",
-      },
-      ...(sender.assistant
+      ...(sender.count === 0
+        ? []
+        : [
+            {
+              id: `${JUMP_PREFIX}${sender.assistantId}`,
+              title: "Jump to last message",
+              image: "arrow.down.to.line",
+            },
+          ]),
+      ...(assistant
         ? [
             {
               id: `access-group:${sender.assistantId}`,
@@ -205,49 +236,88 @@ function menuActions(
               subactions: TOOL_ACCESS_OPTIONS.map((option) => ({
                 id: `${ACCESS_PREFIX}${sender.assistantId}|${option.value}`,
                 title: option.label,
-                state:
-                  sender.assistant?.toolAccess === option.value
-                    ? ("on" as const)
-                    : ("off" as const),
+                state: assistant.toolAccess === option.value ? ("on" as const) : ("off" as const),
                 attributes: { disabled: !canAct },
               })),
             },
+            {
+              id: `${CHAT_PREFIX}${sender.assistantId}`,
+              title: "Open chat",
+              image: "bubble.left.and.bubble.right",
+              attributes: { disabled: assistant.threadId === null },
+            },
+            {
+              id: `${INFO_PREFIX}${sender.assistantId}`,
+              title: "Assistant info",
+              image: "info.circle",
+            },
           ]
         : []),
+      ...(task !== null && task.assistantId === sender.assistantId
+        ? [taskAction(task, canAct)]
+        : []),
     ],
-  }));
+  };
+}
+
+/**
+ * The menu tree: a titled inline section for Working, then Idle, omitting an empty one. Android's
+ * popup draws inline sections as submenus, so there the rows stay flat in the same order; each
+ * subtitle already starts with Working or Idle.
+ */
+export function presenceMenuActions(
+  senders: ReadonlyArray<Sender>,
+  looks: ReadonlyMap<string, SenderLook>,
+  canAct: boolean,
+  task: PresenceTask | null,
+  inlineSections = Platform.OS !== "android",
+): MenuAction[] {
+  const isWorking = (sender: Sender) => looks.get(sender.assistantId)?.working === true;
+  const sections = assistantPresenceSections(senders, isWorking);
+  if (!inlineSections) {
+    return [...sections.working, ...sections.idle].map((sender) =>
+      senderActions(sender, isWorking(sender), canAct, task),
+    );
+  }
+  return (
+    [
+      ["working", "Working", sections.working],
+      ["idle", "Idle", sections.idle],
+    ] as const
+  )
+    .filter(([, , rows]) => rows.length > 0)
+    .map(([id, title, rows]) => ({
+      id: `section:${id}`,
+      title,
+      displayInline: true,
+      subactions: rows.map((sender) => senderActions(sender, isWorking(sender), canAct, task)),
+    }));
 }
 
 function PresenceStackView(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly senders: ReadonlyArray<ReturnType<typeof assistantSenders>[number]>;
+  readonly senders: ReadonlyArray<Sender>;
+  readonly looks: ReadonlyMap<string, SenderLook>;
+  readonly task: PresenceTask | null;
   readonly canAct: boolean;
+  readonly onDismissTask: () => void;
+  readonly onRestoreTask: () => void;
   readonly onAccess: (assistantId: string, access: Assistant["toolAccess"]) => void;
+  readonly onOpenChat: (assistant: Assistant) => void;
+  readonly onOpenInfo: (assistantId: string) => void;
 }) {
-  const { shown, hidden } = splitPresenceStack(props.senders);
-  const shells = useThreadShells();
-  const workingById = new Map(
-    props.senders.map((sender) => {
-      const threadId = sender.assistant?.threadId;
-      const shell = threadId
-        ? shells.find((s) => s.environmentId === props.environmentId && s.id === threadId)
-        : undefined;
-      return [
-        sender.assistantId,
-        shell !== undefined && resolveSidebarThreadStatus(shell) === "working",
-      ];
-    }),
-  );
+  const byId = (id: string) => props.senders.find((candidate) => candidate.assistantId === id);
   return (
     <Menu
-      actions={menuActions(props.senders, workingById, props.canAct)}
+      title={`Assistants in this thread · ${props.senders.length}`}
+      actions={presenceMenuActions(props.senders, props.looks, props.canAct, props.task)}
       onPressAction={({ nativeEvent }) => {
         const id = nativeEvent.event;
-        if (id.startsWith(JUMP_PREFIX)) {
-          const sender = props.senders.find(
-            (candidate) => candidate.assistantId === id.slice(JUMP_PREFIX.length),
-          );
+        if (id === DISMISS_TASK) props.onDismissTask();
+        else if (id === RESTORE_TASK) props.onRestoreTask();
+        else if (id.startsWith(JUMP_PREFIX)) {
+          const sender = byId(id.slice(JUMP_PREFIX.length));
           if (sender)
             requestThreadMessageJump(
               scopedThreadKey(props.environmentId, props.threadId),
@@ -256,28 +326,31 @@ function PresenceStackView(props: {
         } else if (id.startsWith(ACCESS_PREFIX)) {
           const [assistantId, access] = id.slice(ACCESS_PREFIX.length).split("|");
           props.onAccess(assistantId!, access as Assistant["toolAccess"]);
+        } else if (id.startsWith(CHAT_PREFIX)) {
+          const assistant = byId(id.slice(CHAT_PREFIX.length))?.assistant;
+          if (assistant) props.onOpenChat(assistant);
+        } else if (id.startsWith(INFO_PREFIX)) {
+          props.onOpenInfo(id.slice(INFO_PREFIX.length));
         }
       }}
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Assistants in this conversation: ${props.senders
+        accessibilityLabel={`Assistants in this thread: ${props.senders
           .map((sender) => sender.assistant?.name ?? "Assistant")
           .join(", ")}`}
         hitSlop={6}
-        className="flex-row items-center self-end rounded-full border border-border py-0.5 pl-0.5 pr-1.5 active:opacity-70"
+        className="self-end rounded-lg p-0.5 active:opacity-70"
       >
-        {shown.map((sender, index) => (
-          <StackAvatar
-            key={sender.assistantId}
-            sender={sender}
-            working={workingById.get(sender.assistantId) === true}
-            overlap={index > 0}
-          />
-        ))}
-        {hidden > 0 ? (
-          <Text className="ml-1.5 text-2xs text-foreground-muted">+{hidden}</Text>
-        ) : null}
+        <AssistantCluster
+          environmentId={props.environmentId}
+          size={26}
+          faces={props.senders.map((sender) => ({
+            key: sender.assistantId,
+            assistant: sender.assistant ?? removedAssistantFace(sender.assistantId),
+            mood: props.looks.get(sender.assistantId)?.face ?? "sleeping",
+          }))}
+        />
       </Pressable>
     </Menu>
   );

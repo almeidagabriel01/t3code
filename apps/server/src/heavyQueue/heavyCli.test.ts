@@ -403,6 +403,54 @@ describe("t3 heavy", () => {
       },
     );
 
+    // A lazy install that raced in a fresh copy is Linux's failure: once more there, never the Mac.
+    it.each([
+      ["output", 1, 0, 2, "linux-ok\n"],
+      ["output", 2, 0, 2, "vp on mac: test run\n"],
+      ["marker", 1, 0, 2, "linux-ok\n"],
+      ["marker", 2, 0, 2, "vp on mac: test run\n"],
+    ] as const)(
+      "an install failure seen in the %s %i time(s) ends %i after %i Linux runs",
+      async (seen, fails, code, runs, output) => {
+        const failure =
+          seen === "output"
+            ? "echo 'Error: Electron failed to install correctly.' >&2"
+            : `printf '${M} install=electron\\n' >&2`;
+        const { dir, env } = setup(
+          [
+            `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            `if [ $n -le ${fails} ]; then ${failure}; printf '${M} exit=1\\n' >&2; exit 1; fi`,
+            "echo linux-ok",
+            `printf '${M} exit=0\\n' >&2`,
+          ].join("\n"),
+          { runnerDropped: "mac" },
+        );
+        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).toBe(output);
+        expect(NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim()).toBe(
+          `${runs}`,
+        );
+        expect(run.stderr()).toContain("Dependency install on Linux failed");
+        expect(
+          run.stderr().includes("Linux couldn't run this: Dependency install on Linux failed"),
+        ).toBe(fails === 2);
+      },
+    );
+
+    it("sends a script outside the checkout to Linux as its text", async () => {
+      const { dir, env } = setup(echoArgs);
+      const scratch = tempDir();
+      const path = NodePath.join(scratch, "verify.sh");
+      NodeFS.writeFileSync(path, "vp test run");
+      const run = heavy(dir, ["/bin/sh", "-c", `bash ${path} --fast`], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(
+        `bash|-c|vp test run|${path}|--fast| in ${NodeFS.realpathSync(dir)}\n`,
+      );
+    });
+
     it("judges the whole line, not the label cut short for the row", async () => {
       const { dir, env } = setup(echoArgs);
       const line = `vp test run ${"a".repeat(200)} /etc/hosts`;
@@ -1049,5 +1097,50 @@ describe("t3 heavy", () => {
     });
     expect(parseHeavyArgs(["--queue-dir", "/q", "--name", "  ", "--", "vp"]).name).toBeUndefined();
     expect(parseHeavyArgs(["vp"]).dir).toBe(Queue.defaultQueueDir());
+  });
+
+  it("skips options another T3 version added instead of running one as the program", () => {
+    // A hook from one T3 build hands its line to another build's CLI (`--request-id` once ran as a program).
+    const rows: ReadonlyArray<ReadonlyArray<string>> = [
+      ["--queue-dir", "/q", "--trace-id", "toolu_1", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--trace", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--name", "Tests", "--trace", "--", "vp", "test"],
+      ["--trace-id", "toolu_1", "--queue-dir", "/q", "--name", "Tests", "--", "vp", "test"],
+    ];
+    for (const row of rows) {
+      expect(parseHeavyArgs(row), row.join(" ")).toMatchObject({
+        dir: "/q",
+        name: "Tests",
+        program: "vp",
+        args: ["test"],
+      });
+    }
+  });
+
+  it("defaults a checkout's own T3 to that checkout's queue and an installed T3 to the machine's", () => {
+    const root = tempDir();
+    const worktree = NodePath.join(root, "worktree");
+    const main = NodePath.join(root, "main");
+    NodeFS.mkdirSync(worktree);
+    NodeFS.writeFileSync(NodePath.join(worktree, ".git"), "gitdir: /repo/.git/worktrees/w\n");
+    NodeFS.mkdirSync(NodePath.join(main, ".git"), { recursive: true });
+    const live = NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
+    const worktreeSource = NodePath.join(worktree, "apps", "server", "src", "bin.ts");
+    const rows: ReadonlyArray<[NodeJS.ProcessEnv, string | undefined, string]> = [
+      [{}, worktreeSource, NodePath.join(worktree, ".t3", "heavy-queue-dev")],
+      [{}, `${main}/apps/server/dist/bin.mjs`, NodePath.join(main, ".t3", "heavy-queue-dev")],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, worktreeSource, "/q"],
+      [{ T3CODE_HEAVY_QUEUE_DIR: " " }, worktreeSource, `${worktree}/.t3/heavy-queue-dev`],
+      [{ T3CODE_HEAVY_QUEUE_DIR: "/q" }, undefined, "/q"],
+      [{}, "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs", live],
+      [{}, `${main}/node_modules/t3/dist/bin.mjs`, live],
+      [{}, `${main}/node_modules/vitest/vitest.mjs`, live],
+      [{}, `${root}/unpacked/apps/server/dist/bin.mjs`, live],
+      [{}, "/usr/local/bin/t3", live],
+      [{}, undefined, live],
+    ];
+    for (const [environment, entry, dir] of rows) {
+      expect(Queue.defaultQueueDir(environment, entry), entry).toBe(dir);
+    }
   });
 });

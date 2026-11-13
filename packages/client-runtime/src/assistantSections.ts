@@ -14,7 +14,9 @@ export interface SectionTeam {
 }
 
 /** The projects a project assistant belongs to. */
-const listedProjects = (assistant: SectionAssistant["assistant"]): ReadonlyArray<ProjectId> =>
+export const listedProjects = (
+  assistant: SectionAssistant["assistant"],
+): ReadonlyArray<ProjectId> =>
   assistant.projectIds === undefined || assistant.projectIds.length === 0
     ? [assistant.projectId]
     : assistant.projectIds;
@@ -102,6 +104,17 @@ export const assistantProjectsLabel = (
   nameOf: (projectId: string) => string,
 ): string =>
   assistant.scope === "all" ? "All projects" : listedProjects(assistant).map(nameOf).join(", ");
+
+/** One-line project chip: "All projects", or the first project's name plus "+N" for the rest. */
+export const assistantProjectsChip = (
+  assistant: SectionAssistant["assistant"],
+  nameOf: (projectId: string) => string,
+): string => {
+  if (assistant.scope === "all") return "All projects";
+  const [first, ...rest] = listedProjects(assistant).map(nameOf);
+  if (first === undefined) return "";
+  return rest.length === 0 ? first : `${first} +${rest.length}`;
+};
 
 /** The picker's "All projects" entry: always offered, and the assistant's scope `all`. */
 export const ALL_PROJECTS = "all";

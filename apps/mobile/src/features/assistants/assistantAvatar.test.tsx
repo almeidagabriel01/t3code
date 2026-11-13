@@ -16,7 +16,12 @@ const { mocks } = vi.hoisted(() => ({
 }));
 
 vi.mock("react-native", () => ({
-  View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
+  View: (props: { children?: ReactNode; testID?: string }) => (
+    <div data-testid={props.testID}>{props.children}</div>
+  ),
+}));
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
 }));
 vi.mock("../../lib/appState", () => ({
   useAppForeground: () => mocks.foreground,
@@ -69,7 +74,7 @@ vi.mock("../../state/assets", () => ({
   },
 }));
 
-import { AssistantAvatar, AssistantIconGlyph } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster, AssistantIconGlyph } from "./assistantPresentation";
 import { AssistantRobot } from "./AssistantRobot";
 
 const draw = (node: ReactNode) => {
@@ -215,6 +220,31 @@ describe("AssistantAvatar", () => {
     act(() => image.click());
     expect(container.querySelector("[data-image]")).toBeNull();
     expect(container.querySelector('[data-testid="assistant-robot-idle"]')).not.toBeNull();
+  });
+});
+
+describe("AssistantCluster", () => {
+  it.each([
+    [1, 1, null],
+    [2, 2, null],
+    [3, 3, null],
+    [4, 4, null],
+    [5, 3, "+2"],
+    [6, 3, "+3"],
+    [12, 3, "+9"],
+  ])("%i faces draw %i robots and %s", (count, drawn, more) => {
+    const faces = Array.from({ length: count }, (_, index) => ({
+      key: `a${index}`,
+      assistant: { id: AssistantId.make(`a${index}`), avatar: null, icon: null },
+      mood: "sleeping" as const,
+    }));
+    const container = draw(<AssistantCluster faces={faces} size={26} />);
+    expect(container.querySelectorAll('[data-testid="assistant-robot-sleeping"]')).toHaveLength(
+      drawn,
+    );
+    expect(
+      container.querySelector('[data-testid="assistant-cluster-more"]')?.textContent ?? null,
+    ).toBe(more);
   });
 });
 

@@ -83,6 +83,20 @@ describe("heavy queue file", () => {
     expect(Queue.enqueue(dir, entry("r200"), at)).toEqual({ code: 1 });
   });
 
+  it("reads a script up to 64 KB from the folder, and nothing else", () => {
+    const dir = tempDir();
+    NodeFS.writeFileSync(NodePath.join(dir, "small.sh"), "vp test run");
+    NodeFS.writeFileSync(NodePath.join(dir, "big.sh"), "x".repeat(64 * 1024 + 1));
+    NodeFS.mkdirSync(NodePath.join(dir, "folder.sh"));
+    const read = Queue.scriptReader(dir, dir);
+    expect(read("small.sh")).toBe("vp test run");
+    expect(read(`${dir}/small.sh`)).toBe("vp test run");
+    expect(read("~/small.sh")).toBe("vp test run");
+    expect(read("big.sh")).toBeNull();
+    expect(read("folder.sh")).toBeNull();
+    expect(read("missing.sh")).toBeNull();
+  });
+
   it("prunes entries whose process died, so the next waiter starts", () => {
     const dir = tempDir();
     Queue.enqueue(dir, entry("dead", deadPid()));

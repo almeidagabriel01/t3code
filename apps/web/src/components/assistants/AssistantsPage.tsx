@@ -3,7 +3,6 @@ import {
   assistantFace,
   assistantGroupOwnerKey,
   assistantPresence,
-  assistantQueuedLabel,
 } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
@@ -31,8 +30,8 @@ import {
   useAssistantEntries,
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
+import { cn } from "../../lib/utils";
 import { useProjects, useQuietThreadShells } from "../../state/entities";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
@@ -41,7 +40,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
-import { AssistantAttentionStatus, AssistantAvatar } from "./assistantPresentation";
+import {
+  AssistantAttentionStatus,
+  AssistantAvatar,
+  assistantStatusText,
+  MOOD_TEXT,
+} from "./assistantPresentation";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantAttention, useGroupAttention } from "./useAssistantAttention";
@@ -59,7 +63,6 @@ function AssistantCard(props: {
   const taskSections = useAssistantTaskSections(props.entry);
   const { thread, groupThreads, attention } = useAssistantAttention(props.entry);
   const presence = assistantPresence(thread, groupThreads);
-  const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, props.nowMs);
   return (
     <article
       data-testid="assistant-card"
@@ -95,10 +98,8 @@ function AssistantCard(props: {
           {archived ? (
             <p className="truncate text-xs text-muted-foreground">Archived</p>
           ) : (
-            <p className="truncate text-xs text-muted-foreground">
-              {[presence.detail, since, assistantQueuedLabel(presence.queued)]
-                .filter((part) => part !== "" && part !== null)
-                .join(" · ")}
+            <p className={cn("truncate text-xs", MOOD_TEXT[presence.mood])}>
+              {assistantStatusText(presence, props.nowMs)}
             </p>
           )}
         </div>
