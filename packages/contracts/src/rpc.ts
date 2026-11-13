@@ -56,6 +56,7 @@ import {
   WsIntegrationsSaveOwnAppRpc,
   WsIntegrationsSaveTokenRpc,
   WsIntegrationsSubscribeRpc,
+  WsIntegrationsUpdateRpc,
 } from "./integrations.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -3015,6 +3016,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsIntegrationsSaveTokenRpc,
   WsIntegrationsSaveOwnAppRpc,
   WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsUpdateRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -76,6 +77,11 @@ const FORWARDED_REQUEST_HEADERS = [
   "last-event-id",
 ];
 const RETURNED_RESPONSE_HEADERS = ["content-type", "mcp-session-id", "mcp-protocol-version"];
+/** Answers that mean the service itself is down, not that it refused the request. */
+const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+const LEARN_TOOLS_BODY = new TextEncoder().encode(
+  JSON.stringify({ jsonrpc: "2.0", id: "t3-learn-tools", method: "tools/list" }),
+);
 
 export const readOnlyBlocked = (service: string, tool: string) =>
   `Read only blocks this action: "${tool}" can change data in ${service}. Do not try another way; if it is needed, ask the user to change this assistant's tool access.`;
@@ -212,6 +218,7 @@ const make = Effect.gen(function* () {
   const { fetch } = yield* IntegrationFetch.IntegrationFetch;
   // Read-only hints from `tools/list` per integration; a tool never listed counts as a write.
   const annotations = new Map<string, Map<string, boolean>>();
+  const learning = new Map<string, Deferred.Deferred<void>>();
 
   const learn = (name: string) => (tools: ReadonlyArray<unknown>) => {
     const known = annotations.get(name) ?? new Map<string, boolean>();
@@ -245,6 +252,17 @@ const make = Effect.gen(function* () {
       catch: (cause) => new UpstreamUnreachable({ cause }),
     });
 
+  const sendTracked = (name: string, url: string, request: ProxyRequest, token: string) =>
+    send(url, request, token).pipe(
+      Effect.option,
+      Effect.tap((response) =>
+        auth.reportReachable(
+          name,
+          Option.isSome(response) && !UNAVAILABLE_STATUSES.has(response.value.status),
+        ),
+      ),
+    );
+
   const discard = (response: Response) =>
     Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 
@@ -271,14 +289,14 @@ const make = Effect.gen(function* () {
     if (token._tag === "Failure") {
       return { response: yield* signInFailed(token.failure), acted: false };
     }
-    let response = yield* send(url, request, token.success).pipe(Effect.option);
+    let response = yield* sendTracked(name, url, request, token.success);
     if (Option.isSome(response) && response.value.status === 401) {
       yield* discard(response.value);
       const fresh = yield* auth.accessToken(name, token.success).pipe(Effect.result);
       if (fresh._tag === "Failure") {
         return { response: yield* signInFailed(fresh.failure), acted: false };
       }
-      response = yield* send(url, request, fresh.success).pipe(Effect.option);
+      response = yield* sendTracked(name, url, request, fresh.success);
       if (Option.isSome(response) && response.value.status === 401) {
         yield* discard(response.value);
         yield* auth.markRejected(name).pipe(Effect.ignore);
@@ -317,6 +335,42 @@ const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * The provider listed tools before a restart and never lists again, so the proxy asks the
+   * service itself, once per integration at a time, in the provider's own MCP session.
+   * ponytail: first page only; a tool on a later page stays a write until the provider lists.
+   */
+  const learnFromService = Effect.fn("IntegrationProxy.learnFromService")(function* (
+    name: string,
+    url: string,
+    service: string,
+    request: ProxyRequest,
+  ) {
+    const running = learning.get(name);
+    if (running !== undefined) return yield* Deferred.await(running);
+    const done = Deferred.makeUnsafe<void>();
+    learning.set(name, done);
+    yield* forward(
+      name,
+      url,
+      service,
+      { ...request, body: LEARN_TOOLS_BODY },
+      { id: "t3-learn-tools", method: "tools/list" },
+      true,
+    ).pipe(
+      // Reading the body to its end is what feeds `learn`.
+      Effect.flatMap(({ response }) =>
+        Effect.promise(() => response.arrayBuffer().catch(() => undefined)),
+      ),
+      Effect.ensuring(
+        Effect.suspend(() => {
+          learning.delete(name);
+          return Deferred.succeed(done, undefined);
+        }),
+      ),
+    );
+  });
+
   const gateToolCall = Effect.fn("IntegrationProxy.gateToolCall")(function* (input: {
     readonly assistant: Assistant | undefined;
     readonly threadId: ThreadId;
@@ -324,8 +378,18 @@ const make = Effect.gen(function* () {
     readonly service: string;
     readonly readOnlyTools: ReadonlyArray<string> | undefined;
     readonly message: JsonRpcMessage;
+    readonly url: string;
+    readonly request: ProxyRequest;
   }) {
     const tool = typeof input.message.params?.name === "string" ? input.message.params.name : "";
+    const mattersHere = decideToolCall(input.assistant, true) !== "forward";
+    if (
+      mattersHere &&
+      !annotations.has(input.name) &&
+      input.readOnlyTools?.includes(tool) !== true
+    ) {
+      yield* learnFromService(input.name, input.url, input.service, input.request);
+    }
     const write = isWriteTool(tool, annotations.get(input.name), input.readOnlyTools);
     const decision = decideToolCall(input.assistant, write);
     if (decision === "forward" || input.assistant === undefined) {
@@ -408,6 +472,8 @@ const make = Effect.gen(function* () {
       service,
       readOnlyTools: entry?.readOnlyTools,
       message,
+      url: server.url,
+      request,
     });
     if (!approval.allowed) return jsonResponse(toolError(message.id, approval.message));
     const outcome = yield* forward(request.name, server.url, service, request, message, false);

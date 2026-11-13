@@ -346,6 +346,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.integrationsSaveToken]: "integrations",
   [WS_METHODS.integrationsSaveOwnApp]: "integrations",
   [WS_METHODS.integrationsRemoveOwnApp]: "integrations",
+  [WS_METHODS.integrationsUpdate]: "integrations",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

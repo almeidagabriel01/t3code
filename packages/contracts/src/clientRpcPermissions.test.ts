@@ -197,6 +197,7 @@ describe("integration client guards", () => {
       WS_METHODS.integrationsSaveToken,
       WS_METHODS.integrationsSaveOwnApp,
       WS_METHODS.integrationsRemoveOwnApp,
+      WS_METHODS.integrationsUpdate,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["settings:write"]);
     expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.integrationsSubscribe)).toBe(false);

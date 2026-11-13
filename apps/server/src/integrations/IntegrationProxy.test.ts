@@ -53,7 +53,13 @@ const makeUpstream = () => {
     readonly body: { id?: unknown; method?: string; params?: { name?: string } } | undefined;
   }
   const seen: Array<Seen> = [];
-  const state = { validToken: "at-1", scopeDenied: false, down: false, listAsJson: false };
+  const state = {
+    validToken: "at-1",
+    scopeDenied: false,
+    down: false,
+    unavailable: false,
+    listAsJson: false,
+  };
   const json = (body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), {
       headers: { "content-type": "application/json", ...headers },
@@ -67,6 +73,7 @@ const makeUpstream = () => {
     const body = text === undefined ? undefined : (JSON.parse(text) as Seen["body"] & {});
     seen.push({ method: init?.method ?? "GET", headers, body });
     if (state.down) throw new Error("connection reset");
+    if (state.unavailable) return new Response("busy", { status: 503 });
     if (headers.authorization !== `Bearer ${state.validToken}`) {
       return new Response("{}", {
         status: 401,
@@ -124,7 +131,13 @@ const makeUpstream = () => {
     }
     return json({ jsonrpc: "2.0", id: body?.id, result: {} });
   };
-  return { seen, state, send, calls: () => seen.filter((r) => r.body?.method === "tools/call") };
+  return {
+    seen,
+    state,
+    send,
+    calls: () => seen.filter((r) => r.body?.method === "tools/call"),
+    lists: () => seen.filter((r) => r.body?.method === "tools/list"),
+  };
 };
 
 interface Setup {
@@ -139,6 +152,7 @@ const setup = (options: Setup = {}) =>
   Effect.gen(function* () {
     const upstream = makeUpstream();
     const marks: Array<string> = [];
+    const reach: Array<string> = [];
     const auth = { current: "at-1", refreshes: 0, failure: options.tokenFailure };
     const assistant = {
       id: "sam",
@@ -203,6 +217,8 @@ const setup = (options: Setup = {}) =>
               markRejected: (name) => Effect.sync(() => void marks.push(`rejected:${name}`)),
               markNeedsMoreAccess: (name, scope) =>
                 Effect.sync(() => void marks.push(`more:${name}:${scope}`)),
+              reportReachable: (name, reachable) =>
+                Effect.sync(() => void reach.push(`${reachable ? "up" : "down"}:${name}`)),
             }),
             Layer.succeed(
               IntegrationFetch.IntegrationFetch,
@@ -267,7 +283,18 @@ const setup = (options: Setup = {}) =>
           body: new TextEncoder().encode(text),
         })
         .pipe(Effect.map((response) => response.status));
-    return { upstream, marks, auth, request, call, listTools, rawPost, decisions, openDecisions };
+    return {
+      upstream,
+      marks,
+      reach,
+      auth,
+      request,
+      call,
+      listTools,
+      rawPost,
+      decisions,
+      openDecisions,
+    };
   });
 
 const textOf = (reply: unknown) =>
@@ -386,9 +413,9 @@ it.effect.each([false, true])(
       Effect.gen(function* () {
         const env = yield* setup({ access: "read-only" });
         env.upstream.state.listAsJson = listAsJson;
-        // Before tools/list nothing is known, so every tool counts as a write.
-        expect(textOf(yield* env.call("search"))).toMatchObject({ isError: true });
-        yield* env.listTools();
+        // After a restart the provider never lists again: the proxy asks the service itself.
+        expect(textOf(yield* env.call("search")).content[0]!.text).toBe("ran search");
+        expect(env.upstream.lists()).toHaveLength(1);
         const blocked = textOf(yield* env.call("create_issue"));
         expect(blocked.isError).toBe(true);
         expect(blocked.content[0]!.text).toBe(
@@ -396,7 +423,13 @@ it.effect.each([false, true])(
         );
         expect(textOf(yield* env.call("search")).content[0]!.text).toBe("ran search");
         expect(textOf(yield* env.call("list_projects")).content[0]!.text).toBe("ran list_projects");
+        // Unknown after learning stays a write (D8), with no second list.
+        expect(textOf(yield* env.call("mystery")).content[0]!.text).toBe(
+          IntegrationProxy.readOnlyBlocked("Linear", "mystery"),
+        );
+        expect(env.upstream.lists()).toHaveLength(1);
         expect(env.upstream.calls().map((r) => r.body?.params?.name)).toEqual([
+          "search",
           "search",
           "list_projects",
         ]);
@@ -536,6 +569,59 @@ it.effect("an approval survives a call that never reached the service", () =>
       expect(textOf(yield* env.call("create_issue")).content[0]!.text).toBe(
         AskBeforeActingGate.TOOL_WAITING_FOR_APPROVAL,
       );
+    }),
+  ),
+);
+
+it.effect("concurrent unknown tools share one tools/list; a failed one is tried again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup({ access: "read-only" });
+      env.upstream.state.down = true;
+      // The service is down, so nothing is learned and the read counts as a write.
+      expect(textOf(yield* env.call("search")).content[0]!.text).toBe(
+        IntegrationProxy.readOnlyBlocked("Linear", "search"),
+      );
+      env.upstream.state.down = false;
+      const before = env.upstream.lists().length;
+      const replies = yield* Effect.all([env.call("search"), env.call("list_teams")], {
+        concurrency: "unbounded",
+      });
+      expect(replies.map((reply) => textOf(reply).content[0]!.text)).toEqual([
+        "ran search",
+        "ran list_teams",
+      ]);
+      expect(env.upstream.lists().length - before).toBe(1);
+      // The learning request carries the provider's session and the upstream token only.
+      const learned = env.upstream.lists().at(-1)!;
+      expect(learned.headers["mcp-session-id"]).toBe("s-1");
+      expect(learned.headers.authorization).toBe("Bearer at-1");
+      expect(learned.headers.cookie).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("an unreachable or unavailable service is reported until it answers again", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup({ access: "full" });
+      yield* env.listTools();
+      expect(env.reach.at(-1)).toBe("up:linear");
+      env.upstream.state.down = true;
+      expect(textOf(yield* env.call("search")).content[0]!.text).toBe(
+        IntegrationProxy.serviceUnreachable("Linear"),
+      );
+      expect(env.reach.at(-1)).toBe("down:linear");
+      env.upstream.state.down = false;
+      env.upstream.state.unavailable = true;
+      const busy = yield* env.request({
+        body: { jsonrpc: "2.0", id: 99, method: "tools/call", params: { name: "search" } },
+      });
+      expect(busy.status).toBe(503);
+      expect(env.reach.at(-1)).toBe("down:linear");
+      env.upstream.state.unavailable = false;
+      expect(textOf(yield* env.call("search")).content[0]!.text).toBe("ran search");
+      expect(env.reach.at(-1)).toBe("up:linear");
     }),
   ),
 );

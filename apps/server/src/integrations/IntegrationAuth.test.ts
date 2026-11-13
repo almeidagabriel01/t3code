@@ -648,6 +648,59 @@ it.effect(
     ),
 );
 
+it.effect("availability is the user's to set, and a reconnect keeps it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup();
+      yield* connectLinear(env);
+      const stored = () =>
+        env.settings.getSettings.pipe(
+          Effect.map((settings) => {
+            const server = settings.mcpServers.linear;
+            return server?.transport === "http" ? server.integration?.availability : undefined;
+          }),
+        );
+      expect(yield* stored()).toBe("assistants");
+      const view = yield* env.auth.update({ name: "linear", availability: "all" });
+      expect(view).toMatchObject({ name: "linear", availability: "all", status: "connected" });
+      expect(yield* stored()).toBe("all");
+      yield* connectLinear(env);
+      expect(yield* stored()).toBe("all");
+      yield* env.auth.update({ name: "linear", availability: "assistants" });
+      expect(yield* stored()).toBe("assistants");
+      expect(yield* reasonOf(env.auth.update({ name: "missing", availability: "all" }))).toBe(
+        "not-connected",
+      );
+    }),
+  ),
+);
+
+it.effect("an unreachable service shows Error until the next answer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup();
+      yield* connectLinear(env);
+      const view = () =>
+        env.auth.state.pipe(
+          Effect.map((state) => state.integrations.find((i) => i.name === "linear")),
+        );
+      yield* env.auth.reportReachable("linear", false);
+      expect(yield* view()).toMatchObject({ status: "error", lastError: "unreachable" });
+      yield* env.auth.reportReachable("linear", true);
+      const back = yield* view();
+      expect(back).toMatchObject({ status: "connected" });
+      expect(back).not.toHaveProperty("lastError");
+      // Signing in again outranks it: the row asks for that, not a retry.
+      yield* env.auth.reportReachable("linear", false);
+      yield* env.auth.markRejected("linear");
+      expect(yield* view()).toMatchObject({ status: "needs-sign-in" });
+      yield* env.auth.disconnect({ name: "linear" });
+      yield* connectLinear(env);
+      expect(yield* view()).toMatchObject({ status: "connected" });
+    }),
+  ),
+);
+
 it("scopeUnion keeps first-seen order and drops blanks", () => {
   expect(IntegrationAuth.scopeUnion("a b", undefined, " b  c ", "")).toBe("a b c");
   expect(IntegrationAuth.scopeUnion()).toBe("");

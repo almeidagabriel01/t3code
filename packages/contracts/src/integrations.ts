@@ -115,6 +115,8 @@ export const IntegrationErrorReason = Schema.Literals([
   "needs-sign-in",
   "refresh-failed",
   "storage-failed",
+  // The service did not answer, or answered 502/503/504; clears on its next answer.
+  "unreachable",
 ]);
 export type IntegrationErrorReason = typeof IntegrationErrorReason.Type;
 
@@ -128,6 +130,8 @@ export class IntegrationError extends Schema.TaggedError<IntegrationError>()("In
   }
 }
 
+export const IntegrationAvailability = Schema.Literals(["assistants", "all"]);
+
 export const IntegrationView = Schema.Struct({
   name: McpServerName,
   catalogId: Schema.NullOr(McpServerName),
@@ -136,7 +140,7 @@ export const IntegrationView = Schema.Struct({
   lastError: Schema.optionalKey(IntegrationErrorReason),
   expiresAt: Schema.optionalKey(Schema.Number),
   scope: Schema.optionalKey(Schema.String),
-  availability: Schema.Literals(["assistants", "all"]),
+  availability: IntegrationAvailability,
 });
 export type IntegrationView = typeof IntegrationView.Type;
 
@@ -203,6 +207,12 @@ export const IntegrationSaveOwnAppInput = Schema.Struct({
 });
 export type IntegrationSaveOwnAppInput = typeof IntegrationSaveOwnAppInput.Type;
 
+export const IntegrationUpdateInput = Schema.Struct({
+  name: McpServerName,
+  availability: IntegrationAvailability,
+});
+export type IntegrationUpdateInput = typeof IntegrationUpdateInput.Type;
+
 export const INTEGRATIONS_WS_METHODS = {
   integrationsSubscribe: "integrations.subscribe",
   integrationsBeginConnect: "integrations.beginConnect",
@@ -212,6 +222,7 @@ export const INTEGRATIONS_WS_METHODS = {
   integrationsSaveToken: "integrations.saveToken",
   integrationsSaveOwnApp: "integrations.saveOwnApp",
   integrationsRemoveOwnApp: "integrations.removeOwnApp",
+  integrationsUpdate: "integrations.update",
 } as const;
 
 const errors = Schema.Union([IntegrationError, EnvironmentAuthorizationError]);
@@ -257,3 +268,8 @@ export const WsIntegrationsRemoveOwnAppRpc = Rpc.make(
   INTEGRATIONS_WS_METHODS.integrationsRemoveOwnApp,
   { payload: Schema.Struct({ clientGroup: ClientGroup }), error: errors },
 );
+export const WsIntegrationsUpdateRpc = Rpc.make(INTEGRATIONS_WS_METHODS.integrationsUpdate, {
+  payload: IntegrationUpdateInput,
+  success: IntegrationView,
+  error: errors,
+});

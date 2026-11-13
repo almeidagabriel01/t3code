@@ -66,6 +66,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [INTEGRATIONS_WS_METHODS.integrationsSaveToken]: AuthSettingsWriteScope,
   [INTEGRATIONS_WS_METHODS.integrationsSaveOwnApp]: AuthSettingsWriteScope,
   [INTEGRATIONS_WS_METHODS.integrationsRemoveOwnApp]: AuthSettingsWriteScope,
+  [INTEGRATIONS_WS_METHODS.integrationsUpdate]: AuthSettingsWriteScope,
   [GLOBAL_SKILLS_WS_METHODS.globalSkillsRescan]: AuthSettingsWriteScope,
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.threadsRestoreWorkspace]: AuthOrchestrationOperateScope,

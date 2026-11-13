@@ -289,7 +289,9 @@ every request, so a change applies without restarting the session.
 The proxy is the access boundary for assistants, unlike connectors: read only blocks a write
 `tools/call` and Ask before acting files one decision per tool and arguments hash, which an
 approval forwards once. A tool counts as a write unless the upstream `tools/list` annotated it
-`readOnlyHint` or the catalog lists it as read-only. Because T3 already decided, Claude gets
+`readOnlyHint` or the catalog lists it as read-only. Annotations live in memory and a provider lists
+tools once per session, so after a T3 restart the proxy sends its own `tools/list` in the provider's
+MCP session (one at a time per integration) before deciding. Because T3 already decided, Claude gets
 `mcp__<name>_t3__*` in `allowedTools` and Codex `default_tools_approval_mode = "approve"` on assistant
 threads; Cursor and ACP agents have no such switch and may prompt again. ACP agents without http
 MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrations work there

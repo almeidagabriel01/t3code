@@ -8,6 +8,7 @@ import {
   type IntegrationConnectMode,
   type IntegrationErrorReason,
   type IntegrationSaveOwnAppInput,
+  type IntegrationUpdateInput,
   type IntegrationView,
   type IntegrationsState,
   type ServerSettings as ServerSettingsValue,
@@ -223,6 +224,12 @@ export class IntegrationAuth extends Context.Service<
       name: string,
       rejected?: string,
     ) => Effect.Effect<string, IntegrationError>;
+    /** Sets who gets the integration: assistants only (the default) or every thread. */
+    readonly update: (
+      input: IntegrationUpdateInput,
+    ) => Effect.Effect<IntegrationView, IntegrationError>;
+    /** The proxy's last upstream outcome; unreachable shows as Error until the next answer. */
+    readonly reportReachable: (name: string, reachable: boolean) => Effect.Effect<void>;
     /** The upstream refused a fresh token: the user must sign in again. */
     readonly markRejected: (name: string) => Effect.Effect<void, IntegrationError>;
     /** A 403 `insufficient_scope`: Reconnect asks for the granted and the challenged scopes. */
@@ -250,6 +257,7 @@ const make = Effect.gen(function* () {
   const flows = new Map<string, Flow>();
   // The last failed sign-in per integration name, until the next attempt or success.
   const failures = new Map<string, { catalogId: string; reason: IntegrationErrorReason }>();
+  const unreachable = new Set<string>();
 
   const publish = PubSub.publish(changesPubSub, undefined).pipe(Effect.asVoid);
 
@@ -329,15 +337,18 @@ const make = Effect.gen(function* () {
     const stored = record.value;
     if (connecting) return { ...base, status: "connecting" } as const;
     if (Option.isNone(stored)) return { ...base, status: "needs-sign-in" } as const;
-    if (stored.value.kind === "token") return { ...base, status: "connected" } as const;
+    const connected = unreachable.has(name)
+      ? ({ status: "error", lastError: "unreachable" } as const)
+      : ({ status: "connected" } as const);
+    if (stored.value.kind === "token") return { ...base, ...connected } as const;
     const oauth = stored.value;
     return {
       ...base,
-      status: oauth.needsSignIn
-        ? "needs-sign-in"
+      ...(oauth.needsSignIn
+        ? { status: "needs-sign-in" as const }
         : oauth.stepUpScope === undefined
-          ? "connected"
-          : "needs-more-access",
+          ? connected
+          : { status: "needs-more-access" as const }),
       ...(oauth.expiresAt === undefined ? {} : { expiresAt: oauth.expiresAt }),
       ...(oauth.scope === undefined ? {} : { scope: oauth.scope }),
     } as const;
@@ -897,6 +908,7 @@ const make = Effect.gen(function* () {
     );
     for (const [state, flow] of flows) if (flow.name === name) flows.delete(state);
     failures.delete(name);
+    unreachable.delete(name);
     yield* publish;
   });
 
@@ -1031,6 +1043,26 @@ const make = Effect.gen(function* () {
     accessToken: Effect.fn("IntegrationAuth.accessToken")((name: string, rejected?: string) =>
       refreshLock.withPermits(1)(refreshLocked(name, rejected)),
     ),
+    update: Effect.fn("IntegrationAuth.update")(function* ({ name, availability }) {
+      const server = (yield* getSettings).mcpServers[name];
+      const integration = integrationOf(server);
+      if (server?.transport !== "http" || integration === undefined) {
+        return yield* fail("not-connected");
+      }
+      yield* storage(
+        serverSettings.updateSettings({
+          mcpServers: { [name]: { ...server, integration: { ...integration, availability } } },
+        }),
+        "write-settings",
+      );
+      return yield* viewByName(name);
+    }),
+    // Untraced: the proxy reports after every upstream request.
+    reportReachable: Effect.fnUntraced(function* (name: string, reachable: boolean) {
+      const changed = reachable ? unreachable.delete(name) : !unreachable.has(name);
+      if (!reachable) unreachable.add(name);
+      if (changed) yield* publish;
+    }),
     markRejected: Effect.fn("IntegrationAuth.markRejected")(function* (name: string) {
       const stored = Option.getOrUndefined(yield* readRecord(name));
       if (stored?.kind !== "oauth") return;
