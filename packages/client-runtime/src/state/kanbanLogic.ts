@@ -7,6 +7,7 @@ import type {
   KanbanCard,
   KanbanCardContextRecord,
   KanbanCardEvent,
+  KanbanCardProblem,
   KanbanCardId,
   KanbanChecklistItem,
   KanbanColumn,
@@ -598,3 +599,16 @@ export function kanbanCardPickerRows(
     .filter((card) => text === "" || `#${card.number} ${card.title}`.toLowerCase().includes(text))
     .slice(0, limit);
 }
+
+/** A problem card's text lines, in order: the count only once it repeats, the owner when it has one. */
+export function problemCardLines(problem: KanbanCardProblem): ReadonlyArray<string> {
+  return [
+    ...(problem.count > 1 ? [`Seen ${problem.count} times`] : []),
+    ...(problem.ownerName === null ? [] : [`Handled by ${problem.ownerName}`]),
+  ];
+}
+
+export const problemPreviousCardLabel = (number: number) => `Previous card: #${number}`;
+
+export const problemIgnoreLabel = (ignored: boolean) =>
+  ignored ? "Stop ignoring" : "Ignore this problem";

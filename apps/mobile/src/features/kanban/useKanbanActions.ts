@@ -39,5 +39,6 @@ export function useKanbanActions(environmentId: EnvironmentId) {
     deleteCard: useKanbanCommand(kanbanEnvironment.deleteCard, environmentId),
     linkCardThread: useKanbanCommand(kanbanEnvironment.linkCardThread, environmentId),
     unlinkCardThread: useKanbanCommand(kanbanEnvironment.unlinkCardThread, environmentId),
+    setCardProblemIgnored: useKanbanCommand(kanbanEnvironment.setCardProblemIgnored, environmentId),
   };
 }

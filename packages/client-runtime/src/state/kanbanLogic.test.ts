@@ -13,6 +13,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   kanbanCardPickerRows,
+  problemCardLines,
+  problemIgnoreLabel,
+  problemPreviousCardLabel,
   applyMoveLocally,
   withOptimisticMove,
   checklistProgress,
@@ -601,5 +604,28 @@ describe("kanbanCardPickerRows", () => {
     ["zzz", 10, []],
   ])("query %j limit %d", (query, limit, expected) => {
     expect(kanbanCardPickerRows(cards, query, limit).map((card) => card.number)).toEqual(expected);
+  });
+});
+
+describe("problem card text", () => {
+  const base = {
+    kind: "ci",
+    count: 1,
+    ownerName: null,
+    previousCardNumber: null,
+    ignored: false,
+  } as const;
+  it.each([
+    [{ ...base }, []],
+    [{ ...base, count: 2 }, ["Seen 2 times"]],
+    [{ ...base, ownerName: "Jarvis" }, ["Handled by Jarvis"]],
+    [{ ...base, count: 5, ownerName: "Ops" }, ["Seen 5 times", "Handled by Ops"]],
+  ] as const)("%j", (problem, lines) => {
+    expect(problemCardLines(problem)).toEqual(lines);
+  });
+  it("names the previous card and the ignore action for each state", () => {
+    expect(problemPreviousCardLabel(12)).toBe("Previous card: #12");
+    expect(problemIgnoreLabel(false)).toBe("Ignore this problem");
+    expect(problemIgnoreLabel(true)).toBe("Stop ignoring");
   });
 });

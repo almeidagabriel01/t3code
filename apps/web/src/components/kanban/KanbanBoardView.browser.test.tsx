@@ -58,6 +58,7 @@ const card = {
   parentCardId: null,
   attachments: [],
   coverAttachmentId: null,
+  problem: null,
   archivedAt: null,
   createdBy: "user",
   createdAt: "2026-01-01T00:00:00.000Z",

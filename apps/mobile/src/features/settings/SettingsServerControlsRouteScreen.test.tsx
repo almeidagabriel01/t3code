@@ -432,6 +432,29 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.runner!.mixed("runnerHost")).toBe(true);
   });
 
+  it.each([
+    [false, "Detect problems", { detectProblems: false }],
+    [
+      true,
+      "Detect problems in this project",
+      { projectSettingsOverrides: { project: { detectProblems: false } } },
+    ],
+  ] as const)(
+    "turns problem detection off from Maintenance (project selected: %s)",
+    async (projectSelected, label, patch) => {
+      mocks.projectSelected = projectSelected;
+      act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+      const toggle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+        (button) => button.textContent === label,
+      )!;
+      await act(async () => toggle.click());
+      expect(mocks.updateSettings).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: { patch: expect.objectContaining(patch) },
+      });
+    },
+  );
+
   it("saves the keep-awake mode picked on the Maintenance page", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
     const section = container.querySelector<HTMLButtonElement>('[aria-label="keep awake"]')!;

@@ -17,6 +17,7 @@ import { KanbanCardDetail } from "./KanbanCardDetail";
 const mocks = vi.hoisted(() => ({
   upload: vi.fn(),
   updateCard: vi.fn(),
+  setCardProblemIgnored: vi.fn(),
 }));
 
 vi.mock("../../lib/attachmentUploadQueue", async (importOriginal) => ({
@@ -33,12 +34,16 @@ vi.mock("../../state/query", async (importOriginal) => ({
 }));
 vi.mock("./useKanban", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useKanbanActions: () => ({ updateCard: mocks.updateCard }),
+  useKanbanActions: () => ({
+    updateCard: mocks.updateCard,
+    setCardProblemIgnored: mocks.setCardProblemIgnored,
+  }),
 }));
 
 function setup() {
   mocks.upload.mockReset().mockReturnValue(new Promise(() => {}));
   mocks.updateCard.mockReset().mockResolvedValue(null);
+  mocks.setCardProblemIgnored.mockReset().mockResolvedValue(null);
 }
 
 const boardId = "b1" as KanbanBoardId;
@@ -64,6 +69,7 @@ const card = {
   parentCardId: null,
   attachments: [],
   coverAttachmentId: null,
+  problem: null,
   archivedAt: null,
   createdBy: "user",
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -219,5 +225,82 @@ describe("KanbanCardDetail attachments", () => {
       cardId: card.id,
       description: expect.stringMatching(/^## Steps\n1\. first\n\d+\. second$/),
     });
+  });
+});
+
+describe("KanbanCardDetail problem block", () => {
+  const previous = { ...card, id: "c0" as KanbanCardId, number: 7, title: "Old cause" };
+  it.each([
+    {
+      name: "an open problem with an owner and a previous card on the board",
+      problem: { kind: "ci", count: 3, ownerName: "Jarvis", previousCardNumber: 7, ignored: false },
+      lines: ["Seen 3 times", "Handled by Jarvis", "Previous card: #7"],
+      button: "Ignore this problem",
+      ignored: true,
+    },
+    {
+      name: "an ignored problem with no owner and no previous card",
+      problem: {
+        kind: "environment",
+        count: 1,
+        ownerName: null,
+        previousCardNumber: null,
+        ignored: true,
+      },
+      lines: [],
+      button: "Stop ignoring",
+      ignored: false,
+    },
+  ] as const)("$name", async ({ problem, lines, button, ignored }) => {
+    setup();
+    const onOpenCard = vi.fn();
+    const problemCard = { ...card, problem } as KanbanCard;
+    await using _screen = await render(
+      <KanbanCardDetail
+        environmentId={EnvironmentId.make("env")}
+        board={
+          {
+            ...board,
+            cards: new Map([
+              [problemCard.id, problemCard],
+              [previous.id, previous],
+            ]),
+          } as unknown as KanbanBoardState
+        }
+        card={problemCard}
+        canEdit
+        onOpenCard={onOpenCard}
+        onClose={() => {}}
+      />,
+    );
+    for (const line of lines) await expect.element(page.getByText(line)).toBeVisible();
+    if (problem.ownerName === null) expect(page.getByText(/Handled by/).query()).toBeNull();
+    if (problem.count === 1) expect(page.getByText(/Seen \d+ times/).query()).toBeNull();
+    if (problem.previousCardNumber !== null) {
+      await userEvent.click(page.getByRole("button", { name: "Previous card: #7" }));
+      expect(onOpenCard).toHaveBeenCalledWith(previous);
+    }
+    await userEvent.click(page.getByRole("button", { name: button }));
+    expect(mocks.setCardProblemIgnored).toHaveBeenCalledWith({ cardId: card.id, ignored });
+
+    await userEvent.click(page.getByRole("button", { name: "Card actions" }));
+    await expect.element(page.getByRole("menuitem", { name: button })).toBeVisible();
+  });
+
+  it("shows no problem block on an ordinary card", async () => {
+    setup();
+    await using _screen = await render(
+      <KanbanCardDetail
+        environmentId={EnvironmentId.make("env")}
+        board={board}
+        card={{ ...card, problem: null }}
+        canEdit
+        onOpenCard={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await expect.element(page.getByRole("textbox", { name: "Title" })).toBeVisible();
+    expect(page.getByText(/Seen \d+ times/).query()).toBeNull();
+    expect(page.getByRole("button", { name: "Ignore this problem" }).query()).toBeNull();
   });
 });

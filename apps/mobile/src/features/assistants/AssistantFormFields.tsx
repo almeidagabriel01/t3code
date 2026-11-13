@@ -10,15 +10,17 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 
 /** A label and one line of help above whatever the form asks. */
-export function FieldHeader(props: { readonly label: string; readonly description: string }) {
+export function FieldHeader(props: { readonly label: string; readonly description?: string }) {
   return (
     <View className="gap-0.5 px-2">
       <Text textRole="footnote" className="font-t3-medium text-foreground">
         {props.label}
       </Text>
-      <Text textRole="footnote" className="text-foreground-muted">
-        {props.description}
-      </Text>
+      {props.description === undefined ? null : (
+        <Text textRole="footnote" className="text-foreground-muted">
+          {props.description}
+        </Text>
+      )}
     </View>
   );
 }

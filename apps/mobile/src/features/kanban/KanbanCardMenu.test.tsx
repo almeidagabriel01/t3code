@@ -13,6 +13,7 @@ const { mocks } = vi.hoisted(() => ({
     moveCard: vi.fn(),
     archiveCard: vi.fn(),
     deleteCard: vi.fn(),
+    setCardProblemIgnored: vi.fn(),
   },
 }));
 
@@ -53,6 +54,7 @@ vi.mock("./useKanbanActions", () => ({
     moveCard: mocks.moveCard,
     archiveCard: mocks.archiveCard,
     deleteCard: mocks.deleteCard,
+    setCardProblemIgnored: mocks.setCardProblemIgnored,
   }),
 }));
 
@@ -115,6 +117,7 @@ beforeEach(() => {
   mocks.moveCard.mockReset().mockResolvedValue(true);
   mocks.archiveCard.mockReset().mockResolvedValue(true);
   mocks.deleteCard.mockReset().mockResolvedValue(true);
+  mocks.setCardProblemIgnored.mockReset().mockResolvedValue(true);
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -228,6 +231,39 @@ describe("KanbanCardMenu", () => {
     expect(request.destructive).toBe(true);
     request.onConfirm();
     expect(mocks.deleteCard).toHaveBeenCalledWith({ cardId: "c1" });
+  });
+});
+
+describe("problem cards", () => {
+  const problem = { kind: "ci", count: 3, ownerName: null, previousCardNumber: null } as const;
+  it.each([
+    [false, "Ignore this problem"],
+    [true, "Stop ignoring"],
+  ] as const)("offers the opposite of ignored=%s and sends it", async (ignored, title) => {
+    const problemCard = { ...card, problem: { ...problem, ignored } } as KanbanCard;
+    expect(kanbanCardMenuActions(board, problemCard).find((a) => a.id === "problem")).toMatchObject(
+      { title },
+    );
+    act(() =>
+      root.render(
+        <KanbanCardMenu
+          environmentId={"env" as EnvironmentId}
+          board={board}
+          card={problemCard}
+          onOpen={onOpen}
+        >
+          <span>tile</span>
+        </KanbanCardMenu>,
+      ),
+    );
+    await press("problem");
+    expect(mocks.setCardProblemIgnored).toHaveBeenCalledWith({ cardId: "c1", ignored: !ignored });
+  });
+
+  it("offers nothing on an ordinary card", () => {
+    expect(kanbanCardMenuActions(board, { ...card, problem: null }).map((a) => a.id)).not.toContain(
+      "problem",
+    );
   });
 });
 

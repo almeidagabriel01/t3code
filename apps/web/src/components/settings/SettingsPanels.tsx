@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
+import {
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_IN_PROJECT_LABEL,
+  DETECT_PROBLEMS_LABEL,
+} from "@t3tools/client-runtime/autonomy";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -2135,6 +2140,7 @@ export function MaintenanceSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const hasServerTargets = connectedEnvironments.length > 0;
 
   return (
@@ -2220,6 +2226,23 @@ export function MaintenanceSettingsPanel() {
       <StorageCleanupSections />
 
       <SettingsSection id="diagnostics-section" title="Diagnostics">
+        <SettingsRow
+          {...searchableSetting("detect-problems")}
+          {...(isProjectScope
+            ? { title: DETECT_PROBLEMS_IN_PROJECT_LABEL }
+            : { description: DETECT_PROBLEMS_DESCRIPTION })}
+          serverScoped
+          settingKeys={["detectProblems"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["detectProblems"]}
+              checked={settings.detectProblems}
+              disabled={!hasServerTargets}
+              onCheckedChange={(checked) => updateSettings({ detectProblems: Boolean(checked) })}
+              aria-label={isProjectScope ? DETECT_PROBLEMS_IN_PROJECT_LABEL : DETECT_PROBLEMS_LABEL}
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={

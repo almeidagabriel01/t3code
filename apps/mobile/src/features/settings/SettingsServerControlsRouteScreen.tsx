@@ -56,6 +56,11 @@ import { FolderModelsSection } from "./components/FolderModelsSection";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import {
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_IN_PROJECT_LABEL,
+  DETECT_PROBLEMS_LABEL,
+} from "@t3tools/client-runtime/autonomy";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -84,7 +89,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  maintenance: ["continueThreadsAfterServerUpdate", ...RUNNER_PROJECT_KEYS],
+  maintenance: ["continueThreadsAfterServerUpdate", "detectProblems", ...RUNNER_PROJECT_KEYS],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -692,6 +697,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                     />
                   </View>
+                </SettingsSection>
+                <SettingsSection title="Diagnostics">
+                  <SettingsSwitchRow
+                    icon="exclamationmark.shield"
+                    label={
+                      projectSelected ? DETECT_PROBLEMS_IN_PROJECT_LABEL : DETECT_PROBLEMS_LABEL
+                    }
+                    subtitle={
+                      projectSelected
+                        ? managed("detectProblems")
+                        : managedSubtitle("detectProblems", DETECT_PROBLEMS_DESCRIPTION)
+                    }
+                    value={uniform("detectProblems")}
+                    disabled={disabledFor("detectProblems")}
+                    onValueChange={(value) => write({ detectProblems: value })}
+                  />
                 </SettingsSection>
               </>
             ) : null}

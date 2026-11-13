@@ -683,12 +683,18 @@ describe("assistant notifications", () => {
     );
     pick("Only on these");
     pick("Telegram");
+    // The problem level is offered whatever the mode, with Offer to fix chosen by default.
+    expect(container.textContent).toContain("When it finds a problem");
+    expect(checked("Offer to fix")).toBe("true");
+    pick("Fix small things");
+    expect(checked("Fix small things")).toBe("true");
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0].autonomy).toEqual({
       mode: "reply-and-notify",
       rules: ["runFailed", "waitingTooLong", "stuck", "reviewIncomplete"],
       projectIds: [],
       channels: ["t3"],
+      onProblem: "fix-small",
     });
   });
 
