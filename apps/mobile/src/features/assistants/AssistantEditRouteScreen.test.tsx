@@ -754,6 +754,12 @@ describe("assistant integrations", () => {
     render(assistant());
     expect(container.textContent).toContain("Not available on OpenCode");
   });
+
+  it("says integrations do not reach a sandboxed assistant", () => {
+    setup();
+    render({ ...assistant(), workspace: "sandbox" } as Assistant);
+    expect(container.textContent).toContain("Not available in the sandbox");
+  });
 });
 
 describe("assistant ask before acting", () => {

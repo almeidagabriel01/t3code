@@ -1,6 +1,7 @@
 import {
   loadedNatively,
   type AssistantIntegrations,
+  type AssistantWorkspace,
   type DetectedOrigin,
   type DetectedServer,
   type IntegrationCatalogEntry,
@@ -407,6 +408,11 @@ export const integrationProviderSupport = (driverKind: string): boolean =>
 
 export const notAvailableOnLabel = (providerDisplayName: string): string =>
   `Not available on ${providerDisplayName}`;
+
+// The assistant's own conversation runs here and reaches the proxy; work it starts in the sandbox
+// runs on the container's T3 server, which holds none of this server's integrations.
+export const sandboxWorkNote = (workspace: AssistantWorkspace): string | null =>
+  workspace === "sandbox" ? "Not available in the sandbox" : null;
 
 const nativeNote = (origin: DetectedOrigin): string =>
   origin === "codex"

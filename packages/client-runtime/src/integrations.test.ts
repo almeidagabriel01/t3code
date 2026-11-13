@@ -18,6 +18,7 @@ import {
   integrationProviderSupport,
   integrationStatusLabel,
   notAvailableOnLabel,
+  sandboxWorkNote,
   parsePastedCallback,
   selectionForMode,
   toggleIntegration,
@@ -576,6 +577,13 @@ describe("integrationProviderSupport", () => {
 
   it("names the provider it is missing on", () => {
     expect(notAvailableOnLabel("OpenCode")).toBe("Not available on OpenCode");
+  });
+
+  it.each([
+    ["sandbox", "Not available in the sandbox"],
+    ["host", null],
+  ] as const)("a %s workspace notes %j", (workspace, note) => {
+    expect(sandboxWorkNote(workspace)).toBe(note);
   });
 });
 

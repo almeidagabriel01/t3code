@@ -654,6 +654,7 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
               <AssistantIntegrationsSection
                 environmentId={environmentId}
                 instanceId={modelSelection?.instanceId ?? null}
+                workspace={current.workspace}
                 value={current.integrations}
                 onChange={(integrations) => updateAssistantDraft({ integrations })}
               />

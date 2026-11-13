@@ -3,11 +3,12 @@ import {
   integrationProviderSupport,
   integrationStatusLabel,
   notAvailableOnLabel,
+  sandboxWorkNote,
   selectionForMode,
   toggleIntegration,
 } from "@t3tools/client-runtime/integrations";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { AssistantIntegrations, EnvironmentId } from "@t3tools/contracts";
+import type { AssistantIntegrations, AssistantWorkspace, EnvironmentId } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -23,6 +24,7 @@ import { ChoiceRow, FieldHeader } from "./AssistantFormFields";
 export function AssistantIntegrationsSection(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: string | null;
+  readonly workspace: AssistantWorkspace;
   readonly value: AssistantIntegrations;
   readonly onChange: (next: AssistantIntegrations) => void;
 }) {
@@ -44,7 +46,7 @@ export function AssistantIntegrationsSection(props: {
         description={
           unsupported
             ? notAvailableOnLabel(resolveProviderInstanceDisplayName(provider))
-            : undefined
+            : (sandboxWorkNote(props.workspace) ?? undefined)
         }
       />
       <ListSection>
