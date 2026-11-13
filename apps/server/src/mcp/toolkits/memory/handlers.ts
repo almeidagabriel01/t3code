@@ -10,6 +10,7 @@ import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { schemaIssueSummary } from "../../../memory/memoryDiagnostics.ts";
 import { recallThreads } from "./recallThreads.ts";
 import { MemoryToolkit } from "./tools.ts";
@@ -207,9 +208,22 @@ const confineToProjects = Effect.fn("memory.confineToProjects")(function* (
 ) {
   const projects = yield* assistantProjects;
   if (projects === undefined) return;
+  const notYours = refuse(
+    `That memory's project is not one of yours, so nothing ran. Your projects: ${projects.list}.`,
+  );
   const service = yield* MemoryService.MemoryService;
   const scope =
     "memoryId" in target ? yield* service.scopeOf(space, target.memoryId, permit) : target.scope;
+  if (scope?.kind === "thread") {
+    const caller = yield* McpInvocationContext.McpInvocationContext;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const shell =
+      scope.thread.environmentId === caller.environmentId
+        ? yield* threads.getThreadShell(scope.thread.threadId)
+        : null;
+    if (shell === null || !projects.projectIds.includes(shell.projectId)) return yield* notYours;
+    return;
+  }
   if (scope?.kind !== "project") return;
   const { environmentId } = yield* McpInvocationContext.McpInvocationContext;
   // An unresolvable project matches nothing, so it never blocks the others.
@@ -219,9 +233,7 @@ const confineToProjects = Effect.fn("memory.confineToProjects")(function* (
       .pipe(Effect.orElseSucceed(() => null)),
   );
   if (!keys.some((key) => NodeUtil.isDeepStrictEqual(key, scope.projectKey)))
-    return yield* refuse(
-      `That memory's project is not one of yours, so nothing ran. Your projects: ${projects.list}.`,
-    );
+    return yield* notYours;
 });
 /** Read tools default to this server's memory space, so a query or id alone is enough. */
 const currentSpace = Effect.gen(function* () {

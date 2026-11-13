@@ -1,10 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as Fixture from "./handlers.testkit.ts";
 
 const decodeReceipt = Schema.decodeUnknownEffect(M.MemoryMutationReceipt);
@@ -374,5 +377,47 @@ it.effect("a project assistant reaches only its own projects' memories", () =>
     const retried = yield* Fixture.call("memory_forget", forget, assistantCaller);
     expect(retried.result.isError).not.toBe(true);
     expect(retried.body).toEqual(first.body);
-  }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
+
+    // A thread memory belongs to its thread's project; an unknown thread is out of reach.
+    const threadScope = (threadId: string) =>
+      ({
+        kind: "thread",
+        thread: { environmentId: project.environmentId, threadId: M.ThreadId.make(threadId) },
+      }) as const;
+    for (const [threadId, n, reachable] of [
+      ["thread-out", 60, false],
+      ["thread-gone", 62, false],
+      ["thread-in", 64, true],
+    ] as const) {
+      const memoryId = M.MemoryId.make(Fixture.id(n));
+      yield* service.upsert(
+        {
+          ...Fixture.upsert(n + 1),
+          memoryId,
+          scope: threadScope(threadId),
+        },
+        Effect.void,
+      );
+      const check = reachable ? allowed : refused;
+      yield* check("memory_list", { scope: threadScope(threadId), includeQuarantined: false });
+      yield* check("memory_read", { memoryId });
+      yield* check("memory_remember", { text: `Replaced ${threadId}`, memoryId });
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: (threadId) =>
+          Effect.succeed(
+            threadId === "thread-gone"
+              ? null
+              : {
+                  ...liveThreadShell(threadId),
+                  projectId: M.ProjectId.make(threadId === "thread-in" ? "project-2" : "project-9"),
+                },
+          ),
+      }),
+    ),
+    Effect.provideService(AssistantDirectory, directory),
+    Effect.provide(Fixture.layer),
+  ),
 );
