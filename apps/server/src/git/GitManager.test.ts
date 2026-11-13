@@ -1154,7 +1154,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a reused branch PR lookup runs no git until refs, status or its key change", () =>
+  it.effect("a reused merged PR lookup runs no git until refs, status or its key change", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1174,7 +1174,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               url: "https://github.com/pingdotgg/codething-mvp/pull/3",
               baseRefName: "main",
               headRefName: "feature/reused",
-              state: "open",
+              state: "merged",
               updatedAt: "2026-04-03T15:00:00Z",
             },
           ],
@@ -1182,7 +1182,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
       const lookup = (reuseKey = "0") =>
         manager.branchPullRequest({ cwd: repoDir, branch: "feature/reused" }, { reuseKey });
-      const lookups = () => gitCommands.filter((args) => args === "remote").length;
+      const remoteReads = () => gitCommands.filter((args) => args === "remote").length;
+      const lookedUp = () => remoteReads() > 0;
 
       // Concurrent settlement sweeps on one pair share a single lookup.
       const burst = yield* Effect.all(
@@ -1192,7 +1193,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       );
       expect(burst.map((pullRequest) => pullRequest?.number)).toEqual([3, 3, 3, 3, 3]);
-      expect(lookups()).toBe(1);
+      // One lookup plus the fresh read that confirms a merged result.
+      expect(remoteReads()).toBe(2);
 
       // Past every lookup TTL, an unchanged repository still runs no git.
       yield* TestClock.adjust("20 minutes");
@@ -1205,14 +1207,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["commit", "-m", "Outside a turn"]);
       gitCommands.length = 0;
       yield* lookup();
-      expect(lookups()).toBe(1);
+      expect(lookedUp()).toBe(true);
       gitCommands.length = 0;
       yield* lookup();
       expect(gitCommands).toEqual([]);
 
       yield* manager.invalidateStatus(repoDir);
       yield* lookup();
-      expect(lookups()).toBe(1);
+      expect(lookedUp()).toBe(true);
 
       // Another key, such as a finished run in the cwd, reads again once inner caches expire.
       yield* TestClock.adjust("20 minutes");
@@ -1220,7 +1222,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* lookup();
       expect(gitCommands).toEqual([]);
       yield* lookup("1");
-      expect(lookups()).toBe(1);
+      expect(lookedUp()).toBe(true);
 
       // A refresh looks again and leaves its result for the next reuse.
       gitCommands.length = 0;
@@ -1228,11 +1230,57 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         { cwd: repoDir, branch: "feature/reused" },
         { reuseKey: "1", refresh: true },
       );
-      expect(lookups()).toBe(1);
+      expect(lookedUp()).toBe(true);
       gitCommands.length = 0;
       expect((yield* lookup("1"))?.number).toBe(3);
       expect(gitCommands).toEqual([]);
     }),
+  );
+
+  // regression: a reused open or missing PR stayed cached forever, so a merge on GitHub was never seen
+  it.effect.each([
+    { name: "an open PR", state: "open" as const, after: "61 seconds", looksAgain: true },
+    { name: "no PR", state: null, after: "301 seconds", looksAgain: true },
+    { name: "a merged PR", state: "merged" as const, after: "20 minutes", looksAgain: false },
+  ] as const)(
+    "a reused branch PR lookup with $name looks again after $after: $looksAgain",
+    ({ state, after, looksAgain }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/remote-merge"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/remote-merge"]);
+        const { manager, providerCalls } = yield* makeManager({
+          providerScenario: {
+            prListOtherwise:
+              state === null
+                ? []
+                : [
+                    {
+                      number: 4,
+                      title: "Remote merge",
+                      url: "https://github.com/pingdotgg/codething-mvp/pull/4",
+                      baseRefName: "main",
+                      headRefName: "feature/remote-merge",
+                      state,
+                      updatedAt: "2026-04-03T15:00:00Z",
+                    },
+                  ],
+          },
+        });
+        const lookup = manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/remote-merge" },
+          { reuseKey: "0" },
+        );
+        yield* lookup;
+        const asked = listed(providerCalls).length;
+        yield* TestClock.adjust(after);
+        yield* lookup;
+        expect(listed(providerCalls).length > asked).toBe(looksAgain);
+      }),
   );
 
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>

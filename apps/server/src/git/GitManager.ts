@@ -2873,7 +2873,9 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit, key) => {
         if (Exit.isSuccess(exit)) {
           prLookupFailureStreakByKey.delete(key);
-          return Duration.infinity;
+          // An open or missing PR can be merged on GitHub without touching the disk.
+          const state = exit.value?.state;
+          return state === "closed" || state === "merged" ? Duration.infinity : PR_LOOKUP_CACHE_TTL;
         }
         return nextPrLookupFailureTtl(key);
       },
