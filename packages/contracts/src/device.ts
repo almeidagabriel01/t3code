@@ -458,6 +458,8 @@ export const DeviceToolVersion = Schema.Struct({
   requiredVersion: Schema.String,
   installedVersions: Schema.Array(Schema.String),
   runningVersion: Schema.NullOr(Schema.String),
+  /** Its process is alive but does not answer; T3 restarts it once no device session uses it. */
+  unresponsive: Schema.optional(Schema.Boolean),
 });
 export type DeviceToolVersion = typeof DeviceToolVersion.Type;
 

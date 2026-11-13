@@ -66,6 +66,16 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
   }
 }
 
+/** The agent-device daemon is alive but does not answer, and the caller did not allow a restart. */
+export class AgentDeviceUnresponsiveError extends Schema.TaggedError<AgentDeviceUnresponsiveError>()(
+  "AgentDeviceUnresponsiveError",
+  { hostId: Schema.String, pid: Schema.Int },
+) {
+  override get message(): string {
+    return `Agent tools (process ${this.pid}) are running but not responding.`;
+  }
+}
+
 export interface DeviceHubEndpoint {
   readonly origin: string;
 }
@@ -241,9 +251,15 @@ export class DeviceHost extends Context.Service<
     ) => Effect.Effect<DeviceHostReady, DeviceHostError | NodeRuntimeUnavailableError>;
     readonly ensureAgentReady: (
       onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
+      /** Lets a host that owns the daemon restart one that is alive but not answering. */
+      options?: { readonly recycleUnresponsive?: boolean },
     ) => Effect.Effect<
       DeviceHostAgentReady,
-      DeviceHostError | DeviceHostTimeoutError | AgentDeviceStartError | NodeRuntimeUnavailableError
+      | DeviceHostError
+      | DeviceHostTimeoutError
+      | AgentDeviceStartError
+      | AgentDeviceUnresponsiveError
+      | NodeRuntimeUnavailableError
     >;
     readonly current: Effect.Effect<DeviceHostReady | null>;
     readonly stopAgent: Effect.Effect<void>;
