@@ -480,11 +480,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   const requestColumns = yield* sql<{
     readonly name: string;
   }>`PRAGMA table_info(assistant_requests)`;
+  // group_id marks the whole step done, so it must not exist without the rest.
   if (!requestColumns.some((column) => column.name === "group_id")) {
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN group_id TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN reply_text TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`;
-    yield* sql`UPDATE assistant_requests SET group_id = request_id`;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN group_id TEXT`;
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN reply_text TEXT`;
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`;
+        yield* sql`UPDATE assistant_requests SET group_id = request_id`;
+      }),
+    );
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 

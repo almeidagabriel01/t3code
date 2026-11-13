@@ -210,6 +210,31 @@ it.effect("gives each existing group the projects all its members list, and no o
   }).pipe(Effect.provide(database)),
 );
 
+it.effect("adds request grouping columns all together or not at all", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`DROP INDEX assistant_requests_group_idx`;
+    yield* sql`ALTER TABLE assistant_requests DROP COLUMN group_id`;
+    yield* sql`ALTER TABLE assistant_requests DROP COLUMN delivered`;
+    // reply_text already there: adding it fails after group_id was added.
+    yield* sql`
+      INSERT INTO assistant_requests (request_id, sender_thread_id, recipient_thread_id, status, created_at)
+      VALUES ('r1', 's', 'r', 'open', 't')`;
+
+    const failed = yield* Effect.exit(ensureForkSchema());
+    assert.strictEqual(failed._tag, "Failure");
+    assert.isFalse((yield* columnsOf("assistant_requests")).includes("group_id"));
+
+    yield* sql`ALTER TABLE assistant_requests DROP COLUMN reply_text`;
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(
+      yield* sql`SELECT request_id, group_id, reply_text, delivered FROM assistant_requests`,
+      [{ request_id: "r1", group_id: "r1", reply_text: null, delivered: 0 }],
+    );
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect("adds a group's project list only together with its backfill", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
