@@ -3331,11 +3331,12 @@ it.effect.each([
 );
 
 it.effect.each([
-  { name: "background work that went silent", probe: Effect.succeed(true) },
-  { name: "a failing background probe", probe: Effect.die("probe failed") },
+  { name: "silent background work", probe: Effect.succeed(true), activity: false },
+  { name: "a failing background probe", probe: Effect.die("probe failed"), activity: false },
+  { name: "background work with recent activity", probe: Effect.succeed(true), activity: true },
 ] as const)(
-  "ProviderSessionManagerV2 releases an idle Claude session pinned by $name after 4 hours",
-  ({ probe }) =>
+  "ProviderSessionManagerV2 caps the idle pin of $name at 4 hours since its last activity",
+  ({ probe, activity }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const warnings: unknown[] = [];
@@ -3348,12 +3349,13 @@ it.effect.each([
 
         yield* TestClock.adjust("3 hours");
         assert.isTrue(yield* manager.isLive(session.providerSessionId));
+        if (activity) yield* manager.get(session.providerSessionId);
 
         yield* TestClock.adjust("2 hours");
-        assert.isFalse(yield* manager.isLive(session.providerSessionId));
-        assert.deepInclude(
-          warnings.flat(),
-          "orchestration-v2.driver-session.idle-release-pin-expired",
+        assert.equal(yield* manager.isLive(session.providerSessionId), activity);
+        assert.equal(
+          warnings.flat().includes("orchestration-v2.driver-session.idle-release-pin-expired"),
+          !activity,
         );
       });
 
