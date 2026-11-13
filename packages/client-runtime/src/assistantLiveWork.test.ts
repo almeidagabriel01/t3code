@@ -24,6 +24,7 @@ function shell(
     archived?: boolean;
     asks?: boolean;
     at?: string;
+    pinned?: boolean;
   } = {},
 ) {
   const presented = presentThreadShell(env, {
@@ -46,6 +47,7 @@ function shell(
     ...(options.at === undefined ? {} : { createdAt: options.at }),
     ...(options.archived ? { archivedAt: "2026-11-12T00:00:00.000Z" } : {}),
     ...(options.asks ? { hasPendingUserInput: true } : {}),
+    ...(options.pinned ? { pinnedAt: "2026-11-12T00:00:00.000Z" } : {}),
   };
 }
 
@@ -135,9 +137,22 @@ describe("assistantLiveWork", () => {
         shell("late", { parent: "assistant:ada:g-x", at: "2026-11-12T12:00:00.000Z" }),
         shell("early", { parent: "assistant:ada:1", at: "2026-11-12T09:00:00.000Z" }),
         shell("gone", { parent: "assistant:ada:1", status: "completed" }),
+        // A pinned child stays listed after it finishes, so its pin can be seen and undone.
+        shell("kept", {
+          parent: "assistant:ada:1",
+          status: "completed",
+          pinned: true,
+          at: "2026-11-12T10:00:00.000Z",
+        }),
+        shell("kept-archived", { parent: "assistant:ada:1", pinned: true, archived: true }),
       ],
     });
-    expect(work.subagents.get("env:ada")?.map((child) => child.id)).toEqual(["early", "late"]);
+    expect(work.subagents.get("env:ada")?.map((child) => child.id)).toEqual([
+      "early",
+      "kept",
+      "late",
+    ]);
+    expect(work.sites.map((site) => site.threadId)).not.toContain("kept");
     expect(work.subagents.get("env:bo")).toBeUndefined();
   });
 });

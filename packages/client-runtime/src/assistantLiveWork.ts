@@ -81,6 +81,17 @@ export function assistantLiveWork(input: {
       });
     }
   }
+  // A pinned child stays listed after it finishes, as a pinned thread stays in a project list.
+  for (const shell of input.shells) {
+    const parentId = shell.lineage.parentThreadId;
+    if (shell.pinnedAt == null || shell.archivedAt != null || parentId == null) continue;
+    if (shell.lineage.relationshipToParent !== "subagent") continue;
+    const assistantId = assistantIdFromThreadId(parentId);
+    if (assistantId === null) continue;
+    const key = `${shell.environmentId}:${assistantId}`;
+    const list = subagents.get(key) ?? [];
+    if (!list.includes(shell)) subagents.set(key, [...list, shell]);
+  }
   for (const list of subagents.values())
     list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   found.sort((a, b) => b.at.localeCompare(a.at) || a.threadId.localeCompare(b.threadId));
