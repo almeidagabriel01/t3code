@@ -306,10 +306,10 @@ const SessionWorkKind = Schema.Literals([
 ]);
 type SessionWorkKind = typeof SessionWorkKind.Type;
 const SESSION_WORK_PHRASES: Record<SessionWorkKind, string> = {
-  turn: "a turn is running",
+  turn: "the agent is working",
   request: "a request is waiting for your answer",
   command: "a command is running",
-  "tool call": "a tool call is running",
+  "tool call": "a tool is running",
   subagent: "a subagent is running",
   "background task": "a background task is running",
 };

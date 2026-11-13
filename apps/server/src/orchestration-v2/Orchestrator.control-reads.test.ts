@@ -306,7 +306,7 @@ it.effect.each(
           request && !sessionStopped
             ? "a request is waiting for your answer"
             : active
-              ? "a turn is running"
+              ? "the agent is working"
               : "a subagent is running";
         assert.equal(
           outcome.failure.message,
