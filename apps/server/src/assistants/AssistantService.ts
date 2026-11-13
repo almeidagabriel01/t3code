@@ -455,9 +455,15 @@ const make = Effect.gen(function* () {
   const ensureAll = Effect.gen(function* () {
     yield* backfillScopes;
     yield* seedDefault;
-    const active = (yield* allRows).filter((row) => row.archived_at === null);
+    // A thread the projection does not know is left alone, as inspectThread does; only no thread
+    // or a deleted one relaunches. ensureLaunched re-checks each row it is given.
+    const stale = yield* sql<{ readonly assistant_id: string }>`
+      SELECT a.assistant_id FROM assistants a
+      LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = a.thread_id
+      WHERE a.archived_at IS NULL AND (a.thread_id IS NULL OR t.deleted_at IS NOT NULL)
+      ORDER BY a.is_default DESC, a.created_at ASC`;
     yield* Effect.forEach(
-      active,
+      stale,
       (row) =>
         ensureLaunched(row.assistant_id).pipe(
           Effect.catch((cause) =>
