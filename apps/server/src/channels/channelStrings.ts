@@ -41,6 +41,7 @@ export interface ChannelStrings {
     readonly wantsFileRead: string;
     readonly needsApproval: string;
     readonly wantsToSend: string;
+    readonly wantsToUse: string;
     /** What follows `<name>: ` in an autonomy notice title. */
     readonly runFailed: string;
     readonly waitingTooLong: string;
@@ -86,6 +87,7 @@ const en: ChannelStrings = {
     wantsFileRead: "wants to read files",
     needsApproval: "needs your approval",
     wantsToSend: "wants to send a message to",
+    wantsToUse: "wants to use",
     runFailed: "Run failed or was interrupted",
     waitingTooLong: "Waiting for you too long",
     stuck: "Run looks stuck",
@@ -130,6 +132,7 @@ const ptBR: ChannelStrings = {
     wantsFileRead: "quer ler arquivos",
     needsApproval: "precisa da sua aprovação",
     wantsToSend: "quer enviar uma mensagem para",
+    wantsToUse: "quer usar",
     runFailed: "A execução falhou ou foi interrompida",
     waitingTooLong: "Esperando por você há muito tempo",
     stuck: "A execução parece travada",
@@ -169,6 +172,7 @@ const AFTER_NAME: ReadonlyArray<DecisionKey> = [
   "wantsFileRead",
   "needsApproval",
   "wantsToSend",
+  "wantsToUse",
 ];
 const AFTER_COLON: ReadonlyArray<DecisionKey> = [
   "runFailed",

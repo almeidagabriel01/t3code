@@ -600,6 +600,59 @@ it.effect("refresh rotates the refresh token, and invalid_grant needs a new sign
   ),
 );
 
+it.effect("a rejected token refreshes once, even when it has not expired", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup();
+      yield* connectLinear(env);
+      expect(yield* env.auth.accessToken("linear", "at-1")).toBe("at-2");
+      // A second request that saw the same rejection gets the new token, with no second refresh.
+      expect(yield* env.auth.accessToken("linear", "at-1")).toBe("at-2");
+      expect(env.fake.requests.filter((r) => r === `POST ${AS}/token`)).toHaveLength(2);
+      // The refreshed token is refused too: the user must sign in again.
+      yield* env.auth.markRejected("linear");
+      expect((yield* env.auth.state).integrations).toEqual([
+        expect.objectContaining({ name: "linear", status: "needs-sign-in" }),
+      ]);
+      yield* env.auth.markRejected("linear");
+      yield* env.auth.markRejected("missing");
+    }),
+  ),
+);
+
+it.effect(
+  "insufficient_scope needs more access, survives refresh and reconnects with the union",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const env = yield* setup();
+        yield* connectLinear(env);
+        yield* env.auth.markNeedsMoreAccess("linear", "write admin");
+        yield* env.auth.markNeedsMoreAccess("missing", "admin");
+        const view = () =>
+          env.auth.state.pipe(
+            Effect.map((state) => state.integrations.find((i) => i.name === "linear")),
+          );
+        expect(yield* view()).toMatchObject({ status: "needs-more-access" });
+        yield* TestClock.adjust(3_570_000);
+        expect(yield* env.auth.accessToken("linear")).toBe("at-2");
+        expect(yield* view()).toMatchObject({ status: "needs-more-access" });
+        const begun = yield* env.auth.beginConnect({ catalogId: "linear", client: web });
+        expect(new URL(begun.authorizationUrl).searchParams.get("scope")).toBe("read write admin");
+        yield* env.auth.completeConnect({
+          flowId: begun.flowId,
+          callbackUrl: env.fake.approve(begun.authorizationUrl),
+        });
+        expect(yield* view()).toMatchObject({ status: "connected" });
+      }),
+    ),
+);
+
+it("scopeUnion keeps first-seen order and drops blanks", () => {
+  expect(IntegrationAuth.scopeUnion("a b", undefined, " b  c ", "")).toBe("a b c");
+  expect(IntegrationAuth.scopeUnion()).toBe("");
+});
+
 it.effect("disconnect revokes and deletes the tokens, the registration and the server entry", () =>
   Effect.scoped(
     Effect.gen(function* () {

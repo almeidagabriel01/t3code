@@ -171,6 +171,8 @@ import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import * as IntegrationAuth from "./integrations/IntegrationAuth.ts";
 import * as IntegrationFetch from "./integrations/IntegrationFetch.ts";
 import * as IntegrationsHttp from "./integrations/integrationsHttp.ts";
+import * as IntegrationProxy from "./integrations/IntegrationProxy.ts";
+import * as AskBeforeActingGate from "./assistants/AskBeforeActingGate.ts";
 import {
   relayHookBaseUrl,
   ScheduledTaskWebhookOrigin,
@@ -998,6 +1000,20 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    // Integrations for provider sessions, beside /mcp. Memoized layers: the gate the decisions fill.
+    IntegrationProxy.routeLayer.pipe(
+      Layer.provide(
+        IntegrationProxy.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              AskBeforeActingGate.gateLayer,
+              AssistantDirectory.layer,
+              IntegrationFetch.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,

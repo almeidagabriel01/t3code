@@ -77,6 +77,8 @@ const TokenRecord = Schema.Union([
     metadata: Schema.Record(Schema.String, Schema.Unknown),
     client: ClientRef,
     needsSignIn: Schema.optionalKey(Schema.Boolean),
+    // The granted scopes plus what a 403 `insufficient_scope` asked for; the next sign-in asks for all.
+    stepUpScope: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({ kind: Schema.Literal("token"), token: Schema.String }),
 ]);
@@ -103,6 +105,10 @@ const decodeCatalogEntry = Schema.decodeUnknownOption(IntegrationCatalogEntry);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const encodeJson = (value: unknown) => textEncoder.encode(JSON.stringify(value));
+
+/** Space-separated scopes, deduplicated in first-seen order. */
+export const scopeUnion = (...scopes: ReadonlyArray<string | undefined>): string =>
+  [...new Set(scopes.flatMap((scope) => scope?.split(/\s+/) ?? []).filter(Boolean))].join(" ");
 
 /** Catalog entries that fail to decode are skipped, never hiding the others. */
 export const decodeCatalog = (
@@ -209,8 +215,21 @@ export class IntegrationAuth extends Context.Service<
     readonly removeOwnApp: (input: {
       readonly clientGroup: string;
     }) => Effect.Effect<void, IntegrationError>;
-    /** The upstream credential, refreshed when it expires within a minute. For the proxy only. */
-    readonly accessToken: (name: string) => Effect.Effect<string, IntegrationError>;
+    /**
+     * The upstream credential, refreshed when it expires within a minute, or when `rejected` (a
+     * token the upstream just refused) is still the stored one. For the proxy only.
+     */
+    readonly accessToken: (
+      name: string,
+      rejected?: string,
+    ) => Effect.Effect<string, IntegrationError>;
+    /** The upstream refused a fresh token: the user must sign in again. */
+    readonly markRejected: (name: string) => Effect.Effect<void, IntegrationError>;
+    /** A 403 `insufficient_scope`: Reconnect asks for the granted and the challenged scopes. */
+    readonly markNeedsMoreAccess: (
+      name: string,
+      scope: string | undefined,
+    ) => Effect.Effect<void, IntegrationError>;
   }
 >()("t3/integrations/IntegrationAuth") {}
 
@@ -314,7 +333,11 @@ const make = Effect.gen(function* () {
     const oauth = stored.value;
     return {
       ...base,
-      status: oauth.needsSignIn ? "needs-sign-in" : "connected",
+      status: oauth.needsSignIn
+        ? "needs-sign-in"
+        : oauth.stepUpScope === undefined
+          ? "connected"
+          : "needs-more-access",
       ...(oauth.expiresAt === undefined ? {} : { expiresAt: oauth.expiresAt }),
       ...(oauth.scope === undefined ? {} : { scope: oauth.scope }),
     } as const;
@@ -580,7 +603,9 @@ const make = Effect.gen(function* () {
       loopback: mode !== "server",
     });
     const state = randomToken();
-    const scope = discovered.scope ?? entry.scopes?.join(" ");
+    const previous = Option.getOrUndefined(yield* readRecord(name));
+    const stepUp = previous?.kind === "oauth" ? previous.stepUpScope : undefined;
+    const scope = scopeUnion(discovered.scope ?? entry.scopes?.join(" "), stepUp) || undefined;
     const started = yield* outside(
       () =>
         startAuthorization(discovered.authorizationServer, {
@@ -947,16 +972,19 @@ const make = Effect.gen(function* () {
       needsSignIn: true,
     }).pipe(Effect.andThen(publish), Effect.andThen(fail("needs-sign-in")));
 
-  const refreshLocked = Effect.fn("IntegrationAuth.refresh")(function* (name: string) {
+  const refreshLocked = Effect.fn("IntegrationAuth.refresh")(function* (
+    name: string,
+    rejected: string | undefined,
+  ) {
     const stored = yield* readRecord(name);
     if (Option.isNone(stored)) return yield* fail("not-connected");
     const record = stored.value;
     if (record.kind === "token") return record.token;
     if (record.needsSignIn || record.access === undefined) return yield* fail("needs-sign-in");
     const now = yield* Clock.currentTimeMillis;
-    if (record.expiresAt === undefined || record.expiresAt - now > REFRESH_MARGIN_MS) {
-      return record.access;
-    }
+    const fresh = record.expiresAt === undefined || record.expiresAt - now > REFRESH_MARGIN_MS;
+    // Another request already replaced the rejected token: use the new one, refresh nothing.
+    if (rejected === undefined ? fresh : record.access !== rejected) return record.access;
     const client = yield* clientInformationFor(record.client);
     if (record.refresh === undefined || Option.isNone(client)) {
       return yield* markNeedsSignIn(name, record);
@@ -980,7 +1008,10 @@ const make = Effect.gen(function* () {
     );
     const refreshedAt = yield* Clock.currentTimeMillis;
     // The SDK keeps the old refresh token when the server does not rotate it.
-    yield* writeRecord(name, oauthRecord(record, tokens, refreshedAt));
+    yield* writeRecord(name, {
+      ...oauthRecord(record, tokens, refreshedAt),
+      ...(record.stepUpScope === undefined ? {} : { stepUpScope: record.stepUpScope }),
+    });
     yield* publish;
     return tokens.access_token;
   });
@@ -997,10 +1028,29 @@ const make = Effect.gen(function* () {
     saveToken,
     saveOwnApp,
     removeOwnApp,
-    accessToken: Effect.fn("IntegrationAuth.accessToken")((name: string) =>
-      refreshLock.withPermits(1)(refreshLocked(name)),
+    accessToken: Effect.fn("IntegrationAuth.accessToken")((name: string, rejected?: string) =>
+      refreshLock.withPermits(1)(refreshLocked(name, rejected)),
     ),
+    markRejected: Effect.fn("IntegrationAuth.markRejected")(function* (name: string) {
+      const stored = Option.getOrUndefined(yield* readRecord(name));
+      if (stored?.kind !== "oauth") return;
+      yield* markNeedsSignIn(name, stored).pipe(Effect.catchIf(isNeedsSignIn, () => Effect.void));
+    }),
+    markNeedsMoreAccess: Effect.fn("IntegrationAuth.markNeedsMoreAccess")(function* (
+      name: string,
+      scope: string | undefined,
+    ) {
+      const stored = Option.getOrUndefined(yield* readRecord(name));
+      if (stored?.kind !== "oauth") return;
+      yield* writeRecord(name, {
+        ...stored,
+        stepUpScope: scopeUnion(stored.scope, stored.stepUpScope, scope),
+      });
+      yield* publish;
+    }),
   });
 });
+
+const isNeedsSignIn = (error: IntegrationError) => error.reason === "needs-sign-in";
 
 export const layer = Layer.effect(IntegrationAuth, make);
