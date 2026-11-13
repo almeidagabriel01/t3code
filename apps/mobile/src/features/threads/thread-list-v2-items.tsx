@@ -356,7 +356,12 @@ export const ThreadListV2SubagentRow = memo(function ThreadListV2SubagentRow(pro
 }) {
   const { thread, menu } = props;
   const sidebarPane = props.pane === "sidebar";
-  const statusLabel = STATUS_LABEL_BY_STATUS[resolveThreadListV2Status(thread)];
+  const status = resolveThreadListV2Status(thread);
+  // A pinned assistant subagent stays listed once it finishes; an unpinned ready one is still
+  // listed only for its working children, so it shows no Done.
+  const statusLabel =
+    STATUS_LABEL_BY_STATUS[status] ??
+    (status === "ready" && thread.pinnedAt != null ? DONE_STATUS_LABEL : undefined);
   const handlePress = useCallback(() => props.onSelectThread(thread), [props, thread]);
   const row = (
     <Pressable

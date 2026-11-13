@@ -245,7 +245,12 @@ describe("ThreadListV2SubagentRow menu", () => {
     await press(loose, "Copy thread");
     await press(loose, "Copy thread ID");
     expect(mocks.copyText).toHaveBeenCalledWith("t1", { target: "thread-id" });
-    await press(await mountChild({ pinnedAt: "2026-11-01T00:00:00.000Z" }, true), "Unpin");
+    // A finished pinned child stays under its assistant: Done, with Unpin in its menu.
+    const finished = await mountChild({ pinnedAt: "2026-11-01T00:00:00.000Z" }, true);
+    expect([...finished.querySelectorAll("s")].map((symbol) => symbol.textContent)).toContain(
+      "checkmark.circle",
+    );
+    await press(finished, "Unpin");
     expect(onSetPinned.mock.calls.map(([, pinned]) => pinned)).toEqual([true, false]);
     expect((await mountChild({}, false)).querySelector("button")).toBeNull();
   });

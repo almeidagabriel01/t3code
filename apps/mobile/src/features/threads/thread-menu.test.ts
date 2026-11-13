@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   buildSnoozePresetActions,
   buildSubagentMenuActions,
+  isAssistantSubagent,
   canOpenThreadNotes,
   buildThreadMenuActions,
   menuActionsToAppBarItems,
@@ -164,6 +165,24 @@ describe("thread menu", () => {
       "Jarvis settings",
     );
     expect(ids()).not.toContain("reset-assistant");
+  });
+
+  it.each([
+    ["an assistant's subagent", "assistant:a1:0", true],
+    ["a project thread's subagent", "thread-1", false],
+    ["a root thread", null, false],
+  ] as const)("hides project actions on %s's own menu", (_name, parentThreadId, hidden) => {
+    const outsideProjects = isAssistantSubagent({ lineage: { parentThreadId } });
+    expect(outsideProjects).toBe(hidden);
+    const menu = ids({
+      outsideProjects,
+      notes: true,
+      projectViews: true,
+      turnIntoProject: { archivable: true },
+    });
+    const projectIds = ["new-thread-on-branch", "notes", "project", "turn-into-project"];
+    expect(projectIds.filter((id) => menu.includes(id))).toEqual(hidden ? [] : projectIds);
+    expect(menu).toContain("rename");
   });
 
   it("gives a subagent row copy and pin only, swapping pin for unpin", () => {

@@ -44,7 +44,13 @@ const { mocks } = vi.hoisted(() => ({
       sites: [] as Array<Record<string, string>>,
       subagents: new Map<
         string,
-        Array<{ id: string; title: string; environmentId?: string; pinnedAt?: string | null }>
+        Array<{
+          id: string;
+          title: string;
+          environmentId?: string;
+          pinnedAt?: string | null;
+          runtime?: null;
+        }>
       >(),
     },
     toggleShowAll: vi.fn(),
@@ -497,7 +503,14 @@ describe("HomeAssistantsSection", () => {
           "hub:a0",
           [
             { id: "c1", title: "Loose", environmentId: "hub", pinnedAt: null },
-            { id: "c2", title: "Kept", environmentId: "hub", pinnedAt: "2026-11-01T00:00:00.000Z" },
+            // Finished, but pinned: it stays under its assistant until unpinned.
+            {
+              id: "c2",
+              title: "Kept",
+              environmentId: "hub",
+              pinnedAt: "2026-11-01T00:00:00.000Z",
+              runtime: null,
+            },
           ],
         ],
       ]),

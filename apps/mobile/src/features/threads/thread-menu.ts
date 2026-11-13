@@ -1,4 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import { assistantIdFromThreadId } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
@@ -80,22 +81,31 @@ export interface ThreadMenuInput {
   readonly assistant?: { readonly name: string; readonly resetDisabled?: boolean } | null;
   /** Set when an assistant launched this thread as a task. */
   readonly assistantTask?: { readonly dismissed: boolean; readonly canDismiss: boolean } | null;
+  /** An assistant's subagent: it lives under the assistant, in no project of its own. */
+  readonly outsideProjects?: boolean;
 }
 
-// An assistant's chat lives in no project of its own, so project actions are hidden too.
+const PROJECT_IDS = new Set(["new-thread-on-branch", "notes", "project", "turn-into-project"]);
 const ASSISTANT_HIDDEN_IDS = new Set([
-  "new-thread-on-branch",
-  "notes",
-  "project",
+  ...PROJECT_IDS,
   "rename",
   "regenerate-title",
-  "turn-into-project",
   "archive",
   "delete",
 ]);
 
+/** A thread an assistant's chat delegated, listed under that assistant rather than a project. */
+export const isAssistantSubagent = (thread: {
+  readonly lineage: { readonly parentThreadId: string | null };
+}) =>
+  thread.lineage.parentThreadId !== null &&
+  assistantIdFromThreadId(thread.lineage.parentThreadId) !== null;
+
 export function buildThreadMenuActions(input: ThreadMenuInput): MenuAction[] {
-  const actions = buildBaseThreadMenuActions(input);
+  const base = buildBaseThreadMenuActions(input);
+  const actions = input.outsideProjects
+    ? base.filter((action) => !PROJECT_IDS.has(action.id ?? ""))
+    : base;
   if (!input.assistant) return actions;
   return [
     ...actions.filter((action) => !ASSISTANT_HIDDEN_IDS.has(action.id ?? "")),

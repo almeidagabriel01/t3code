@@ -30,7 +30,16 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
-import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
+import { threadJumpTarget, useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
+
+const { jump } = vi.hoisted(() => ({
+  jump: { handler: null as ((command: string) => boolean) | null },
+}));
+vi.mock("../keyboard/hardwareKeyboardCommands", () => ({
+  useHardwareKeyboardCommand: (_commands: unknown, handler: (command: string) => boolean) => {
+    jump.handler = handler;
+  },
+}));
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -935,6 +944,12 @@ describe("buildThreadListV2ListItems", () => {
     expect(threadJumpTarget(items, "thread.jump.2", leading)?.id).toBe("active");
     expect(threadJumpTarget(items, "thread.jump.3", leading)?.id).toBe("settled");
     expect(threadJumpTarget(items, "thread.jump.4", leading)).toBeNull();
+    const onSelect = vi.fn();
+    useThreadJumpShortcuts(items, onSelect, leading);
+    for (const command of ["thread.jump.1", "thread.jump.3", "thread.jump.9"]) {
+      expect(jump.handler?.(command)).toBe(true);
+    }
+    expect(onSelect.mock.calls.map(([thread]) => thread.id)).toEqual(["chat", "settled"]);
   });
 });
 
