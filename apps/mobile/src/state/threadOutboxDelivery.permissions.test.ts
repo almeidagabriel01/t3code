@@ -514,7 +514,7 @@ describe("a mode change the server refuses", () => {
           new OrchestrationV2DispatchCommandError({
             commandId: CommandId.make("command"),
             commandType: "thread.runtime-mode.set",
-            message: "Can't switch mode while a command is running.",
+            message: "Can't switch mode while a command is running",
             refusal: "session-busy",
           }),
         ),

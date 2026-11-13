@@ -89,13 +89,10 @@ describe("dispatchRefusal", () => {
     const busy = new OrchestratorProviderSelectionBusyError({
       commandId: CommandId.make("command"),
       threadId: ThreadId.make("thread"),
-      change: "runtime mode",
+      change: "mode",
       holding: "command",
     });
-    assert.equal(
-      busy.message,
-      "Can't switch mode while a command is running. Let it finish or stop it, then try again.",
-    );
+    assert.equal(busy.message, "Can't switch mode while a command is running");
     assert.equal(
       dispatchRefusal({ cause: { errors: [new Error("other"), busy] } }),
       "session-busy",

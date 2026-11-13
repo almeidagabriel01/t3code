@@ -1337,8 +1337,7 @@ describe("thread outbox", () => {
     const busy = new OrchestrationV2DispatchCommandError({
       commandId: CommandId.make("command-busy"),
       commandType: "thread.runtime-mode.set",
-      message:
-        "Can't switch mode while a command is running. Let it finish or stop it, then try again.",
+      message: "Can't switch mode while a command is running",
       refusal: "session-busy",
     });
     for (const stage of ["settings-sync", "start-turn"] as const) {

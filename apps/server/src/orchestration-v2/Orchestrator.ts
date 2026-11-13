@@ -319,13 +319,12 @@ export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<O
   {
     commandId: CommandId,
     threadId: ThreadId,
-    change: Schema.optional(Schema.Literals(["provider selection", "runtime mode"])),
+    change: Schema.optional(Schema.Literals(["provider", "model", "mode"])),
     holding: Schema.optional(SessionWorkKind),
   },
 ) {
   override get message(): string {
-    const change = this.change === "runtime mode" ? "switch mode" : "change the provider or model";
-    return `Can't ${change} while ${SESSION_WORK_PHRASES[this.holding ?? "turn"]}. Let it finish or stop it, then try again.`;
+    return `Can't switch ${this.change ?? "model"} while ${SESSION_WORK_PHRASES[this.holding ?? "turn"]}`;
   }
 }
 
@@ -3911,6 +3910,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               return yield* new OrchestratorProviderSelectionBusyError({
                 commandId: command.commandId,
                 threadId: command.threadId,
+                change: plan.instanceChanged ? "provider" : "model",
                 holding,
               });
             }
@@ -3932,7 +3932,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorProviderSelectionBusyError({
         commandId: command.commandId,
         threadId: command.threadId,
-        change: "runtime mode",
+        change: "mode",
         holding: modeHolding,
       });
     }

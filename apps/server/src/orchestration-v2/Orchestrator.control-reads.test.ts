@@ -310,7 +310,7 @@ it.effect.each(
               : "a subagent is running";
         assert.equal(
           outcome.failure.message,
-          `Can't ${type === "thread.runtime-mode.set" ? "switch mode" : "change the provider or model"} while ${running}. Let it finish or stop it, then try again.`,
+          `Can't switch ${type === "thread.runtime-mode.set" ? "mode" : selectionChange === "instance" ? "provider" : "model"} while ${running}`,
         );
       } else if (type === "thread.runtime-mode.set") {
         assert.ok(Result.isSuccess(outcome));

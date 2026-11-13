@@ -104,7 +104,7 @@ const harness = () => {
                   new Orchestrator.OrchestratorProviderSelectionBusyError({
                     commandId: command.commandId,
                     threadId: ThreadId.make(command.threadId),
-                    change: "runtime mode",
+                    change: "mode",
                   }),
                 )
               : Effect.gen(function* () {
