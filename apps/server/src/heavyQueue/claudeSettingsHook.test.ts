@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   claudeSettingsPath,
   hasHeavyHook,
+  HOOK_SCRIPT,
   readHeavyHookInstalled,
   setHeavyHookInstalled,
   withHeavyHook,
+  writeHookScript,
 } from "./claudeSettingsHook.ts";
 
 const HOOK = "ELECTRON_RUN_AS_NODE=1 '/app/t3' heavy hook --queue-dir '/q'";
@@ -89,6 +91,47 @@ describe("the heavy hook in Claude Code settings", () => {
     expect(readHeavyHookInstalled(path)).toBe(false);
     NodeFS.writeFileSync(real, "[]");
     expect(() => setHeavyHookInstalled(path, HOOK, true)).toThrow("not a JSON object");
+  });
+
+  it("a T3 running from a checkout writes hook state only inside that checkout", () => {
+    const home = NodePath.dirname(tempSettings());
+    const checkout = NodePath.join(home, "worktrees", "t3");
+    NodeFS.mkdirSync(checkout, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(checkout, ".git"), "gitdir: /repo/.git/worktrees/t3\n");
+    const source = NodePath.join(checkout, "apps", "server", "src", "bin.ts");
+    const installed =
+      "/Applications/T3 Code.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs";
+    const liveSettings = NodePath.join(home, ".claude-work", "settings.json");
+    const liveScript = NodePath.join(home, ".t3", "heavy-queue", HOOK_SCRIPT);
+    const linked = NodePath.join(checkout, ".t3", "claude", "settings.json");
+    NodeFS.mkdirSync(NodePath.dirname(linked), { recursive: true });
+    NodeFS.mkdirSync(NodePath.dirname(liveSettings), { recursive: true });
+    NodeFS.writeFileSync(liveSettings, "{}");
+    NodeFS.symlinkSync(liveSettings, linked);
+    const rows = [
+      { entry: source, file: "settings", path: liveSettings, refused: true },
+      { entry: source, file: "script", path: liveScript, refused: true },
+      { entry: source, file: "settings", path: linked, refused: true },
+      { entry: source, file: "script", path: `${checkout}/.t3/heavy-queue-dev/${HOOK_SCRIPT}` },
+      { entry: source, file: "settings", path: `${checkout}/.t3/claude/own.json` },
+      { entry: installed, file: "script", path: liveScript },
+      { entry: installed, file: "settings", path: liveSettings },
+    ] as const;
+    for (const row of rows) {
+      const write = () =>
+        row.file === "script"
+          ? writeHookScript(row.path, "#!/bin/sh\n", row.entry)
+          : setHeavyHookInstalled(row.path, HOOK, true, row.entry);
+      if ("refused" in row) {
+        expect(write, row.path).toThrow(/does not write/);
+        expect(readHeavyHookInstalled(liveSettings), row.path).toBe(false);
+      } else {
+        write();
+        if (row.file === "settings") expect(readHeavyHookInstalled(row.path), row.path).toBe(true);
+        else expect(NodeFS.existsSync(row.path), row.path).toBe(true);
+      }
+    }
+    expect(NodeFS.existsSync(liveScript)).toBe(true);
   });
 
   it("lives in CLAUDE_CONFIG_DIR when set, else ~/.claude", () => {

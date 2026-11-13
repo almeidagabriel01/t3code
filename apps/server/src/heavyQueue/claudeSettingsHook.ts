@@ -6,6 +6,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { HeavyQueueError } from "@t3tools/contracts";
 
 /** The `sh` entry the installed hook runs, beside the queue file. */
 export const HOOK_SCRIPT = "t3-heavy-hook.sh";
@@ -71,6 +72,39 @@ const readSettings = (path: string): Json => {
   return parsed;
 };
 
+/**
+ * The checkout root when `entry` is T3's own server entry in a git checkout (`vp run dev`,
+ * `dev:desktop`, a source `bin.ts`); undefined for an installed T3 (app bundle, npm package, binary).
+ */
+export const sourceCheckout = (entry: string | undefined) => {
+  if (entry === undefined) return undefined;
+  const root = /^(.*)[\\/]apps[\\/]server[\\/](?:src[\\/]bin\.ts|dist[\\/]bin\.mjs)$/.exec(
+    NodePath.resolve(entry),
+  )?.[1];
+  return root !== undefined && NodeFS.existsSync(NodePath.join(root, ".git")) ? root : undefined;
+};
+
+/**
+ * The only writer of hook state. A source run writes only inside its own checkout: the machine's
+ * Claude sessions would otherwise run that checkout's code, and pass every call once it is deleted.
+ */
+const writeAtomic = (path: string, text: string, entry: string | undefined, mode?: number) => {
+  const checkout = sourceCheckout(entry);
+  if (checkout !== undefined) {
+    const inside = NodePath.relative(checkout, NodePath.resolve(path));
+    if (inside.split(NodePath.sep)[0] === ".." || NodePath.isAbsolute(inside)) {
+      throw new HeavyQueueError({
+        reason: "not-allowed",
+        message: `T3 running from ${checkout} does not write ${path}; the installed T3 owns it.`,
+      });
+    }
+  }
+  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+  const temp = `${path}.${process.pid}.tmp`;
+  NodeFS.writeFileSync(temp, text, mode === undefined ? undefined : { mode });
+  NodeFS.renameSync(temp, path);
+};
+
 export const readHeavyHookInstalled = (path: string) => {
   try {
     return hasHeavyHook(readSettings(path));
@@ -80,23 +114,25 @@ export const readHeavyHookInstalled = (path: string) => {
 };
 
 /** Rewritten on install and at startup, so it always names the current T3 executable. */
-export const writeHookScript = (path: string, script: string) => {
-  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
-  const temp = `${path}.${process.pid}.tmp`;
-  NodeFS.writeFileSync(temp, script, { mode: 0o755 });
-  NodeFS.renameSync(temp, path);
-};
+export const writeHookScript = (
+  path: string,
+  script: string,
+  entry: string | undefined = process.argv[1],
+) => writeAtomic(path, script, entry, 0o755);
 
-export const setHeavyHookInstalled = (path: string, command: string, install: boolean) => {
+export const setHeavyHookInstalled = (
+  path: string,
+  command: string,
+  install: boolean,
+  entry: string | undefined = process.argv[1],
+) => {
   const settings = readSettings(path);
   if (!install && !hasHeavyHook(settings)) return;
-  NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
   // A dotfiles symlink stays a symlink: the rename lands on the file it points to.
   const target = NodeFS.existsSync(path) ? NodeFS.realpathSync(path) : path;
-  const temp = `${target}.${process.pid}.tmp`;
-  NodeFS.writeFileSync(
-    temp,
+  writeAtomic(
+    target,
     `${JSON.stringify(withHeavyHook(settings, command, install), null, 2)}\n`,
+    entry,
   );
-  NodeFS.renameSync(temp, target);
 };

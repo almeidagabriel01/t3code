@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -141,6 +142,45 @@ describe("HeavyQueue", () => {
           expect((yield* Effect.flip(queue.setClaudeHook(true))).reason).toBe("unavailable");
         }),
       ),
+  );
+
+  it.effect("a T3 running from a checkout leaves the installed hook and settings alone", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-src-"))),
+      (dir) => {
+        const checkout = NodePath.join(dir, "checkout");
+        NodeFS.mkdirSync(NodePath.join(checkout, ".git"), { recursive: true });
+        const settings = NodePath.join(dir, "claude", "settings.json");
+        NodeFS.mkdirSync(NodePath.dirname(settings));
+        const installed = JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Bash",
+                hooks: [{ type: "command", command: `/bin/sh '${dir}/t3-heavy-hook.sh'` }],
+              },
+            ],
+          },
+        });
+        NodeFS.writeFileSync(settings, installed);
+        return Effect.gen(function* () {
+          const queue = yield* HeavyQueue.HeavyQueue;
+          for (const install of [true, false]) {
+            expect((yield* Effect.flip(queue.setClaudeHook(install))).reason).toBe("not-allowed");
+          }
+          expect(NodeFS.readFileSync(settings, "utf8")).toBe(installed);
+          // The startup refresh would point the installed hook at this checkout.
+          expect(NodeFS.existsSync(NodePath.join(dir, "t3-heavy-hook.sh"))).toBe(false);
+        }).pipe(
+          Effect.provide(HeavyQueue.layer(dir, settings).pipe(Layer.provide(NodeServices.layer))),
+          Effect.provideService(HostProcess.Arguments, [
+            process.execPath,
+            NodePath.join(checkout, "apps", "server", "src", "bin.ts"),
+          ]),
+        );
+      },
+      (dir) => Effect.sync(() => NodeFS.rmSync(dir, { recursive: true, force: true })),
+    ),
   );
 
   it.effect("the Bash hook takes heavy calls while the queue or the Runner is on", () =>
