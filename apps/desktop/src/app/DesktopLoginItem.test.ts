@@ -2,11 +2,13 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopState from "./DesktopState.ts";
 import * as DesktopLoginItem from "./DesktopLoginItem.ts";
 
 type MacStatus = Electron.LoginItemSettings["status"];
@@ -29,6 +31,7 @@ function makeSystem(input: {
   readonly openAtLogin: boolean;
   readonly openAtLoginRegistered?: boolean;
   readonly registrationFails?: boolean;
+  readonly registrationThrows?: boolean;
   readonly wasOpenedAtLogin?: boolean;
 }) {
   let status = input.status;
@@ -58,6 +61,7 @@ function makeSystem(input: {
       setLoginItemSettings: (settings) =>
         Effect.sync(() => {
           calls.push(settings);
+          if (input.registrationThrows) throw new Error("login item service unavailable");
           if (!settings.openAtLogin) status = "not-registered";
           else if (!input.registrationFails) status = "enabled";
         }),
@@ -171,6 +175,30 @@ describe("DesktopLoginItem", () => {
         assert.deepEqual(system.calls, [{ openAtLogin: true }, { openAtLogin: false }]);
       }).pipe(Effect.provide(system.layer));
     }),
+  );
+
+  it.effect.each([
+    [true, false],
+    [false, true],
+  ] as const)(
+    "prepares startup (opened at login %s) without failing when the system throws %s",
+    ([wasOpenedAtLogin, registrationThrows]) =>
+      Effect.gen(function* () {
+        const system = makeSystem({
+          platform: "darwin",
+          isPackaged: true,
+          status: "not-registered",
+          openAtLogin: true,
+          wasOpenedAtLogin,
+          registrationThrows,
+        });
+        yield* Effect.gen(function* () {
+          yield* DesktopLoginItem.prepareStartup;
+          const state = yield* DesktopState.DesktopState;
+          assert.equal(yield* Ref.get(state.startHidden), wasOpenedAtLogin);
+          assert.deepEqual(system.calls, [{ openAtLogin: true }]);
+        }).pipe(Effect.provide(Layer.merge(system.layer, DesktopState.layer)));
+      }),
   );
 
   it.effect("registers on Windows with the login launch marker", () =>

@@ -1,11 +1,16 @@
 import type { DesktopOpenAtLoginState } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopObservability from "./DesktopObservability.ts";
+import * as DesktopState from "./DesktopState.ts";
+
+const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-startup");
 
 // Windows has no "opened at login" flag, so the Run entry passes this marker.
 export const OPENED_AT_LOGIN_ARG = "--opened-at-login";
@@ -119,3 +124,14 @@ export const openedAtLogin = Effect.gen(function* () {
   }
   return false;
 }).pipe(Effect.withSpan("desktop.loginItem.openedAtLogin"));
+
+/** A login launch starts hidden, and the login item follows the setting; neither can fail startup. */
+export const prepareStartup = Effect.gen(function* () {
+  if (yield* openedAtLogin) {
+    yield* Ref.set((yield* DesktopState.DesktopState).startHidden, true);
+    yield* logInfo("opened at login; main window starts hidden");
+  }
+  yield* reconcileOpenAtLogin().pipe(
+    Effect.catchCause((cause) => logError("open at login reconcile failed", { cause })),
+  );
+}).pipe(Effect.withSpan("desktop.loginItem.prepareStartup"));

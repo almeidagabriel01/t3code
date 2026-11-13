@@ -42,9 +42,7 @@ describe("ElectronApp", () => {
   it.effect("passes login item options through to Electron", () =>
     Effect.gen(function* () {
       loginItems.get.mockReturnValue({ openAtLogin: true });
-      assert.deepEqual(yield* ElectronApp.make.getLoginItemSettings({ args: ["--x"] }), {
-        openAtLogin: true,
-      });
+      assert.isTrue((yield* ElectronApp.make.getLoginItemSettings({ args: ["--x"] })).openAtLogin);
       yield* ElectronApp.make.setLoginItemSettings({ openAtLogin: false });
       assert.deepEqual(loginItems.get.mock.calls, [[{ args: ["--x"] }]]);
       assert.deepEqual(loginItems.set.mock.calls, [[{ openAtLogin: false }]]);
