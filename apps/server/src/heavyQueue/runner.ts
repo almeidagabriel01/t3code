@@ -276,8 +276,6 @@ const tieOf = (
     return "Commits run here: the pre-commit edits this Mac's repository";
   }
   if (part.program === "git" || needsGit(part.values.slice(part.remoteAt))) return NEEDS_GIT;
-  // Its own redirects and pipes would run there too.
-  if (part.nested !== null) return "Couldn't read this command safely (nested shell)";
   const { command } = part;
   // The job's one slot, Stop and requeue follow a single run at a time.
   if (command.next === "&") return `Runs in the background: ${nameOf(text)}`;
@@ -300,6 +298,17 @@ const tieOf = (
     if (tie !== null) return tie;
   }
   return null;
+};
+
+const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/** The text a shell part runs with `-c`, which goes to Linux whole; undefined for anything else. */
+const shellTextOf = (part: Part) => {
+  if (!SHELL_PROGRAMS.has(part.program)) return undefined;
+  const flag = part.values.findIndex(
+    (value, at) => at > part.programAt && /^-[a-z]*c[a-z]*$/.test(value),
+  );
+  return flag < 0 ? undefined : part.values[flag + 1];
 };
 
 const literalValue = (word: Word, vars: ReadonlyMap<string, string | null>, cwd: string) => {
@@ -348,13 +357,19 @@ export const eligibilityOf = (
       const tie = tieOf(part, cwd, vars, rootOf, config);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
-      if (part.script !== null) {
-        if (part.script.body === null) {
-          return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
-        }
+      if (part.script?.body === null) return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
+      // A script or `sh -c` text runs there whole: one level of it is judged like a line.
+      const body = part.script?.body ?? shellTextOf(part);
+      if (body !== undefined) {
+        // It runs in this part's copy, so a folder outside that checkout is not there.
+        const outer = cwd === null ? null : rootOf(cwd);
         const inner = eligibilityOf(
-          { label: part.script.body, cwd: cwd ?? entry.cwd, where: entry.where },
-          context,
+          {
+            label: body,
+            cwd: cwd ?? entry.cwd,
+            ...(entry.where === undefined ? {} : { where: entry.where }),
+          },
+          { ...context, rootOf: (dir) => (outer !== null && inside(dir, outer) ? outer : null) },
         );
         if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;

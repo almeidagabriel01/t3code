@@ -107,12 +107,13 @@ describe("running on Linux through remoto", () => {
   });
 
   it.each([
-    ["/w", '"$PWD/node_modules/.bin:$PATH"'],
+    ["/w", '"$PWD"', '"$PWD/node_modules/.bin:$PATH"'],
     [
       "/w/apps/web",
+      '"${PWD%/*/*}"',
       '"$PWD/node_modules/.bin:${PWD%/*}/node_modules/.bin:${PWD%/*/*}/node_modules/.bin:$PATH"',
     ],
-  ])("from %s, Linux looks for project tools in %s first", (cwd, path) => {
+  ])("from %s, the copy is %s and project tools come from %s first", (cwd, copy, path) => {
     const wrapped = withProjectBins(["vp", "test"], cwd, "/w");
     expect([...wrapped.slice(0, 2), ...wrapped.slice(3)]).toEqual([
       "bash",
@@ -123,10 +124,41 @@ describe("running on Linux through remoto", () => {
     ]);
     expect(
       wrapped[2]!.startsWith(
-        `export PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
+        `export T3_COPY=${copy} PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; `,
       ),
     ).toBe(true);
     expect(wrapped[2]!.endsWith('; exec "$@"')).toBe(true);
+  });
+
+  // Linux has no Mac home: the text's paths into the checkout point at its copy (`$T3_COPY`).
+  it.each([
+    ["cd /Users/me/wt/apps/server && vp test", `cd "$T3_COPY"'/apps/server' && vp test`],
+    ["cd ~/wt/apps/server && vp test", `cd "$T3_COPY"'/apps/server' && vp test`],
+    ["cd $HOME/wt && vp test", `cd "$T3_COPY" && vp test`],
+    ['cd "${HOME}/wt/a b" && vp test', `cd "$T3_COPY"'/a b' && vp test`],
+    [
+      "vp test --root=/Users/me/wt/apps/web > /Users/me/wt/out.txt",
+      `vp test '--root='"$T3_COPY"'/apps/web' > "$T3_COPY"'/out.txt'`,
+    ],
+    ["echo $(cat /Users/me/wt/list)", `echo $(cat "$T3_COPY"'/list')`],
+    // Not the checkout, a quoted `~`, another home or variable: left as written.
+    ["cd /Users/me/other && vp test", "cd /Users/me/other && vp test"],
+    ["cd /Users/me/wt-2 && vp test", "cd /Users/me/wt-2 && vp test"],
+    ["echo '~/wt' $WT/x ~other/wt", "echo '~/wt' $WT/x ~other/wt"],
+  ])("sh -c %j runs there as %j", (text, expected) => {
+    expect(
+      remoteCommand("/bin/sh", ["-ec", text], "/Users/me/wt/apps/web", "/Users/me/wt", "/Users/me"),
+    ).toEqual(["bash", "-ec", expected]);
+  });
+
+  it("an absolute cd into the checkout lands in its copy there", async () => {
+    const web = NodePath.join(dir, "apps", "web");
+    NodeFS.mkdirSync(NodePath.join(dir, "apps", "server"), { recursive: true });
+    NodeFS.mkdirSync(web, { recursive: true });
+    // Stands in for `remoto-rodar`, which runs the wrapper in the same folder of the copy.
+    const { run, out } = runWith(fake('exec "$@"'), `cd ${dir}/apps/server && pwd -P`, web);
+    await run.done;
+    expect(out()).toBe(`${NodeFS.realpathSync(NodePath.join(dir, "apps", "server"))}\n`);
   });
 
   // Electron 44 fetches its binary on first use: two test workers raced on it in a fresh copy.

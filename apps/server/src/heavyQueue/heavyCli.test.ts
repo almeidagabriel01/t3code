@@ -439,6 +439,48 @@ describe("t3 heavy", () => {
       },
     );
 
+    // Linux has no Mac home: `~`, `$HOME` and absolute paths into the checkout point at its copy.
+    it.each([
+      ["cd ~/W/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
+      ["cd D/sub && remoto sh -c 'vp test run'", "vp test run", "sub"],
+      ["remoto sh -c 'cd ~/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      ["remoto sh -c 'cd $HOME/W/sub && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      ["remoto sh -c 'cd \"D/sub\" && vp test run'", `cd "$T3_COPY"'/sub' && vp test run`, ""],
+      [
+        "remoto sh -c 'cd D && vp test run --root=D/sub'",
+        `cd "$T3_COPY" && vp test run '--root='"$T3_COPY"'/sub'`,
+        "",
+      ],
+      [
+        "sh -c 'cd ~/W/sub && vp test run > ~/W/out.txt'",
+        `cd "$T3_COPY"'/sub' && vp test run > "$T3_COPY"'/out.txt'`,
+        "",
+      ],
+      // Quoted, `~` is no home.
+      ["remoto sh -c 'vp test run \"~/W\"'", `vp test run "~/W"`, ""],
+    ])("%s runs on Linux in its copy", async (line, body, folder) => {
+      const { dir: made, env } = setup(echoArgs);
+      // ponytail: paths compare as written; one through a symlink into the checkout stays here.
+      const dir = NodeFS.realpathSync(made);
+      NodeFS.mkdirSync(NodePath.join(dir, "sub"));
+      const real = (text: string) =>
+        text
+          .replaceAll(
+            /(~|\$HOME)\/W(?=\/|"|'| |$)/g,
+            (_, start: string) => `${start}/${NodePath.basename(dir)}`,
+          )
+          .replaceAll(/(?<=[ ="]|^)D(?=\/| |"|$)/g, dir);
+      const run = heavy(
+        dir,
+        ["/bin/sh", "-c", real(line)],
+        { ...env, HOME: NodePath.dirname(dir) },
+        ["--runner", "linux", "--"],
+        dir,
+      );
+      expect(await run.exited, run.stderr()).toBe(0);
+      expect(run.stdout()).toBe(`bash|-c|${real(body)}| in ${NodePath.join(dir, folder)}\n`);
+    });
+
     it("sends a script outside the checkout to Linux as its text", async () => {
       const { dir, env } = setup(echoArgs);
       const scratch = tempDir();
@@ -844,6 +886,16 @@ describe("t3 heavy", () => {
       ["vp test run /Users/me/x/a.test.ts", `${OUTSIDE}/Users/me/x/a.test.ts`],
       ["vp test run --config ~/vitest.config.ts", `${OUTSIDE}/home/me/vitest.config.ts`],
       ["vp test run --outputFile=/private/tmp/r.json", `${OUTSIDE}/private/tmp/r.json`],
+      // A `sh -c` text runs there whole, in the copy of the checkout it starts in.
+      ["sh -c 'vp test run'", "linux", "X sh -c 'vp test run'"],
+      [
+        "remoto sh -c 'cd /w/repo/apps/server && vp test run'",
+        "linux",
+        "X sh -c 'cd /w/repo/apps/server && vp test run'",
+      ],
+      ["remoto sh -c 'cd ~/code && vp test run'", "Runs outside a git checkout: /home/me/code"],
+      ["sh -c 'vp test run /w/other/a.test.ts'", `${OUTSIDE}/w/other/a.test.ts`],
+      ["sh -c 'echo a | vp test run'", "Reads its input from this Mac: vp test run"],
       ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
       ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
       ["cd /nowhere && vp test run", "Runs outside a git checkout: /nowhere"],
@@ -859,10 +911,7 @@ describe("t3 heavy", () => {
       ["eval vp test run", "Couldn't read this command safely (eval)"],
       ["vp test run 'unbalanced", "Couldn't read this command safely (unbalanced quotes)"],
       ["vp test run <<EOF\nnever ends", "Couldn't read this command safely (unterminated heredoc)"],
-      [
-        "nohup sh -c 'vp test run > /tmp/x.log 2>&1' &",
-        "Couldn't read this command safely (nested shell)",
-      ],
+      ["nohup sh -c 'vp test run > /tmp/x.log 2>&1' &", "Runs in the background: sh vp test"],
       // Not heavy, or already queued: the hook leaves these alone.
       ['grep "a\\|vitest" src/x.ts', "light"],
       ["rg 'vp test run' docs", "light"],
