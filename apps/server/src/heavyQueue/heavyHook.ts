@@ -66,6 +66,16 @@ const isAssignment = (word: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
  */
 const LOCAL_PREFIXES = new Set(["time", "nice", "command", "exec", "caffeinate", "nohup"]);
 
+/** A prefix's options that take the next word as their value (`timeout -s KILL`, `env -u NAME`). */
+const PREFIX_VALUE_OPTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  timeout: new Set(["-s", "--signal", "-k", "--kill-after"]),
+  env: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]),
+  nice: new Set(["-n", "--adjustment"]),
+  time: new Set(["-f", "--format", "-o", "--output"]),
+  exec: new Set(["-a"]),
+  caffeinate: new Set(["-t", "-w"]),
+};
+
 /** Where a command's program starts, past assignments, prefixes and their options (`nice -n 5`). */
 const programAt = (values: ReadonlyArray<string>, from = 0, local = false) => {
   let at = from;
@@ -73,11 +83,12 @@ const programAt = (values: ReadonlyArray<string>, from = 0, local = false) => {
     const word = base(values[at]!);
     if (!(local ? LOCAL_PREFIXES : PREFIXES).has(word)) break;
     at++;
-    while (
-      at < values.length &&
-      (/^-|^\d+(\.\d+)?[smhd]?$/.test(values[at]!) || isAssignment(values[at]!))
-    )
-      at++;
+    while (at < values.length) {
+      const value = values[at]!;
+      if (PREFIX_VALUE_OPTIONS[word]?.has(value)) at += 2;
+      else if (/^-|^\d+(\.\d+)?[smhd]?$/.test(value) || isAssignment(value)) at++;
+      else break;
+    }
   }
   return at;
 };

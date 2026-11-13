@@ -58,6 +58,20 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["nohup sh -c 'npx tsc --noEmit > /tmp/t.out' &", "nohup sh -c 'npx tsc --noEmit > /tmp/t.out'"],
   ["X=$(vp test run 2>&1 | tail -1)", "vp test run 2>&1"],
   ["nice -n 10 vp test run", "nice -n 10 vp test run"],
+  // A prefix option's value is not the program.
+  [
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+  ],
+  ["timeout --signal TERM 60 vp test run", "timeout --signal TERM 60 vp test run"],
+  ["nice --adjustment 5 vp test run", "nice --adjustment 5 vp test run"],
+  ["env -u CI -C apps/server vp test run", "env -u CI -C apps/server vp test run"],
+  ["caffeinate -w 123 vp test run", "caffeinate -w 123 vp test run"],
+  ["time -f %e vp test run", "time -f %e vp test run"],
+  [
+    "nohup env -u CI timeout -s INT 10 vp test run",
+    "nohup env -u CI timeout -s INT 10 vp test run",
+  ],
 ];
 
 const LIGHT = [
