@@ -2629,7 +2629,10 @@ function OpenCommandPaletteDialog(props: {
       addProjectCloneFlow.environmentId,
       startResult.value.projectId,
     );
-    await waitForProject(projectRef, 3_000).catch(() => null);
+    const cloned = await waitForProject(projectRef, 3_000).catch(() => null);
+    if (cloned !== null) {
+      offerProjectAssistantAccess(addProjectCloneFlow.environmentId, projectRef.projectId);
+    }
     const navigationResult = await settlePromise(() => handleNewThread(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);

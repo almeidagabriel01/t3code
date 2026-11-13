@@ -38,15 +38,18 @@ export function ProjectAssistantAccessHost() {
   );
 }
 
-/** After a project is added: tells the user, and offers access only where assistants could use it. */
-export function offerProjectAssistantAccess(environmentId: EnvironmentId, projectId: ProjectId) {
+/** After a project is added: tells the user, and offers access only where assistants could use it. Returns whether it did. */
+export function offerProjectAssistantAccess(
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+): boolean {
   const { activeTeams, active } = readAssistantEntries();
   const relevant =
     activeTeams.some((entry) => entry.environmentId === environmentId) ||
     active.some(
       (entry) => entry.environmentId === environmentId && entry.assistant.scope === "project",
     );
-  if (!relevant) return;
+  if (!relevant) return false;
   toastManager.add({
     type: "success",
     title: "Project added",
@@ -55,4 +58,5 @@ export function offerProjectAssistantAccess(environmentId: EnvironmentId, projec
       onClick: () => appAtomRegistry.set(projectAssistantAccessAtom, { environmentId, projectId }),
     },
   });
+  return true;
 }
