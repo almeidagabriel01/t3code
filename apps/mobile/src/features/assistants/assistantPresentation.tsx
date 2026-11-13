@@ -91,8 +91,8 @@ export function assistantAdvancedSummary(draft: {
         : `$${amount} limit`
       : "no spending limit",
     draft.connectors.length === 0
-      ? "no connectors"
-      : `${draft.connectors.length} connector${draft.connectors.length === 1 ? "" : "s"}`,
+      ? "no custom servers"
+      : `${draft.connectors.length} custom server${draft.connectors.length === 1 ? "" : "s"}`,
     draft.askBeforeActing ? "asks before messaging other threads" : "messages other threads freely",
   ].join(" · ");
 }

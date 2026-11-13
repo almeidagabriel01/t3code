@@ -99,7 +99,7 @@ function ConnectorForm(props: {
   return (
     <View className="gap-4 rounded-2xl border border-border p-3">
       <TextField
-        label="Connector name"
+        label="Custom server name"
         description={
           props.isNew
             ? "Lowercase letters, numbers, dashes or underscores. Its tools are prefixed with it."
@@ -111,7 +111,7 @@ function ConnectorForm(props: {
         onChange={(name) => props.onChange({ name: name.toLowerCase() })}
       />
       <View className="gap-2">
-        <FieldHeader label="Type" description="Where the connector runs." />
+        <FieldHeader label="Type" description="Where the custom server runs." />
         <ListSection>
           <ChoiceRow
             role="radio"
@@ -224,7 +224,7 @@ export function AssistantConnectorsSection(props: {
   return (
     <View className="gap-2">
       <FieldHeader
-        label="Connectors"
+        label="Custom servers"
         description={`MCP servers only this assistant gets, next to T3's own tools. ${CONNECTORS_PROVIDER_NOTE}`}
       />
       <ListSection>
@@ -276,7 +276,7 @@ export function AssistantConnectorsSection(props: {
         ))}
         <ListActionRow
           icon="plus"
-          label="Add connector"
+          label="Add custom server"
           onPress={() => open(-1, emptyConnectorDraft())}
         />
       </ListSection>
