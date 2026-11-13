@@ -37,6 +37,30 @@ const detected: DetectedServer = {
   secretKeys: ["DETECTED-ENV"],
   needsValue: [],
 };
+// Found, but not working everywhere: claude.ai still wants a sign-in, and a project server loads
+// only in that project.
+const notLoaded: ReadonlyArray<DetectedServer> = [
+  {
+    ...detected,
+    id: "ai-slack",
+    name: "Slack",
+    origin: "claude-ai",
+    instanceId: ProviderInstanceId.make("claude"),
+    catalogId: "slack",
+    loaded: "needs-auth",
+  },
+  {
+    ...detected,
+    id: "cc-notion",
+    name: "notion",
+    origin: "claude-code",
+    instanceId: ProviderInstanceId.make("claude"),
+    scope: "project",
+    projectPath: "/work/app",
+    catalogId: "notion",
+    loaded: "connected",
+  },
+];
 
 const assistant = (handle: string, integrations: Assistant["integrations"], archived = false) =>
   ({
@@ -70,7 +94,7 @@ const harness = (hostedAppUrl?: string) =>
               Layer.succeed(
                 IntegrationDetector.IntegrationDetector,
                 IntegrationDetector.IntegrationDetector.of({
-                  detect: Effect.succeed({ detected: [detected], sources: [] }),
+                  detect: Effect.succeed({ detected: [detected, ...notLoaded], sources: [] }),
                   changes: Stream.empty,
                   recordClaudeSession: () => Effect.void,
                   nativeCatalogIds: () => Effect.succeed(new Set()),
@@ -137,7 +161,14 @@ it.effect(
       Effect.gen(function* () {
         const call = yield* harness();
         const listed = yield* call({ action: "list" });
-        expect(listed.integrations.slice(0, 2)).toEqual([
+        // What is in use comes first, in catalog order.
+        expect(listed.integrations.slice(0, 4).map((row: { id: string }) => row.id)).toEqual([
+          "slack",
+          "notion",
+          "linear",
+          "asana",
+        ]);
+        for (const row of [
           {
             id: "linear",
             name: "Linear",
@@ -166,7 +197,22 @@ it.effect(
             providers: ["Codex"],
             assistants: [],
           },
-        ]);
+        ])
+          expect(listed.integrations).toContainEqual(row);
+        for (const [id, name, origin] of [
+          ["slack", "Slack", "claude-ai"],
+          ["notion", "Notion", "claude-code"],
+        ] as const) {
+          expect(listed.integrations).toContainEqual({
+            id,
+            name,
+            status: "not-connected",
+            origins: [origin],
+            providers: [],
+            assistants: [],
+          });
+          expect((yield* call({ action: "read", id })).next).toMatch(/^Ask the user to connect/);
+        }
         expect(listed.integrations).toContainEqual({
           id: "gmail",
           name: "Gmail",

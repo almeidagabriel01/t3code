@@ -3,6 +3,7 @@ import {
   type DetectedOrigin,
   integrationProviderSupport,
   type IntegrationsState,
+  loadedNatively,
   type IntegrationStatus,
   PROVIDER_DISPLAY_NAMES,
 } from "@t3tools/contracts";
@@ -50,13 +51,10 @@ export function agentIntegrations(
     integration: IntegrationsState["integrations"][number] | undefined,
   ): AgentIntegration => {
     const status = integration?.status ?? "not-connected";
-    const native = [
-      ...new Set(
-        state.detected
-          .filter((server) => server.catalogId === id && server.origin !== "t3" && server.enabled)
-          .map((server) => server.origin),
-      ),
-    ];
+    const detected = state.detected.filter(
+      (server) => server.catalogId === id && server.origin !== "t3" && server.enabled,
+    );
+    const native = [...new Set(detected.map((server) => server.origin))];
     return {
       id,
       name,
@@ -65,7 +63,9 @@ export function agentIntegrations(
       providers: [
         ...new Set([
           ...(status === "connected" ? T3_PROVIDERS : []),
-          ...native.flatMap((origin) => NATIVE_PROVIDER[origin] ?? []),
+          ...detected.flatMap((server) =>
+            loadedNatively(server) ? (NATIVE_PROVIDER[server.origin] ?? []) : [],
+          ),
         ]),
       ],
       assistants: integration === undefined ? [] : usedBy(integration.name),
