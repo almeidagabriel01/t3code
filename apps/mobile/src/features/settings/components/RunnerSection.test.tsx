@@ -351,6 +351,74 @@ describe("RunnerSection", () => {
     await view.unmount();
   });
 
+  it.each([
+    {
+      name: "Mac first asks after how many jobs",
+      settings: { runnerWhere: "macFirst" as const },
+      shown: ["Send to Linux after"],
+      hidden: ["Everything"],
+    },
+    {
+      name: "Linux can send everything",
+      settings: { runnerWhere: "linux" as const },
+      shown: ["Everything"],
+      hidden: ["Send to Linux after"],
+    },
+    {
+      name: "disagreeing modes show both",
+      settings: {},
+      mixed: ["runnerWhere" as const],
+      shown: ["Everything", "Send to Linux after"],
+      hidden: [],
+    },
+    {
+      name: "Hybrid shows neither",
+      settings: { runnerWhere: "automatic" as const },
+      shown: [],
+      hidden: ["Everything", "Send to Linux after"],
+    },
+  ])("$name", async ({ settings, mixed, shown, hidden }) => {
+    const view = await mount({ settings, ...(mixed === undefined ? {} : { mixed }) });
+    const present = (label: string) =>
+      view.input(label) !== undefined ||
+      view.host.querySelector(`input[aria-label="${label}"]`) !== null;
+    for (const label of shown) expect(present(label), label).toBe(true);
+    for (const label of hidden) expect(present(label), label).toBe(false);
+    expect(present("Bring results back")).toBe(true);
+    await view.unmount();
+  });
+
+  it("saves the Mac first threshold, Everything, bring-back and failure choices", async () => {
+    const view = await mount({ settings: { runnerWhere: "macFirst" } });
+    await view.type("Send to Linux after", "6");
+    await view.type("Send to Linux after", "33");
+    expect(view.host.textContent).toContain("Use 1 to 32 jobs.");
+    await act(async () =>
+      view.host.querySelector<HTMLInputElement>('input[aria-label="Bring results back"]')!.click(),
+    );
+    await view.click("Tell the agent");
+    expect(view.button("Tell the agent")!.getAttribute("aria-checked")).toBe("true");
+    await view.click("Wait for Linux", 1);
+    await view.unmount();
+    expect(view.write.mock.calls.map(([patch]) => patch)).toEqual([
+      { runnerMacFirstAfter: 6 },
+      { runnerBringBack: true },
+      { runnerDropped: "agent" },
+      { runnerDropped: "wait" },
+    ]);
+
+    const linux = await mount({
+      settings: { runnerWhere: "linux", runnerLinuxEverything: true },
+      disabled: ["runnerLinuxEverything"],
+    });
+    const everything = linux.host.querySelector<HTMLInputElement>(
+      'input[aria-label="Everything"]',
+    )!;
+    expect(everything.checked).toBe(true);
+    expect(everything.disabled).toBe(true);
+    await linux.unmount();
+  });
+
   it("folds the connection checks until asked", async () => {
     const view = await mount();
     expect(view.input("Check Linux every")).toBeUndefined();
@@ -425,7 +493,7 @@ describe("RunnerSection", () => {
       expect(view.button(name)!.getAttribute("aria-checked")).toBe("false");
     }
     expect(view.host.textContent).toContain(
-      "Hybrid runs listed commands here while this Mac has room",
+      "Mac first fills this Mac, then sends the rest to Linux.",
     );
     expect(view.input("Jobs at once on Linux")).toMatchObject({
       defaultValue: "",

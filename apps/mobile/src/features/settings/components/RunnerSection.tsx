@@ -7,6 +7,7 @@ import {
   RUNNER_WHERE_DESCRIPTION,
   RUNNER_WHERE_LABEL,
   runnerFieldIdle,
+  runnerModeFieldApplies,
   type RunnerChoices,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
@@ -254,7 +255,10 @@ export function RunnerSection(props: {
     runnerDropped: choice("runnerDropped"),
   };
   const shown = (...keys: ReadonlyArray<RunnerKey>) =>
-    keys.some((key) => runnerFieldIdle(key, choices) === null);
+    keys.some(
+      (key) =>
+        runnerFieldIdle(key, choices) === null && runnerModeFieldApplies(key, choices.runnerWhere),
+    );
   const scoped = (key: RunnerKey, text: string) => {
     if (!projectSelected) return text;
     if (!isProjectKey(key))
@@ -336,6 +340,19 @@ export function RunnerSection(props: {
       {resetRow(key)}
     </>
   );
+  const toggle = (key: "runnerLinuxEverything" | "runnerBringBack", icon: AppSymbolName) => (
+    <>
+      <SettingsSwitchRow
+        icon={icon}
+        label={RUNNER_SETTING_COPY[key].title}
+        subtitle={scoped(key, RUNNER_SETTING_COPY[key].description)}
+        value={props.mixed(key) ? null : settings[key]}
+        disabled={props.disabledFor(key)}
+        onValueChange={(value) => props.write(patchOf(key, value))}
+      />
+      {resetRow(key)}
+    </>
+  );
   const where = choices.runnerWhere;
   const whereDisabled = props.disabledFor("runnerWhere");
   return (
@@ -376,8 +393,11 @@ export function RunnerSection(props: {
             </Text>
           </View>
           {resetRow("runnerWhere")}
+          {shown("runnerMacFirstAfter") ? number("runnerMacFirstAfter") : null}
+          {shown("runnerLinuxEverything") ? toggle("runnerLinuxEverything", "server.rack") : null}
           {shown("runnerLinuxCommands") ? commands("runnerLinuxCommands") : null}
           {shown("runnerMacOnly") ? commands("runnerMacOnly") : null}
+          {toggle("runnerBringBack", "tray.and.arrow.down")}
         </SettingsSection>
       ) : null}
       {shown(
