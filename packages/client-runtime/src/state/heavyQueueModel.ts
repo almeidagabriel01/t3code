@@ -435,6 +435,30 @@ const withWarning = (text: string, warning: string | null) =>
   warning === null ? text : `${text} · ${warning}`;
 
 /**
+ * This Mac's CPU (share of the machine, in percent) and used memory, as the machine bar shows them:
+ * the queue's own sample when it has one, `host` otherwise. Null where neither has a reading.
+ */
+export function macReading(
+  state: HeavyQueueState,
+  host: HostResourcesSnapshot | null | undefined,
+): { readonly cpuPercent: number | null; readonly usedBytes: number | null } {
+  const { machine } = state;
+  const memory = machine ?? host ?? null;
+  return {
+    cpuPercent:
+      machine !== null
+        ? (machine.busyCores / Math.max(1, machine.cpuCount)) * 100
+        : host?.cpuUtilization == null
+          ? null
+          : host.cpuUtilization * 100,
+    usedBytes:
+      memory === null || memory.totalMemoryBytes <= 0
+        ? null
+        : memory.totalMemoryBytes - memory.availableMemoryBytes,
+  };
+}
+
+/**
  * This Mac and, while the Runner reports it, Linux. The Mac reads the queue's own sample when it
  * has one, so a warning always matches the number beside it, and `host` otherwise. Running counts
  * come from `heavyWork`, the same split the rows use. `hostFailed` marks a host read that failed
@@ -446,15 +470,17 @@ export function machineBar(
   hostFailed = false,
 ): { readonly mac: MachineBarRow; readonly linux: MachineBarRow | null } {
   const { machine, linux } = state;
+  const cpuPercent = macReading(state, host).cpuPercent;
   const cpu =
-    machine !== null
-      ? {
-          percent: (machine.busyCores / Math.max(1, machine.cpuCount)) * 100,
-          detail: `${machine.busyCores.toFixed(1)} of ${machine.cpuCount} cores busy`,
-        }
-      : host == null || host.cpuUtilization == null
-        ? null
-        : { percent: host.cpuUtilization * 100, detail: `${host.cpuCount} cores` };
+    cpuPercent === null
+      ? null
+      : {
+          percent: cpuPercent,
+          detail:
+            machine !== null
+              ? `${machine.busyCores.toFixed(1)} of ${machine.cpuCount} cores busy`
+              : `${host?.cpuCount} cores`,
+        };
   const memory = machine ?? host ?? null;
   const work = heavyWork(state, []);
   const note = machineSummaries(state).mac.note;

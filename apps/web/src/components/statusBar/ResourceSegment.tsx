@@ -1,9 +1,14 @@
 import { useAtom } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { heavyWork, heavyWorkItems } from "@t3tools/client-runtime/state/heavyQueueModel";
+import {
+  heavyWork,
+  heavyWorkItems,
+  macReading,
+} from "@t3tools/client-runtime/state/heavyQueueModel";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
   AuthDiagnosticsReadScope,
+  AuthOrchestrationReadScope,
   type EnvironmentId,
   type ProjectId,
   type ResourceTelemetryProcess,
@@ -17,6 +22,7 @@ import {
   ActivityIcon,
   AppWindowIcon,
   AppWindowMacIcon,
+  EllipsisIcon,
   BotIcon,
   ChevronRightIcon,
   CpuIcon,
@@ -42,7 +48,7 @@ import { useDeviceState } from "../../state/device";
 import { resourceManagerOpenAtom, useHeavyCommands, useHeavyQueue } from "../../state/heavyQueue";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentQuerySelector } from "../../state/query";
+import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -64,6 +70,7 @@ import {
   formatMemory,
   isHeavyProcess,
   orderResourceTree,
+  outsideT3Usage,
   resourceTreeKeys,
   runningTerminals,
   type AppProcessGroup,
@@ -355,6 +362,11 @@ export function EnvironmentSection({
   const navigate = useNavigate();
   const { canClose, close } = useCloseTerminal(environmentId);
   const queue = useHeavyQueue(environmentId);
+  const canReadHost = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  // The same polled reading as the machine bar, so Outside T3 is This Mac minus the T3 total.
+  const host = useEnvironmentQuery(
+    canReadHost ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  );
   // While mounted, the server samples processes for heavy commands.
   const { commands, cpuCount } = useHeavyCommands(environmentId);
   const infoOf = (threadId: string) => threadInfo.get(`${environmentId}:${threadId}`);
@@ -388,8 +400,15 @@ export function EnvironmentSection({
   const detached = work.detached;
   const heavyCount = heavyWorkItems(work).length;
   const app = snapshot === null ? null : tree.app;
-  const outsideCount = outsideDevices.length + detached.length + tree.outsideApps.length;
-  const outsideUsage = detached.reduce(
+  const t3 =
+    snapshot === null
+      ? null
+      : {
+          cpuPercent: snapshot.groups.allT3.currentCpuPercent,
+          rssBytes: snapshot.groups.allT3.currentRssBytes,
+          processCount: snapshot.groups.allT3.processCount,
+        };
+  const outsideRows = detached.reduce(
     (sum, command) =>
       command.cpu === undefined || command.memory === undefined
         ? sum
@@ -400,6 +419,16 @@ export function EnvironmentSection({
           }),
     sumUsage([...outsideDevices, ...tree.outsideApps]),
   );
+  const outside = outsideT3Usage({
+    mac: macReading(queue, host.data),
+    t3,
+    rows: [outsideRows],
+  });
+  const outsideCount =
+    outsideDevices.length +
+    detached.length +
+    tree.outsideApps.length +
+    (outside.other === null ? 0 : 1);
 
   return (
     <HostCoresContext value={snapshot?.cpuCount ?? 1}>
@@ -410,18 +439,7 @@ export function EnvironmentSection({
             {label}
           </div>
         )}
-        <MachineBar
-          environmentId={environmentId}
-          t3={
-            snapshot === null
-              ? null
-              : {
-                  cpuPercent: snapshot.groups.allT3.currentCpuPercent,
-                  rssBytes: snapshot.groups.allT3.currentRssBytes,
-                  processCount: snapshot.groups.allT3.processCount,
-                }
-          }
-        />
+        <MachineBar environmentId={environmentId} t3={t3} />
         {sortHeader}
         {tree.projects.length === 0 && t3Devices.length === 0 && heavyCount === 0 ? (
           <div className="flex flex-col items-center gap-1.5 px-3 py-8 text-center text-xs text-muted-foreground">
@@ -548,7 +566,7 @@ export function EnvironmentSection({
             title="Outside T3"
             icon={<SquareDashedIcon aria-hidden />}
             count={outsideCount}
-            usage={outsideUsage}
+            usage={outside.total}
           >
             {outsideDevices.length === 0 ? null : (
               <DeviceRows environmentId={environmentId} devices={outsideDevices} outside />
@@ -569,6 +587,15 @@ export function EnvironmentSection({
               cpuCount={cpuCount}
               threads={threads}
             />
+            {outside.other === null ? null : (
+              <UsageRow
+                icon={<EllipsisIcon aria-hidden />}
+                label="Other"
+                detail="Other · runs outside T3, not counted in the T3 total"
+                usage={outside.other}
+                onOpen={null}
+              />
+            )}
           </ResourceSection>
         )}
       </div>

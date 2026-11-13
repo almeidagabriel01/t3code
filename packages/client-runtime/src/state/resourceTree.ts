@@ -400,6 +400,37 @@ const compareUsage =
         ? right.cpuPercent - left.cpuPercent
         : right.rssBytes - left.rssBytes;
 
+/** The Outside T3 header's usage, and the Other row with what its rows leave out. */
+export interface OutsideT3Usage {
+  readonly total: ResourceUsage;
+  /** Null without a host reading, or when the rest rounds to nothing on screen. */
+  readonly other: ResourceUsage | null;
+}
+
+/**
+ * This Mac minus the T3 total, never below the rows it holds, so a sample the rows are ahead of
+ * cannot make Other negative. Without a host reading the header sums the rows and Other is absent.
+ */
+export function outsideT3Usage(input: {
+  readonly mac: { readonly cpuPercent: number | null; readonly usedBytes: number | null };
+  readonly t3: ResourceUsage | null;
+  readonly rows: ReadonlyArray<ResourceUsage>;
+}): OutsideT3Usage {
+  const rows = input.rows.reduce(addUsage, EMPTY_USAGE);
+  const { cpuPercent, usedBytes } = input.mac;
+  if (cpuPercent === null || usedBytes === null || input.t3 === null) {
+    return { total: rows, other: null };
+  }
+  const other = {
+    cpuPercent: Math.max(0, cpuPercent - input.t3.cpuPercent - rows.cpuPercent),
+    rssBytes: Math.max(0, usedBytes - input.t3.rssBytes - rows.rssBytes),
+    processCount: 0,
+  };
+  // formatCpu shows tenths and formatMemory whole megabytes.
+  const shown = other.cpuPercent >= 0.05 || other.rssBytes >= 0.5 * 1024 ** 2;
+  return { total: addUsage(rows, other), other: shown ? other : null };
+}
+
 const OUTSIDE_APP_ROWS = 5;
 
 /** The heaviest apps outside T3 by the sort's metric (CPU when sorting by name), in the sort's order. */

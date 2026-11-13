@@ -1082,6 +1082,23 @@ describe("ResourceManagerRouteScreen", () => {
       "NoteRuns outside T3, not counted in the T3 total",
     );
     expect(outside!.querySelector("button")).toBeNull();
+
+    // Without a host reading Outside T3 sums its rows; with one it is This Mac minus the T3 total.
+    expect(outside!.textContent).toContain("2 · 30% · 3.00 GB");
+    mocks.host = {
+      cpuUtilization: 0.6,
+      cpuCount: 8,
+      totalMemoryBytes: 16 * GIB,
+      availableMemoryBytes: 4 * GIB,
+    };
+    await view.rerender(<ResourceManagerRouteScreen />);
+    const withHost = [...view.host.querySelectorAll("section")].at(-1)!;
+    expect(withHost.textContent).toContain("3 · 50% · 9.00 GB");
+    expect(outline(withHost)).toEqual([
+      "Tablet X: Device, 10% · 1.00 GB",
+      "Google Chrome: App, 20% · 2.00 GB",
+      "Other: Other, 20% · 6.00 GB",
+    ]);
     await view.unmount();
   });
 

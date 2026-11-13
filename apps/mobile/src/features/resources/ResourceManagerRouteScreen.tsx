@@ -1,17 +1,26 @@
 import { useIsFocused } from "@react-navigation/native";
-import { heavyWork, heavyWorkItems } from "@t3tools/client-runtime/state/heavyQueueModel";
+import {
+  heavyWork,
+  heavyWorkItems,
+  macReading,
+} from "@t3tools/client-runtime/state/heavyQueueModel";
 import { withArrivedKeys } from "@t3tools/client-runtime/list-order";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
   addUsage,
   environmentResourceTree,
   orderResourceTree,
+  outsideT3Usage,
   resourceTreeKeys,
   runningTerminals,
   toMachineShare,
   type ResourceSort,
 } from "@t3tools/client-runtime/state/resourceTree";
-import { AuthDiagnosticsReadScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthDiagnosticsReadScope,
+  AuthOrchestrationReadScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,6 +41,7 @@ import { MachineBar } from "./MachineBar";
 import {
   DeviceAndAppSections,
   DeviceRows,
+  OtherRow,
   OutsideAppRows,
   ProjectSections,
   RESOURCE_SORT_LABEL,
@@ -82,6 +92,11 @@ function EnvironmentResources(props: {
     canRead ? serverEnvironment.resourceTelemetry({ environmentId, input: {} }) : null,
   ).data;
   const snapshot = telemetry == null ? null : toMachineShare(telemetry);
+  const canReadHost = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  // The same polled reading as the machine bar, so Outside T3 is This Mac minus the T3 total.
+  const host = useEnvironmentQuery(
+    canReadHost ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  );
   const terminals = runningTerminals(
     useKnownTerminalSessions({ environmentId, threadId: null }).sessions ?? [],
   );
@@ -119,8 +134,15 @@ function EnvironmentResources(props: {
   const cores = snapshot?.cpuCount ?? 1;
   const work = heavyWork(state, commands);
   const outsideDevices = tree.devices.filter((device) => device.outside);
-  const outsideCount = outsideDevices.length + work.detached.length + tree.outsideApps.length;
-  const outsideUsage = work.detached.reduce(
+  const t3 =
+    snapshot === null
+      ? null
+      : {
+          cpuPercent: snapshot.groups.allT3.currentCpuPercent,
+          rssBytes: snapshot.groups.allT3.currentRssBytes,
+          processCount: snapshot.groups.allT3.processCount,
+        };
+  const outsideRows = work.detached.reduce(
     (sum, command) =>
       command.cpu === undefined || command.memory === undefined
         ? sum
@@ -131,6 +153,12 @@ function EnvironmentResources(props: {
           }),
     sumUsage([...outsideDevices, ...tree.outsideApps]),
   );
+  const outside = outsideT3Usage({ mac: macReading(state, host.data), t3, rows: [outsideRows] });
+  const outsideCount =
+    outsideDevices.length +
+    work.detached.length +
+    tree.outsideApps.length +
+    (outside.other === null ? 0 : 1);
   const nothing =
     heavyWorkItems(work).length === 0 &&
     tree.projects.length === 0 &&
@@ -138,19 +166,7 @@ function EnvironmentResources(props: {
   return (
     <View className="gap-6">
       <SettingsSection {...(props.label === null ? {} : { title: props.label })}>
-        <MachineBar
-          environmentId={environmentId}
-          state={state}
-          t3={
-            snapshot === null
-              ? null
-              : {
-                  cpuPercent: snapshot.groups.allT3.currentCpuPercent,
-                  rssBytes: snapshot.groups.allT3.currentRssBytes,
-                  processCount: snapshot.groups.allT3.processCount,
-                }
-          }
-        />
+        <MachineBar environmentId={environmentId} state={state} t3={t3} />
       </SettingsSection>
       {nothing ? (
         <SettingsSection>
@@ -177,7 +193,7 @@ function EnvironmentResources(props: {
           title="Outside T3"
           trailing={
             <Text textRole="footnote" className="text-foreground-muted tabular-nums">
-              {`${outsideCount} · ${usageText(outsideUsage)}`}
+              {`${outsideCount} · ${usageText(outside.total)}`}
             </Text>
           }
         >
@@ -195,6 +211,7 @@ function EnvironmentResources(props: {
             commands={work.detached}
             cpuCount={cpuCount}
           />
+          {outside.other === null ? null : <OtherRow usage={outside.other} cores={cores} />}
         </SettingsSection>
       )}
     </View>

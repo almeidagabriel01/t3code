@@ -14,6 +14,7 @@ import {
   deviceRowLabel,
   deviceShutdownTargets,
   orderResourceTree,
+  outsideT3Usage,
   resourceTreeKeys,
   toMachineShare,
 } from "./resourceTree.ts";
@@ -367,6 +368,93 @@ describe("buildResourceTree", () => {
       sort,
     });
     expect(tree.projects.map((project) => project.title)).toEqual(expected);
+  });
+});
+
+describe("outsideT3Usage", () => {
+  const GiB = 1024 ** 3;
+  const usage = (cpuPercent: number, rssBytes: number) => ({
+    cpuPercent,
+    rssBytes,
+    processCount: 1,
+  });
+  const mac = { cpuPercent: 97, usedBytes: 14 * GiB };
+  const t3 = usage(0.5, 2 * GiB);
+
+  it.each([
+    {
+      case: "is This Mac minus the T3 total, the rest left to Other",
+      mac,
+      t3,
+      rows: [usage(30, 4 * GiB), usage(13, 2 * GiB)],
+      total: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+      other: { cpuPercent: 53.5, rssBytes: 6 * GiB },
+    },
+    {
+      case: "with no rows, puts everything in Other",
+      mac,
+      t3,
+      rows: [],
+      total: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+      other: { cpuPercent: 96.5, rssBytes: 12 * GiB },
+    },
+    {
+      case: "never drops below rows a newer sample put ahead of the Mac",
+      mac: { cpuPercent: 40, usedBytes: 5 * GiB },
+      t3: usage(10, GiB),
+      rows: [usage(35, 6 * GiB)],
+      total: { cpuPercent: 35, rssBytes: 6 * GiB },
+      other: null,
+    },
+    {
+      case: "keeps Other at 0 for one metric the rows exceed",
+      mac: { cpuPercent: 40, usedBytes: 9 * GiB },
+      t3: usage(10, GiB),
+      rows: [usage(35, 6 * GiB)],
+      total: { cpuPercent: 35, rssBytes: 8 * GiB },
+      other: { cpuPercent: 0, rssBytes: 2 * GiB },
+    },
+    {
+      case: "hides an Other that rounds to nothing on screen",
+      mac: { cpuPercent: 10.04, usedBytes: GiB + 400 * 1024 },
+      t3: usage(0, 0),
+      rows: [usage(10, GiB)],
+      total: { cpuPercent: 10.04, rssBytes: GiB + 400 * 1024 },
+      other: null,
+    },
+    {
+      case: "sums the rows without a host CPU reading",
+      mac: { cpuPercent: null, usedBytes: 14 * GiB },
+      t3,
+      rows: [usage(30, 4 * GiB), usage(13, 2 * GiB)],
+      total: { cpuPercent: 43, rssBytes: 6 * GiB },
+      other: null,
+    },
+    {
+      case: "sums the rows without a memory reading",
+      mac: { cpuPercent: 97, usedBytes: null },
+      t3,
+      rows: [usage(30, 4 * GiB)],
+      total: { cpuPercent: 30, rssBytes: 4 * GiB },
+      other: null,
+    },
+    {
+      case: "sums the rows before T3's first sample",
+      mac,
+      t3: null,
+      rows: [usage(30, 4 * GiB)],
+      total: { cpuPercent: 30, rssBytes: 4 * GiB },
+      other: null,
+    },
+  ])("$case", ({ mac, t3, rows, total, other }) => {
+    const result = outsideT3Usage({ mac, t3, rows });
+    expect(result.total.rssBytes).toBe(total.rssBytes);
+    expect(result.total.cpuPercent).toBeCloseTo(total.cpuPercent);
+    if (other === null) expect(result.other).toBeNull();
+    else {
+      expect(result.other?.cpuPercent).toBeCloseTo(other.cpuPercent);
+      expect(result.other?.rssBytes).toBe(other.rssBytes);
+    }
   });
 });
 

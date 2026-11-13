@@ -301,6 +301,21 @@ export function OutsideAppRows(props: {
   ));
 }
 
+/** What runs outside T3 beyond the listed rows: the system, the kernel and small processes. */
+export function OtherRow(props: { readonly usage: ResourceUsage; readonly cores: number }) {
+  return (
+    <UsageRow
+      icon="ellipsis"
+      iconLabel="Other"
+      label="Other"
+      usage={props.usage}
+      cores={props.cores}
+      facts={[OUTSIDE_NOTE]}
+      actions={[]}
+    />
+  );
+}
+
 /** Rendered only while devices run, so the device state subscription stays closed otherwise. */
 export function DeviceRows(props: {
   readonly environmentId: EnvironmentId;

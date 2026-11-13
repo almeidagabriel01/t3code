@@ -222,66 +222,96 @@ describe("EnvironmentSection", () => {
     await expect.element(screen.getByRole("button", { name: "Fix build · idle" })).toBeVisible();
   });
 
-  it("merges devices and detached commands outside T3 into one section", async () => {
-    const props = setup({}, [
-      {
-        source: "detached",
-        pid: 90,
-        startTimeMs: 1,
-        threadId: null,
-        label: "/usr/local/bin/playwright test",
-        name: "playwright test",
-        startedAt: "2026-01-01T00:00:00.000Z",
-        stoppable: false,
-        cpu: 1,
-        memory: 1024 ** 3,
-        reason: "Started outside an agent, so the queue can't route it",
+  it.each([
+    {
+      case: "without a host reading, sums its rows",
+      host: null,
+      count: 3,
+      shows: [],
+      hides: "Other",
+    },
+    {
+      case: "with one, is This Mac minus the T3 total, the rest in Other",
+      host: {
+        cpuUtilization: 0.9,
+        cpuCount: 8,
+        availableMemoryBytes: 4 * 1024 ** 3,
+        totalMemoryBytes: 16 * 1024 ** 3,
       },
-    ]);
-    const udid = "C7ECB864-1C0B-4E4D-B0E7-0B7037305D4B";
-    deviceState.current = {
-      hosts: [{ id: "local", kind: "local" }],
-      devices: [
-        { hostId: "local", id: udid, platform: "ios", name: "iPhone 17 Pro", booted: true },
-      ],
-    };
-    const withSimulator = {
-      ...snapshot,
-      processes: [
-        ...snapshot.processes,
-        proc(
-          70,
-          [71],
-          1_000_000,
-          "launchd_sim",
-          `launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
-          "external-device",
-        ),
-        proc(71, [], 9_000_000, "SpringBoard", "SpringBoard", "external-device"),
-      ],
-      outsideApps: [
-        { name: "Google Chrome", cpuPercent: 20, rssBytes: 2_000_000, processCount: 12 },
-      ],
-    } as unknown as ResourceTelemetrySnapshot;
-    await using screen = await render(
-      <EnvironmentSection {...props} snapshot={withSimulator} sort="memory" label={null} />,
-      { router: "/" },
-    );
-    const outside = screen.getByRole("region", { name: "Outside T3" });
-    await expect.element(outside.getByRole("button", { name: "Outside T3 (3)" })).toBeVisible();
-    await expect.element(outside.getByText("iPhone 17 Pro")).toBeVisible();
-    await expect.element(outside.getByText("Google Chrome")).toBeVisible();
-    await expect.element(outside.getByText("playwright test")).toBeVisible();
-    // Detached work has no Stop and no thread, so it has no menu; why it is here is one click away.
-    expect(outside.getByRole("button", { name: /^Actions for/ }).elements()).toHaveLength(0);
-    await userEvent.click(outside.getByRole("button", { name: "playwright test" }));
-    await expect
-      .element(outside.getByText("Started outside an agent, so the queue can't route it"))
-      .toBeVisible();
-    await expect.element(screen.getByRole("button", { name: /^Devices \(/ })).toBeVisible();
-    await expect.element(screen.getByText("Pixel 8")).toBeVisible();
-    expect(screen.getByRole("region", { name: "Heavy work" }).elements()).toHaveLength(0);
-  });
+      count: 4,
+      // Rows: 52.5% and 1 GiB + 12 MB; T3: 1% and 6 MB; This Mac: 90% and 12 GiB.
+      shows: ["89%", "11.99 GB", "Other", "37%", "10.98 GB"],
+      hides: null,
+    },
+  ])(
+    "merges devices, apps and detached commands into Outside T3, whose total $case",
+    async ({ host, count, shows, hides }) => {
+      const props = setup({}, [
+        {
+          source: "detached",
+          pid: 90,
+          startTimeMs: 1,
+          threadId: null,
+          label: "/usr/local/bin/playwright test",
+          name: "playwright test",
+          startedAt: "2026-01-01T00:00:00.000Z",
+          stoppable: false,
+          cpu: 1,
+          memory: 1024 ** 3,
+          reason: "Started outside an agent, so the queue can't route it",
+        },
+      ]);
+      hostResources.current = host;
+      const udid = "C7ECB864-1C0B-4E4D-B0E7-0B7037305D4B";
+      deviceState.current = {
+        hosts: [{ id: "local", kind: "local" }],
+        devices: [
+          { hostId: "local", id: udid, platform: "ios", name: "iPhone 17 Pro", booted: true },
+        ],
+      };
+      const withSimulator = {
+        ...snapshot,
+        processes: [
+          ...snapshot.processes,
+          proc(
+            70,
+            [71],
+            1_000_000,
+            "launchd_sim",
+            `launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist`,
+            "external-device",
+          ),
+          proc(71, [], 9_000_000, "SpringBoard", "SpringBoard", "external-device"),
+        ],
+        outsideApps: [
+          { name: "Google Chrome", cpuPercent: 20, rssBytes: 2_000_000, processCount: 12 },
+        ],
+      } as unknown as ResourceTelemetrySnapshot;
+      await using screen = await render(
+        <EnvironmentSection {...props} snapshot={withSimulator} sort="memory" label={null} />,
+        { router: "/" },
+      );
+      const outside = screen.getByRole("region", { name: "Outside T3" });
+      await expect
+        .element(outside.getByRole("button", { name: `Outside T3 (${count})` }))
+        .toBeVisible();
+      await expect.element(outside.getByText("iPhone 17 Pro")).toBeVisible();
+      await expect.element(outside.getByText("Google Chrome")).toBeVisible();
+      for (const text of shows) expect(outside.element().textContent).toContain(text);
+      if (hides !== null)
+        expect(outside.getByText(hides, { exact: true }).elements()).toHaveLength(0);
+      await expect.element(outside.getByText("playwright test")).toBeVisible();
+      // Detached work has no Stop and no thread, so it has no menu; why it is here is one click away.
+      expect(outside.getByRole("button", { name: /^Actions for/ }).elements()).toHaveLength(0);
+      await userEvent.click(outside.getByRole("button", { name: "playwright test" }));
+      await expect
+        .element(outside.getByText("Started outside an agent, so the queue can't route it"))
+        .toBeVisible();
+      await expect.element(screen.getByRole("button", { name: /^Devices \(/ })).toBeVisible();
+      await expect.element(screen.getByText("Pixel 8")).toBeVisible();
+      expect(screen.getByRole("region", { name: "Heavy work" }).elements()).toHaveLength(0);
+    },
+  );
 
   it("expands a row to list its processes with usage and the full command", async () => {
     const props = setup();

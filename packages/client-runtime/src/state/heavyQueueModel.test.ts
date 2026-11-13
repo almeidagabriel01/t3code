@@ -15,6 +15,7 @@ import {
   jobPriority,
   macNoteGauge,
   machineBar,
+  macReading,
   machineSummaries,
   moveTarget,
   ordinal,
@@ -654,6 +655,26 @@ describe("machineBar", () => {
       value: "50%",
       hint: "CPU 50% · 10 cores",
     });
+  });
+
+  it.each([
+    ["the queue's sample", MACHINE, HOST, { cpuPercent: 25, usedBytes: 12 * GiB }],
+    ["the host without a sample", null, HOST, { cpuPercent: 50, usedBytes: 8 * GiB }],
+    [
+      "no CPU before the host's first window",
+      null,
+      { ...HOST, cpuUtilization: null },
+      { cpuPercent: null, usedBytes: 8 * GiB },
+    ],
+    ["nothing without either", null, null, { cpuPercent: null, usedBytes: null }],
+    [
+      "no memory from a host without a total",
+      null,
+      { ...HOST, totalMemoryBytes: 0 },
+      { cpuPercent: 50, usedBytes: null },
+    ],
+  ] as const)("macReading takes %s", (_case, machine, host, expected) => {
+    expect(macReading(state({ machine }), host)).toEqual(expected);
   });
 
   it.each([
