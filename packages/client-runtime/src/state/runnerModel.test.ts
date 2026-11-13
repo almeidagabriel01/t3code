@@ -42,7 +42,7 @@ describe("the queue × Runner line", () => {
     queueEnabled: boolean,
     queuePaused: boolean,
     runnerEnabled: boolean,
-    where: "mac" | "linux" | "automatic",
+    where: "mac" | "linux" | "automatic" | "macFirst",
   ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
 
   it.each([
@@ -79,6 +79,20 @@ describe("the queue × Runner line", () => {
       true,
       "automatic",
       "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
+    ],
+    [
+      true,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
+    ],
+    [
+      false,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
     ],
   ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
     expect(line(queue, paused, runner, where)).toBe(text);
