@@ -7,19 +7,23 @@ import {
   CommandId,
   DEFAULT_AUTONOMY_SETTINGS,
   MessageId,
+  type AutonomyChannel,
   type AutonomySettings,
   type AutonomyWatchDeleteInput,
   type AutonomyWatchSetEnabledInput,
   type AutonomyWatchUpsertInput,
   type KanbanBoard,
   type KanbanCard,
+  type ChannelReplyAddress,
+  type Decision,
   type KanbanStreamItem,
   type OrchestrationV2DomainEvent,
   type ProjectId,
+  PROVIDER_DISPLAY_NAMES,
   type ThreadId,
   isSideChatThread,
 } from "@t3tools/contracts";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,21 +40,30 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { groupThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
+import { containsSecret } from "../channels/channelRedaction.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
 import * as ChannelOutbox from "../channels/ChannelOutbox.ts";
 import {
   channelStrings,
+  DECISION_PHRASES,
+  localizeDecision,
   localizeNoticeLabel,
   type ResolvedChannelLanguage,
 } from "../channels/channelStrings.ts";
+import { IMESSAGE_CONNECTION_ID } from "../channels/imessage/ImessageChannelRuntime.ts";
+import * as ImessageChannelSettings from "../channels/imessage/ImessageChannelSettings.ts";
+import { normalizeHandle } from "../channels/imessage/imessageHandles.ts";
 import { TELEGRAM_CONNECTION_ID } from "../channels/telegram/TelegramChannelRuntime.ts";
 import * as TelegramChannelSettings from "../channels/telegram/TelegramChannelSettings.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -64,12 +77,17 @@ import {
   type AutonomyCandidate,
   type AutonomySignal,
 } from "./autonomyRules.ts";
+import { MACHINE_REQUEST_KINDS, needsYouText, requestDecision } from "./needsYou.ts";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 /** Rule wakes about one thread reach one assistant at most this often. */
 const MIN_WAKE_INTERVAL_MS = 5 * MINUTE_MS;
 const SWEEP_INTERVAL = "1 minute";
+/** The waiting notice is checked more often than the wake rules, so its grace stays short. */
+const NEEDS_YOU_INTERVAL = "15 seconds";
+const SCHEDULED_MESSAGE_PREFIX = "scheduled-task-message:";
+const USER_MESSAGE_MAX_LENGTH = 2_000;
 const WORKING = new Set(["starting", "running"]);
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
@@ -115,6 +133,26 @@ export class AutonomyService extends Context.Service<
     readonly handleKanban: (item: KanbanStreamItem) => Effect.Effect<void>;
     /** Evaluates the time-based rules (waiting, stuck) against the clock now. */
     readonly sweep: Effect.Effect<void>;
+    /**
+     * Tells the user, with no model, about each request, decision and paused group task that has
+     * waited on them past the grace period. Bypasses the loop guard: telling the user wakes nobody.
+     */
+    readonly notifyWaiting: Effect.Effect<void>;
+    /** An assistant's short message to the user through their channels, asked for by the user. */
+    readonly notifyUser: (input: {
+      readonly assistantId: string;
+      /** Identifies the message: a repeat with the same key sends nothing more. */
+      readonly key: string;
+      readonly text: string;
+      readonly threadId?: ThreadId | undefined;
+    }) => Effect.Effect<
+      {
+        readonly status: "sent" | "already_sent";
+        readonly channels: ReadonlyArray<string>;
+        readonly remainingToday: number;
+      },
+      AutonomyError
+    >;
     readonly listWatches: Effect.Effect<ReadonlyArray<AutonomyWatch>, AutonomyError>;
     readonly upsertWatch: (
       input: AutonomyWatchUpsertInput,
@@ -143,6 +181,9 @@ const make = Effect.gen(function* () {
   const telegram = yield* TelegramChannelSettings.TelegramChannelSettings;
   const kanban = yield* KanbanService.KanbanService;
   const projects = yield* ProjectService.ProjectService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const imessage = yield* ImessageChannelSettings.ImessageChannelSettings;
+  const environment = yield* ServerEnvironment;
   const lock = yield* Semaphore.make(1);
 
   // What the time-based rules need; rebuilt from events after a restart, so a run that was already
@@ -271,7 +312,8 @@ const make = Effect.gen(function* () {
     }
     const today = yield* sql<{ readonly n: number }>`
       SELECT COUNT(*) AS n FROM autonomy_wakes
-      WHERE assistant_id = ${assistant.id} AND created_at > ${iso(nowMs - DAY_MS)}`;
+      WHERE assistant_id = ${assistant.id} AND source <> 'notify'
+        AND created_at > ${iso(nowMs - DAY_MS)}`;
     if ((today[0]?.n ?? 0) >= config.maxWakesPerDay) return;
     if (Option.isSome(yield* spend.budgetRefusal(assistant.threadId as ThreadId))) return;
 
@@ -341,18 +383,16 @@ const make = Effect.gen(function* () {
               : yield* engine
                   .getThreadShell(signal.threadId as ThreadId)
                   .pipe(Effect.orElseSucceed(() => null));
-          if (signal.threadId !== null) {
-            // Assistants, subagents and delegated children never trigger rules: that is the loop guard.
-            if (
-              shell === null ||
-              assistantIdFromThreadId(signal.threadId) !== null ||
+          if (signal.threadId !== null && shell === null) return;
+          // Assistants, subagents and delegated children never trigger rules: that is the loop guard.
+          // Only a one-shot watch the user asked for on that very thread passes, and never its own.
+          const guarded =
+            signal.threadId !== null &&
+            shell !== null &&
+            (assistantIdFromThreadId(signal.threadId) !== null ||
               shell.lineage.relationshipToParent === "subagent" ||
               shell.delegatedFrom !== undefined ||
-              isSideChatThread(shell)
-            ) {
-              return;
-            }
-          }
+              isSideChatThread(shell));
           const scoped = { ...signal, projectId: signal.projectId ?? shell?.projectId ?? null };
           const assistants = (yield* sql<AssistantRow>`
             SELECT * FROM assistants WHERE archived_at IS NULL AND thread_id IS NOT NULL`).map(
@@ -365,7 +405,15 @@ const make = Effect.gen(function* () {
             watches: (yield* watchRows).map(toWatch),
             settings: config,
             nowMs,
-          });
+            watchesOnly: guarded,
+          }).filter(
+            (candidate) =>
+              !guarded ||
+              ("watch" in candidate.source &&
+                candidate.source.watch.oneShot &&
+                candidate.source.watch.filter.threadId === signal.threadId &&
+                assistantIdFromThreadId(signal.threadId!) !== candidate.assistantId),
+          );
           for (const candidate of candidates) {
             yield* wakeOne(scoped, candidate, shell, config, nowMs);
           }
@@ -400,6 +448,50 @@ const make = Effect.gen(function* () {
         : undefined);
   });
 
+  /**
+   * The user's own chat: the first allowed Telegram user when Telegram is a channel and set up,
+   * otherwise their chat with themselves in iMessage when that is on and they have written from it.
+   */
+  const ownerChat = Effect.fn("AutonomyService.ownerChat")(function* (
+    channels: ReadonlyArray<AutonomyChannel>,
+  ) {
+    if (channels.includes("telegram")) {
+      const snapshot = yield* telegram.get.pipe(Effect.orElseSucceed(() => null));
+      const chatId = snapshot?.allowedUserIds[0];
+      if (snapshot?.enabled && snapshot.tokenConfigured && chatId !== undefined) {
+        return {
+          kind: "telegram",
+          connectionId: TELEGRAM_CONNECTION_ID,
+          chatId,
+        } satisfies ChannelReplyAddress as ChannelReplyAddress;
+      }
+    }
+    const messages = yield* imessage.get.pipe(Effect.orElseSucceed(() => null));
+    if (messages?.enabled !== true || messages.selfHandles.length === 0) return undefined;
+    const rows = yield* sql<{ readonly address: string; readonly actor: string }>`
+      SELECT json_extract(payload_json, '$.replyAddress') AS address,
+        json_extract(payload_json, '$.actor.externalActorId') AS actor
+      FROM channel_inbox WHERE connection_id = ${IMESSAGE_CONNECTION_ID}
+      ORDER BY rowid DESC LIMIT 50`;
+    const own = rows.find((row) =>
+      messages.selfHandles.includes(normalizeHandle(String(row.actor)) ?? ""),
+    );
+    return own === undefined ? undefined : decodeReplyAddress(own.address);
+  });
+
+  const linkTo = (threadId: ThreadId) =>
+    environment.getEnvironmentId.pipe(
+      Effect.map((environmentId) => hostedThreadLink({ environmentId, threadId })),
+    );
+
+  const projectName = (projectId: string | null) =>
+    projectId === null
+      ? Effect.succeed(null)
+      : projects.getById(projectId as ProjectId).pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (project) => project.title })),
+          Effect.orElseSucceed(() => null),
+        );
+
   type FinishedRun = {
     readonly id: string;
     readonly threadId: ThreadId;
@@ -420,30 +512,19 @@ const make = Effect.gen(function* () {
     const text = render("en");
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
-
-    if (channels.includes("telegram")) {
-      const snapshot = yield* telegram.get.pipe(Effect.orElseSucceed(() => null));
-      const ownerChat = snapshot?.allowedUserIds[0];
-      // When the user last wrote from Telegram, the reply reactor already posts this run there.
+    const chat = yield* ownerChat(channels);
+    if (chat !== undefined) {
+      // When the user last wrote from that chat app, the reply reactor already posts this run there.
       const chatted = yield* sql<{ readonly address_json: string }>`
         SELECT address_json FROM channel_reply_targets WHERE assistant_id = ${assistant.id}`;
       const alreadyThere = chatted.some(
-        (row) => decodeReplyAddress(row.address_json).kind === "telegram",
+        (row) => decodeReplyAddress(row.address_json).kind === chat.kind,
       );
-      if (
-        snapshot?.enabled &&
-        snapshot.tokenConfigured &&
-        ownerChat !== undefined &&
-        !alreadyThere
-      ) {
+      if (!alreadyThere) {
         const language = yield* channelLanguage.current;
         yield* outbox.enqueue({
           deliveryId: `autonomy-run:${run.id}`,
-          destination: {
-            kind: "telegram",
-            connectionId: TELEGRAM_CONNECTION_ID,
-            chatId: ownerChat,
-          },
+          destination: chat,
           senderName: assistant.name,
           text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
           language,
@@ -475,6 +556,21 @@ const make = Effect.gen(function* () {
       SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
     if (wakes[0] === undefined) return;
     yield* deliverResult(run, wakes[0].label, config);
+  });
+
+  /** A schedule in an assistant's own conversation ended: its answer reaches the user like a wake's. */
+  const deliverRoutine = Effect.fn("AutonomyService.deliverRoutine")(function* (run: FinishedRun) {
+    if (run.status !== "completed" && run.status !== "failed") return;
+    const config = yield* settings;
+    if (!config.enabled) return;
+    const fireKey = run.userMessageId.slice(SCHEDULED_MESSAGE_PREFIX.length);
+    // A group's routine announces in the group chat instead.
+    const tasks = yield* sql<{ readonly title: string }>`
+      SELECT title FROM scheduled_tasks
+      WHERE assistant_team_id IS NULL AND substr(${fireKey}, 1, length(task_id) + 1) = task_id || ':'
+      ORDER BY length(task_id) DESC LIMIT 1`;
+    if (tasks[0] === undefined) return;
+    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config);
   });
 
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(
@@ -514,6 +610,12 @@ const make = Effect.gen(function* () {
           if (run.userMessageId.startsWith(WAKE_MESSAGE_PREFIX)) {
             yield* deliver(run);
             return;
+          }
+          if (
+            run.userMessageId.startsWith(SCHEDULED_MESSAGE_PREFIX) &&
+            assistantIdFromThreadId(run.threadId) !== null
+          ) {
+            yield* deliverRoutine(run);
           }
           if (run.status === "cancelled") return;
           const failed = run.status === "failed" || run.status === "interrupted";
@@ -679,6 +781,407 @@ const make = Effect.gen(function* () {
     }
   }).pipe(Effect.catchCause((cause) => Effect.logWarning("autonomy sweep failed", { cause })));
 
+  /** Who is waiting: the assistant (a group member's threads are its own), or the thread's provider. */
+  const agentName = Effect.fn("AutonomyService.agentName")(function* (
+    threadId: string,
+    providerInstanceId: string | undefined,
+  ) {
+    const assistantId = assistantIdFromThreadId(threadId);
+    const rows =
+      assistantId === null
+        ? []
+        : yield* sql<{ readonly name: string }>`
+            SELECT name FROM assistants WHERE assistant_id = ${assistantId}`;
+    // ponytail: renamed provider instances fall back to "T3 Code"; resolve the driver if that matters.
+    return (
+      rows[0]?.name ??
+      (providerInstanceId === undefined
+        ? undefined
+        : PROVIDER_DISPLAY_NAMES[providerInstanceId as keyof typeof PROVIDER_DISPLAY_NAMES]) ??
+      "T3 Code"
+    );
+  });
+
+  const alreadyTold = (subject: string) =>
+    sql`SELECT 1 FROM autonomy_needs_you WHERE subject_key = ${subject}`.pipe(
+      Effect.map((rows) => rows.length > 0),
+    );
+  const markTold = (subject: string, decisionId: string, nowMs: number) =>
+    sql`
+      INSERT OR IGNORE INTO autonomy_needs_you (subject_key, decision_id, created_at)
+      VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
+
+  /** The card in the user's chat; Activity already shows the decision itself. */
+  const sendNeedsYou = Effect.fn("AutonomyService.sendNeedsYou")(function* (input: {
+    readonly decision: Decision;
+    readonly agent: string;
+    readonly threadId: ThreadId;
+    readonly projectId: string | null;
+    readonly threadTitle: string | null;
+    readonly answerable: boolean;
+    readonly config: AutonomySettings;
+    readonly context?: (language: ResolvedChannelLanguage) => string;
+  }) {
+    const chat = yield* ownerChat(input.config.channels);
+    if (chat === undefined) return;
+    if (
+      input.answerable &&
+      (yield* sql`SELECT 1 FROM channel_cards WHERE decision_id = ${input.decision.id}`).length > 0
+    ) {
+      return;
+    }
+    const language = yield* channelLanguage.current;
+    const shown = localizeDecision(input.decision, language);
+    const deliveryId = `needs-you:${input.decision.id}`;
+    yield* outbox.enqueue({
+      deliveryId,
+      destination: chat,
+      senderName: "T3 Code",
+      text: needsYouText(
+        {
+          agent: input.agent,
+          title: shown.title,
+          context: input.context?.(language) ?? shown.context,
+          projectName: yield* projectName(input.projectId),
+          threadTitle: input.threadTitle,
+          link: yield* linkTo(input.threadId),
+          answerable: input.answerable,
+        },
+        language,
+      ),
+      ...(input.answerable
+        ? { choices: shown.options.map((option) => ({ label: option.label, value: option.id })) }
+        : {}),
+      language,
+    });
+    if (input.answerable) {
+      yield* sql`
+        INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id)
+        VALUES (${input.decision.id}, ${deliveryId})`;
+    }
+  });
+
+  const notifyRequest = Effect.fn("AutonomyService.notifyRequest")(function* (
+    threadId: ThreadId,
+    requestId: string,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const subject = `request:${requestId}`;
+    if (yield* alreadyTold(subject)) return;
+    const { request, item } = yield* projections.getRuntimeResponseContext(
+      threadId,
+      requestId as never,
+    );
+    if (request === undefined || request.status !== "pending") return;
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (shell === null || shell.archivedAt !== null) return;
+    const agent = yield* agentName(threadId, shell.providerInstanceId);
+    const built = requestDecision(agent, request, item);
+    const decision = yield* decisions.request({
+      fromThreadId: threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      // The same ids the assistant approval mirror uses, so an assistant's request is one decision.
+      clientRequestId: !built.answerable
+        ? `${DecisionService.NOTICE_REQUEST_PREFIX}needs-you:${requestId}`
+        : request.kind === "user_input"
+          ? `question:${requestId}`
+          : `approval:${requestId}`,
+      title: built.title,
+      context: built.context,
+      options: built.options,
+      ...(built.answerable ? { approvalRequestId: requestId } : {}),
+    });
+    if (decision.status !== "open") return yield* markTold(subject, decision.id, nowMs);
+    yield* sendNeedsYou({
+      decision,
+      agent,
+      threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      answerable: built.answerable,
+      config,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
+  const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
+    decision: Decision,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const subject = `decision:${decision.id}`;
+    if (yield* alreadyTold(subject)) return;
+    const shell = yield* engine
+      .getThreadShell(decision.fromThreadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    yield* sendNeedsYou({
+      decision,
+      agent: yield* agentName(decision.fromThreadId, shell?.providerInstanceId),
+      threadId: decision.fromThreadId,
+      projectId: shell?.projectId ?? null,
+      threadTitle: decision.threadTitle,
+      answerable: true,
+      config,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
+  interface PausedTask {
+    readonly task_id: string;
+    readonly team_id: string;
+    readonly owner_id: string;
+    readonly instruction: string;
+    readonly reason: string | null;
+    readonly thread_id: string | null;
+    readonly updated_at: string;
+    readonly team_name: string;
+    readonly owner_name: string;
+    readonly project_id: string;
+  }
+
+  const notifyGroupTask = Effect.fn("AutonomyService.notifyGroupTask")(function* (
+    task: PausedTask,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const subject = `group-task:${task.task_id}@${task.updated_at}`;
+    if (yield* alreadyTold(subject)) return;
+    const instruction = task.instruction.trim().slice(0, 1_000);
+    const threadId = (task.thread_id ?? groupThreadId(task.owner_id, task.team_id)) as ThreadId;
+    const contextIn = (language: ResolvedChannelLanguage) =>
+      [instruction, channelStrings(language).groupTaskReason(task.reason)]
+        .filter((part) => part !== "")
+        .join("\n\n");
+    const decision = yield* decisions.request({
+      fromThreadId: threadId,
+      projectId: task.project_id as ProjectId,
+      threadTitle: task.team_name,
+      clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${subject}`,
+      title: `${task.team_name}: ${DECISION_PHRASES.taskPaused}`.slice(0, 120),
+      context: contextIn("en"),
+      options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+    });
+    yield* sendNeedsYou({
+      decision,
+      agent: task.owner_name,
+      threadId,
+      projectId: task.project_id,
+      threadTitle: task.team_name,
+      answerable: false,
+      config,
+      context: contextIn,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
+  /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
+  const withdrawSettledNotices = Effect.gen(function* () {
+    const told = yield* sql<{
+      readonly subject_key: string;
+      readonly decision_id: string;
+      readonly from_thread_id: string;
+    }>`
+      SELECT n.subject_key, n.decision_id, d.from_thread_id FROM autonomy_needs_you n
+      JOIN decisions d ON d.decision_id = n.decision_id
+      WHERE d.status = 'open'
+        AND d.client_request_id LIKE ${`${DecisionService.NOTICE_REQUEST_PREFIX}%`}`;
+    for (const row of told) {
+      const still = row.subject_key.startsWith("request:")
+        ? yield* sql`
+            SELECT 1 FROM orchestration_v2_projection_runtime_requests
+            WHERE runtime_request_id = ${row.subject_key.slice("request:".length)}
+              AND status = 'pending'`
+        : row.subject_key.startsWith("group-task:")
+          ? yield* sql`
+              SELECT 1 FROM assistant_group_tasks
+              WHERE 'group-task:' || task_id || '@' || updated_at = ${row.subject_key}
+                AND status = 'paused'`
+          : [true];
+      if (still.length > 0) continue;
+      yield* decisions
+        .withdraw({
+          decisionId: row.decision_id as never,
+          fromThreadId: row.from_thread_id as ThreadId,
+        })
+        .pipe(Effect.ignore);
+    }
+  });
+
+  const isolate =
+    (what: string) =>
+    <A, E, R>(self: Effect.Effect<A, E, R>) =>
+      self.pipe(Effect.catchCause((cause) => Effect.logWarning(what, { cause })));
+
+  const notifyWaiting: AutonomyService["Service"]["notifyWaiting"] = lock
+    .withPermits(1)(
+      Effect.gen(function* () {
+        const config = yield* settings;
+        if (!config.enabled || !config.notifyWaiting) return;
+        const nowMs = yield* Clock.currentTimeMillis;
+        const due = (createdAt: string) =>
+          Date.parse(createdAt) + config.notifyWaitingAfterMinutes * MINUTE_MS <= nowMs;
+
+        const requests = yield* sql<{
+          readonly runtime_request_id: string;
+          readonly thread_id: string;
+          readonly created_at: string;
+        }>`
+          SELECT runtime_request_id, thread_id, created_at
+          FROM orchestration_v2_projection_runtime_requests
+          WHERE status = 'pending' AND kind NOT IN ${sql.in(MACHINE_REQUEST_KINDS)}`;
+        // One bad item never keeps the others from being told.
+        for (const row of requests) {
+          if (!due(row.created_at)) continue;
+          yield* notifyRequest(
+            row.thread_id as ThreadId,
+            row.runtime_request_id,
+            config,
+            nowMs,
+          ).pipe(isolate("autonomy: a waiting request could not be told"));
+        }
+
+        const open = yield* decisions.list({}).pipe(Effect.orElseSucceed(() => []));
+        for (const decision of open) {
+          // Notices only inform, and a request's mirror is told about through its request.
+          if (
+            decision.status !== "open" ||
+            decision.notice === true ||
+            decision.approvalRequestId !== undefined ||
+            !due(decision.createdAt)
+          ) {
+            continue;
+          }
+          yield* notifyDecision(decision, config, nowMs).pipe(
+            isolate("autonomy: an open decision could not be told"),
+          );
+        }
+
+        // Stopping a task or archiving its group is the user's own doing; the rest wait on them.
+        const tasks = yield* sql<PausedTask>`
+          SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at,
+            gt.thread_id, tm.name AS team_name, a.name AS owner_name, a.project_id
+          FROM assistant_group_tasks t
+          JOIN assistant_teams tm ON tm.team_id = t.team_id
+          JOIN assistants a ON a.assistant_id = t.owner_id
+          LEFT JOIN assistant_group_threads gt
+            ON gt.team_id = t.team_id AND gt.assistant_id = t.owner_id
+          WHERE t.status = 'paused' AND t.kind <> 'reply'
+            AND COALESCE(t.reason, '') NOT IN ('stopped', 'group_archived')`;
+        for (const task of tasks) {
+          if (!due(task.updated_at)) continue;
+          yield* notifyGroupTask(task, config, nowMs).pipe(
+            isolate("autonomy: a paused group task could not be told"),
+          );
+        }
+
+        yield* withdrawSettledNotices;
+      }),
+    )
+    .pipe(isolate("autonomy: the waiting notice failed"));
+
+  const notifyUser: AutonomyService["Service"]["notifyUser"] = Effect.fn(
+    "AutonomyService.notifyUser",
+  )(function* (input) {
+    const config = yield* settings;
+    if (!config.enabled) {
+      return yield* autonomyError(
+        "invalid",
+        "Assistant notifications are paused in Settings → Assistants → Autonomy. Tell the user in your reply instead; do not retry.",
+      );
+    }
+    const text = input.text.trim();
+    if (text === "") return yield* autonomyError("invalid", "Write the message in `text`.");
+    if (text.length > USER_MESSAGE_MAX_LENGTH) {
+      return yield* autonomyError(
+        "invalid",
+        `Keep the message under ${USER_MESSAGE_MAX_LENGTH} characters.`,
+      );
+    }
+    if (containsSecret(text)) {
+      return yield* autonomyError(
+        "invalid",
+        "The message looks like it holds a secret (a token, key or password). Leave it out and say where the user can find it.",
+      );
+    }
+    const rows = yield* sql<AssistantRow>`
+      SELECT * FROM assistants WHERE assistant_id = ${input.assistantId}
+        AND archived_at IS NULL AND thread_id IS NOT NULL`;
+    if (rows[0] === undefined) {
+      return yield* autonomyError("invalid", "Only an active assistant can message the user.");
+    }
+    const assistant = toAssistant(rows[0]);
+    const wakeKey = `notify:${input.key}`;
+    const nowMs = yield* Clock.currentTimeMillis;
+    const sentToday = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM autonomy_wakes
+      WHERE assistant_id = ${assistant.id} AND source = 'notify'
+        AND created_at > ${iso(nowMs - DAY_MS)}`;
+    const count = sentToday[0]?.n ?? 0;
+    if ((yield* sql`SELECT 1 FROM autonomy_wakes WHERE wake_key = ${wakeKey}`).length > 0) {
+      return {
+        status: "already_sent" as const,
+        channels: [],
+        remainingToday: Math.max(0, config.maxUserMessagesPerDay - count),
+      };
+    }
+    if (count >= config.maxUserMessagesPerDay) {
+      return yield* autonomyError(
+        "invalid",
+        `You already sent the user ${config.maxUserMessagesPerDay} messages today, the most allowed. Tell them in your reply instead; do not retry.`,
+      );
+    }
+    const shell =
+      input.threadId === undefined
+        ? null
+        : yield* engine.getThreadShell(input.threadId).pipe(Effect.orElseSucceed(() => null));
+    if (input.threadId !== undefined && shell === null) {
+      return yield* autonomyError("invalid", "That thread does not exist.");
+    }
+    yield* sql`
+      INSERT INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
+      VALUES (${wakeKey}, ${assistant.id}, ${input.threadId ?? assistant.threadId}, 'notify',
+        'message', ${iso(nowMs)})`;
+    const link = input.threadId === undefined ? null : yield* linkTo(input.threadId);
+    const withLink = (language: ResolvedChannelLanguage) =>
+      link === null ? text : `${text}\n\n${channelStrings(language).openInT3} ${link}`;
+    yield* decisions
+      .request({
+        fromThreadId: assistant.threadId as ThreadId,
+        projectId: assistant.projectId,
+        threadTitle: shell?.title ?? assistant.name,
+        clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${wakeKey}`,
+        title: assistant.name.slice(0, 120),
+        context: withLink("en").slice(0, 4_000),
+        options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+      })
+      .pipe(
+        Effect.catchTags({
+          DecisionError: (error) =>
+            sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(
+              Effect.andThen(Effect.fail(autonomyError("storage", error.message))),
+            ),
+        }),
+      );
+    const chat = yield* ownerChat(resolveChannels(assistant.autonomy, config));
+    if (chat !== undefined) {
+      const language = yield* channelLanguage.current;
+      yield* outbox.enqueue({
+        deliveryId: `autonomy-notify:${input.key}`,
+        destination: chat,
+        senderName: assistant.name,
+        text: withLink(language),
+        language,
+      });
+    }
+    return {
+      status: "sent" as const,
+      channels: ["activity", ...(chat === undefined ? [] : [chat.kind])],
+      remainingToday: config.maxUserMessagesPerDay - count - 1,
+    };
+  }, storage);
+
   const start: AutonomyService["Service"]["start"] = () =>
     Effect.all(
       [
@@ -697,6 +1200,9 @@ const make = Effect.gen(function* () {
           ),
         ),
         forkParked(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL)), Effect.asVoid)),
+        forkParked(
+          notifyWaiting.pipe(Effect.repeat(Schedule.spaced(NEEDS_YOU_INTERVAL)), Effect.asVoid),
+        ),
       ],
       { discard: true },
     );
@@ -705,6 +1211,8 @@ const make = Effect.gen(function* () {
     handleEvent,
     handleKanban,
     sweep,
+    notifyWaiting,
+    notifyUser,
     listWatches,
     upsertWatch,
     setWatchEnabled,

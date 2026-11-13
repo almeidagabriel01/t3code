@@ -445,8 +445,18 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       assistant_id TEXT NOT NULL,
       watched_thread_id TEXT NOT NULL,
       -- 'rule' wakes share a minimum interval per thread; 'watch' wakes are asked for and exempt.
+      -- 'notify' rows are an assistant's messages to the user, counted against their own limit.
       source TEXT NOT NULL,
       label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
+  // One row per thing that waited on the user and was told about: a request, a decision or a
+  // paused group task. It is what keeps each from being told twice.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS autonomy_needs_you (
+      subject_key TEXT PRIMARY KEY,
+      decision_id TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `;
@@ -547,6 +557,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN expected_result TEXT`;
     yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN source_seqs_json TEXT NOT NULL DEFAULT '[]'`;
     yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN resources_json TEXT NOT NULL DEFAULT '[]'`;
+  }
+  // Hand-offs since a task last delivered. Additive with a default, so an older build still runs.
+  if (!groupTaskColumns.some((column) => column.name === "undelivered_hops")) {
+    yield* sql`ALTER TABLE assistant_group_tasks ADD COLUMN undelivered_hops INTEGER NOT NULL DEFAULT 0`;
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_team_idx ON assistant_group_tasks(team_id, status)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_root_idx ON assistant_group_tasks(root_id)`;

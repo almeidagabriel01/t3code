@@ -28,6 +28,8 @@ const harness = (threadId: ThreadId, storageDown = false) =>
       handleEvent: () => Effect.void,
       handleKanban: () => Effect.void,
       sweep: Effect.void,
+      notifyWaiting: Effect.void,
+      notifyUser: () => Effect.die("unused"),
       start: () => Effect.void,
       listWatches: storageDown
         ? Effect.fail(new AutonomyError({ reason: "storage", message: "down" }))

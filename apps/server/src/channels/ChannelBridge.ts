@@ -21,7 +21,7 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
-import { channelStrings } from "./channelStrings.ts";
+import { channelStrings, localizeDecision } from "./channelStrings.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 
@@ -234,9 +234,10 @@ const make = Effect.gen(function* () {
     yield* markSent(message);
   });
 
-  /** The newest card sent to this chat that nobody has answered yet. */
+  /** The newest card sent to this chat that nobody has answered yet; a bare number answers it. */
   const openCardFor = Effect.fn("ChannelBridge.openCardFor")(function* (
     message: ChannelInboundMessage,
+    skip?: DecisionId,
   ) {
     const cards = yield* sql<{ readonly decision_id: string }>`
       SELECT c.decision_id FROM channel_cards c
@@ -247,6 +248,7 @@ const make = Effect.gen(function* () {
           json_extract(o.message_json, '$.destination.chatId')) = ${channelChatKey(message.replyAddress)}
       ORDER BY o.rowid DESC LIMIT 20`;
     for (const card of cards) {
+      if (card.decision_id === skip) continue;
       const decision = yield* decisions.get(DecisionId.make(card.decision_id)).pipe(Effect.result);
       if (decision._tag === "Success" && decision.success.status === "open") {
         return decision.success;
@@ -276,6 +278,14 @@ const make = Effect.gen(function* () {
           ? t.couldNotRecord
           : t.alreadyAnswered,
       );
+      return true;
+    }
+    // Several agents may wait at once: say which card the next number answers.
+    const next = yield* openCardFor(message, card.id);
+    if (next !== undefined) {
+      const language = yield* channelLanguage.current;
+      const title = localizeDecision(next, language).title;
+      yield* reply(message, "next", (t) => t.stillWaiting(title));
     }
     return true;
   });

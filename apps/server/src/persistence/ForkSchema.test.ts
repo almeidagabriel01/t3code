@@ -42,9 +42,32 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
         lead_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       )`;
     yield* sql`INSERT INTO assistant_teams VALUES ('g1', 'Core', '[]', NULL, 't', 't')`;
+    // Group tasks from before briefs and the count of hand-offs without a delivery.
+    yield* sql`
+      CREATE TABLE assistant_group_tasks (
+        task_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, root_id TEXT NOT NULL, parent_id TEXT,
+        kind TEXT NOT NULL, request_message_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+        instruction TEXT NOT NULL, status TEXT NOT NULL, reason TEXT,
+        revision INTEGER NOT NULL DEFAULT 1, result_text TEXT, hops INTEGER NOT NULL DEFAULT 0,
+        followup TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      )`;
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status, hops,
+        created_at, updated_at)
+      VALUES ('gt1', 'g1', 'gt1', 'root', 'm1', 'a', 'do', 'running', 5, 't', 't')`;
 
     yield* ensureForkSchema();
     yield* ensureForkSchema();
+
+    assert.deepStrictEqual(
+      yield* sql`SELECT task_id, hops, undelivered_hops, expected_result FROM assistant_group_tasks`,
+      [{ task_id: "gt1", hops: 5, undelivered_hops: 0, expected_result: null }],
+    );
+    assert.strictEqual(
+      (yield* columnsOf("assistant_group_tasks")).filter((name) => name === "undelivered_hops")
+        .length,
+      1,
+    );
 
     assert.deepStrictEqual(yield* sql`SELECT team_id, archived_at FROM assistant_teams`, [
       { team_id: "g1", archived_at: null },

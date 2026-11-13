@@ -35,14 +35,20 @@ const harness = (fail?: (call: number) => ThreadManagement.ThreadManagementError
   const sends: Send[] = [];
   const dispatches: Array<Record<string, unknown>> = [];
   /** The runtime requests the thread currently holds. */
-  const requests: Array<{ id: string; status: string; responseCapability: unknown }> = [];
+  const requests: Array<{
+    id: string;
+    status: string;
+    responseCapability: unknown;
+    kind?: string;
+  }> = [];
+  const turnItems: Array<Record<string, unknown>> = [];
   const layer = Decisions.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getThreadRecords: () => Effect.succeed({ runtimeRequests: requests } as never),
+          getThreadRecords: () => Effect.succeed({ runtimeRequests: requests, turnItems } as never),
           dispatch: (command) => {
             dispatches.push(command as never);
             return Effect.succeed({} as never);
@@ -56,7 +62,7 @@ const harness = (fail?: (call: number) => ThreadManagement.ThreadManagementError
       ),
     ),
   );
-  return { sends, dispatches, requests, layer };
+  return { sends, dispatches, requests, turnItems, layer };
 };
 
 const ask = (
@@ -506,6 +512,79 @@ it.effect("an approval decision answers its request instead of sending a message
     assert.lengthOf(sends, 0);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "a question decision answers with the chosen option or typed text, never by dismissal",
+  () => {
+    const { layer, sends, dispatches, requests, turnItems } = harness();
+    const question = (id: string, allowCustomAnswer?: boolean) => {
+      requests.push({
+        id,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "live" },
+      });
+      turnItems.push({
+        type: "user_input_request",
+        requestId: id,
+        questions: [
+          {
+            id: "q1",
+            header: "Region",
+            question: "Where should it deploy?",
+            options: [
+              { label: "Europe", description: "eu", value: "eu-west-1" },
+              { label: "Brazil", description: "br" },
+            ],
+            ...(allowCustomAnswer === undefined ? {} : { allowCustomAnswer }),
+          },
+        ],
+      });
+      return {
+        clientRequestId: `question:${id}`,
+        approvalRequestId: id,
+        options: [
+          { id: "option:0", label: "Europe" },
+          { id: "option:1", label: "Brazil" },
+        ],
+        recommended: undefined,
+      };
+    };
+    return Effect.gen(function* () {
+      const decisions = yield* Decisions.DecisionService;
+      const answersOf = (id: string) =>
+        dispatches
+          .filter((command) => command["requestId"] === id)
+          .map((command) => command["answers"]);
+
+      yield* decisions.answer({
+        decisionId: (yield* ask(decisions, question("value"))).id,
+        optionId: "option:0",
+      });
+      yield* decisions.answer({
+        decisionId: (yield* ask(decisions, question("label"))).id,
+        optionId: "option:1",
+      });
+      yield* decisions.answer({
+        decisionId: (yield* ask(decisions, question("typed"))).id,
+        text: "São Paulo",
+      });
+      yield* decisions.answer({
+        decisionId: (yield* ask(decisions, question("closed", false))).id,
+        text: "São Paulo",
+      });
+      yield* decisions.dismiss((yield* ask(decisions, question("dismissed"))).id);
+      yield* decisions.deliverPending;
+
+      assert.deepEqual(answersOf("value"), [{ q1: "eu-west-1" }]);
+      assert.deepEqual(answersOf("label"), [{ q1: "Brazil" }]);
+      assert.deepEqual(answersOf("typed"), [{ q1: "São Paulo" }]);
+      assert.deepEqual(answersOf("closed"), []);
+      assert.deepEqual(answersOf("dismissed"), []);
+      assert.lengthOf(sends, 0);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 const upload = {
   type: "file",

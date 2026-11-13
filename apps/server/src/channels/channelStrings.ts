@@ -29,6 +29,15 @@ export interface ChannelStrings {
   readonly denied: string;
   readonly dismissed: string;
   readonly answered: (chosen: string) => string;
+  /** The first line of a notice that something waits on the user. */
+  readonly waitingForYou: (agent: string) => string;
+  readonly projectLabel: string;
+  readonly threadLabel: string;
+  readonly openInT3: string;
+  readonly answerInT3: string;
+  /** After a number answered one card while another is still open in the chat. */
+  readonly stillWaiting: (title: string) => string;
+  readonly groupTaskReason: (reason: string | null) => string;
   readonly decision: {
     readonly approve: string;
     readonly deny: string;
@@ -41,6 +50,7 @@ export interface ChannelStrings {
     readonly wantsFileRead: string;
     readonly needsApproval: string;
     readonly wantsToSend: string;
+    readonly asksQuestion: string;
     /** What follows `<name>: ` in an autonomy notice title. */
     readonly runFailed: string;
     readonly waitingTooLong: string;
@@ -48,6 +58,8 @@ export interface ChannelStrings {
     readonly ciFailed: string;
     readonly reviewIncomplete: string;
     readonly watch: string;
+    readonly routine: string;
+    readonly taskPaused: string;
   };
 }
 
@@ -75,6 +87,20 @@ const en: ChannelStrings = {
   denied: "Denied",
   dismissed: "Dismissed",
   answered: (chosen) => `Answered: ${chosen}`,
+  waitingForYou: (agent) => `${agent} is waiting for you`,
+  projectLabel: "Project:",
+  threadLabel: "Thread:",
+  openInT3: "Open in T3:",
+  answerInT3: "Answer it in T3.",
+  stillWaiting: (title) => `Still waiting for you: "${title}". Numbers now answer it.`,
+  groupTaskReason: (reason) =>
+    reason === "handoff_limit"
+      ? "It reached the hand-off limit. Resume, reassign or cancel it."
+      : reason === "member_removed"
+        ? "Its member left the group. Reassign or cancel it."
+        : reason === "routing_failed"
+          ? "No member could be picked for it. Reassign or cancel it."
+          : `Paused${reason === null ? "" : ` (${reason})`}. Resume, reassign or cancel it.`,
   decision: {
     approve: "Approve",
     deny: "Deny",
@@ -86,12 +112,15 @@ const en: ChannelStrings = {
     wantsFileRead: "wants to read files",
     needsApproval: "needs your approval",
     wantsToSend: "wants to send a message to",
+    asksQuestion: "has a question for you",
     runFailed: "Run failed or was interrupted",
     waitingTooLong: "Waiting for you too long",
     stuck: "Run looks stuck",
     ciFailed: "PR checks failed",
     reviewIncomplete: "Card in Review with open items",
     watch: "Watch:",
+    routine: "Routine:",
+    taskPaused: "Group task paused",
   },
 };
 
@@ -119,6 +148,20 @@ const ptBR: ChannelStrings = {
   denied: "Negado",
   dismissed: "Dispensado",
   answered: (chosen) => `Respondido: ${chosen}`,
+  waitingForYou: (agent) => `${agent} está esperando você`,
+  projectLabel: "Projeto:",
+  threadLabel: "Thread:",
+  openInT3: "Abrir no T3:",
+  answerInT3: "Responda no T3.",
+  stillWaiting: (title) => `Ainda esperando você: "${title}". Os números agora respondem a ele.`,
+  groupTaskReason: (reason) =>
+    reason === "handoff_limit"
+      ? "Chegou ao limite de repasses. Retome, reatribua ou cancele."
+      : reason === "member_removed"
+        ? "O membro saiu do grupo. Reatribua ou cancele."
+        : reason === "routing_failed"
+          ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
+          : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
   decision: {
     approve: "Aprovar",
     deny: "Negar",
@@ -130,12 +173,15 @@ const ptBR: ChannelStrings = {
     wantsFileRead: "quer ler arquivos",
     needsApproval: "precisa da sua aprovação",
     wantsToSend: "quer enviar uma mensagem para",
+    asksQuestion: "tem uma pergunta para você",
     runFailed: "A execução falhou ou foi interrompida",
     waitingTooLong: "Esperando por você há muito tempo",
     stuck: "A execução parece travada",
     ciFailed: "As verificações do PR falharam",
     reviewIncomplete: "Card em Revisão com itens em aberto",
     watch: "Vigia:",
+    routine: "Rotina:",
+    taskPaused: "Tarefa de grupo pausada",
   },
 };
 
@@ -169,6 +215,7 @@ const AFTER_NAME: ReadonlyArray<DecisionKey> = [
   "wantsFileRead",
   "needsApproval",
   "wantsToSend",
+  "asksQuestion",
 ];
 const AFTER_COLON: ReadonlyArray<DecisionKey> = [
   "runFailed",
@@ -176,6 +223,7 @@ const AFTER_COLON: ReadonlyArray<DecisionKey> = [
   "stuck",
   "ciFailed",
   "reviewIncomplete",
+  "taskPaused",
   "watch",
 ];
 const LABELS: ReadonlyArray<DecisionKey> = ["approve", "deny", "gotIt"];
@@ -231,7 +279,10 @@ export function localizeNoticeLabel(label: string, language: ResolvedChannelLang
   for (const key of AFTER_COLON) {
     if (key !== "watch" && label === en.decision[key]) return ptBR.decision[key];
   }
-  return label.startsWith(`${en.decision.watch} `)
-    ? `${ptBR.decision.watch} ${label.slice(en.decision.watch.length + 1)}`
-    : label;
+  for (const key of ["watch", "routine"] as const) {
+    if (label.startsWith(`${en.decision[key]} `)) {
+      return `${ptBR.decision[key]} ${label.slice(en.decision[key].length + 1)}`;
+    }
+  }
+  return label;
 }

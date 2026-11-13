@@ -477,6 +477,64 @@ it.effect("a number answers the open card of that chat once; others are told or 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("with two cards open a number answers the newest, then says which one is next", () => {
+  const { layer, request } = decisionHarness();
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    const decisions = yield* DecisionService.DecisionService;
+    const older = yield* request;
+    const newer = yield* decisions.request({
+      fromThreadId: "thread-2" as never,
+      projectId: "scratch" as never,
+      threadTitle: "Fix login",
+      clientRequestId: "r2",
+      title: "Claude wants to run a command",
+      context: "",
+      options: [
+        { id: "accept", label: "Approve" },
+        { id: "decline", label: "Deny" },
+      ],
+    });
+    yield* sendCard(older.id);
+    yield* sendCard(newer.id);
+    yield* gateway.ingest(inbound({ text: "2" }));
+    assert.equal((yield* decisions.get(newer.id)).answer?.optionId, "decline");
+    assert.equal((yield* decisions.get(older.id)).status, "open");
+    assert.equal((yield* texts).at(-1), 'Still waiting for you: "Deploy?". Numbers now answer it.');
+    yield* gateway.ingest(inbound({ text: "1" }));
+    assert.equal((yield* decisions.get(older.id)).answer?.optionId, "yes");
+    // Nothing else is open, so no "next" line follows the last answer.
+    assert.equal((yield* texts).at(-1), 'Still waiting for you: "Deploy?". Numbers now answer it.');
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a number for a card that lapsed before the sweep says so and records nothing", () => {
+  const { layer } = decisionHarness();
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    const decisions = yield* DecisionService.DecisionService;
+    const lapsing = yield* decisions.request({
+      fromThreadId: "thread-2" as never,
+      projectId: "scratch" as never,
+      threadTitle: "Fix login",
+      clientRequestId: "r-lapse",
+      title: "Claude wants to run a command",
+      context: "",
+      options: [
+        { id: "accept", label: "Approve" },
+        { id: "decline", label: "Deny" },
+      ],
+      expiresInMinutes: 1,
+    });
+    yield* sendCard(lapsing.id);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE decisions SET expires_at = ${"1970-01-01T00:00:00.000Z"} WHERE decision_id = ${lapsing.id}`;
+    yield* gateway.ingest(inbound({ text: "1" }));
+    assert.equal((yield* texts).at(-1), "That decision was already answered.");
+    assert.isUndefined((yield* decisions.get(lapsing.id)).answer);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "a Telegram chat answers its own card, and an iMessage chat with the same key cannot",
   () => {

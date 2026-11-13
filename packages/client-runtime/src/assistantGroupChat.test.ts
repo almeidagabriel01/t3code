@@ -178,7 +178,8 @@ describe("group feed", () => {
       assistantGroupPauseReasonLabel("routing_failed"),
       "The lead could not route this",
     );
-    assert.match(assistantGroupPauseReasonLabel("handoff_limit"), /hand-offs/);
+    assert.match(assistantGroupPauseReasonLabel("handoff_limit"), /since your last action/);
+    assert.match(assistantGroupPauseReasonLabel("no_delivery"), /without a delivery/);
     assert.strictEqual(assistantGroupPauseReasonLabel("brand_new"), "Paused");
     assert.strictEqual(assistantGroupPauseReasonLabel(null), "Paused");
   });
