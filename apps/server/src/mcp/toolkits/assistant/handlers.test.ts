@@ -771,8 +771,17 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
         },
       );
     }
+    // Making a new assistant with projects is the same escalation.
+    const made = { action: "create", name: "Fresh", toolAccess: "read-only" } as const;
+    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+      expect(yield* fromRoutine.call({ ...made, ...change })).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringContaining("this turn came from a scheduled task"),
+      });
+    }
     expect(fromRoutine.writes).toEqual([]);
     // Other changes from that turn need no user.
+    expect(yield* fromRoutine.call(made)).toMatchObject({ status: "created" });
     expect(
       yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
     ).toMatchObject({
@@ -798,6 +807,9 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
     expect(yield* call({ action: "update", handle: "eng", projectIds: ["p-other"] })).toMatchObject(
       { status: "updated" },
     );
+    expect(
+      yield* call({ ...made, projectIds: ["p-other"], clientRequestId: "fresh-user" }),
+    ).toMatchObject({ status: "created" });
   }),
 );
 

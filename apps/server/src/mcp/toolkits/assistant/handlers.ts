@@ -196,7 +196,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
     yield* requireUserTurn(caller, "change when an assistant notifies them");
   // Projects bound a project assistant, so only the user moves that bound.
   if (
-    input.action === "update" &&
+    (input.action === "update" || input.action === "create") &&
     (input.projectIds !== undefined || input.projectId !== undefined)
   )
     yield* requireUserTurn(caller, "change which projects an assistant may work in");
