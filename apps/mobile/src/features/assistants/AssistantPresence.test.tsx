@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   jump: vi.fn(),
   openChat: vi.fn(),
   navigate: vi.fn(),
+  owner: null as unknown,
+  taskShell: null as unknown,
+  task: null as null | { dismissedAt: string | null },
+  dismissTask: vi.fn(),
+  restoreTask: vi.fn(),
 }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
@@ -32,18 +37,21 @@ vi.mock("../../components/ui/Menu", () => ({
     actions: MenuAction[];
     onPressAction: (event: { nativeEvent: { event: string } }) => void;
     children?: ReactNode;
-  }) => (
-    <section aria-label={props.title}>
-      {props.children}
-      {leaves(props.actions).map((action) => (
-        <button
-          key={action.id}
-          aria-label={`menu:${action.id}`}
-          onClick={() => props.onPressAction({ nativeEvent: { event: action.id ?? "" } })}
-        />
-      ))}
-    </section>
-  ),
+  }) => {
+    return (
+      <section aria-label={props.title}>
+        {props.children}
+        {leaves(props.actions).map((action) => (
+          <button
+            key={action.id}
+            aria-label={`menu:${action.id}`}
+            disabled={action.attributes?.disabled}
+            onClick={() => props.onPressAction({ nativeEvent: { event: action.id ?? "" } })}
+          />
+        ))}
+      </section>
+    );
+  },
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../state/assistants", () => ({
@@ -52,8 +60,13 @@ vi.mock("../../state/assistants", () => ({
     archived: [],
   }),
   useAssistantActions: () => ({ canAct: mocks.canAct, update: mocks.update }),
+  useTaskAssistant: () => mocks.owner,
+  useAssistantTask: () => mocks.task,
 }));
-vi.mock("../../state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("../../state/entities", () => ({
+  useThreadShells: () => [],
+  useThreadShell: () => mocks.taskShell,
+}));
 vi.mock("../../lib/scopedEntities", () => ({
   scopedThreadKey: (environmentId: string, threadId: string) => `${environmentId}:${threadId}`,
 }));
@@ -81,7 +94,11 @@ vi.mock("./assistantPresentation", () => ({
   ),
 }));
 vi.mock("./useAssistantFlows", () => ({
-  useAssistantFlows: () => ({ openConversation: mocks.openChat }),
+  useAssistantFlows: () => ({
+    openConversation: mocks.openChat,
+    dismissTask: mocks.dismissTask,
+    restoreTask: mocks.restoreTask,
+  }),
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
@@ -114,7 +131,9 @@ const mood = (working: string[]) =>
   new Map(
     ["ada", "bo", "cy"].map((id) => [
       id,
-      { mood: working.includes(id) ? "working" : "idle" } as never,
+      working.includes(id)
+        ? { face: "working" as const, working: true }
+        : { face: "idle" as const, working: false },
     ]),
   );
 const tree = (actions: ReadonlyArray<MenuAction>): unknown[] =>
@@ -161,15 +180,45 @@ describe("presenceMenuActions", () => {
       ],
     },
   ])("$name", ({ working, inline, expected }) => {
-    expect(tree(presenceMenuActions(senders, mood(working), true, inline))).toEqual(expected);
+    expect(tree(presenceMenuActions(senders, mood(working), true, null, inline))).toEqual(expected);
   });
+
+  it.each([
+    {
+      name: "iOS",
+      inline: true,
+      expected: [{ Working: ["JARVIS — Working"] }, { Idle: ["ADA — Idle · 1 message here"] }],
+    },
+    {
+      name: "Android",
+      inline: false,
+      expected: ["JARVIS — Working", "ADA — Idle · 1 message here"],
+    },
+  ])(
+    "$name: the task's assistant with no message here has no jump, and its row dismisses the task",
+    ({ inline, expected }) => {
+      const owner = { ...sender("jarvis", 0), firstMessageId: "", lastMessageId: "" };
+      const looks = new Map([
+        ["jarvis", { face: "working" as const, working: true }],
+        ["ada", { face: "idle" as const, working: false }],
+      ]);
+      const task = { assistantId: "jarvis", state: "running" as const, dismissed: false };
+      const actions = presenceMenuActions([owner, sender("ada", 1)], looks, true, task, inline);
+      expect(tree(actions)).toEqual(expected);
+      const rows = actions.flatMap((action) => (inline ? (action.subactions ?? []) : [action]));
+      expect(rows.map((row) => row.subactions?.map((item) => item.title))).toEqual([
+        ["Access", "Open chat", "Assistant info", "Dismiss task"],
+        ["Jump to last message", "Access", "Open chat", "Assistant info"],
+      ]);
+    },
+  );
 
   it("a removed assistant can only be jumped to; access follows the permission", () => {
     const removed = { ...sender("gone", 1), assistant: null };
-    const [row] = presenceMenuActions([removed], new Map(), true, false);
+    const [row] = presenceMenuActions([removed], new Map(), true, null, false);
     expect(row?.title).toBe("Assistant");
     expect(row?.subactions?.map((action) => action.title)).toEqual(["Jump to last message"]);
-    const [locked] = presenceMenuActions([sender("ada", 1)], mood([]), false, false);
+    const [locked] = presenceMenuActions([sender("ada", 1)], mood([]), false, null, false);
     const access = locked?.subactions?.find((action) => action.title === "Access");
     expect(access?.subactions?.map((option) => [option.title, option.state])).toEqual([
       ["Read only", "on"],
@@ -184,7 +233,11 @@ const mount = (node: ReactNode) => {
   const container = document.createElement("div");
   const root = createRoot(container);
   act(() => root.render(node));
-  return { container, [Symbol.dispose]: () => act(() => root.unmount()) };
+  return {
+    container,
+    rerender: (next: ReactNode) => act(() => root.render(next)),
+    [Symbol.dispose]: () => act(() => root.unmount()),
+  };
 };
 
 describe("ThreadAssistantStack", () => {
@@ -228,6 +281,62 @@ describe("ThreadAssistantStack", () => {
       environmentId: "hub",
       assistantId: "bo",
     });
+  });
+
+  const failedShell = {
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingSubagentRequest: null,
+    pendingGuestMessageCount: 0,
+    queuedMessageCount: 0,
+    blockedOnThreadWait: false,
+    latestRun: null,
+    runtime: { status: "failed" },
+    source: { latestVisibleMessage: null },
+  };
+  it("the task's assistant joins the cluster first, in the task's mood, with its actions", async () => {
+    mocks.assistants = [assistant("ada", "Ada"), assistant("jarvis", "Jarvis")];
+    mocks.working = new Set();
+    mocks.owner = { environmentId: "hub", assistant: mocks.assistants[1] };
+    mocks.taskShell = null;
+    mocks.task = { dismissedAt: null };
+    for (const fn of [mocks.openChat, mocks.dismissTask, mocks.restoreTask]) fn.mockReset();
+    using _reset = {
+      [Symbol.dispose]: () => {
+        mocks.owner = null;
+        mocks.task = null;
+        mocks.taskShell = null;
+      },
+    };
+    const stack = () => (
+      <ThreadAssistantStack
+        environmentId={"hub" as never}
+        threadId={"t1" as never}
+        messages={[{ id: "m1", senderThreadId: "assistant:ada:1" }] as never}
+      />
+    );
+    using view = mount(stack());
+    const button = (id: string) =>
+      view.container.querySelector<HTMLButtonElement>(`[aria-label="menu:${id}"]`);
+    const cluster = () => view.container.querySelector('[data-testid="cluster"]')?.textContent;
+
+    expect(cluster()).toBe("jarvis:working,ada:idle");
+    expect(button("jump:jarvis")).toBeNull();
+    expect(button("task:dismiss")?.disabled).toBe(true);
+    await act(async () => button("chat:jarvis")?.click());
+    expect(mocks.openChat).toHaveBeenCalledWith(expect.objectContaining({ id: "jarvis" }));
+
+    mocks.taskShell = failedShell;
+    view.rerender(stack());
+    expect(cluster()).toBe("jarvis:failed,ada:idle");
+    await act(async () => button("task:dismiss")?.click());
+    expect(mocks.dismissTask).toHaveBeenCalledWith("t1");
+
+    mocks.task = { dismissedAt: "2026-11-06T00:00:00.000Z" };
+    view.rerender(stack());
+    expect(button("task:dismiss")).toBeNull();
+    await act(async () => button("task:restore")?.click());
+    expect(mocks.restoreTask).toHaveBeenCalledWith("t1");
   });
 
   it("draws nothing in an assistant's own chat", () => {
