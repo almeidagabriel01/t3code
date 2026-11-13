@@ -44,7 +44,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -64,6 +64,7 @@ function AssistantCard(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const archived = assistant.archivedAt !== null;
+  const taskSections = useAssistantTaskSections(props.entry);
   const threadRef =
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
   const thread = useThreadShell(threadRef);
@@ -108,7 +109,14 @@ function AssistantCard(props: {
           )}
         </div>
       </div>
-      {archived ? null : <AssistantTaskRows entry={props.entry} onOpen={flows.openThread} roomy />}
+      {archived ? null : (
+        <AssistantTaskRows
+          entry={props.entry}
+          sections={taskSections}
+          onOpen={flows.openThread}
+          roomy
+        />
+      )}
       {props.groupNames.length === 0 ? null : (
         <ul aria-label="Groups" className="flex flex-wrap gap-1">
           {props.groupNames.map((name) => (

@@ -47,7 +47,7 @@ import {
   useAssistantLiveWork,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
-import { useUiStateStore } from "../../uiStateStore";
+import { resolveProjectExpanded, useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { SubagentRows } from "../sidebar/SidebarSubagentRows";
@@ -58,7 +58,7 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { AssistantAvatar } from "./assistantPresentation";
-import { AssistantTaskRows } from "./AssistantTaskRows";
+import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import {
@@ -179,6 +179,15 @@ const AssistantRow = memo(function AssistantRow(props: {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
   const { presence, dotClass, open } = useAssistantState(props.entry, props.onOpen);
+  const sections = useAssistantTaskSections(props.entry);
+  // Folds persist beside the project folds, under a key no project can take.
+  const foldKey = `assistant:${environmentId}:${assistant.id}`;
+  const expanded = useUiStateStore((state) =>
+    resolveProjectExpanded(state.projectExpandedById, [foldKey]),
+  );
+  const setExpanded = useUiStateStore((state) => state.setProjectExpanded);
+  const subagents = props.subagents ?? [];
+  const foldable = sections.open.length + sections.settled.length + subagents.length > 0;
   const working = presence.mood === "working";
   const meta = assistantMetaLabel(presence);
   const statusDot = STATUS_DOT[presence.mood];
@@ -270,6 +279,24 @@ const AssistantRow = memo(function AssistantRow(props: {
           </Tooltip>
         ) : null}
         <SidebarNotificationDot dotClass={dotClass} />
+        {foldable ? (
+          <button
+            type="button"
+            aria-label={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
+            aria-expanded={expanded}
+            data-testid="assistant-fold"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded(foldKey, !expanded);
+            }}
+            className={cn(
+              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/8 hover:text-foreground",
+              FOCUS_RING,
+            )}
+          >
+            <ChevronDownIcon aria-hidden className={cn("size-3", !expanded && "-rotate-90")} />
+          </button>
+        ) : null}
         <Menu>
           <Tooltip>
             <TooltipTrigger
@@ -323,15 +350,20 @@ const AssistantRow = memo(function AssistantRow(props: {
           </MenuPopup>
         </Menu>
       </div>
-      <AssistantTaskRows
-        entry={props.entry}
-        activeThreadKey={props.activeThreadKey}
-        onOpen={props.onOpen}
-      />
-      {props.subagents && props.subagents.length > 0 ? (
-        <ul aria-label={`${assistant.name} subagents`} className="m-0 p-0">
-          <SubagentRows onOpen={props.onOpen}>{props.subagents}</SubagentRows>
-        </ul>
+      {expanded ? (
+        <>
+          <AssistantTaskRows
+            entry={props.entry}
+            sections={sections}
+            activeThreadKey={props.activeThreadKey}
+            onOpen={props.onOpen}
+          />
+          {subagents.length > 0 ? (
+            <ul aria-label={`${assistant.name} subagents`} className="m-0 p-0">
+              <SubagentRows onOpen={props.onOpen}>{subagents}</SubagentRows>
+            </ul>
+          ) : null}
+        </>
       ) : null}
     </li>
   );

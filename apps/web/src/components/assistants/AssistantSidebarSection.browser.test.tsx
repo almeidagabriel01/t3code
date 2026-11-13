@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { useUiStateStore } from "../../uiStateStore";
 import { AssistantSidebarSection } from "./AssistantSidebarSection";
 
 type Spec = { name: string; role?: string; scope?: "all" | "project"; projectId?: string };
@@ -21,6 +22,7 @@ const state = vi.hoisted(() => ({
   updated: {} as Record<string, string>,
   moods: {} as Record<string, "working" | "needs" | "failed">,
   queued: {} as Record<string, number>,
+  settled: new Set<string>(),
   teams: [] as Array<{
     environmentId: string;
     team: { id: string; name: string; memberIds: string[] };
@@ -66,6 +68,9 @@ const shellFor = (threadId: string) => {
     runtime:
       mood === "working" ? { status: "running" } : mood === "failed" ? { status: "failed" } : null,
     source: { latestVisibleMessage: null },
+    ...(state.settled.has(threadId)
+      ? { settledOverride: "settled", settledAt: "2020-01-02T00:00:00.000Z" }
+      : { settledOverride: null }),
   };
 };
 
@@ -132,6 +137,7 @@ vi.mock("../../hooks/useSettings", () => ({
       sidebarAssistantsExpandedGroups: state.expanded,
       sidebarAssistantsShowAll: state.showAll,
       sidebarShowSubagents: true,
+      sidebarThreadOrder: "activity",
       sidebarAgentActivityDisplayMode: "compact",
     }),
   updateClientSettings: state.update,
@@ -175,7 +181,9 @@ function setup(
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
   state.tasks = [];
+  state.settled = new Set();
   state.work = { sites: [], subagents: new Map() };
+  useUiStateStore.setState({ projectExpandedById: {} });
   state.dismissTask.mockClear();
 }
 
@@ -242,12 +250,38 @@ describe("AssistantSidebarSection", () => {
     expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
+  it("folds settled tasks into a Settled shelf and folds the whole list, persisted", async () => {
+    setup(["Jarvis"], { moods: { "task-1": "working" } });
+    state.settled = new Set(["task-2"]);
+    state.tasks = [
+      { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "task-2", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+    ];
+    await using screen = await render(element());
+    const taskTitles = () =>
+      [...screen.container.querySelectorAll('[data-testid="assistant-task-row"]')].map((row) =>
+        row.getAttribute("aria-label"),
+      );
+    expect(taskTitles()).toEqual(["Add retry, Running"]);
+    const shelf = screen.getByTestId("assistant-settled-toggle");
+    await expect.element(shelf).toHaveTextContent("Settled1");
+    await userEvent.click(shelf);
+    expect(taskTitles()).toEqual(["Add retry, Running", "Old chore, Done"]);
+    await userEvent.click(screen.getByRole("button", { name: "Hide Jarvis tasks" }));
+    expect(taskTitles()).toEqual([]);
+    expect(useUiStateStore.getState().projectExpandedById["assistant:env:jarvis"]).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Show Jarvis tasks" }));
+    expect(taskTitles()).toEqual(["Add retry, Running"]);
+  });
+
   it("drops the favicons and subagent rows once the work ends", async () => {
     setup([{ name: "Jarvis", scope: "project", projectId: "p1" }]);
     await using screen = await render(element());
     expect(screen.container.querySelector('[data-testid="assistant-work-sites"]')).toBeNull();
     expect(screen.container.querySelector('[data-testid="sidebar-subagent-row"]')).toBeNull();
     expect(pill(screen.container, "jarvis")).not.toBeNull();
+    // Nothing under it, so nothing to fold.
+    expect(screen.container.querySelector('[data-testid="assistant-fold"]')).toBeNull();
   });
 
   it("lists an assistant's tasks under it with their state, and opens one on click", async () => {

@@ -65,53 +65,59 @@ describe("assistantTaskState", () => {
 });
 
 describe("assistantTaskRows", () => {
+  const settled = (settledAt: string) =>
+    ({ ...done, settledOverride: "settled", settledAt }) as typeof done;
   const shells = new Map<string, ReturnType<typeof shell>>([
-    ["done-old", done],
     ["running-a", running],
     ["waiting-a", waiting],
-    ["failed-a", failed],
-    ["done-new", done],
-    ["archived-done", shell({ archivedAt: at })],
+    ["done-unseen", done],
+    ["settled-old", settled("2026-11-01T00:00:00.000Z")],
+    ["settled-new", settled("2026-11-05T00:00:00.000Z")],
     ["archived-running", shell({ ...runningFields, archivedAt: at })],
   ]);
   const tasks = [
-    task("done-old", "2026-11-01T00:00:00.000Z"),
     task("running-a", "2026-11-02T00:00:00.000Z"),
     task("waiting-a", "2026-11-03T00:00:00.000Z"),
-    task("failed-a", "2026-11-04T00:00:00.000Z"),
-    task("done-new", "2026-11-05T00:00:00.000Z"),
+    task("done-unseen", "2026-11-04T00:00:00.000Z"),
+    task("settled-old", "2026-11-01T00:00:00.000Z"),
+    task("settled-new", "2026-11-05T00:00:00.000Z"),
     task("deleted", "2026-11-05T00:00:00.000Z"),
-    task("archived-done", "2026-11-05T00:00:00.000Z"),
     task("archived-running", "2026-11-06T00:00:00.000Z"),
+    { ...task("waiting-a", "2026-11-03T00:00:00.000Z"), dismissedAt: null },
   ];
+  const ids = (rows: ReadonlyArray<{ readonly task: AssistantTask }>) =>
+    rows.map((row) => row.task.threadId);
 
-  it("orders waiting, running, failed, done, newest first, and drops what has no thread", () => {
-    const rows = assistantTaskRows(tasks, (threadId) => shells.get(threadId));
-    expect(rows.map((row) => row.task.threadId)).toEqual([
-      "waiting-a",
-      "archived-running",
-      "running-a",
-      "failed-a",
-      "done-new",
-      "done-old",
-    ]);
-  });
-
-  it("hides dismissed tasks and null reads as not dismissed", () => {
+  it("splits open and settled as a project does, ordering open rows with the caller's sort", () => {
+    const sorted: string[][] = [];
     const rows = assistantTaskRows(
-      [
-        {
-          ...task("done-new", "2026-11-05T00:00:00.000Z"),
-          dismissedAt: "2026-11-06T00:00:00.000Z",
-        },
-        { ...task("done-old", "2026-11-01T00:00:00.000Z"), dismissedAt: null },
-      ],
+      tasks,
       (threadId) => shells.get(threadId),
+      (open) => {
+        sorted.push(open.map((s) => [...shells].find(([, v]) => v === s)![0]));
+        return open.toReversed();
+      },
     );
-    expect(rows.map((row) => row.task.threadId)).toEqual(["done-old"]);
+    // A finished thread stays open until the server settles it; archived and deleted ones leave.
+    expect(sorted).toEqual([["running-a", "waiting-a", "done-unseen"]]);
+    expect(ids(rows.open)).toEqual(["done-unseen", "waiting-a", "running-a"]);
+    expect(ids(rows.settled)).toEqual(["settled-new", "settled-old"]);
+    expect(rows.open.map((row) => row.state)).toEqual(["done", "waiting", "running"]);
   });
 
-  it("lists nothing for no tasks", () => {
-    expect(assistantTaskRows([], () => undefined)).toEqual([]);
+  it("hides dismissed tasks and lists nothing for no tasks", () => {
+    const rows = assistantTaskRows(
+      [{ ...task("running-a", "2026-11-05T00:00:00.000Z"), dismissedAt: at.toString() }],
+      (threadId) => shells.get(threadId),
+      (open) => open,
+    );
+    expect(rows).toEqual({ open: [], settled: [] });
+    expect(
+      assistantTaskRows(
+        [],
+        () => undefined,
+        (open) => open,
+      ),
+    ).toEqual({ open: [], settled: [] });
   });
 });

@@ -6,6 +6,10 @@ import {
 } from "@t3tools/shared/assistantTaskStatus";
 
 import type { assistantPresence, AssistantFace } from "./assistantRobot.ts";
+import type { EnvironmentThreadShell } from "./state/models.ts";
+import { sortSettledThreads, type SettledThreadTimestampInput } from "./state/threadSort.ts";
+
+type SettledShell = SettledThreadTimestampInput & Pick<EnvironmentThreadShell, "settledOverride">;
 
 /** What a task row says, read from the task thread's own shell. */
 export type AssistantTaskState = AssistantTaskStatus;
@@ -64,29 +68,35 @@ export interface AssistantTaskRow<S extends TaskShell> {
   readonly state: AssistantTaskState;
 }
 
-const ORDER: Record<AssistantTaskState, number> = { waiting: 0, running: 1, failed: 2, done: 3 };
+export interface AssistantTaskSections<S extends TaskShell> {
+  /** Ordered by the caller's project-list sort, so the rows rank as its project rows do. */
+  readonly open: ReadonlyArray<AssistantTaskRow<S>>;
+  /** Threads the server settled (finished and seen), newest first, as a project's Settled shelf. */
+  readonly settled: ReadonlyArray<AssistantTaskRow<S>>;
+}
 
 /**
- * An assistant's tasks that still have a thread and were not dismissed, waiting first, then running, failed and done,
- * each newest first. A deleted thread drops out; an archived one stays hidden once it is done.
+ * An assistant's task rows split as a project splits its threads. Dismissed tasks, deleted threads
+ * and archived threads drop out, as archived threads leave project lists.
  */
-export function assistantTaskRows<S extends TaskShell>(
+export function assistantTaskRows<S extends TaskShell & SettledShell>(
   tasks: ReadonlyArray<AssistantTask>,
   shellOf: (threadId: string) => S | null | undefined,
-): Array<AssistantTaskRow<S>> {
-  const rows: Array<AssistantTaskRow<S>> = [];
+  sortOpen: (shells: ReadonlyArray<S>) => ReadonlyArray<S>,
+): AssistantTaskSections<S> {
+  const rowByShell = new Map<S, AssistantTaskRow<S>>();
   for (const task of tasks) {
     if (task.dismissedAt != null) continue;
     const shell = shellOf(task.threadId);
-    if (shell === null || shell === undefined) continue;
-    rows.push({ task, shell, state: assistantTaskState(shell) });
+    if (shell == null || shell.archivedAt != null) continue;
+    rowByShell.set(shell, { task, shell, state: assistantTaskState(shell) });
   }
-  return rows
-    .filter((row) => row.shell.archivedAt == null || row.state !== "done")
-    .sort(
-      (left, right) =>
-        ORDER[left.state] - ORDER[right.state] ||
-        right.task.createdAt.localeCompare(left.task.createdAt) ||
-        left.task.threadId.localeCompare(right.task.threadId),
-    );
+  const shells = [...rowByShell.keys()];
+  const rowsOf = (ordered: ReadonlyArray<S>) => ordered.map((shell) => rowByShell.get(shell)!);
+  return {
+    open: rowsOf(sortOpen(shells.filter((shell) => shell.settledOverride !== "settled"))),
+    settled: rowsOf(
+      sortSettledThreads(shells.filter((shell) => shell.settledOverride === "settled")),
+    ),
+  };
 }
