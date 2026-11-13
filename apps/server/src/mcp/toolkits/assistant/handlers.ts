@@ -4,6 +4,8 @@ import * as NodeCrypto from "node:crypto";
 import {
   type Assistant,
   type AssistantError,
+  assistantIdFromThreadId,
+  type AutonomyError,
   type AssistantId,
   type AssistantTeam,
   type AssistantToolAccess,
@@ -18,6 +20,7 @@ import type * as Schema from "effect/Schema";
 
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
+import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import { runtimeModeRank } from "../../delegatedTaskModes.ts";
@@ -46,6 +49,7 @@ const brief = (
   icon: assistant.icon ?? null,
   avatar: (assistant.avatar ?? null) as Schema.Json,
   scope: assistant.scope,
+  notifications: assistant.autonomy.mode,
   connectors: assistant.mcpServers.map(({ name, transport, enabled }) => ({
     name,
     transport,
@@ -66,6 +70,9 @@ const invalid = (message: string) =>
   new OrchestratorMcpFailure({ code: "invalid_request", message });
 
 const failure = (error: AssistantError) =>
+  error.reason === "storage" ? unavailable() : invalid(error.message);
+
+const notifyFailure = (error: AutonomyError) =>
   error.reason === "storage" ? unavailable() : invalid(error.message);
 
 const rankOf = (access: AssistantToolAccess) => runtimeModeRank(runtimeModeForToolAccess(access));
@@ -179,6 +186,9 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
 
   if (input.action === "group_create" || input.action === "group_update")
     yield* requireUserTurn(caller, "change a group");
+  // Waking on its own spends the user's tokens, so only the user turns it on.
+  if (input.action === "update" && input.notifications !== undefined)
+    yield* requireUserTurn(caller, "change when an assistant notifies them");
   /** One chat line per change, so a repeat of the same call adds none. */
   const announce = (team: AssistantTeam, lines: ReadonlyArray<string>) =>
     caller.caller === undefined
@@ -204,6 +214,42 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   const listOf = (ids: ReadonlyArray<string>) => ids.map(nameOf).join(", ");
 
   switch (input.action) {
+    case "notify_user": {
+      const self = caller.caller === undefined ? null : assistantIdFromThreadId(caller.caller.id);
+      const assistant = all.find(
+        (candidate) => candidate.id === self && candidate.archivedAt === null,
+      );
+      if (assistant === undefined) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "Only an assistant can message the user this way. Tell the user in your reply instead.",
+        });
+      }
+      if (input.text === undefined || input.text.trim() === "")
+        return yield* invalid("notify_user needs `text`: the message.");
+      const autonomy = yield* AutonomyService.AutonomyService;
+      const result = yield* autonomy
+        .notifyUser({
+          assistantId: assistant.id,
+          // A retry in the same turn lands on the first send; the same words in a later turn send again.
+          key: `${caller.scope.requestNamespace}:${sha(
+            input.clientRequestId?.trim() || [
+              input.text,
+              input.threadId,
+              caller.caller?.activeRunId ?? caller.caller?.latestRunId,
+            ],
+          ).slice(0, 48)}`,
+          text: input.text,
+          ...(input.threadId === undefined ? {} : { threadId: input.threadId as ThreadId }),
+        })
+        .pipe(Effect.mapError(notifyFailure));
+      return {
+        status: result.status,
+        channels: [...result.channels],
+        remainingToday: result.remainingToday,
+      } satisfies Out;
+    }
     case "container_task":
       return yield* containerTask(
         caller,
@@ -327,6 +373,10 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           : { projectIds: input.projectIds as ReadonlyArray<ProjectId> }),
         ...(input.role === undefined ? {} : { role: input.role }),
         ...(avatar === undefined ? {} : { avatar }),
+        // Only the mode changes; its rules, projects and channels stay as the user set them.
+        ...(input.notifications === undefined
+          ? {}
+          : { autonomy: { ...target.autonomy, mode: input.notifications } }),
       };
       return done("updated", yield* assistants.update(update).pipe(Effect.mapError(failure)));
     }

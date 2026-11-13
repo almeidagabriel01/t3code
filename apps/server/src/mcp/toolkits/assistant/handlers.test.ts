@@ -3,6 +3,8 @@ import { expect, it } from "@effect/vitest";
 import {
   type Assistant,
   AssistantError,
+  AutonomyError,
+  DEFAULT_ASSISTANT_AUTONOMY,
   type AssistantTeam,
   EnvironmentId,
   ProjectId,
@@ -27,6 +29,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as AssistantHandlers from "./handlers.ts";
 import { AssistantToolkit, type AssistantParameters } from "./tools.ts";
@@ -48,6 +51,7 @@ const assistant = (id: string, extra: Partial<Assistant>) =>
     avatar: null,
     scope: "all",
     archivedAt: null,
+    autonomy: DEFAULT_ASSISTANT_AUTONOMY,
     ...extra,
   }) as unknown as Assistant;
 
@@ -207,6 +211,8 @@ const harness = (
     const threadId = ThreadId.make(callerThread);
     const announced: Array<{ text: string; clientRequestId: string }> = [];
     const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
+    const notified: Array<Parameters<AutonomyService.AutonomyService["Service"]["notifyUser"]>[0]> =
+      [];
     const deps = Layer.succeedContext(
       yield* Layer.build(
         Layer.mergeAll(
@@ -291,6 +297,23 @@ const harness = (
             ensureAssistantProject: Effect.succeed({ projectId: home }),
             namedProjectsRoot: "",
           }),
+          Layer.mock(AutonomyService.AutonomyService)({
+            notifyUser: (input) =>
+              Effect.suspend(() => {
+                if (input.text.includes("paused")) {
+                  return Effect.fail(
+                    new AutonomyError({ reason: "invalid", message: "notifications are paused" }),
+                  );
+                }
+                const first = !notified.some((call) => call.key === input.key);
+                notified.push(input);
+                return Effect.succeed({
+                  status: first ? ("sent" as const) : ("already_sent" as const),
+                  channels: first ? ["activity", "telegram"] : [],
+                  remainingToday: 19,
+                });
+              }),
+          }),
           Layer.mock(AssistantGroups.AssistantGroups)({
             member: {} as AssistantGroups.AssistantGroups["Service"]["member"],
             announce: (input) =>
@@ -335,7 +358,7 @@ const harness = (
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts, announced, container };
+    return { call, writes, decisions, posts, announced, container, notified };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -673,6 +696,90 @@ it.effect("a user turn, including a channel or decision answer, may change a gro
       });
       expect(announced).toHaveLength(1);
     }
+  }),
+);
+
+it.effect("only the user turns an assistant's notifications on, and only the mode changes", () =>
+  Effect.gen(function* () {
+    const fromRoutine = yield* harness("full-access", {
+      id: "m2",
+      createdBy: "user",
+      scheduledTaskId: "task-1",
+    });
+    expect(
+      yield* fromRoutine.call({
+        action: "update",
+        handle: "eng",
+        notifications: "reply-and-notify",
+      }),
+    ).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("this turn came from a scheduled task"),
+    });
+    expect(fromRoutine.writes).toEqual([]);
+    // Other changes from that turn need no user.
+    expect(
+      yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
+    ).toMatchObject({
+      status: "updated",
+    });
+
+    const { call, writes } = yield* harness("full-access");
+    const updated = yield* call({
+      action: "update",
+      handle: "eng",
+      notifications: "reply-and-notify",
+    });
+    expect(updated).toMatchObject({ status: "updated" });
+    expect(writes).toEqual([
+      {
+        update: {
+          assistantId: "eng",
+          autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, mode: "reply-and-notify" },
+        },
+      },
+    ]);
+    expect((yield* call({ action: "read", handle: "ceo" })).notifications).toBe("reply-only");
+  }),
+);
+
+it.effect("notify_user is for an assistant's own turn, and a retry in the turn sends once", () =>
+  Effect.gen(function* () {
+    const stranger = yield* harness("full-access");
+    expect(yield* stranger.call({ action: "notify_user", text: "Done." })).toMatchObject({
+      code: "capability_denied",
+    });
+    expect(stranger.notified).toEqual([]);
+
+    // A scheduled reminder is exactly when it is used, so the turn's origin does not matter.
+    const { call, notified } = yield* harness(
+      "approval-required",
+      { id: "m2", createdBy: "user", scheduledTaskId: "task-1" },
+      "assistant:eng:1",
+    );
+    expect(yield* call({ action: "notify_user", text: " " })).toMatchObject({
+      code: "invalid_request",
+    });
+    const sent = yield* call({ action: "notify_user", text: "Deploy done.", threadId: "t9" });
+    expect(sent).toEqual({
+      status: "sent",
+      channels: ["activity", "telegram"],
+      remainingToday: 19,
+    });
+    expect(
+      yield* call({ action: "notify_user", text: "Deploy done.", threadId: "t9" }),
+    ).toMatchObject({ status: "already_sent" });
+    expect(notified.map((input) => [input.assistantId, input.text, input.threadId])).toEqual([
+      ["eng", "Deploy done.", "t9"],
+      ["eng", "Deploy done.", "t9"],
+    ]);
+    expect(notified[0]!.key).toBe(notified[1]!.key);
+    yield* call({ action: "notify_user", text: "Deploy done.", clientRequestId: "again" });
+    expect(notified[2]!.key).not.toBe(notified[0]!.key);
+    expect(yield* call({ action: "notify_user", text: "paused" })).toMatchObject({
+      code: "invalid_request",
+      message: "notifications are paused",
+    });
   }),
 );
 
