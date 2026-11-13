@@ -73,7 +73,13 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
-export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export type ThreadListV2SwipeAction =
+  | "archive"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze"
+  | "dismiss";
 
 /**
  * Presets for a row's snooze menu, read at the list's minute instead of the
@@ -119,10 +125,19 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   readonly snoozed?: boolean;
+  /** A done or failed task in its assistant's section: dismissing it is the row's main action. */
+  readonly dismissible?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
 } {
+  if (input.dismissible === true) {
+    return {
+      primary: "dismiss",
+      secondary:
+        input.snoozeSupported && input.snoozable && input.snoozed !== true ? "snooze" : null,
+    };
+  }
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
   }

@@ -910,12 +910,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // The window is inclusive, so wake just past it.
   const snoozeGateNowMs = useNowAfter(snoozeGateExpiryMs === null ? null : snoozeGateExpiryMs + 1);
   const snoozeGateNow = new Date(snoozeGateNowMs).toISOString();
+  const assistantTask = useAssistantTask(thread.environmentId, thread.id);
+  const taskMenu = useMemo(
+    () => assistantTaskMenuState(assistantTask, thread),
+    [assistantTask, thread],
+  );
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
+    dismissible: props.compact === true && taskMenu?.canDismiss === true && !taskMenu.dismissed,
   });
   const snoozePresets = resolveThreadListV2SnoozePresets({
     secondary: swipeActions.secondary,
@@ -926,7 +932,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     () => buildSnoozePresetActions(snoozePresets),
     [snoozePresets],
   );
-  const assistantTask = useAssistantTask(thread.environmentId, thread.id);
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const menuKind = resolveThreadMenuKind({
     snoozed: snoozedRow,
@@ -964,11 +969,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           ? { archivable: threadCanArchive(thread.runtime) }
           : null,
         snoozePresetActions,
-        assistantTask: assistantTaskMenuState(assistantTask, thread),
+        assistantTask: taskMenu,
       }),
     [
       menuKind,
-      assistantTask,
+      taskMenu,
       thread,
       isRegeneratingTitle,
       canTurnIntoProject,
@@ -1039,6 +1044,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
   );
   const primaryAction = useMemo(() => {
+    if (swipeActions.primary === "dismiss") {
+      return {
+        accessibilityLabel: `Dismiss ${thread.title}`,
+        icon: "xmark" as const,
+        label: "Dismiss",
+        onPress: (): void => void setTaskDismissed(thread.environmentId, thread.id, true),
+      };
+    }
     if (swipeActions.primary === "archive") {
       return {
         accessibilityLabel: `Archive ${thread.title}`,
@@ -1074,6 +1087,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     handleUnsettle,
     handleUnsnooze,
     swipeActions.primary,
+    thread.environmentId,
+    thread.id,
     thread.title,
   ]);
   const secondaryAction = useMemo(

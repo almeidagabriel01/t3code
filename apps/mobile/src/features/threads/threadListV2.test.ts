@@ -219,6 +219,24 @@ describe("resolveThreadListV2Status", () => {
 });
 
 describe("resolveThreadListV2SwipeActions", () => {
+  it.each([
+    ["a done or failed assistant task", "dismiss", true, "card", false],
+    ["a settled done task", "dismiss", true, "slim", false],
+    ["a snoozed done task", "dismiss", true, "slim", true],
+    ["any other task", "settle", false, "card", false],
+  ] as const)("swipes %s to %s", (_name, primary, dismissible, variant, snoozed) => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant,
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: false,
+        snoozed,
+        dismissible,
+      }).primary,
+    ).toBe(primary);
+  });
+
   it("offers snooze for a presented input request and moves it onto the snoozed shelf", () => {
     const raw = makeRawThreadShell({
       pendingRuntimeRequest: {

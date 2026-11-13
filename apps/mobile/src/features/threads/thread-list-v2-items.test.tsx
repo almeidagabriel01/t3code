@@ -3,7 +3,12 @@ import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { mocks } = vi.hoisted(() => ({
-  mocks: { task: null as unknown, setTaskDismissed: vi.fn(), copyText: vi.fn() },
+  mocks: {
+    task: null as unknown,
+    canDismiss: true,
+    setTaskDismissed: vi.fn(),
+    copyText: vi.fn(),
+  },
 }));
 
 vi.mock("react-native", () => ({
@@ -61,7 +66,7 @@ vi.mock("./thread-list-v2-row-appearance", () => ({
 vi.mock("./CustomSnoozeSheet", () => ({ CustomSnoozeSheet: () => null }));
 vi.mock("@t3tools/client-runtime/assistantTasks", () => ({
   assistantTaskMenuState: (task: { dismissedAt: string | null } | null) =>
-    task === null ? null : { dismissed: task.dismissedAt !== null, canDismiss: true },
+    task === null ? null : { dismissed: task.dismissedAt !== null, canDismiss: mocks.canDismiss },
 }));
 vi.mock("../../state/assistants", () => ({ useAssistantTask: () => mocks.task }));
 vi.mock("../assistants/useAssistantFlows", () => ({ setTaskDismissed: mocks.setTaskDismissed }));
@@ -86,8 +91,14 @@ vi.mock("../home/swipe-row-activation", () => ({ useSwipeRowDormant: () => false
 vi.mock("../home/thread-swipe-actions", () => ({
   ThreadSwipeable: (props: {
     compactActions: boolean;
+    primaryAction: { label: string; onPress: () => void };
     children: (close: () => void) => ReactNode;
-  }) => <div data-compact={String(props.compactActions)}>{props.children(() => {})}</div>,
+  }) => (
+    <div data-compact={String(props.compactActions)}>
+      <button onClick={props.primaryAction.onPress}>{`swipe:${props.primaryAction.label}`}</button>
+      {props.children(() => {})}
+    </div>
+  ),
 }));
 vi.mock("./openThreadHandoff", () => ({ openThreadHandoff: vi.fn() }));
 vi.mock("./thread-handoff", () => ({ canHandoffThread: () => false }));
@@ -193,6 +204,32 @@ describe("ThreadListV2Row assistant task menu", () => {
     mocks.task = null;
     const container = await mount();
     expect(container.textContent).not.toMatch(/Dismiss task|Restore task/);
+  });
+});
+
+describe("ThreadListV2Row assistant task swipe", () => {
+  beforeEach(() => {
+    mocks.setTaskDismissed.mockReset();
+    mocks.canDismiss = true;
+  });
+
+  it("swipes a done or failed task to Dismiss in the assistants section, keeping Settle in the menu", async () => {
+    mocks.task = { dismissedAt: null };
+    const row = await mount({ compact: true, settlementSupported: true });
+    await press(row, "swipe:Dismiss");
+    expect(mocks.setTaskDismissed).toHaveBeenCalledWith("env", "t1", true);
+    expect(row.textContent).toContain("Settle");
+    expect(row.textContent).toContain("Dismiss task");
+  });
+
+  it.each([
+    ["a task still running", true, false],
+    ["a done task in the project list", false, true],
+  ] as const)("swipes %s to Settle", async (_name, compact, canDismiss) => {
+    mocks.task = { dismissedAt: null };
+    mocks.canDismiss = canDismiss;
+    const row = await mount({ compact, settlementSupported: true });
+    expect(row.textContent).toContain("swipe:Settle");
   });
 });
 
