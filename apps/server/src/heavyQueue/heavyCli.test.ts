@@ -501,26 +501,47 @@ describe("t3 heavy", () => {
       expect(run.stdout()).toMatch(/^vp on mac: test run a+ \/etc\/hosts\n$/);
     });
 
+    /** Fails its first run with `first`, then runs as Linux would; `$0.count` counts the runs. */
+    const failingOnce = (first: string) =>
+      [
+        `n=$(($(cat "$0.count" 2>/dev/null || echo 0) + 1)); echo $n > "$0.count"`,
+        `if [ $n -eq 1 ]; then ${first}; fi`,
+        `printf '${M} phase=running pgid=4\\n' >&2`,
+        "echo on-linux",
+        `printf '${M} exit=0\\n' >&2`,
+      ].join("\n");
+    const runs = (dir: string) =>
+      NodeFS.readFileSync(NodePath.join(dir, "remoto.count"), "utf8").trim();
+
+    // One lost link is Linux's to recover: the heartbeat it triggers gets through, so the job goes
+    // back there by itself, never to the Mac, whatever the policy says.
     it.each([
       ["vp test run; echo after"],
       // `timeout` runs its command in a process group of its own.
       ["timeout 30 vp test run; echo after"],
-    ])("stops %j where Linux is unavailable and reruns it on the Mac by policy", async (line) => {
-      const { dir, env } = setup("exit 75", { runnerUnavailable: "mac" });
-      const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
-      expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("vp on mac: test run\nafter\n");
-      expect(run.stderr()).toContain("Linux is unavailable");
-    });
+    ])(
+      "stops %j where Linux was unreachable and runs it there once the link is back",
+      async (line) => {
+        const { dir, env } = setup(failingOnce("exit 75"), { runnerUnavailable: "mac" });
+        const run = heavy(dir, ["/bin/sh", "-c", line], env, ["--"], dir);
+        expect(await run.exited).toBe(0);
+        expect(run.stdout()).toBe("on-linux\nafter\n");
+        expect(run.stderr()).toContain("Linux is unavailable");
+        expect(runs(dir)).toBe("2");
+      },
+    );
 
-    it("reruns a dropped job on the Mac only after Linux confirms it stopped", async () => {
+    it("reruns a dropped job on Linux once it confirms it stopped and the link is back", async () => {
       const { dir, env } = setup(
-        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exit 255`,
+        failingOnce(
+          `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exit 255`,
+        ),
         { runnerDropped: "mac" },
       );
       const run = heavy(dir, onMac, env, ["--runner", "linux", "--"]);
       expect(await run.exited).toBe(0);
-      expect(run.stdout()).toBe("ran on mac\n");
+      expect(run.stdout()).toBe("on-linux\n");
+      expect(runs(dir)).toBe("2");
     });
 
     const longRun = `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n' >&2; exec sleep 30`;

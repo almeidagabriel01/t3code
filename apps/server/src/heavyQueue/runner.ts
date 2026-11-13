@@ -19,8 +19,10 @@ import {
   machineHold,
   plan,
   SAMPLE_FRESH_MS,
+  SWAP_IN_LIMIT,
   sustain,
   type Plan,
+  type Sample,
   type PlanInput,
   type Sustained,
 } from "./admission.ts";
@@ -152,6 +154,10 @@ export type QueuedEntry = HeavyQueueEntry & {
   readonly routeReason?: string;
   /** The scripts the line runs, read when it was queued, by their path word; null: unreadable. */
   readonly scripts?: Readonly<Record<string, string | null>>;
+  /** Its Linux runs that lost the link in a row; it keeps going back there until `linkAttempts`. */
+  readonly linkFailures?: number;
+  /** Linux ran it and its environment failed (not the link): "If a Linux run fails" holds it. */
+  readonly failure?: string;
 };
 const lineOf = (entry: Pick<QueuedEntry, "label" | "line">) => entry.line ?? entry.label;
 
@@ -431,6 +437,8 @@ export interface LinuxHealth extends Sustained {
   readonly availableMemoryBytes: number | null;
   readonly totalMemoryBytes: number | null;
   readonly error?: string;
+  /** When the last failure counted; a check's claim moves `checkedAt` before it runs. */
+  readonly failedAt?: number;
 }
 
 export const UNKNOWN_HEALTH: LinuxHealth = {
@@ -505,6 +513,13 @@ export const nextHealth = (
   windowMs: number,
   now: number,
 ): LinuxHealth => {
+  // Failures closer than half a heartbeat apart are one outage seen twice (jobs failing together).
+  const sameEvent =
+    !check.ok &&
+    previous.failures > 0 &&
+    previous.failedAt !== undefined &&
+    now - previous.failedAt < (machine.runnerHeartbeatSeconds * 1000) / 2;
+  if (sameEvent) return { ...previous, error: check.error };
   if (check.ok) {
     // One missed beat keeps the run of readings; a longer silence starts over from "has room".
     const gapMs = 2 * (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
@@ -522,9 +537,11 @@ export const nextHealth = (
   const failures = previous.failures + 1;
   return {
     ...previous,
-    online: failures >= machine.runnerOfflineAfterFailures ? false : previous.online,
+    // One failure never takes Linux offline, whatever the setting says.
+    online: failures >= Math.max(2, machine.runnerOfflineAfterFailures) ? false : previous.online,
     failures,
     checkedAt: now,
+    failedAt: now,
     error: check.error,
   };
 };
@@ -533,6 +550,57 @@ export const nextHealth = (
 const linuxUpFor = (health: LinuxHealth, entry: HeavyQueueEntry) =>
   health.online === true &&
   (entry.linuxFailedAt === undefined || (health.okAt ?? 0) > entry.linuxFailedAt);
+
+/** Runs that may lose the link before a job counts Linux unavailable: one past going offline. */
+export const linkAttempts = (machine: RunnerMachineConfig) =>
+  Math.max(2, machine.runnerOfflineAfterFailures) + 1;
+
+/**
+ * A job whose run lost the link (not its environment) goes back to Linux by itself: at once when
+ * a heartbeat gets through after the failure, else after a backoff that doubles each time.
+ */
+const linkRetry = (
+  health: LinuxHealth,
+  entry: HeavyQueueEntry,
+  machine: RunnerMachineConfig,
+  now: number,
+): "retry" | "wait" | null => {
+  const { linuxFailedAt } = entry;
+  const { linkFailures = 1, failure } = entry as QueuedEntry;
+  if (linuxFailedAt === undefined || failure !== undefined || health.online === false) return null;
+  if (linkFailures >= linkAttempts(machine)) return null;
+  const backoffMs = machine.runnerSshTimeoutSeconds * 1000 * 2 ** (linkFailures - 1);
+  return now >= linuxFailedAt + backoffMs ? "retry" : "wait";
+};
+
+/** The kernel's own pressure scale (1, 2, 4), or 2 while swapping in; 1 with no reading. */
+const strainOf = (sample: Sample | null) =>
+  sample === null
+    ? 1
+    : Math.max(
+        1,
+        sample.pressureLevel ?? 1,
+        (sample.swapInBytesPerSecond ?? 0) > SWAP_IN_LIMIT ? 2 : 1,
+      );
+
+/** ssh's start and handshake slow down while this Mac swaps: its timeout grows with the strain. */
+export const linkMachine = (machine: RunnerMachineConfig, sample: Sample | null) => ({
+  ...machine,
+  runnerSshTimeoutSeconds: machine.runnerSshTimeoutSeconds * strainOf(sample),
+});
+
+/**
+ * This Mac is short of memory: work Linux couldn't take waits for it rather than run here. A
+ * stale reading still counts within one heartbeat, since the sampler lags while it swaps.
+ */
+const macStrained = (input: RoutePlanInput) => {
+  const { sample, now, machine } = input;
+  if (sample === null) return false;
+  if (now - sample.at > Math.max(SAMPLE_FRESH_MS, machine.runnerHeartbeatSeconds * 1000))
+    return false;
+  const hold = machineHold(sample, input);
+  return hold === "pressure" || hold === "swap-in" || hold === "memory-floor";
+};
 
 export interface WorkContext {
   readonly config: RunnerProjectConfig;
@@ -587,6 +655,7 @@ const askExpired = (entry: HeavyQueueEntry, now: number) =>
  */
 const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: number) =>
   entry.dropped === true &&
+  (entry as QueuedEntry).failure !== undefined &&
   entry.route === undefined &&
   (config.runnerDropped === "mac" ||
     (config.runnerDropped === "ask" &&
@@ -646,6 +715,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
   const reading = health.load1 !== null || health.availableMemoryBytes !== null;
+  const strained = macStrained(input);
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -738,7 +808,19 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toMac(entry, why);
       continue;
     }
-    const up = linuxUpFor(health, entry) && !dropHolds(entry, config, now);
+    const retry = linkRetry(health, entry, machine, now);
+    const up = (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, now);
+    // A lost link is Linux's: the job waits for it while it retries, or while this Mac is strained.
+    const holdForLinux =
+      !up &&
+      (retry === "wait" ||
+        (strained &&
+          (entry as QueuedEntry).failure === undefined &&
+          (health.online !== null || entry.linuxFailedAt !== undefined)));
+    if (holdForLinux && !paused) {
+      toLinux(entry, "waiting for Linux to come back");
+      continue;
+    }
     if (intent === "automatic") {
       if (paused || !up || macRoom(entry)) {
         toMac(
@@ -786,7 +868,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
     const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
-    const what = reason === "dropped" ? "Linux dropped it mid-run" : "Linux is unavailable";
+    const { failure } = entry as QueuedEntry;
+    const what =
+      failure !== undefined
+        ? `Linux couldn't run this: ${failure}`
+        : reason === "dropped"
+          ? "Linux dropped it mid-run"
+          : "Linux is unavailable";
     if (policy === "mac") {
       toMac(entry, `${what}: running here`);
       continue;

@@ -49,6 +49,7 @@ import {
 import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
+  linkMachine,
   NEEDS_GIT,
   needsGit,
   outsideTie,
@@ -755,11 +756,31 @@ const checkLinuxIfStale = (dir: string, environment: NodeJS.ProcessEnv) => {
   const staleMs = (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
   if (!claimHealthCheck(dir, staleMs)) return;
   healthCheckRunning = true;
-  void checkLinux(machine, environment).then((check) => {
+  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
     healthCheckRunning = false;
     recordHealth(dir, check);
   });
 };
+
+/**
+ * A run lost the link: one heartbeat now says whether Linux is down, instead of the run. Jobs that
+ * lost it together share that one check, so they count as one failure.
+ */
+const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
+  const doc = readDoc(dir);
+  const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+  if (!claimHealthCheck(dir, (machine.runnerHeartbeatSeconds * 1000) / 2)) return;
+  healthCheckRunning = true;
+  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
+    healthCheckRunning = false;
+    recordHealth(dir, check);
+  });
+};
+
+/** Its runs that lost the link so far, this one included. */
+const linkFailuresOf = (dir: string, id: string) =>
+  ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
+    ?.linkFailures ?? 0) + 1;
 
 type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
@@ -876,7 +897,8 @@ const runLinuxAttempt = async (
   if (remoto === null) {
     process.stderr.write("[t3 heavy] remoto is not installed; Linux counts as unavailable.\n");
     recordHealth(dir, { ok: false, error: "remoto is not installed" });
-    requeue(dir, id, { linuxFailedAt: Date.now() });
+    // This Mac can't reach Linux at all: no link to wait for, so the unavailable policy decides.
+    requeue(dir, id, { linuxFailedAt: Date.now(), failure: "remoto is not installed" });
     return { kind: "requeued" };
   }
   takeOutcome(dir, id);
@@ -956,15 +978,19 @@ const runLinuxAttempt = async (
   if (outcome.kind === "environment") {
     // It ended there with its exit code, so nothing is left to confirm.
     process.stderr.write(`[t3 heavy] Linux couldn't run this: ${outcome.reason}\n`);
-    requeue(dir, id, { dropped: true, linuxFailedAt: Date.now(), routeReason: outcome.reason });
+    requeue(dir, id, { dropped: true, failure: outcome.reason, linuxFailedAt: Date.now() });
     return { kind: "requeued" };
   }
   if (outcome.kind === "unavailable") {
     process.stderr.write("[t3 heavy] Linux is unavailable; it never started there.\n");
     // A run that got as far as syncing may have a dependency install going there.
     const clean = !outcome.touched || (await confirmGone());
-    recordHealth(dir, { ok: false, error: "remoto could not reach Linux" });
-    requeue(dir, id, { linuxFailedAt: Date.now(), ...(clean ? {} : { unconfirmed: true }) });
+    checkLinuxNow(dir, environment);
+    requeue(dir, id, {
+      linuxFailedAt: Date.now(),
+      linkFailures: linkFailuresOf(dir, id),
+      ...(clean ? {} : { unconfirmed: true }),
+    });
     if (!clean) await confirmLater(dir, id, machine, environment, remote!);
     return { kind: "requeued" };
   }
@@ -972,9 +998,11 @@ const runLinuxAttempt = async (
     "[t3 heavy] Linux dropped the connection mid-run; confirming the run stopped there.\n",
   );
   const clean = remote !== null && (await confirmGone());
+  checkLinuxNow(dir, environment);
   requeue(dir, id, {
     dropped: true,
     linuxFailedAt: Date.now(),
+    linkFailures: linkFailuresOf(dir, id),
     ...(clean ? {} : { unconfirmed: true }),
   });
   if (!clean && remote !== null) await confirmLater(dir, id, machine, environment, remote);
@@ -1037,7 +1065,8 @@ const runLinuxPart = async (
       cwd,
       root,
       environment: process.env,
-      machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
+      // `remoto` reads its ssh timeout from `REMOTO_TIMEOUT`, which this sets.
+      machine: linkMachine(doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
       stdout: (chunk) => process.stdout.write(chunk),
