@@ -79,9 +79,32 @@ const FORWARDED_REQUEST_HEADERS = [
 const RETURNED_RESPONSE_HEADERS = ["content-type", "mcp-session-id", "mcp-protocol-version"];
 /** Answers that mean the service itself is down, not that it refused the request. */
 const UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
-const LEARN_TOOLS_BODY = new TextEncoder().encode(
-  JSON.stringify({ jsonrpc: "2.0", id: "t3-learn-tools", method: "tools/list" }),
-);
+const LEARN_TOOLS_ID = "t3-learn-tools";
+const MAX_LEARN_PAGES = 10;
+
+/** The first `tools/list` result in a response; stops reading there instead of at EOF. */
+const readToolsPage = (response: Response): Promise<ToolsPage | undefined> =>
+  new Promise((resolve) => {
+    if (!response.ok || response.body === null) {
+      void response.body?.cancel().catch(() => undefined);
+      return resolve(undefined);
+    }
+    let found: ToolsPage | undefined;
+    const reader = learnToolAnnotations(
+      response.body,
+      (response.headers.get("content-type") ?? "").includes("text/event-stream"),
+      (page) => {
+        found ??= page;
+      },
+    ).getReader();
+    const pump = (): Promise<void> =>
+      reader.read().then(({ done }) => {
+        if (found === undefined && !done) return pump();
+        void reader.cancel().catch(() => undefined);
+        resolve(found);
+      });
+    pump().catch(() => resolve(found));
+  });
 
 export const readOnlyBlocked = (service: string, tool: string) =>
   `Read only blocks this action: "${tool}" can change data in ${service}. Do not try another way; if it is needed, ask the user to change this assistant's tool access.`;
@@ -105,12 +128,17 @@ const parseJson = (bytes: Uint8Array | undefined): Option.Option<unknown> => {
   }
 };
 
+interface ToolsPage {
+  readonly tools?: unknown;
+  readonly nextCursor?: unknown;
+}
+
 interface JsonRpcMessage {
   readonly jsonrpc?: unknown;
   readonly id?: unknown;
   readonly method?: unknown;
   readonly params?: { readonly name?: unknown; readonly arguments?: unknown };
-  readonly result?: { readonly tools?: unknown };
+  readonly result?: ToolsPage;
 }
 
 const asMessage = (value: unknown): JsonRpcMessage | undefined =>
@@ -145,14 +173,14 @@ const refusal = (message: JsonRpcMessage | undefined, text: string) =>
 const learnToolAnnotations = (
   body: ReadableStream<Uint8Array>,
   sse: boolean,
-  learn: (tools: ReadonlyArray<unknown>) => void,
+  learn: (page: ToolsPage & { readonly tools: ReadonlyArray<unknown> }) => void,
 ) => {
   const decoder = new TextDecoder();
   let text = "";
   const parse = (json: string) => {
     try {
-      const tools = asMessage(JSON.parse(json))?.result?.tools;
-      if (Array.isArray(tools)) learn(tools);
+      const page = asMessage(JSON.parse(json))?.result;
+      if (Array.isArray(page?.tools)) learn({ ...page, tools: page.tools });
     } catch {
       // Not a JSON-RPC message; the client gets it unchanged.
     }
@@ -220,9 +248,9 @@ const make = Effect.gen(function* () {
   const annotations = new Map<string, Map<string, boolean>>();
   const learning = new Map<string, Deferred.Deferred<void>>();
 
-  const learn = (name: string) => (tools: ReadonlyArray<unknown>) => {
+  const learn = (name: string) => (page: { readonly tools: ReadonlyArray<unknown> }) => {
     const known = annotations.get(name) ?? new Map<string, boolean>();
-    for (const tool of tools) {
+    for (const tool of page.tools) {
       const entry = tool as { name?: unknown; annotations?: { readOnlyHint?: unknown } };
       if (typeof entry?.name === "string") {
         known.set(entry.name, entry.annotations?.readOnlyHint === true);
@@ -338,7 +366,6 @@ const make = Effect.gen(function* () {
   /**
    * The provider listed tools before a restart and never lists again, so the proxy asks the
    * service itself, once per integration at a time, in the provider's own MCP session.
-   * ponytail: first page only; a tool on a later page stays a write until the provider lists.
    */
   const learnFromService = Effect.fn("IntegrationProxy.learnFromService")(function* (
     name: string,
@@ -350,18 +377,31 @@ const make = Effect.gen(function* () {
     if (running !== undefined) return yield* Deferred.await(running);
     const done = Deferred.makeUnsafe<void>();
     learning.set(name, done);
-    yield* forward(
-      name,
-      url,
-      service,
-      { ...request, body: LEARN_TOOLS_BODY },
-      { id: "t3-learn-tools", method: "tools/list" },
-      true,
-    ).pipe(
-      // Reading the body to its end is what feeds `learn`.
-      Effect.flatMap(({ response }) =>
-        Effect.promise(() => response.arrayBuffer().catch(() => undefined)),
-      ),
+    yield* Effect.gen(function* () {
+      let cursor: string | undefined;
+      // ponytail: a page cap; a tool past it stays a write until the provider lists again.
+      for (let page = 0; page < MAX_LEARN_PAGES; page++) {
+        const message = {
+          jsonrpc: "2.0",
+          id: LEARN_TOOLS_ID,
+          method: "tools/list",
+          ...(cursor === undefined ? {} : { params: { cursor } }),
+        };
+        const { response } = yield* forward(
+          name,
+          url,
+          service,
+          { ...request, body: new TextEncoder().encode(JSON.stringify(message)) },
+          { id: LEARN_TOOLS_ID, method: "tools/list" },
+          false,
+        );
+        const result = yield* Effect.promise(() => readToolsPage(response));
+        if (result === undefined || !Array.isArray(result.tools)) return;
+        learn(name)({ tools: result.tools });
+        cursor = typeof result.nextCursor === "string" ? result.nextCursor : undefined;
+        if (cursor === undefined) return;
+      }
+    }).pipe(
       Effect.ensuring(
         Effect.suspend(() => {
           learning.delete(name);

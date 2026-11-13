@@ -50,7 +50,9 @@ const makeUpstream = () => {
   interface Seen {
     readonly method: string;
     readonly headers: Record<string, string>;
-    readonly body: { id?: unknown; method?: string; params?: { name?: string } } | undefined;
+    readonly body:
+      | { id?: unknown; method?: string; params?: { name?: string; cursor?: string } }
+      | undefined;
   }
   const seen: Array<Seen> = [];
   const state = {
@@ -59,6 +61,8 @@ const makeUpstream = () => {
     down: false,
     unavailable: false,
     listAsJson: false,
+    // Two pages over a stream the service never closes.
+    pagedOpen: false,
   };
   const json = (body: unknown, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), {
@@ -93,6 +97,21 @@ const makeUpstream = () => {
       );
     }
     if (headers["mcp-session-id"] !== "s-1") return new Response("no session", { status: 400 });
+    if (body?.method === "tools/list" && state.pagedOpen) {
+      const second = body.params?.cursor === "p2";
+      const result = second
+        ? { tools: [{ name: "list_teams", annotations: { readOnlyHint: true } }] }
+        : { tools: [{ name: "search", annotations: { readOnlyHint: true } }], nextCursor: "p2" };
+      const event = `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(event));
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    }
     if (body?.method === "tools/list") {
       const result = {
         tools: [
@@ -597,6 +616,17 @@ it.effect("concurrent unknown tools share one tools/list; a failed one is tried 
       expect(learned.headers["mcp-session-id"]).toBe("s-1");
       expect(learned.headers.authorization).toBe("Bearer at-1");
       expect(learned.headers.cookie).toBeUndefined();
+    }),
+  ),
+);
+
+it.effect("learning follows later pages and stops reading once a page is parsed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup({ access: "read-only" });
+      env.upstream.state.pagedOpen = true;
+      expect(textOf(yield* env.call("list_teams")).content[0]!.text).toBe("ran list_teams");
+      expect(env.upstream.lists().map((r) => r.body?.params?.cursor ?? null)).toEqual([null, "p2"]);
     }),
   ),
 );
