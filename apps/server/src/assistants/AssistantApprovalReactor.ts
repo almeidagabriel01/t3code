@@ -1,5 +1,4 @@
 import {
-  DECISION_CONTEXT_MAX_LENGTH,
   isAssistantThreadId,
   type OrchestrationV2DomainEvent,
   type RuntimeRequestId,
@@ -13,18 +12,12 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { requestDecision } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import { DECISION_PHRASES } from "../channels/channelStrings.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantDirectory } from "./AssistantDirectory.ts";
-
-const WANTS: Readonly<Record<string, string>> = {
-  command: DECISION_PHRASES.wantsCommand,
-  "file-change": DECISION_PHRASES.wantsFileChange,
-  "file-read": DECISION_PHRASES.wantsFileRead,
-};
 
 export class AssistantApprovalReactor extends Context.Service<
   AssistantApprovalReactor,
@@ -43,6 +36,19 @@ const make = Effect.gen(function* () {
   const directory = yield* AssistantDirectory;
   const sql = yield* SqlClient.SqlClient;
 
+  /** Withdraws the open decision that mirrors a request, in any thread, once the request is settled. */
+  const withdrawMirror = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  ) {
+    const open = (yield* decisions.list({ threadId })).find(
+      (decision) => decision.status === "open" && decision.approvalRequestId === requestId,
+    );
+    if (open !== undefined) {
+      yield* decisions.withdraw({ decisionId: open.id, fromThreadId: threadId });
+    }
+  });
+
   /** Makes the open decision match the request: one while it waits for the user, none after. */
   const sync = Effect.fnUntraced(function* (threadId: ThreadId, requestId: RuntimeRequestId) {
     const { request, item } = yield* projections.getRuntimeResponseContext(threadId, requestId);
@@ -51,49 +57,34 @@ const make = Effect.gen(function* () {
       request.kind !== "user_input" &&
       request.status === "pending" &&
       request.responseCapability.type === "live";
-    if (!mirrored) {
-      const open = (yield* decisions.list({ threadId })).find(
-        (decision) => decision.status === "open" && decision.approvalRequestId === requestId,
-      );
-      if (open !== undefined) {
-        yield* decisions.withdraw({ decisionId: open.id, fromThreadId: threadId });
-      }
-      return;
-    }
+    if (!mirrored) return yield* withdrawMirror(threadId, requestId);
     const found = yield* directory.forThread(threadId);
     if (Option.isNone(found)) return;
     const { assistant } = found.value;
-    const detail = item?.type === "approval_request" ? item : undefined;
-    const prompt = detail?.prompt?.trim();
-    const context = [
-      ...(prompt === undefined || prompt === ""
-        ? []
-        : [request.kind === "command" ? `\`\`\`sh\n${prompt}\n\`\`\`` : prompt]),
-      ...(detail?.reason?.trim() ? [`${DECISION_PHRASES.reason} ${detail.reason.trim()}`] : []),
-    ]
-      .join("\n\n")
-      .slice(0, DECISION_CONTEXT_MAX_LENGTH);
+    const { title, context, options } = requestDecision(assistant.name, request, item);
     yield* decisions.request({
       fromThreadId: threadId,
       projectId: assistant.projectId,
       threadTitle: assistant.name,
       clientRequestId: `approval:${requestId}`,
-      title: `${assistant.name} ${WANTS[request.kind] ?? DECISION_PHRASES.needsApproval}`,
+      title,
       context,
-      options: [
-        { id: "accept", label: DECISION_PHRASES.approve },
-        { id: "decline", label: DECISION_PHRASES.deny },
-      ],
+      options,
       approvalRequestId: requestId,
     });
   });
 
+  // Other threads' requests are mirrored later by the waiting notice; any thread's mirror goes
+  // away here as soon as its request is answered, cancelled or expires.
   const handle: AssistantApprovalReactor["Service"]["handle"] = (event) =>
-    event.type !== "runtime-request.updated" ||
-    event.payload.kind === "user_input" ||
-    !isAssistantThreadId(event.threadId)
+    event.type !== "runtime-request.updated"
       ? Effect.void
-      : sync(event.threadId, event.payload.id).pipe(
+      : (event.payload.status !== "pending"
+          ? withdrawMirror(event.threadId, event.payload.id)
+          : event.payload.kind === "user_input" || !isAssistantThreadId(event.threadId)
+            ? Effect.void
+            : sync(event.threadId, event.payload.id)
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("mirroring an assistant approval failed", {
               threadId: event.threadId,

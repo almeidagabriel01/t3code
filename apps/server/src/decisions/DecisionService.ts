@@ -31,6 +31,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { userInputOptionIndex } from "../autonomy/needsYou.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
 /** Settled decisions kept in a list or snapshot; open ones are never cut. */
@@ -325,6 +326,35 @@ const make = Effect.gen(function* () {
     // Answered in the thread, interrupted or gone meanwhile: nothing left to deliver.
     if (request === undefined || request.status !== "pending") return;
     const { answer } = toDecision(row);
+    if (request.kind === "user_input") {
+      // Only a chosen option or typed text answers a question; anything else leaves it to the thread.
+      if (row.status !== "answered") return;
+      const { turnItems } = yield* threads.getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["user_input_request"],
+      });
+      const item = turnItems.find(
+        (candidate) => candidate.type === "user_input_request" && candidate.requestId === requestId,
+      );
+      const question = item?.type === "user_input_request" ? item.questions[0] : undefined;
+      if (question === undefined) return;
+      const option = question.options[userInputOptionIndex(answer?.optionId) ?? -1];
+      const text = answer?.text?.trim();
+      const value =
+        option !== undefined
+          ? (option.value ?? option.label)
+          : text !== undefined && text !== "" && question.allowCustomAnswer !== false
+            ? text
+            : undefined;
+      if (value === undefined) return;
+      yield* threads.dispatch({
+        type: "runtime-request.respond",
+        commandId: CommandId.make(`decision-answer:${row.decision_id}`),
+        threadId,
+        requestId,
+        answers: { [question.id]: value },
+      });
+      return;
+    }
     const accepted = row.status === "answered" && answer?.optionId === "accept";
     const feedback = answer?.text;
     yield* threads.dispatch({

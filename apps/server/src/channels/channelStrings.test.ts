@@ -37,6 +37,13 @@ describe("channel phrases", () => {
     ["choiceRange", (t: ReturnType<typeof channelStrings>) => t.choiceRange(3)],
     ["answered", (t: ReturnType<typeof channelStrings>) => t.answered("Yes")],
     ["couldNotFinish", (t: ReturnType<typeof channelStrings>) => t.couldNotFinish("boom")],
+    ["waitingForYou", (t: ReturnType<typeof channelStrings>) => t.waitingForYou("Claude")],
+    ["stillWaiting", (t: ReturnType<typeof channelStrings>) => t.stillWaiting("Deploy")],
+    ["handoff limit", (t: ReturnType<typeof channelStrings>) => t.groupTaskReason("handoff_limit")],
+    ["member left", (t: ReturnType<typeof channelStrings>) => t.groupTaskReason("member_removed")],
+    ["no member", (t: ReturnType<typeof channelStrings>) => t.groupTaskReason("routing_failed")],
+    ["other reason", (t: ReturnType<typeof channelStrings>) => t.groupTaskReason("custom")],
+    ["no reason", (t: ReturnType<typeof channelStrings>) => t.groupTaskReason(null)],
   ])("%s differs between English and Portuguese", (_name, phrase) => {
     expect(phrase(channelStrings("pt-BR"))).not.toBe(phrase(channelStrings("en")));
   });
@@ -65,6 +72,8 @@ describe("localizeDecision", () => {
     ["Jarvis wants to change files", "Jarvis quer alterar arquivos"],
     ["Jarvis wants to read files", "Jarvis quer ler arquivos"],
     ["Jarvis needs your approval", "Jarvis precisa da sua aprovação"],
+    ["Claude has a question for you", "Claude tem uma pergunta para você"],
+    ["Ops: Group task paused", "Ops: Tarefa de grupo pausada"],
     [
       "Jarvis wants to send a message to Fix login",
       "Jarvis quer enviar uma mensagem para Fix login",
@@ -118,6 +127,7 @@ describe("localizeDecision", () => {
   it("maps autonomy notice labels only when they are T3's own", () => {
     expect(localizeNoticeLabel("Run looks stuck", "pt-BR")).toBe("A execução parece travada");
     expect(localizeNoticeLabel("Watch: nightly", "pt-BR")).toBe("Vigia: nightly");
+    expect(localizeNoticeLabel("Routine: Daily report", "pt-BR")).toBe("Rotina: Daily report");
     expect(localizeNoticeLabel("Something else", "pt-BR")).toBe("Something else");
     expect(localizeNoticeLabel("Run looks stuck", "en")).toBe("Run looks stuck");
   });
