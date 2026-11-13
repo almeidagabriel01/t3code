@@ -3,6 +3,7 @@ import {
   integrationCategoryLabel,
   integrationDirectory,
   integrationErrorMessage,
+  integrationLinkTarget,
   type IntegrationDirectoryRow,
 } from "@t3tools/client-runtime/integrations";
 import {
@@ -133,6 +134,8 @@ function SignInWatcher(props: {
 /** The Integrations directory of one environment and every connect, detail and consent flow. */
 export function IntegrationsDirectory(props: {
   readonly state: IntegrationsState;
+  /** A catalog id from a link: opens its detail, or searches for it when T3 does not hold it. */
+  readonly entry?: string | undefined;
   readonly actions: IntegrationActions;
   readonly assistants: ReadonlyArray<{
     readonly name: string;
@@ -143,10 +146,18 @@ export function IntegrationsDirectory(props: {
   readonly onChooseAssistants: () => void;
 }) {
   const { state, actions } = props;
-  const [query, setQuery] = useState("");
+  const linked = () =>
+    props.entry === undefined ? null : integrationLinkTarget(state, props.entry);
+  const [query, setQuery] = useState(() => {
+    const target = linked();
+    return target?.kind === "search" ? target.query : "";
+  });
   const [category, setCategory] = useState<Category | null>(null);
   const [flows, setFlows] = useState<ReadonlyMap<string, Flow>>(new Map());
-  const [open, setOpen] = useState<OpenDialog | null>(null);
+  const [open, setOpen] = useState<OpenDialog | null>(() => {
+    const target = linked();
+    return target?.kind === "detail" ? { kind: "detail", name: target.name } : null;
+  });
   // Loopback listeners stopped because the sign-in already ended on the server.
   const endedByPush = useRef(new Set<string>());
   const directory = integrationDirectory(state, { query, category });

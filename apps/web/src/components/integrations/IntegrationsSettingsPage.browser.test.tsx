@@ -88,6 +88,36 @@ it("Settings → Integrations lists the environment's catalog and connects throu
   );
 });
 
+it("an agent's link opens the entry: its detail once connected, otherwise a search for it", async () => {
+  publishIntegrations({
+    catalog: [notion, { ...notion, id: "linear", name: "Linear", description: "Issues." }],
+    integrations: [
+      {
+        name: "linear",
+        catalogId: "linear",
+        auth: "oauth",
+        status: "connected",
+        availability: "assistants",
+      },
+    ],
+    ownApps: [],
+    loopbackRedirectUri: "http://127.0.0.1:43110/integrations/callback",
+    detected: [],
+    detectionSources: [],
+  });
+  {
+    const { screen } = await openApp("/settings/integrations?entry=linear");
+    await using _screen = screen;
+    await expect.element(page.getByRole("dialog").getByText("Linear")).toBeVisible();
+  }
+  const { screen } = await openApp("/settings/integrations?entry=notion");
+  await using _screen = screen;
+  await expect
+    .element(page.getByRole("searchbox", { name: "Search integrations" }))
+    .toHaveValue("Notion");
+  expect(page.getByText("Issues.").query()).toBeNull();
+});
+
 it("the command palette opens Integrations", async () => {
   const { screen, router } = await openApp("/settings/general");
   await using _screen = screen;

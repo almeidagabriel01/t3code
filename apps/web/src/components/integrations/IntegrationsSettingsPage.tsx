@@ -18,6 +18,7 @@ import { IntegrationsDirectory } from "./IntegrationsDirectory";
 function EnvironmentIntegrations(props: {
   readonly environmentId: EnvironmentId;
   readonly state: IntegrationsState;
+  readonly entry: string | undefined;
 }) {
   const navigate = useNavigate();
   const actions = useIntegrationActions(props.environmentId);
@@ -32,6 +33,7 @@ function EnvironmentIntegrations(props: {
   return (
     <IntegrationsDirectory
       state={props.state}
+      entry={props.entry}
       actions={actions}
       assistants={assistants}
       providers={providers}
@@ -49,7 +51,7 @@ function EnvironmentIntegrations(props: {
 }
 
 /** Settings → Integrations for the environment the settings scope selects. */
-export function IntegrationsSettingsPanel() {
+export function IntegrationsSettingsPanel(props: { readonly entry?: string | undefined }) {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const state = useIntegrationsState(environmentId);
@@ -63,7 +65,12 @@ export function IntegrationsSettingsPanel() {
           </div>
         ) : null
       ) : (
-        <EnvironmentIntegrations key={environmentId} environmentId={environmentId} state={state} />
+        <EnvironmentIntegrations
+          key={environmentId}
+          environmentId={environmentId}
+          state={state}
+          entry={props.entry}
+        />
       )}
     </SettingsPageContainer>
   );
