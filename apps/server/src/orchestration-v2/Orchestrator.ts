@@ -744,7 +744,8 @@ function mayStartSubagentFollowup(
   return (
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||
-    command.usageLimitContinuationOfRunId !== undefined
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.manualContinuationOfRunId !== undefined
   );
 }
 
