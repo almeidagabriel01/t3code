@@ -57,6 +57,7 @@ const state = vi.hoisted(() => ({
   openTeamDialog: vi.fn(),
   openGroupSettings: vi.fn(),
   openGroupRoutines: vi.fn(),
+  openInfo: vi.fn(),
   openDialog: vi.fn(),
   archiveTeam: vi.fn(),
 }));
@@ -130,6 +131,7 @@ vi.mock("./assistantTeamState", () => ({
   openAssistantGroupRoutines: state.openGroupRoutines,
 }));
 vi.mock("./assistantDialogState", () => ({ openAssistantDialog: state.openDialog }));
+vi.mock("./assistantInfoState", () => ({ openAssistantInfo: state.openInfo }));
 vi.mock("./DescribeAssistantDialog", () => ({
   DescribeAssistantDialog: (props: { open: boolean }) => (props.open ? <p>describe-open</p> : null),
 }));
@@ -208,6 +210,7 @@ function setup(
   state.openTeamDialog.mockClear();
   state.openGroupSettings.mockClear();
   state.openGroupRoutines.mockClear();
+  state.openInfo.mockClear();
   state.openDialog.mockClear();
   state.archiveTeam.mockClear();
   state.tasks = [];
@@ -498,6 +501,12 @@ describe("AssistantSidebarSection", () => {
       .element(screen.getByRole("menuitem", { name: "Reset conversation" }))
       .toBeVisible();
     await expect.element(screen.getByRole("menuitem", { name: "Archive assistant" })).toBeVisible();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Assistant info" }));
+    expect(state.openInfo).toHaveBeenCalledWith({
+      kind: "assistant",
+      environmentId: "env",
+      assistantId: "jarvis",
+    });
   });
 
   it("drags the assistant chat into a split of the workspace on screen", async () => {
@@ -807,6 +816,13 @@ describe("AssistantSidebarSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Group routines" }));
     expect(state.openGroupRoutines).toHaveBeenCalledWith({ environmentId: "env", teamId: "t1" });
+    await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Group info" }));
+    expect(state.openInfo).toHaveBeenCalledWith({
+      kind: "group",
+      environmentId: "env",
+      teamId: "t1",
+    });
     await userEvent.click(screen.getByRole("button", { name: "Growth actions" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "New assistant in this group" }));
     expect(state.openDialog).toHaveBeenCalledWith({

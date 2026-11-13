@@ -38,6 +38,7 @@ import {
 } from "./AssistantTaskRows";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantInfo } from "./openAssistantInfo";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
@@ -229,6 +230,7 @@ const AssistantRow = memo(function AssistantRow(props: {
   const flows = useAssistantFlows(environmentId);
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
+  const openInfo = useOpenAssistantInfo();
   const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
   const [metaWidth, setMetaWidth] = useState(Number.POSITIVE_INFINITY);
   const meta = [rowWidth >= ROLE_MIN_ROW_WIDTH ? assistant.role : "", props.environmentLabel ?? ""]
@@ -243,6 +245,7 @@ const AssistantRow = memo(function AssistantRow(props: {
           true,
         );
   const actions: MenuAction[] = [
+    { id: "info", title: "Assistant info", image: "info.circle" },
     {
       id: "reset",
       title: "Reset conversation",
@@ -259,7 +262,8 @@ const AssistantRow = memo(function AssistantRow(props: {
     },
   ];
   const onAction = (id: string) => {
-    if (id === "reset") flows.reset(assistant, { openAfter: true });
+    if (id === "info") openInfo.assistant(environmentId, assistant.id);
+    else if (id === "reset") flows.reset(assistant, { openAfter: true });
     else if (id === "work") openWork(environmentId, assistant.id);
     else if (id === "settings") openEditor(environmentId, assistant);
     else if (id === "archive") flows.archive(assistant);
@@ -431,6 +435,7 @@ const FolderRow = memo(function FolderRow(props: {
 }) {
   const openTeam = useOpenAssistantTeam();
   const openEditor = useOpenAssistantEditor();
+  const openInfo = useOpenAssistantInfo();
   const flows = useAssistantTeamFlows(props.environmentId);
   const { environmentId, team } = props;
   const unread = team.chat?.unreadCount ?? 0;
@@ -491,6 +496,7 @@ const FolderRow = memo(function FolderRow(props: {
         sidebar={props.sidebar}
         actions={[
           { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
+          { id: "info", title: "Group info", image: "info.circle" },
           unread > 0
             ? {
                 id: "read",
@@ -515,6 +521,7 @@ const FolderRow = memo(function FolderRow(props: {
         ]}
         onAction={(id) => {
           if (id === "chat") openTeam.chat(environmentId, team.id);
+          else if (id === "info") openInfo.group(environmentId, team.id);
           else if (id === "read") void flows.markRead(team);
           else if (id === "unread") void flows.markUnread(team);
           else if (id === "edit") openTeam.edit(environmentId, team.id);

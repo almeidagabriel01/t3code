@@ -11,6 +11,7 @@ const { mocks } = vi.hoisted(() => ({
     open: vi.fn(),
     editor: vi.fn(),
     work: vi.fn(),
+    info: { assistant: vi.fn(), group: vi.fn() },
     toggle: vi.fn(),
     openTeam: vi.fn(),
     chat: vi.fn(),
@@ -387,6 +388,7 @@ vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
+vi.mock("./openAssistantInfo", () => ({ useOpenAssistantInfo: () => mocks.info }));
 vi.mock("./assistantWorkTarget", () => ({
   // Only an assistant's own row asks for this, so its calls count that row's renders.
   useOpenAssistantWork: () => {
@@ -519,6 +521,8 @@ beforeEach(() => {
     mocks.toggleGroup,
     mocks.pin,
     mocks.unpin,
+    mocks.info.assistant,
+    mocks.info.group,
   ]) {
     fn.mockReset();
   }
@@ -846,6 +850,8 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
     await click("menu:New assistant in this group");
     expect(mocks.editor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
+    await click("menu:Group info");
+    expect(mocks.info.group).toHaveBeenCalledWith("hub", "g1");
   });
 
   it("shows active assistants plus five recent ungrouped ones, and Show all reveals the rest", async () => {
@@ -876,8 +882,10 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel("Bot0")?.disabled).toBe(true);
   });
 
-  it("a row's menu resets, opens settings and archives; reset waits while it works", async () => {
+  it("a row's menu opens info, resets, opens settings and archives; reset waits while it works", async () => {
     render();
+    await click("menu:Assistant info");
+    expect(mocks.info.assistant).toHaveBeenCalledWith("hub", "a0");
     await click("menu:Reset conversation");
     expect(mocks.reset).toHaveBeenCalledWith(expect.objectContaining({ id: "a0" }), {
       openAfter: true,

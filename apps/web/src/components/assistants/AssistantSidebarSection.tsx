@@ -11,6 +11,7 @@ import {
   CircleAlertIcon,
   CirclePauseIcon,
   EllipsisIcon,
+  InfoIcon,
   MailIcon,
   MailOpenIcon,
   MessageSquareTextIcon,
@@ -38,6 +39,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { openAssistantInfo } from "./assistantInfoState";
 import { AssistantAvatar } from "./assistantPresentation";
 import {
   assistantFoldKey,
@@ -311,6 +313,14 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
               onKeyDown={(event) => event.stopPropagation()}
             >
               <MenuItem
+                onClick={() =>
+                  openAssistantInfo({ kind: "assistant", environmentId, assistantId: assistant.id })
+                }
+              >
+                <InfoIcon />
+                Assistant info
+              </MenuItem>
+              <MenuItem
                 disabled={!flows.canAct || working}
                 onClick={() => void flows.reset(assistant, { openAfter: true })}
               >
@@ -455,6 +465,10 @@ const FolderRow = memo(function FolderRow(props: {
             <MenuItem onClick={open}>
               <MessagesSquareIcon />
               Open chat
+            </MenuItem>
+            <MenuItem onClick={() => openAssistantInfo({ kind: "group", environmentId, teamId })}>
+              <InfoIcon />
+              Group info
             </MenuItem>
             {unread > 0 ? (
               <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
