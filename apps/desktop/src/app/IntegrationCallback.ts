@@ -6,10 +6,10 @@ import * as NodeHttp from "node:http";
 
 const SIGN_IN_CEILING_MS = 600_000;
 
-let active: AbortController | null = null;
+let active: { readonly abort: AbortController; readonly closed: Promise<void> } | null = null;
 
 export function cancelIntegrationCallback() {
-  active?.abort();
+  active?.abort.abort();
 }
 
 /**
@@ -20,6 +20,9 @@ export async function receiveIntegrationCallback(
   input: { readonly authorizationUrl: string; readonly redirectUri: string },
   openBrowser: (url: string) => Promise<boolean>,
 ): Promise<DesktopIntegrationCallbackResult> {
+  if (!URL.canParse(input.redirectUri) || !URL.canParse(input.authorizationUrl)) {
+    return { status: "failed" };
+  }
   const redirect = new URL(input.redirectUri);
   const authorization = new URL(input.authorizationUrl);
   if (
@@ -32,9 +35,13 @@ export async function receiveIntegrationCallback(
     return { status: "failed" };
   }
   const state = authorization.searchParams.get("state");
-  active?.abort();
+  // The port is stable, so the superseded listener must release it before this one binds.
+  const previous = active;
+  previous?.abort.abort();
   const abort = new AbortController();
-  active = abort;
+  const closed = Promise.withResolvers<void>();
+  const current = { abort, closed: closed.promise };
+  active = current;
   const done = Promise.withResolvers<DesktopIntegrationCallbackResult>();
   const server = NodeHttp.createServer((incoming, response) => {
     const url = new URL(incoming.url ?? "/", redirect);
@@ -65,6 +72,7 @@ export async function receiveIntegrationCallback(
   const timer = setTimeout(() => done.resolve({ status: "expired" }), SIGN_IN_CEILING_MS);
   timer.unref();
   try {
+    await previous?.closed;
     const bound = await new Promise<"ok" | "busy" | "failed">((resolve) => {
       server.once("error", (error: NodeJS.ErrnoException) =>
         resolve(error.code === "EADDRINUSE" ? "busy" : "failed"),
@@ -79,8 +87,9 @@ export async function receiveIntegrationCallback(
   } finally {
     clearTimeout(timer);
     abort.signal.removeEventListener("abort", cancelled);
-    if (active === abort) active = null;
+    if (active === current) active = null;
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    closed.resolve();
   }
 }

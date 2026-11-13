@@ -143,6 +143,8 @@ export interface IntegrationDirectoryRow {
 }
 
 export interface IntegrationSourceNote {
+  readonly origin: DetectedOrigin;
+  readonly instanceId: string | null;
   readonly label: string;
   readonly path: string | null;
   readonly reason: string | null;
@@ -345,10 +347,13 @@ export function integrationDirectory(
       continue;
     }
     const row = integrationRow(integration);
-    if (inCategory(row) && matches(row, query)) connected.push(row);
+    if (!inCategory(row) || !matches(row, query)) continue;
+    (integration.status === "not-connected" ? available : connected).push(row);
   }
   for (const server of state.detected) {
-    if (server.catalogId !== null && server.origin !== "t3") continue;
+    if (server.origin !== "t3" && server.catalogId !== null && catalogIds.has(server.catalogId)) {
+      continue;
+    }
     const row = otherRow(server);
     if (inCategory(row) && matches(row, query)) other.push(row);
   }
@@ -357,13 +362,23 @@ export function integrationDirectory(
       source.status === "unreadable"
         ? [
             {
+              origin: source.origin,
+              instanceId: source.instanceId ?? null,
               label: "Couldn't read",
               path: source.path ?? null,
               reason: SOURCE_REASONS[source.reason ?? ""] ?? "Read failed",
             },
           ]
         : source.origin === "claude-ai" && source.status === "not-seen"
-          ? [{ label: "Not seen yet (open a Claude conversation)", path: null, reason: null }]
+          ? [
+              {
+                origin: source.origin,
+                instanceId: source.instanceId ?? null,
+                label: "Not seen yet (open a Claude conversation)",
+                path: null,
+                reason: null,
+              },
+            ]
           : [],
   );
   return {
@@ -460,19 +475,6 @@ export function assistantIntegrationPicker(input: {
       note: ORIGIN_LABELS.t3,
     });
   }
-  const t3CatalogIds = new Set(state.integrations.map((integration) => integration.catalogId));
-  for (const [catalogId, server] of native) {
-    if (t3CatalogIds.has(catalogId)) continue;
-    items.push({
-      key: `native:${server.id}`,
-      name: server.name,
-      title: titleOf(catalogId, server.name),
-      status: null,
-      selected: true,
-      disabled: true,
-      note: nativeNote(server.origin),
-    });
-  }
   if (selection.mode === "selected") {
     const known = new Set(items.map((item) => item.name));
     for (const name of selection.names) {
@@ -487,6 +489,19 @@ export function assistantIntegrationPicker(input: {
         note: null,
       });
     }
+  }
+  const t3CatalogIds = new Set(state.integrations.map((integration) => integration.catalogId));
+  for (const [catalogId, server] of native) {
+    if (t3CatalogIds.has(catalogId)) continue;
+    items.push({
+      key: `native:${server.id}`,
+      name: server.name,
+      title: titleOf(catalogId, server.name),
+      status: null,
+      selected: true,
+      disabled: true,
+      note: nativeNote(server.origin),
+    });
   }
   return { mode: selection.mode, items: items.sort(byTitle) };
 }

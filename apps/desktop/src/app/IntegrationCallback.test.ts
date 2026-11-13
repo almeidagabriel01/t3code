@@ -74,7 +74,24 @@ describe("receiveIntegrationCallback", () => {
     expect(again.port).toBe(port);
   });
 
+  it("hands the port to a sign-in that supersedes the open one", async () => {
+    const redirectUri = redirectFor(await freePort());
+    const second = Promise.withResolvers<unknown>();
+    const first = await receiveIntegrationCallback({ authorizationUrl, redirectUri }, async () => {
+      second.resolve(
+        receiveIntegrationCallback({ authorizationUrl, redirectUri }, async () => {
+          await fetch(`${redirectUri}?code=c&state=s1`);
+          return true;
+        }),
+      );
+      return true;
+    });
+    expect(first).toEqual({ status: "cancelled" });
+    expect(await second.promise).toMatchObject({ status: "received" });
+  });
+
   it.each([
+    ["an unparseable redirect", "not a url", authorizationUrl],
     ["a non-loopback redirect", "https://example.com/integrations/callback", authorizationUrl],
     ["another path", "http://127.0.0.1:4000/oauth/callback", authorizationUrl],
     ["a non-web sign-in address", "http://127.0.0.1:4000/integrations/callback", "file:///etc"],

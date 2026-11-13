@@ -200,6 +200,7 @@ describe("integrationDirectory", () => {
         view("linear", "linear", "connected"),
         view("stripe", "stripe", "not-connected"),
         view("old-tool", "gone", "error", { lastError: "unknown-entry" }),
+        view("idle", null, "not-connected"),
         view("linear-2", "linear", "needs-sign-in"),
       ],
       detected: [
@@ -208,6 +209,7 @@ describe("integrationDirectory", () => {
         detected("hand", "t3", null),
         detected("hand-sentry", "t3", "sentry"),
         detected("Zed", "codex", null),
+        detected("cc-gone", "claude-code", "gone"),
       ],
     });
     expect(sections(input)).toEqual({
@@ -217,8 +219,14 @@ describe("integrationDirectory", () => {
         "integration:linear-2",
         "integration:old-tool",
       ],
-      available: ["catalog:github", "catalog:notion", "catalog:sentry", "catalog:stripe"],
-      other: ["detected:hand", "detected:hand-sentry", "detected:Zed"],
+      available: [
+        "catalog:github",
+        "integration:idle",
+        "catalog:notion",
+        "catalog:sentry",
+        "catalog:stripe",
+      ],
+      other: ["detected:cc-gone", "detected:hand", "detected:hand-sentry", "detected:Zed"],
     });
     expect(sections(input, "", "tasks")).toEqual({
       connected: ["catalog:linear"],
@@ -522,7 +530,7 @@ describe("integrationDirectory", () => {
       { origin: "codex", path: "/b.toml", status: "unreadable", reason: "invalid-format" },
       { origin: "codex", path: "/c.toml", status: "unreadable", reason: "read-failed" },
       { origin: "codex", status: "unreadable" },
-      { origin: "claude-ai", status: "not-seen" },
+      { origin: "claude-ai", instanceId: "claude-main" as never, status: "not-seen" },
       { origin: "claude-code", path: "/ok.json", status: "ok" },
       { origin: "codex", path: "/none.toml", status: "missing" },
     ];
@@ -530,12 +538,19 @@ describe("integrationDirectory", () => {
       query: "",
       category: null,
     });
-    expect(result.sourceNotes).toEqual([
+    expect(result.sourceNotes.map(({ label, path, reason }) => ({ label, path, reason }))).toEqual([
       { label: "Couldn't read", path: "/a.json", reason: "Permission denied" },
       { label: "Couldn't read", path: "/b.toml", reason: "Not valid JSON or TOML" },
       { label: "Couldn't read", path: "/c.toml", reason: "Read failed" },
       { label: "Couldn't read", path: null, reason: "Read failed" },
       { label: "Not seen yet (open a Claude conversation)", path: null, reason: null },
+    ]);
+    expect(result.sourceNotes.map((note) => [note.origin, note.instanceId])).toEqual([
+      ["claude-code", null],
+      ["codex", null],
+      ["codex", null],
+      ["codex", null],
+      ["claude-ai", "claude-main"],
     ]);
   });
 });
@@ -638,6 +653,22 @@ describe("assistant integration picker", () => {
     expect(picker.items.map(brief)).toEqual([
       ["Linear", null, true, true, "Always on for Codex (set up in Codex)"],
       ["Notion", "Connected", true, false, null],
+    ]);
+  });
+
+  it("keeps a selected name that only a native copy shares", () => {
+    const picker = assistantIntegrationPicker({
+      state: state({
+        catalog: [linear],
+        detected: [detected("linear", "codex", "linear", { instanceId: "codex-main" as never })],
+      }),
+      selection: { mode: "selected", names: ["linear"] },
+      driverKind: "codex",
+      instanceId: "codex-main",
+    });
+    expect(picker.items.map((item) => [item.key, item.status?.label ?? null])).toEqual([
+      ["missing:linear", "Not connected"],
+      ["native:linear", null],
     ]);
   });
 
