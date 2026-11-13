@@ -87,6 +87,13 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -1651,35 +1658,44 @@ function ProviderIdleTimeoutInput({
   value: number;
   onCommit: (minutes: number) => void;
 }) {
-  const [draft, setDraft] = useState(String(value));
-  const [draftSource, setDraftSource] = useState(value);
-  if (draftSource !== value) {
-    setDraftSource(value);
-    setDraft(String(value));
+  const [draft, setDraft] = useState<number | null>(value);
+  const [savedValue, setSavedValue] = useState(value);
+  if (savedValue !== value) {
+    setSavedValue(value);
+    setDraft(value);
   }
 
   return (
-    <Input
-      size="sm"
-      type="number"
-      min={MIN_PROVIDER_IDLE_TIMEOUT_MINUTES}
-      max={MAX_PROVIDER_IDLE_TIMEOUT_MINUTES}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_PROVIDER_IDLE_TIMEOUT_MINUTES &&
-          parsed <= MAX_PROVIDER_IDLE_TIMEOUT_MINUTES
-        ) {
-          onCommit(parsed);
-        }
-      }}
-      onBlur={() => setDraft(String(value))}
-      aria-label="Minutes before an idle Claude agent closes"
-    />
+    <div className="flex shrink-0 items-center gap-2">
+      <NumberField
+        value={draft}
+        min={MIN_PROVIDER_IDLE_TIMEOUT_MINUTES}
+        max={MAX_PROVIDER_IDLE_TIMEOUT_MINUTES}
+        step={1}
+        size="sm"
+        className="w-32"
+        onValueChange={setDraft}
+        onValueCommitted={(next) => {
+          if (next === null) {
+            setDraft(value);
+            return;
+          }
+          const minutes = Math.min(
+            MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+            Math.max(MIN_PROVIDER_IDLE_TIMEOUT_MINUTES, Math.round(next)),
+          );
+          setDraft(minutes);
+          if (minutes !== value) onCommit(minutes);
+        }}
+      >
+        <NumberFieldGroup>
+          <NumberFieldDecrement aria-label="Decrease close idle Claude agents" />
+          <NumberFieldInput aria-label="Minutes before an idle Claude agent closes" />
+          <NumberFieldIncrement aria-label="Increase close idle Claude agents" />
+        </NumberFieldGroup>
+      </NumberField>
+      <span className="text-xs text-muted-foreground">minutes</span>
+    </div>
   );
 }
 
@@ -1695,7 +1711,7 @@ function ScopedProviderIdleTimeoutRow() {
     <SettingsRow
       serverScoped
       settingKeys={["providerIdleTimeoutMinutes"]}
-      title="Close idle Claude agents"
+      {...searchableSetting("close-idle-claude-agents")}
       description="Minutes without activity before an idle Claude agent process is closed. The conversation resumes on your next message."
       resetAction={
         settings.providerIdleTimeoutMinutes !==

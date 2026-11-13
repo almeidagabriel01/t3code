@@ -1,4 +1,7 @@
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+} from "@t3tools/contracts/settings";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -44,32 +47,42 @@ function setup(minutes: number, scoped = true) {
   mocks.update.mockReset();
 }
 
-const input = (screen: { getByRole: (role: "spinbutton") => { element(): Element } }) =>
-  screen.getByRole("spinbutton").element() as HTMLInputElement;
+const field = (screen: { getByLabelText: (label: string) => { element(): Element } }) =>
+  screen.getByLabelText("Minutes before an idle Claude agent closes").element() as HTMLInputElement;
 
-it("saves only whole minutes inside the allowed range and restores the saved value on blur", async () => {
+it("saves whole minutes clamped to the allowed range and keeps the saved value when cleared", async () => {
   setup(10);
   await using screen = await render(<ProviderIdleTimeoutRow />, { router: false }); // a settings row needs no route
   await expect.element(screen.getByText("Close idle Claude agents")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reset close idle Claude agents" }).query()).toBeNull();
 
-  await userEvent.fill(input(screen), "25");
-  expect(mocks.update).toHaveBeenLastCalledWith({ providerIdleTimeoutMinutes: 25 });
+  await userEvent.fill(field(screen), "25");
+  field(screen).blur();
+  await expect
+    .poll(() => mocks.update.mock.calls.at(-1)?.[0])
+    .toEqual({
+      providerIdleTimeoutMinutes: 25,
+    });
+
+  await userEvent.fill(field(screen), "999");
+  field(screen).blur();
+  await expect
+    .poll(() => mocks.update.mock.calls.at(-1)?.[0])
+    .toEqual({
+      providerIdleTimeoutMinutes: MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+    });
 
   mocks.update.mockClear();
-  await userEvent.fill(input(screen), "0");
-  await userEvent.fill(input(screen), "1.5");
-  await userEvent.fill(input(screen), "999");
+  await userEvent.clear(field(screen));
+  field(screen).blur();
+  await expect.poll(() => field(screen).value).toBe("10");
   expect(mocks.update).not.toHaveBeenCalled();
-
-  input(screen).blur();
-  await expect.poll(() => input(screen).value).toBe("10");
 });
 
 it("offers a reset to the default and hides itself outside a settings scope", async () => {
   setup(45);
   await using screen = await render(<ProviderIdleTimeoutRow />, { router: false }); // a settings row needs no route
-  expect(input(screen).value).toBe("45");
+  expect(field(screen).value).toBe("45");
   await screen.getByRole("button", { name: "Reset close idle Claude agents" }).click();
   expect(mocks.update).toHaveBeenCalledWith({
     providerIdleTimeoutMinutes: DEFAULT_UNIFIED_SETTINGS.providerIdleTimeoutMinutes,
