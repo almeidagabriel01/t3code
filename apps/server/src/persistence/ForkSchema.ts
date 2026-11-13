@@ -108,6 +108,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE kanban_cards ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'`;
     yield* sql`ALTER TABLE kanban_cards ADD COLUMN cover_attachment_id TEXT`;
   }
+  // Set on cards the problem detector filed (see problems/ProblemDetector.ts).
+  if (!cardColumns.some((column) => column.name === "problem_json")) {
+    yield* sql`ALTER TABLE kanban_cards ADD COLUMN problem_json TEXT`;
+  }
   yield* sql`CREATE INDEX IF NOT EXISTS kanban_cards_parent_idx ON kanban_cards(parent_card_id)`;
   // Board snapshot and column neighbour lookups: live cards per column in order.
   yield* sql`
@@ -448,6 +452,60 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
       -- 'notify' rows are an assistant's messages to the user, counted against their own limit.
       source TEXT NOT NULL,
       label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `;
+  // Problem detection (problems/ProblemDetector.ts). One row per failure occurrence, keyed by what
+  // happened rather than by its delivery, so a replayed or retried event is stored once.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_occurrences (
+      event_key TEXT PRIMARY KEY,
+      fingerprint TEXT,
+      project_id TEXT NOT NULL,
+      -- Null when the occurrence is not a problem by itself; three in a day still make one.
+      kind TEXT,
+      reason TEXT,
+      report_json TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      processed_at TEXT,
+      skip_reason TEXT
+    )
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS problem_occurrences_pending_idx
+    ON problem_occurrences(occurred_at) WHERE processed_at IS NULL
+  `;
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS problem_occurrences_fingerprint_idx
+    ON problem_occurrences(fingerprint, occurred_at)
+  `;
+  // One row per cause; `generation` counts its cards, so a cause that returns after its card was
+  // done gets a new card.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_causes (
+      fingerprint TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      card_id TEXT NOT NULL,
+      card_number INTEGER NOT NULL,
+      previous_card_number INTEGER,
+      kind TEXT NOT NULL,
+      count INTEGER NOT NULL,
+      owner_id TEXT,
+      ignored INTEGER NOT NULL DEFAULT 0,
+      evidence_json TEXT NOT NULL,
+      last_comment_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE TABLE IF NOT EXISTS problem_cards (card_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL)`;
+  // A card whose owner has not been woken yet; held while autonomy is paused or at its limits.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS problem_wakes (
+      card_id TEXT PRIMARY KEY,
+      owner_id TEXT,
+      project_id TEXT NOT NULL,
+      reassigned INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )
   `;
