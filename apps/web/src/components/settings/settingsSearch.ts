@@ -72,6 +72,8 @@ export interface SettingsSearchItem {
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
   readonly windowsOnly?: boolean;
+  /** macOS and Windows, where the desktop app can register a login item. */
+  readonly loginItemsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
   readonly cloudOnly?: boolean;
@@ -1157,6 +1159,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "open-at-login",
+    title: "Open at login",
+    to: "/settings/general",
+    searchTerms: ["launch start startup sign in login items restart reboot background"],
+    desktopOnly: true,
+    loginItemsOnly: true,
+  },
+  {
     id: "show-in-menu-bar",
     title: "Show in menu bar",
     to: "/settings/general",
@@ -2061,7 +2071,8 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
-      (!item.windowsOnly || isWindowsPlatform(platform)),
+      (!item.windowsOnly || isWindowsPlatform(platform)) &&
+      (!item.loginItemsOnly || isMacPlatform(platform) || isWindowsPlatform(platform)),
   );
 }
 
