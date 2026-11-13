@@ -90,8 +90,10 @@ vi.mock("./useAssistantFlows", () => ({
   }),
 }));
 vi.mock("react-native", () => ({
-  View: (props: { children?: ReactNode; accessibilityLabel?: string }) => (
-    <div aria-label={props.accessibilityLabel}>{props.children}</div>
+  View: (props: { children?: ReactNode; accessibilityLabel?: string; testID?: string }) => (
+    <div aria-label={props.accessibilityLabel} data-testid={props.testID}>
+      {props.children}
+    </div>
   ),
   Pressable: (props: {
     accessibilityLabel?: string;
@@ -177,16 +179,27 @@ vi.mock("./AssistantSandboxSection", () => ({
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
 vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.openWork }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
+// A shell whose status follows the presence a test gives its thread.
+const shellOf = (id: string) => ({
+  environmentId: "hub",
+  id,
+  hasPendingApprovals: mocks.presence[id]?.mood === "needs",
+  hasPendingUserInput: false,
+  pendingSubagentRequest: null,
+  pendingGuestMessageCount: 0,
+  runtime: mocks.presence[id]?.mood === "working" ? { status: "running" } : null,
+});
 vi.mock("../../state/entities", () => ({
   useProjects: () => [{ environmentId: "hub", id: "p1", title: "Website" }],
   useThreadShell: (ref: { threadId: string } | null) =>
-    ref === null ? null : { id: ref.threadId },
+    ref === null ? null : shellOf(ref.threadId),
   useQuietThreadShells: () =>
-    (mocks.entries ?? defaults()).active.map((entry) => ({
-      environmentId: "hub",
-      id: (entry as ReturnType<typeof assistant>).assistant.threadId,
-    })),
+    (mocks.entries ?? defaults()).active.map((entry) =>
+      shellOf((entry as ReturnType<typeof assistant>).assistant.threadId),
+    ),
 }));
+vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set() }));
+vi.mock("../threads/threadListV2", () => ({ threadHasUnseenCompletion: () => false }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({
     savedConnectionsById: { lab: { environmentLabel: "Lab" }, hub: { environmentLabel: "Hub" } },
@@ -270,11 +283,12 @@ describe("assistants page", () => {
       ],
       archived: [assistant("a5", "Old", { archivedAt: "2026-01-01T00:00:00Z" })],
       teams: [
-        { environmentId: "hub", team: { id: "g1", name: "Growth", memberIds: ["a1"] } },
+        { environmentId: "hub", team: { id: "g1", name: "Growth", memberIds: ["a1", "a4"] } },
         { environmentId: "hub", team: { id: "g2", name: "Empty", memberIds: [] } },
       ],
     };
     mocks.presence["t-a4"] = { mood: "needs", detail: "Needs your approval", since: null };
+    mocks.presence["t-a1"] = { mood: "working", detail: "Reading", since: null };
     render();
     const text = container.textContent ?? "";
     const order = ["Needs you", "Growth", "Empty", "Website", "Unassigned", "Archived"].map(
@@ -285,6 +299,14 @@ describe("assistants page", () => {
     expect(text).toContain("No members yet.");
     expect(byLabel("Scout, Website")).not.toBeNull();
     expect(text).toContain("Needs your approval");
+    // Cards and group headers say their status in a thread row's words.
+    expect(
+      byLabel("Asker, All projects")?.querySelector('[data-testid="assistant-status"]')
+        ?.textContent,
+    ).toBe("Approval");
+    const groupStatus = container.querySelectorAll('[data-testid="group-status"]');
+    // Asker waits under "Needs you", yet its group still says so.
+    expect([...groupStatus].map((node) => node.textContent)).toEqual(["Approval"]);
     // A member card names its groups; an unassigned one has none.
     expect(byLabel("Jarvis, All projects")?.textContent).toContain("Growth");
     expect(byLabel("Loose, All projects")?.textContent).not.toContain("Growth");

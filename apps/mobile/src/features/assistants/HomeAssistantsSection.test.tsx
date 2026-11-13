@@ -1,5 +1,5 @@
 import { RegistryProvider } from "@effect/atom-react";
-import { act, type ReactNode } from "react";
+import { act, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -20,18 +20,37 @@ const { mocks } = vi.hoisted(() => ({
     navigate: vi.fn(),
     reset: vi.fn(),
     archive: vi.fn(),
+    version: 0,
+    listeners: new Set<() => void>(),
+    workRenders: 0,
+    teamRenders: 0,
+    running: new Set<string>(),
+    expandedGroups: [] as string[],
+    toggleGroup: vi.fn(),
+    pending: {} as Record<string, { id: string; kind: string; createdAt: string }>,
+    extraTasks: new Map<
+      string,
+      Array<{ threadId: string; title: string; createdAt: string; dismissedAt?: string | null }>
+    >(),
     teams: [] as Array<{
       environmentId: string;
       team: {
         id: string;
         name: string;
         memberIds: string[];
-        chat?: { unreadCount: number; latestSeq: number };
+        chat?: {
+          unreadCount: number;
+          latestSeq: number;
+          pausedTasks?: number;
+          failedTasks?: number;
+          threadIds?: string[];
+        };
       };
     }>,
     collapsed: false,
     showAll: false,
     rowWidth: undefined as number | undefined,
+    metaWidth: undefined as number | undefined,
     tasks: [] as Array<{
       threadId: string;
       title: string;
@@ -76,9 +95,89 @@ const { mocks } = vi.hoisted(() => ({
     }>,
   },
 }));
+const { helpers } = vi.hoisted(() => {
+  const reactHooks = { useSyncExternalStore: undefined as unknown as typeof useSyncExternalStore };
+  const shellBase = (id: string) => ({
+    archivedAt: null,
+    lineage: { parentThreadId: null },
+    delegatedFrom: null,
+    pendingRequest: mocks.pending[id] ?? null,
+  });
+  const shellCache = new Map<string, { signature: string; shell: { id: string } }>();
+  const quietShells = () => {
+    // Re-rendered on every pushed update, as the quiet shell list is.
+    reactHooks.useSyncExternalStore(
+      (listener) => {
+        mocks.listeners.add(listener);
+        return () => mocks.listeners.delete(listener);
+      },
+      () => mocks.version,
+    );
+    const built = [
+      ...mocks.active.flatMap((entry) =>
+        entry.assistant.threadId === null
+          ? []
+          : [
+              {
+                ...shellBase(entry.assistant.threadId),
+                environmentId: entry.environmentId,
+                id: entry.assistant.threadId,
+              },
+            ],
+      ),
+      ...[...mocks.liveWork.subagents.values()].flat().map((child) => ({
+        ...shellBase(child.id),
+        ...child,
+      })),
+      ...[...mocks.tasks, ...[...mocks.extraTasks.values()].flat()].map((task) => {
+        const mood = mocks.presence[task.threadId]?.mood;
+        return {
+          ...shellBase(task.threadId),
+          environmentId: "hub",
+          id: task.threadId,
+          title: task.title,
+          settledOverride: mocks.settled.has(task.threadId) ? "settled" : null,
+          settledAt: null,
+          snoozedUntil: mocks.snoozed.has(task.threadId) ? "2026-12-01T00:00:00.000Z" : null,
+          updatedAt: task.createdAt,
+          runtime:
+            mood === "working"
+              ? { status: "running" }
+              : mood === "failed"
+                ? { status: "failed" }
+                : null,
+        };
+      }),
+    ];
+    // A shell keeps its identity until it changes; running tasks change on every pushed update.
+    return built.map((shell) => {
+      const signature = `${JSON.stringify(shell)}:${mocks.running.has(shell.id) ? mocks.version : 0}`;
+      const cached = shellCache.get(shell.id);
+      if (cached?.signature === signature) return cached.shell;
+      shellCache.set(shell.id, { signature, shell });
+      return shell;
+    });
+  };
+
+  const tasksByAssistant = () => new Map([["hub:a0", mocks.tasks], ...mocks.extraTasks]);
+  return { helpers: { quietShells, tasksByAssistant, reactHooks } };
+});
+helpers.reactHooks.useSyncExternalStore = useSyncExternalStore;
 vi.mock("react-native", () => ({
-  View: (props: { children?: ReactNode; testID?: string; className?: string }) => (
-    <div data-testid={props.testID} className={props.className}>
+  View: (props: {
+    children?: ReactNode;
+    testID?: string;
+    className?: string;
+    onLayout?: (event: { nativeEvent: { layout: { width: number } } }) => void;
+  }) => (
+    <div
+      data-testid={props.testID}
+      className={props.className}
+      ref={(node) => {
+        if (node && props.onLayout && mocks.metaWidth !== undefined)
+          props.onLayout({ nativeEvent: { layout: { width: mocks.metaWidth } } });
+      }}
+    >
       {props.children}
     </div>
   ),
@@ -166,42 +265,26 @@ vi.mock("../../components/ui/Menu", () => ({
   ),
 }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-06T12:00:00Z") }));
-vi.mock("../../state/entities", () => ({
-  useThreadShell: (ref: { threadId: string } | null) =>
-    ref === null ? null : { id: ref.threadId, lastVisitedAt: "x" },
-  useQuietThreadShells: () => [
-    ...mocks.active.flatMap((entry) =>
-      entry.assistant.threadId === null
-        ? []
-        : [{ environmentId: entry.environmentId, id: entry.assistant.threadId }],
-    ),
-    ...[...mocks.liveWork.subagents.values()].flat(),
-    ...mocks.tasks.map((task) => {
-      const mood = mocks.presence[task.threadId]?.mood;
-      return {
-        environmentId: "hub",
-        id: task.threadId,
-        title: task.title,
-        settledOverride: mocks.settled.has(task.threadId) ? "settled" : null,
-        settledAt: null,
-        snoozedUntil: mocks.snoozed.has(task.threadId) ? "2026-12-01T00:00:00.000Z" : null,
-        updatedAt: task.createdAt,
-        runtime:
-          mood === "working"
-            ? { status: "running" }
-            : mood === "failed"
-              ? { status: "failed" }
-              : null,
-      };
-    }),
-  ],
-  useProjects: () => mocks.projects,
-}));
-vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
-  useAssistantLiveWork: () => mocks.liveWork,
-  useAssistantTasksByAssistant: () => new Map([["hub:a0", mocks.tasks]]),
-}));
+vi.mock("../../state/entities", () => ({ useQuietThreadShells: helpers.quietShells }));
+vi.mock("../../state/assistants", async () => {
+  const { buildThreadOwnership } = await import("../../state/threadOwnership");
+  return {
+    useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
+    useAssistantLiveWork: () => mocks.liveWork,
+    useAssistantTasksByAssistant: helpers.tasksByAssistant,
+    useThreadOwnership: () =>
+      buildThreadOwnership({
+        shells: helpers.quietShells() as never,
+        active: mocks.active,
+        activeTeams: mocks.teams.map((entry) => ({
+          environmentId: entry.environmentId,
+          team: { id: entry.team.id, chat: { threadIds: entry.team.chat?.threadIds ?? [] } },
+        })),
+        tasksByAssistant: helpers.tasksByAssistant(),
+      }),
+  };
+});
+vi.mock("../../state/decisions", () => ({ useDecisionEntries: () => ({ open: [] }) }));
 vi.mock("../../state/presentation", async () => {
   const { Atom } = await import("effect/reactivity");
   return { threadListEnvironmentsAtom: Atom.make({ pinningEnvironmentIds: new Set(["hub"]) }) };
@@ -288,19 +371,29 @@ vi.mock("./useAssistantFlows", () => ({
     archive: mocks.archive,
     dismissTask: mocks.dismissTask,
   }),
-  useAssistantTeamFlows: () => ({
-    canAct: true,
-    canMarkRead: true,
-    archive: mocks.archiveTeam,
-    markRead: mocks.markRead,
-    markUnread: mocks.markUnread,
-  }),
+  // Only a folder row asks for this, so its calls count folder renders.
+  useAssistantTeamFlows: () => {
+    mocks.teamRenders += 1;
+    return {
+      canAct: true,
+      canMarkRead: true,
+      archive: mocks.archiveTeam,
+      markRead: mocks.markRead,
+      markUnread: mocks.markUnread,
+    };
+  },
 }));
 vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
-vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.work }));
+vi.mock("./assistantWorkTarget", () => ({
+  // Only an assistant's own row asks for this, so its calls count that row's renders.
+  useOpenAssistantWork: () => {
+    mocks.workRenders += 1;
+    return mocks.work;
+  },
+}));
 vi.mock("../home/useHomeSectionPreferences", () => ({
   useHomeSectionPreferences: () => ({
     assistantsCollapsed: mocks.collapsed,
@@ -309,6 +402,8 @@ vi.mock("../home/useHomeSectionPreferences", () => ({
     toggleAssistantsShowAll: mocks.toggleShowAll,
     assistantsFolded: mocks.folded,
     toggleAssistantFolded: mocks.toggleFold,
+    assistantsExpandedGroups: mocks.expandedGroups,
+    toggleAssistantsGroup: mocks.toggleGroup,
   }),
 }));
 
@@ -333,7 +428,7 @@ const team = (
   name: string,
   memberIds: string[],
   environmentId = "hub",
-  chat?: { unreadCount: number; latestSeq: number },
+  chat?: { unreadCount: number; latestSeq: number; pausedTasks?: number; failedTasks?: number },
 ) => ({
   environmentId,
   team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
@@ -388,11 +483,19 @@ beforeEach(() => {
     collapsed: false,
     showAll: false,
     rowWidth: undefined,
+    metaWidth: undefined,
     presence: {},
     notified: new Set(),
     active: make(2),
     teams: [],
     tasks: [],
+    extraTasks: new Map(),
+    pending: {},
+    expandedGroups: [],
+    version: 0,
+    workRenders: 0,
+    teamRenders: 0,
+    running: new Set(),
     liveWork: { sites: [], subagents: new Map() },
     folded: new Set(),
     settled: new Set(),
@@ -413,6 +516,7 @@ beforeEach(() => {
     mocks.markUnread,
     mocks.toggleShowAll,
     mocks.toggleFold,
+    mocks.toggleGroup,
     mocks.pin,
     mocks.unpin,
   ]) {
@@ -421,34 +525,30 @@ beforeEach(() => {
 });
 afterEach(() => act(() => root.unmount()));
 
+const assistantRows = () =>
+  [...container.querySelectorAll('[aria-label^="Bot"]')]
+    .map((row) => row.getAttribute("aria-label")!)
+    .filter((label) => !/ (actions|tasks)$/.test(label));
+const indicators = () =>
+  [...container.querySelectorAll('[data-testid="zone-indicator"]')].map(
+    (node) => node.getAttribute("aria-label") ?? node.textContent,
+  );
+const pushShellUpdate = () =>
+  act(() => {
+    mocks.version += 1;
+    for (const listener of mocks.listeners) listener();
+  });
+
 describe("HomeAssistantsSection", () => {
-  it("shows where an assistant works and its live subagents, and opens each", async () => {
+  it("draws no work-site icons, lists live subagents and opens each", async () => {
     mocks.active = [bot(0, { scope: "project", projectId: "p1" })];
-    mocks.projects = [
-      { environmentId: "hub", id: "p1", title: "Website" },
-      { environmentId: "hub", id: "p2", title: "Docs" },
-      { environmentId: "hub", id: "p3", title: "Api" },
-      { environmentId: "hub", id: "home", title: "Assistants", managedRole: "assistants" } as never,
-    ];
-    const site = { environmentId: "hub", assistantId: "a0", face: "working" };
     mocks.liveWork = {
-      sites: ["p1", "p2", "p3", "home"].map((projectId) => ({
-        ...site,
-        projectId,
-        threadId: `task-${projectId}`,
-      })),
+      sites: [{ environmentId: "hub", assistantId: "a0", projectId: "p1", threadId: "x" }],
       subagents: new Map([["hub:a0", [{ id: "child-1", title: "Review the diff" }]]]),
     };
     render();
-    expect([...container.querySelectorAll("em")].map((favicon) => favicon.textContent)).toEqual([
-      "fav:Website",
-      "fav:Docs",
-    ]);
-    expect(container.textContent).toContain("+1");
-    // The favicons stand in for the configured-project pill.
+    expect(container.querySelector("em")).toBeNull();
     expect(container.querySelector('[data-testid="assistant-project"]')).toBeNull();
-    await click("Working in Docs");
-    expect(mocks.open).toHaveBeenLastCalledWith({ threadId: "task-p2" });
     await click("subagent:Review the diff:sidebar");
     expect(mocks.open).toHaveBeenLastCalledWith({ threadId: "child-1" });
   });
@@ -533,7 +633,7 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.unpin).toHaveBeenCalledWith(expect.objectContaining({ id: "c2" }));
   });
 
-  it("numbers for ⌘1–9 exactly the rows the section draws, each thread once", async () => {
+  it("numbers for ⌘1–9 exactly the rows the zone draws: ungrouped first, then open folders", async () => {
     mocks.active = make(2);
     mocks.tasks = [
       { threadId: "w1", title: "Add retry", createdAt: "2026-11-02T00:00:00.000Z" },
@@ -546,15 +646,15 @@ describe("HomeAssistantsSection", () => {
       subagents: new Map([["hub:a1", [{ id: "c1", title: "Child", environmentId: "hub" }]]]),
     };
     await render(true, new Map(), { drawn: true });
-    expect(jump()).toBe("t0,w1,t1,c1");
+    expect(jump()).toBe("t0,w1");
     await click("settled:1");
+    expect(jump()).toBe("t0,w1,w2");
+    mocks.expandedGroups = ["group:hub:g1"];
+    await render(true, new Map(), { drawn: true });
     expect(jump()).toBe("t0,w1,w2,t1,c1");
-    // An open group draws its members first; the list's copy is not numbered twice.
-    await click("Show Finance members");
-    expect(jump()).toBe("t1,c1,t0,w1,w2");
     mocks.folded = new Set(["hub:a0"]);
     await render(true, new Map(), { drawn: true });
-    expect(jump()).toBe("t1,c1,t0");
+    expect(jump()).toBe("t0,t1,c1");
     mocks.collapsed = true;
     await render(true, new Map(), { drawn: true });
     expect(jump()).toBe("");
@@ -563,73 +663,91 @@ describe("HomeAssistantsSection", () => {
     expect(jump()).toBe("");
   });
 
-  it("keeps the project pill and no subagent rows once the work ends", () => {
-    mocks.active = [bot(0, { scope: "project", projectId: "p1" })];
-    render(false);
-    expect(container.querySelector("em")).toBeNull();
-    expect(container.querySelector('[aria-label^="subagent:"]')).toBeNull();
-    expect(container.querySelector('[data-testid="assistant-project"]')).not.toBeNull();
-    // Nothing under it, so nothing to fold.
-    expect(container.querySelector('[aria-label="Hide Bot0 tasks"]')).toBeNull();
-  });
-
-  it("renders nothing without assistants or groups, but a group alone still shows", () => {
-    mocks.active = [];
-    render();
-    expect(container.textContent).toBe("");
-    mocks.teams = [team("g1", "Finance", [])];
-    render();
-    expect(container.textContent).toContain("Finance");
-  });
-
-  it("lists the unassigned assistants without a label, and toggles the whole section", async () => {
-    render();
-    expect(container.textContent).toContain("symbol:chevron.down");
-    expect(container.textContent).not.toContain("Unassigned");
-    expect(byLabel("Bot0")).not.toBeNull();
-    await click("Assistants");
-    expect(mocks.toggle).toHaveBeenCalledOnce();
-  });
-
-  it("lists assistants flat: needs you, working, then the rest, with one meta each", () => {
-    mocks.active = [
-      bot(0, { role: "CEO" }),
-      bot(1),
-      bot(2),
-      bot(3, { scope: "project", projectId: "p1" }),
-      bot(4, { scope: "project", projectId: "p1" }),
-      bot(5, { scope: "project", projectId: "p9" }),
-    ];
-    mocks.teams = [team("g1", "Finance", ["a1"])];
-    mocks.presence.t4 = { mood: "needs", detail: "Needs your approval in Finance", since: null };
-    mocks.presence.t2 = { mood: "working", detail: "Reading the repo", since: null };
-    mocks.presence.t1 = { mood: "failed", detail: "Last run failed", since: null };
-    mocks.showAll = true;
-    render(false);
+  it("draws an assistant in two groups once, in the first, and its task once; ungrouped come first", async () => {
+    mocks.active = make(3);
+    mocks.tasks = [{ threadId: "w1", title: "Add retry", createdAt: "2026-11-02T00:00:00.000Z" }];
+    mocks.teams = [team("g1", "Finance", ["a0", "a1"]), team("g2", "Ops", ["a0"])];
+    mocks.expandedGroups = ["group:hub:g1", "group:hub:g2"];
+    const renderThread = vi.fn(hostRow);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(assistantRows()).toEqual(["Bot2", "Bot0", "Bot1"]);
+    expect(hostRows()).toEqual(["w1:card:compact"]);
     const text = container.textContent ?? "";
-    for (const label of ["Unassigned", "Groups", "Idle"]) {
-      expect(text).not.toContain(label);
-    }
-    const order = ["Bot4", "Bot2", "Bot0", "Bot1", "Bot3", "Bot5"].map((name) =>
-      text.lastIndexOf(name),
-    );
-    expect(order).toEqual([...order].sort((x, y) => x - y));
-    const statuses = Array.from(container.querySelectorAll('[data-testid="assistant-status"]'));
-    expect(statuses.map((node) => node.textContent)).toEqual([
-      "Needs you",
-      "Working",
-      "Last run failed",
-    ]);
-    expect(statuses[1]?.className).toContain("text-adaptive-sky-600-400");
-    expect(statuses[2]?.className).toContain("text-danger-foreground");
-    const pills = Array.from(container.querySelectorAll('[data-testid="assistant-project"]'));
-    expect(pills.map((node) => node.textContent)).toEqual(["All projects", "Website", "Project"]);
-    expect(text).toContain("CEO");
-    expect(text).toContain("av:Bot2:working");
-    render(true);
-    expect(container.querySelector('[data-testid="assistant-status"]')?.className).toContain(
-      "text-warning-foreground",
-    );
+    expect(text.indexOf("Bot2")).toBeLessThan(text.indexOf("Finance"));
+    expect(text.indexOf("Finance")).toBeLessThan(text.indexOf("Bot0"));
+    // Ops lists only a0, already drawn in Finance: it is empty here and has no chevron.
+    expect(byLabel("Show Ops members")).toBeNull();
+    expect(byLabel("Hide Ops members")).toBeNull();
+    expect(container.querySelector('[data-testid="group-status"]')?.textContent).toBe("empty");
+    expect(container.querySelector('[data-testid="group-avatars"]')).toBeNull();
+  });
+
+  it.each([
+    ["needs you", { pending: true, failed: 1, paused: 2, running: true, unread: 3 }, "Needs you"],
+    ["failed", { pending: false, failed: 1, paused: 2, running: true, unread: 3 }, "Failed"],
+    ["paused", { pending: false, failed: 0, paused: 2, running: true, unread: 3 }, "2 paused"],
+    ["running", { pending: false, failed: 0, paused: 0, running: true, unread: 3 }, "1 running"],
+    ["unread", { pending: false, failed: 0, paused: 0, running: false, unread: 3 }, "3"],
+  ] as const)("a folder shows one indicator, %s first", (_name, state, label) => {
+    mocks.active = [bot(0, { threadId: "assistant:a0:1" }), bot(1)];
+    mocks.teams = [
+      team("g1", "Finance", ["a0", "a1"], "hub", {
+        unreadCount: state.unread,
+        latestSeq: 9,
+        pausedTasks: state.paused,
+        failedTasks: state.failed,
+      }),
+    ];
+    if (state.running) mocks.presence.t1 = { mood: "working", detail: "W", since: null };
+    if (state.pending)
+      mocks.pending["assistant:a0:1"] = {
+        id: "r1",
+        kind: "command",
+        createdAt: "2026-11-01T00:00:00.000Z",
+      };
+    render();
+    expect(indicators()).toEqual([label]);
+    expect(container.textContent).not.toContain("spinner");
+  });
+
+  it("an assistant row shows its full name, the role muted, and one static indicator", () => {
+    mocks.active = [
+      bot(0, { role: "CEO", threadId: "assistant:a0:1" }),
+      bot(1),
+      bot(2, { role: "Ops" }),
+    ];
+    mocks.presence.t1 = { mood: "working", detail: "Reading the repo", since: null };
+    mocks.presence["assistant:a0:1"] = { mood: "needs", detail: "Needs you", since: null };
+    mocks.pending["assistant:a0:1"] = {
+      id: "r1",
+      kind: "user_input",
+      createdAt: "2026-11-01T00:00:00.000Z",
+    };
+    // A presence that says "needs" without a listed wait gets no indicator.
+    mocks.presence.t2 = { mood: "needs", detail: "Needs you", since: null };
+    render(false);
+    expect(assistantRows()).toEqual(["Bot0, CEO, Needs you", "Bot1, Working", "Bot2, Ops"]);
+    expect(indicators()).toEqual(["Needs you", "Working"]);
+    expect(container.textContent).toContain("CEO");
+    expect(container.textContent).not.toContain("spinner");
+    // Too narrow for the role: the name stays, the role leaves.
+    mocks.rowWidth = 200;
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(false);
+    expect(container.textContent).not.toContain("CEO");
+    expect(container.textContent).toContain("Bot0");
+    // Wide enough for the role, but an indicator leaves only a sliver: no fragment of it shows.
+    Object.assign(mocks, { rowWidth: 320, metaWidth: 40 });
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(false);
+    expect(container.textContent).not.toContain("CEO");
+    mocks.metaWidth = 120;
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(false);
+    expect(container.textContent).toContain("CEO");
   });
 
   it("lists an assistant's tasks under it with their state, and opens one on tap", async () => {
@@ -655,7 +773,6 @@ describe("HomeAssistantsSection", () => {
       "Fix flaky test, Failed",
       "Old chore, Done",
     ]);
-    expect(container.textContent).toContain("av:Bot0:working");
     await click("Fix flaky test, Failed");
     expect(mocks.open).toHaveBeenCalledWith({ threadId: "w2" });
     // Only finished and failed tasks can be dismissed: the running one has no menu.
@@ -671,7 +788,7 @@ describe("HomeAssistantsSection", () => {
   });
 
   it("names the environment only when assistants live on several", () => {
-    mocks.active = [bot(0), { ...bot(1), environmentId: "lab" }];
+    mocks.active = [bot(0, { role: "CEO" }), { ...bot(1), environmentId: "lab" }];
     render(
       true,
       new Map([
@@ -679,29 +796,24 @@ describe("HomeAssistantsSection", () => {
         ["lab", "Lab"],
       ]),
     );
-    expect(container.textContent).toContain("Home Mac");
+    expect(container.textContent).toContain("CEO · Home Mac");
     expect(container.textContent).toContain("Lab");
     mocks.active = make(2);
     render(true, new Map([["hub", "Home Mac"]]));
     expect(container.textContent).not.toContain("Home Mac");
-    mocks.active = [bot(0), { ...bot(1), environmentId: "lab" }];
-    render(true, new Map());
-    expect(container.textContent).not.toContain("Lab");
   });
 
-  it("a group with unread messages shows a count and offers Mark as read; otherwise Mark as unread", async () => {
+  it("a folder with unread messages offers Mark as read; otherwise Mark as unread", async () => {
     mocks.teams = [
       team("g1", "Busy", [], "hub", { unreadCount: 120, latestSeq: 130 }),
       team("g2", "Quiet", [], "hub", { unreadCount: 0, latestSeq: 5 }),
       team("g3", "Empty", [], "hub", { unreadCount: 0, latestSeq: 0 }),
     ];
     render();
-    const badges = Array.from(container.querySelectorAll('[data-testid="group-unread"]'));
-    expect(badges.map((node) => node.textContent)).toEqual(["99+"]);
-    expect(byLabel("Busy actions")).not.toBeNull();
+    expect(
+      [...container.querySelectorAll('[data-testid="zone-indicator"]')].map((n) => n.textContent),
+    ).toEqual(["99+"]);
     expect(container.querySelectorAll('[aria-label="menu:Mark as read"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[aria-label="menu:Mark as unread"]')).toHaveLength(2);
-    // A group with no messages has nothing to mark.
     const unread = container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="menu:Mark as unread"]',
     );
@@ -712,50 +824,42 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.markUnread).toHaveBeenCalledWith(expect.objectContaining({ id: "g2" }));
   });
 
-  it("a group is one row: avatars with +N, running or empty status, members behind the chevron", async () => {
-    mocks.active = make(8);
-    mocks.teams = [
-      team("g1", "Everyone", ["a0", "a1", "a2", "a3", "a4", "a5"]),
-      team("g2", "Nobody", []),
-      team("g3", "Idle", ["a2", "a3", "a4", "a5", "a6", "a7"]),
-    ];
-    mocks.presence.t0 = { mood: "working", detail: "W", since: null };
-    mocks.presence.t1 = { mood: "working", detail: "W", since: null };
-    mocks.showAll = true;
+  it("the folder chevron toggles and remembers it; the name opens the chat", async () => {
+    mocks.teams = [team("g1", "Finance", ["a0"])];
     render();
-    // The tablet bar drops a running group's faces so its name stays whole.
-    const stacks = container.querySelectorAll('[data-testid="group-avatars"]');
-    expect(stacks).toHaveLength(2);
-    const stack = stacks[1]!;
-    expect(stack.querySelectorAll("i")).toHaveLength(4);
-    expect(stack.textContent).toContain("+2");
-    const statuses = Array.from(container.querySelectorAll('[data-testid="group-status"]'));
-    expect(statuses.map((node) => node.textContent)).toEqual(["spinner2 running", "empty"]);
-    expect(byLabel("Show Nobody members")).toBeNull();
-    const bot0 = () => container.querySelectorAll('[aria-label^="Bot0"]').length;
-    expect(bot0()).toBe(2);
-    await click("Show Everyone members");
-    expect(bot0()).toBe(4);
-    expect(byLabel("Hide Everyone members")?.getAttribute("aria-expanded")).toBe("true");
-    await click("Hide Everyone members");
-    expect(bot0()).toBe(2);
+    expect(assistantRows()).toEqual(["Bot1"]);
+    await click("Show Finance members");
+    expect(mocks.toggleGroup).toHaveBeenCalledWith("group:hub:g1");
     expect(mocks.chat).not.toHaveBeenCalled();
+    mocks.expandedGroups = ["group:hub:g1"];
+    render();
+    expect(assistantRows()).toEqual(["Bot1", "Bot0"]);
+    expect(byLabel("Hide Finance members")?.getAttribute("aria-expanded")).toBe("true");
+    await click("Finance");
+    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
+    mocks.chat.mockClear();
+    await click("menu:Open chat");
+    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
+    await click("menu:Archive group");
+    expect(mocks.archiveTeam).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
+    await click("menu:Edit group");
+    expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
+    await click("menu:New assistant in this group");
+    expect(mocks.editor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
   });
 
-  it("shows active assistants plus five recent ones, and Show all reveals the rest", async () => {
-    mocks.active = make(9);
+  it("shows active assistants plus five recent ungrouped ones, and Show all reveals the rest", async () => {
+    mocks.active = make(10);
+    mocks.teams = [team("g1", "Finance", ["a9"])];
     mocks.presence.t8 = { mood: "working", detail: "W", since: null };
     render();
-    const rows = () =>
-      container.querySelectorAll('[aria-label^="Bot"]:not([aria-label*="actions"])');
-    expect(rows()).toHaveLength(6);
-    expect(byLabel("Bot7")).toBeNull();
+    expect(assistantRows()).toHaveLength(6);
     expect(container.textContent).toContain("Show all (9)");
     await click("Show all");
     expect(mocks.toggleShowAll).toHaveBeenCalledOnce();
     mocks.showAll = true;
     render();
-    expect(byLabel("Bot7")).not.toBeNull();
+    expect(assistantRows()).toHaveLength(9);
     expect(byLabel("Show less")).not.toBeNull();
     mocks.showAll = false;
     mocks.active = make(3);
@@ -763,10 +867,13 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel("Show all")).toBeNull();
   });
 
-  it("opens a conversation from a row", async () => {
+  it("opens a conversation from a row; an assistant without a thread cannot be opened", async () => {
     render();
     await click("Bot1");
     expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
+    mocks.active = [bot(0, { threadId: null })];
+    render();
+    expect(byLabel("Bot0")?.disabled).toBe(true);
   });
 
   it("a row's menu resets, opens settings and archives; reset waits while it works", async () => {
@@ -788,22 +895,6 @@ describe("HomeAssistantsSection", () => {
     expect(byLabel("menu:Reset conversation")?.disabled).toBe(true);
   });
 
-  it("tapping a group opens its chat; its menu opens it, archives it, edits it and starts an assistant in it", async () => {
-    mocks.teams = [team("g1", "Finance", ["a0"])];
-    render();
-    await click("Finance");
-    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
-    mocks.chat.mockClear();
-    await click("menu:Open chat");
-    expect(mocks.chat).toHaveBeenCalledWith("hub", "g1");
-    await click("menu:Archive group");
-    expect(mocks.archiveTeam).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
-    await click("menu:Edit group");
-    expect(mocks.openTeam).toHaveBeenCalledWith("hub", "g1");
-    await click("menu:New assistant in this group");
-    expect(mocks.editor).toHaveBeenCalledWith("hub", null, { teamId: "g1" });
-  });
-
   it("the plus menu offers a new assistant, a new group and the describe flow", async () => {
     render();
     await click("menu:New assistant");
@@ -814,55 +905,66 @@ describe("HomeAssistantsSection", () => {
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistantDescribe");
   });
 
-  it("collapsed: shows five avatars then +N, and an avatar opens its conversation", async () => {
-    mocks.collapsed = true;
+  it("renders nothing without assistants or groups, and collapsed shows the label and a count only", async () => {
+    mocks.active = [];
+    render();
+    expect(container.textContent).toBe("");
+    mocks.teams = [team("g1", "Finance", [])];
+    render();
+    expect(container.textContent).toContain("Finance");
     mocks.active = make(7);
-    render();
-    expect(container.textContent).toContain("symbol:chevron.right");
-    expect(container.textContent).toContain("+2");
-    expect(byLabel("Bot4")).not.toBeNull();
-    expect(byLabel("Bot5")).toBeNull();
-    await click("Bot1");
-    expect(mocks.open).toHaveBeenCalledWith(expect.objectContaining({ id: "a1" }));
-    await click("2 more assistants");
-    expect(mocks.toggle).toHaveBeenCalledOnce();
-    expect(byLabel("Add")).not.toBeNull();
-    expect(container.textContent).not.toContain("Groups");
-  });
-
-  it.each([
-    ["working", "Bot0, working", "dot:working"],
-    ["attention", "Bot0, needs attention", "dot:completed"],
-  ] as const)("collapsed avatar shows %s state", (status, label, dot) => {
+    mocks.teams = [];
     mocks.collapsed = true;
-    mocks.active = make(1);
-    if (status === "working") mocks.presence.t0 = { mood: "working", detail: "W", since: null };
-    else mocks.notified.add("t0");
     render();
-    expect(byLabel(label)?.textContent).toContain(dot);
+    expect(container.querySelector('[data-testid="teams-count"]')?.textContent).toBe("7");
+    expect(container.querySelector("i")).toBeNull();
+    expect(assistantRows()).toEqual([]);
+    await click("Teams");
+    expect(mocks.toggle).toHaveBeenCalledOnce();
   });
 
-  it("expanded rows show the working and attention dots", () => {
-    mocks.presence.t0 = { mood: "working", detail: "W", since: null };
-    render();
-    expect(container.textContent).toContain("dot:working");
-    const status = () => container.querySelector('[data-testid="assistant-status"]');
-    expect(status()?.textContent).toBe("Working");
-    // A row too narrow for the text keeps the dot, and its label still says it works.
-    mocks.rowWidth = 296;
-    render();
-    expect(status()).toBeNull();
-    expect(container.textContent).toContain("dot:working");
-    expect(container.querySelector('[aria-label="Bot0, working"]')).not.toBeNull();
-    mocks.presence = {};
-    mocks.notified.add("t0");
-    render();
-    expect(container.textContent).toContain("dot:completed");
-  });
-
-  it("an assistant without a thread cannot be opened", () => {
-    mocks.active = [bot(0, { threadId: null })];
-    render();
-    expect(byLabel("Bot0")?.disabled).toBe(true);
+  it("pushed updates redraw no assistant or folder row; only the host's task rows run again", async () => {
+    // 37 assistants in 7 groups (some in two), 5 running one task each, 3 more with an idle task.
+    mocks.active = make(37);
+    mocks.showAll = true;
+    mocks.teams = Array.from({ length: 7 }, (_, g) =>
+      team(
+        `g${g}`,
+        `Group ${g}`,
+        Array.from({ length: 5 }, (_, m) => `a${(g * 4 + m) % 37}`),
+      ),
+    );
+    mocks.expandedGroups = mocks.teams.map(({ team: t }) => `group:hub:${t.id}`);
+    for (const i of [3, 9, 15, 21, 27]) {
+      mocks.extraTasks.set(`hub:a${i}`, [
+        { threadId: `run-${i}`, title: `Run ${i}`, createdAt: "2026-11-05T00:00:00.000Z" },
+      ]);
+      mocks.running.add(`run-${i}`);
+      mocks.presence[`run-${i}`] = { mood: "working", detail: "W", since: null };
+      mocks.presence[`t${i}`] = { mood: "working", detail: "W", since: null };
+    }
+    for (const i of [30, 31, 32]) {
+      mocks.extraTasks.set(`hub:a${i}`, [
+        { threadId: `idle-${i}`, title: `Idle ${i}`, createdAt: "2026-11-04T00:00:00.000Z" },
+      ]);
+    }
+    const renderThread = vi.fn(hostRow);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(assistantRows()).toHaveLength(37);
+    expect(hostRows()).toHaveLength(8);
+    mocks.workRenders = 0;
+    mocks.teamRenders = 0;
+    renderThread.mockClear();
+    for (let update = 0; update < 50; update += 1) await pushShellUpdate();
+    // Assistant and folder rows read plain props only.
+    expect([mocks.workRenders, mocks.teamRenders]).toEqual([0, 0]);
+    // Calls to the host's row function (a stand-in here): every drawn task row, idle ones too,
+    // because the task sections are rebuilt on each change.
+    expect(renderThread.mock.calls.length / 50).toBe(8);
+    // The assistant list wraps every entry anew on each change; the rows still hold.
+    mocks.active = mocks.active.map((entry) => ({ ...entry }));
+    mocks.teams = mocks.teams.map((entry) => ({ ...entry }));
+    await pushShellUpdate();
+    expect([mocks.workRenders, mocks.teamRenders]).toEqual([0, 0]);
   });
 });

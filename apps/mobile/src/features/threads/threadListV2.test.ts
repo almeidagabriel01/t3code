@@ -30,6 +30,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
+import { buildThreadOwnership } from "../../state/threadOwnership";
 import { threadJumpTarget, useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 
 const { jump } = vi.hoisted(() => ({
@@ -592,6 +593,47 @@ describe("buildThreadListV2Items", () => {
       ["match", "card"],
       ["settled", "slim"],
     ]);
+  });
+
+  it("leaves an active assistant's work to Teams, keeps an archived one's, and search finds both", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("mine"), title: "Fix login" }),
+      makeThread({ id: ThreadId.make("ada-task"), title: "Fix login retry" }),
+      makeThread({
+        id: ThreadId.make("ada-child"),
+        title: "Fix login child",
+        delegatedFrom: { environmentId, threadId: ThreadId.make("assistant:ada:1"), title: "" },
+      }),
+      // Its assistant is archived, so it lists nothing and the task returns to its project.
+      makeThread({ id: ThreadId.make("gone-task"), title: "Fix login old" }),
+    ];
+    const { ownedThreadKeys } = buildThreadOwnership({
+      shells: threads,
+      active: [{ environmentId, assistant: { id: "ada" } }],
+      activeTeams: [],
+      tasksByAssistant: new Map([[`${environmentId}:ada`, [{ threadId: "ada-task" }]]]),
+    });
+    const ids = (searchQuery: string) =>
+      buildThreadListV2Items({
+        threads,
+        environmentId: null,
+        searchQuery,
+        now: NOW,
+        hiddenThreadKeys: ownedThreadKeys,
+      }).items.map((item) => item.thread.id);
+    expect(ids("").toSorted()).toEqual(["gone-task", "mine"]);
+    expect(
+      getThreadListV2OrderedSection({
+        threads,
+        section: "active",
+        threadOrder: "activity",
+        now: NOW,
+        hiddenThreadKeys: ownedThreadKeys,
+      })
+        .map((thread) => thread.id)
+        .toSorted(),
+    ).toEqual(["gone-task", "mine"]);
+    expect(ids("login").toSorted()).toEqual(["ada-child", "ada-task", "gone-task", "mine"]);
   });
 
   it("forgives a typo even when a hidden thread matches the query exactly", () => {

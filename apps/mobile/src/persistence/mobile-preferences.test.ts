@@ -47,25 +47,26 @@ describe("mobile preferences parser", () => {
       expect(
         yield* loadFrom({
           homeAssistantsCollapsed: true,
-          homeAgentsDoneExpanded: false,
           homeAssistantsShowAll: true,
           homeAssistantsFolded: ["hub:a1", 3, null, "hub:a2"],
-          // Saved by builds that had a Working shelf; still loads, and is dropped.
+          homeAssistantsExpandedGroups: ["group:env:t1", 3, null, "group:env:t2"],
+          // Saved by builds that had a Working shelf or the Agents section; still loads, and is dropped.
+          homeAgentsDoneExpanded: true,
           workingShelfEnabled: true,
           threadListWorkingShelfExpanded: true,
         }),
       ).toEqual({
         homeAssistantsCollapsed: true,
-        homeAgentsDoneExpanded: false,
         homeAssistantsShowAll: true,
         homeAssistantsFolded: ["hub:a1", "hub:a2"],
+        homeAssistantsExpandedGroups: ["group:env:t1", "group:env:t2"],
       });
       expect(
         yield* loadFrom({
           homeAssistantsCollapsed: "yes",
-          homeAgentsDoneExpanded: 1,
           homeAssistantsShowAll: "x",
           homeAssistantsFolded: "hub:a1",
+          homeAssistantsExpandedGroups: "group:env:t1",
         }),
       ).toEqual({});
     }),

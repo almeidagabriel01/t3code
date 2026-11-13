@@ -66,9 +66,9 @@ import {
   useAssistantSectionJumpThreads,
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
-import { HomeAgentsSection } from "./HomeAgentsSection";
-import { HomeNeedsYouSection } from "./HomeNeedsYouSection";
-import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
+import { NeedsYouZone } from "./NeedsYouZone";
+import { ProjectsZoneHeader } from "./ProjectsZoneHeader";
+import { useSidebarZones } from "./useSidebarZones";
 import { decisionThreadKey, useOpenDecisionThreadKeys } from "../../state/decisions";
 import { hasSidebarNotification } from "@t3tools/client-runtime/state/thread-attention";
 import { usePendingThreadOrder } from "../../state/thread-order";
@@ -395,9 +395,11 @@ export function HomeScreen(props: HomeScreenProps) {
     [projects, selectedEnvironmentId, projectGroupingMode],
   );
   const openDecisionThreadKeys = useOpenDecisionThreadKeys();
+  const zones = useSidebarZones();
   const attentionProjectKeys = new Set(
     props.threads.flatMap((thread) =>
       thread.archivedAt === null &&
+      !zones.ownedThreadKeys.has(scopedThreadKey(thread.environmentId, thread.id)) &&
       thread.settledOverride !== "settled" &&
       thread.lineage.relationshipToParent !== "subagent" &&
       !isSideChatThread(thread) &&
@@ -514,6 +516,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
+    hiddenThreadKeys: zones.ownedThreadKeys,
   });
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
@@ -783,6 +786,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onArchiveProject={props.onArchiveProject}
         />
       ) : null}
+      {hasSearchQuery ? null : <NeedsYouZone gutter={primaryColumn ? 8 : 16} />}
       {hasSearchQuery ? null : (
         <HomeAssistantsSection
           gutter={primaryColumn ? 8 : 16}
@@ -804,14 +808,9 @@ export function HomeScreen(props: HomeScreenProps) {
           gutter={primaryColumn ? 8 : 16}
         />
       )}
-      <HomeAgentsSection threads={props.threads} now={now} gutter={primaryColumn ? 8 : 16} />
-      <HomeNeedsYouSection
-        threads={props.threads}
-        now={now}
-        gutter={primaryColumn ? 8 : 16}
-        renderRow={(item) => renderV2Item({ item })}
-      />
-      <HomeDecisionsSection gutter={primaryColumn ? 8 : 16} />
+      {hasSearchQuery ? null : (
+        <ProjectsZoneHeader threads={props.threads} now={now} gutter={primaryColumn ? 8 : 16} />
+      )}
     </>
   );
 
@@ -842,7 +841,12 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  // The zones above the list still draw when no project thread is left to list.
+  if (
+    Platform.OS === "android" &&
+    threadListV2Items.length === 0 &&
+    (hasSearchQuery || zones.empty)
+  ) {
     return (
       <ScreenContent surface="screen">
         <View
