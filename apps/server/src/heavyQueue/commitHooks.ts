@@ -35,7 +35,7 @@ const runs = (dir: string, name: string) => {
  * file counts, never a `.sample`. Outside a repository nothing runs; when git cannot answer at all,
  * a hook is assumed, which keeps the commit queued as before.
  */
-export const commitHookRuns = (cwd: string) => {
+const commitHookRuns = (cwd: string) => {
   const found = NodeChildProcess.spawnSync("git", ["rev-parse", "--git-path", "hooks"], {
     cwd,
     encoding: "utf8",

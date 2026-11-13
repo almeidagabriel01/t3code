@@ -1,9 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { commitRoute } from "./commitHooks.ts";
 
@@ -17,10 +18,15 @@ const write = (path: string, text: string, mode = 0o755) => {
 
 const SHIM = '#!/usr/bin/env sh\n. "$(dirname "$0")/h"';
 
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) NodeFS.rmSync(root, { recursive: true, force: true });
+});
+
 /** A fresh repository with git's own `.sample` hooks, set up by `arrange`; returns where to commit from. */
 const repo = (arrange: (root: string) => string | void) => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-commit-hooks-"));
-  onTestFinished(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+  roots.push(root);
   git(root, "init", "-q");
   return NodePath.resolve(root, arrange(root) ?? ".");
 };
