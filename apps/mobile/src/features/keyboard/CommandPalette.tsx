@@ -372,6 +372,13 @@ export function CommandPalette(props: {
         searchTerms: ["limits", "accounts", "quota"],
         run: () => openSettings(navigation, "SettingsUsage"),
       },
+      {
+        key: "resourceManager",
+        kind: "action",
+        title: "Resource Manager",
+        searchTerms: ["heavy work", "queue", "cpu", "memory", "linux", "processes"],
+        run: () => openSettings(navigation, "SettingsResourceManager"),
+      },
       ...(hasBoards
         ? [
             {

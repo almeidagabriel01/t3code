@@ -12,7 +12,7 @@ import { useContentTopInset } from "../../components/ui/useBarInset";
 import { useProject, useThreadShell } from "../../state/entities";
 import { useKanbanEnvironmentIds } from "../../state/kanban";
 import { ProjectBoardView } from "../kanban/ProjectBoardView";
-import { HeavyCommandsSection, HeavyQueueSection } from "../settings/components/HeavyQueueSection";
+import { ProjectHeavyWork } from "../resources/HeavyWork";
 import { ProjectScheduledTasksView } from "../settings/ProjectScheduledTasksView";
 import { ProjectActivityView } from "./ProjectActivityView";
 import { ProjectMemoryView } from "./ProjectMemoryView";
@@ -68,12 +68,7 @@ export function ProjectViewSheet({ route }: StaticScreenProps<ProjectViewTarget>
       case "memory":
         return <ProjectMemoryView {...target} />;
       case "heavy-work":
-        return (
-          <>
-            <HeavyCommandsSection {...target} />
-            <HeavyQueueSection {...target} />
-          </>
-        );
+        return <ProjectHeavyWork {...target} />;
     }
   })();
   return (

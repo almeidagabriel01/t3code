@@ -1,4 +1,9 @@
-import type { HeavyCommand, HeavyQueueEntry } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type HeavyCommand,
+  type HeavyQueueEntry,
+  type HeavyQueueState,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -9,6 +14,7 @@ import {
   heavyWork,
   jobPriority,
   macNoteGauge,
+  machineBar,
   machineSummaries,
   moveTarget,
   ordinal,
@@ -554,6 +560,155 @@ describe("macNoteGauge", () => {
     [{ hold: "cpu", enabled: false }, null],
   ] as const)("puts %o on %s", (over, gauge) => {
     expect(macNoteGauge({ enabled: true, paused: false, ...over })).toBe(gauge);
+  });
+});
+
+describe("machineBar", () => {
+  const GiB = 1024 ** 3;
+  const LINUX = {
+    host: "remoto",
+    online: true,
+    slots: 2,
+    running: 0,
+    load1: 3,
+    cpuCount: 6,
+    availableMemoryBytes: 8 * GiB,
+    totalMemoryBytes: 16 * GiB,
+  };
+  const MACHINE = {
+    busyCores: 2,
+    cpuCount: 8,
+    availableMemoryBytes: 4 * GiB,
+    totalMemoryBytes: 16 * GiB,
+    pressureLevel: null,
+    swapInBytesPerSecond: null,
+  };
+  const state = (over: Partial<HeavyQueueState> = {}): HeavyQueueState => ({
+    entries: [],
+    enabled: true,
+    paused: false,
+    rules: [],
+    maxRunning: 3,
+    ...HEAVY_QUEUE_DEFAULTS,
+    reasons: {},
+    room: true,
+    claudeHookInstalled: false,
+    deviceIdleMinutes: 20,
+    machine: MACHINE,
+    hold: null,
+    linux: null,
+    macOnly: [],
+    routes: {},
+    ...over,
+  });
+  const linuxJob = (id: string) => ({ ...e(id, true), runner: "linux" as const });
+
+  it("counts each machine's running jobs from the entries, not Linux's own heartbeat", () => {
+    // The "0 of 3 running" bug: two jobs ran on Linux and none on the Mac.
+    const bar = machineBar(
+      state({
+        entries: [linuxJob("a"), linuxJob("b"), e("c", true), e("w")],
+        linux: { ...LINUX, running: 0 },
+      }),
+      null,
+    );
+    expect(bar.mac.slots).toEqual({ running: 1, slots: 3, hint: "1 of 3 running on this Mac" });
+    expect(bar.linux?.slots).toEqual({ running: 2, slots: 2, hint: "2 of 2 running on Linux" });
+  });
+
+  it("reads the Mac from the queue's sample, and the host only without one", () => {
+    const sampled = machineBar(state(), null).mac;
+    expect(sampled.cpu).toEqual({
+      share: 0.25,
+      value: "25%",
+      warn: false,
+      hint: "CPU 25% · 2.0 of 8 cores busy",
+    });
+    expect(sampled.memory).toEqual({
+      share: 0.75,
+      value: "4.0 GB",
+      warn: false,
+      hint: "4.0 GB free of 16.0 GB",
+    });
+    const host = {
+      sampledAt: 0,
+      cpuUtilization: 0.5,
+      cpuCount: 10,
+      availableMemoryBytes: 8 * GiB,
+      totalMemoryBytes: 16 * GiB,
+    };
+    expect(machineBar(state({ machine: null }), host).mac.cpu).toMatchObject({
+      value: "50%",
+      hint: "CPU 50% · 10 cores",
+    });
+    expect(machineBar(state({ machine: null }), null).mac).toMatchObject({
+      cpu: { share: null, value: "--", hint: "No CPU reading yet" },
+      memory: { share: null, value: "--", hint: "No memory reading yet" },
+    });
+  });
+
+  it.each([
+    ["memory-floor", false, true],
+    ["cpu", true, false],
+    ["slots", false, false],
+  ] as const)("a %s hold warns on its own gauge only", (hold, cpu, memory) => {
+    const { mac } = machineBar(state({ hold, entries: [e("w")] }), null);
+    expect([mac.cpu?.warn, mac.memory?.warn]).toEqual([cpu, memory]);
+    const note = machineSummaries(state({ hold, entries: [e("w")] })).mac.note!;
+    const worded = [mac.cpu!.hint, mac.memory!.hint, mac.slots!.hint].filter((hint) =>
+      hint.endsWith(` · ${note}`),
+    );
+    // The hold is worded once: on the gauge it is about, or on the slots when it is about them.
+    expect(worded).toHaveLength(1);
+  });
+
+  it("has no slots while the queue is off, only its note", () => {
+    const { mac } = machineBar(state({ enabled: false }), null);
+    expect(mac.slots).toBeNull();
+    expect(mac.queueOff).toBe("Queue off: heavy jobs start right away");
+  });
+
+  it.each([
+    [true, null, "remoto · online"],
+    [
+      false,
+      { text: "Offline", hint: "Linux offline: ssh timed out" },
+      "Linux offline: ssh timed out",
+    ],
+    [null, { text: "Checking…", hint: "Checking Linux (remoto)…" }, "Checking Linux (remoto)…"],
+  ] as const)("Linux online=%s shows gauges only while online", (online, offline, statusHint) => {
+    const { linux } = machineBar(
+      state({ linux: { ...LINUX, online, error: "ssh timed out" }, paused: true }),
+      null,
+    );
+    expect(linux).toMatchObject({ online, offline, statusHint });
+    expect(linux!.cpu === null).toBe(online !== true);
+    expect(linux!.slots!.hint).toBe("0 of 2 running on Linux · paused");
+  });
+
+  it("reads Linux's load as a share of its cores", () => {
+    const { linux } = machineBar(state({ linux: LINUX }), null);
+    expect(linux!.cpu).toEqual({
+      share: 0.5,
+      value: "50%",
+      warn: false,
+      hint: "Load 3.0 on 6 cores",
+    });
+    expect(linux!.memory!.hint).toBe("8.0 GB free of 16.0 GB");
+    const bare = machineBar(
+      state({ linux: { ...LINUX, cpuCount: null, totalMemoryBytes: null } }),
+      null,
+    ).linux!;
+    expect(bare.cpu).toMatchObject({ value: "--", hint: "Load 3.0" });
+    expect(bare.memory).toMatchObject({ share: null, hint: "8.0 GB free" });
+    const none = machineBar(
+      state({ linux: { ...LINUX, load1: null, availableMemoryBytes: null } }),
+      null,
+    ).linux!;
+    expect([none.cpu?.hint, none.memory?.hint]).toEqual([
+      "No load reading yet",
+      "No memory reading yet",
+    ]);
   });
 });
 

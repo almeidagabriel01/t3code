@@ -15,7 +15,7 @@ import {
   type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
-import { Fragment, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -47,7 +47,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { KeepAwakeSection } from "./components/KeepAwakeSection";
 import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
-import { HeavyCommandsSection, HeavyQueueSection } from "./components/HeavyQueueSection";
+import { HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
@@ -577,26 +577,30 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onChange={(mode) => write({ keepAwake: mode })}
                   />
                 ) : null}
+                {!projectSelected ? (
+                  <SettingsSection>
+                    <SettingsRow
+                      icon="gauge.with.dots.needle.50percent"
+                      label="Resource Manager"
+                      target="SettingsResourceManager"
+                    />
+                  </SettingsSection>
+                ) : null}
                 {/* Each machine has its own queue, so several environments get one section each. */}
                 {!projectSelected
                   ? displayTargets.map((target) => {
                       const machine =
                         displayTargets.length > 1 ? target.environment.label : undefined;
                       return (
-                        <Fragment key={target.environment.environmentId}>
-                          <HeavyCommandsSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                          />
-                          <HeavyQueueSection
-                            environmentId={target.environment.environmentId}
-                            {...(machine === undefined ? {} : { machine })}
-                            runner={{
-                              enabled: target.settings.runnerEnabled,
-                              where: target.settings.runnerWhere,
-                            }}
-                          />
-                        </Fragment>
+                        <HeavyQueueSection
+                          key={target.environment.environmentId}
+                          environmentId={target.environment.environmentId}
+                          {...(machine === undefined ? {} : { machine })}
+                          runner={{
+                            enabled: target.settings.runnerEnabled,
+                            where: target.settings.runnerWhere,
+                          }}
+                        />
                       );
                     })
                   : null}

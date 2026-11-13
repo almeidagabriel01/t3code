@@ -6,6 +6,7 @@ import {
   type HeavyQueueRule,
   type HeavyQueueState,
   type HeavyRunner,
+  type HostResourcesSnapshot,
 } from "@t3tools/contracts";
 
 import { linuxLine, runnerBadge } from "./runnerModel.ts";
@@ -372,6 +373,157 @@ export const heavyWorkItems = (work: ReturnType<typeof heavyWork>) => [
 
 /** "3.4 GB", as the queue's lines print free memory; "420 MB" below a gigabyte, never "0.0 GB". */
 export const formatFreeMemory = gb;
+
+/** One gauge of a machine: how full it is, its value, and the exact words behind it. */
+export interface MachineGauge {
+  readonly share: number | null;
+  readonly value: string;
+  /** A condition holding the queue is about this gauge; `hint` then names it. */
+  readonly warn: boolean;
+  readonly hint: string;
+}
+
+/** One machine of the machine bar. */
+export interface MachineBarRow {
+  readonly runner: HeavyRunner;
+  /** Linux's connection, null while it is being checked; always true for the Mac. */
+  readonly online: boolean | null;
+  readonly statusHint: string | null;
+  /** Both null while Linux is not online; `offline` then says so. */
+  readonly cpu: MachineGauge | null;
+  readonly memory: MachineGauge | null;
+  readonly offline: { readonly text: string; readonly hint: string } | null;
+  /** Null on the Mac while the queue is off; `queueOff` then holds its note. */
+  readonly slots: {
+    readonly running: number;
+    readonly slots: number;
+    readonly hint: string;
+  } | null;
+  readonly queueOff: string | null;
+}
+
+const NO_GAUGE = (hint: string): MachineGauge => ({ share: null, value: "--", warn: false, hint });
+const withWarning = (text: string, warning: string | null) =>
+  warning === null ? text : `${text} · ${warning}`;
+
+/**
+ * This Mac and, while the Runner reports it, Linux. The Mac reads the queue's own sample when it
+ * has one, so a warning always matches the number beside it, and `host` otherwise. Running counts
+ * come from `heavyWork`, the same split the rows use.
+ */
+export function machineBar(
+  state: HeavyQueueState,
+  host: HostResourcesSnapshot | null | undefined,
+): { readonly mac: MachineBarRow; readonly linux: MachineBarRow | null } {
+  const { machine, linux } = state;
+  const reading =
+    machine !== null
+      ? {
+          cpuPercent: (machine.busyCores / Math.max(1, machine.cpuCount)) * 100,
+          detail: `${machine.busyCores.toFixed(1)} of ${machine.cpuCount} cores busy`,
+          free: machine.availableMemoryBytes,
+          total: machine.totalMemoryBytes,
+        }
+      : host === null || host === undefined || host.cpuUtilization == null
+        ? null
+        : {
+            cpuPercent: host.cpuUtilization * 100,
+            detail: `${host.cpuCount} cores`,
+            free: host.availableMemoryBytes,
+            total: host.totalMemoryBytes,
+          };
+  const work = heavyWork(state, []);
+  const note = machineSummaries(state).mac.note;
+  const gauge = macNoteGauge(state);
+  const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
+  const cpuWarning = warning("cpu");
+  const memoryWarning = warning("memory");
+  const macRunning = work.mac.running.length;
+  const mac: MachineBarRow = {
+    runner: "mac",
+    online: true,
+    statusHint: null,
+    cpu:
+      reading === null
+        ? NO_GAUGE("No CPU reading yet")
+        : {
+            share: reading.cpuPercent / 100,
+            value: `${Math.round(reading.cpuPercent)}%`,
+            warn: cpuWarning !== null,
+            hint: withWarning(
+              `CPU ${Math.round(reading.cpuPercent)}% · ${reading.detail}`,
+              cpuWarning,
+            ),
+          },
+    memory:
+      reading === null
+        ? NO_GAUGE("No memory reading yet")
+        : {
+            share: reading.total <= 0 ? null : 1 - reading.free / reading.total,
+            value: gb(reading.free),
+            warn: memoryWarning !== null,
+            hint: withWarning(`${gb(reading.free)} free of ${gb(reading.total)}`, memoryWarning),
+          },
+    offline: null,
+    slots: state.enabled
+      ? {
+          running: macRunning,
+          slots: state.maxRunning,
+          hint: withWarning(
+            `${macRunning} of ${state.maxRunning} running on this Mac`,
+            gauge === null ? note : null,
+          ),
+        }
+      : null,
+    queueOff: state.enabled ? null : (note ?? ""),
+  };
+  if (linux === null) return { mac, linux: null };
+  const linuxRunning = work.linux.running.length;
+  const live = linux.online === true;
+  const cores = linux.cpuCount;
+  return {
+    mac,
+    linux: {
+      runner: "linux",
+      online: linux.online,
+      statusHint: live ? `${linux.host} · online` : linuxLine(linux),
+      cpu: !live
+        ? null
+        : linux.load1 === null || cores === null
+          ? NO_GAUGE(
+              linux.load1 === null ? "No load reading yet" : `Load ${linux.load1.toFixed(1)}`,
+            )
+          : {
+              share: linux.load1 / Math.max(1, cores),
+              value: `${Math.round((linux.load1 / Math.max(1, cores)) * 100)}%`,
+              warn: false,
+              hint: `Load ${linux.load1.toFixed(1)} on ${cores} cores`,
+            },
+      memory: !live
+        ? null
+        : linux.availableMemoryBytes === null
+          ? NO_GAUGE("No memory reading yet")
+          : {
+              share:
+                linux.totalMemoryBytes === null || linux.totalMemoryBytes <= 0
+                  ? null
+                  : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes,
+              value: gb(linux.availableMemoryBytes),
+              warn: false,
+              hint: `${gb(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${gb(linux.totalMemoryBytes)}`}`,
+            },
+      offline: live
+        ? null
+        : { text: linux.online === false ? "Offline" : "Checking…", hint: linuxLine(linux) },
+      slots: {
+        running: linuxRunning,
+        slots: linux.slots,
+        hint: `${linuxRunning} of ${linux.slots} running on Linux${state.enabled && state.paused ? " · paused" : ""}`,
+      },
+      queueOff: null,
+    },
+  };
+}
 
 export function ordinal(n: number): string {
   const mod100 = n % 100;

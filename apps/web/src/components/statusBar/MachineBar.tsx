@@ -1,10 +1,8 @@
 import {
-  formatFreeMemory,
-  heavyWork,
-  machineSummaries,
-  macNoteGauge,
+  machineBar,
+  type MachineBarRow,
+  type MachineGauge as MachineGaugeModel,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
-import { linuxLine } from "@t3tools/client-runtime/state/runnerModel";
 import {
   AuthDiagnosticsReadScope,
   AuthOrchestrationReadScope,
@@ -196,6 +194,34 @@ function MachineName({
   );
 }
 
+function MachineGauge({
+  gauge,
+  unit,
+}: {
+  readonly gauge: MachineGaugeModel | null;
+  readonly unit?: string;
+}) {
+  return gauge === null ? null : (
+    <Gauge
+      share={gauge.share}
+      value={gauge.value}
+      {...(unit === undefined ? {} : { unit })}
+      warn={gauge.warn}
+      hint={gauge.hint}
+    />
+  );
+}
+
+function MachineSlots({ row }: { readonly row: MachineBarRow }) {
+  return row.slots === null ? (
+    <Reading hint={row.queueOff ?? ""} className="justify-end">
+      <span className="text-2xs text-muted-foreground">Off</span>
+    </Reading>
+  ) : (
+    <Slots running={row.slots.running} slots={row.slots.slots} hint={row.slots.hint} />
+  );
+}
+
 const LINUX_STATUS = (online: boolean | null) =>
   online === null
     ? { text: "checking", dot: "bg-muted-foreground/60" }
@@ -225,8 +251,6 @@ function useT3History(environmentId: EnvironmentId) {
 /**
  * This Mac and, while the Runner reports it, Linux: CPU, free memory and slots per machine. A
  * condition that holds the queue colours the gauge it is about, worded in that gauge's tooltip.
- * The Mac's readings come from the queue's own reading when it has one, so a warning always
- * matches the number beside it.
  */
 export function MachineBar({
   environmentId,
@@ -244,32 +268,8 @@ export function MachineBar({
       : null,
   ).data;
   const buckets = useT3History(environmentId);
-  const summaries = machineSummaries(state);
-  const work = heavyWork(state, []);
-  const reading =
-    state.machine !== null
-      ? {
-          cpuPercent: (state.machine.busyCores / Math.max(1, state.machine.cpuCount)) * 100,
-          detail: `${state.machine.busyCores.toFixed(1)} of ${state.machine.cpuCount} cores busy`,
-          free: state.machine.availableMemoryBytes,
-          total: state.machine.totalMemoryBytes,
-        }
-      : host === null || host === undefined || host.cpuUtilization == null
-        ? null
-        : {
-            cpuPercent: host.cpuUtilization * 100,
-            detail: `${host.cpuCount} cores`,
-            free: host.availableMemoryBytes,
-            total: host.totalMemoryBytes,
-          };
-  const gauge = macNoteGauge(state);
-  const note = summaries.mac.note;
-  const warning = (on: "cpu" | "memory") => (gauge === on && note !== null ? note : null);
-  const cpuWarning = warning("cpu");
-  const memoryWarning = warning("memory");
-  const macRunning = work.mac.running.length;
-  const linux = state.linux;
-  const linuxRunning = work.linux.running.length;
+  const { mac, linux } = machineBar(state, host);
+  const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <div
       role="group"
@@ -277,38 +277,9 @@ export function MachineBar({
       className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5"
     >
       <MachineName Icon={LaptopIcon} name="This Mac" />
-      <Gauge
-        share={reading === null ? null : reading.cpuPercent / 100}
-        value={reading === null ? "--" : `${Math.round(reading.cpuPercent)}%`}
-        warn={cpuWarning !== null}
-        hint={
-          reading === null
-            ? "No CPU reading yet"
-            : `CPU ${Math.round(reading.cpuPercent)}% · ${reading.detail}${cpuWarning === null ? "" : ` · ${cpuWarning}`}`
-        }
-      />
-      <Gauge
-        share={reading === null || reading.total <= 0 ? null : 1 - reading.free / reading.total}
-        value={reading === null ? "--" : formatFreeMemory(reading.free)}
-        unit="free"
-        warn={memoryWarning !== null}
-        hint={
-          reading === null
-            ? "No memory reading yet"
-            : `${formatFreeMemory(reading.free)} free of ${formatFreeMemory(reading.total)}${memoryWarning === null ? "" : ` · ${memoryWarning}`}`
-        }
-      />
-      {state.enabled ? (
-        <Slots
-          running={macRunning}
-          slots={state.maxRunning}
-          hint={`${macRunning} of ${state.maxRunning} running on this Mac${gauge === null && note !== null ? ` · ${note}` : ""}`}
-        />
-      ) : (
-        <Reading hint={note ?? ""} className="justify-end">
-          <span className="text-2xs text-muted-foreground">Off</span>
-        </Reading>
-      )}
+      <MachineGauge gauge={mac.cpu} />
+      <MachineGauge gauge={mac.memory} unit="free" />
+      <MachineSlots row={mac} />
 
       {t3 === null ? null : (
         <>
@@ -319,7 +290,7 @@ export function MachineBar({
             <Trace label="T3 CPU, last 5 minutes" values={buckets.map((b) => b.avgCpuPercent)} />
             <span className={cn(VALUE, "text-muted-foreground")}>
               {formatCpu(
-                reading === null ? t3.cpuPercent : Math.min(t3.cpuPercent, reading.cpuPercent),
+                macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent),
               )}
             </span>
             <span className={UNIT} />
@@ -338,55 +309,15 @@ export function MachineBar({
           <MachineName
             Icon={ServerIcon}
             name="Linux"
-            status={{
-              ...LINUX_STATUS(linux.online),
-              hint: linux.online === true ? `${linux.host} · online` : linuxLine(linux),
-            }}
+            status={{ ...LINUX_STATUS(linux.online), hint: linux.statusHint ?? "" }}
           />
-          {linux.online === true ? (
+          {linux.offline === null ? (
             <>
-              <Gauge
-                share={
-                  linux.load1 === null || linux.cpuCount === null
-                    ? null
-                    : linux.load1 / Math.max(1, linux.cpuCount)
-                }
-                value={
-                  linux.load1 === null || linux.cpuCount === null
-                    ? "--"
-                    : `${Math.round((linux.load1 / Math.max(1, linux.cpuCount)) * 100)}%`
-                }
-                warn={false}
-                hint={
-                  linux.load1 === null
-                    ? "No load reading yet"
-                    : `Load ${linux.load1.toFixed(1)}${linux.cpuCount === null ? "" : ` on ${linux.cpuCount} cores`}`
-                }
-              />
-              <Gauge
-                share={
-                  linux.availableMemoryBytes === null ||
-                  linux.totalMemoryBytes === null ||
-                  linux.totalMemoryBytes <= 0
-                    ? null
-                    : 1 - linux.availableMemoryBytes / linux.totalMemoryBytes
-                }
-                value={
-                  linux.availableMemoryBytes === null
-                    ? "--"
-                    : formatFreeMemory(linux.availableMemoryBytes)
-                }
-                unit="free"
-                warn={false}
-                hint={
-                  linux.availableMemoryBytes === null
-                    ? "No memory reading yet"
-                    : `${formatFreeMemory(linux.availableMemoryBytes)} free${linux.totalMemoryBytes === null ? "" : ` of ${formatFreeMemory(linux.totalMemoryBytes)}`}`
-                }
-              />
+              <MachineGauge gauge={linux.cpu} />
+              <MachineGauge gauge={linux.memory} unit="free" />
             </>
           ) : (
-            <Reading hint={linuxLine(linux)} className="col-span-2 min-w-0">
+            <Reading hint={linux.offline.hint} className="col-span-2 min-w-0">
               <span
                 className={cn(
                   "truncate text-2xs",
@@ -394,15 +325,11 @@ export function MachineBar({
                 )}
               >
                 {/* The error goes in the tooltip: a long one would starve the names' column. */}
-                {linux.online === false ? "Offline" : "Checking…"}
+                {linux.offline.text}
               </span>
             </Reading>
           )}
-          <Slots
-            running={linuxRunning}
-            slots={linux.slots}
-            hint={`${linuxRunning} of ${linux.slots} running on Linux${state.enabled && state.paused ? " · paused" : ""}`}
-          />
+          <MachineSlots row={linux} />
         </>
       )}
     </div>
