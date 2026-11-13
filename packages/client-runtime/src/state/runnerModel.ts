@@ -10,6 +10,7 @@ import type {
   HeavyRunnerLinux,
   HeavyRunnerPhase,
   RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerKey,
   RunnerUnavailablePolicy,
   RunnerWhere,
@@ -57,6 +58,20 @@ export const RUNNER_SETTING_COPY: Record<
     title: "If nobody answers",
     description: "What happens when nobody answers in time.",
   },
+  runnerMacFirstAfter: {
+    title: "Send to Linux after",
+    description:
+      "Mac first sends a job to Linux once this Mac has this many jobs running or waiting.",
+  },
+  runnerLinuxEverything: {
+    title: "Everything",
+    description: "Every heavy command goes to Linux, except what has to stay on this Mac.",
+  },
+  runnerBringBack: {
+    title: "Bring results back",
+    description:
+      "Copies the files a Linux job created or changed back to this Mac. A file changed here during the job is left alone.",
+  },
   runnerHost: {
     title: "Linux host",
     description: "The Linux PC, as an alias from ~/.ssh/config or user@host.",
@@ -94,6 +109,7 @@ export const RUNNER_SETTING_COPY: Record<
 /** In the order the choice shows them: from all-local to all-remote. */
 export const RUNNER_WHERE_LABEL: Record<RunnerWhere, string> = {
   mac: "This Mac",
+  macFirst: "Mac first",
   automatic: "Hybrid",
   linux: "Linux",
 };
@@ -102,6 +118,11 @@ export const RUNNER_POLICY_LABEL: Record<RunnerUnavailablePolicy, string> = {
   ask: "Ask me",
   mac: "Run on this Mac",
   wait: "Wait for Linux",
+};
+
+export const RUNNER_FAILED_POLICY_LABEL: Record<RunnerFailedPolicy, string> = {
+  agent: "Tell the agent",
+  ...RUNNER_POLICY_LABEL,
 };
 
 export const RUNNER_DEADLINE_LABEL: Record<RunnerDeadlineAction, string> = {
@@ -145,6 +166,8 @@ export function heavyModeLine(mode: HeavyModeInput): string {
         return "Listed commands run on Linux; everything else waits its turn on this Mac.";
       case "automatic":
         return "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.";
+      case "macFirst":
+        return RUNNER_WHERE_DESCRIPTION.macFirst;
     }
   }
   switch (where) {
@@ -154,6 +177,8 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       return "No queue: listed commands wait for a Linux slot, the rest start here right away.";
     case "automatic":
       return "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.";
+    case "macFirst":
+      return RUNNER_WHERE_DESCRIPTION.macFirst;
   }
 }
 
@@ -253,7 +278,7 @@ export interface RunnerChoices {
   readonly runnerEnabled: boolean | null;
   readonly runnerWhere: RunnerWhere | null;
   readonly runnerUnavailable: RunnerUnavailablePolicy | null;
-  readonly runnerDropped: RunnerUnavailablePolicy | null;
+  readonly runnerDropped: RunnerFailedPolicy | null;
 }
 
 /**
@@ -284,6 +309,7 @@ export function runnerFieldIdle(key: RunnerKey, choices: RunnerChoices): string 
 /** One line under the "Where heavy work runs" choice, saying what the picked mode does. */
 export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
   mac: "Everything runs on this Mac. A job's menu can still send it to Linux.",
+  macFirst: "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
   automatic:
     "Jobs run on this Mac until it reaches its limits, then on Linux until Linux reaches its own. Past both, each job joins the shorter queue.",
   linux: "Listed commands always run on Linux. Everything else stays on this Mac.",

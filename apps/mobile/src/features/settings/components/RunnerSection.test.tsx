@@ -220,6 +220,7 @@ describe("RunnerSection", () => {
       ]),
     ).toEqual([
       ["This Mac", "true"],
+      ["Mac first", "false"],
       ["Hybrid", "false"],
       ["Linux", "false"],
     ]);

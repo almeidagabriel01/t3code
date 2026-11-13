@@ -11,6 +11,7 @@ import {
   type HeavyRunnerAskReason,
   type RunnerMachineConfig,
   type RunnerProjectConfig,
+  type RunnerWhere,
 } from "@t3tools/contracts";
 
 import {
@@ -46,6 +47,9 @@ export const DEFAULT_PROJECT_CONFIG: RunnerProjectConfig = {
   runnerDropped: RUNNER_DEFAULTS.runnerDropped,
   runnerMacOnly: RUNNER_DEFAULTS.runnerMacOnly,
   runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands,
+  runnerMacFirstAfter: RUNNER_DEFAULTS.runnerMacFirstAfter,
+  runnerLinuxEverything: RUNNER_DEFAULTS.runnerLinuxEverything,
+  runnerBringBack: RUNNER_DEFAULTS.runnerBringBack,
 };
 
 export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {
@@ -665,7 +669,7 @@ const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: num
 export const intentOf = (
   entry: HeavyQueueEntry,
   context: WorkContext,
-): { readonly intent: "mac" | "linux" | "automatic"; readonly reason: string } => {
+): { readonly intent: RunnerWhere; readonly reason: string } => {
   const mac = (reason: string) => ({ intent: "mac" as const, reason });
   if (!context.config.runnerEnabled) {
     // Only a commit whose hook runs is queued, so the queue can say why it waits.

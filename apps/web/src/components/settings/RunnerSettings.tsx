@@ -2,6 +2,7 @@ import {
   heavyModeLine,
   linuxLine,
   RUNNER_DEADLINE_LABEL,
+  RUNNER_FAILED_POLICY_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
@@ -642,7 +643,7 @@ export function RunnerSettingsSection() {
             <SegmentedRow
               settingKey="runnerDropped"
               searchId="runner-dropped"
-              labels={RUNNER_POLICY_LABEL}
+              labels={RUNNER_FAILED_POLICY_LABEL}
               idle={field("runnerDropped").idle}
               description={() => RUNNER_SETTING_COPY.runnerDropped.description}
             />

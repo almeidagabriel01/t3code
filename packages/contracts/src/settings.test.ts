@@ -617,6 +617,47 @@ describe("ServerSettings project overrides across versions", () => {
     expect(settings.projectSettingsOverrides[projectId]?.runnerWhere).toBe("linux");
     expect(decodeServerSettingsPatch({ runnerOverflow: 3 })).toEqual({});
   });
+
+  const RUNNER_MODE_KEYS = [
+    "runnerWhere",
+    "runnerDropped",
+    "runnerMacFirstAfter",
+    "runnerLinuxEverything",
+    "runnerBringBack",
+  ] as const;
+  it.each([
+    ["an older file reads the new defaults", {}, ["mac", "agent", 4, false, false]],
+    [
+      "a stored Ask me stays Ask me",
+      { runnerWhere: "automatic", runnerDropped: "ask" },
+      ["automatic", "ask", 4, false, false],
+    ],
+    [
+      "the new values",
+      {
+        runnerWhere: "macFirst",
+        runnerDropped: "agent",
+        runnerMacFirstAfter: 32,
+        runnerLinuxEverything: true,
+        runnerBringBack: true,
+      },
+      ["macFirst", "agent", 32, true, true],
+    ],
+  ] as const)("Runner modes: %s, globally and per project", (_, stored, read) => {
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      ...stored,
+      projectSettingsOverrides: { [projectId]: stored },
+    });
+    expect(RUNNER_MODE_KEYS.map((key) => settings[key])).toEqual(read);
+    const project = settings.projectSettingsOverrides[projectId] ?? {};
+    expect(RUNNER_MODE_KEYS.map((key) => project[key] ?? settings[key])).toEqual(read);
+    expect(decodeServerSettingsPatch(stored)).toEqual(stored);
+  });
+
+  it.each([0, 33, 2.5])("Send to Linux after refuses %s", (value) => {
+    expect(() => decodeServerSettingsPatch({ runnerMacFirstAfter: value })).toThrow();
+  });
 });
 
 describe("resolveProjectProviderInstanceEnabled", () => {

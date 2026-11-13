@@ -5,12 +5,17 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-export const RunnerWhere = Schema.Literals(["mac", "linux", "automatic"]);
+/** `automatic` is Hybrid; `macFirst` fills this Mac up to `runnerMacFirstAfter` jobs first. */
+export const RunnerWhere = Schema.Literals(["mac", "linux", "automatic", "macFirst"]);
 export type RunnerWhere = typeof RunnerWhere.Type;
 
-/** What a job bound for Linux does when Linux is offline, or dropped it mid-run. */
+/** What a job bound for Linux does when Linux is offline. */
 export const RunnerUnavailablePolicy = Schema.Literals(["ask", "mac", "wait"]);
 export type RunnerUnavailablePolicy = typeof RunnerUnavailablePolicy.Type;
+
+/** What a job does when Linux couldn't run it; `agent` hands the failure back without a rerun. */
+export const RunnerFailedPolicy = Schema.Literals(["agent", "ask", "mac", "wait"]);
+export type RunnerFailedPolicy = typeof RunnerFailedPolicy.Type;
 
 /** What an unanswered question does once its deadline passes. */
 export const RunnerDeadlineAction = Schema.Literals(["mac", "wait", "cancel"]);
@@ -18,6 +23,7 @@ export type RunnerDeadlineAction = typeof RunnerDeadlineAction.Type;
 
 export const RUNNER_LIMITS = {
   runnerAskMinutes: { min: 1, max: 30, unit: "minutes" },
+  runnerMacFirstAfter: { min: 1, max: 32, unit: "jobs" },
   runnerLinuxSlots: { min: 1, max: 16, unit: "jobs" },
   runnerHeartbeatSeconds: { min: 5, max: 600, unit: "seconds" },
   runnerOfflineAfterFailures: { min: 2, max: 10, unit: "failures" },
@@ -37,7 +43,10 @@ export const RUNNER_DEFAULTS = {
   runnerUnavailable: "ask" as RunnerUnavailablePolicy,
   runnerAskMinutes: 5,
   runnerDeadlineAction: "mac" as RunnerDeadlineAction,
-  runnerDropped: "ask" as RunnerUnavailablePolicy,
+  runnerDropped: "agent" as RunnerFailedPolicy,
+  runnerMacFirstAfter: 4,
+  runnerLinuxEverything: false,
+  runnerBringBack: false,
   runnerMacOnly: [
     "xcodebuild",
     "xcrun",
@@ -92,6 +101,9 @@ export const RUNNER_PROJECT_KEYS = [
   "runnerDropped",
   "runnerMacOnly",
   "runnerLinuxCommands",
+  "runnerMacFirstAfter",
+  "runnerLinuxEverything",
+  "runnerBringBack",
 ] as const;
 export const RUNNER_MACHINE_KEYS = [
   "runnerHost",
@@ -141,6 +153,7 @@ const between = (key: RunnerNumberKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => runnerNumberError(key, value) ?? true));
 
 export const RunnerAskMinutes = between("runnerAskMinutes");
+export const RunnerMacFirstAfter = between("runnerMacFirstAfter");
 export const RunnerLinuxSlots = between("runnerLinuxSlots");
 export const RunnerHeartbeatSeconds = between("runnerHeartbeatSeconds");
 /** One failure never takes Linux offline, so a 1 saved before the minimum rose reads as 2. */
@@ -172,9 +185,13 @@ export const RunnerProjectConfig = Schema.Struct({
   runnerUnavailable: RunnerUnavailablePolicy,
   runnerAskMinutes: Schema.Int,
   runnerDeadlineAction: RunnerDeadlineAction,
-  runnerDropped: RunnerUnavailablePolicy,
+  runnerDropped: RunnerFailedPolicy,
   runnerMacOnly: Schema.Array(Schema.String),
   runnerLinuxCommands: Schema.Array(Schema.String),
+  runnerMacFirstAfter: Schema.Int,
+  /** Can run on Linux is Everything: every work job may leave, except what must stay here. */
+  runnerLinuxEverything: Schema.Boolean,
+  runnerBringBack: Schema.Boolean,
 });
 export type RunnerProjectConfig = typeof RunnerProjectConfig.Type;
 

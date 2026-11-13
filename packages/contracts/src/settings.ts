@@ -46,9 +46,11 @@ import {
   RUNNER_DEFAULTS,
   RunnerAskMinutes,
   RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerHeartbeatSeconds,
   RunnerHost,
   RunnerLinuxSlots,
+  RunnerMacFirstAfter,
   RunnerOfflineAfterFailures,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
@@ -1371,6 +1373,9 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "runnerDropped",
   "runnerMacOnly",
   "runnerLinuxCommands",
+  "runnerMacFirstAfter",
+  "runnerLinuxEverything",
+  "runnerBringBack",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1436,9 +1441,12 @@ export const ProjectSettingsOverrides = Schema.Struct({
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
-  runnerDropped: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
   runnerMacOnly: Schema.optionalKey(RunnerPatterns),
   runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
+  runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
+  runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
+  runnerBringBack: Schema.optionalKey(Schema.Boolean),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1725,7 +1733,7 @@ export const ServerSettings = Schema.Struct({
   runnerDeadlineAction: RunnerDeadlineAction.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerDeadlineAction)),
   ),
-  runnerDropped: RunnerUnavailablePolicy.pipe(
+  runnerDropped: RunnerFailedPolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerDropped)),
   ),
   runnerMacOnly: RunnerPatterns.pipe(
@@ -1733,6 +1741,15 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerLinuxCommands: RunnerPatterns.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCommands)),
+  ),
+  runnerMacFirstAfter: RunnerMacFirstAfter.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerMacFirstAfter)),
+  ),
+  runnerLinuxEverything: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxEverything)),
+  ),
+  runnerBringBack: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerBringBack)),
   ),
   runnerHost: RunnerHost.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerHost)),
@@ -2254,9 +2271,12 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
-  runnerDropped: Schema.optionalKey(RunnerUnavailablePolicy),
+  runnerDropped: Schema.optionalKey(RunnerFailedPolicy),
   runnerMacOnly: Schema.optionalKey(RunnerPatterns),
   runnerLinuxCommands: Schema.optionalKey(RunnerPatterns),
+  runnerMacFirstAfter: Schema.optionalKey(RunnerMacFirstAfter),
+  runnerLinuxEverything: Schema.optionalKey(Schema.Boolean),
+  runnerBringBack: Schema.optionalKey(Schema.Boolean),
   runnerHost: Schema.optionalKey(RunnerHost),
   runnerLinuxSlots: Schema.optionalKey(RunnerLinuxSlots),
   runnerHeartbeatSeconds: Schema.optionalKey(RunnerHeartbeatSeconds),

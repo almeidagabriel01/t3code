@@ -12,11 +12,12 @@ import type {
   HeavyQueueHold,
   HeavyRunner,
   HeavyRunnerPhase,
-  RunnerUnavailablePolicy,
+  RunnerFailedPolicy,
+  RunnerWhere,
 } from "@t3tools/contracts";
 
 /** What the Runner does next with a job Linux lost. */
-export type FollowUp = RunnerUnavailablePolicy;
+export type FollowUp = RunnerFailedPolicy;
 
 export type HeavyEvent =
   /** Exited with a failure; `phase` is where a Linux job was. */
@@ -248,7 +249,7 @@ export const requeueRecord = (
 /** An admission on a machine other than the one the job's own settings chose. */
 export const startRecord = (
   entry: HeavyQueueEntry,
-  intent: "mac" | "linux" | "automatic",
+  intent: RunnerWhere,
   runner: HeavyRunner,
   now: number,
 ): HeavyEventRecord | null => {
@@ -389,7 +390,8 @@ const short = (name: string) => (name.length > 60 ? `${name.slice(0, 59)}…` : 
 const jobs = (count: number) => `${count} jobs`;
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / MINUTE))} min`;
 
-const FOLLOW_UP: Record<FollowUp, string> = {
+/** Tell the agent hands the failure back: the agent, not the user, does what comes next. */
+const FOLLOW_UP: Record<Exclude<FollowUp, "agent">, string> = {
   mac: "Running it on this Mac instead",
   wait: "Waiting for Linux to come back",
   ask: "Waiting for your answer in the Resource Manager",
@@ -452,7 +454,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
     case "linux-lost": {
       const steps = [
         ...(record.unconfirmed ? ["Confirming the run stopped there first"] : []),
-        FOLLOW_UP[record.followUp],
+        ...(record.followUp === "agent" ? [] : [FOLLOW_UP[record.followUp]]),
       ];
       return notice({
         group: `linux-lost:${record.dropped}:${record.followUp}`,

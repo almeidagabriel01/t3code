@@ -1,6 +1,7 @@
 import {
   linuxLine,
   RUNNER_DEADLINE_LABEL,
+  RUNNER_FAILED_POLICY_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
@@ -13,6 +14,7 @@ import {
   RUNNER_LIMITS,
   RUNNER_PROJECT_KEYS,
   RunnerDeadlineAction,
+  RunnerFailedPolicy,
   RunnerUnavailablePolicy,
   runnerHostError,
   runnerNumberError,
@@ -419,8 +421,8 @@ export function RunnerSection(props: {
             ? policy(
                 "runnerDropped",
                 "exclamationmark.triangle",
-                RunnerUnavailablePolicy.literals,
-                RUNNER_POLICY_LABEL,
+                RunnerFailedPolicy.literals,
+                RUNNER_FAILED_POLICY_LABEL,
               )
             : null}
           {shown("runnerAskMinutes") ? number("runnerAskMinutes") : null}
