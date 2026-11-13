@@ -288,3 +288,25 @@ it.effect("an assistant in several projects saves a project memory only where it
     expect((yield* decodeRefusal(plain.body)).message).toContain("leave it out");
   }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
 );
+
+it.effect("an assistant in several projects replaces a project memory by id alone", () =>
+  Effect.gen(function* () {
+    yield* seedThread;
+    yield* seedSecondProject;
+    const saved = yield* Fixture.call(
+      "memory_remember",
+      { text: "Apotek deploys on Mondays", scope: "project", projectId: "project-2" },
+      assistantCaller,
+    );
+    const memoryId = (yield* decodeReceipt(saved.body)).memoryId;
+    const replaced = yield* Fixture.call(
+      "memory_remember",
+      { text: "Apotek deploys on Tuesdays", scope: "project", memoryId },
+      assistantCaller,
+    );
+    expect(replaced.result.isError).not.toBe(true);
+    expect(yield* projectMemories("shared-2")).toMatchObject([
+      { memoryId, payload: { text: "Apotek deploys on Tuesdays" } },
+    ]);
+  }).pipe(Effect.provideService(AssistantDirectory, directory), Effect.provide(Fixture.layer)),
+);

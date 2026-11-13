@@ -179,7 +179,8 @@ const refuse = (message: string) =>
 const checkRememberProject = Effect.fn("memory.checkRememberProject")(function* (
   value: M.MemoryRememberInput,
 ) {
-  if (value.scope !== "project") return;
+  // A replacement keeps the memory's own scope, so projectId would change nothing.
+  if (value.scope !== "project" || value.memoryId !== undefined) return;
   const projects = yield* assistantProjects;
   if (value.projectId !== undefined) {
     if (projects === undefined)
