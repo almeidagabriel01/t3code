@@ -707,6 +707,26 @@ it.effect(
   },
 );
 
+it.effect("the integration selection defaults to all, saves and survives unrelated updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.deepEqual(plain.integrations, { mode: "all" });
+    const chosen = yield* assistants.create(
+      create({ name: "Scheduler", integrations: { mode: "selected", names: ["google-calendar"] } }),
+    );
+    assert.deepEqual(chosen.integrations, { mode: "selected", names: ["google-calendar"] });
+    const renamed = yield* assistants.update({ assistantId: chosen.id, role: "Ops" });
+    assert.deepEqual(renamed.integrations, { mode: "selected", names: ["google-calendar"] });
+    const opened = yield* assistants.update({
+      assistantId: chosen.id,
+      integrations: { mode: "all" },
+    });
+    assert.deepEqual(opened.integrations, { mode: "all" });
+  }).pipe(Effect.provide(layer), Effect.orDie);
+});
+
 it.effect(
   "connector secrets are write-only: reads show keys, omitted keeps, empty clears, deletes clean up",
   () => {

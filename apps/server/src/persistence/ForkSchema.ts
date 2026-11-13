@@ -418,6 +418,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!assistantColumns.some((column) => column.name === "mcp_servers_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN mcp_servers_json TEXT`;
   }
+  // Which T3 MCP servers its sessions get; NULL reads as all of them.
+  if (!assistantColumns.some((column) => column.name === "integrations_json")) {
+    yield* sql`ALTER TABLE assistants ADD COLUMN integrations_json TEXT`;
+  }
   // The project list of a project assistant; an existing single project becomes a list of one.
   if (!assistantColumns.some((column) => column.name === "project_ids_json")) {
     yield* sql`ALTER TABLE assistants ADD COLUMN project_ids_json TEXT`;

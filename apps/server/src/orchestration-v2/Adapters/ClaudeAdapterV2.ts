@@ -2078,7 +2078,8 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 /**
  * An assistant's connectors join T3's own server. Claude gets them as plain `mcpServers`: they are
  * never added to `allowedTools`, so a read-only assistant still asks before calling one and the
- * runtime mode decides the rest, like any other non-allowlisted tool.
+ * runtime mode decides the rest, like any other non-allowlisted tool. The one exception is a
+ * pre-approved integration: T3's proxy gate already decided, so Claude must not ask again.
  */
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -2103,9 +2104,13 @@ export function claudeMcpQueryOverrides(input: {
           },
     ]),
   );
+  const preApproved = (input.connectors ?? []).flatMap((connector) =>
+    connector.proxy?.preApproved ? [`mcp__${connector.name}__*`] : [],
+  );
   if (session === undefined) {
+    const allowedTools = [...(input.allowedTools ?? []), ...preApproved];
     return {
-      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.allowedTools === undefined && preApproved.length === 0 ? {} : { allowedTools }),
       ...(Object.keys(connectorServers).length === 0 ? {} : { mcpServers: connectorServers }),
     };
   }
@@ -2113,7 +2118,9 @@ export function claudeMcpQueryOverrides(input: {
     ? [...CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS, CLAUDE_GROUP_MEMBER_T3_MCP_TOOL]
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
-    allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    allowedTools: Array.from(
+      new Set([...(input.allowedTools ?? []), ...mcpAllowedTools, ...preApproved]),
+    ),
     mcpServers: {
       ...connectorServers,
       "t3-code": {
