@@ -34,6 +34,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
+import * as NeedsUser from "./NeedsUser.ts";
 
 const awake: AssistantAutonomy = {
   mode: "reply-and-notify",
@@ -80,6 +81,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   });
   const dispatched: Array<Record<string, unknown>> = [];
   const layer = Autonomy.layer.pipe(
+    Layer.provideMerge(NeedsUser.layer),
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
