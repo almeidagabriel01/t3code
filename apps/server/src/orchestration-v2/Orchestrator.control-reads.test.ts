@@ -68,11 +68,21 @@ it.effect.each(
   (["provider.switch", "thread.model-selection.set", "thread.runtime-mode.set"] as const).flatMap(
     (type) =>
       [
-        { active: true, subagent: false, selectionChange: "instance" },
-        { active: false, subagent: true, selectionChange: "instance" },
-        { active: false, subagent: false, selectionChange: "instance" },
-        { active: true, subagent: false, selectionChange: "next-turn" },
-        { active: true, subagent: false, selectionChange: "restart" },
+        { active: true, subagent: false, request: false, selectionChange: "instance" },
+        { active: false, subagent: true, request: false, selectionChange: "instance" },
+        // A question or approval raised outside a turn still waits on the user.
+        { active: false, subagent: false, request: true, selectionChange: "instance" },
+        // Work no live session holds cannot be lost, so it never blocks recovery.
+        {
+          active: false,
+          subagent: true,
+          request: false,
+          sessionStopped: true,
+          selectionChange: "instance",
+        },
+        { active: false, subagent: false, request: false, selectionChange: "instance" },
+        { active: true, subagent: false, request: false, selectionChange: "next-turn" },
+        { active: true, subagent: false, request: false, selectionChange: "restart" },
       ]
         .filter(
           (scenario) =>
@@ -81,8 +91,8 @@ it.effect.each(
         .map((scenario) => ({ type, ...scenario })),
   ),
 )(
-  "$type $selectionChange (active $active, subagent $subagent)",
-  ({ type, active, subagent, selectionChange }) =>
+  "$type $selectionChange (active $active, subagent $subagent, request $request, stopped $sessionStopped)",
+  ({ type, active, subagent, request, sessionStopped = false, selectionChange }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -117,7 +127,7 @@ it.effect.each(
           id: sessionId,
           driver: adapter.driver,
           providerInstanceId: instanceId,
-          status: "ready",
+          status: sessionStopped ? "stopped" : "ready",
           cwd: "/repo",
           model: modelSelection.model,
           capabilities: {
@@ -203,6 +213,29 @@ it.effect.each(
           },
         });
       }
+      if (request) {
+        yield* projections.apply({
+          id: EventId.make("instance-switch:request"),
+          type: "runtime-request.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("request:instance-switch"),
+            nodeId: NodeId.make("node:instance-switch-request"),
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: sessionId,
+              supportsFeedback: false,
+            },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
       if (subagent) {
         yield* projections.apply({
           id: EventId.make("instance-switch:subagent"),
@@ -252,7 +285,10 @@ it.effect.each(
         )
         .pipe(Effect.result);
       const after = yield* projections.getThreadProjection(threadId);
-      if ((active || subagent) && selectionChange !== "next-turn") {
+      if (
+        (active || ((subagent || request) && !sessionStopped)) &&
+        selectionChange !== "next-turn"
+      ) {
         assert.deepEqual(
           after,
           before,
@@ -271,7 +307,7 @@ it.effect.each(
         assert.equal(after.thread.runtimeMode, "approval-required");
         assert.deepEqual(
           (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
-          ["provider-session.detach"],
+          sessionStopped ? [] : ["provider-session.detach"],
         );
       } else {
         assert.ok(Result.isSuccess(outcome));

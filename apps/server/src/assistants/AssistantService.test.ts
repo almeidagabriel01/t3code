@@ -505,15 +505,15 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.deepEqual(
       dispatched.map((command) => command.type),
       [
+        "thread.runtime-mode.set",
         "thread.metadata.update",
         "thread.notice.record",
         "thread.model-selection.set",
-        "thread.runtime-mode.set",
       ],
     );
-    assert.equal((dispatched[1] as unknown as { message: string }).message, "Renamed to Renamed");
+    assert.equal((dispatched[2] as unknown as { message: string }).message, "Renamed to Renamed");
     assert.equal(
-      (dispatched[3] as unknown as { runtimeMode: string }).runtimeMode,
+      (dispatched[0] as unknown as { runtimeMode: string }).runtimeMode,
       "approval-required",
     );
 
@@ -526,6 +526,17 @@ it.effect("update writes the row, then renames, switches access and archives the
     assert.equal(
       (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
       "read-only",
+    );
+    refusedCommands.clear();
+    // A refusal after the mode change leaves the row on the access the thread now runs with.
+    refusedCommands.add("thread.model-selection.set");
+    yield* assistants
+      .update({ assistantId: made.id, toolAccess: "full", modelSelection: model("m3") })
+      .pipe(Effect.flip);
+    assert.equal(dispatched.at(-1)!.type, "thread.runtime-mode.set");
+    assert.equal(
+      (yield* assistants.list).find((assistant) => assistant.id === made.id)?.toolAccess,
+      "full",
     );
     refusedCommands.clear();
 
