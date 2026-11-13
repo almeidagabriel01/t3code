@@ -762,7 +762,12 @@ function ResourceSegmentBody() {
         <span className="tabular-nums">{terminalCount}</span>
         <QueueCount environmentId={primaryEnvironmentId} />
       </PopoverTrigger>
-      <PopoverPopup side="top" align="end" padding="none" className="w-[28rem]">
+      <PopoverPopup
+        side="top"
+        align="end"
+        padding="none"
+        className="w-[28rem] max-w-[calc(100vw-1rem)]"
+      >
         <ResourceManager resources={resources} />
       </PopoverPopup>
     </Popover>
