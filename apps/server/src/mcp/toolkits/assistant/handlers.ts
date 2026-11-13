@@ -194,6 +194,12 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   // Waking on its own spends the user's tokens, so only the user turns it on.
   if (input.action === "update" && input.notifications !== undefined)
     yield* requireUserTurn(caller, "change when an assistant notifies them");
+  // Projects bound a project assistant, so only the user moves that bound.
+  if (
+    input.action === "update" &&
+    (input.projectIds !== undefined || input.projectId !== undefined)
+  )
+    yield* requireUserTurn(caller, "change which projects an assistant may work in");
   /** One chat line per change, so a repeat of the same call adds none. */
   const announce = (team: AssistantTeam, lines: ReadonlyArray<string>) =>
     caller.caller === undefined
