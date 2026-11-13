@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -556,6 +556,52 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "limit-continuation.start": {
+            const runId = effect.request.runId;
+            return Effect.gen(function* () {
+              const projection = yield* threads.getThreadRecords(effect.threadId, ["runs"]);
+              const limited = projection.runs.find((run) => run.id === runId);
+              // Switched back to the limited provider before this ran: keep waiting for its reset.
+              if (limited?.providerInstanceId === projection.thread.modelSelection.instanceId)
+                return;
+              yield* threads.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:limit-continuation:${effect.id}`),
+                messageId: MessageId.make(`limit-continuation:${effect.id}`),
+                threadId: effect.threadId,
+                manualContinuationOfRunId: runId,
+                text: "Continue where you left off.",
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+                createdBy: "agent",
+                creationSource: "server",
+              });
+            }).pipe(
+              // The thread moved on (new run, archive, pending request): nothing left to continue.
+              Effect.catchTags({
+                OrchestratorDispatchError: (cause) =>
+                  Effect.logInfo("orchestration-v2.effect-worker.limit-continuation-stale", {
+                    threadId: effect.threadId,
+                    runId,
+                    cause,
+                  }),
+                ThreadManagementProviderInstanceDisabledError: (cause) =>
+                  Effect.logInfo("orchestration-v2.effect-worker.limit-continuation-disabled", {
+                    threadId: effect.threadId,
+                    runId,
+                    instanceId: cause.instanceId,
+                  }),
+              }),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          }
           case "delegated-tasks.stop":
             return threads
               .stopDelegatedTasks({

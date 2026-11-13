@@ -880,28 +880,50 @@ function followsCurrentConversation(
   );
 }
 
-function queuedRunModelSelection(
-  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
-  run: OrchestrationV2Run,
-): ModelSelection {
+/** A queued run's own selection, when the user picked it in that message. */
+function pinnedModelSelection(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages">,
+  run: Pick<OrchestrationV2Run, "modelSelection" | "modelSelectionPinned" | "userMessageId">,
+): ModelSelection | undefined {
+  if (run.modelSelectionPinned !== true) return undefined;
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  return followsCurrentConversation(message)
-    ? projection.thread.modelSelection
-    : run.modelSelection;
+  return followsCurrentConversation(message) ? undefined : run.modelSelection;
+}
+
+/**
+ * The one place a queued run's provider and model are decided when it is dispatched (queue
+ * start or resume): the user's own pick in that message, otherwise the thread's selection now.
+ */
+function dispatchModelSelection(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: Pick<OrchestrationV2Run, "modelSelection" | "modelSelectionPinned" | "userMessageId">,
+): ModelSelection {
+  return pinnedModelSelection(projection, run) ?? projection.thread.modelSelection;
+}
+
+/** Whether a message's selection is the user's own pick rather than an echo of the thread's. */
+function pinsModelSelection(
+  command: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "createdBy" | "modelSelection"
+  >,
+  thread: Pick<OrchestrationV2ThreadProjection["thread"], "modelSelection">,
+): boolean {
+  return (
+    command.createdBy === "user" &&
+    command.modelSelection !== undefined &&
+    !modelSelectionsEqual(command.modelSelection, thread.modelSelection)
+  );
 }
 
 /** The selection the thread will be on once every queued run has started. */
 function queueTailModelSelection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
 ): ModelSelection {
-  return (
-    queuedRunsInDeliveryOrder(projection).findLast(
-      (run) =>
-        !followsCurrentConversation(
-          projection.messages.find((message) => message.id === run.userMessageId),
-        ),
-    )?.modelSelection ?? projection.thread.modelSelection
+  const pinned = queuedRunsInDeliveryOrder(projection).findLast(
+    (run) => pinnedModelSelection(projection, run) !== undefined,
   );
+  return pinned?.modelSelection ?? projection.thread.modelSelection;
 }
 
 function usageLimitHoldsQueue(
@@ -1955,7 +1977,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
-      const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
+      const modelSelection = dispatchModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
         modelSelection,
@@ -2087,17 +2109,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const followsCurrent = followsCurrentConversation(queuedMessage);
       const freshContext = queuedRun.freshContext === true;
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection.runs);
+      // The selection resolved at dispatch may differ from the provider the run was queued for.
+      const storedOnTarget =
+        storedProviderThread.providerInstanceId === queuedRun.providerInstanceId;
       // A run queued before a fresh run started is bound to the conversation that run left behind.
       const followsLatestContext =
         !freshContext &&
-        (followsCurrent || providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
+        (followsCurrent ||
+          !storedOnTarget ||
+          providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId &&
           !providerThreadPredatesBoundary(activeProviderThread, contextBoundary)
           ? activeProviderThread
           : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
         : freshContext &&
-            (storedProviderThread.firstRunOrdinal !== null ||
+            (!storedOnTarget ||
+              storedProviderThread.firstRunOrdinal !== null ||
               storedProviderThread.nativeThreadRef !== null)
           ? undefined
           : storedProviderThread;
@@ -2130,7 +2158,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
-        followsCurrent &&
+        (followsCurrent || !storedOnTarget) &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
@@ -2763,6 +2791,59 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ],
     );
   });
+
+  /**
+   * Switching away from a usage-limited provider ends the wait: queued work is released and the
+   * limited run continues on the new selection, so nothing waits for the old provider's reset.
+   */
+  const continueLimitedRunOnSwitch = Effect.fn("Orchestrator.continueLimitedRunOnSwitch")(
+    function* (
+      command: Extract<
+        OrchestrationV2Command,
+        { readonly type: "thread.model-selection.set" | "provider.switch" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+      now: DateTime.Utc,
+    ) {
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "turnItems", "runtimeRequests"],
+        { turnItemTypes: ["error"] },
+      );
+      const limited = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+      if (
+        limited === null ||
+        limited.providerInstanceId === command.modelSelection.instanceId ||
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return;
+      }
+      for (const run of projection.runs) {
+        if (run.status !== "queued" || run.queueHeld !== true) continue;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, queueHeld: false },
+        });
+      }
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:limit-continuation.start`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "limit-continuation.start" as const, runId: limited.id },
+        },
+      ]);
+    },
+  );
 
   // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
   // the server or scheduled tasks, so a later completed run releases those unless it was stopped.
@@ -4538,6 +4619,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
+    if (
+      (command.type === "thread.model-selection.set" || command.type === "provider.switch") &&
+      thread.archivedAt === null &&
+      thread.settledOverride !== "settled"
+    ) {
+      yield* continueLimitedRunOnSwitch(command, events, effects, now);
+    }
+
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -6159,6 +6248,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const modelSelectionPinned = pinsModelSelection(command, projection.thread);
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -6497,7 +6587,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
-      command.modelSelection === undefined &&
+      !modelSelectionPinned &&
       queuedRunStop === undefined &&
       !followsCurrentConversation(incomingMessage) &&
       !isBufferedProviderNotification(incomingMessage)
@@ -6647,6 +6737,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        ...(modelSelectionPinned ? { modelSelectionPinned: true } : {}),
         providerThreadId: queuedProviderThread.id,
         userMessageId: command.messageId,
         rootNodeId,
@@ -13991,7 +14082,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             projection,
             nextRun === undefined
               ? projection.thread.providerInstanceId
-              : queuedRunModelSelection(projection, nextRun).instanceId,
+              : dispatchModelSelection(projection, nextRun).instanceId,
           )
         ) {
           return yield* new OrchestratorDispatchError({
