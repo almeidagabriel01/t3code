@@ -127,10 +127,14 @@ const MEDIUM = /\b(typecheck|tsc|lint|oxlint|fmt|format|check|check:changed)\b/i
 const FILE_ARG = /\S+\.(test|spec)\.\w+|\S+\.(ts|tsx|js|jsx|mjs)\b/;
 
 /** Server-held entries are device opens; unknown commands count as heavy. */
-export const kindOf = (entry: Pick<HeavyQueueEntry, "label" | "server">): Kind => {
-  if (entry.server === true || EXCLUSIVE.test(entry.label)) return "exclusive";
-  if (HEAVY.test(entry.label)) return "heavy";
-  if (MEDIUM.test(entry.label) || (/\btest\b/.test(entry.label) && FILE_ARG.test(entry.label))) {
+/** Judged from the full command line: the label is cut short for the row. */
+export const kindOf = (
+  entry: Pick<HeavyQueueEntry, "label" | "server"> & { readonly line?: string },
+): Kind => {
+  const line = entry.line ?? entry.label;
+  if (entry.server === true || EXCLUSIVE.test(line)) return "exclusive";
+  if (HEAVY.test(line)) return "heavy";
+  if (MEDIUM.test(line) || (/\btest\b/.test(line) && FILE_ARG.test(line))) {
     return "medium";
   }
   return "heavy";

@@ -71,6 +71,15 @@ describe("command kinds and signatures", () => {
     expect(kindOf({ label })).toBe(kind);
   });
 
+  // The label is the first 200 characters of the line; the work can sit past it.
+  it.each([
+    ["xcrun simctl boot iPhone", "exclusive"],
+    ["vp run typecheck", "medium"],
+  ])("a long line is judged by its full text: %s is %s", (tail, kind) => {
+    const line = `cd /w && cat > x.md <<'EOF'\n${"x".repeat(220)}\nEOF\n${tail}`;
+    expect(kindOf({ label: line.slice(0, 200), line })).toBe(kind);
+  });
+
   it("device opens held by a server are exclusive", () => {
     expect(kindOf({ label: "Open iPhone", server: true })).toBe("exclusive");
   });
