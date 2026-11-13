@@ -119,7 +119,18 @@ export const parseHeavyArgs = (args: ReadonlyArray<string>) => {
     "--request-id",
     "--route-reason",
   ];
-  while (rest[0] === "--now" || (rest[1] !== undefined && options.includes(rest[0]!))) {
+  // Another T3 version's option, before the separator: skipped with its value, never run.
+  const foreign = (flag: string | undefined) =>
+    flag !== undefined && flag !== "--" && flag.startsWith("--") && args.includes("--");
+  while (
+    rest[0] === "--now" ||
+    (rest[1] !== undefined && options.includes(rest[0]!)) ||
+    foreign(rest[0])
+  ) {
+    if (rest[0] !== "--now" && !options.includes(rest[0]!)) {
+      rest = rest.slice(rest[1]!.startsWith("-") ? 1 : 2);
+      continue;
+    }
     if (rest[0] === "--now" || rest[1] === undefined) {
       now = true;
       rest = rest.slice(1);

@@ -1099,6 +1099,24 @@ describe("t3 heavy", () => {
     expect(parseHeavyArgs(["vp"]).dir).toBe(Queue.defaultQueueDir());
   });
 
+  it("skips options another T3 version added instead of running one as the program", () => {
+    // A hook from one T3 build hands its line to another build's CLI (`--request-id` once ran as a program).
+    const rows: ReadonlyArray<ReadonlyArray<string>> = [
+      ["--queue-dir", "/q", "--trace-id", "toolu_1", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--trace", "--name", "Tests", "--", "vp", "test"],
+      ["--queue-dir", "/q", "--name", "Tests", "--trace", "--", "vp", "test"],
+      ["--trace-id", "toolu_1", "--queue-dir", "/q", "--name", "Tests", "--", "vp", "test"],
+    ];
+    for (const row of rows) {
+      expect(parseHeavyArgs(row), row.join(" ")).toMatchObject({
+        dir: "/q",
+        name: "Tests",
+        program: "vp",
+        args: ["test"],
+      });
+    }
+  });
+
   it("defaults a checkout's own T3 to that checkout's queue and an installed T3 to the machine's", () => {
     const root = tempDir();
     const worktree = NodePath.join(root, "worktree");
