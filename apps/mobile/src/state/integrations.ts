@@ -100,8 +100,8 @@ export function useIntegrationActions(environmentId: EnvironmentId) {
       integrationReply(await begin({ environmentId, input })),
     completeConnect: async (input: { readonly flowId: string; readonly callbackUrl: string }) =>
       integrationReply(await complete({ environmentId, input })),
-    cancelConnect: async (flowId: string) =>
-      integrationReply(await cancel({ environmentId, input: { flowId } })),
+    cancelConnect: async (name: string) =>
+      integrationReply(await cancel({ environmentId, input: { name } })),
     disconnect: async (name: string) =>
       integrationReply(await disconnect({ environmentId, input: { name } })),
     saveToken: async (catalogId: string, token: string) =>

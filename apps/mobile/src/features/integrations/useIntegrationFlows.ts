@@ -9,6 +9,7 @@ import {
 import type { EnvironmentId, IntegrationsState } from "@t3tools/contracts";
 import * as WebBrowser from "expo-web-browser";
 import { Atom } from "effect/reactivity";
+import { useEffect } from "react";
 import { Keyboard } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -18,7 +19,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { useIntegrationActions } from "../../state/integrations";
 import {
   appReturnScheme,
-  cancelConnectFlow,
+  cancelConnect,
+  endPushedFlows,
   pendingFlowFor,
   pendingFlowsAtom,
   startConnect,
@@ -64,6 +66,18 @@ export function useIntegrationFlows(environmentId: EnvironmentId, state: Integra
     openBrowser: (url) => WebBrowser.openBrowserAsync(url),
     waitForConnection: () => waitForEnvironmentConnection(environmentId),
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a sign-in ends on the server; its pushed status must close the native auth sheet this device still shows
+  useEffect(() => {
+    if (state === null) return;
+    const statusOf = (name: string) =>
+      state.integrations.find((item) => item.name === name)?.status;
+    for (const flow of endPushedFlows(environmentId, statusOf)) {
+      if (flow.mode === "server") WebBrowser.dismissAuthSession();
+      if (statusOf(flow.name) === "connected") {
+        appAtomRegistry.set(connectedNoticeAtom, { environmentId, name: flow.name });
+      }
+    }
+  }, [environmentId, state]);
   const entryOf = (catalogId: string) =>
     state?.catalog.find((entry) => entry.id === catalogId) ?? null;
   const titleOf = (catalogId: string) => entryOf(catalogId)?.name ?? catalogId;
@@ -101,8 +115,7 @@ export function useIntegrationFlows(environmentId: EnvironmentId, state: Integra
   };
 
   const cancel = async (name: string) => {
-    const flow = pendingFlowFor(flows, environmentId, name);
-    if (flow !== null) await cancelConnectFlow(flow, deps);
+    await cancelConnect(environmentId, name, deps);
   };
 
   const disconnect = (name: string, title: string, onDone?: () => void) => {
@@ -170,8 +183,6 @@ export function useIntegrationFlows(environmentId: EnvironmentId, state: Integra
     canAct: actions.canAct,
     actions,
     deps,
-    /** Cancel needs the flow id, which only the app that started the sign-in holds. */
-    canCancel: (name: string) => pendingFlowFor(flows, environmentId, name) !== null,
     pendingFlow: (name: string) => pendingFlowFor(flows, environmentId, name),
     open,
     connect,

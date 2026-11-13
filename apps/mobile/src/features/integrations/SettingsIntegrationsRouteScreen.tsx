@@ -111,14 +111,13 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         </RowPressable>
       )}
       {primary === null || primary.kind === "open" ? null : primary.kind === "cancel" ? (
-        flows.canCancel(primary.name) ? (
-          <Button
-            label={primary.label}
-            size="compact"
-            accessibilityLabel={`${primary.label} ${row.title}`}
-            onPress={() => run(() => flows.runPrimary(primary))}
-          />
-        ) : null
+        <Button
+          label={primary.label}
+          size="compact"
+          accessibilityLabel={`${primary.label} ${row.title}`}
+          disabled={!flows.canAct}
+          onPress={() => run(() => flows.runPrimary(primary))}
+        />
       ) : (
         <Button
           label={primary.label}
@@ -193,6 +192,12 @@ function IntegrationsDirectory(props: {
           {props.title}
         </Text>
       )}
+      {directory.connected.length + directory.available.length + directory.other.length === 0 &&
+      (props.query.trim() !== "" || props.category !== null) ? (
+        <Text className="px-2 text-base text-foreground-muted">
+          No integrations match your search.
+        </Text>
+      ) : null}
       {section("Connected", directory.connected)}
       {section("Available", directory.available)}
       {directory.other.length === 0 ? (
@@ -283,6 +288,7 @@ export function SettingsIntegrationsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 72 }}
       >
         <HorizontalScroll
+          accessibilityLabel="Categories"
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerClassName="gap-2 px-5"
@@ -299,7 +305,7 @@ export function SettingsIntegrationsRouteScreen() {
         <View className="gap-8 px-5">
           {targets.length === 0 ? (
             <Text className="px-2 text-base text-foreground-muted">
-              No environments match this filter. Change the filter above.
+              No integrations match your search.
             </Text>
           ) : (
             targets.map((target) => (

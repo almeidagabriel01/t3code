@@ -14,7 +14,7 @@ import {
   type IntegrationsState,
 } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Keyboard, Linking, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -259,23 +259,27 @@ function OwnAppForm(props: FormProps) {
   };
   const remove = () => {
     Keyboard.dismiss();
-    Dialog.alert("Remove app", leaving.length === 0 ? undefined : leaving.join(", "), [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove app",
-        style: "destructive",
-        onPress: () =>
-          void flows.actions.removeOwnApp(clientGroup).then((reply) => {
-            if (reply.ok) props.done();
-            else setError(integrationErrorMessage(reply.reason, entry.name));
-          }),
-      },
-    ]);
+    Dialog.alert(
+      "Remove app",
+      leaving.length === 0 ? undefined : `Disconnects: ${leaving.join(", ")}`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove app",
+          style: "destructive",
+          onPress: () =>
+            void flows.actions.removeOwnApp(clientGroup).then((reply) => {
+              if (reply.ok) props.done();
+              else setError(integrationErrorMessage(reply.reason, entry.name));
+            }),
+        },
+      ],
+    );
   };
   return (
     <>
       <Header title={entry.name} icon={entry.icon ?? null} />
-      {setupUrl === undefined ? null : <LinkRow label={setupUrl} url={setupUrl} />}
+      {setupUrl === undefined ? null : <LinkRow label="Open the setup page" url={setupUrl} />}
       <ListSection title="Redirect URIs to register">
         {redirectUris.map((uri) => (
           <View key={uri} className="flex-row items-center bg-grouped-card pe-2">
@@ -379,6 +383,17 @@ function PasteForm(props: FormProps) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hadFlow] = useState(flow !== null);
+  const left = useRef(false);
+  const leave = () => {
+    if (left.current) return;
+    left.current = true;
+    props.done();
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- another device or the server can end this sign-in; the step it opened must close with it
+  useEffect(() => {
+    if (hadFlow && flow === null) leave();
+  });
   const submit = async () => {
     if (flow === null) return;
     setSaving(true);
@@ -389,10 +404,11 @@ function PasteForm(props: FormProps) {
       environmentId: props.environmentId,
       name: flow.name,
     });
-    props.done();
+    leave();
   };
   const cancel = async () => {
-    await flows.cancel(flow?.name ?? "");
+    left.current = true;
+    await flows.cancel(flow?.name ?? props.params.name ?? "");
     props.done();
   };
   return (
@@ -404,6 +420,7 @@ function PasteForm(props: FormProps) {
         <>
           <TextField
             label="Paste the address from the browser"
+            description="After you sign in, the browser shows a page that can't load. Copy its address and paste it here."
             value={text}
             multiline
             autoCapitalize="none"
@@ -420,6 +437,11 @@ function PasteForm(props: FormProps) {
             loading={saving}
             disabled={!flows.canAct || text.trim() === "" || saving}
             onPress={() => void submit()}
+          />
+          <Button
+            label="Open sign-in page"
+            fullWidth
+            onPress={() => void flows.deps.openBrowser(flow.authorizationUrl)}
           />
           <Button label="Cancel" fullWidth onPress={() => void cancel()} />
         </>

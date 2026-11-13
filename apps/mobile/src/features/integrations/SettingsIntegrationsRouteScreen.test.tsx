@@ -12,6 +12,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     alert: vi.fn(),
     authSession: vi.fn(),
     openBrowser: vi.fn(),
+    dismissAuthSession: vi.fn(),
     actions: {} as Record<string, ReturnType<typeof vi.fn>>,
     assistants: [] as unknown[],
   },
@@ -19,7 +20,9 @@ const { mocks, Children } = vi.hoisted(() => ({
 
 vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
-  ScrollView: Children,
+  ScrollView: (props: { children?: ReactNode; accessibilityLabel?: string }) => (
+    <div aria-label={props.accessibilityLabel}>{props.children}</div>
+  ),
   Keyboard: { dismiss: vi.fn() },
 }));
 vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
@@ -28,6 +31,7 @@ vi.mock("expo-constants", () => ({ default: { expoConfig: { scheme: "t3code" } }
 vi.mock("expo-web-browser", () => ({
   openAuthSessionAsync: (...args: unknown[]) => mocks.authSession(...args),
   openBrowserAsync: (...args: unknown[]) => mocks.openBrowser(...args),
+  dismissAuthSession: () => mocks.dismissAuthSession(),
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate, goBack: vi.fn() }),
@@ -280,7 +284,13 @@ beforeEach(() => {
       assistant: { id: "a2", name: "Ops", integrations: { mode: "selected", names: [] } },
     },
   ];
-  for (const fn of [mocks.navigate, mocks.alert, mocks.authSession, mocks.openBrowser]) {
+  for (const fn of [
+    mocks.navigate,
+    mocks.alert,
+    mocks.authSession,
+    mocks.openBrowser,
+    mocks.dismissAuthSession,
+  ]) {
     fn.mockReset();
   }
   mocks.actions = {
@@ -331,8 +341,11 @@ describe("integrations directory", () => {
     });
     expect(container.textContent).toContain("GitHub");
     expect(container.textContent).not.toContain("Linear");
+    expect(container.textContent).not.toContain("No integrations match your search.");
     await press("chip:Email");
     expect(container.textContent).not.toContain("GitHub");
+    expect(container.textContent).toContain("No integrations match your search.");
+    expect(container.querySelector('[aria-label="Categories"]')).not.toBeNull();
     expect(button("chip:Email").getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -344,7 +357,7 @@ describe("integrations directory", () => {
     root = createRoot(container);
     mocks.environmentIds = [];
     render();
-    expect(container.textContent).toContain("No environments match this filter.");
+    expect(container.textContent).toContain("No integrations match your search.");
   });
 
   it("opens the detail, the custom servers page and Added in T3 rows", async () => {
@@ -424,7 +437,7 @@ describe("connect", () => {
     render();
     expect(container.textContent).toContain("Waiting for sign-in…");
     await press("Cancel Notion");
-    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("f2");
+    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("notion");
   });
 
   it("opens the token and own-app steps instead of signing in, and explains refusals", async () => {
@@ -459,8 +472,44 @@ describe("connect", () => {
     mocks.authSession.mockResolvedValue({ type: "dismiss" });
     render();
     await press("Connect for other providers Notion");
-    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("f1");
+    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("notion");
     expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  const withNotion = (status: string) => {
+    const state = baseState();
+    mocks.state = {
+      ...state,
+      integrations: [
+        ...state.integrations,
+        { name: "notion", catalogId: "notion", auth: "oauth", status, availability: "all" },
+      ],
+    };
+  };
+
+  it("cancels by name a sign-in another device started", async () => {
+    withNotion("connecting");
+    render();
+    await press("Cancel Notion");
+    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("notion");
+  });
+
+  it("closes the auth sheet when the pushed state ends this device's sign-in", async () => {
+    const session = Promise.withResolvers<{ type: string }>();
+    mocks.authSession.mockReturnValue(session.promise);
+    render();
+    await press("Connect for other providers Notion");
+    withNotion("connecting");
+    render();
+    expect(mocks.dismissAuthSession).not.toHaveBeenCalled();
+    withNotion("connected");
+    render();
+    expect(mocks.dismissAuthSession).toHaveBeenCalledTimes(1);
+    await act(async () => session.resolve({ type: "dismiss" }));
+    expect(mocks.actions.cancelConnect).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "Choose which assistants use it",
+    );
   });
 });
 

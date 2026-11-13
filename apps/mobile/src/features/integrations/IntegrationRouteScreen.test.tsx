@@ -13,6 +13,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     openURL: vi.fn(),
     copy: vi.fn(),
     authSession: vi.fn(),
+    openBrowser: vi.fn(),
     actions: {} as Record<string, ReturnType<typeof vi.fn>>,
     assistants: [] as unknown[],
     providers: [] as unknown[],
@@ -31,7 +32,7 @@ vi.mock("expo-constants", () => ({ default: { expoConfig: { scheme: "t3code-prev
 vi.mock("expo-clipboard", () => ({ setStringAsync: (value: string) => mocks.copy(value) }));
 vi.mock("expo-web-browser", () => ({
   openAuthSessionAsync: (...args: unknown[]) => mocks.authSession(...args),
-  openBrowserAsync: vi.fn(),
+  openBrowserAsync: (url: string) => mocks.openBrowser(url),
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate, goBack: mocks.goBack }),
@@ -83,11 +84,13 @@ vi.mock("../assistants/AssistantFormFields", () => ({
     label: string;
     value: string;
     placeholder?: string;
+    description?: string;
     secure?: boolean;
     onChange: (value: string) => void;
   }) => (
     <input
       aria-label={props.label}
+      aria-description={props.description}
       type={props.secure ? "password" : "text"}
       placeholder={props.placeholder}
       value={props.value}
@@ -225,7 +228,14 @@ beforeEach(() => {
     { instanceId: "opencode", driver: "opencode", enabled: true },
     { instanceId: "codex", driver: "codex", enabled: false },
   ];
-  for (const fn of [mocks.navigate, mocks.goBack, mocks.alert, mocks.openURL, mocks.copy]) {
+  for (const fn of [
+    mocks.navigate,
+    mocks.goBack,
+    mocks.alert,
+    mocks.openURL,
+    mocks.copy,
+    mocks.openBrowser,
+  ]) {
     fn.mockReset();
   }
   mocks.copy.mockResolvedValue(true);
@@ -309,7 +319,7 @@ describe("own app", () => {
     expect(uris?.textContent).toContain("http://127.0.0.1:9/integrations/callback");
     await press("Copy");
     expect(mocks.copy).toHaveBeenCalledWith("https://box.tail.ts.net/oauth/integrations/callback");
-    await press(gmail.auth.setupUrl);
+    await press("Open the setup page");
     expect(mocks.openURL).toHaveBeenCalledWith(gmail.auth.setupUrl);
   });
 
@@ -352,7 +362,7 @@ describe("own app", () => {
   it("remove app names the integrations that disconnect", async () => {
     render({ form: "own-app", catalogId: "gmail" });
     await press("Remove app");
-    expect(mocks.alert.mock.calls[0]?.slice(0, 2)).toEqual(["Remove app", "gmail"]);
+    expect(mocks.alert.mock.calls[0]?.slice(0, 2)).toEqual(["Remove app", "Disconnects: gmail"]);
     await confirmAlert("Remove app");
     expect(mocks.actions.removeOwnApp).toHaveBeenCalledWith("google");
     expect(mocks.goBack).toHaveBeenCalled();
@@ -443,14 +453,36 @@ describe("paste", () => {
       environmentId: "hub",
       name: "gmail",
     });
-    expect(mocks.goBack).toHaveBeenCalled();
+    expect(mocks.goBack).toHaveBeenCalledTimes(1);
   });
 
   it("cancel ends the sign-in on the server", async () => {
     withFlow();
     render({ form: "paste", catalogId: "gmail", name: "gmail" });
     await press("Cancel");
-    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("f9");
-    expect(mocks.goBack).toHaveBeenCalled();
+    expect(mocks.actions.cancelConnect).toHaveBeenCalledWith("gmail");
+    expect(mocks.goBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains the step and reopens the sign-in page", async () => {
+    withFlow();
+    render({ form: "paste", catalogId: "gmail", name: "gmail" });
+    expect(
+      container
+        .querySelector('[aria-label="Paste the address from the browser"]')
+        ?.getAttribute("aria-description"),
+    ).toBe(
+      "After you sign in, the browser shows a page that can't load. Copy its address and paste it here.",
+    );
+    await press("Open sign-in page");
+    expect(mocks.openBrowser).toHaveBeenCalledWith("https://auth.example");
+  });
+
+  it("closes when the sign-in ends elsewhere", () => {
+    withFlow();
+    render({ form: "paste", catalogId: "gmail", name: "gmail" });
+    expect(mocks.goBack).not.toHaveBeenCalled();
+    act(() => appAtomRegistry.set(pendingFlowsAtom, new Map()));
+    expect(mocks.goBack).toHaveBeenCalledTimes(1);
   });
 });

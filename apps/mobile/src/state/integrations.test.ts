@@ -63,7 +63,7 @@ describe("useIntegrationActions", () => {
         actions.completeConnect({ flowId: "f", callbackUrl: "u" }),
         { flowId: "f", callbackUrl: "u" },
       ],
-      [actions.cancelConnect("f"), { flowId: "f" }],
+      [actions.cancelConnect("x"), { name: "x" }],
       [actions.disconnect("x"), { name: "x" }],
       [actions.saveToken("x", "t"), { catalogId: "x", token: "t" }],
       [

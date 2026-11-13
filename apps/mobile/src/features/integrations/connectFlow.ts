@@ -26,11 +26,13 @@ export interface PendingFlow {
   readonly name: string;
   readonly mode: IntegrationBeginConnectResult["mode"];
   readonly authorizationUrl: string;
+  /** Set once a pushed state showed it connecting, so a later status ends it. */
+  readonly seenConnecting?: boolean;
 }
 
 const flowKey = (environmentId: EnvironmentId, name: string) => `${environmentId}\u0000${name}`;
 
-/** Sign-ins this app started; a row only offers Cancel for a flow it knows the id of. */
+/** Sign-ins this app started, for the paste step and to close the auth sheet when they end. */
 export const pendingFlowsAtom = Atom.make<ReadonlyMap<string, PendingFlow>>(new Map()).pipe(
   Atom.keepAlive,
   Atom.withLabel("mobile-integration-flows"),
@@ -59,7 +61,7 @@ export interface ConnectDeps {
     readonly flowId: string;
     readonly callbackUrl: string;
   }) => Promise<IntegrationReply<unknown>>;
-  readonly cancel: (flowId: string) => Promise<IntegrationReply<unknown>>;
+  readonly cancel: (name: string) => Promise<IntegrationReply<unknown>>;
   readonly openAuthSession: (
     url: string,
     returnUrl: string,
@@ -74,7 +76,9 @@ export type ConnectOutcome =
   /** `reason` null: the server already recorded why on the integration. */
   | { readonly kind: "failed"; readonly reason: string | null }
   | { readonly kind: "paste"; readonly flow: PendingFlow }
-  | { readonly kind: "cancelled" };
+  | { readonly kind: "cancelled" }
+  /** A pushed state ended it first (connected, failed, expired or cancelled elsewhere). */
+  | { readonly kind: "ended" };
 
 const originOf = (baseUrl: string | null) => {
   if (baseUrl === null || !URL.canParse(baseUrl)) return {};
@@ -115,18 +119,53 @@ export async function startConnect(catalogId: string, deps: ConnectDeps): Promis
       ? { kind: "connected", name: flow.name }
       : { kind: "failed", reason: null };
   }
-  // Completion happens on the server, so cancelling a flow it already finished changes nothing.
-  return cancelConnectFlow(flow, deps);
+  if (
+    pendingFlowFor(appAtomRegistry.get(pendingFlowsAtom), flow.environmentId, flow.name) === null
+  ) {
+    return { kind: "ended" };
+  }
+  return cancelConnect(flow.environmentId, flow.name, deps);
 }
 
-export async function cancelConnectFlow(
-  flow: PendingFlow,
+/** By name, so a sign-in started on any device can be cancelled from here. */
+export async function cancelConnect(
+  environmentId: EnvironmentId,
+  name: string,
   deps: Pick<ConnectDeps, "cancel" | "waitForConnection">,
 ): Promise<ConnectOutcome> {
   await deps.waitForConnection();
-  await deps.cancel(flow.flowId);
-  setPending(flow, false);
+  await deps.cancel(name);
+  const flow = pendingFlowFor(appAtomRegistry.get(pendingFlowsAtom), environmentId, name);
+  if (flow !== null) setPending(flow, false);
   return { kind: "cancelled" };
+}
+
+/**
+ * Forgets this device's sign-ins whose pushed status left "connecting" and returns them, so
+ * the caller can close the auth sheet or paste step they still show.
+ */
+export function endPushedFlows(
+  environmentId: EnvironmentId,
+  statusOf: (name: string) => string | undefined,
+): ReadonlyArray<PendingFlow> {
+  const flows = appAtomRegistry.get(pendingFlowsAtom);
+  const next = new Map(flows);
+  const ended: PendingFlow[] = [];
+  let changed = false;
+  for (const [key, flow] of flows) {
+    if (flow.environmentId !== environmentId) continue;
+    const connecting = statusOf(flow.name) === "connecting";
+    if (connecting && !flow.seenConnecting) {
+      next.set(key, { ...flow, seenConnecting: true });
+      changed = true;
+    } else if (!connecting && flow.seenConnecting) {
+      next.delete(key);
+      ended.push(flow);
+      changed = true;
+    }
+  }
+  if (changed) appAtomRegistry.set(pendingFlowsAtom, next);
+  return ended;
 }
 
 /** `invalid-callback` when the text is not an address carrying the sign-in answer. */

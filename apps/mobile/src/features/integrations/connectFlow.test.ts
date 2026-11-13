@@ -8,7 +8,8 @@ vi.mock("expo-constants", () => ({ default: constants }));
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
   appReturnScheme,
-  cancelConnectFlow,
+  cancelConnect,
+  endPushedFlows,
   completePastedConnect,
   pendingFlowFor,
   pendingFlowsAtom,
@@ -106,7 +107,7 @@ describe("startConnect", () => {
         }),
       });
       expect(await startConnect("linear", d)).toEqual({ kind: "cancelled" });
-      expect(d.cancel).toHaveBeenCalledWith("f1");
+      expect(d.cancel).toHaveBeenCalledWith("linear");
       expect(order).toEqual(["wait", "wait", "cancel"]);
       expect(pending()).toBeNull();
     },
@@ -165,7 +166,40 @@ describe("pasted callbacks", () => {
       await completePastedConnect(flow, "http://127.0.0.1:4/integrations/callback?error=x", d),
     ).toEqual({ ok: false, reason: "sign-in-expired" });
     expect(pending()).not.toBeNull();
-    await cancelConnectFlow(flow, d);
+    await cancelConnect("hub" as never, "linear", d);
     expect(pending()).toBeNull();
+  });
+});
+
+describe("pushed endings", () => {
+  it("ends this device's flow only after the server showed it connecting", async () => {
+    const session = Promise.withResolvers<{ type: string }>();
+    const opened = Promise.withResolvers<void>();
+    const d = deps({
+      openAuthSession: vi.fn(() => {
+        opened.resolve();
+        return session.promise;
+      }),
+    });
+    const started = startConnect("linear", d);
+    await opened.promise;
+    let status = "not-connected";
+    const statusOf = (name: string) => (name === "linear" ? status : undefined);
+    expect(endPushedFlows("hub" as never, statusOf)).toEqual([]);
+    status = "connecting";
+    expect(endPushedFlows("hub" as never, statusOf)).toEqual([]);
+    expect(endPushedFlows("other" as never, () => undefined)).toEqual([]);
+    status = "connected";
+    expect(endPushedFlows("hub" as never, statusOf)).toMatchObject([{ name: "linear" }]);
+    expect(pending()).toBeNull();
+    session.resolve({ type: "dismiss" });
+    expect(await started).toEqual({ kind: "ended" });
+    expect(d.cancel).not.toHaveBeenCalled();
+  });
+
+  it("cancels by name a sign-in this device never started", async () => {
+    const d = deps();
+    expect(await cancelConnect("hub" as never, "notion", d)).toEqual({ kind: "cancelled" });
+    expect(d.cancel).toHaveBeenCalledWith("notion");
   });
 });
