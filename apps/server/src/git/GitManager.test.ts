@@ -1221,6 +1221,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(gitCommands).toEqual([]);
       yield* lookup("1");
       expect(lookups()).toBe(1);
+
+      // A refresh looks again and leaves its result for the next reuse.
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/reused" },
+        { reuseKey: "1", refresh: true },
+      );
+      expect(lookups()).toBe(1);
+      gitCommands.length = 0;
+      expect((yield* lookup("1"))?.number).toBe(3);
+      expect(gitCommands).toEqual([]);
     }),
   );
 
