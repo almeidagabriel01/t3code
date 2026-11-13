@@ -3753,10 +3753,13 @@ it.effect.each([
       h.user,
     );
     yield* groups.idle;
-    const notices = (yield* h.messages).filter((row) => row.kind === "notice");
+    const notices = (yield* groups.history({ teamId: TEAM })).messages.filter(
+      (message) => message.kind === "notice",
+    );
+    // Only the lead's question for the project carries the mark clients read as "Needs project".
     assert.deepEqual(
-      notices.map((row) => [row.assistant_id, row.text]),
-      "notice" in rest ? [["beto", rest.notice]] : [],
+      notices.map((message) => [message.assistantId, message.text, message.asksProject ?? false]),
+      "notice" in rest ? [["beto", rest.notice, runs === null]] : [],
     );
     assert.deepEqual(
       h.launched.map((launch) => launch.projectId),

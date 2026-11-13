@@ -214,6 +214,7 @@ interface MessageRow {
   readonly wait_thread_id: string | null;
   readonly wait_decision_id: string | null;
   readonly wait_resolved_at: string | null;
+  readonly asks_project: number;
   readonly created_at: string;
 }
 
@@ -289,6 +290,7 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
           resolved: row.wait_resolved_at !== null,
         },
       }),
+  ...(row.asks_project === 1 ? { asksProject: true } : {}),
   createdAt: row.created_at,
 });
 
@@ -710,6 +712,8 @@ const make = Effect.gen(function* () {
     readonly title?: string | null;
     /** A notice that a member's conversation waits on the user. */
     readonly wait?: ThreadWait;
+    /** The lead's notice asking which project the request is for. */
+    readonly asksProject?: boolean;
   }) {
     const id = yield* newId("gm");
     const requestId = input.requestId === "new" ? id : (input.requestId ?? null);
@@ -718,14 +722,14 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
         task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
-        wait_thread_id, wait_decision_id, created_at
+        wait_thread_id, wait_decision_id, asks_project, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
         ${input.replyTo ?? null}, ${input.taskId ?? null}, ${input.clientRequestId ?? null},
         ${encodeAttachments(input.attachments ?? [])}, ${requestId}, ${input.projectId ?? null},
         ${input.title ?? null}, ${input.wait?.key ?? null}, ${input.wait?.threadId ?? null},
-        ${input.wait?.decisionId ?? null}, ${yield* nowIso}
+        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -1624,6 +1628,7 @@ const make = Effect.gen(function* () {
                   )}?`,
                 replyTo: trigger.message_id,
                 requestId: request.message_id,
+                asksProject: true,
               });
               return;
             }

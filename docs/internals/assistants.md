@@ -117,8 +117,8 @@ the group), a user's reply into a request one member works (that member), then a
 message replying to nothing is a new request and never follows up on what is open. Only then does the
 lead route; it also picks a new request's project among the members' projects
 (`assistantGroupProjectIds`) and titles it, and when the project is unclear it asks with a `notice`
-replying to the message (clients read that shape as "Needs project"), so the user's answer routes the
-request again. Before the lead, the project comes from the request, then the composer's pick, then a
+replying to the message and marked `asksProject` (clients show "Needs project" from that mark alone),
+so the user's answer routes the request again. Before the lead, the project comes from the request, then the composer's pick, then a
 single `#slug` in the text (`assistantGroupProjectMentions`, the same parser clients highlight with);
 two `#projects` force the question even when the lead would infer one. The lead routes through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
 Antigravity), which may answer `noReply` for a thanks: no task, a muted `change` line that also marks

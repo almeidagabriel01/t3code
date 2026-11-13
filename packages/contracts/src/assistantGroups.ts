@@ -109,6 +109,8 @@ export const AssistantGroupMessage = Schema.Struct({
    * question, an open decision): where to answer it, and whether it was answered since.
    */
   waiting: Schema.optionalKey(AssistantGroupWaiting),
+  /** On the lead's notice asking which project a request is for; absent on every other message. */
+  asksProject: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;

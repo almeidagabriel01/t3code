@@ -685,6 +685,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["wait_decision_id", "TEXT"],
     ["wait_resolved_at", "TEXT"],
   ]);
+  // The lead's notice asking which project a request is for.
+  yield* addColumns("assistant_group_messages", [["asks_project", "INTEGER NOT NULL DEFAULT 0"]]);
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
