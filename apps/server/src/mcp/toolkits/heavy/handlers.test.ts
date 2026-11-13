@@ -199,6 +199,15 @@ describe("heavyStatus", () => {
       askUser: true,
     },
     {
+      name: "runs directly, as a commit with no hook: never ask",
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, runsOn: "direct" as const, reason: "No commit hook" },
+      },
+      askUser: false,
+      reason: "No commit hook",
+    },
+    {
       name: "Mac-bound: Linux jobs never fill this Mac's slots",
       change: {
         maxRunning: 1,
