@@ -834,28 +834,29 @@ const make = Effect.gen(function* () {
     const language = yield* channelLanguage.current;
     const shown = localizeDecision(input.decision, language);
     const deliveryId = `needs-you:${input.decision.id}`;
+    const card = needsYouText(
+      {
+        agent: input.agent,
+        title: shown.title,
+        context: input.context?.(language) ?? shown.context,
+        projectName: yield* projectName(input.projectId),
+        threadTitle: input.threadTitle,
+        link: yield* linkTo(input.threadId),
+        answerable: input.answerable,
+      },
+      language,
+    );
     yield* outbox.enqueue({
       deliveryId,
       destination: chat,
       senderName: "T3 Code",
-      text: needsYouText(
-        {
-          agent: input.agent,
-          title: shown.title,
-          context: input.context?.(language) ?? shown.context,
-          projectName: yield* projectName(input.projectId),
-          threadTitle: input.threadTitle,
-          link: yield* linkTo(input.threadId),
-          answerable: input.answerable,
-        },
-        language,
-      ),
-      ...(input.answerable
+      text: card.text,
+      ...(card.answerable
         ? { choices: shown.options.map((option) => ({ label: option.label, value: option.id })) }
         : {}),
       language,
     });
-    if (input.answerable) {
+    if (card.answerable) {
       yield* sql`
         INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id)
         VALUES (${input.decision.id}, ${deliveryId})`;

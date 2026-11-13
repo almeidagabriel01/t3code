@@ -9,6 +9,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -43,6 +44,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
+        Layer.mock(ServerEnvironment)({ getEnvironmentId: Effect.succeed("env-1" as never) }),
         Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: () => Effect.succeed({} as never),
@@ -294,6 +296,34 @@ it.effect("an open decision becomes a card with its options, posted once", () =>
       ],
       language: "en",
     });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a decision too long for its card goes without choices, pointing to T3", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const reactor = yield* Reactor.ChannelReplyReactor;
+    const decisions = yield* DecisionService.DecisionService;
+    yield* speak(otherChatAddress);
+    const decision = yield* decisions.request({
+      fromThreadId: thread as never,
+      projectId: "scratch" as never,
+      threadTitle: "Jarvis",
+      clientRequestId: "long",
+      title: "Run it?",
+      context: `rm -rf ${"x".repeat(2_000)}`,
+      options: [
+        { id: "yes", label: "Yes" },
+        { id: "no", label: "No" },
+      ],
+    });
+    yield* reactor.handleDecision(decision);
+    const [row] = yield* outboxRows;
+    assert.isUndefined(row!.message.choices);
+    assert.include(row!.message.text, "(cut short — open it in T3)");
+    assert.include(row!.message.text, "https://app.t3.codes/threads/env-1/assistant%3Ajarvis%3A2");
+    const sql = yield* SqlClient.SqlClient;
+    assert.lengthOf(yield* sql`SELECT 1 FROM channel_cards`, 0);
   }).pipe(Effect.provide(layer));
 });
 

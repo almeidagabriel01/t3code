@@ -14,7 +14,11 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { hostedThreadLink } from "@t3tools/shared/threadLinks";
+
+import { cardContext } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -67,6 +71,7 @@ const make = Effect.gen(function* () {
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const channelLanguage = yield* ChannelLanguage;
   const sql = yield* SqlClient.SqlClient;
+  const environment = yield* ServerEnvironment;
 
   const targetFor = Effect.fn("ChannelReplyReactor.targetFor")(function* (threadId: string) {
     const assistantId = assistantIdFromThreadId(threadId);
@@ -152,18 +157,29 @@ const make = Effect.gen(function* () {
         if (card.length > 0) return;
         const language = yield* channelLanguage.current;
         const shown = localizeDecision(decision, language);
+        const context = cardContext(shown.context, language);
+        const link = context.cut
+          ? `${channelStrings(language).openInT3} ${hostedThreadLink({
+              environmentId: yield* environment.getEnvironmentId,
+              threadId: decision.fromThreadId,
+            })}`
+          : "";
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
           senderName: target.assistantName,
-          text: [shown.title, shown.context].filter((part) => part !== "").join("\n\n"),
-          choices: shown.options.map((option) => ({
-            label: option.label,
-            value: option.id,
-          })),
+          text: [shown.title, context.text, link].filter((part) => part !== "").join("\n\n"),
+          ...(context.cut
+            ? {}
+            : {
+                choices: shown.options.map((option) => ({ label: option.label, value: option.id })),
+              }),
           language,
         });
-        yield* sql`INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id) VALUES (${decision.id}, ${deliveryId})`;
+        // A cut card has no choices, so no number in the chat may answer it.
+        if (!context.cut) {
+          yield* sql`INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id) VALUES (${decision.id}, ${deliveryId})`;
+        }
         return;
       }
       const card = yield* sql<{ readonly delivery_id: string }>`

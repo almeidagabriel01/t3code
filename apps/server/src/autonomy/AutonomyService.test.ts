@@ -1064,6 +1064,40 @@ it.effect("a secret at the edge of the clipped context is redacted before the cu
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a command cut to fit the card cannot be approved from the chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    h.shells.set("t1", plain);
+    for (const [id, length] of [
+      ["card", 2_000],
+      ["decision", 5_000],
+    ] as const) {
+      yield* pendingRequest(h, {
+        id,
+        threadId: "t1",
+        item: { type: "approval_request", requestId: id, prompt: `echo ${"a".repeat(length)}` },
+      });
+    }
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 2);
+    for (const { message } of rows) {
+      assert.isUndefined(message.choices);
+      assert.include(message.text, "(cut short — open it in T3)");
+      assert.include(message.text, "https://app.t3.codes/threads/env-1/t1");
+    }
+    assert.lengthOf(yield* cards, 0);
+    // Cut at the decision's own limit, it is not an approval in Activity either.
+    const cut = (yield* decisions.list({})).find((decision) =>
+      decision.context.includes("a".repeat(4_000).slice(0, 3_900)),
+    );
+    assert.isUndefined(cut?.approvalRequestId);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "a single-choice question offers its options; any other question informs and leaves when answered",
   () => {

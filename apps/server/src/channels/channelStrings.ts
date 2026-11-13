@@ -40,6 +40,8 @@ export interface ChannelStrings {
   readonly threadLabel: string;
   readonly openInT3: string;
   readonly answerInT3: string;
+  /** Ends a card whose text was cut short, so it is never answered from the chat. */
+  readonly cutOpenInT3: string;
   /** After a number answered one card while another is still open in the chat. */
   readonly stillWaiting: (title: string) => string;
   readonly groupTaskReason: (reason: string | null) => string;
@@ -100,6 +102,8 @@ const en: ChannelStrings = {
   threadLabel: "Thread:",
   openInT3: "Open in T3:",
   answerInT3: "Answer it in T3.",
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- the wording the developer asked for
+  cutOpenInT3: "(cut short — open it in T3)",
   stillWaiting: (title) => `Still waiting for you: "${title}". Numbers now answer it.`,
   groupTaskReason: (reason) =>
     reason === "handoff_limit"
@@ -164,6 +168,8 @@ const ptBR: ChannelStrings = {
   threadLabel: "Thread:",
   openInT3: "Abrir no T3:",
   answerInT3: "Responda no T3.",
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- the wording the developer asked for
+  cutOpenInT3: "(cortado — abra no T3)",
   stillWaiting: (title) => `Ainda esperando você: "${title}". Os números agora respondem a ele.`,
   groupTaskReason: (reason) =>
     reason === "handoff_limit"
