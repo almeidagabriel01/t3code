@@ -1154,6 +1154,76 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a reused branch PR lookup runs no git until refs, status or its key change", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/reused"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/reused"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({
+        gitCommands,
+        providerScenario: {
+          prListOtherwise: [
+            {
+              number: 3,
+              title: "Reused",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/3",
+              baseRefName: "main",
+              headRefName: "feature/reused",
+              state: "open",
+              updatedAt: "2026-04-03T15:00:00Z",
+            },
+          ],
+        },
+      });
+      const lookup = (reuseKey = "0") =>
+        manager.branchPullRequest({ cwd: repoDir, branch: "feature/reused" }, { reuseKey });
+      const lookups = () => gitCommands.filter((args) => args === "remote").length;
+
+      // Concurrent settlement sweeps on one pair share a single lookup.
+      const burst = yield* Effect.all(
+        Array.from({ length: 5 }, () => lookup()),
+        {
+          concurrency: "unbounded",
+        },
+      );
+      expect(burst.map((pullRequest) => pullRequest?.number)).toEqual([3, 3, 3, 3, 3]);
+      expect(lookups()).toBe(1);
+
+      // Past every lookup TTL, an unchanged repository still runs no git.
+      yield* TestClock.adjust("20 minutes");
+      gitCommands.length = 0;
+      expect((yield* lookup())?.number).toBe(3);
+      expect(gitCommands).toEqual([]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "reused.txt"), "outside a turn\n");
+      yield* runGit(repoDir, ["add", "reused.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Outside a turn"]);
+      gitCommands.length = 0;
+      yield* lookup();
+      expect(lookups()).toBe(1);
+      gitCommands.length = 0;
+      yield* lookup();
+      expect(gitCommands).toEqual([]);
+
+      yield* manager.invalidateStatus(repoDir);
+      yield* lookup();
+      expect(lookups()).toBe(1);
+
+      // Another key, such as a finished run in the cwd, reads again once inner caches expire.
+      yield* TestClock.adjust("20 minutes");
+      gitCommands.length = 0;
+      yield* lookup();
+      expect(gitCommands).toEqual([]);
+      yield* lookup("1");
+      expect(lookups()).toBe(1);
+    }),
+  );
+
   it.effect("branch PR lookup uses a saved tracked branch without changing checkout", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

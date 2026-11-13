@@ -14,6 +14,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
@@ -1302,6 +1303,64 @@ describe("ThreadSettlementServiceV2 worker", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
             [thread.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a finished run makes the next branch lookups in its cwd read past the reuse", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const finished = makeThread("run-finished", {
+          branch: "saved-feature",
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        });
+        const sibling = makeThread("same-branch", {
+          branch: "saved-feature",
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([finished, sibling]),
+          // GitManager keeps returning the reused open result until the key changes.
+          branchPullRequest: (_input, lookupOptions) =>
+            Effect.succeed(
+              makeBranchPullRequest(lookupOptions?.reuseKey === "1" ? "merged" : "open"),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          // Two threads on one pair share one lookup per sweep.
+          assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 1);
+
+          yield* fixture.publishEvent({
+            type: "run.updated",
+            id: EventId.make("event:run-finished:completed"),
+            threadId: finished.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              id: RunId.make("run:run-finished"),
+              threadId: finished.id,
+              status: "completed",
+            } as OrchestrationV2Run,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [finished.id],
+          );
+
+          // The full sweep reuses the newer key for the sibling on the same cwd.
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toContain(
+            sibling.id,
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

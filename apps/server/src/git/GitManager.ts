@@ -135,10 +135,18 @@ export class GitManager extends Context.Service<
       input: VcsStatusInput,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
-    /** refresh queries the host; freshGitState rereads only git state and is required before persisting. */
+    /**
+     * refresh queries the host; freshGitState rereads only git state and is required before persisting.
+     * reuseKey reuses the last result, without running git, until the repository's refs or config
+     * change on disk, invalidateStatus runs for the cwd, or the caller passes another reuseKey.
+     */
     readonly branchPullRequest: (
       input: { readonly cwd: string; readonly branch: string },
-      options?: { readonly refresh?: boolean; readonly freshGitState?: boolean },
+      options?: {
+        readonly refresh?: boolean;
+        readonly freshGitState?: boolean;
+        readonly reuseKey?: string;
+      },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -2755,49 +2763,145 @@ export const make = Effect.gen(function* () {
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
   });
+  const lookupBranchPullRequestUntilSettled = Effect.fn("lookupBranchPullRequestUntilSettled")(
+    function* (cacheCwd: string, branch: string, refresh: boolean, freshGitState: boolean) {
+      const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
+        refresh,
+        freshGitState,
+      });
+      if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
+      // A confirmed closed or merged result stays final until the branch or remotes change,
+      // with a periodic fresh lookup so a new PR from a reused branch still shows up.
+      const settledKey = `${cacheCwd}\u0000${branch}`;
+      const now = yield* Clock.currentTimeMillis;
+      const settled = settledPrLookupByBranchKey.get(settledKey);
+      // Read before any fresh lookup, so a change made during it forces another one.
+      const fingerprint = yield* readSettledPrLookupFingerprint(cacheCwd, branch);
+      if (
+        settled !== undefined &&
+        settled.url === pullRequest.url &&
+        settled.fingerprint === fingerprint &&
+        now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL)
+      ) {
+        return pullRequest;
+      }
+      const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
+        refresh: false,
+        freshGitState: true,
+      });
+      settledPrLookupByBranchKey.delete(settledKey);
+      if (confirmed !== null && confirmed.state !== "open") {
+        if (settledPrLookupByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+          const oldestKey = settledPrLookupByBranchKey.keys().next().value;
+          if (oldestKey !== undefined) settledPrLookupByBranchKey.delete(oldestKey);
+        }
+        settledPrLookupByBranchKey.set(settledKey, {
+          url: confirmed.url,
+          fingerprint,
+          confirmedAtMs: now,
+        });
+      }
+      return confirmed;
+    },
+  );
+  // null marks a cwd outside a repository, so repeat calls skip the reuse cache without running git.
+  // Both helpers below are untraced: they run inside the branchPullRequest span on every sweep.
+  const gitDirsByCwd = new Map<
+    string,
+    { readonly gitDir: string; readonly commonDir: string } | null
+  >();
+  const resolveGitDirs = Effect.fnUntraced(function* (cacheCwd: string) {
+    const known = gitDirsByCwd.get(cacheCwd);
+    if (known !== undefined) return known;
+    const result = yield* gitCore
+      .execute({
+        operation: "GitManager.branchPullRequest.gitDirs",
+        cwd: cacheCwd,
+        args: ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(result)) return null;
+    const [gitDir, commonDir] = result.value.stdout.trim().split("\n");
+    const dirs = result.value.exitCode === 0 && gitDir && commonDir ? { gitDir, commonDir } : null;
+    if (gitDirsByCwd.size >= PR_LOOKUP_CACHE_CAPACITY) {
+      const oldestKey = gitDirsByCwd.keys().next().value;
+      if (oldestKey !== undefined) gitDirsByCwd.delete(oldestKey);
+    }
+    gitDirsByCwd.set(cacheCwd, dirs);
+    return dirs;
+  });
+  // stat runs no process yet sees commits, checkouts, pushes and remote edits made outside T3.
+  const readRefFingerprint = Effect.fnUntraced(function* (cacheCwd: string, branch: string) {
+    const dirs = yield* resolveGitDirs(cacheCwd);
+    if (dirs === null) return null;
+    const statKey = (file: string) =>
+      fileSystem.stat(file).pipe(
+        Effect.map((info) =>
+          [
+            Option.getOrElse(info.ino, () => ""),
+            info.size,
+            Option.match(info.mtime, { onNone: () => "", onSome: (date) => date.getTime() }),
+          ].join(":"),
+        ),
+        Effect.orElseSucceed(() => "-"),
+      );
+    const [head, ...rest] = yield* Effect.forEach(
+      [
+        path.join(dirs.gitDir, "HEAD"),
+        path.join(dirs.commonDir, "refs", "heads", branch),
+        path.join(dirs.commonDir, "packed-refs"),
+        path.join(dirs.commonDir, "config"),
+        path.join(dirs.commonDir, "reftable", "tables.list"),
+      ],
+      statKey,
+      { concurrency: "unbounded" },
+    );
+    if (head === "-") {
+      gitDirsByCwd.delete(cacheCwd);
+      return null;
+    }
+    return [head, ...rest].join("|");
+  });
+  const reusableLookups = yield* Cache.makeWith(
+    (key: string) => {
+      const [cacheCwd = "", branch = ""] = key.split("\u0000");
+      return lookupBranchPullRequestUntilSettled(cacheCwd, branch, false, false);
+    },
+    {
+      capacity: PR_LOOKUP_CACHE_CAPACITY,
+      timeToLive: (exit, key) => {
+        if (Exit.isSuccess(exit)) {
+          prLookupFailureStreakByKey.delete(key);
+          return Duration.infinity;
+        }
+        return nextPrLookupFailureTtl(key);
+      },
+    },
+  );
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const refresh = options?.refresh === true;
     const freshGitState = refresh || options?.freshGitState === true;
-    const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
-      refresh,
-      freshGitState,
-    });
-    if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
-    // A confirmed closed or merged result stays final until the branch or remotes change,
-    // with a periodic fresh lookup so a new PR from a reused branch still shows up.
-    const settledKey = `${cacheCwd}\u0000${branch}`;
-    const now = yield* Clock.currentTimeMillis;
-    const settled = settledPrLookupByBranchKey.get(settledKey);
-    // Read before any fresh lookup, so a change made during it forces another one.
-    const fingerprint = yield* readSettledPrLookupFingerprint(cacheCwd, branch);
-    if (
-      settled !== undefined &&
-      settled.url === pullRequest.url &&
-      settled.fingerprint === fingerprint &&
-      now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL)
-    ) {
-      return pullRequest;
+    const reuseKey = options?.reuseKey;
+    if (reuseKey === undefined || options?.freshGitState === true) {
+      return yield* lookupBranchPullRequestUntilSettled(cacheCwd, branch, refresh, freshGitState);
     }
-    const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
-      refresh: false,
-      freshGitState: true,
-    });
-    settledPrLookupByBranchKey.delete(settledKey);
-    if (confirmed !== null && confirmed.state !== "open") {
-      if (settledPrLookupByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
-        const oldestKey = settledPrLookupByBranchKey.keys().next().value;
-        if (oldestKey !== undefined) settledPrLookupByBranchKey.delete(oldestKey);
-      }
-      settledPrLookupByBranchKey.set(settledKey, {
-        url: confirmed.url,
-        fingerprint,
-        confirmedAtMs: now,
-      });
+    // Read the epoch and fingerprint first, so a change during the lookup misses next time.
+    const epoch = prLookupEpoch(cacheCwd);
+    const fingerprint = yield* readRefFingerprint(cacheCwd, branch);
+    if (fingerprint === null) {
+      return yield* lookupBranchPullRequestUntilSettled(cacheCwd, branch, refresh, freshGitState);
     }
-    return confirmed;
+    const key = [cacheCwd, branch, String(epoch), fingerprint, reuseKey].join("\u0000");
+    if (!refresh) return yield* detachStackFrame(Cache.get(reusableLookups, key));
+    // Drop the old result first, so a failed refresh cannot leave it in place.
+    yield* Cache.invalidate(reusableLookups, key);
+    const pullRequest = yield* lookupBranchPullRequestUntilSettled(cacheCwd, branch, true, true);
+    yield* Cache.set(reusableLookups, key, pullRequest);
+    return pullRequest;
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
@@ -2815,6 +2919,7 @@ export const make = Effect.gen(function* () {
       yield* invalidateRemoteStatusResultCache(cwd);
       yield* bumpPrLookupEpoch(cwd);
       yield* forgetPrLookupGitState(cwd);
+      gitDirsByCwd.delete(yield* normalizeStatusCacheKey(cwd));
     },
   );
 
