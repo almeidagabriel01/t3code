@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as KanbanService from "../../../kanban/KanbanService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProblemDetector from "../../../problems/ProblemDetector.ts";
 import { sliceWholeCodePoints } from "@t3tools/shared/String";
 import { startableSubtasks, subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
 import { assertNotLinked } from "../../linkOrigin.ts";
@@ -90,6 +91,7 @@ const fullCard = (board: KanbanBoardSnapshot, card: KanbanCard): Out => ({
   checklist: card.checklist.map(({ id, text, done }) => ({ id, text, done })),
   acceptanceCriteria: card.acceptanceCriteria.map(({ id, text, done }) => ({ id, text, done })),
   linkedThreadIds: [...card.linkedThreadIds],
+  ...(card.problem === null ? {} : { problem: { ...card.problem } }),
 });
 
 const resolveColumn = Effect.fn("mcp.kanban.resolveColumn")(function* (
@@ -493,6 +495,16 @@ const run = Effect.fn("mcp.kanban.run")(
           notStarted: Math.max(0, open.length - MAX_STARTED_SUBTASKS),
           ...(open.length === 0 ? { note: "No open subtask without a thread." } : {}),
         } satisfies Out;
+      }
+      case "ignore_problem":
+      case "stop_ignoring": {
+        const { card } = yield* locateCard(base);
+        yield* (yield* ProblemDetector.ProblemDetector).setIgnored({
+          commandId: commandId("problem"),
+          cardId: card.id,
+          ignored: action === "ignore_problem",
+        });
+        return (yield* viewCard(card.id)) satisfies Out;
       }
       case "link_thread":
       case "unlink_thread": {

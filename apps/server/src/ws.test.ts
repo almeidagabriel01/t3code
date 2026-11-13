@@ -145,6 +145,7 @@ import * as AssistantSpend from "./assistants/AssistantSpend.ts";
 import * as ImessageChannelSettings from "./channels/imessage/ImessageChannelSettings.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
+import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelSettings from "./channels/telegram/TelegramChannelSettings.ts";
@@ -902,6 +903,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(HeavyQueue.HeavyQueue)({}),
   Layer.mock(HeavyCommands.HeavyCommands)({}),
   Layer.mock(HeavyQueueNotices.HeavyQueueNotices)({}),
+  Layer.mock(ProblemDetector.ProblemDetector)({}),
   Layer.mock(TelegramChannelSettings.TelegramChannelSettings)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),

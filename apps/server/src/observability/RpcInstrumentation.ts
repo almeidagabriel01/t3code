@@ -206,6 +206,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.kanbanCardComment]: "kanban",
   [WS_METHODS.kanbanCardLinkThread]: "kanban",
   [WS_METHODS.kanbanCardUnlinkThread]: "kanban",
+  [WS_METHODS.kanbanCardSetProblemIgnored]: "kanban",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.guestShareCreate]: "guest-share",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",

@@ -88,7 +88,8 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
-  description: "Update one project's settings. Omitted fields are unchanged.",
+  description:
+    "Update one project's settings. Omitted fields are unchanged. Problem detection for one project: `detectProblemsInProject` on t3_environment_preferences_update.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,

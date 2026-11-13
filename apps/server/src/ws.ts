@@ -142,6 +142,7 @@ import * as Decisions from "./decisions/DecisionService.ts";
 import * as AssistantGroups from "./assistants/AssistantGroups.ts";
 import * as Assistants from "./assistants/AssistantService.ts";
 import * as Kanban from "./kanban/KanbanService.ts";
+import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as NoteWork from "./notes/NoteWorkService.ts";
 import * as Notes from "./notes/NotesService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
@@ -1531,6 +1532,7 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const kanban = yield* Kanban.KanbanService;
+      const problems = yield* ProblemDetector.ProblemDetector;
       const notes = yield* Notes.NotesService;
       const decisions = yield* Decisions.DecisionService;
       const computerUse = yield* ComputerUse.ComputerUse;
@@ -2642,6 +2644,7 @@ export const layerWsRpc = (
         [WS_METHODS.kanbanCardComment]: (input) => kanban.cardComment(input),
         [WS_METHODS.kanbanCardLinkThread]: (input) => kanban.cardLinkThread(input),
         [WS_METHODS.kanbanCardUnlinkThread]: (input) => kanban.cardUnlinkThread(input),
+        [WS_METHODS.kanbanCardSetProblemIgnored]: (input) => problems.setIgnored(input),
         [WS_METHODS.notesList]: (input) => notes.list(input),
         [WS_METHODS.notesRead]: (input) => notes.read(input),
         [WS_METHODS.notesWrite]: (input) => notes.write(input, "user"),

@@ -4,6 +4,7 @@ import {
   ExecutionEnvironmentDescriptor,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  ProjectId,
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -19,6 +20,9 @@ const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
   newWorktreesStartFromOrigin: ServerSettings.fields.newWorktreesStartFromOrigin,
   enableProviderUpdateChecks: ServerSettings.fields.enableProviderUpdateChecks,
+  detectProblems: Schema.Boolean,
+  /** Projects that override `detectProblems`. */
+  detectProblemsInProjects: Schema.Record(Schema.String, Schema.Boolean),
   backgroundActivity: Schema.Struct({ profile: BackgroundActivityProfileSelection }),
   sourceControlWritingStyle: Schema.Struct({
     mode: Schema.String,
@@ -56,12 +60,16 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update", {
   ...shared,
   description:
-    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",
+    "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it. `detectProblems`: assistants watch every project for failures and file one card per cause; `detectProblemsInProject` overrides it for one project (`enabled: null` follows the global setting again). Change these only when the user asks.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     defaultThreadEnvMode: ServerSettingsPatch.fields.defaultThreadEnvMode,
     newWorktreesStartFromOrigin: ServerSettingsPatch.fields.newWorktreesStartFromOrigin,
     enableProviderUpdateChecks: ServerSettingsPatch.fields.enableProviderUpdateChecks,
+    detectProblems: ServerSettingsPatch.fields.detectProblems,
+    detectProblemsInProject: Schema.optionalKey(
+      Schema.Struct({ projectId: ProjectId, enabled: Schema.NullOr(Schema.Boolean) }),
+    ),
     backgroundActivity: Schema.optionalKey(Schema.Struct({ profile: BackgroundActivityProfile })),
     sourceControlWritingStyle: ServerSettingsPatch.fields.sourceControlWritingStyle,
   }),

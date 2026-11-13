@@ -19,6 +19,7 @@ import {
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
+  PROBLEM_LEVELS,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -58,6 +59,7 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/tools.ts";
 import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
 import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
+import { wakeText } from "../../apps/server/src/problems/problemRules.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
@@ -422,6 +424,21 @@ export const McpToolUseCase = Schema.Struct({
             }),
           ),
         ),
+      }),
+    ),
+    /**
+     * A problem wake: T3 sends `wakeText` for one card, with `prompt` as the card's evidence. With
+     * `answer`, the wake (on `evidence`) and that answer are history and `prompt` is the user's reply.
+     */
+    problemWake: Schema.optional(
+      Schema.Struct({
+        level: Schema.Literals(PROBLEM_LEVELS),
+        header: Schema.String,
+        cardId: Schema.String,
+        projectId: Schema.String,
+        count: Schema.Number,
+        evidence: Schema.optional(Schema.String),
+        answer: Schema.optional(Schema.String),
       }),
     ),
     sideChat: Schema.optional(
@@ -1177,28 +1194,37 @@ export const buildMessages = (sample: Sample) => {
     if (turn.text) push(turn.role, text(turn.text));
   }
   const groupTask = testCase.setup.groupTask;
+  const problemWake = testCase.setup.problemWake;
+  const wake = (description: string) =>
+    wakeText([{ ...problemWake!, description, reassigned: false }], problemWake!.level);
+  if (problemWake?.answer !== undefined) {
+    push("user", text(wake(problemWake.evidence ?? "")));
+    push("assistant", text(problemWake.answer));
+  }
   const userText =
-    groupTask !== undefined
-      ? groupTaskPacket({
-          group: groupTask.group,
-          taskId: "task-1",
-          kind: groupTask.kind ?? "root",
-          self: { ...groupTask.self, isLead: false },
-          members: groupTask.members.map((member) => ({
-            ...member,
-            isLead: member.isLead ?? false,
-          })),
-          news: groupTask.news,
-          summary: groupTask.summary ?? null,
-          quoted: groupTask.quoted ?? [],
-          from: groupTask.from,
-          instruction: testCase.prompt,
-          followup: null,
-          ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
-        })
-      : testCase.promptContext === undefined
-        ? testCase.prompt
-        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+    problemWake !== undefined && problemWake.answer === undefined
+      ? wake(testCase.prompt)
+      : groupTask !== undefined
+        ? groupTaskPacket({
+            group: groupTask.group,
+            taskId: "task-1",
+            kind: groupTask.kind ?? "root",
+            self: { ...groupTask.self, isLead: false },
+            members: groupTask.members.map((member) => ({
+              ...member,
+              isLead: member.isLead ?? false,
+            })),
+            news: groupTask.news,
+            summary: groupTask.summary ?? null,
+            quoted: groupTask.quoted ?? [],
+            from: groupTask.from,
+            instruction: testCase.prompt,
+            followup: null,
+            ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
+          })
+        : testCase.promptContext === undefined
+          ? testCase.prompt
+          : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const assistant = testCase.setup.assistant;
   const note =
     assistant === undefined

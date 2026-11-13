@@ -5,6 +5,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as McpSchema from "effect/ai/McpSchema";
 
 import * as KanbanService from "../../../kanban/KanbanService.ts";
+import * as ProblemDetector from "../../../problems/ProblemDetector.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -22,6 +23,8 @@ const KANBAN_ACTIONS = [
   "link_thread",
   "unlink_thread",
   "start_agents",
+  "ignore_problem",
+  "stop_ignoring",
 ] as const;
 
 /** A string adds an item; an object edits or, with `remove`, deletes the item named by `item` (id or text), or adds when it has none. */
@@ -64,7 +67,7 @@ export type KanbanParameters = typeof KanbanParameters.Type;
 
 const KanbanTool = Tool.make("t3_kanban", {
   description:
-    "The project's kanban board. Use when the user asks to create, plan, track, or update tasks or cards, or this thread is linked to a card (first message has a `kanban-card` context). Not for ordinary coding. Board: this project, or `project` (id or name; `none` for the No-project board, for cards tied to no project). `card`: id or #number; omitted = this thread's card. `column`: id, name, or role. `checklist`, `acceptanceCriteria`: a string adds an item; `{item, done, text}` edits one by id or text; `{item, remove: true}` deletes it. Moving into review/done needs every checklist item done and a `summary`. Subtasks: `create_card` with `parent` (card ref) makes one; `start_agents` on a parent starts one subagent per open subtask without a thread, each linked to its subtask (`isolation: worktree` for separate checkouts); their completion wakes you; use it, not your own subagents, to run subtasks in parallel. Only split a card into subtasks when asked or the work is clearly separate parts. In a card thread: read the card, tick items as you finish, comment progress, then move to review with a summary.",
+    "The project's kanban board. Use when the user asks to create, plan, track, or update tasks or cards, or this thread is linked to a card (first message has a `kanban-card` context). Not for ordinary coding. Board: this project, or `project` (id or name; `none` for the No-project board, for cards tied to no project). `card`: id or #number; omitted = this thread's card. `column`: id, name, or role. `checklist`, `acceptanceCriteria`: a string adds an item; `{item, done, text}` edits one by id or text; `{item, remove: true}` deletes it. Moving into review/done needs every checklist item done and a `summary`. Subtasks: `create_card` with `parent` (card ref) makes one; `start_agents` on a parent starts one subagent per open subtask without a thread, each linked to its subtask (`isolation: worktree` for separate checkouts); their completion wakes you; use it, not your own subagents, to run subtasks in parallel. A card with `problem` was filed for a detected failure: `ignore_problem` stops new reports of that cause, `stop_ignoring` undoes it; only when the user asks. Only split a card into subtasks when asked or the work is clearly separate parts. In a card thread: read the card, tick items as you finish, comment progress, then move to review with a summary.",
   parameters: KanbanParameters,
   success: Schema.Record(Schema.String, Schema.Json),
   failure: OrchestratorMcpFailure,
@@ -74,6 +77,7 @@ const KanbanTool = Tool.make("t3_kanban", {
     ThreadManagementService.ThreadManagementService,
     OrchestratorMcpService.OrchestratorMcpService,
     KanbanService.KanbanService,
+    ProblemDetector.ProblemDetector,
     ProjectService.ProjectService,
     ManagedProjectFolders.ManagedProjectFolders,
     SecureRandom.SecureRandom,
