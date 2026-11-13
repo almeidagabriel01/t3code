@@ -14,7 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
-import { adoptedRoots, attributeDaemons, readClues } from "./daemons.ts";
+import { adoptedRoots, attributeDaemons, readClues, unseenJavaPeers } from "./daemons.ts";
 import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
 import { applySlowdown, isNoop, slowdownStep } from "./slowdown.ts";
@@ -157,14 +157,60 @@ const daemonsOf = Effect.fnUntraced(function* (
       (entry) => entry.startedAt !== null && entry.runner !== "linux" && entry.server !== true,
     )
     .map((entry) => Date.parse(entry.startedAt!));
-  if (starts.length === 0) return {};
+  if (starts.length === 0) return { daemons: {}, unseen: [] };
   const exclude = serverChain(processes);
   const oldest = Math.min(...starts);
   const clues = yield* readClues(
     adoptedRoots(processes, exclude).filter((process) => process.identity.startTimeMs >= oldest),
   );
-  return attributeDaemons(entries, processes, clues, exclude);
+  return {
+    daemons: attributeDaemons(entries, processes, clues, exclude),
+    unseen: unseenJavaPeers(entries, processes, clues),
+  };
 });
+
+/**
+ * What the monitor must sample beside T3's tree: each running Mac job's root, its daemons, and the
+ * Java processes it talks to that no sample has seen yet.
+ */
+const jobRootsOf = (
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  daemons: Readonly<Record<string, ReadonlyArray<number>>>,
+  unseen: ReadonlyArray<number>,
+) => {
+  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
+  const pids = new Set([
+    ...entries
+      .filter(
+        (entry) => entry.startedAt !== null && entry.runner !== "linux" && entry.server !== true,
+      )
+      .map((entry) => entry.pid),
+    ...Object.values(daemons).flat(),
+    ...unseen,
+  ]);
+  return [...pids].map((pid) => {
+    const startTimeMs = byPid.get(pid)?.identity.startTimeMs;
+    return startTimeMs === undefined ? { pid } : { pid, startTimeMs };
+  });
+};
+
+/** Every pid a running job holds, its daemons included. */
+const jobPidsOf = (
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  daemons: Readonly<Record<string, ReadonlyArray<number>>>,
+) => {
+  const children = childrenByParent(processes);
+  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
+  return new Set([
+    ...entries.flatMap((entry) => {
+      const root = entry.startedAt === null ? undefined : byPid.get(entry.pid);
+      return root === undefined ? [] : treeUsage(root, children).pids;
+    }),
+    ...Object.values(daemons).flat(),
+  ]);
+};
 
 export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
   Layer.effectDiscard(
@@ -175,7 +221,10 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
       const tick = Effect.gen(function* () {
         const { entries, slowedDaemons } = QueueFile.readDoc(dir);
         // Daemons left lowered after their job ended are restored even with the queue empty.
-        if (entries.length === 0 && slowedDaemons.length === 0) return;
+        if (entries.length === 0 && slowedDaemons.length === 0) {
+          yield* telemetry.setJobRoots([]);
+          return;
+        }
         const reading = yield* host.read;
         const running = entries.some((entry) => entry.startedAt !== null);
         // Devices live for minutes, so the last snapshot finds them while nothing runs.
@@ -183,12 +232,17 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           ? yield* telemetry.refresh.pipe(Effect.catch(() => telemetry.latest))
           : yield* telemetry.latest;
         const processes = snapshot?.processes ?? [];
-        const daemons = running ? yield* daemonsOf(entries, processes) : {};
+        const found = running ? yield* daemonsOf(entries, processes) : { daemons: {}, unseen: [] };
+        const { daemons } = found;
+        yield* telemetry.setJobRoots(jobRootsOf(entries, processes, daemons, found.unseen));
+        // Registered jobs sample outside T3's tree like devices do, but hold no device reserve.
+        const jobPids = jobPidsOf(entries, processes, daemons);
+        const devices = processes.filter(
+          (process) => process.category === "external-device" && !jobPids.has(process.identity.pid),
+        );
         const footprints = yield* readFootprints(
           entries,
-          processes
-            .filter((process) => process.category === "external-device")
-            .map((process) => process.identity.pid),
+          devices.map((process) => process.identity.pid),
           daemons,
         );
         const at = yield* Clock.currentTimeMillis;
@@ -204,7 +258,7 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             cpuCount: reading.cpuCount,
             availableMemoryBytes: Math.max(
               0,
-              reading.availableMemoryBytes - deviceReserve(processes, footprints.byPid),
+              reading.availableMemoryBytes - deviceReserve(devices, footprints.byPid),
             ),
             totalMemoryBytes: reading.totalMemoryBytes,
             pressureLevel: reading.memoryPressureLevel ?? null,

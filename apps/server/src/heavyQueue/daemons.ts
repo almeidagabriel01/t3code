@@ -1,8 +1,7 @@
 /**
- * Build daemons work for a job from outside its process tree: launchd adopts them (ppid 1), and a
- * warm Gradle daemon predates the job that reuses it. A daemon counts toward the job that talks to
- * it over a local socket (Gradle's client, then the Kotlin daemon behind Gradle's), or toward the
- * job whose folder holds its own when it started during that job.
+ * Build daemons run outside a job's tree (launchd adopts them; a warm Gradle daemon predates it).
+ * One counts for the job that talks to it over a local socket, or whose folder holds its own when
+ * it started during the job. Only Gradle and Kotlin daemons: a database a test uses is shared.
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import type { HeavyQueueEntry, ResourceTelemetryProcess } from "@t3tools/contracts";
@@ -17,9 +16,17 @@ export interface DaemonClues {
   readonly links: ReadonlyArray<readonly [number, number]>;
   /** Working folder by pid, for processes launchd adopted. */
   readonly cwds: ReadonlyMap<number, string>;
+  /** Short command name by pid (lsof's `c` field), for every process with a TCP connection. */
+  readonly names: ReadonlyMap<number, string>;
 }
 
-export const NO_CLUES: DaemonClues = { links: [], cwds: new Map() };
+export const NO_CLUES: DaemonClues = { links: [], cwds: new Map(), names: new Map() };
+
+const BUILD_DAEMON = /\b(?:GradleDaemon|KotlinCompileDaemon)\b/;
+
+/** A Gradle or Kotlin compile daemon, by its command line; their workers come with their trees. */
+const isBuildDaemon = (process: Pick<ResourceTelemetryProcess, "command">) =>
+  BUILD_DAEMON.test(process.command);
 
 /** `lsof -F pn` records: each `p<pid>` line, then the `n<name>` lines of its files. */
 const records = (text: string) => {
@@ -46,6 +53,17 @@ export const parseLinks = (text: string): DaemonClues["links"] => {
 };
 
 export const parseCwds = (text: string): Map<number, string> => new Map(records(text));
+
+/** Each pid's `c<command>` line in `lsof -F pcn` output. */
+export const parseNames = (text: string): Map<number, string> => {
+  const names = new Map<number, string>();
+  let pid = 0;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("p")) pid = Number(line.slice(1));
+    else if (line.startsWith("c") && pid > 0) names.set(pid, line.slice(1));
+  }
+  return names;
+};
 
 /** Processes launchd adopted, outside every pid in `claimed`. */
 export const adoptedRoots = (
@@ -87,10 +105,9 @@ export const attributeDaemons = (
       if (!owner.has(pid)) owner.set(pid, entry.id);
   }
   const roots = new Map(
-    adoptedRoots(processes, new Set([...owner.keys(), ...exclude])).map((process) => [
-      process.identity.pid,
-      process,
-    ]),
+    adoptedRoots(processes, new Set([...owner.keys(), ...exclude]))
+      .filter(isBuildDaemon)
+      .map((process) => [process.identity.pid, process]),
   );
   const linked = new Map<number, number[]>();
   for (const [a, b] of clues.links) {
@@ -135,6 +152,43 @@ export const attributeDaemons = (
   return daemons;
 };
 
+/**
+ * Java processes the snapshot lacks that a running job reaches over local sockets, directly or
+ * through each other: the monitor samples only the trees it is given, so a warm Gradle daemon
+ * (and the Kotlin daemon behind it) shows up only once registered. The next sample attributes them.
+ */
+export const unseenJavaPeers = (
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  processes: ReadonlyArray<ResourceTelemetryProcess>,
+  clues: DaemonClues,
+): ReadonlyArray<number> => {
+  const children = childrenByParent(processes);
+  const byPid = new Map(processes.map((process) => [process.identity.pid, process]));
+  const linked = new Map<number, number[]>();
+  for (const [a, b] of clues.links) {
+    linked.set(a, [...(linked.get(a) ?? []), b]);
+    linked.set(b, [...(linked.get(b) ?? []), a]);
+  }
+  const queue = entries.filter(runsHere).flatMap((entry) => {
+    const root = byPid.get(entry.pid);
+    return [
+      ...(root === undefined ? [] : treeUsage(root, children).pids),
+      ...(entry.daemons ?? []),
+    ];
+  });
+  const visited = new Set(queue);
+  const found: number[] = [];
+  for (let at = 0; at < queue.length; at += 1) {
+    for (const pid of linked.get(queue[at]!) ?? []) {
+      if (visited.has(pid) || byPid.has(pid) || clues.names.get(pid) !== "java") continue;
+      visited.add(pid);
+      found.push(pid);
+      queue.push(pid);
+    }
+  }
+  return found;
+};
+
 /** Working folders don't change for a daemon's life, so each is read once per process. */
 const cwdCache = new Map<string, string | null>();
 
@@ -160,7 +214,7 @@ export const readClues = Effect.fn("HeavyQueueDaemons.readClues")(
     const unseen = candidates.filter((process) => !cwdCache.has(keyOf(process)));
     const [sockets, folders] = yield* Effect.all(
       [
-        output(["-nP", "-iTCP", "-sTCP:ESTABLISHED", "-Fpn"]),
+        output(["-nP", "-iTCP", "-sTCP:ESTABLISHED", "-Fpcn"]),
         unseen.length === 0
           ? Effect.succeed("")
           : output([
@@ -188,7 +242,7 @@ export const readClues = Effect.fn("HeavyQueueDaemons.readClues")(
       const cwd = cwdCache.get(keyOf(process));
       if (cwd !== null && cwd !== undefined) cwds.set(process.identity.pid, cwd);
     }
-    return { links: parseLinks(sockets), cwds } satisfies DaemonClues;
+    return { links: parseLinks(sockets), cwds, names: parseNames(sockets) } satisfies DaemonClues;
   },
   Effect.orElseSucceed(() => NO_CLUES),
 );

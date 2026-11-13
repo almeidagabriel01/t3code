@@ -476,7 +476,7 @@ export function mergeProcesses(input: MergeProcessesInput): MergeProcessesResult
     }
     return false;
   };
-  // Every tracked process outside the server and Electron trees belongs to a device root.
+  // Every tracked process outside the server and Electron trees belongs to a device or heavy-job root.
   const externalPids = new Set(
     processes.filter((process) => !isT3(process.pid)).map((process) => process.pid),
   );

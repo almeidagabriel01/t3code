@@ -7,14 +7,26 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { attributeDaemons, NO_CLUES, parseCwds, parseLinks, readClues } from "./daemons.ts";
+import {
+  attributeDaemons,
+  NO_CLUES,
+  parseCwds,
+  parseLinks,
+  parseNames,
+  readClues,
+  unseenJavaPeers,
+} from "./daemons.ts";
 
 const START = Date.parse("2026-01-01T00:00:10.000Z");
 
-const proc = (pid: number, ppid: number, startTimeMs = START + 1) =>
+const GRADLE = "java -Xmx2g org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.3.1";
+const KOTLIN = "java -cp kotlin-daemon.jar org.jetbrains.kotlin.daemon.KotlinCompileDaemon";
+
+const proc = (pid: number, ppid: number, startTimeMs = START + 1, command = "") =>
   ({
     identity: { pid, startTimeMs },
     ppid,
+    command,
     cpuPercent: 0,
     residentBytes: 0,
   }) as ResourceTelemetryProcess;
@@ -37,14 +49,15 @@ const job = (
 });
 
 // Job 10 (`t3 heavy`) runs gradlew's client 11. Gradle's daemon 50 predates the job and runs a
-// worker 51; the Kotlin daemon 60 talks only to Gradle's. 70 is an unrelated app.
+// worker 51; the Kotlin daemon 60 talks only to Gradle's. 70 is an unrelated app, 80 a Postgres.
 const base = [
   proc(10, 5),
   proc(11, 10),
-  proc(50, 1, START - 60_000),
+  proc(50, 1, START - 60_000, GRADLE),
   proc(51, 50),
-  proc(60, 1),
-  proc(70, 1, START - 60_000),
+  proc(60, 1, START + 1, KOTLIN),
+  proc(70, 1, START - 60_000, "/Applications/Slack.app/Contents/MacOS/Slack"),
+  proc(80, 1, START + 1, "postgres -D /usr/local/var/postgres"),
 ];
 const sockets = [
   [11, 50],
@@ -73,6 +86,16 @@ describe("attributeDaemons", () => {
       links: [[60, 50]],
       cwds: { 60: "/repo/android" },
       expected: { a: [60, 50, 51] },
+    },
+    {
+      name: "a database or another app the job talks to is never its daemon",
+      entries: [job("a", 10, "/repo")],
+      links: [
+        [11, 80],
+        [11, 70],
+      ],
+      cwds: { 80: "/repo/db" },
+      expected: {},
     },
     {
       name: "the folder rule skips a daemon older than the job",
@@ -119,6 +142,7 @@ describe("attributeDaemons", () => {
     const clues = {
       links: links as ReadonlyArray<readonly [number, number]>,
       cwds: new Map(Object.entries(cwds).map(([pid, cwd]) => [Number(pid), cwd])),
+      names: new Map<number, string>(),
     };
     expect(attributeDaemons(entries, [...base, ...extra], clues)).toEqual(expected);
   });
@@ -128,7 +152,7 @@ describe("attributeDaemons", () => {
       attributeDaemons(
         [job("a", 10, "/repo")],
         base,
-        { links: sockets, cwds: new Map() },
+        { links: sockets, cwds: new Map(), names: new Map() },
         new Set([50]),
       ),
     ).toEqual({});
@@ -156,11 +180,65 @@ describe("lsof parsing", () => {
     ]);
   });
 
+  it("reads each pid's short command name", () => {
+    expect([...parseNames("p11\ncjava\nf9\nn127.0.0.1:1->127.0.0.1:2\np12\ncpostgres\n")]).toEqual([
+      [11, "java"],
+      [12, "postgres"],
+    ]);
+  });
+
   it("reads each pid's working folder", () => {
     expect([...parseCwds("p385\nfcwd\nn/\np433\nfcwd\nn/repo/android\n")]).toEqual([
       [385, "/"],
       [433, "/repo/android"],
     ]);
+  });
+});
+
+describe("unseenJavaPeers", () => {
+  // Job 10's client 11 talks to Gradle's daemon 50, which talks to the Kotlin daemon 60; 11 also
+  // talks to a Postgres 80. None of them is in the snapshot yet; 12 is, and is the job's own.
+  const seen = [proc(10, 5), proc(11, 10), proc(12, 10)];
+  const names = new Map([
+    [50, "java"],
+    [60, "java"],
+    [80, "postgres"],
+    [12, "java"],
+  ]);
+  it.each([
+    {
+      name: "Java processes a job reaches, through each other, that no sample has seen",
+      entries: [job("a", 10, "/repo")],
+      links: [
+        [11, 50],
+        [50, 60],
+        [11, 80],
+        [11, 12],
+      ],
+      expected: [50, 60],
+    },
+    {
+      name: "from a daemon the job already holds",
+      entries: [job("a", 99, "/repo", START, { daemons: [50] })],
+      links: [[50, 60]],
+      expected: [60],
+    },
+    {
+      name: "nothing for a Linux or waiting job",
+      entries: [
+        job("l", 10, "/repo", START, { runner: "linux" }),
+        { ...job("w", 10, "/repo"), startedAt: null },
+      ],
+      links: [[11, 50]],
+      expected: [],
+    },
+  ])("$name", ({ entries, links, expected }) => {
+    const clues = {
+      links: links.map(([a, b]) => [a!, b!] as const),
+      cwds: new Map(),
+      names,
+    };
+    expect(unseenJavaPeers(entries, seen, clues)).toEqual(expected);
   });
 });
 

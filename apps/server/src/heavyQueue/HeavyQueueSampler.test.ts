@@ -241,7 +241,11 @@ describe("recordSample", () => {
 
 const peaks = (entries: HeavyQueueEntry[]) => Sampler.peaksOf(entries, processes);
 
-const runSampler = (dir: string, platform: NodeJS.Platform) =>
+const runSampler = (
+  dir: string,
+  platform: NodeJS.Platform,
+  registered: Array<ReadonlyArray<{ readonly pid: number }>> = [],
+) =>
   Layer.build(
     Sampler.layer(dir).pipe(
       Layer.provide(
@@ -259,6 +263,7 @@ const runSampler = (dir: string, platform: NodeJS.Platform) =>
           }),
           Layer.mock(ResourceTelemetry)({
             refresh: Effect.succeed({ processes: [proc(process.pid, 1, 200, 77)] } as never),
+            setJobRoots: (roots) => Effect.sync(() => void registered.push(roots)),
           }),
           NodeServices.layer,
         ),
@@ -279,22 +284,27 @@ const withRunning = <A, E, R>(body: (dir: string) => Effect.Effect<A, E, R>) =>
   }).pipe(Effect.scoped);
 
 describe("HeavyQueueSampler", () => {
-  it.effect("publishes the machine reading and the running job's peak into the queue file", () =>
-    withRunning((dir) =>
-      Effect.gen(function* () {
-        yield* runSampler(dir, "linux");
-        yield* Effect.yieldNow;
-        const doc = Queue.readDoc(dir);
-        expect(doc.sample).toMatchObject({
-          cpuCount: 8,
-          availableMemoryBytes: 5,
-          totalMemoryBytes: 10,
-          pressureLevel: 2,
-          swapInBytesPerSecond: 1024,
-        });
-        expect(doc.entries[0]).toMatchObject({ cpu: 2, memory: 77, peakCpu: 2, peakMemory: 77 });
-      }),
-    ),
+  it.effect(
+    "registers a running job's root for sampling and publishes its peak and the reading",
+    () =>
+      withRunning((dir) =>
+        Effect.gen(function* () {
+          const registered: Array<ReadonlyArray<{ readonly pid: number }>> = [];
+          yield* runSampler(dir, "linux", registered);
+          yield* Effect.yieldNow;
+          const doc = Queue.readDoc(dir);
+          expect(doc.sample).toMatchObject({
+            cpuCount: 8,
+            availableMemoryBytes: 5,
+            totalMemoryBytes: 10,
+            pressureLevel: 2,
+            swapInBytesPerSecond: 1024,
+          });
+          expect(doc.entries[0]).toMatchObject({ cpu: 2, memory: 77, peakCpu: 2, peakMemory: 77 });
+          // Its root is outside this server's tree (ppid 1), so the monitor samples it only once told.
+          expect(registered).toEqual([[{ pid: process.pid, startTimeMs: 0 }]]);
+        }),
+      ),
   );
 
   it.effect("on macOS measures a job's tree by physical footprint; elsewhere it leaves RSS", () =>

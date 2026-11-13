@@ -73,6 +73,13 @@ export class ResourceTelemetry extends Context.Service<
     ) => Effect.Effect<ResourceTelemetryHistoryWithLegacyBuckets>;
     readonly refresh: Effect.Effect<ResourceTelemetrySnapshot, ResourceTelemetryRefreshFailed>;
     readonly retry: Effect.Effect<ResourceTelemetryRetryResult>;
+    /**
+     * Heavy jobs' roots and their daemons, sampled beside T3's tree: a job started from a terminal,
+     * another agent or another T3 runs outside it. Each call replaces the last set.
+     */
+    readonly setJobRoots: (
+      roots: ReadonlyArray<ResourceMonitorExternalProcess>,
+    ) => Effect.Effect<void>;
   }
 >()("t3/resourceTelemetry/ResourceTelemetry") {}
 
@@ -96,6 +103,7 @@ const DEVICE_SCAN_INTERVAL = "10 seconds";
 interface ExternalRoots {
   readonly electron: ReadonlyArray<ResourceMonitorExternalProcess>;
   readonly devices: ReadonlyArray<ResourceMonitorExternalProcess>;
+  readonly jobs: ReadonlyArray<ResourceMonitorExternalProcess>;
 }
 
 const sameRoots = (
@@ -182,7 +190,7 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   const desktopHealthSubscription = yield* desktopReceiver.subscribeHealth;
   const desktopSubscription = yield* desktopReceiver.subscribe;
   const initialDesktop = desktopSubscription.latest;
-  const externalRoots = yield* Ref.make<ExternalRoots>({ electron: [], devices: [] });
+  const externalRoots = yield* Ref.make<ExternalRoots>({ electron: [], devices: [], jobs: [] });
   const externalRootsMutex = yield* Semaphore.make(1);
   // The sidecar replaces its whole external list on each call, so every caller sends the union.
   const updateExternalRoots = (update: (current: ExternalRoots) => ExternalRoots) =>
@@ -190,11 +198,15 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
       Effect.gen(function* () {
         const current = yield* Ref.get(externalRoots);
         const next = update(current);
-        if (sameRoots(next.electron, current.electron) && sameRoots(next.devices, current.devices))
+        if (
+          sameRoots(next.electron, current.electron) &&
+          sameRoots(next.devices, current.devices) &&
+          sameRoots(next.jobs, current.jobs)
+        )
           return;
         yield* Ref.set(externalRoots, next);
         yield* nativeClient
-          .setExternalProcesses([...next.electron, ...next.devices])
+          .setExternalProcesses([...next.electron, ...next.devices, ...next.jobs])
           .pipe(Effect.ignore);
       }),
     );
@@ -305,9 +317,14 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
           desktopReceiver.health,
           attribution.snapshot,
         ]);
+        // The sidecar echoes every external root; only the ones sent as Electron can be Electron.
+        const requestedElectron = new Set(
+          (yield* Ref.get(externalRoots)).electron.map((root) => root.pid),
+        );
         const recordedElectronRoots = Option.match(nativeSnapshot, {
           onNone: () => [],
-          onSome: (snapshot) => snapshot.externalProcesses ?? [],
+          onSome: (snapshot) =>
+            (snapshot.externalProcesses ?? []).filter((root) => requestedElectron.has(root.pid)),
         });
         const electronRootPids = new Set(recordedElectronRoots.map((process) => process.pid));
         Option.match(desktopSnapshot, {
@@ -516,6 +533,11 @@ export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(functi
   );
 
   return ResourceTelemetry.of({
+    setJobRoots: Effect.fn("ResourceTelemetry.setJobRoots")(function* (
+      roots: ReadonlyArray<ResourceMonitorExternalProcess>,
+    ) {
+      yield* updateExternalRoots((current) => ({ ...current, jobs: [...roots] }));
+    }),
     latest,
     changes: liveChanges,
     subscribe,
