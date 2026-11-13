@@ -238,6 +238,10 @@ export interface Part {
   readonly heavy: boolean;
   /** The agent's own `remoto` in front of it. */
   readonly remoto: Word | null;
+  /** Its nested `sh -c` line or its script calls `remoto` itself: T3 never wraps it in another. */
+  readonly remotoInside: boolean;
+  /** All its heavy work goes through `remoto`, its own or inside it: nothing of it holds this Mac. */
+  readonly remote: boolean;
   /** It is `t3 heavy …`, or the T3 executable's `heavy` subcommand as `selfPrefix` writes it. */
   readonly queued: boolean;
   /** The heavy part inside a nested `sh -c '<line>'`, which makes this part heavy too. */
@@ -253,7 +257,7 @@ export const UNREADABLE_SCRIPT = "Couldn't read this script";
 const SHEBANG = /^#!\s*(\S*\/)?(env\s+)?(sh|bash|zsh|dash)(\s|$)/;
 
 /** The path word of the script a command runs: `bash x.sh`, `./x.sh`, or any path (`./verify`). */
-export const scriptWord = (values: ReadonlyArray<string>, at: number): string | null => {
+const scriptWord = (values: ReadonlyArray<string>, at: number): string | null => {
   const program = values[at];
   if (program === undefined || program === "") return null;
   if (SHELLS.has(base(program))) {
@@ -280,13 +284,15 @@ export const scriptOf = (
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 
-/** `bash -c '<line>'`: the line's first heavy part. */
-const nestedHeavy = (program: string, values: ReadonlyArray<string>, at: number) => {
-  if (!SHELLS.has(program)) return null;
+/** `bash -c '<line>'`: the line's parts. */
+const nestedParts = (program: string, values: ReadonlyArray<string>, at: number) => {
+  if (!SHELLS.has(program)) return [];
   const flag = values.findIndex((value, index) => index > at && /^-[a-z]*c[a-z]*$/.test(value));
   const line = flag < 0 ? undefined : values[flag + 1];
-  return line === undefined ? null : (readLine(line).parts.find((part) => part.heavy) ?? null);
+  return line === undefined ? [] : readLine(line).parts;
 };
+
+const callsRemoto = (part: Part) => part.remoto !== null || part.remotoInside;
 
 const isHeavyCall = (values: ReadonlyArray<string>) => {
   let at = 1;
@@ -307,12 +313,16 @@ const partOf = (command: Command, read?: ReadScript): Part => {
     remoteAt = programAt(values, remoteAt + 1, true);
   }
   const { at, program, words, flags } = wordsAt(values, remoteAt);
-  const nested = nestedHeavy(program, values, at);
+  const inner = nestedParts(program, values, at);
+  const nested = inner.find((part) => part.heavy) ?? null;
   const script = scriptOf(values, at, read);
   // A script's own scripts are not followed: one level is what an agent's scratch script needs.
   const unreadable = script !== null && script.body === null;
-  const scriptHeavy =
-    script?.body != null && readLine(script.body).parts.some((part) => part.heavy);
+  const scriptParts = script?.body == null ? [] : readLine(script.body).parts;
+  const scriptHeavy = scriptParts.some((part) => part.heavy);
+  const insideParts = [...inner, ...scriptParts];
+  const remotoInside = insideParts.some(callsRemoto);
+  const ownHeavy = unreadable || (program !== "" && heavyWords(program, words, flags));
   return {
     command,
     values,
@@ -321,12 +331,12 @@ const partOf = (command: Command, read?: ReadScript): Part => {
     program,
     words,
     flags,
-    heavy:
-      nested !== null ||
-      unreadable ||
-      scriptHeavy ||
-      (program !== "" && heavyWords(program, words, flags)),
+    heavy: nested !== null || scriptHeavy || ownHeavy,
     remoto,
+    remotoInside,
+    remote:
+      remoto !== null ||
+      (remotoInside && !ownHeavy && insideParts.every((part) => !part.heavy || part.remote)),
     queued: isHeavyCall(values.slice(at)),
     nested,
     script,
@@ -376,12 +386,16 @@ const BUILTINS = new Set([
   "sleep",
 ]);
 
-/** The parts that are the work: heavy ones and `remoto` calls, else every program a queued job runs. */
+/**
+ * The parts that are the work: heavy ones and `remoto` calls, else every program a queued job runs.
+ * A part that calls `remoto` inside itself already runs remotely, so it is never work.
+ */
 export const workParts = (parts: ReadonlyArray<Part>) => {
-  const work = parts.filter((part) => part.heavy || part.remoto !== null);
+  const own = parts.filter((part) => !part.remotoInside);
+  const work = own.filter((part) => part.heavy || part.remoto !== null);
   return work.length > 0
     ? work
-    : parts.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
+    : own.filter((part) => part.program !== "" && !part.queued && !BUILTINS.has(part.program));
 };
 
 /** The `git commit` parts of a line whose only work is committing, or null for any other line. */
@@ -412,11 +426,11 @@ export const heavySegment = (command: string, read?: ReadScript): string | null 
  * which already runs work on another machine, and no heavy part runs outside them. Quoted text
  * and a grep pattern are arguments, never a call.
  */
-export const isQueued = (command: string) => {
-  const { parts } = readLine(command);
+export const isQueued = (command: string, read?: ReadScript) => {
+  const { parts } = readLine(command, read);
   return (
-    parts.some((part) => part.queued || part.remoto !== null) &&
-    parts.every((part) => !part.heavy || part.remoto !== null)
+    parts.some((part) => part.queued || part.remote) &&
+    parts.every((part) => !part.heavy || part.remote)
   );
 };
 
@@ -543,7 +557,7 @@ export const queueBashCall = (
   if (typeof command !== "string") return null;
   const parts = lineParts(command);
   const remoto = options.runner === true && parts.remoto;
-  if (!remoto && isQueued(command)) return null;
+  if (!remoto && isQueued(command, options.readScript)) return null;
   const segment = remoto
     ? (heavySegment(parts.command, options.readScript) ?? parts.command.trim())
     : heavySegment(command, options.readScript);
