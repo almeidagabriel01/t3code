@@ -401,14 +401,14 @@ it.effect("an unchanged file is not parsed again, and a touched one is", () =>
         detected.filter((server) => server.origin === "codex").map((server) => server.name),
       );
       // Whole seconds: utimes takes float seconds, which can round a millisecond away.
-      const mtime = new Date(1_700_000_000_000);
+      const mtime = 1_700_000_000;
       NodeFS.utimesSync(file, mtime, mtime);
       expect(yield* codexNames).toEqual(["sentry"]);
       // Same size and mtime: only a memo keyed on them can still answer "sentry".
       NodeFS.writeFileSync(file, env.files[file]!.replace("sentry]", "sentrz]"));
       NodeFS.utimesSync(file, mtime, mtime);
       expect(yield* codexNames).toEqual(["sentry"]);
-      NodeFS.utimesSync(file, mtime, new Date(1_700_000_005_000));
+      NodeFS.utimesSync(file, mtime, mtime + 5);
       expect(yield* codexNames).toEqual(["sentrz"]);
     }),
   ),
