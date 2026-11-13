@@ -373,7 +373,7 @@ export function assistantGroupMentions<
  * group's list, where titles may collide.
  */
 export function assistantGroupProjectSlug(name: string): string {
-  const slug = foldAssistantGroupText(name)
+  const slug = foldAssistantGroupText(name.normalize("NFC"))
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-|-$/g, "");
   return slug === "" ? "project" : slug;
@@ -420,7 +420,7 @@ export function assistantGroupProjectMentionRanges<
   const found: Array<{ start: number; end: number; project: P }> = [];
   for (const match of blanked.matchAll(PROJECT_MENTION)) {
     const word = match[1]!.replace(/[./-]+$/, "");
-    const token = foldAssistantGroupText(word);
+    const token = foldAssistantGroupText(word.normalize("NFC"));
     const project = projects.find((candidate) => slugs.get(candidate.id) === token);
     if (project === undefined) continue;
     const start = match.index + match[0].length - match[1]!.length - 1;
