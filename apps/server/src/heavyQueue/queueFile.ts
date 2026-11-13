@@ -1147,8 +1147,8 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
 
 /**
  * Move all: routes every waiter the plan places on the other machine to `runner`, as `route`
- * would each one, and returns their ids. Running jobs, Mac-only work bound for Linux and runs
- * Linux has not confirmed stopped stay where they are.
+ * would each one, and returns their ids. Running jobs, runs Linux has not confirmed stopped,
+ * and for Linux, Mac-only work, jobs asked for this Mac and projects with the Runner off stay.
  */
 export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
   mutate(
@@ -1160,7 +1160,12 @@ export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
           entry.startedAt === null &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
-          !(runner === "linux" && staysOnMac(doc, entry)),
+          !(
+            runner === "linux" &&
+            (entry.where === "mac" ||
+              !configFor(doc, entry.cwd).runnerEnabled ||
+              staysOnMac(doc, entry))
+          ),
       );
       const moved = new Set(moves.map((entry) => entry.id));
       return {

@@ -845,16 +845,33 @@ describe("Runner in the queue file", () => {
       test("b", { ask: { reason: "unavailable", deadlineAt: new Date(NOW).toISOString() } }),
       test("x", { label: "xcodebuild test" }),
       test("u", { unconfirmed: true }),
+      // Asked for this Mac with `--runner mac`.
+      test("m", { where: "mac" }),
+      // Not on the Can run on Linux list: a hand route sends it all the same.
+      test("n", { label: "vp run build" }),
     ];
     for (const waiter of waiters) Queue.enqueue(dir, waiter);
     const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null });
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null, m: null, n: null });
     expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
     expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
-    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
-    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null });
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b", "n"]);
+    expect(routes()).toEqual({
+      r: null,
+      a: "linux",
+      b: "linux",
+      x: null,
+      u: null,
+      m: null,
+      n: "linux",
+    });
     expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
+    // With the Runner off for the project, nothing can go to Linux, so nothing claims to.
+    const off = queueWith(block(config({ runnerEnabled: false })));
+    Queue.enqueue(off, test("a"));
+    expect(Queue.routeAll(off, "linux", NOW)).toEqual([]);
+    expect(Queue.read(off)[0]).not.toHaveProperty("route");
   });
 
   it("forcing a rerun clears the unconfirmed hold", () => {
