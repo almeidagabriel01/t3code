@@ -29,11 +29,48 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
-/** The Mac's `$SHELL -c` becomes `bash -c` there, and a Mac path to a program becomes its name. */
+/**
+ * The Mac's `$SHELL -c` becomes `bash -c` there, and an absolute path to a program becomes its
+ * name; a relative one is a file of the synced copy and stays.
+ */
 export const remoteCommand = (program: string, args: ReadonlyArray<string>) => {
   const name = NodePath.basename(program);
   if (SHELLS.has(name)) return ["bash", ...args];
-  return [program.includes("/") ? name : program, ...args];
+  return [NodePath.isAbsolute(program) ? name : program, ...args];
+};
+
+const physical = (path: string) => {
+  try {
+    return NodeFS.realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
+/** The folder `remoto` syncs: the git root holding `cwd`, else `cwd` itself, both as `pwd -P`. */
+const syncedRoot = (cwd: string) => {
+  try {
+    const root = NodeChildProcess.execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (root !== "") return root;
+  } catch {}
+  return physical(cwd);
+};
+
+/**
+ * Mac paths under `root` rewritten relative to `cwd`, where the command starts in Linux's copy
+ * of it. The replacement is only `.` and `..` segments, so it adds no shell syntax.
+ */
+export const linuxPaths = (args: ReadonlyArray<string>, root: string, cwd: string) => {
+  const up = NodePath.relative(cwd, root) || ".";
+  // `cwd` outside `root` (a GIT_WORK_TREE elsewhere): remoto cannot place it either.
+  if (!/^\.\.?(\/\.\.)*$/.test(up)) return args;
+  // Not inside a longer path, and not a prefix of a sibling such as `<root>-2`.
+  const mac = new RegExp(String.raw`(?<![\w.~/-])${RegExp.escape(root)}(?![\w.-])`, "g");
+  return args.map((arg) => arg.replace(mac, () => up));
 };
 
 const executable = (path: string) => {
@@ -167,21 +204,23 @@ const lineSplitter = (onLine: (line: string, newline: boolean) => void) => {
  */
 export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const { machine } = options;
-  const child = NodeChildProcess.spawn(
-    options.remoto,
-    remoteCommand(options.program, options.args),
-    {
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...options.environment,
-        REMOTO_FALLBACK: "nao",
-        REMOTO_HOST: machine.runnerHost,
-        REMOTO_MARKERS: "1",
-        REMOTO_TIMEOUT: String(machine.runnerSshTimeoutSeconds),
-      },
-    },
+  const cwd = physical(options.cwd);
+  const [program = "", ...args] = linuxPaths(
+    [options.program, ...options.args],
+    syncedRoot(cwd),
+    cwd,
   );
+  const child = NodeChildProcess.spawn(options.remoto, remoteCommand(program, args), {
+    cwd: options.cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...options.environment,
+      REMOTO_FALLBACK: "nao",
+      REMOTO_HOST: machine.runnerHost,
+      REMOTO_MARKERS: "1",
+      REMOTO_TIMEOUT: String(machine.runnerSshTimeoutSeconds),
+    },
+  });
   let progress: RemoteProgress = NO_PROGRESS;
   const platform = new Set<string>();
   const scan = (line: string) => {

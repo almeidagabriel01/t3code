@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,6 +9,7 @@ import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
   checkLinux,
   confirmed,
+  linuxPaths,
   remoteCommand,
   resolveRemoto,
   startLinuxRun,
@@ -25,7 +27,14 @@ const fake = (body: string) => {
 };
 const M = "\\036remoto";
 
-const runWith = (remoto: string) => {
+const runWith = (
+  remoto: string,
+  job: { program: string; args: ReadonlyArray<string>; cwd: string } = {
+    program: "/bin/zsh",
+    args: ["-c", "vp test run"],
+    cwd: dir,
+  },
+) => {
   const stdout: Buffer[] = [];
   let stderr = "";
   const phases: string[] = [];
@@ -33,9 +42,7 @@ const runWith = (remoto: string) => {
   const running = new Promise<void>((resolve) => (started = resolve));
   const run = startLinuxRun({
     remoto,
-    program: "/bin/zsh",
-    args: ["-c", "vp test run"],
-    cwd: dir,
+    ...job,
     environment: process.env,
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
@@ -60,8 +67,45 @@ describe("running on Linux through remoto", () => {
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
     ["/opt/homebrew/bin/node", ["--test"], ["node", "--test"]],
     ["vp", ["test"], ["vp", "test"]],
+    ["./scripts/check.sh", ["--all"], ["./scripts/check.sh", "--all"]],
   ] as const)("%s %j runs there as %j", (program, args, expected) => {
     expect(remoteCommand(program, args)).toEqual(expected);
+  });
+
+  // `remoto` syncs the git root (or the folder itself outside git) and starts in the same
+  // folder of its copy there, so a Mac path to anything inside must become relative.
+  const repo = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-repo-")));
+  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: repo });
+  NodeFS.mkdirSync(NodePath.join(repo, "apps", "web"), { recursive: true });
+  const plain = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-plain-")),
+  );
+  it.each([
+    ["the repo root", repo, `cd ${repo}/apps/web && vp test`, "cd ./apps/web && vp test"],
+    [
+      "a subfolder",
+      `${repo}/apps/web`,
+      `cd '${repo}/apps' && vp test`,
+      "cd '../../apps' && vp test",
+    ],
+    ["a folder outside git", plain, `vp test ${plain}/a.ts /etc/x`, "vp test ./a.ts /etc/x"],
+  ])("from %s, a Mac path inside the copy becomes relative", async (_where, cwd, line, sent) => {
+    const echo = fake('printf "%s\\n" "$@"');
+    const { run, out } = runWith(echo, {
+      program: `${repo}/node_modules/.bin/zsh`,
+      args: ["-c", line],
+      cwd,
+    });
+    await run.done;
+    expect(out()).toBe(`bash\n-c\n${sent}\n`);
+  });
+
+  it.each([
+    ["/r/apps/web/a.ts /r", "/r", "/r/apps", "../apps/web/a.ts .."],
+    ["/r-2/a /r2/a /x/r/a --dir=/r/b '/r'", "/r", "/r", "/r-2/a /r2/a /x/r/a --dir=./b '.'"],
+    ["cd /r/a", "/r", "/elsewhere", "cd /r/a"],
+  ])("%j from root %s at %s is %j there", (arg, root, cwd, sent) => {
+    expect(linuxPaths([arg], root, cwd)).toEqual([sent]);
   });
 
   it("passes output through, strips markers into progress and keeps the command's code", async () => {
