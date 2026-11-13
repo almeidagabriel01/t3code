@@ -142,6 +142,8 @@ import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRou
 import { AssistantModelPickerRouteScreen } from "./features/assistants/AssistantModelPickerRouteScreen";
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
+import { IntegrationRouteScreen } from "./features/integrations/IntegrationRouteScreen";
+import { SettingsIntegrationsRouteScreen } from "./features/integrations/SettingsIntegrationsRouteScreen";
 import { SettingsDevicesRouteScreen } from "./features/settings/SettingsDevicesRouteScreen";
 import { SettingsComputerUseRouteScreen } from "./features/settings/SettingsComputerUseRouteScreen";
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
@@ -374,6 +376,15 @@ const SETTINGS_SCREENS = {
     screen: SettingsAssistantsRouteScreen,
     linking: "settings/assistants",
     options: settingsPage("Assistants"),
+  }),
+  SettingsIntegrations: createNativeStackScreen({
+    screen: SettingsIntegrationsRouteScreen,
+    linking: "settings/integrations",
+    options: settingsPage("Integrations"),
+  }),
+  SettingsIntegration: createNativeStackScreen({
+    screen: IntegrationRouteScreen,
+    options: settingsPage("Integrations"),
   }),
   SettingsAssistantDescribe: createNativeStackScreen({
     screen: DescribeAssistantRouteScreen,

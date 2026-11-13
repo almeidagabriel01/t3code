@@ -10,7 +10,6 @@ const { Children, mocks } = vi.hoisted(() => ({
     selectedProjectGroups: null as
       | null
       | { key: string; label: string; members: { project: unknown }[] }[],
-    integrationIds: [] as string[],
   },
 }));
 
@@ -63,9 +62,6 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
 }));
 vi.mock("../../state/assistants", () => ({ useAssistantsEnvironmentIds: () => [] }));
-vi.mock("../../state/integrations", () => ({
-  useIntegrationsEnvironmentIds: () => mocks.integrationIds,
-}));
 vi.mock("../../state/kanban", () => ({ useHasKanbanEnvironments: () => false }));
 vi.mock("../../state/imessageChannel", () => ({ useImessageEnvironmentIds: () => [] }));
 vi.mock("../../state/telegramChannel", () => ({ useTelegramEnvironmentIds: () => [] }));
@@ -86,13 +82,8 @@ vi.mock("./components/SettingsSection", async () => ({
   SettingsSidebarContext: (await import("react")).createContext(null),
 }));
 vi.mock("./components/SettingsRow", () => ({
-  SettingsRow: (props: { label: string; value?: string; target?: string; icon?: unknown }) => (
-    <i
-      data-label={props.label}
-      data-value={props.value}
-      data-target={props.target}
-      data-icon={String(props.icon)}
-    />
+  SettingsRow: (props: { label: string; value?: string }) => (
+    <i data-label={props.label} data-value={props.value} />
   ),
 }));
 vi.mock("./settings-environment-filter", () => ({
@@ -121,7 +112,6 @@ beforeEach(() => {
   root = createRoot(container);
   mocks.selectedProjectKeys = null;
   mocks.selectedProjectGroups = null;
-  mocks.integrationIds = [];
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -147,20 +137,5 @@ describe("Projects row of the Settings list", () => {
     mocks.selectedProjectGroups = groups && [...groups];
     act(() => root.render(<WorkspaceSettingsList />));
     expect(projectsValue()).toBe(expected);
-  });
-});
-
-describe("Integrations row of the Settings list", () => {
-  it("opens Integrations beside the agent pages only when an environment has them", () => {
-    act(() => root.render(<WorkspaceSettingsList />));
-    expect(container.querySelector('[data-label="Integrations"]')).toBeNull();
-    act(() => root.unmount());
-    root = createRoot(container);
-    mocks.integrationIds = ["local"];
-    act(() => root.render(<WorkspaceSettingsList />));
-    const row = container.querySelector<HTMLElement>('[data-label="Integrations"]')!;
-    expect(row.dataset.target).toBe("SettingsIntegrations");
-    expect(row.dataset.icon).toBe("cable.connector");
-    expect(row.previousElementSibling?.getAttribute("data-label")).toBe("MCP servers & skills");
   });
 });

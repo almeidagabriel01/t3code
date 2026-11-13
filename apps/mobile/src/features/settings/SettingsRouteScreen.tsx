@@ -33,6 +33,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsProjectsLabel } from "./settings-environment-filter.logic";
 import { useAssistantsEnvironmentIds } from "../../state/assistants";
+import { useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
@@ -233,6 +234,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const scopedProjectMembers =
     selectedProjectGroups?.length === 1
       ? selectedProjectGroups[0]!.members
@@ -277,6 +279,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         serverPage("SettingsAgentTools", "hammer", "MCP servers & skills"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),
+        ...(hasIntegrations
+          ? [page("SettingsIntegrations", "cable.connector", "Integrations")]
+          : []),
         ...(hasImessage ? [page("SettingsImessage", "bubble.left", "iMessage")] : []),
         ...(hasTelegram ? [page("SettingsTelegram", "paperplane", "Telegram")] : []),
         ...(hasMac

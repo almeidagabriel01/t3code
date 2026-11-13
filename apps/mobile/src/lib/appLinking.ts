@@ -13,6 +13,8 @@ export function shouldHandleAppLink(url: string, cloudConfigured: boolean): bool
     !route.includes("expo-development-client") &&
     !route.includes("://expo-sharing") &&
     !/^t3code(-dev|-preview)?:\/*$/.test(url) &&
+    // The integration sign-in sheet's return address; the auth session consumes it.
+    !/^t3code(-dev|-preview)?:\/*integrations\/done\/*$/.test(route) &&
     (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );
 }
