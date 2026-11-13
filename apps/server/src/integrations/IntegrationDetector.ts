@@ -321,22 +321,43 @@ const make = Effect.fn("IntegrationDetector.make")(function* (
         ),
       ),
     );
-  const readJson = (file: string) =>
-    readText(file).pipe(
-      Effect.map((result) => {
-        if (result.status !== "ok") return { result, value: undefined };
-        try {
-          const value = record(JSON.parse(result.text));
-          if (value !== undefined) return { result, value };
-        } catch {
-          // falls through to invalid-format
+  // Rebuilds follow every settings write and session start; an unchanged file is never re-parsed.
+  // ponytail: one entry per path ever read, never evicted; paths are config files, so few.
+  const parsed = new Map<string, { readonly stamp: string; readonly value: unknown }>();
+  const memoRead = <A>(file: string, parse: (result: ReadResult) => A): Effect.Effect<A> =>
+    fs.stat(file).pipe(
+      Effect.map((info) => `${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`),
+      Effect.option,
+      Effect.flatMap((stamp) => {
+        const hit = parsed.get(file);
+        if (Option.isSome(stamp) && hit?.stamp === stamp.value) {
+          return Effect.succeed(hit.value as A);
         }
-        return {
-          result: { status: "unreadable", reason: "invalid-format" } as ReadResult,
-          value: undefined,
-        };
+        return readText(file).pipe(
+          Effect.map(parse),
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              if (Option.isSome(stamp)) parsed.set(file, { stamp: stamp.value, value });
+              else parsed.delete(file);
+            }),
+          ),
+        );
       }),
     );
+  const readJson = (file: string) =>
+    memoRead(file, (result) => {
+      if (result.status !== "ok") return { result, value: undefined };
+      try {
+        const value = record(JSON.parse(result.text));
+        if (value !== undefined) return { result, value };
+      } catch {
+        // falls through to invalid-format
+      }
+      return {
+        result: { status: "unreadable", reason: "invalid-format" } as ReadResult,
+        value: undefined,
+      };
+    });
   const sourceOf = (
     base: Pick<DetectionSource, "origin" | "instanceId" | "path">,
     result: ReadResult,
@@ -530,7 +551,7 @@ const make = Effect.fn("IntegrationDetector.make")(function* (
     const home =
       layout.effectiveHomePath ?? (environment.CODEX_HOME?.trim() || layout.sharedHomePath);
     const file = path.join(home, "config.toml");
-    const { result, servers } = readCodexConfig(yield* readText(file));
+    const { result, servers } = yield* memoRead(file, readCodexConfig);
     return {
       rows: servers.map((found) => rowOf(found, { origin: "codex", instanceId })),
       sources: [sourceOf({ origin: "codex", instanceId, path: file }, result)],

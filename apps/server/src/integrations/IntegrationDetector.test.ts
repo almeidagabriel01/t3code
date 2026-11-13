@@ -392,6 +392,28 @@ it.effect("one unreadable source never hides the others, and claude.ai says not 
   ),
 );
 
+it.effect("an unchanged file is not parsed again, and a touched one is", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const env = yield* setup(tempRoot());
+      const file = NodePath.join(env.home, ".codex", "config.toml");
+      const codexNames = Effect.map(env.detector.detect, ({ detected }) =>
+        detected.filter((server) => server.origin === "codex").map((server) => server.name),
+      );
+      // Whole seconds: utimes takes float seconds, which can round a millisecond away.
+      const mtime = new Date(1_700_000_000_000);
+      NodeFS.utimesSync(file, mtime, mtime);
+      expect(yield* codexNames).toEqual(["sentry"]);
+      // Same size and mtime: only a memo keyed on them can still answer "sentry".
+      NodeFS.writeFileSync(file, env.files[file]!.replace("sentry]", "sentrz]"));
+      NodeFS.utimesSync(file, mtime, mtime);
+      expect(yield* codexNames).toEqual(["sentry"]);
+      NodeFS.utimesSync(file, mtime, new Date(1_700_000_005_000));
+      expect(yield* codexNames).toEqual(["sentrz"]);
+    }),
+  ),
+);
+
 it.effect("make available copies on consent, once, and refuses what it cannot carry", () =>
   Effect.scoped(
     Effect.gen(function* () {
