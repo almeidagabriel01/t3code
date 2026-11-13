@@ -163,18 +163,26 @@ Settings → Maintenance → **Runner** sends heavy jobs to a Linux PC over SSH
 with `remoto` instead of this Mac. It switches on and off apart from the heavy
 work queue, and each section says what the two do together.
 
-- **Heavy work runs on.** **This Mac** keeps everything here. **Linux** sends
-  the commands in **Linux commands** (tests, lint, type checks; builds stay
-  here, since their output is needed on the Mac). **Hybrid** runs listed
-  commands here while this Mac has room (slots, limits, and room for what that
-  command used in its last runs here) and on Linux when it does not; when
-  both are full, a waiting job goes to the side with the shorter line per slot
-  (this Mac on a tie). Hybrid never asks: while Linux is offline everything
-  stays here. With the queue off, it starts work here at once and sends listed
-  commands to Linux only while this Mac is over its limits. **Mac only**
-  commands (Xcode, Gradle, simulators) never leave. All of these, and the
+- **Where heavy work runs.** Pick one:
+  - **This Mac** keeps everything here.
+  - **Mac first** fills this Mac, then sends the rest to Linux: a job goes to
+    Linux once this Mac has **Send to Linux after** jobs running or waiting
+    (default 4).
+  - **Hybrid** splits jobs between both: each goes to the machine with the
+    shorter queue per slot (this Mac on a tie), and neither starts a job past
+    its own limits. While Linux is offline everything stays here.
+  - **Linux** sends the commands in **Can run on Linux** (tests, lint, type
+    checks; builds stay here, since their output is needed on the Mac). Turn on
+    **Everything** to send every heavy command instead, except what has to stay
+    on this Mac: git commands that write, installs that change the lockfile,
+    **Always on this Mac** matches, simulator, emulator and Xcode tools, dev
+    servers, and commands that touch Mac paths outside the project.
+
+  With the queue off, work starts here at once and Hybrid or Mac first send it
+  to Linux only while this Mac is over its limits. All of these, and the
   policies below, can be set per project; the PC's SSH host, slots, limits and
   checks apply to the whole machine.
+
 - **Linux limits.** Linux takes a job while a slot is free, no other job from
   the same worktree runs there, and it stays under its own **Keep memory free**
   (default 20%) and **CPU limit** (default 70%). The next job starts only after
@@ -188,26 +196,43 @@ work queue, and each section says what the two do together.
   commands run on Linux, each from the folder the line is in at that point;
   redirects, pipes and everything else run here, and the job holds one Linux
   slot. A job stays on this Mac, and its row says why, when a command is not
-  listed, is on **Mac only**, reads its input from this Mac
+  listed, is on **Always on this Mac**, reads its input from this Mac
   (`cat x | vp test run`), runs in the background (`vp test run &`), runs
   outside a git checkout, names a file outside its checkout, is a git command
   (commits run here, since the pre-commit hook edits this Mac's repository),
-  diffs against git (`check:changed`, `vp staged`, `--changed`; the Linux copy
-  has no git history), or uses shell syntax T3 Code cannot follow (`eval`,
-  `case`, functions). A path or flag that is only known when the line runs is
-  checked then: if it turns out to need this Mac, the job runs here instead. A
-  script that calls git inside cannot be seen from its line; add it to **Mac
-  only**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
+  diffs against git (`vp staged`, `--changed`; the Linux copy has no git
+  history; `check:changed` still runs on Linux, with the changed files worked
+  out here), or uses shell syntax T3 Code cannot follow (`eval`, `case`,
+  functions). A path or flag that is only known when the line runs is checked
+  then: if it turns out to need this Mac, the job runs here instead. A script
+  that calls git inside cannot be seen from its line; add it to **Always on
+  this Mac**. On Linux, the project's own tools (`vp`, `vitest`) come first, from
   `node_modules/.bin` between the command's folder and the checkout.
-- **When Linux is offline or drops a job.** Choose **Run on this Mac**, **Wait
-  for Linux** or **Ask me**. A question shows on the job in the Resource
-  Manager with a countdown; unanswered, it follows the deadline setting. An
-  agent's foreground command gives up after 10 minutes, so longer waits only
-  help background commands.
-- **Moving a job.** A job's **⋯** menu has **Run on this Mac** and **Run on
+- **When Linux is offline.** A job headed for Linux that is still waiting
+  follows **Run on this Mac**, **Wait for Linux** or **Ask me**. A question
+  shows on the job in the Resource Manager with a countdown; unanswered, it
+  follows the deadline setting. An agent's foreground command gives up after 10
+  minutes, so longer waits only help background commands.
+- **If a Linux run fails.** When Linux couldn't run a job (the PC went away, or
+  a tool or folder is missing there), **Tell the agent** (the default) ends the
+  job with Linux's error and "Linux couldn't run this: <reason>", and nothing
+  reruns it. **Run on this Mac**, **Wait for Linux** and **Ask me** hand the job
+  to this Mac, back to Linux, or to you instead. A command that fails on Linux
+  for its own reasons, such as a failing test, returns its exit code and output
+  unchanged and never reruns.
+- **Bring results back.** Off by default. When on, the files a Linux job
+  created or changed are copied back to this Mac when it ends, except
+  `node_modules` and `.git`. A file you changed here during the job is left
+  alone, and the job's output lists it as "Not copied back (changed on this
+  Mac)".
+- **Moving jobs.** A job's **⋯** menu has **Run on this Mac** and **Run on
   Linux**. Moving a running job stops it and starts it again on the other side.
   A job Linux dropped runs again only once Linux confirms the earlier run
   stopped; if the PC cannot be reached, the menu asks before running it twice.
+  **Move all to Linux** and **Move all to this Mac**, on each machine's header
+  in the Resource Manager (on mobile too, and for agents through the heavy-work
+  tool), move every waiting job there at once. Running jobs, jobs that must stay
+  on this Mac and jobs queued for this Mac by hand stay where they are.
 - **Status.** The Resource Manager shows whether Linux is online, its jobs, load
   and free memory, and on each job where it runs and whether it is syncing,
   installing dependencies or running.
