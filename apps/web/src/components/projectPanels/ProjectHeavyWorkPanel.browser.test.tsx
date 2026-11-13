@@ -109,28 +109,33 @@ const panel = (visible = true) => (
   />
 );
 
-it("shows only this project's commands and jobs, worktree jobs by their thread, at their queue places", async () => {
+it("shows only this project's commands and jobs once each, worktree jobs by their thread, at their queue places", async () => {
   setup(
     [
       entry("worktree", { cwd: "/home/.t3/worktrees/app-1", threadId: "t1", startedAt: STARTED }),
       entry("other", { cwd: "/work/other" }),
       entry("build", { cwd: "/work/app/src" }),
     ],
-    [command("vitest", { threadId: "t1" }), command("gradle", { threadId: "t2" })],
+    [
+      command("pnpm worktree", { source: "queue", entryId: "worktree", threadId: "t1" }),
+      command("vitest", { threadId: "t1" }),
+      command("gradle", { threadId: "t2" }),
+    ],
   );
   await using screen = await render(panel());
   await expect.element(screen.getByText("vitest")).toBeVisible();
   expect(screen.getByText("gradle").elements()).toHaveLength(0);
   await expect.element(screen.getByText("pnpm worktree")).toBeVisible();
+  expect(screen.getByText("pnpm worktree").elements()).toHaveLength(1);
   await expect.element(screen.getByText("pnpm build")).toBeVisible();
   expect(screen.getByText("pnpm other").elements()).toHaveLength(0);
   expect(screen.getByText("App", { exact: true }).elements()).toHaveLength(0);
   await expect.element(screen.getByText(/^2nd/)).toBeVisible();
-  await expect.element(screen.getByText(/^Whole queue: /)).toBeVisible();
   expect(
-    screen.getByRole("switch", { name: "Pause the heavy work queue" }).elements(),
+    screen.getByRole("button", { name: "Pause the heavy work queue" }).elements(),
   ).toHaveLength(0);
-  await userEvent.click(screen.getByRole("button", { name: "Stop vitest" }));
+  await userEvent.click(screen.getByRole("button", { name: "Actions for vitest" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: "Stop" }));
   expect(mocks.stop.stop).toHaveBeenCalledWith(expect.objectContaining({ name: "vitest" }));
 });
 
@@ -159,6 +164,7 @@ it.each([
 it("opens the thread behind a job and the heavy work settings", async () => {
   setup([entry("run", { startedAt: STARTED, threadId: "t1" })], []);
   await using screen = await render(panel());
+  await userEvent.click(screen.getByRole("button", { name: "pnpm run" }));
   await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
   expect(mocks.navigate).toHaveBeenCalledWith({
     to: "/$environmentId/$threadId",

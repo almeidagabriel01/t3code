@@ -361,25 +361,17 @@ export function heavyWork(
   };
 }
 
-/** "3.4 GB", as the queue's lines print free memory. */
-export const formatFreeMemory = (bytes: number) => `${(bytes / GB).toFixed(1)} GB`;
+/** Every row of the heavy work, both machines: what its count and a project's share count. */
+export const heavyWorkItems = (work: ReturnType<typeof heavyWork>) => [
+  ...work.mac.running,
+  ...work.mac.direct,
+  ...work.mac.waiting,
+  ...work.linux.running,
+  ...work.linux.waiting,
+];
 
-/**
- * One line for the Mac's side of the queue: what holds its next job, in words drawn from the same
- * reading as the numbers beside them. Linux jobs and waiters have their own line.
- */
-export function queueSummary(state: SummaryState): string {
-  const mac = macSummary(state);
-  if (!state.enabled) return QUEUE_OFF_SUMMARY;
-  const head = `${mac.running} of ${mac.slots} running`;
-  const reading =
-    mac.cpuPercent === null || mac.freeBytes === null
-      ? ""
-      : ` · CPU ${mac.cpuPercent}% · ${formatFreeMemory(mac.freeBytes)} free`;
-  if (mac.note !== null) return `${head} · ${mac.note}${reading}`;
-  // Without a reading there is nothing to back a claim about the Mac.
-  return reading === "" ? head : `${head} · Mac has room${reading}`;
-}
+/** "3.4 GB", as the queue's lines print free memory; "420 MB" below a gigabyte, never "0.0 GB". */
+export const formatFreeMemory = gb;
 
 export function ordinal(n: number): string {
   const mod100 = n % 100;

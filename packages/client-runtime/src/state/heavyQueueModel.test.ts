@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   dropTarget,
   formatDuration,
+  formatFreeMemory,
   heavyCommandKey,
   heavyWork,
   jobPriority,
@@ -15,7 +16,6 @@ import {
   heavyItemsInProject,
   projectForCommand,
   projectForCwd,
-  queueSummary,
   usageLine,
   readableLabel,
   ruleForRoot,
@@ -182,19 +182,20 @@ describe("summary and formatting", () => {
     pressureLevel: 2,
     swapInBytesPerSecond: 40 * 1024 ** 2,
   };
-  const reading = " · CPU 9% · 3.2 GB free";
-  it("reads the slots, pause and room", () => {
-    expect(queueSummary(base)).toBe("1 of 3 running");
-    expect(queueSummary({ ...base, paused: true })).toBe("1 of 3 running · paused");
-    expect(queueSummary({ ...base, enabled: false, paused: true })).toBe(
+  const mac = (state: Partial<Parameters<typeof machineSummaries>[0]>) =>
+    machineSummaries({ ...base, ...state }).mac;
+  it("reads the slots, pause, the queue being off and room", () => {
+    expect(mac({})).toMatchObject({ running: 1, slots: 3, note: null, cpuPercent: null });
+    expect(mac({ paused: true }).note).toBe("paused");
+    expect(mac({ enabled: false, paused: true }).note).toBe(
       "Queue off: heavy jobs start right away",
     );
     expect(
-      queueSummary({ ...base, machine: { ...machine, pressureLevel: 0, swapInBytesPerSecond: 0 } }),
-    ).toBe(`1 of 3 running · Mac has room${reading}`);
+      mac({ machine: { ...machine, pressureLevel: 0, swapInBytesPerSecond: 0 } }),
+    ).toMatchObject({ note: null, cpuPercent: 9, freeBytes: machine.availableMemoryBytes });
   });
 
-  // Each hold is worded from the reading printed beside it, never a generic "waiting for headroom".
+  // Each hold is worded from the reading shown beside it, never a generic "waiting for headroom".
   it.each([
     ["paused", machine, "paused"],
     ["exclusive", machine, "waiting: a job that runs alone is running"],
@@ -217,32 +218,27 @@ describe("summary and formatting", () => {
           ? "needs ~4.0 cores; CPU 9%, limit 70%"
           : "needs ~4.0 GB; 3.2 GB free, 3.2 GB kept spare",
     };
-    const paused = hold === "paused";
-    const numbers = reading === null ? "" : " · CPU 9% · 3.2 GB free";
-    expect(queueSummary({ ...base, paused, machine: reading, hold, reasons })).toBe(
-      `1 of 3 running · ${text}${numbers}`,
-    );
+    expect(mac({ paused: hold === "paused", machine: reading, hold, reasons }).note).toBe(text);
   });
 
   it("names a limit without claiming anything waits when nothing does", () => {
-    expect(queueSummary({ ...base, entries: [e("r", true)], machine, hold: "pressure" })).toBe(
-      `1 of 3 running · memory pressure high${reading}`,
+    expect(mac({ entries: [e("r", true)], machine, hold: "pressure" }).note).toBe(
+      "memory pressure high",
     );
   });
 
-  // The slots and the hold are the Mac's: Linux jobs have their own line, and a job waiting for
-  // a Linux slot is not held by the Mac's memory.
+  // The slots and the hold are the Mac's: Linux jobs count under Linux, and a job waiting for a
+  // Linux slot is not held by the Mac's memory.
   it("counts and explains only the Mac's side when the Runner sends work to Linux", () => {
     const linux = { ...e("l", true), runner: "linux" as const };
     expect(
-      queueSummary({
-        ...base,
+      mac({
         entries: [e("r", true), linux, e("w")],
         routes: { w: "linux" },
         machine,
         hold: "pressure",
       }),
-    ).toBe(`1 of 3 running · memory pressure high${reading}`);
+    ).toMatchObject({ running: 1, slots: 3, note: "memory pressure high" });
   });
 
   const LINUX = {
@@ -347,6 +343,12 @@ describe("summary and formatting", () => {
     expect(long).toHaveLength(90);
     expect(long.endsWith("…")).toBe(true);
   });
+
+  it.each([
+    [3.44 * 1024 ** 3, "3.4 GB"],
+    [420 * 1024 ** 2, "420 MB"],
+    [1024, "1 MB"],
+  ])("prints %d bytes free as %s", (bytes, text) => expect(formatFreeMemory(bytes)).toBe(text));
 
   it("formats elapsed time", () => {
     const now = Date.parse("2026-01-01T02:05:00.000Z");

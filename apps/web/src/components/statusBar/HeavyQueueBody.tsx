@@ -12,9 +12,9 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import {
   dropTarget,
-  formatDuration,
-  formatFreeMemory,
   heavyItemsInProject,
+  heavyWork,
+  heavyWorkItems,
   jobPriority,
   machineSummaries,
   moveTarget,
@@ -22,10 +22,9 @@ import {
   ordinal,
   PRIORITY_LABEL,
   projectForCommand,
-  readableLabel,
   ruleForRoot,
   usageLine,
-  type MachineSummary,
+  type MachineWork,
   type MoveAction,
   type PriorityChange,
 } from "@t3tools/client-runtime/state/heavyQueueModel";
@@ -36,39 +35,43 @@ import {
   RUNNER_DEADLINE_LABEL,
   RUNNER_PHASE_LABEL,
   RUNNER_POLICY_LABEL,
-  runnerBadge,
   RUNNER_UNCONFIRMED_NOTE,
 } from "@t3tools/client-runtime/state/runnerModel";
-import type { EnvironmentId, HeavyQueueEntry, HeavyRunner } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  HeavyCommand,
+  HeavyQueueEntry,
+  HeavyRunner,
+  HeavyRunnerPhase,
+} from "@t3tools/contracts";
 import {
   ArrowDownIcon,
   ArrowDownToLineIcon,
   ArrowUpIcon,
   ArrowUpToLineIcon,
-  ChevronsDownIcon,
-  ChevronsUpIcon,
-  CpuIcon,
+  CircleStopIcon,
+  DumbbellIcon,
   EllipsisIcon,
+  FolderSyncIcon,
   GaugeIcon,
   GripVerticalIcon,
-  InfoIcon,
+  HourglassIcon,
   LaptopIcon,
-  MemoryStickIcon,
   MessageSquareIcon,
+  PackageIcon,
+  PauseIcon,
   PlayIcon,
   RocketIcon,
   ServerIcon,
   SnailIcon,
-  SquareIcon,
   Trash2Icon,
   ZapIcon,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import { useProjects } from "../../state/entities";
 import { useHeavyQueue } from "../../state/heavyQueue";
-import { cn } from "../../lib/utils";
-import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -81,24 +84,21 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { useHeavyQueueActions } from "./useKillTarget";
+import {
+  Elapsed,
+  type Fact,
+  HeavyCommandRow,
+  type HeavyCommandThreads,
+  HeavyRow,
+  ProjectChip,
+  threadFact,
+} from "./HeavyCommandsBody";
+import { ResourceSection } from "./ResourceMetrics";
+import { useHeavyQueueActions, useStopHeavyCommand } from "./useKillTarget";
 
-const ELAPSED_REFRESH_MS = 5_000;
 const ASK_REFRESH_MS = 1_000;
 const DRAG_MODIFIERS = [restrictToVerticalAxis, restrictToFirstScrollableAncestor];
-
-export function Elapsed({ since, prefix }: { readonly since: string; readonly prefix?: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- coarse timer so the elapsed time does not repaint continuously
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), ELAPSED_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, []);
-  const duration = formatDuration(since, now);
-  return <>{prefix === undefined ? duration : `${prefix} ${duration}`}</>;
-}
 
 /** Ticks once a second only while `active`, so an idle list never repaints. */
 function useAskClock(active: boolean) {
@@ -162,6 +162,10 @@ function RowMenu({
       <MenuPopup side="top" align="end">
         {running ? null : (
           <MenuGroup>
+            <MenuItem disabled={!actions.canChange} onClick={() => void actions.startNow(entry.id)}>
+              <RocketIcon aria-hidden />
+              Start now
+            </MenuItem>
             <MenuItem
               disabled={!actions.canChange || moveTarget(entries, entry.id, "next") === undefined}
               onClick={() => move("next")}
@@ -251,7 +255,7 @@ function RowMenu({
           disabled={!actions.canChange || (running && entry.server === true)}
           onClick={() => void actions.cancel(entry.id, running)}
         >
-          {running ? <SquareIcon aria-hidden /> : <Trash2Icon aria-hidden />}
+          {running ? <CircleStopIcon aria-hidden /> : <Trash2Icon aria-hidden />}
           {running ? "Stop" : "Remove from the queue"}
         </MenuItem>
       </MenuPopup>
@@ -285,7 +289,7 @@ function AskPrompt({
     <div
       role="group"
       aria-label={title}
-      className="mt-1.5 ml-6.5 rounded-md border border-foreground/12 px-2 py-1.5"
+      className="mr-3 mb-2 ml-9 rounded-md border border-foreground/12 px-2 py-1.5"
     >
       <div className="flex items-center gap-1.5 text-3xs">
         <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">{title}</span>
@@ -322,94 +326,43 @@ function AskPrompt({
   );
 }
 
-/** An icon, or a short value, whose meaning lives in its tooltip and accessible name. */
-function Hint({
-  label,
-  Icon,
-  children,
-}: {
-  readonly label: string;
-  readonly Icon: typeof InfoIcon;
-  readonly children?: ReactNode;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            aria-label={label}
-            tabIndex={0}
-            className="flex shrink-0 cursor-default items-center gap-0.5 rounded-sm tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&>svg]:size-3"
-          />
-        }
-      >
-        <Icon aria-hidden />
-        {children}
-      </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
-  );
-}
+const MACHINE = {
+  mac: { name: "This Mac", Icon: LaptopIcon },
+  linux: { name: "Linux", Icon: ServerIcon },
+} as const;
 
-/** One truncated line whose full text is in its tooltip. */
-function TruncatedText({
-  text,
-  className,
-}: {
-  readonly text: string;
-  readonly className?: string;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            tabIndex={0}
-            className={cn(
-              "cursor-default truncate rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-              className,
-            )}
-          />
-        }
-      >
-        {text}
-      </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-sm">
-        {text}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
+const PHASE_ICON: Record<HeavyRunnerPhase, typeof PlayIcon> = {
+  syncing: FolderSyncIcon,
+  installing: PackageIcon,
+  running: PlayIcon,
+};
 
-const RULE_ICON = { first: ChevronsUpIcon, last: ChevronsDownIcon } as const;
-
-function Row({
+function QueueRow({
   entry,
-  entries,
+  waiting,
   position,
   state,
   actions,
   now,
-  threadTitle,
-  projectIdOfThread,
-  onOpenThread,
+  cpuCount,
+  threads,
   scopeProjectId,
 }: {
   readonly entry: HeavyQueueEntry;
-  /** The waiters of this row's machine, in run order: moves stay inside its group. */
-  readonly entries: ReadonlyArray<HeavyQueueEntry>;
+  /** The waiters of this row's machine, in run order: moves stay inside its line. */
+  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
   readonly position: number | null;
   readonly state: QueueState;
-  readonly now: number;
   readonly actions: Actions;
-  readonly threadTitle: (threadId: string) => string | undefined;
-  readonly projectIdOfThread: (threadId: string) => string | undefined;
-  readonly onOpenThread: (threadId: string) => void;
-  readonly scopeProjectId?: string | undefined;
+  readonly now: number;
+  readonly cpuCount: number;
+  readonly threads: HeavyCommandThreads;
+  readonly scopeProjectId: string | undefined;
 }) {
   const running = position === null;
+  const onLinux = running ? entry.runner === "linux" : state.routes[entry.id] === "linux";
   const projects = useProjects();
-  const project = projectForCommand(entry, projects, projectIdOfThread);
+  const project = projectForCommand(entry, projects, threads.projectIdOfThread);
   const rule = project === undefined ? undefined : ruleForRoot(state.rules, project.workspaceRoot);
   const {
     setNodeRef,
@@ -422,32 +375,77 @@ function Row({
   } = useSortable({ id: entry.id, disabled: running || !actions.canChange });
   const label = heavyEntryName(entry);
   const { threadId } = entry;
-  const title = threadId === null ? undefined : threadTitle(threadId);
-  const usage = usageLine(entry, state);
   const cpuLabel = jobPriority(entry).label;
-  const detail = [state.reasons[entry.id], entry.note].filter(Boolean).join(" · ");
-  const RuleIcon = rule === undefined ? null : RULE_ICON[rule.priority];
+  const reason = state.reasons[entry.id];
+  const machine = onLinux
+    ? `Linux${state.linux === null ? "" : ` (${state.linux.host})`}`
+    : MACHINE.mac.name;
+  const PhaseIcon = PHASE_ICON[entry.phase ?? "running"];
+  // A Linux job's own processes run there; what this Mac samples is only its ssh session.
+  const usage =
+    !running || onLinux
+      ? undefined
+      : entry.cpu === undefined || entry.memory === undefined
+        ? null
+        : { cpuPercent: (entry.cpu / Math.max(1, cpuCount)) * 100, rssBytes: entry.memory };
+  const facts = (interactive: boolean): ReadonlyArray<Fact> => [
+    { label: "Command", value: entry.label, mono: true },
+    { label: "Folder", value: entry.cwd, mono: true },
+    ...threadFact(threadId, threads, interactive),
+    {
+      label: running ? "Runs on" : "Waits for",
+      value:
+        running && onLinux && entry.phase !== undefined
+          ? `${machine} · ${RUNNER_PHASE_LABEL[entry.phase]}`
+          : machine,
+    },
+    ...(entry.remote === undefined
+      ? []
+      : [{ label: "Run folder", value: `~/runs/${entry.remote.id}`, mono: true }]),
+    running
+      ? { label: "Running", value: <Elapsed since={entry.startedAt ?? entry.createdAt} /> }
+      : {
+          label: "Waiting",
+          value: (
+            <>
+              {ordinal(position ?? 0)} in line · <Elapsed since={entry.createdAt} />
+            </>
+          ),
+        },
+    {
+      label: "Priority",
+      value: [`Project: ${PRIORITY_LABEL[rule?.priority ?? "normal"]}`, cpuLabel]
+        .filter(Boolean)
+        .join(" · "),
+    },
+    ...(onLinux && running
+      ? []
+      : [{ label: "Usage", value: usageLine(entry, state) ?? "Unknown" }]),
+    ...(reason === undefined ? [] : [{ label: "Why waiting", value: reason }]),
+    ...(entry.note === undefined ? [] : [{ label: "Note", value: entry.note }]),
+    ...(entry.unconfirmed === true
+      ? [{ label: "Earlier run", value: RUNNER_UNCONFIRMED_NOTE }]
+      : []),
+    { label: "Process", value: `pid ${entry.pid}` },
+  ];
   return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
-      className={cn(
-        "py-1.5 pl-2 pr-3 hover:bg-foreground/8",
-        isDragging && "relative z-10 bg-popover shadow-md",
-      )}
-    >
-      <div className="flex items-center gap-1.5">
-        {running ? (
-          <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-3">
-            <PlayIcon aria-hidden />
-          </span>
+    <HeavyRow
+      rowRef={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(isDragging && "relative z-20 bg-popover shadow-md")}
+      name={label}
+      glyph={
+        running ? (
+          <PhaseIcon
+            aria-label={
+              onLinux && entry.phase !== undefined ? RUNNER_PHASE_LABEL[entry.phase] : "Running"
+            }
+            className="fill-current text-success"
+          />
         ) : (
           <Button
             variant="ghost-muted"
-            size="icon-micro"
+            size="icon-tiny"
             className="cursor-grab touch-none"
             aria-label={`Drag to reorder ${label}`}
             disabled={!actions.canChange}
@@ -455,251 +453,84 @@ function Row({
             {...attributes}
             {...listeners}
           >
-            <GripVerticalIcon aria-hidden />
+            <HourglassIcon aria-hidden className="group-hover/row:hidden" />
+            <GripVerticalIcon aria-hidden className="hidden group-hover/row:block" />
           </Button>
-        )}
-        {readableLabel(entry.label) === label ? (
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
-            {label}
-          </span>
+        )
+      }
+      chip={
+        project !== undefined && project.id === scopeProjectId ? null : (
+          <ProjectChip project={project} folder={entry.cwd} />
+        )
+      }
+      state={
+        running ? (
+          onLinux && entry.phase !== undefined && entry.phase !== "running" ? (
+            RUNNER_PHASE_LABEL[entry.phase]
+          ) : (
+            <Elapsed since={entry.startedAt ?? entry.createdAt} />
+          )
         ) : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="min-w-0 flex-1 cursor-default truncate text-xs font-medium text-foreground/90" />
-              }
-            >
-              {label}
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="max-w-sm break-all">
-              {entry.label}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="shrink-0 cursor-default text-2xs tabular-nums text-muted-foreground" />
-            }
-          >
-            {entry.startedAt === null ? (
-              <>
-                {ordinal(position ?? 0)} · <Elapsed since={entry.createdAt} />
-              </>
-            ) : (
-              <>
-                {entry.phase === undefined ? "" : `${RUNNER_PHASE_LABEL[entry.phase]} · `}
-                <Elapsed since={entry.startedAt} />
-              </>
-            )}
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {entry.startedAt === null ? (
-              <Elapsed since={entry.createdAt} prefix="Waiting" />
-            ) : (
-              <Elapsed since={entry.startedAt} prefix="Running" />
-            )}
-          </TooltipPopup>
-        </Tooltip>
-        {running ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost-muted"
-                  size="icon-micro"
-                  className="cursor-pointer"
-                  aria-label={`Start ${label} now`}
-                  disabled={!actions.canChange}
-                  onClick={() => void actions.startNow(entry.id)}
-                />
-              }
-            >
-              <RocketIcon aria-hidden />
-            </TooltipTrigger>
-            <TooltipPopup side="top">Start now, even if the Mac is busy</TooltipPopup>
-          </Tooltip>
-        )}
+          <>
+            {ordinal(position ?? 0)} · <Elapsed since={entry.createdAt} />
+          </>
+        )
+      }
+      usage={usage}
+      secondLine={running ? undefined : reason}
+      facts={facts}
+      menu={
         <RowMenu
           entry={entry}
-          entries={entries}
+          entries={waiting}
           state={state}
           actions={actions}
           priority={rule?.priority ?? "normal"}
           projectRoot={project?.workspaceRoot ?? null}
-          onOpenThread={threadId === null ? null : () => onOpenThread(threadId)}
+          onOpenThread={threadId === null ? null : () => threads.onOpenThread(threadId)}
         />
-      </div>
-      <div className="mt-0.5 ml-6.5 flex min-w-0 items-center gap-1.5 text-3xs text-muted-foreground">
-        {/* A project-scoped list already names the project. */}
-        {project !== undefined && project.id === scopeProjectId ? null : (
-          <span className="flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-            {project === undefined ? null : (
-              <ProjectFavicon project={project} className="size-3 shrink-0" />
-            )}
-            <span className="truncate">
-              {project?.title ?? entry.cwd.split(/[\\/]/).findLast(Boolean)}
-            </span>
-          </span>
-        )}
-        {RuleIcon === null || rule === undefined ? null : (
-          <Hint label={`Project priority: ${PRIORITY_LABEL[rule.priority]}`} Icon={RuleIcon} />
-        )}
-        {cpuLabel === null ? null : <Hint label={cpuLabel} Icon={SnailIcon} />}
-        {threadId === null ? null : (
-          <button
-            type="button"
-            className="flex min-w-0 max-w-[40%] shrink-0 cursor-pointer items-center gap-0.5 rounded-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&>svg]:size-3 [&>svg]:shrink-0"
-            onClick={() => onOpenThread(threadId)}
-          >
-            <MessageSquareIcon aria-hidden />
-            <span className="truncate hover:underline">{title ?? "Open thread"}</span>
-          </button>
-        )}
-        {usage === null ? null : <TruncatedText text={usage} className="min-w-0 flex-1" />}
-      </div>
-      {detail === "" ? null : (
-        <div className="mt-0.5 ml-6.5 flex min-w-0 items-center gap-1 text-3xs text-muted-foreground [&>svg]:size-3 [&>svg]:shrink-0">
-          <InfoIcon aria-hidden />
-          <TruncatedText text={detail} className="min-w-0" />
-        </div>
-      )}
+      }
+    >
       {entry.ask === undefined ? null : (
         <AskPrompt entry={entry} ask={entry.ask} state={state} actions={actions} now={now} />
       )}
-      {running || entry.unconfirmed !== true ? null : (
-        <div className="mt-1 ml-6.5 text-3xs text-muted-foreground">{RUNNER_UNCONFIRMED_NOTE}</div>
-      )}
-    </div>
+    </HeavyRow>
   );
 }
 
-const NO_THREAD_PROJECT = () => undefined;
-
-const MACHINE = {
-  mac: { name: "This Mac", Icon: LaptopIcon },
-  linux: { name: "Linux", Icon: ServerIcon },
-} as const;
-
-const LINUX_STATUS = (online: boolean | null) =>
-  online === null
-    ? { text: "checking", dot: "bg-muted-foreground/60" }
-    : online
-      ? { text: "online", dot: "bg-success" }
-      : { text: "offline", dot: "bg-destructive" };
-
-/** A machine's name, status and readings on one row; the whole-queue control sits at its right. */
-function MachineHeader({
+/** One machine's rows: running jobs, then the commands agents run directly, then its line. */
+function MachineGroup({
   runner,
-  summary,
-  host,
-  queueOn,
+  work,
+  showName,
   children,
+  renderWaiter,
+  actions,
 }: {
   readonly runner: HeavyRunner;
-  readonly summary: MachineSummary | null;
-  readonly host: string | null;
-  readonly queueOn: boolean;
-  readonly children?: ReactNode;
-}) {
-  const { name, Icon } = MACHINE[runner];
-  // A job can outlive the Runner on Linux; with no heartbeat there is no status to show.
-  const status = runner === "linux" && summary !== null ? LINUX_STATUS(summary.online) : null;
-  // Linux's readings are stale while it is offline or unchecked; the Mac's slots mean nothing with the queue off.
-  const live = summary !== null && summary.online === true;
-  const showSlots = live && (runner === "linux" || queueOn);
-  const load = summary?.load ?? null;
-  const cpuCount = summary?.cpuCount ?? null;
-  return (
-    <>
-      <div className="flex items-center gap-1.5 py-1.5 pl-2 pr-3 text-3xs text-muted-foreground">
-        <span className="flex size-5 shrink-0 items-center justify-center [&>svg]:size-3.5">
-          <Icon aria-hidden />
-        </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          {host === null ? (
-            <span className="truncate text-xs font-medium text-foreground/90">{name}</span>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="cursor-default truncate text-xs font-medium text-foreground/90" />
-                }
-              >
-                {name}
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {host} · {status?.text}
-              </TooltipPopup>
-            </Tooltip>
-          )}
-          {status === null ? null : (
-            <span className={cn("size-1.5 shrink-0 rounded-full", status.dot)}>
-              <span className="sr-only">{status.text}</span>
-            </span>
-          )}
-        </span>
-        {!showSlots || summary === null ? null : (
-          <Hint label={`${summary.running} of ${summary.slots} running`} Icon={PlayIcon}>
-            {summary.running}/{summary.slots}
-          </Hint>
-        )}
-        {!live || summary.cpuPercent === null ? null : (
-          <Hint label={`CPU ${summary.cpuPercent}%`} Icon={CpuIcon}>
-            {summary.cpuPercent}%
-          </Hint>
-        )}
-        {!live || load === null ? null : (
-          <Hint
-            label={`load ${load.toFixed(1)}${cpuCount === null ? "" : ` on ${cpuCount} cores`}`}
-            Icon={CpuIcon}
-          >
-            {load.toFixed(1)}
-            {cpuCount === null ? "" : `/${cpuCount}`}
-          </Hint>
-        )}
-        {!live || summary.freeBytes === null ? null : (
-          <Hint label={`${formatFreeMemory(summary.freeBytes)} free`} Icon={MemoryStickIcon}>
-            {formatFreeMemory(summary.freeBytes)}
-          </Hint>
-        )}
-        {children}
-      </div>
-      {summary === null || summary.note === null ? null : (
-        <div className="-mt-1 flex items-start gap-1.5 pb-1.5 pl-2 pr-3 text-3xs text-muted-foreground">
-          <span className="flex h-3.5 w-5 shrink-0 items-center justify-center [&>svg]:size-3">
-            <InfoIcon aria-hidden />
-          </span>
-          <span className="min-w-0">{summary.note}</span>
-        </div>
-      )}
-    </>
-  );
-}
-
-function MachineGroup({
-  rows,
-  waiting,
-  actions,
-  header,
-  renderRow,
-}: {
-  readonly rows: ReadonlyArray<HeavyQueueEntry>;
-  /** Every waiter on this machine in run order, shown or not: places and moves count them all. */
-  readonly waiting: ReadonlyArray<HeavyQueueEntry>;
+  /** Already narrowed to what this list shows; `line` keeps every waiter for places and moves. */
+  readonly work: MachineWork & { readonly line: ReadonlyArray<HeavyQueueEntry> };
+  readonly showName: boolean;
+  readonly children: ReactNode;
+  readonly renderWaiter: (entry: HeavyQueueEntry, position: number) => ReactNode;
   readonly actions: Actions;
-  readonly header: ReactNode;
-  readonly renderRow: (entry: HeavyQueueEntry, position: number | null) => ReactNode;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (over === null) return;
-    const target = dropTarget(waiting, String(active.id), String(over.id));
+    const target = dropTarget(work.line, String(active.id), String(over.id));
     if (target !== undefined) void actions.move(String(active.id), target);
   };
+  const { name, Icon } = MACHINE[runner];
   return (
-    <div className="border-t border-foreground/8 first:border-t-0">
-      {header}
+    <div role="group" aria-label={name}>
+      {showName ? (
+        <div className="flex items-center gap-1.5 pt-2 pb-0.5 pl-3 text-3xs font-medium tracking-wide text-muted-foreground uppercase [&>svg]:size-3">
+          <Icon aria-hidden />
+          {name}
+        </div>
+      ) : null}
+      {children}
       {/* One drag context per machine, so a waiter cannot be dropped into the other machine's line. */}
       <DndContext
         sensors={sensors}
@@ -708,14 +539,11 @@ function MachineGroup({
         onDragEnd={onDragEnd}
       >
         <SortableContext
-          items={rows.filter((entry) => entry.startedAt === null).map((entry) => entry.id)}
+          items={work.waiting.map((entry) => entry.id)}
           strategy={verticalListSortingStrategy}
         >
-          {rows.map((entry) =>
-            renderRow(
-              entry,
-              entry.startedAt === null ? waiting.findIndex((w) => w.id === entry.id) + 1 : null,
-            ),
+          {work.waiting.map((entry) =>
+            renderWaiter(entry, work.line.findIndex((w) => w.id === entry.id) + 1),
           )}
         </SortableContext>
       </DndContext>
@@ -723,104 +551,221 @@ function MachineGroup({
   );
 }
 
+const NO_COMMANDS: ReadonlyArray<HeavyCommand> = [];
+
 /**
- * The popover's heavy-work section, grouped by machine: each one's readings and note, the pause,
- * and its entries in run order. With `projectId` it lists that project's entries only, at their
- * places on their machine, and leaves the whole-queue switches to the Resource Manager.
+ * Heavy work split by machine, each running first and then waiting in its own line, with every
+ * job listed once. With `projectId` it keeps that project's rows, at their places on their machine.
  */
-export function HeavyQueueBody({
+export function HeavyWorkList({
   environmentId,
-  threadTitle,
-  projectIdOfThread = NO_THREAD_PROJECT,
-  onOpenThread,
+  commands = NO_COMMANDS,
+  cpuCount,
+  threads,
   projectId,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly threadTitle: (threadId: string) => string | undefined;
-  readonly projectIdOfThread?: (threadId: string) => string | undefined;
-  readonly onOpenThread: (threadId: string) => void;
+  readonly commands?: ReadonlyArray<HeavyCommand>;
+  readonly cpuCount: number;
+  readonly threads: HeavyCommandThreads;
   readonly projectId?: string;
 }) {
   const state = useHeavyQueue(environmentId);
   const actions = useHeavyQueueActions(environmentId);
+  const stop = useStopHeavyCommand(environmentId);
   const projects = useProjects();
-  const { entries } = state;
-  const shown =
+  const work = heavyWork(state, commands);
+  const keep = <T extends Pick<HeavyCommand, "threadId"> & { readonly cwd?: string | undefined }>(
+    items: ReadonlyArray<T>,
+  ) =>
     projectId === undefined
-      ? entries
-      : heavyItemsInProject(entries, {
+      ? items
+      : heavyItemsInProject(items, {
           projectId,
           projects: projects.filter((project) => project.environmentId === environmentId),
-          projectIdOfThread,
+          projectIdOfThread: threads.projectIdOfThread,
         });
-  const now = useAskClock(entries.some((entry) => entry.ask !== undefined));
-  const summaries = machineSummaries(state);
-  const machineOf = (entry: HeavyQueueEntry) => runnerBadge(entry, state)?.runner ?? "mac";
+  const now = useAskClock(state.entries.some((entry) => entry.ask !== undefined));
+  const machineCpuCount = state.machine?.cpuCount ?? cpuCount;
   const groups = (["mac", "linux"] as const)
-    .map((runner) => ({
-      runner,
-      summary: runner === "mac" ? summaries.mac : summaries.linux,
-      rows: shown.filter((entry) => machineOf(entry) === runner),
-      waiting: entries.filter((entry) => entry.startedAt === null && machineOf(entry) === runner),
-    }))
-    // Linux stays visible while the Runner is on, and while a job still runs there after it went off.
-    .filter((group) => group.runner === "mac" || group.summary !== null || group.rows.length > 0);
+    .map((runner) => {
+      const all = work[runner];
+      return {
+        runner,
+        work: {
+          running: keep(all.running),
+          direct: keep(all.direct),
+          waiting: keep(all.waiting),
+          line: all.waiting,
+        },
+      };
+    })
+    .filter(({ work: rows }) => rows.running.length + rows.direct.length + rows.waiting.length > 0);
+  const showNames =
+    state.linux !== null || work.linux.running.length + work.linux.waiting.length > 0;
+  const row = (
+    entry: HeavyQueueEntry,
+    position: number | null,
+    line: ReadonlyArray<HeavyQueueEntry>,
+  ) => (
+    <QueueRow
+      key={entry.id}
+      entry={entry}
+      waiting={line}
+      position={position}
+      state={state}
+      actions={actions}
+      now={entry.ask === undefined ? 0 : now}
+      cpuCount={machineCpuCount}
+      threads={threads}
+      scopeProjectId={projectId}
+    />
+  );
   return (
     <div>
-      {groups.map(({ runner, summary, rows, waiting }) => (
+      {groups.map(({ runner, work: rows }) => (
         <MachineGroup
           key={runner}
-          rows={rows}
-          waiting={waiting}
+          runner={runner}
+          work={rows}
+          showName={showNames}
           actions={actions}
-          header={
-            <MachineHeader
-              runner={runner}
-              summary={summary}
-              host={runner === "linux" ? (state.linux?.host ?? null) : null}
-              queueOn={state.enabled}
-            >
-              {runner === "linux" || projectId !== undefined ? null : state.enabled ? (
-                <label className="ml-1 flex shrink-0 cursor-pointer items-center gap-1.5">
-                  Pause
-                  <Switch
-                    size="sm"
-                    checked={state.paused}
-                    disabled={!actions.canChange}
-                    onCheckedChange={(checked) => void actions.setPaused(Boolean(checked))}
-                    aria-label="Pause the heavy work queue"
-                  />
-                </label>
-              ) : (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  className="ml-1"
-                  disabled={!actions.canChange}
-                  onClick={() => void actions.setEnabled(true)}
-                >
-                  Turn on
-                </Button>
-              )}
-            </MachineHeader>
-          }
-          renderRow={(entry, position) => (
-            <Row
-              key={entry.id}
-              entry={entry}
-              entries={waiting}
-              position={position}
-              state={state}
-              actions={actions}
-              now={entry.ask === undefined ? 0 : now}
-              threadTitle={threadTitle}
-              projectIdOfThread={projectIdOfThread}
-              onOpenThread={onOpenThread}
+          renderWaiter={(entry, position) => row(entry, position, rows.line)}
+        >
+          {rows.running.map((entry) => row(entry, null, rows.line))}
+          {rows.direct.map((command) => (
+            <HeavyCommandRow
+              key={`${command.pid}:${command.startTimeMs}`}
+              command={command}
+              cpuCount={cpuCount}
+              threads={threads}
+              stop={stop}
               scopeProjectId={projectId}
             />
-          )}
-        />
+          ))}
+        </MachineGroup>
       ))}
     </div>
+  );
+}
+
+/** "Mac 0/3": a machine's running jobs against its slots, without slots where none apply. */
+function MachineCount({
+  runner,
+  running,
+  slots,
+}: {
+  readonly runner: HeavyRunner;
+  readonly running: number;
+  readonly slots: number | null;
+}) {
+  const name = runner === "mac" ? "Mac" : "Linux";
+  return (
+    <span
+      aria-label={`${MACHINE[runner].name}: ${running}${slots === null ? "" : ` of ${slots}`} running`}
+    >
+      {name} {running}
+      {slots === null ? "" : `/${slots}`}
+    </span>
+  );
+}
+
+/**
+ * The Resource Manager's Heavy work section: per-machine counts and the queue's pause in its
+ * header. Hidden while nothing runs or waits and the queue is simply on.
+ */
+export function HeavyWorkSection({
+  environmentId,
+  commands,
+  cpuCount,
+  threads,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly commands: ReadonlyArray<HeavyCommand>;
+  readonly cpuCount: number;
+  readonly threads: HeavyCommandThreads;
+}) {
+  const state = useHeavyQueue(environmentId);
+  const actions = useHeavyQueueActions(environmentId);
+  const work = heavyWork(state, commands);
+  const summaries = machineSummaries(state);
+  const count = heavyWorkItems(work).length;
+  if (count === 0 && state.enabled && !state.paused) return null;
+  const showLinux =
+    summaries.linux !== null || work.linux.running.length + work.linux.waiting.length > 0;
+  return (
+    <ResourceSection
+      sectionId={`${environmentId}:heavy-work`}
+      title="Heavy work"
+      icon={<DumbbellIcon aria-hidden />}
+      count={count}
+      controls={
+        <>
+          <span className="pointer-events-none mr-1 flex items-center gap-1 text-2xs tabular-nums text-muted-foreground">
+            <MachineCount
+              runner="mac"
+              running={work.mac.running.length}
+              slots={state.enabled ? state.maxRunning : null}
+            />
+            {showLinux ? (
+              <>
+                <span aria-hidden>·</span>
+                <MachineCount
+                  runner="linux"
+                  running={work.linux.running.length}
+                  slots={summaries.linux?.slots ?? null}
+                />
+              </>
+            ) : null}
+          </span>
+          {state.enabled ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-micro"
+                    aria-label="Pause the heavy work queue"
+                    aria-pressed={state.paused}
+                    disabled={!actions.canChange}
+                    onClick={() => void actions.setPaused(!state.paused)}
+                  />
+                }
+              >
+                <PauseIcon aria-hidden className={cn(state.paused && "text-warning")} />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {state.paused
+                  ? "Paused: nothing new starts. Click to resume."
+                  : "Pause the queue: running jobs finish, nothing new starts."}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="micro"
+                    variant="outline"
+                    disabled={!actions.canChange}
+                    onClick={() => void actions.setEnabled(true)}
+                  />
+                }
+              >
+                Turn on
+              </TooltipTrigger>
+              <TooltipPopup side="top">{summaries.mac.note}</TooltipPopup>
+            </Tooltip>
+          )}
+        </>
+      }
+    >
+      <HeavyWorkList
+        environmentId={environmentId}
+        commands={commands}
+        cpuCount={cpuCount}
+        threads={threads}
+      />
+    </ResourceSection>
   );
 }
