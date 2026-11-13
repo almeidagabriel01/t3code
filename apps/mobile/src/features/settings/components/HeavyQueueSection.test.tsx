@@ -365,7 +365,7 @@ describe("HeavyQueueSection", () => {
     await off.unmount();
     const auto = await mount({ enabled: true, where: "automatic" });
     expect(auto.host.textContent).toContain(
-      "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.",
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     );
     await auto.unmount();
   });

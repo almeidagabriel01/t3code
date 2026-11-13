@@ -63,7 +63,7 @@ describe("the queue × Runner line", () => {
       false,
       true,
       "automatic",
-      "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.",
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     ],
     [false, false, true, "mac", "No queue: heavy jobs start on this Mac right away."],
     [
@@ -78,7 +78,7 @@ describe("the queue × Runner line", () => {
       true,
       true,
       "automatic",
-      "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.",
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
     ],
   ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
     expect(line(queue, paused, runner, where)).toBe(text);

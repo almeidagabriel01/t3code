@@ -166,7 +166,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       case "linux":
         return "Listed commands run on Linux; everything else waits its turn on this Mac.";
       case "automatic":
-        return "Listed commands run here while this Mac has room, else on Linux; the rest wait their turn here.";
+        return RUNNER_WHERE_DESCRIPTION.automatic;
       case "macFirst":
         return RUNNER_WHERE_DESCRIPTION.macFirst;
     }
@@ -177,7 +177,7 @@ export function heavyModeLine(mode: HeavyModeInput): string {
     case "linux":
       return "No queue: listed commands wait for a Linux slot, the rest start here right away.";
     case "automatic":
-      return "No queue: jobs start here right away; listed commands go to Linux while this Mac is over its limits.";
+      return RUNNER_WHERE_DESCRIPTION.automatic;
     case "macFirst":
       return RUNNER_WHERE_DESCRIPTION.macFirst;
   }
