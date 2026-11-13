@@ -969,7 +969,13 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<{ readonly status: string }>`
       SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
-    for (const row of yield* requestThreads(requestId)) {
+    yield* settleThreads(yield* requestThreads(requestId));
+  });
+
+  const settleThreads = Effect.fn("AssistantGroups.settleThreads")(function* (
+    rows: ReadonlyArray<ThreadRow>,
+  ) {
+    for (const row of rows) {
       const thread = yield* inspectThread(row.thread_id as ThreadId);
       if (
         thread === undefined ||
@@ -2883,15 +2889,15 @@ const make = Effect.gen(function* () {
     }
   });
 
+  const groupRequestThreads = (teamId: string) =>
+    sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
+
   /**
-   * The group's chat, tasks, summary, the files of its messages and the requests' threads, which
-   * held nothing but those requests; nothing else of the group.
+   * The group's chat, tasks, summary and the files of its messages; nothing else of the group. The
+   * members keep their requests' conversations, settled and no longer the group's.
    */
   const clearChat = Effect.fn("AssistantGroups.clearChat")(function* (teamId: string) {
-    yield* deleteThreads(
-      yield* sql<ThreadRow>`
-        SELECT * FROM assistant_group_request_threads WHERE team_id = ${teamId}`,
-    );
+    yield* settleThreads(yield* groupRequestThreads(teamId));
     yield* sql`DELETE FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     const owned = (yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
@@ -2915,6 +2921,7 @@ const make = Effect.gen(function* () {
     yield* deleteThreads(
       yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${teamId}`,
     );
+    yield* deleteThreads(yield* groupRequestThreads(teamId));
     yield* scheduledTasks
       .deleteForTeam(teamId)
       .pipe(

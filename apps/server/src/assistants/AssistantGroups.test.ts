@@ -3125,7 +3125,7 @@ it.effect(
 );
 
 it.effect(
-  "clear deletes the chat, its tasks, threads, summary and files; the group starts over",
+  "clear deletes the chat, its tasks, summary and files; members keep their conversations",
   () => {
     const h = harness({ summarize: () => "S." });
     return Effect.gen(function* () {
@@ -3147,12 +3147,16 @@ it.effect(
         "SELECT read_seq FROM assistant_teams WHERE team_id = 'team:1'",
       );
       assert.equal(team!.read_seq, 0);
-      // The requests' threads go with their chat; the next request gets a fresh one.
+      // The requests' conversations stay, settled and unlinked; the next request gets a fresh one.
       const first = posted.tasks[0]!.threadId;
-      assert.deepInclude(
+      assert.notDeepInclude(
         h.dispatched.map((command) => [command.type, command.threadId]),
         ["thread.delete", first],
       );
+      assert.deepInclude(h.fakeThreads.get(first)!, {
+        deletedAt: null,
+        settledOverride: "settled",
+      });
       assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_request_threads"), 0);
       yield* groups.post({ teamId: TEAM, text: "@ada again" }, h.user);
       assert.include(h.sent.at(-1)!.text, "again");
