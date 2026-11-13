@@ -32,7 +32,6 @@ import {
   sustain,
   workersFor,
 } from "./admission.ts";
-import { sourceCheckout } from "./claudeSettingsHook.ts";
 import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
 import { interceptBashCall, lineParts } from "./heavyHook.ts";
 import {
@@ -66,22 +65,9 @@ const LOCK_STALE_MS = 10_000;
 /** A longer silence between readings restarts the steady-headroom window. */
 const SAMPLE_GAP_MS = 10_000;
 
-/**
- * Machine-wide on purpose, so it is outside any server's userdata. A T3 running from a checkout
- * gets that checkout's own queue, so it never drives the installed T3's jobs; the env var wins.
- */
-export const defaultQueueDir = (
-  environment: NodeJS.ProcessEnv = process.env,
-  entry: string | undefined = process.argv[1],
-) => {
-  const checkout = sourceCheckout(entry);
-  return (
-    environment.T3CODE_HEAVY_QUEUE_DIR?.trim() ||
-    (checkout === undefined
-      ? NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue")
-      : NodePath.join(checkout, ".t3", "heavy-queue-dev"))
-  );
-};
+/** Machine-wide on purpose, so it is outside any server's userdata. The env override isolates a dev server under test. */
+export const defaultQueueDir = () =>
+  process.env.T3CODE_HEAVY_QUEUE_DIR ?? NodePath.join(NodeOS.homedir(), ".t3", "heavy-queue");
 
 export const isAlive = (pid: number) => {
   try {
@@ -147,8 +133,6 @@ interface QueueDoc {
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
-  /** Recently ended jobs' codes, so a repeated request answers the same without running again. */
-  readonly results: ReadonlyArray<JobResult>;
   /** Linux copies of removed worktrees still to delete, waiting for the host to come back. */
   readonly copyRemovals: ReadonlyArray<CopyRemoval>;
   /** Recent transitions that may need a notice, newest last. */
@@ -172,14 +156,6 @@ export interface CopyRemoval {
   readonly at: number;
 }
 
-export interface JobResult {
-  readonly id: string;
-  readonly code: number;
-  readonly at: number;
-}
-const MAX_RESULTS = 200;
-const RESULT_TTL_MS = 3_600_000;
-
 const MAX_COPY_REMOVALS = 200;
 const COPY_REMOVAL_TTL_MS = 30 * 86_400_000;
 
@@ -197,7 +173,6 @@ const EMPTY_DOC: QueueDoc = {
   lastStartAt: null,
   holding: false,
   deviceIdleMinutes: DEFAULT_DEVICE_IDLE_MINUTES,
-  results: [],
   ...HEAVY_QUEUE_DEFAULTS,
   runner: null,
   linux: UNKNOWN_HEALTH,
@@ -252,7 +227,6 @@ const loadDoc = (dir: string): QueueDoc => {
       linux?: unknown;
       copyRemovals?: unknown;
       slowedDaemons?: unknown;
-      results?: unknown;
     } | null;
     const record = isObject(parsed) ? parsed : null;
     return {
@@ -297,15 +271,6 @@ const loadDoc = (dir: string): QueueDoc => {
           )
         : [],
       events: parseLog(parsed?.events),
-      results: Array.isArray(record?.results)
-        ? record.results.filter(
-            (value: unknown): value is JobResult =>
-              isObject(value) &&
-              typeof value.id === "string" &&
-              typeof value.code === "number" &&
-              typeof value.at === "number",
-          )
-        : [],
       slowedDaemons: Array.isArray(record?.slowedDaemons)
         ? record.slowedDaemons.filter(
             (value: unknown): value is ProcessIdentity =>
@@ -725,23 +690,8 @@ export const readDoc = (dir: string): QueueDoc => {
 
 export const read = (dir: string): ReadonlyArray<HeavyQueueEntry> => readDoc(dir).entries;
 
-/**
- * Adds `entry`, or, for an id already known, attaches to its job: still waiting or running, or
- * ended recently with the code it returns again.
- */
-export const enqueue = (dir: string, entry: QueuedEntry, now = Date.now()) =>
-  mutate(
-    dir,
-    (doc): Decided<"added" | "attached" | { readonly code: number }> => {
-      if (doc.entries.some((each) => each.id === entry.id)) return { doc, result: "attached" };
-      const ended = doc.results.find(
-        (each) => each.id === entry.id && now - each.at < RESULT_TTL_MS,
-      );
-      if (ended !== undefined) return { doc, result: { code: ended.code } };
-      return { doc: insertNew(doc, entry), result: "added" };
-    },
-    now,
-  );
+export const enqueue = (dir: string, entry: QueuedEntry) =>
+  mutate(dir, (doc) => ({ doc: insertNew(doc, entry), result: undefined }));
 
 export const tryStart = (dir: string, id: string, now = Date.now()) =>
   mutate(dir, (doc) => decideStart(doc, id, now), now);
@@ -921,10 +871,6 @@ export const finish = (dir: string, id: string, code: number, now = Date.now()) 
       doc: {
         ...doc,
         entries: doc.entries.filter((entry) => entry.id !== id),
-        results: [
-          ...doc.results.filter((each) => each.id !== id && now - each.at < RESULT_TTL_MS),
-          { id, code, at: now },
-        ].slice(-MAX_RESULTS),
         events: withRecord(
           doc.events,
           endedRecord(
