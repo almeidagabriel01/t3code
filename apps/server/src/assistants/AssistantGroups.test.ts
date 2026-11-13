@@ -3524,6 +3524,36 @@ it.effect("two requests in different projects run together, each seeing only its
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a deleted project is never offered, picked nor inferred", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: ["ada"] }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE projection_projects SET deleted_at = '2026-02-01' WHERE project_id = 'p2'`;
+    const refused = yield* groups
+      .post({ teamId: TEAM, text: "@ada x", projectId: ProjectId.make("p2") }, h.user)
+      .pipe(Effect.flip);
+    assert.equal(refused.reason, "invalid");
+    // The one live project is the request's without asking.
+    const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    assert.equal(
+      (yield* groups.history({ teamId: TEAM })).messages.find((m) => m.id === posted.message.id)!
+        .projectId,
+      "p1",
+    );
+    assert.deepEqual(
+      h.launched.map((launch) => launch.projectId),
+      ["p1"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("the dev keeps working in the request's conversation when QA hands work back", () => {
   const h = harness();
   return Effect.gen(function* () {

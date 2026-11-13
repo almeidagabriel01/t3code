@@ -1459,7 +1459,7 @@ const make = Effect.gen(function* () {
 
   const routingNow = new Set<string>();
 
-  /** The group's projects with their titles, in member order; a deleted one is left out. */
+  /** The group's projects with their titles, in member order, a deleted one left out: what every offer and inference reads. */
   const groupProjects = Effect.fn("AssistantGroups.groupProjects")(function* (
     members: ReadonlyArray<AssistantRow>,
   ) {
@@ -1849,12 +1849,12 @@ const make = Effect.gen(function* () {
               if (repeat[0] !== undefined) return { message: repeat[0], lead: undefined };
             }
             const members = yield* activeMembers(team);
-            const projects = assistantGroupProjectIds(members.map(toAssistant));
+            const projectList = yield* groupProjects(members);
+            const projects = projectList.map((project) => project.id as ProjectId);
             if (input.projectId !== undefined && !projects.includes(input.projectId)) {
               return yield* invalid("That project is not one of the group's projects.");
             }
             // `#project` in the text picks like the picker does; the picker wins when they differ.
-            const projectList = input.text.includes("#") ? yield* groupProjects(members) : [];
             const mentioned = assistantGroupProjectMentions(input.text, projectList);
             // A reply continues the request of the message it answers.
             let request: MessageRow | undefined;
