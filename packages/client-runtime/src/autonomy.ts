@@ -44,6 +44,9 @@ export const PROBLEM_LEVEL_OPTIONS: ReadonlyArray<{
   },
 ];
 
+export const problemLevelLabel = (level: ProblemLevel): string =>
+  PROBLEM_LEVEL_OPTIONS.find((option) => option.level === level)?.label ?? level;
+
 export const AUTONOMY_RULE_OPTIONS: ReadonlyArray<{
   readonly rule: AutonomyRule;
   readonly label: string;

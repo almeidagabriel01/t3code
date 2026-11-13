@@ -1,4 +1,5 @@
 import { applyAssistantGroupsEvent } from "@t3tools/client-runtime/assistantGroupChat";
+import { DEFAULT_ASSISTANT_AUTONOMY } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
@@ -170,6 +171,7 @@ const assistant = (id: string, name: string, extra: object = {}) => ({
   archivedAt: null,
   avatar: null,
   icon: null,
+  autonomy: DEFAULT_ASSISTANT_AUTONOMY,
   ...extra,
 });
 const team = (extra: object = {}) => ({
@@ -251,6 +253,7 @@ beforeEach(() => {
         role: "CFO",
         askBeforeActing: true,
         budget: { limitUsd: 10 },
+        autonomy: { ...DEFAULT_ASSISTANT_AUTONOMY, onProblem: "fix-small" },
       }),
       assistant("bo", "Bo", { scope: "all" }),
     ],
@@ -289,6 +292,7 @@ describe("Assistant info", () => {
       "Tool access | access:read-only",
       "Asks before acting",
       `Model | ${formatModelSlugName("claude-opus-5-5")}`,
+      "When it finds a problem | Fix small things",
       "Spending limit | $3 spent",
     ]);
 
@@ -316,7 +320,10 @@ describe("Assistant info", () => {
     expect(section("Working now")).toEqual(["Nothing running"]);
     expect(section("Projects")).toEqual(["All projects"]);
     expect(section("Groups")).toEqual(["Crew | Lead"]);
-    expect(section("Access")).toEqual(["Tool access | access:read-only"]);
+    expect(section("Access")).toEqual([
+      "Tool access | access:read-only",
+      "When it finds a problem | Offer to fix",
+    ]);
   });
 
   it("an archived one says so, hides Working now and restores", async () => {

@@ -14,6 +14,7 @@ import {
   assistantWorkingNow,
 } from "@t3tools/client-runtime/assistantLiveWork";
 import { assistantFace, assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
+import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime/autonomy";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
 import { AssistantId, AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
@@ -242,6 +243,10 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
         {thread ? (
           <Field label="Model" value={formatModelSlugName(thread.modelSelection.model)} />
         ) : null}
+        <Field
+          label={PROBLEM_LEVEL_LEGEND}
+          value={problemLevelLabel(assistant.autonomy.onProblem)}
+        />
         {assistant.budget !== null && spend ? (
           <Field label="Spending limit" value={budgetSpendLine(spend)} />
         ) : null}

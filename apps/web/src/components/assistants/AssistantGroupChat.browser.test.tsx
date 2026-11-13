@@ -168,7 +168,16 @@ const task = (id: string, request: number, overrides: Partial<AssistantGroupTask
   }) as AssistantGroupTask;
 
 const people = () => [
-  assistant("ada", "Ada", { role: "CFO" }),
+  assistant("ada", "Ada", {
+    role: "CFO",
+    autonomy: {
+      mode: "reply-only",
+      rules: null,
+      projectIds: null,
+      channels: null,
+      onProblem: "fix-small",
+    },
+  }),
   assistant("bo", "Bo"),
   assistant("jarvis", "Jarvis", { isDefault: true }),
 ];
@@ -613,7 +622,9 @@ it("a member row opens Assistant info with its role, groups and access", async (
   await expect.element(panel.getByText("CFO")).toBeVisible();
   await expect.element(panel.getByText("All projects")).toBeVisible();
   const access = panel.getByRole("region", { name: "Access" });
-  await expect.element(access).toHaveTextContent("AccessTool accessEdit files");
+  await expect
+    .element(access)
+    .toHaveTextContent("AccessTool accessEdit filesWhen it finds a problemFix small things");
   const groups = panel.getByRole("region", { name: "Groups" });
   await expect.element(groups.getByRole("button", { name: "Leadership" })).toBeVisible();
 
