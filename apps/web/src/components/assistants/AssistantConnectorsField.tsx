@@ -204,7 +204,7 @@ export function AssistantConnectorsField(props: {
 
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className="text-sm font-medium">Connectors</legend>
+      <legend className="text-sm font-medium">Custom servers</legend>
       <p className="text-xs text-muted-foreground">
         MCP servers only this assistant gets, next to T3's own tools. {CONNECTORS_PROVIDER_NOTE}
       </p>

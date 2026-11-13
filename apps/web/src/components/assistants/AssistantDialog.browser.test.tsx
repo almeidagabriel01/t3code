@@ -143,7 +143,7 @@ it("a new assistant starts with the basics, Advanced closed and the safe default
   expect(page.getByRole("radio", { name: /Full access/ }).query()).toBeNull();
   await expect
     .element(
-      page.getByText(/Edit files · This Mac · no spending limit · no connectors · asks before/),
+      page.getByText(/Edit files · This Mac · no spending limit · no custom servers · asks before/),
     )
     .toBeVisible();
 
@@ -181,7 +181,9 @@ it("the Advanced summary follows the choices and opens to the full settings", as
   await userEvent.fill(page.getByLabelText("Amount (USD)"), "7");
   await openAdvanced();
   await expect
-    .element(page.getByText(/Read only · This Mac · \$7 limit · no connectors · messages other/))
+    .element(
+      page.getByText(/Read only · This Mac · \$7 limit · no custom servers · messages other/),
+    )
     .toBeVisible();
   appAtomRegistry.set(assistantDialogAtom, null);
 });

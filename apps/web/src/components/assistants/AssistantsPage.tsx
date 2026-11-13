@@ -44,6 +44,7 @@ import { SidebarInset } from "../ui/sidebar";
 import { openAssistantDialog } from "./assistantDialogState";
 import { openAssistantWork } from "./assistantWorkState";
 import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantIntegrationChips } from "./AssistantIntegrationsField";
 import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
@@ -119,6 +120,12 @@ function AssistantCard(props: {
             </li>
           ))}
         </ul>
+      )}
+      {archived ? null : (
+        <AssistantIntegrationChips
+          environmentId={environmentId}
+          selection={assistant.integrations}
+        />
       )}
       <div className="flex flex-wrap items-center gap-1.5">
         {archived ? (
