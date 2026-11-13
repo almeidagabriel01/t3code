@@ -266,13 +266,12 @@ export function MachineBar({
 }) {
   const state = useHeavyQueue(environmentId);
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  // Read even while the queue has a sample, so the Mac row is live the moment that sample ages out.
   const host = useEnvironmentQuery(
-    canRead && state.machine === null
-      ? serverEnvironment.hostResources({ environmentId, input: {} })
-      : null,
-  ).data;
+    canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  );
   const buckets = useT3History(environmentId);
-  const { mac, linux } = machineBar(state, host);
+  const { mac, linux } = machineBar(state, host.data, host.error !== null);
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <div

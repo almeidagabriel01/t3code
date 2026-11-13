@@ -615,6 +615,13 @@ describe("machineBar", () => {
     ...over,
   });
   const linuxJob = (id: string) => ({ ...e(id, true), runner: "linux" as const });
+  const HOST = {
+    sampledAt: 0,
+    cpuUtilization: 0.5,
+    cpuCount: 10,
+    availableMemoryBytes: 8 * GiB,
+    totalMemoryBytes: 16 * GiB,
+  };
 
   it("counts each machine's running jobs from the entries, not Linux's own heartbeat", () => {
     // The "0 of 3 running" bug: two jobs ran on Linux and none on the Mac.
@@ -643,21 +650,32 @@ describe("machineBar", () => {
       warn: false,
       hint: "4.0 GB free of 16.0 GB",
     });
-    const host = {
-      sampledAt: 0,
-      cpuUtilization: 0.5,
-      cpuCount: 10,
-      availableMemoryBytes: 8 * GiB,
-      totalMemoryBytes: 16 * GiB,
-    };
-    expect(machineBar(state({ machine: null }), host).mac.cpu).toMatchObject({
+    expect(machineBar(state({ machine: null }), HOST).mac.cpu).toMatchObject({
       value: "50%",
       hint: "CPU 50% · 10 cores",
     });
-    expect(machineBar(state({ machine: null }), null).mac).toMatchObject({
-      cpu: { share: null, value: "--", hint: "No CPU reading yet" },
-      memory: { share: null, value: "--", hint: "No memory reading yet" },
-    });
+  });
+
+  it.each([
+    [
+      "while the first read is in flight",
+      null,
+      false,
+      "No CPU reading yet",
+      "No memory reading yet",
+    ],
+    ["after a failed read", null, true, "CPU reading failed", "Memory reading failed"],
+    [
+      "with no CPU window yet",
+      { ...HOST, cpuUtilization: null },
+      false,
+      "No CPU reading yet",
+      "8.0 GB free of 16.0 GB",
+    ],
+  ] as const)("without a queue sample, %s", (_case, host, failed, cpuHint, memoryHint) => {
+    const { mac } = machineBar(state({ machine: null }), host, failed);
+    expect(mac.cpu).toMatchObject({ value: "--", hint: cpuHint });
+    expect(mac.memory?.hint).toBe(memoryHint);
   });
 
   it.each([

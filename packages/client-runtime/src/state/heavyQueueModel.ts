@@ -437,29 +437,25 @@ const withWarning = (text: string, warning: string | null) =>
 /**
  * This Mac and, while the Runner reports it, Linux. The Mac reads the queue's own sample when it
  * has one, so a warning always matches the number beside it, and `host` otherwise. Running counts
- * come from `heavyWork`, the same split the rows use.
+ * come from `heavyWork`, the same split the rows use. `hostFailed` marks a host read that failed
+ * with nothing earlier to show.
  */
 export function machineBar(
   state: HeavyQueueState,
   host: HostResourcesSnapshot | null | undefined,
+  hostFailed = false,
 ): { readonly mac: MachineBarRow; readonly linux: MachineBarRow | null } {
   const { machine, linux } = state;
-  const reading =
+  const cpu =
     machine !== null
       ? {
-          cpuPercent: (machine.busyCores / Math.max(1, machine.cpuCount)) * 100,
+          percent: (machine.busyCores / Math.max(1, machine.cpuCount)) * 100,
           detail: `${machine.busyCores.toFixed(1)} of ${machine.cpuCount} cores busy`,
-          free: machine.availableMemoryBytes,
-          total: machine.totalMemoryBytes,
         }
-      : host === null || host === undefined || host.cpuUtilization == null
+      : host == null || host.cpuUtilization == null
         ? null
-        : {
-            cpuPercent: host.cpuUtilization * 100,
-            detail: `${host.cpuCount} cores`,
-            free: host.availableMemoryBytes,
-            total: host.totalMemoryBytes,
-          };
+        : { percent: host.cpuUtilization * 100, detail: `${host.cpuCount} cores` };
+  const memory = machine ?? host ?? null;
   const work = heavyWork(state, []);
   const note = machineSummaries(state).mac.note;
   const gauge = macNoteGauge(state);
@@ -472,25 +468,28 @@ export function machineBar(
     online: true,
     statusHint: null,
     cpu:
-      reading === null
-        ? NO_GAUGE("No CPU reading yet")
+      cpu === null
+        ? NO_GAUGE(hostFailed ? "CPU reading failed" : "No CPU reading yet")
         : {
-            share: reading.cpuPercent / 100,
-            value: `${Math.round(reading.cpuPercent)}%`,
+            share: cpu.percent / 100,
+            value: `${Math.round(cpu.percent)}%`,
             warn: cpuWarning !== null,
-            hint: withWarning(
-              `CPU ${Math.round(reading.cpuPercent)}% · ${reading.detail}`,
-              cpuWarning,
-            ),
+            hint: withWarning(`CPU ${Math.round(cpu.percent)}% · ${cpu.detail}`, cpuWarning),
           },
     memory:
-      reading === null
-        ? NO_GAUGE("No memory reading yet")
+      memory === null
+        ? NO_GAUGE(hostFailed ? "Memory reading failed" : "No memory reading yet")
         : {
-            share: reading.total <= 0 ? null : 1 - reading.free / reading.total,
-            value: gb(reading.free),
+            share:
+              memory.totalMemoryBytes <= 0
+                ? null
+                : 1 - memory.availableMemoryBytes / memory.totalMemoryBytes,
+            value: gb(memory.availableMemoryBytes),
             warn: memoryWarning !== null,
-            hint: withWarning(`${gb(reading.free)} free of ${gb(reading.total)}`, memoryWarning),
+            hint: withWarning(
+              `${gb(memory.availableMemoryBytes)} free of ${gb(memory.totalMemoryBytes)}`,
+              memoryWarning,
+            ),
           },
     offline: null,
     slots: state.enabled

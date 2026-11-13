@@ -188,12 +188,11 @@ export function MachineBar(props: {
 }) {
   const { environmentId, state } = props;
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  // Read even while the queue has a sample, so the Mac row is live the moment that sample ages out.
   const host = useEnvironmentQuery(
-    canRead && state.machine === null
-      ? serverEnvironment.hostResources({ environmentId, input: {} })
-      : null,
-  ).data;
-  const { mac, linux } = machineBar(state, host);
+    canRead ? serverEnvironment.hostResources({ environmentId, input: {} }) : null,
+  );
+  const { mac, linux } = machineBar(state, host.data, host.error !== null);
   const { t3 } = props;
   const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
