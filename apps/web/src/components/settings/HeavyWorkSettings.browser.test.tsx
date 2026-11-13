@@ -10,7 +10,8 @@ const mocks = vi.hoisted(() => ({
   scope: { environmentIds: ["env"] } as { environmentIds: string[] },
   state: null as unknown as HeavyQueueState,
   target: null as string | null,
-  runner: { runnerEnabled: false, runnerWhere: "mac" },
+  runner: { runnerEnabled: false, runnerWhere: "mac", heavySlowAgentJobs: true },
+  updateSettings: vi.fn(),
   actions: {
     canChange: true,
     setEnabled: vi.fn(),
@@ -35,7 +36,7 @@ vi.mock("../../state/heavyQueue", () => ({ useHeavyQueue: () => mocks.state }));
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: (select: (settings: typeof mocks.runner) => unknown) => select(mocks.runner),
   useScopedSettingsMixed: () => false,
-  useUpdateScopedSettings: () => vi.fn(),
+  useUpdateScopedSettings: () => mocks.updateSettings,
 }));
 vi.mock("../statusBar/useKillTarget", () => ({ useHeavyQueueActions: () => mocks.actions }));
 vi.mock("./settingsLayout", () => ({
@@ -82,7 +83,8 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   mocks.target = null;
   mocks.actions.canChange = true;
   mocks.scope = { environmentIds: ["env"] };
-  mocks.runner = { runnerEnabled: false, runnerWhere: "mac" };
+  mocks.runner = { runnerEnabled: false, runnerWhere: "mac", heavySlowAgentJobs: true };
+  mocks.updateSettings.mockReset();
   mocks.state = {
     ...HEAVY_QUEUE_DEFAULTS,
     entries: [],
@@ -116,6 +118,10 @@ it("changes the pause, the Mac limits and the other rows", async () => {
   expect(mocks.actions.setPaused).toHaveBeenCalledWith(true);
   await userEvent.click(screen.getByRole("button", { name: "Increase Jobs at once on this Mac" }));
   expect(mocks.actions.setMaxRunning).toHaveBeenCalledWith(4);
+  const slow = mac.getByRole("switch", { name: "Slow down agent jobs when the Mac is busy" });
+  await expect.element(slow).toBeChecked();
+  await userEvent.click(slow);
+  expect(mocks.updateSettings).toHaveBeenCalledWith({ heavySlowAgentJobs: false });
   for (const [label, typed, action, saved] of [
     ["CPU limit", "85", mocks.actions.setMacCpuCeilingPercent, 85],
     ["Keep memory free", "1", mocks.actions.setMacMemoryFloorPercent, 5],
@@ -154,7 +160,7 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
 
   setup({ enabled: false, paused: true, rules: [{ root: "/work/app", priority: "first" }] });
   // The Runner being on changes the mode line, never which queue rows show.
-  mocks.runner = { runnerEnabled: true, runnerWhere: "linux" };
+  mocks.runner = { runnerEnabled: true, runnerWhere: "linux", heavySlowAgentJobs: true };
   await using off = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
   await expect
     .element(
@@ -168,6 +174,7 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
     "Jobs at once on this Mac",
     "CPU limit",
     "Keep memory free",
+    "Slow down agent jobs when the Mac is busy",
     "Heavy work priority by project",
   ]) {
     expect(off.getByRole("heading", { name: title }).elements()).toHaveLength(0);
@@ -188,7 +195,7 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
 
   // Hybrid routes on the Mac limits even without the queue.
   setup({ enabled: false });
-  mocks.runner = { runnerEnabled: true, runnerWhere: "automatic" };
+  mocks.runner = { runnerEnabled: true, runnerWhere: "automatic", heavySlowAgentJobs: true };
   await using hybrid = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
   await expect.element(hybrid.getByLabelText("CPU limit", { exact: true })).toBeEnabled();
   await expect.element(hybrid.getByRole("heading", { name: "Keep memory free" })).toBeVisible();

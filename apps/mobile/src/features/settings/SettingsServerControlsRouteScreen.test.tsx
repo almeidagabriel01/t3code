@@ -158,12 +158,18 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyCommandsSection: () => null,
-  HeavyQueueSection: (props: { environmentId: string; runner: object; machine?: string }) => (
-    <i
+  HeavyQueueSection: (props: {
+    environmentId: string;
+    runner: object;
+    machine?: string;
+    slowAgentJobs: { onChange: (value: boolean) => void };
+  }) => (
+    <button
       aria-label="heavy queue"
       data-env={props.environmentId}
       data-machine={props.machine}
       data-runner={JSON.stringify(props.runner)}
+      onClick={() => props.slowAgentJobs.onChange(false)}
     />
   ),
 }));
@@ -322,13 +328,15 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.runner!.severalMachines).toBe(true);
   });
 
-  it("passes the effective Runner mode to the heavy-work queue", () => {
+  it("passes the effective Runner mode to the heavy-work queue and saves its slow-down switch", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
-    expect(
-      JSON.parse(
-        container.querySelector<HTMLElement>('[aria-label="heavy queue"]')!.dataset.runner!,
-      ),
-    ).toEqual({ enabled: false, where: "mac" });
+    const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
+    expect(JSON.parse(queue.dataset.runner!)).toEqual({ enabled: false, where: "mac" });
+    act(() => queue.click());
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { patch: { heavySlowAgentJobs: false } },
+    });
   });
 
   it("saves Runner settings for the environment, or as project overrides it can reset", async () => {

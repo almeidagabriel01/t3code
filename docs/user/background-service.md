@@ -89,12 +89,21 @@ place in the whole queue.
 - **Memory pressure.** On macOS, a second job waits while the system reports
   memory pressure or is swapping heavily, whatever the free percentage says;
   memory held by running simulators and emulators counts as used. A lone job
-  always starts. Each job's test runner gets as many workers as the machine has
-  free cores (`VITEST_MAX_WORKERS`, `T3_HEAVY_WORKERS`).
+  always starts. Each job's test runners and build tools get as many workers as
+  the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
+  `node --test`, Gradle, xcodebuild, `swift build`, cargo and `cmake --build`.
+  A count the command already sets is kept.
 - **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
   much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
   while either is crossed, and memory must recover 5 points past the floor
-  before the next one starts.
+  before the next one starts. A job's usage includes the build daemons it uses,
+  such as Gradle's, so the queue learns what a build really costs.
+- **Slow down agent jobs when the Mac is busy.** On macOS, once this Mac stays
+  over its CPU limit for **Over the limit for**, agents' running jobs and the
+  build daemons they use drop to background CPU priority. They return to normal
+  once the Mac would stay under the limit with them at full speed for that long.
+  Your own jobs, jobs whose priority you changed and jobs started with the queue
+  off keep their speed. It is on by default; turn it off under **This Mac**.
 - **Reorder.** Drag a waiting job, or use its **⋯** menu: **Run next**, **Move
   up**, **Move down**, **Move to end**, **Open thread**, **Remove**. A running
   job's menu has **Stop**, which ends its `t3 heavy` command.

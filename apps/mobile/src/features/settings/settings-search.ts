@@ -174,6 +174,8 @@ const SETTINGS_SEARCH_TERMS = {
     "resource manager",
     "cpu",
     "memory",
+    "slow down agent jobs",
+    "background priority",
   ],
   SettingsAbout: [
     "version",

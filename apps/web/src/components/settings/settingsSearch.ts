@@ -1259,6 +1259,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["heavy work queue mac memory ram free floor percent low"],
   },
   {
+    id: "heavy-work-slow-agents",
+    machine: "This Mac",
+    title: "Slow down agent jobs when the Mac is busy",
+    to: "/settings/maintenance",
+    searchTerms: [
+      "heavy work queue agent jobs background priority throttle slow cpu busy limit qos taskpolicy",
+    ],
+  },
+  {
     id: "heavy-work-over-limit",
     title: "Over the limit for",
     to: "/settings/maintenance",

@@ -66,7 +66,14 @@ export function HeavyQueueSection(props: {
   readonly runner?: RunnerMode;
   /** Names the machine when Settings shows several environments' queues. */
   readonly machine?: string;
+  /** The server setting that slows agents' running jobs while this Mac stays over its CPU limit. */
+  readonly slowAgentJobs?: {
+    readonly value: boolean;
+    readonly disabled: boolean;
+    readonly onChange: (value: boolean) => void;
+  };
 }) {
+  const { slowAgentJobs } = props;
   const { environmentId, runner } = props;
   const state = useHeavyQueueState(environmentId);
   const canChange = useAtomValue(heavyQueueEnvironment.move.permissionAtom(environmentId));
@@ -245,6 +252,16 @@ export function HeavyQueueSection(props: {
             </>
           ) : null}
           {macLimits.map(limitRow)}
+          {state.enabled && slowAgentJobs !== undefined ? (
+            <SettingsSwitchRow
+              icon="hourglass"
+              label="Slow down agent jobs when the Mac is busy"
+              subtitle="While this Mac stays over its CPU limit, agents' running jobs and the build daemons they use drop to background priority, and speed up again once there is room. Your own jobs keep their speed."
+              value={slowAgentJobs.value}
+              disabled={slowAgentJobs.disabled}
+              onValueChange={slowAgentJobs.onChange}
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
     </>

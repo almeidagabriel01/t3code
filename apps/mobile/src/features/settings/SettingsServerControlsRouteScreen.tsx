@@ -600,6 +600,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                             enabled: target.settings.runnerEnabled,
                             where: target.settings.runnerWhere,
                           }}
+                          slowAgentJobs={{
+                            value: target.settings.heavySlowAgentJobs,
+                            disabled: disabledFor("heavySlowAgentJobs"),
+                            onChange: (value) => write({ heavySlowAgentJobs: value }),
+                          }}
                         />
                       );
                     })

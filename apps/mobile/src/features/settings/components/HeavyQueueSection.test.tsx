@@ -158,6 +158,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
 };
 
 const RUNNER_OFF: RunnerMode = { enabled: false, where: "mac" };
+const slowAgentJobs = { value: true, disabled: false, onChange: vi.fn() };
 async function mount(runner = RUNNER_OFF, machine?: string) {
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -166,6 +167,7 @@ async function mount(runner = RUNNER_OFF, machine?: string) {
       <HeavyQueueSection
         environmentId={"env" as EnvironmentId}
         runner={runner}
+        slowAgentJobs={slowAgentJobs}
         {...(machine === undefined ? {} : { machine })}
       />,
     );
@@ -179,6 +181,7 @@ async function mount(runner = RUNNER_OFF, machine?: string) {
 
 afterEach(() => {
   mocks.can = true;
+  slowAgentJobs.disabled = false;
   mocks.commands = {};
   vi.clearAllMocks();
 });
@@ -194,6 +197,12 @@ describe("HeavyQueueSection", () => {
     }
     expect(mac.querySelector('input[aria-label="Over the limit for"]')).toBeNull();
     expect(view.toggle("Over the limit for")).not.toBeNull();
+    const slow = mac.querySelector<HTMLInputElement>(
+      'input[aria-label="Slow down agent jobs when the Mac is busy"]',
+    )!;
+    expect(slow.checked).toBe(true);
+    await act(async () => slow.click());
+    expect(slowAgentJobs.onChange).toHaveBeenCalledWith(false);
     await view.unmount();
     // Queue off with Linux only: nothing of this Mac's applies, so the section goes.
     setup({ enabled: false });
@@ -203,6 +212,8 @@ describe("HeavyQueueSection", () => {
       linux.host.querySelector('section[aria-label="Heavy work queue · Studio"]'),
     ).not.toBeNull();
     expect(linux.toggle("Over the limit for")).not.toBeNull();
+    // Only queued jobs are slowed, so the row goes with the queue.
+    expect(linux.toggle("Slow down agent jobs when the Mac is busy")).toBeNull();
     await linux.unmount();
   });
 
@@ -368,6 +379,8 @@ describe("HeavyQueueSection", () => {
 
   it("disables the actions without permission", async () => {
     mocks.can = false;
+    // Settings writes have their own permission; without it the screen disables the row too.
+    slowAgentJobs.disabled = true;
     setup({ rules: [{ root: "/work/app", priority: "last" }] });
     const view = await mount();
     expect(

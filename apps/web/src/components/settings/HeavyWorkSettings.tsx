@@ -19,7 +19,11 @@ import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection, useSettingsSearchTargetId } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
-import { useScopedSettings, useScopedSettingsMixed } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 const MAX_RUNNING = { min: 1, max: 8 } as const;
 const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
@@ -64,6 +68,9 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   const max = queueRow("heavy-work-max");
   const pause = queueRow("heavy-work-pause");
   const rulesRow = queueRow("heavy-work-rules");
+  const slowRow = queueRow("heavy-work-slow-agents");
+  const slowAgentJobs = useScopedSettings((settings) => settings.heavySlowAgentJobs);
+  const updateSettings = useUpdateScopedSettings();
   const runnerEnabled = useScopedSettings((settings) => settings.runnerEnabled);
   const runnerWhere = useScopedSettings((settings) => settings.runnerWhere);
   const runnerMixed = useScopedSettingsMixed(["runnerEnabled", "runnerWhere"]);
@@ -140,7 +147,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
           />
         ) : null}
       </SettingsGroup>
-      {max.shown || macLimits.some((row) => row.shown) ? (
+      {max.shown || slowRow.shown || macLimits.some((row) => row.shown) ? (
         <RunnerGroup title="This Mac">
           {max.shown ? (
             <SettingsRow
@@ -161,6 +168,23 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
             />
           ) : null}
           {macLimits.map(limitRow)}
+          {slowRow.shown ? (
+            <SettingsRow
+              {...searchableSetting("heavy-work-slow-agents")}
+              description="While this Mac stays over its CPU limit, agents' running jobs and the build daemons they use drop to background priority, and speed up again once there is room. Your own jobs keep their speed."
+              status={slowRow.status}
+              control={
+                <Switch
+                  checked={slowAgentJobs}
+                  disabled={!state.enabled}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ heavySlowAgentJobs: Boolean(checked) })
+                  }
+                  aria-label="Slow down agent jobs when the Mac is busy"
+                />
+              }
+            />
+          ) : null}
         </RunnerGroup>
       ) : null}
       {sharedLimits.some((row) => row.shown) ? (
