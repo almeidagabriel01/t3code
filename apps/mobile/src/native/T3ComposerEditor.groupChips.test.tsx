@@ -47,7 +47,7 @@ import { ComposerEditor as AndroidEditor } from "./T3ComposerEditor.native";
 
 const MENTIONS: ComposerGroupMentions = {
   members: [{ handle: "ada", name: "Ada Lovelace", accent: "#336699" }],
-  projects: [{ slug: "alpha", name: "Alpha" }],
+  projects: [{ id: "p1", name: "Alpha" }],
 };
 
 type Chip = { type: string; source: string; label: string; iconUri: string; accent: string };

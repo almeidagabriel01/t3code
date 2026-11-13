@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import type {
   AssistantGroupMessage,
   AssistantGroupTask,
@@ -33,6 +34,8 @@ import {
   ASSISTANT_MENTION_HREF,
   assistantGroupMarkdownMentions,
   assistantGroupMentionHref,
+  assistantGroupMentionTarget,
+  assistantGroupMentionTargets,
   assistantGroupPauseReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
@@ -568,24 +571,85 @@ describe("composer helpers", () => {
     assert.deepStrictEqual(assistantGroupMentionHref(href), expected);
   });
 
+  it("chips the members and projects the server reads, by handle or name, ignoring accents", () => {
+    const zoe = { id: "zoe" as AssistantId, name: "Zoé Martins", handle: "zoe" };
+    const cafe = { id: "p1", name: "Café App" };
+    const targets = assistantGroupMentionTargets([ada, zoe], [cafe]);
+    const tokens = collectComposerInlineTokens("@Zoé, run #café-app with @everyone", targets);
+    assert.deepStrictEqual(
+      tokens.map((token) => [token.type, token.value]),
+      [
+        ["member", "zoe"],
+        ["project", "cafe-app"],
+        ["member", "everyone"],
+      ],
+    );
+    const target = (kind: "member" | "project", value: string) =>
+      assistantGroupMentionTarget(kind, value, [ada, zoe], [cafe]);
+    for (const value of ["zoe", "Zoé", "Zoé Martins", "zoemartins"])
+      assert.deepStrictEqual(target("member", value), { kind: "member", member: zoe });
+    assert.deepStrictEqual(target("member", "everyone"), { kind: "member", member: null });
+    assert.deepStrictEqual(target("project", "Café-App"), { kind: "project", project: cafe });
+    for (const [kind, value] of [
+      ["member", "zoe-x"],
+      ["member", "zo"],
+      ["project", "cafe"],
+    ] as const)
+      assert.isNull(target(kind, value));
+  });
+
+  it("tells projects whose titles make the same slug apart, everywhere a client names them", () => {
+    const second = { id: "p2", name: "Core" };
+    const first = { id: "p1", name: "core" };
+    const projects = [second, first];
+    assert.deepStrictEqual(assistantGroupMentionTargets([], projects).projectSlugs, [
+      "core-2",
+      "core",
+    ]);
+    const [token] = collectComposerInlineTokens(
+      "run #core-2",
+      assistantGroupMentionTargets([], projects),
+    );
+    assert.deepStrictEqual(assistantGroupMentionTarget("project", token!.value, [], projects), {
+      kind: "project",
+      project: second,
+    });
+    assert.strictEqual(
+      assistantGroupMarkdownMentions("#core-2 #core", [], projects),
+      "[#core-2](t3-mention:project/core-2) [#core](t3-mention:project/core)",
+    );
+    const query = assistantGroupProjectQuery("#core", 5)!;
+    const [option] = assistantGroupProjectOptions("core-", projects);
+    assert.deepStrictEqual(insertAssistantGroupProject("#core", query, option!), {
+      text: "#core-2 ",
+      caret: 8,
+    });
+  });
+
   it("offers matching projects and inserts the picked one as its #slug", () => {
     const projects = [
       { id: "p1", name: "Billing API" },
       { id: "p2", name: "agenda-instagram" },
     ];
-    assert.deepStrictEqual(
-      assistantGroupProjectOptions("billing-a", projects).map((project) => project.id),
-      ["p1"],
-    );
+    assert.deepStrictEqual(assistantGroupProjectOptions("billing-a", projects), [
+      { ...projects[0]!, slug: "billing-api" },
+    ]);
     assert.deepStrictEqual(
       assistantGroupProjectOptions("", projects).map((project) => project.id),
       ["p1", "p2"],
     );
     const query = assistantGroupProjectQuery("run in #bil now", 11)!;
-    assert.deepStrictEqual(insertAssistantGroupProject("run in #bil now", query, projects[0]!), {
-      text: "run in #billing-api now",
-      caret: 20,
-    });
+    assert.deepStrictEqual(
+      insertAssistantGroupProject(
+        "run in #bil now",
+        query,
+        assistantGroupProjectOptions(query.query, projects)[0]!,
+      ),
+      {
+        text: "run in #billing-api now",
+        caret: 20,
+      },
+    );
   });
 
   it("links member mentions in markdown, but not in code or author bold", () => {

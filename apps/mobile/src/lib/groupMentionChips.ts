@@ -1,6 +1,10 @@
-import { assistantGroupMentionHref } from "@t3tools/client-runtime/assistantGroupChat";
+import {
+  assistantGroupMentionHref,
+  assistantGroupMentionTarget,
+  assistantGroupMentionTargets,
+} from "@t3tools/client-runtime/assistantGroupChat";
 import { assistantRobotLook } from "@t3tools/client-runtime/assistantRobot";
-import { assistantGroupProjectSlug, type Assistant } from "@t3tools/contracts";
+import type { Assistant } from "@t3tools/contracts";
 
 import { contextChipPresentation, type ContextChipIconRef } from "./composerChipPresentation";
 
@@ -11,10 +15,10 @@ export interface ComposerGroupMentions {
     readonly name: string;
     readonly accent: string;
   }>;
-  readonly projects: ReadonlyArray<{ readonly slug: string; readonly name: string }>;
+  readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }
 
-const EVERYONE = { handle: "everyone", name: "Everyone", accent: "#0096af" } as const;
+const EVERYONE = { name: "Everyone", accent: "#0096af" } as const;
 const PROJECT_ACCENT = contextChipPresentation("file").accent ?? "#0090cd";
 const MEMBER_ICON: ContextChipIconRef = { kind: "chip", name: "bot" };
 const PROJECT_ICON: ContextChipIconRef = { kind: "chip", name: "folder" };
@@ -39,21 +43,15 @@ function memberAccent(member: Pick<Assistant, "id" | "avatar">): string {
 
 export function composerGroupMentions(
   members: ReadonlyArray<Pick<Assistant, "id" | "avatar" | "handle" | "name">>,
-  projects: ReadonlyArray<{ readonly name: string }>,
+  projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
 ): ComposerGroupMentions {
   return {
-    members: [
-      ...members.map((member) => ({
-        handle: member.handle.toLowerCase(),
-        name: member.name,
-        accent: memberAccent(member),
-      })),
-      EVERYONE,
-    ],
-    projects: projects.map((project) => ({
-      slug: assistantGroupProjectSlug(project.name),
-      name: project.name,
+    members: members.map((member) => ({
+      handle: member.handle,
+      name: member.name,
+      accent: memberAccent(member),
     })),
+    projects: projects.map((project) => ({ id: project.id, name: project.name })),
   };
 }
 
@@ -61,10 +59,7 @@ export function composerGroupMentions(
 export function groupMentionTokenOptions(mentions: ComposerGroupMentions | undefined) {
   return mentions === undefined
     ? {}
-    : {
-        memberHandles: mentions.members.map((member) => member.handle),
-        projectSlugs: mentions.projects.map((project) => project.slug),
-      };
+    : assistantGroupMentionTargets(mentions.members, mentions.projects);
 }
 
 /** A member or project token's chip: the name as label, a face or folder icon, and its colour. */
@@ -72,25 +67,24 @@ export function groupMentionChip(
   token: { readonly type: string; readonly value: string },
   mentions: ComposerGroupMentions | undefined,
 ): { readonly label: string; readonly icon: ContextChipIconRef; readonly accent: string } | null {
-  if (mentions === undefined) return null;
-  if (token.type === "member") {
-    const member = mentions.members.find((entry) => entry.handle === token.value);
-    return member === undefined
-      ? null
-      : { label: member.name, icon: MEMBER_ICON, accent: member.accent };
+  if (mentions === undefined || (token.type !== "member" && token.type !== "project")) return null;
+  const target = assistantGroupMentionTarget(
+    token.type,
+    token.value,
+    mentions.members,
+    mentions.projects,
+  );
+  if (target === null) return null;
+  if (target.kind === "project") {
+    return { label: target.project.name, icon: PROJECT_ICON, accent: PROJECT_ACCENT };
   }
-  if (token.type === "project") {
-    const project = mentions.projects.find((entry) => entry.slug === token.value);
-    return project === undefined
-      ? null
-      : { label: project.name, icon: PROJECT_ICON, accent: PROJECT_ACCENT };
-  }
-  return null;
+  const member = target.member ?? EVERYONE;
+  return { label: member.name, icon: MEMBER_ICON, accent: member.accent };
 }
 
 /** A pressed chip is a member or project: it opens nothing. */
 export function isGroupMentionSource(source: string, mentions: ComposerGroupMentions | undefined) {
-  const value = source.slice(1).toLowerCase();
+  const value = source.slice(1);
   const type = source.startsWith("@") ? "member" : source.startsWith("#") ? "project" : null;
   return type !== null && groupMentionChip({ type, value }, mentions) !== null;
 }

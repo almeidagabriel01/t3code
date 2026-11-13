@@ -5,7 +5,7 @@ import {
   assistantGroupAddress,
   assistantGroupMentions,
   assistantGroupProjectMentionRanges,
-  assistantGroupProjectSlug,
+  assistantGroupProjectSlugs,
   foldAssistantGroupText,
   type Assistant,
   type AssistantTeam,
@@ -396,14 +396,65 @@ export function assistantGroupMentionHref(
   return null;
 }
 
+type MentionProject = { readonly id: string; readonly name: string };
+
+/** Each project's `#slug`, in order: the one place clients name a group project. */
+const projectSlugs = (projects: ReadonlyArray<MentionProject>) => {
+  const slugs = assistantGroupProjectSlugs(projects);
+  return projects.map((project) => slugs.get(project.id)!);
+};
+
+/** The `@handle`s and `#slug`s the composer draws as a group's own chips. */
+export function assistantGroupMentionTargets(
+  members: ReadonlyArray<Pick<Assistant, "handle">>,
+  projects: ReadonlyArray<MentionProject>,
+): { readonly memberHandles: ReadonlyArray<string>; readonly projectSlugs: ReadonlyArray<string> } {
+  return {
+    memberHandles: [
+      ...members.map((member) => foldAssistantGroupText(member.handle)),
+      ASSISTANT_GROUP_EVERYONE,
+    ],
+    projectSlugs: projectSlugs(projects),
+  };
+}
+
+export type AssistantGroupMentionTarget<M, P> =
+  /** `member` is null for `@everyone`. */
+  | { readonly kind: "member"; readonly member: M | null }
+  | { readonly kind: "project"; readonly project: P };
+
+/**
+ * The member or project a chip's value (after `@` or `#`) names, as the server reads it: a
+ * member by handle or name, a project by its `#slug`, case and accents ignored.
+ */
+export function assistantGroupMentionTarget<
+  M extends Pick<Assistant, "handle" | "name">,
+  P extends MentionProject,
+>(
+  kind: "member" | "project",
+  value: string,
+  members: ReadonlyArray<M>,
+  projects: ReadonlyArray<P>,
+): AssistantGroupMentionTarget<M, P> | null {
+  if (kind === "project") {
+    const project = projects[projectSlugs(projects).indexOf(foldAssistantGroupText(value))];
+    return project === undefined ? null : { kind, project };
+  }
+  const [found] = assistantGroupMentions(`@${value}`, members);
+  return found?.start === 0 && found.end === value.length + 1
+    ? { kind, member: found.member }
+    : null;
+}
+
 const linkProjects = (
   text: string,
   projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
 ) => {
+  const slugs = projectSlugs(projects);
   let out = "";
   let at = 0;
   for (const found of assistantGroupProjectMentionRanges(text, projects)) {
-    out += `${text.slice(at, found.start)}[${text.slice(found.start, found.end)}](${ASSISTANT_PROJECT_HREF}/${assistantGroupProjectSlug(found.project.name)})`;
+    out += `${text.slice(at, found.start)}[${text.slice(found.start, found.end)}](${ASSISTANT_PROJECT_HREF}/${slugs[projects.indexOf(found.project)]})`;
     at = found.end;
   }
   return out + text.slice(at);
@@ -507,12 +558,14 @@ export function assistantGroupProjectQuery(
 /** The group's projects whose `#slug` or name starts with the query, in the group's order. */
 export function assistantGroupProjectOptions<
   P extends { readonly id: string; readonly name: string },
->(query: string, projects: ReadonlyArray<P>): ReadonlyArray<P> {
-  return projects.filter(
-    (project) =>
-      assistantGroupProjectSlug(project.name).startsWith(query) ||
-      foldAssistantGroupText(project.name).startsWith(query),
-  );
+>(query: string, projects: ReadonlyArray<P>): ReadonlyArray<P & { readonly slug: string }> {
+  const slugs = projectSlugs(projects);
+  return projects
+    .map((project, index) => ({ ...project, slug: slugs[index]! }))
+    .filter(
+      (project) =>
+        project.slug.startsWith(query) || foldAssistantGroupText(project.name).startsWith(query),
+    );
 }
 
 /** One plain-text line of a markdown message, for a reply quote. */
@@ -530,9 +583,9 @@ export function assistantGroupMessageExcerpt(text: string): string {
 export function insertAssistantGroupProject(
   text: string,
   mention: AssistantGroupMentionQuery,
-  project: { readonly name: string },
+  project: { readonly slug: string },
 ): { readonly text: string; readonly caret: number } {
-  const inserted = `#${assistantGroupProjectSlug(project.name)} `;
+  const inserted = `#${project.slug} `;
   const rest = text.slice(mention.end).replace(/^ /, "");
   return {
     text: `${text.slice(0, mention.start)}${inserted}${rest}`,

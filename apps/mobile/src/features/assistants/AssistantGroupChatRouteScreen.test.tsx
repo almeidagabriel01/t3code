@@ -852,8 +852,8 @@ describe("group composer", () => {
       groupMentions: {
         members: expect.arrayContaining([expect.objectContaining({ handle: "ada", name: "Ada" })]),
         projects: [
-          { slug: "alpha", name: "Alpha" },
-          { slug: "beta", name: "Beta" },
+          { id: "p1", name: "Alpha" },
+          { id: "p2", name: "Beta" },
         ],
       },
     });

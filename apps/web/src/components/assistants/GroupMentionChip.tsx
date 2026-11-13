@@ -1,10 +1,5 @@
-import {
-  assistantGroupMentions,
-  assistantGroupProjectSlug,
-  foldAssistantGroupText,
-  type Assistant,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { assistantGroupMentionTarget } from "@t3tools/client-runtime/assistantGroupChat";
+import type { Assistant, EnvironmentId } from "@t3tools/contracts";
 import { AtSignIcon, FolderIcon } from "lucide-react";
 
 import { useProjects } from "../../state/entities";
@@ -30,11 +25,14 @@ export function GroupMentionChip(props: {
   readonly environmentId: EnvironmentId;
 }) {
   const environmentProjects = useProjects();
+  const target = assistantGroupMentionTarget(
+    props.kind,
+    props.value,
+    props.members,
+    props.projects,
+  );
   if (props.kind === "project") {
-    const slug = foldAssistantGroupText(props.value);
-    const project = props.projects.find(
-      (candidate) => assistantGroupProjectSlug(candidate.name) === slug,
-    );
+    const project = target?.kind === "project" ? target.project : undefined;
     const known = environmentProjects.find(
       (candidate) =>
         candidate.environmentId === props.environmentId && candidate.id === project?.id,
@@ -56,8 +54,7 @@ export function GroupMentionChip(props: {
       </ContextChip>
     );
   }
-  const mention = assistantGroupMentions(`@${props.value}`, props.members)[0];
-  const member = mention?.member ?? undefined;
+  const member = target?.kind === "member" ? (target.member ?? undefined) : undefined;
   return (
     <ContextChip
       kind="mention"
@@ -75,7 +72,7 @@ export function GroupMentionChip(props: {
       ) : (
         <AtSignIcon aria-hidden />
       )}
-      <ContextChipLabel>{member?.name ?? (mention ? "everyone" : props.value)}</ContextChipLabel>
+      <ContextChipLabel>{member?.name ?? (target ? "everyone" : props.value)}</ContextChipLabel>
     </ContextChip>
   );
 }

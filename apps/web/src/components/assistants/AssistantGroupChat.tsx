@@ -373,7 +373,7 @@ function FeedRow(props: {
       renderMention={(href, text) => (
         <GroupMentionChip
           kind={assistantGroupMentionHref(href)?.kind ?? "member"}
-          value={text.slice(1)}
+          value={assistantGroupMentionHref(href)?.value ?? text.slice(1)}
           members={props.members}
           projects={props.projects}
           environmentId={props.environmentId}

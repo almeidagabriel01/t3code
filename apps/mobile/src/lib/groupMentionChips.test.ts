@@ -15,14 +15,15 @@ const mentions = composerGroupMentions(
       avatar: { kind: "robot", hue: 210, variant: 0 },
     },
   ] as never,
-  [{ name: "Billing API" }],
+  [{ id: "p1", name: "Billing API" }],
 );
 
 describe("group mention chips", () => {
-  it("colours a member with its face's hue and names the group's projects by slug", () => {
-    expect(mentions.members[0]).toEqual({ handle: "ada", name: "Ada Lovelace", accent: "#2e73b8" });
-    expect(mentions.members.at(-1)).toMatchObject({ handle: "everyone", name: "Everyone" });
-    expect(mentions.projects).toEqual([{ slug: "billing-api", name: "Billing API" }]);
+  it("colours a member with its face's hue, and everyone with its own", () => {
+    expect(mentions.members).toEqual([{ handle: "Ada", name: "Ada Lovelace", accent: "#2e73b8" }]);
+    expect(groupMentionLinkChip("t3-mention:mention/everyone", mentions)).toMatchObject({
+      label: "Everyone",
+    });
   });
 
   it("draws a message's member and project links with name, face and folder", () => {
@@ -41,6 +42,10 @@ describe("group mention chips", () => {
 
   it("knows a pressed editor chip is a member or project", () => {
     expect(isGroupMentionSource("@Ada", mentions)).toBe(true);
+    expect(isGroupMentionSource("@AdaLovelace", mentions)).toBe(true);
+    expect(isGroupMentionSource("@Ádá", mentions)).toBe(true);
+    expect(isGroupMentionSource("@everyone", mentions)).toBe(true);
+    expect(isGroupMentionSource("#Billing-API", mentions)).toBe(true);
     expect(isGroupMentionSource("#billing-api", mentions)).toBe(true);
     expect(isGroupMentionSource("@src/app.ts", mentions)).toBe(false);
     expect(isGroupMentionSource("@ada", undefined)).toBe(false);

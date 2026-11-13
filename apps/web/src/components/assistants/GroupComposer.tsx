@@ -3,6 +3,7 @@ import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
+  assistantGroupMentionTargets,
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
@@ -12,8 +13,6 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
-  ASSISTANT_GROUP_EVERYONE,
-  assistantGroupProjectSlug,
   type Assistant,
   type ChatAttachment,
   type EnvironmentId,
@@ -314,7 +313,7 @@ export function GroupComposer(props: {
           type: "custom",
           icon: <FolderIcon aria-hidden className="size-4 shrink-0 text-secondary-label" />,
           label: project.name,
-          description: `#${assistantGroupProjectSlug(project.name)}`,
+          description: `#${project.slug}`,
         }));
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
@@ -636,13 +635,7 @@ export function GroupComposer(props: {
                         "Message the group. @ picks who gets it, # picks a project."
                       }
                       groupMentions={{
-                        memberHandles: [
-                          ...props.members.map((member) => member.handle),
-                          ASSISTANT_GROUP_EVERYONE,
-                        ],
-                        projectSlugs: projectRefs.map((project) =>
-                          assistantGroupProjectSlug(project.name),
-                        ),
+                        ...assistantGroupMentionTargets(props.members, projectRefs),
                         render: (kind, value) => (
                           <GroupMentionChip
                             kind={kind}

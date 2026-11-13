@@ -12,7 +12,6 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
-  assistantGroupProjectSlug,
   type Assistant,
   type AssistantTeamId,
   type ChatAttachment,
@@ -74,6 +73,7 @@ export type GroupSendResult =
   | { readonly ok: false; readonly message: string };
 
 export type GroupComposerProject = { readonly id: ProjectId; readonly name: string };
+type GroupComposerProjectOption = GroupComposerProject & { readonly slug: string };
 
 /** The message being answered, quoted on top of the composer. */
 export type GroupReplyTarget = {
@@ -141,9 +141,9 @@ function Suggestions(props: {
   readonly environmentId: EnvironmentId;
   readonly leadId: Assistant["id"] | null;
   readonly members: ReadonlyArray<AssistantGroupMentionOption<Assistant>>;
-  readonly projects: ReadonlyArray<GroupComposerProject>;
+  readonly projects: ReadonlyArray<GroupComposerProjectOption>;
   readonly onPickMember: (option: AssistantGroupMentionOption<Assistant>) => void;
-  readonly onPickProject: (project: GroupComposerProject) => void;
+  readonly onPickProject: (project: GroupComposerProjectOption) => void;
 }) {
   const showsMembers = props.members.length > 0;
   return (
@@ -217,7 +217,7 @@ function Suggestions(props: {
                   {project.name}
                 </Text>
                 <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-                  #{assistantGroupProjectSlug(project.name)}
+                  #{project.slug}
                 </Text>
               </SuggestionRow>
             ))}
@@ -387,7 +387,7 @@ export function GroupComposer(props: {
     write(next.text, next.caret);
   };
 
-  const pickProject = (project: GroupComposerProject) => {
+  const pickProject = (project: GroupComposerProjectOption) => {
     if (projectMention === null) return;
     const next = insertAssistantGroupProject(text, projectMention, project);
     write(next.text, next.caret);
