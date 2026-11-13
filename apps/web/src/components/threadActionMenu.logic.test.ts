@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadActionMenuItems,
+  isAssistantSubagent,
   threadActionRequiresOperate,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
@@ -108,6 +109,36 @@ describe("buildThreadActionMenuItems", () => {
     const readOnly = ids(false);
     expect(readOnly.find((item) => item.id === "reset-assistant")?.disabled).toBe(true);
     expect(readOnly.find((item) => item.id === "assistant-settings")?.disabled).toBeUndefined();
+  });
+
+  it.each([
+    ["a project thread", null, null, true],
+    ["a project thread's subagent", null, "thread-1", true],
+    ["an assistant chat", "Jarvis", null, false],
+    ["an assistant's subagent", null, "assistant:jarvis:1", false],
+  ] as const)("offers branch, path and project actions per kind: %s", (_n, name, parent, shown) => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      assistant: name === null ? null : { name },
+      outsideProjects: isAssistantSubagent({ lineage: { parentThreadId: parent } }),
+      branch: "feature/retry",
+      projectFilter: { label: "Web", isActive: false },
+      canTurnIntoProject: true,
+    });
+    const ids = [
+      ...items.map((item) => item.id),
+      ...items.flatMap((item) => item.children?.map((child) => child.id) ?? []),
+    ];
+    const projectOnly = [
+      "new-thread-on-branch",
+      "filter-by-project",
+      "turn-into-project",
+      "project-settings",
+      "copy-path",
+      "copy-branch",
+    ];
+    expect(projectOnly.filter((id) => ids.includes(id as never))).toEqual(shown ? projectOnly : []);
+    expect(ids).toEqual(expect.arrayContaining(["copy-thread", "copy-thread-id"]));
   });
 
   it.each([

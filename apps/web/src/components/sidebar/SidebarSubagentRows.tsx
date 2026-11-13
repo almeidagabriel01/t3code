@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
+import { startThreadDrag } from "../threadDrag";
 import { resolveSubagentDisplay } from "./sidebarDisplay.logic";
 import { WorkingDuration } from "./WorkingDuration";
 
@@ -23,18 +24,31 @@ function subagentDotClass(thread: EnvironmentThreadShell): string {
   return "bg-sky-500 dark:bg-sky-300/80";
 }
 
+type SubagentContextMenu = (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+
 function SubagentRow(props: {
   thread: EnvironmentThreadShell;
   onOpen: (threadRef: ScopedThreadRef) => void;
+  onContextMenu?: SubagentContextMenu | undefined;
 }) {
-  const { thread } = props;
+  const { thread, onContextMenu } = props;
+  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   return (
     <li className="relative list-none">
       <span aria-hidden className="absolute inset-y-0 start-9 w-px bg-sidebar-border" />
       <button
         type="button"
         data-testid="sidebar-subagent-row"
-        onClick={() => props.onOpen(scopeThreadRef(thread.environmentId, thread.id))}
+        onClick={() => props.onOpen(threadRef)}
+        onPointerDown={(event) => startThreadDrag(event.nativeEvent, threadRef, thread.title)}
+        onContextMenu={
+          onContextMenu
+            ? (event) => {
+                event.preventDefault();
+                onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+              }
+            : undefined
+        }
         className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md ps-12 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <span
@@ -53,6 +67,7 @@ function SubagentRow(props: {
 export function SubagentRows(props: {
   children: readonly EnvironmentThreadShell[];
   onOpen: (threadRef: ScopedThreadRef) => void;
+  onContextMenu?: SubagentContextMenu | undefined;
 }) {
   const show = useClientSettings((settings) => settings.sidebarShowSubagents);
   const mode = useClientSettings((settings) => settings.sidebarAgentActivityDisplayMode);
@@ -89,7 +104,12 @@ export function SubagentRows(props: {
       ) : null}
       {display === "rows" || display === "summary-and-rows"
         ? props.children.map((child) => (
-            <SubagentRow key={threadKeyOf(child)} thread={child} onOpen={props.onOpen} />
+            <SubagentRow
+              key={threadKeyOf(child)}
+              thread={child}
+              onOpen={props.onOpen}
+              onContextMenu={props.onContextMenu}
+            />
           ))
         : null}
     </>

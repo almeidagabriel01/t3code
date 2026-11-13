@@ -22,13 +22,18 @@ import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
-import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
+import { SortableThreadRow, StaticThreadRow } from "./sidebar/SidebarThreadRow";
+import {
+  type AssistantSidebarModel,
+  useAssistantSidebarModel,
+} from "./assistants/useAssistantSidebarModel";
 import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
+vi.mock("./assistants/useAssistantSidebarModel", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -232,6 +237,108 @@ describe("sidebar thread pick", () => {
     ).toBeNull();
     await vi.waitFor(() =>
       expect(screen.router?.state.location.pathname).toBe(`/local/${threads[1]!.id}`),
+    );
+  });
+});
+
+describe("sidebar assistants section", () => {
+  it("numbers its rows before the projects' and draws a task as a second, unsortable row", async () => {
+    const activeProject = project("active");
+    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
+    const task = threads[1]!;
+    const environmentId = activeProject.environmentId;
+    const entry = {
+      environmentId,
+      assistant: {
+        id: "jarvis",
+        name: "Jarvis",
+        handle: "jarvis",
+        threadId: ThreadId.make("assistant:jarvis:1"),
+        role: "",
+        scope: "all",
+        projectId: "p0",
+        avatar: null,
+        icon: null,
+      },
+    } as never as AssistantSidebarModel["active"][number];
+    vi.mocked(useAssistantSidebarModel).mockReturnValue({
+      enabled: true,
+      collapsed: false,
+      showAll: false,
+      expandedGroups: [],
+      active: [entry],
+      teams: [],
+      ranked: [],
+      shown: [{ entry, presence: { mood: "idle" } }],
+      hidden: 0,
+      items: new Map([
+        [
+          "local:jarvis",
+          {
+            sections: {
+              pinned: [],
+              open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
+              snoozed: [],
+              settled: [],
+            },
+            expanded: true,
+            subagents: [],
+          },
+        ],
+      ]),
+      threadKeys: ["local:assistant:jarvis:1", `local:${task.id}`],
+    } as never as AssistantSidebarModel);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: { environmentId, projectId: activeProject.id },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+    const copy = screen.container.querySelector(
+      `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,
+    );
+    expect(copy?.getAttribute("data-sidebar-parent")).toBe("assistant:local:jarvis");
+    // The list's geometry reads only the project's own row of the thread.
+    expect(screen.container.querySelectorAll(`[data-thread-item="local:${task.id}"]`)).toHaveLength(
+      1,
+    );
+
+    using _timers = fakeTimers();
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    const before = vi.mocked(StaticThreadRow).mock.calls.length;
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    const hints = () =>
+      [...screen.container.querySelectorAll("[data-jump-hint]")].map((hint) =>
+        hint.closest("[data-sidebar-row]")?.getAttribute("data-sidebar-row"),
+      );
+    // Two shortcuts: the assistant's chat, then its task, on both rows of the task.
+    expect(hints().toSorted()).toEqual(
+      [
+        "assistant:local:jarvis",
+        `assistant:local:jarvis/local:${task.id}`,
+        `local:${task.id}`,
+      ].toSorted(),
+    );
+    expect(vi.mocked(StaticThreadRow).mock.calls.length).toBeGreaterThan(before);
+    await userEvent.keyboard(`{/${modifier}}`);
+    await userEvent.keyboard(`{${modifier}>}1{/${modifier}}`);
+    await vi.waitFor(() =>
+      expect(decodeURIComponent(screen.router?.state.location.pathname ?? "")).toBe(
+        "/local/assistant:jarvis:1",
+      ),
     );
   });
 });

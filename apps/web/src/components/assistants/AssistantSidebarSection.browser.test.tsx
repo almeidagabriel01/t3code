@@ -3,8 +3,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { useThreadTabsStore } from "../../threadTabsStore";
 import { useUiStateStore } from "../../uiStateStore";
+import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "../chat/threadContextDrag";
 import { AssistantSidebarSection } from "./AssistantSidebarSection";
+import type { AssistantTaskRowRenderer } from "./AssistantTaskRows";
+import { useAssistantSidebarModel } from "./useAssistantSidebarModel";
 
 type Spec = { name: string; role?: string; scope?: "all" | "project"; projectId?: string };
 
@@ -96,8 +100,8 @@ vi.mock("../../state/assistants", () => ({
     activeTeams: state.teams,
   }),
   useAssistantLiveWork: () => state.work,
-  useAssistantTasks: (_environmentId: string, assistantId: string) =>
-    assistantId === "jarvis" ? state.tasks : [],
+  useAssistantTasks: () => state.tasks,
+  useAssistantTasksByAssistant: () => new Map([["env:jarvis", state.tasks]]),
 }));
 vi.mock("./assistantTeamState", () => ({
   openAssistantTeamDialog: state.openTeamDialog,
@@ -111,6 +115,7 @@ vi.mock("./DescribeAssistantDialog", () => ({
 vi.mock("../../state/entities", () => ({
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : shellFor(ref.threadId),
+  readThreadShell: () => null,
   useQuietThreadShells: () => [
     ...state.tasks.map((task) => ({ ...shellFor(task.threadId), environmentId: "env" })),
     ...state.specs.map((spec) => shellFor(threadOf(spec.name))),
@@ -187,20 +192,45 @@ function setup(
   state.dismissTask.mockClear();
 }
 
+function Section(props: {
+  readonly onOpenThread: () => void;
+  readonly routeThreadKey: string | null;
+  readonly onOpenGroup: () => void;
+  readonly renderTaskRow?: AssistantTaskRowRenderer;
+  readonly onThreadContextMenu?: () => void;
+}) {
+  const model = useAssistantSidebarModel();
+  return (
+    <ul data-thread-keys={model.threadKeys.join(" ")}>
+      <AssistantSidebarSection
+        model={model}
+        routeThreadKey={props.routeThreadKey}
+        environmentLabelById={new Map()}
+        onOpenThread={props.onOpenThread}
+        onOpenGroup={props.onOpenGroup}
+        jumpLabelByKey={new Map(model.threadKeys.map((key, index) => [key, `${index + 1}`]))}
+        renderTaskRow={props.renderTaskRow}
+        onThreadContextMenu={props.onThreadContextMenu}
+      />
+    </ul>
+  );
+}
+
 const element = (
   onOpenThread = vi.fn(),
   routeThreadKey: string | null = null,
   onOpenGroup = vi.fn(),
+  extra: Pick<Parameters<typeof Section>[0], "renderTaskRow" | "onThreadContextMenu"> = {},
 ) => (
-  <ul>
-    <AssistantSidebarSection
-      routeThreadKey={routeThreadKey}
-      environmentLabelById={new Map()}
-      onOpenThread={onOpenThread}
-      onOpenGroup={onOpenGroup}
-    />
-  </ul>
+  <Section
+    onOpenThread={onOpenThread}
+    routeThreadKey={routeThreadKey}
+    onOpenGroup={onOpenGroup}
+    {...extra}
+  />
 );
+const threadKeys = (container: HTMLElement) =>
+  container.querySelector("ul")?.getAttribute("data-thread-keys")?.split(" ").filter(Boolean) ?? [];
 
 const team = (id: string, name: string, memberIds: string[]) => ({
   environmentId: "env",
@@ -269,11 +299,153 @@ describe("AssistantSidebarSection", () => {
     await expect.element(shelf).toHaveTextContent("Settled1");
     await userEvent.click(shelf);
     expect(taskTitles()).toEqual(["Add retry, Running", "Old chore, Done"]);
+    expect(useUiStateStore.getState().projectExpandedById["assistant:env:jarvis:settled"]).toBe(
+      true,
+    );
     await userEvent.click(screen.getByRole("button", { name: "Hide Jarvis tasks" }));
     expect(taskTitles()).toEqual([]);
     expect(useUiStateStore.getState().projectExpandedById["assistant:env:jarvis"]).toBe(false);
+    // The shelf stays open across the fold, as the numbering reads it from the same store.
     await userEvent.click(screen.getByRole("button", { name: "Show Jarvis tasks" }));
-    expect(taskTitles()).toEqual(["Add retry, Running"]);
+    expect(taskTitles()).toEqual(["Add retry, Running", "Old chore, Done"]);
+  });
+
+  it("numbers the rows it draws for ⌘1–9 and draws tasks with the sidebar's own rows", async () => {
+    setup(["Jarvis"], { moods: { "task-1": "working" } });
+    state.settled = new Set(["task-2"]);
+    state.tasks = [
+      { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "task-2", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
+    ];
+    const child = (id: string, title: string, pin: Record<string, string> = {}) => ({
+      ...shellFor(id),
+      title,
+      createdAt: id,
+      pinnedAt: null,
+      ...pin,
+    });
+    state.work = {
+      sites: [],
+      subagents: new Map([
+        [
+          "env:jarvis",
+          [
+            child("child-1", "Review the diff"),
+            child("child-2", "Pinned later", { pinnedAt: "2026-11-02", pinOrderKey: "b" }),
+            child("child-3", "Pinned first", { pinnedAt: "2026-11-03", pinOrderKey: "a" }),
+          ],
+        ],
+      ]),
+    };
+    const renderTaskRow: AssistantTaskRowRenderer = (thread, section, assistantRow) => (
+      <li key={thread.id} data-testid="full-task-row">
+        {`${thread.title}|${section}|${assistantRow}`}
+      </li>
+    );
+    const onMenu = vi.fn();
+    await using screen = await render(
+      element(vi.fn(), null, vi.fn(), { renderTaskRow, onThreadContextMenu: onMenu }),
+    );
+    const fullRows = () =>
+      [...screen.container.querySelectorAll('[data-testid="full-task-row"]')].map(
+        (row) => row.textContent,
+      );
+    expect(fullRows()).toEqual(["Add retry|active|assistant:env:jarvis"]);
+    // Pinned subagents lead, in their pin order.
+    expect(
+      [...screen.container.querySelectorAll('[data-testid="sidebar-subagent-row"]')].map(
+        (row) => row.textContent,
+      ),
+    ).toEqual([
+      expect.stringContaining("Pinned first"),
+      expect.stringContaining("Pinned later"),
+      expect.stringContaining("Review the diff"),
+    ]);
+    expect(threadKeys(screen.container)).toEqual([
+      "env:assistant:jarvis:1",
+      "env:task-1",
+      "env:child-3",
+      "env:child-2",
+      "env:child-1",
+    ]);
+    expect(
+      screen.container.querySelector('[data-sidebar-row="assistant:env:jarvis"] [data-jump-hint]')
+        ?.textContent,
+    ).toBe("1");
+
+    await userEvent.click(screen.getByTestId("assistant-settled-toggle"));
+    expect(fullRows()).toEqual([
+      "Add retry|active|assistant:env:jarvis",
+      "Old chore|settled|assistant:env:jarvis",
+    ]);
+    expect(threadKeys(screen.container)).toContain("env:task-2");
+
+    const subagent = screen.container.querySelector('[data-testid="sidebar-subagent-row"]')!;
+    subagent.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 8 }),
+    );
+    expect(onMenu).toHaveBeenCalledWith(
+      { environmentId: "env", threadId: "child-3" },
+      { x: 4, y: 8 },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Hide Jarvis tasks" }));
+    expect(threadKeys(screen.container)).toEqual(["env:assistant:jarvis:1"]);
+  });
+
+  it("numbers nothing while the section is collapsed to its avatar strip", async () => {
+    setup(["Jarvis"], { collapsed: true });
+    await using screen = await render(element());
+    expect(threadKeys(screen.container)).toEqual([]);
+  });
+
+  it("opens the assistant's own menu on right-click", async () => {
+    setup(["Jarvis"]);
+    await using screen = await render(element());
+    const row = screen.container.querySelector('[data-sidebar-row="assistant:env:jarvis"]')!;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Reset conversation" }))
+      .toBeVisible();
+    await expect.element(screen.getByRole("menuitem", { name: "Archive assistant" })).toBeVisible();
+  });
+
+  it("drags the assistant chat into a split of the workspace on screen", async () => {
+    setup(["Jarvis"]);
+    useThreadTabsStore.setState({ byProject: {}, visibleKey: "env:p1" });
+    await using screen = await render(element());
+    const row = screen.container.querySelector('[data-sidebar-row="assistant:env:jarvis"]')!;
+    const pointer = (type: string, x: number, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        isPrimary: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    row.dispatchEvent(pointer("pointerdown", 1, 1));
+    const pane = document.createElement("div");
+    pane.setAttribute("data-thread-groups", "env:p1");
+    pane.innerHTML = '<div data-thread-group-body="main" style="width:100%;height:100%"></div>';
+    Object.assign(pane.style, { position: "fixed", inset: "0", zIndex: "50" });
+    document.body.append(pane);
+    using _pane = { [Symbol.dispose]: () => pane.remove() };
+    const drops: ThreadTabDropDetail[] = [];
+    pane.addEventListener(THREAD_TAB_DROP_EVENT, (event) =>
+      drops.push((event as CustomEvent<ThreadTabDropDetail>).detail),
+    );
+    document.dispatchEvent(pointer("pointermove", 40, 40));
+    document.dispatchEvent(pointer("pointerup", 40, 40));
+    expect(drops).toEqual([
+      {
+        threadKey: "env:assistant:jarvis:1",
+        target: { groupId: "main", zone: expect.any(String) },
+      },
+    ]);
   });
 
   it("drops the favicons and subagent rows once the work ends", async () => {

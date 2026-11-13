@@ -25,6 +25,7 @@ import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  isAssistantSubagent,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -176,6 +177,7 @@ export function useThreadActionMenu(input: {
         canLinkCard,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         assistant: assistantEntry ? { name: assistantEntry.assistant.name } : null,
+        outsideProjects: isAssistantSubagent(thread),
         assistantTask: assistantTaskMenuState(
           readAssistantTask(threadRef.environmentId, threadRef.threadId),
           thread,

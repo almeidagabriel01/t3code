@@ -1445,3 +1445,37 @@ export {
   sortPriorityThreadsForSidebar,
   type SidebarPriorityHolds,
 } from "@t3tools/client-runtime/state/thread-activity";
+
+/**
+ * The thread a sidebar menu acts on. Assistant rows and tasks of folded projects are not listed,
+ * so their shell answers, read as the thread menu in the chat header reads it.
+ */
+export function resolveSidebarMenuThread<
+  T extends Parameters<typeof effectiveSnoozed>[0] & { readonly settledOverride?: string | null },
+>(input: {
+  readonly listed: T | undefined;
+  readonly shell: T | null;
+  readonly section: SidebarSection | undefined;
+  readonly now: string;
+}): { readonly thread: T; readonly isSettled: boolean; readonly isSnoozed: boolean } | null {
+  const thread = input.listed ?? input.shell;
+  if (thread === null) return null;
+  if (input.section !== undefined) {
+    return {
+      thread,
+      isSettled: input.section === "settled",
+      isSnoozed: input.section === "snoozed",
+    };
+  }
+  return {
+    thread,
+    isSettled: thread.settledOverride === "settled",
+    isSnoozed: effectiveSnoozed(thread, { now: input.now }),
+  };
+}
+
+/** ⌘1–9 numbers the assistants section's rows first, then the projects', each thread once. */
+export const sidebarJumpThreadKeys = (
+  assistantKeys: ReadonlyArray<string>,
+  projectKeys: ReadonlyArray<string>,
+): ReadonlyArray<string> => [...new Set([...assistantKeys, ...projectKeys])];

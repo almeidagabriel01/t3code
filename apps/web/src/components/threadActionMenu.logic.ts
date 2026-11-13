@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import { assistantIdFromThreadId, type ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 export type ThreadActionMenuId =
@@ -109,12 +109,21 @@ export interface ThreadActionMenuState {
   readonly canLinkCard?: boolean | undefined;
   /** The assistant whose current conversation this is; it can't be renamed, archived or deleted here. */
   readonly assistant?: { readonly name: string } | null | undefined;
+  /** An assistant's delegated subagent: it lives outside project lists, as the assistant chat does. */
+  readonly outsideProjects?: boolean | undefined;
   /** Set when an assistant launched this thread as a task. */
   readonly assistantTask?:
     | { readonly dismissed: boolean; readonly canDismiss: boolean }
     | null
     | undefined;
 }
+
+/** A thread an assistant's chat delegated, which the sidebar lists under that assistant. */
+export const isAssistantSubagent = (thread: {
+  readonly lineage: { readonly parentThreadId: string | null };
+}) =>
+  thread.lineage.parentThreadId !== null &&
+  assistantIdFromThreadId(thread.lineage.parentThreadId) !== null;
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
@@ -140,6 +149,9 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const isAssistant = state.assistant != null;
+  // Branch, path and project actions belong to project threads.
+  const inProject = !isAssistant && state.outsideProjects !== true;
+  const branch = inProject ? state.branch : null;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
@@ -147,11 +159,11 @@ export function buildThreadActionMenuItems(
     ...(state.canOpenSideBySide
       ? [{ id: "open-side-by-side" as const, label: "Open side by side", icon: "columns-2" }]
       : []),
-    ...(state.branch
+    ...(branch
       ? [
           {
             id: "new-thread-on-branch" as const,
-            label: `New thread on ${state.branch}`,
+            label: `New thread on ${branch}`,
             icon: "message-square-plus",
           },
         ]
@@ -227,7 +239,7 @@ export function buildThreadActionMenuItems(
     ...(state.canLinkCard
       ? [{ id: "link-card" as const, label: "Link to board card…", icon: "link" }]
       : []),
-    ...(state.projectFilter
+    ...(state.projectFilter && inProject
       ? [
           {
             id: "filter-by-project" as const,
@@ -238,7 +250,7 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.canTurnIntoProject
+    ...(state.canTurnIntoProject && inProject
       ? [
           {
             id: "turn-into-project" as const,
@@ -275,15 +287,15 @@ export function buildThreadActionMenuItems(
       icon: "copy",
       separatorBefore: true,
       children: [
-        { id: "copy-path", label: "Path", icon: "folder" },
-        ...(state.branch
-          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
-          : []),
+        ...(inProject ? [{ id: "copy-path" as const, label: "Path", icon: "folder" }] : []),
+        ...(branch ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }] : []),
         { id: "copy-thread", label: "Thread", icon: "message-square" },
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    ...(inProject
+      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      : []),
     ...(state.assistant
       ? [
           {

@@ -118,13 +118,14 @@ import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
-import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Spinner } from "../ui/spinner";
 import { SidebarNotificationDot } from "./SidebarNotificationDot";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { JumpHintBadge } from "./JumpHintBadge";
+import { startThreadDrag } from "../threadDrag";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -154,14 +155,6 @@ function RelativeTimeLabel(props: { timestamp: string | null }) {
     : compactSidebarTimeLabel(
         formatRelativeTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`)),
       );
-}
-
-function JumpHintBadge(props: { label: string }) {
-  return (
-    <Kbd aria-hidden data-jump-hint>
-      {props.label}
-    </Kbd>
-  );
 }
 
 const JUMP_HINT_SLOT_CLASS_NAME =
@@ -466,20 +459,48 @@ export function SortableThreadRow(
     transition: contextDrag && isDragging ? "transform 150ms ease-out" : transition,
     isDragging: isDragging && !contextDrag,
   };
-  // The sidebar arranges rows from quiet shells, which hold still while a
-  // thread streams; reading the live shell here re-renders only this row.
-  const liveThread = useThreadShell(
-    scopeThreadRef(rowProps.thread.environmentId, rowProps.thread.id),
-  );
-  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
-  const thread =
-    liveThread === null
-      ? rowProps.thread
-      : rowProps.thread.runtime !== null
-        ? asLaunchingThread(liveThread)
-        : liveThread;
+  const thread = useLiveRowThread(rowProps.thread);
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+}
+
+// The sidebar arranges rows from quiet shells, which hold still while a
+// thread streams; reading the live shell here re-renders only this row.
+function useLiveRowThread(arranged: SidebarThreadSummary): SidebarThreadSummary {
+  const liveThread = useThreadShell(scopeThreadRef(arranged.environmentId, arranged.id));
+  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
+  return liveThread === null
+    ? arranged
+    : arranged.runtime !== null
+      ? asLaunchingThread(liveThread)
+      : liveThread;
+}
+
+const noNodeRef = () => {};
+
+/**
+ * A second row for a thread its project already lists (the assistants section). It never joins
+ * the sortable list: two sortables with one id break dnd-kit. Dragging it out splits the pane.
+ */
+export function StaticThreadRow(
+  props: Omit<SidebarThreadRowProps, "sortable" | "revealRef"> & { sectionRowKey: string },
+) {
+  const thread = useLiveRowThread(props.thread);
+  const bag = {
+    listeners: {
+      onPointerDown: (event: ReactPointerEvent) =>
+        startThreadDrag(
+          event.nativeEvent,
+          scopeThreadRef(thread.environmentId, thread.id),
+          thread.title,
+        ),
+    },
+    setNodeRef: noNodeRef,
+    transform: null,
+    transition: undefined,
+    isDragging: false,
+  };
+  return <SidebarThreadRow key={props.variant} {...props} thread={thread} sortable={bag} />;
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
@@ -554,6 +575,9 @@ type SidebarThreadRowProps = {
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
   revealRef?: ((row: HTMLElement, threadKey: string) => void) | undefined;
+  // A second copy of the row (the assistants section) has its own tree key, and the list's
+  // geometry queries skip it.
+  sectionRowKey?: string | undefined;
   // Unlike isActive, never true for the ancestor standing in for an open
   // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
@@ -1223,7 +1247,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     const inFolder = variant === "folder" || multiline;
     return (
       <li
-        data-thread-item={threadKey}
+        data-thread-item={props.sectionRowKey === undefined ? threadKey : undefined}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1239,7 +1263,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
-                data-sidebar-row={threadKey}
+                data-sidebar-row={props.sectionRowKey ?? threadKey}
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
@@ -1435,7 +1459,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   return (
     <li
-      data-thread-item={threadKey}
+      data-thread-item={props.sectionRowKey === undefined ? threadKey : undefined}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
@@ -1451,7 +1475,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ref={rowRef}
               role="button"
               tabIndex={0}
-              data-sidebar-row={threadKey}
+              data-sidebar-row={props.sectionRowKey ?? threadKey}
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}

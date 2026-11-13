@@ -9,9 +9,10 @@ import {
   type AssistantTaskState,
 } from "@t3tools/client-runtime/assistantTasks";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { AssistantTask, ScopedThreadRef } from "@t3tools/contracts";
+import type { SidebarThreadOrder } from "@t3tools/contracts/settings";
 import { XIcon } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -23,7 +24,11 @@ import { useAssistantTasks, type AssistantEntry } from "../../state/assistants";
 import { useOpenDecisionThreadKeys } from "../../state/decisions";
 import { useQuietThreadShells } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
-import { sortOpenThreadsForSidebar } from "../Sidebar.logic";
+import {
+  sortOpenThreadsForSidebar,
+  type SidebarSection,
+  type SidebarThreadAttention,
+} from "../Sidebar.logic";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
 
@@ -41,7 +46,34 @@ const NO_SECTIONS: AssistantTaskSections<EnvironmentThreadShell> = {
   settled: [],
 };
 
+/** Where an assistant's fold and its shelves persist, beside the project folds. */
+export const assistantFoldKey = ({ environmentId, assistant }: AssistantEntry) =>
+  `assistant:${environmentId}:${assistant.id}`;
+
+/** A shelf under an assistant opens on request only, so a missing entry reads as closed. */
+export const assistantShelfOpen = (
+  folds: Readonly<Record<string, boolean>>,
+  foldKey: string,
+  shelf: "snoozed" | "settled",
+) => folds[`${foldKey}:${shelf}`] === true;
+
 /** The assistant's task threads split and ordered exactly as a project's thread list. */
+export function assistantTaskSectionsOf(input: {
+  readonly tasks: ReadonlyArray<AssistantTask>;
+  readonly shellOf: (threadId: string) => EnvironmentThreadShell | undefined;
+  readonly threadOrder: SidebarThreadOrder;
+  readonly attention: SidebarThreadAttention;
+  readonly nowMs: number;
+}): AssistantTaskSections<EnvironmentThreadShell> {
+  if (input.tasks.length === 0) return NO_SECTIONS;
+  return assistantTaskRows(
+    input.tasks,
+    input.shellOf,
+    (open) => sortOpenThreadsForSidebar(open, input.threadOrder, input.attention),
+    { now: new Date(input.nowMs).toISOString() },
+  );
+}
+
 export function useAssistantTaskSections(
   entry: AssistantEntry,
 ): AssistantTaskSections<EnvironmentThreadShell> {
@@ -52,18 +84,30 @@ export function useAssistantTaskSections(
   const lastVisitedAtByKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const openDecisionKeys = useOpenDecisionThreadKeys();
   const nowMs = useNowMinuteMs();
-  if (tasks.length === 0) return NO_SECTIONS;
   const byId = new Map(
     shells.filter((shell) => shell.environmentId === environmentId).map((s) => [s.id, s]),
   );
-  return assistantTaskRows(
+  return assistantTaskSectionsOf({
     tasks,
-    (threadId) => byId.get(threadId as never),
-    (open) =>
-      sortOpenThreadsForSidebar(open, threadOrder, { lastVisitedAtByKey, openDecisionKeys }),
-    { now: new Date(nowMs).toISOString() },
-  );
+    shellOf: (threadId) => byId.get(threadId as never),
+    threadOrder,
+    attention: { lastVisitedAtByKey, openDecisionKeys },
+    nowMs,
+  });
 }
+
+export type AssistantTaskRowRenderer = (
+  thread: EnvironmentThreadShell,
+  section: SidebarSection,
+  assistantRowKey: string,
+) => ReactNode;
+
+const SECTION_OF = {
+  pinned: "pinned",
+  open: "active",
+  snoozed: "snoozed",
+  settled: "settled",
+} as const satisfies Record<keyof AssistantTaskSections<EnvironmentThreadShell>, SidebarSection>;
 
 /**
  * The threads an assistant launched, one line each: its face in the task's mood, the title and the
@@ -76,14 +120,22 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
   readonly onOpen: (threadRef: ScopedThreadRef) => void;
   /** Larger rows and no left rule, for the assistant page. */
   readonly roomy?: boolean;
+  /** The sidebar draws each task as the thread row its project shows, under the assistant's row. */
+  readonly renderRow?: AssistantTaskRowRenderer | undefined;
 }) {
   const { assistant, environmentId } = props.entry;
   const flows = useAssistantFlows(environmentId);
-  const [settledExpanded, setSettledExpanded] = useState(false);
-  const [snoozedExpanded, setSnoozedExpanded] = useState(false);
+  const foldKey = assistantFoldKey(props.entry);
+  const snoozedExpanded = useUiStateStore((state) =>
+    assistantShelfOpen(state.projectExpandedById, foldKey, "snoozed"),
+  );
+  const settledExpanded = useUiStateStore((state) =>
+    assistantShelfOpen(state.projectExpandedById, foldKey, "settled"),
+  );
+  const setExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const { pinned, open, snoozed, settled } = props.sections;
   if (pinned.length + open.length + snoozed.length + settled.length === 0) return null;
-  const renderRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => (
+  const renderCompactRow = ({ task, shell, state }: AssistantTaskRow<EnvironmentThreadShell>) => (
     <li
       key={task.threadId}
       className={cn(
@@ -132,40 +184,46 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
       ) : null}
     </li>
   );
+  const rowsOf = (key: keyof typeof SECTION_OF) =>
+    props.sections[key].map((row) =>
+      props.renderRow
+        ? props.renderRow(row.shell, SECTION_OF[key], foldKey)
+        : renderCompactRow(row),
+    );
   return (
     <ul
       aria-label={`${assistant.name} tasks`}
       data-testid="assistant-task-list"
       className={cn("m-0 p-0", !props.roomy && "ms-3.5 border-s border-foreground/10")}
     >
-      {pinned.map(renderRow)}
-      {open.map(renderRow)}
+      {rowsOf("pinned")}
+      {rowsOf("open")}
       {snoozed.length === 0 ? null : (
         <li className="list-none">
           <CollapsibleSectionHeader
             expanded={snoozedExpanded}
             data-testid="assistant-snoozed-toggle"
-            onClick={() => setSnoozedExpanded((value) => !value)}
+            onClick={() => setExpanded(`${foldKey}:snoozed`, !snoozedExpanded)}
             accessory={<span className="font-normal tabular-nums">{snoozed.length}</span>}
           >
             Snoozed
           </CollapsibleSectionHeader>
         </li>
       )}
-      {snoozedExpanded ? snoozed.map(renderRow) : null}
+      {snoozedExpanded ? rowsOf("snoozed") : null}
       {settled.length === 0 ? null : (
         <li className="list-none">
           <CollapsibleSectionHeader
             expanded={settledExpanded}
             data-testid="assistant-settled-toggle"
-            onClick={() => setSettledExpanded((value) => !value)}
+            onClick={() => setExpanded(`${foldKey}:settled`, !settledExpanded)}
             accessory={<span className="font-normal tabular-nums">{settled.length}</span>}
           >
             Settled
           </CollapsibleSectionHeader>
         </li>
       )}
-      {settledExpanded ? settled.map(renderRow) : null}
+      {settledExpanded ? rowsOf("settled") : null}
     </ul>
   );
 });

@@ -22,6 +22,8 @@ import {
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
+  resolveSidebarMenuThread,
+  sidebarJumpThreadKeys,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -909,6 +911,70 @@ describe("resolveSidebarSweepKeys", () => {
   it("leaves out rows that cannot settle and rows that left the list", () => {
     expect(resolveSidebarSweepKeys(ordered, "c", "blocked", canSettle)).toEqual(["c", "d"]);
     expect(resolveSidebarSweepKeys(ordered, "gone", "a", canSettle)).toEqual([]);
+  });
+});
+
+describe("resolveSidebarMenuThread", () => {
+  const now = "2026-11-13T12:00:00.000Z";
+  const shell = (overrides: Record<string, unknown> = {}) =>
+    ({
+      id: "t",
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      settledOverride: null,
+      snoozedUntil: null,
+      ...overrides,
+    }) as never as Parameters<typeof resolveSidebarMenuThread>[0]["shell"] & object;
+
+  it.each([
+    ["a listed row, by its section", "listed", "settled", {}, [true, false]],
+    [
+      "an unlisted thread, settled by hand",
+      "shell",
+      undefined,
+      { settledOverride: "settled" },
+      [true, false],
+    ],
+    [
+      "an unlisted thread, snoozed",
+      "shell",
+      undefined,
+      { snoozedUntil: "2026-11-14T00:00:00.000Z" },
+      [false, true],
+    ],
+    [
+      "an unlisted thread whose snooze ran out",
+      "shell",
+      undefined,
+      { snoozedUntil: "2026-11-12T00:00:00.000Z" },
+      [false, false],
+    ],
+  ] as const)("reads %s", (_name, source, section, overrides, [isSettled, isSnoozed]) => {
+    const thread = shell(overrides);
+    const resolved = resolveSidebarMenuThread({
+      listed: source === "listed" ? thread : undefined,
+      shell: source === "shell" ? thread : null,
+      section,
+      now,
+    });
+    expect(resolved).toEqual({ thread, isSettled, isSnoozed });
+  });
+
+  it("answers nothing for a thread that has not loaded", () => {
+    expect(
+      resolveSidebarMenuThread({ listed: undefined, shell: null, section: undefined, now }),
+    ).toBe(null);
+  });
+});
+
+describe("sidebarJumpThreadKeys", () => {
+  it("numbers the assistants section first and keeps one number per thread", () => {
+    expect(sidebarJumpThreadKeys(["chat", "task"], ["a", "task", "b"])).toEqual([
+      "chat",
+      "task",
+      "a",
+      "b",
+    ]);
   });
 });
 

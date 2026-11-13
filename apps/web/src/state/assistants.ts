@@ -151,6 +151,28 @@ export function useAssistantTasks(
   return useAtomValue(assistantTasksAtom(`${environmentId}\u0000${assistantId}`));
 }
 
+const assistantTasksByAssistantAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const byAssistant = new Map<string, ReadonlyArray<AssistantTask>>();
+    for (const [environmentId, state] of get(assistantStatesAtom(key))) {
+      for (const assistant of selectActiveAssistants(state)) {
+        byAssistant.set(
+          `${environmentId}:${assistant.id}`,
+          selectAssistantTasks(state, assistant.id),
+        );
+      }
+    }
+    return byAssistant;
+  }).pipe(Atom.withLabel(`web-assistant-tasks-by-assistant:${key}`)),
+);
+
+/** Every active assistant's tasks keyed `environmentId:assistantId`, for the sidebar's one pass. */
+export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
+  return useAtomValue(
+    assistantTasksByAssistantAtom(environmentIdsKey(useAssistantsEnvironmentIds())),
+  );
+}
+
 const taskAssistantAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     const [environmentId, threadId] = key.split("\u0000") as [EnvironmentId, ThreadId];
