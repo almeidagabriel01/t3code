@@ -6,7 +6,11 @@ import {
   heavyLimitIdle,
   heavyModeLine,
   linuxLine,
+  moveAllActions,
   routeActions,
+  RUNNER_SETTING_COPY,
+  RUNNER_WHERE_DESCRIPTION,
+  runnerModeFieldApplies,
   runnerBadge,
   runnerFieldIdle,
   type RunnerChoices,
@@ -144,6 +148,76 @@ describe("a row's runner", () => {
   it("an unconfirmed drop reruns only with a warning and force", () => {
     const [mac] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
+  });
+});
+
+describe("Move all", () => {
+  const base = {
+    entries: [entry()],
+    linux,
+    routes: {} as Record<string, "mac" | "linux">,
+    macOnly: [] as string[],
+  };
+  const labels = (state: Parameters<typeof moveAllActions>[0]) =>
+    moveAllActions(state).map((action) => action.label);
+
+  it.each([
+    ["a waiter headed here can go to Linux", base, ["Move all to Linux"]],
+    [
+      "a waiter headed to Linux can come back",
+      { ...base, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
+    [
+      "waiters on both sides offer both ways",
+      { ...base, entries: [entry(), entry({ id: "b" })], routes: { b: "linux" } },
+      ["Move all to this Mac", "Move all to Linux"],
+    ],
+    ["Mac-only work stays", { ...base, macOnly: ["a"] }, []],
+    ["a job asked for this Mac stays", { ...base, entries: [entry({ where: "mac" })] }, []],
+    ["running jobs stay", { ...base, entries: [entry({ startedAt: "x" })] }, []],
+    ["an unconfirmed run stays", { ...base, entries: [entry({ unconfirmed: true })] }, []],
+    ["a server slot stays", { ...base, entries: [entry({ server: true })] }, []],
+    ["no Runner, no Linux target", { ...base, linux: null }, []],
+    [
+      "no Runner still brings Linux waiters back",
+      { ...base, linux: null, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
+  ] as const)("%s", (_name, state, expected) => {
+    expect(labels(state as never)).toEqual(expected);
+  });
+});
+
+describe("Runner copy and mode fields", () => {
+  it.each([
+    [RUNNER_SETTING_COPY.runnerDropped.title, "If a Linux run fails"],
+    [
+      RUNNER_SETTING_COPY.runnerDropped.description,
+      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
+    ],
+    [
+      RUNNER_SETTING_COPY.runnerWhere.description,
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
+    ],
+    [
+      RUNNER_WHERE_DESCRIPTION.automatic,
+      "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
+    ],
+  ])("%s", (text, expected) => {
+    expect(text).toBe(expected);
+  });
+
+  it.each([
+    ["runnerMacFirstAfter", "macFirst", true],
+    ["runnerMacFirstAfter", null, true],
+    ["runnerMacFirstAfter", "linux", false],
+    ["runnerLinuxEverything", "linux", true],
+    ["runnerLinuxEverything", null, true],
+    ["runnerLinuxEverything", "macFirst", false],
+    ["runnerBringBack", "mac", true],
+  ] as const)("%s under %s: %s", (key, where, applies) => {
+    expect(runnerModeFieldApplies(key, where)).toBe(applies);
   });
 });
 

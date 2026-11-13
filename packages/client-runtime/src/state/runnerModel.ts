@@ -29,7 +29,7 @@ export const RUNNER_SETTING_COPY: Record<
   runnerWhere: {
     title: "Where heavy work runs",
     description:
-      "This Mac keeps everything here. Linux sends the listed commands there. Hybrid runs listed commands here while this Mac has room and on Linux when it does not; waiting ones go to whichever has the shorter line.",
+      "This Mac keeps everything here. Mac first fills this Mac, then sends the rest to Linux. Hybrid splits jobs between both. Linux sends the listed commands there.",
   },
   runnerLinuxCommands: {
     title: "Can run on Linux",
@@ -46,8 +46,9 @@ export const RUNNER_SETTING_COPY: Record<
     description: "What a job headed for Linux does while Linux is offline.",
   },
   runnerDropped: {
-    title: "When Linux drops a job",
-    description: "What a job does when Linux goes away while it runs there.",
+    title: "If a Linux run fails",
+    description:
+      "What a job does when Linux couldn't run it: the PC went away, or a tool or folder is missing there.",
   },
   runnerAskMinutes: {
     title: "Wait for an answer",
@@ -273,6 +274,42 @@ export function routeActions(
   return actions;
 }
 
+export interface MoveAllAction {
+  readonly runner: HeavyRunner;
+  readonly label: string;
+}
+
+/**
+ * "Move all to this Mac" / "Move all to Linux": offered while some waiting job would move. Mirrors
+ * the server's rule: running jobs, unconfirmed runs and, for Linux, Mac-only or Mac-pinned work stay.
+ */
+export function moveAllActions(
+  state: Pick<HeavyQueueState, "entries" | "linux" | "routes" | "macOnly">,
+): ReadonlyArray<MoveAllAction> {
+  const moves = (runner: HeavyRunner) =>
+    state.entries.some(
+      (entry) =>
+        entry.startedAt === null &&
+        entry.server !== true &&
+        entry.unconfirmed !== true &&
+        (state.routes[entry.id] ?? "mac") !== runner &&
+        !(runner === "linux" && (entry.where === "mac" || state.macOnly.includes(entry.id))),
+    );
+  const actions: MoveAllAction[] = [];
+  if (moves("mac")) actions.push({ runner: "mac", label: "Move all to this Mac" });
+  if (state.linux !== null && moves("linux")) {
+    actions.push({ runner: "linux", label: "Move all to Linux" });
+  }
+  return actions;
+}
+
+/** Whether a mode-specific field belongs to the picked mode; null (targets disagree) counts as applying. */
+export function runnerModeFieldApplies(key: RunnerKey, where: RunnerWhere | null): boolean {
+  if (key === "runnerMacFirstAfter") return where === null || where === "macFirst";
+  if (key === "runnerLinuxEverything") return where === null || where === "linux";
+  return true;
+}
+
 /** The effective values Runner fields depend on; null where the selected targets disagree. */
 export interface RunnerChoices {
   readonly runnerEnabled: boolean | null;
@@ -311,7 +348,7 @@ export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
   mac: "Everything runs on this Mac. A job's menu can still send it to Linux.",
   macFirst: "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
   automatic:
-    "Jobs run on this Mac until it reaches its limits, then on Linux until Linux reaches its own. Past both, each job joins the shorter queue.",
+    "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
   linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
 };
 
