@@ -15,7 +15,7 @@ import {
   integrationCategoryLabel,
   integrationDirectory,
   integrationErrorMessage,
-  integrationProviderSupport,
+  integrationLinkTarget,
   integrationStatusLabel,
   notAvailableOnLabel,
   sandboxWorkNote,
@@ -556,25 +556,7 @@ describe("integrationDirectory", () => {
   });
 });
 
-describe("integrationProviderSupport", () => {
-  it.each([
-    ["claudeAgent", true],
-    ["codex", true],
-    ["cursor", true],
-    ["antigravity", true],
-    ["acpRegistry", true],
-    ["grok", true],
-    ["kiro", true],
-    ["fx", true],
-    ["opencode", false],
-    ["pi", false],
-    ["muse", false],
-    ["remote", false],
-    ["a-future-driver", false],
-  ])("%s", (driverKind, supported) => {
-    expect(integrationProviderSupport(driverKind)).toBe(supported);
-  });
-
+describe("provider and workspace notes", () => {
   it("names the provider it is missing on", () => {
     expect(notAvailableOnLabel("OpenCode")).toBe("Not available on OpenCode");
   });
@@ -757,5 +739,24 @@ describe("integrationAssistantsUsing", () => {
       "a",
       "b",
     ]);
+  });
+});
+
+describe("integrationLinkTarget", () => {
+  const linked = state({
+    catalog: [entry("linear", "Linear"), entry("gmail", "Gmail"), entry("slack", "Slack")],
+    integrations: [
+      view("linear-work", "linear", "connected"),
+      view("slack", "slack", "needs-sign-in"),
+    ],
+    detected: [detected("cc-gmail", "claude-code", "gmail")],
+  });
+  it.each([
+    ["linear", { kind: "detail", name: "linear-work" }],
+    ["slack", { kind: "search", query: "Slack" }],
+    ["gmail", { kind: "search", query: "Gmail" }],
+    ["nope", null],
+  ] as const)("%s", (catalogId, target) => {
+    expect(integrationLinkTarget(linked, catalogId)).toEqual(target);
   });
 });

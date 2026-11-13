@@ -1,4 +1,5 @@
 import {
+  integrationProviderSupport,
   loadedNatively,
   type AssistantIntegrations,
   type AssistantWorkspace,
@@ -390,21 +391,23 @@ export function integrationDirectory(
   };
 }
 
-// Drivers whose adapter reads `McpProviderSessions.connectors`: Claude, Codex, Cursor, and the
-// ACP adapter (Grok, Kiro and FX through the stdio bridge). Muse, Pi, OpenCode and cloud agents do not.
-const INTEGRATION_DRIVERS = new Set([
-  "claudeAgent",
-  "codex",
-  "cursor",
-  "antigravity",
-  "acpRegistry",
-  "grok",
-  "kiro",
-  "fx",
-]);
+export { integrationProviderSupport };
 
-export const integrationProviderSupport = (driverKind: string): boolean =>
-  INTEGRATION_DRIVERS.has(driverKind);
+/** Where a link to one catalog entry lands: its detail once T3 holds it, otherwise a search for it. */
+export function integrationLinkTarget(
+  state: IntegrationsState,
+  catalogId: string,
+):
+  | { readonly kind: "detail"; readonly name: string }
+  | { readonly kind: "search"; readonly query: string }
+  | null {
+  const { connected, available } = integrationDirectory(state, { query: "", category: null });
+  const row = [...connected, ...available].find((item) => item.entry?.id === catalogId);
+  if (row === undefined) return null;
+  return row.primary?.kind === "open"
+    ? { kind: "detail", name: row.primary.name }
+    : { kind: "search", query: row.title };
+}
 
 export const notAvailableOnLabel = (providerDisplayName: string): string =>
   `Not available on ${providerDisplayName}`;

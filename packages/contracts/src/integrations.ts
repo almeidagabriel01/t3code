@@ -214,6 +214,23 @@ export const loadedNatively = (server: DetectedServer): boolean =>
         (server.scope === "user" || server.scope === "plugin"))) &&
       server.loaded === "connected"));
 
+// Drivers whose adapter reads `McpProviderSessions.connectors`: Claude, Codex, Cursor, and the
+// ACP adapter (Grok, Kiro and FX through the stdio bridge). Muse, Pi, OpenCode and cloud agents do not.
+const INTEGRATION_DRIVERS = new Set([
+  "claudeAgent",
+  "codex",
+  "cursor",
+  "antigravity",
+  "acpRegistry",
+  "grok",
+  "kiro",
+  "fx",
+]);
+
+/** Whether T3's integrations reach a provider of this driver. */
+export const integrationProviderSupport = (driverKind: string): boolean =>
+  INTEGRATION_DRIVERS.has(driverKind);
+
 export const IntegrationOwnAppView = Schema.Struct({
   clientGroup: ClientGroup,
   clientId: Schema.String,

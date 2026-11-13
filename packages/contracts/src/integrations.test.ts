@@ -1,6 +1,6 @@
 import { expect, it } from "vite-plus/test";
 
-import { type DetectedServer, loadedNatively } from "./integrations.ts";
+import { type DetectedServer, integrationProviderSupport, loadedNatively } from "./integrations.ts";
 
 const detected = (overrides: Partial<DetectedServer>): DetectedServer => ({
   id: "x",
@@ -32,4 +32,22 @@ it.each([
   ["T3's own server", { origin: "t3", scope: undefined }, false],
 ] as const)("D7 counts %s: %s", (_label, overrides, expected) => {
   expect(loadedNatively(detected(overrides as Partial<DetectedServer>))).toBe(expected);
+});
+
+it.each([
+  ["claudeAgent", true],
+  ["codex", true],
+  ["cursor", true],
+  ["antigravity", true],
+  ["acpRegistry", true],
+  ["grok", true],
+  ["kiro", true],
+  ["fx", true],
+  ["opencode", false],
+  ["pi", false],
+  ["muse", false],
+  ["remote", false],
+  ["a-future-driver", false],
+])("integrations reach %s: %s", (driverKind, supported) => {
+  expect(integrationProviderSupport(driverKind)).toBe(supported);
 });
