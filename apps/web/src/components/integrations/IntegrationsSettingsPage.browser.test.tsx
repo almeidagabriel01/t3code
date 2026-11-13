@@ -12,6 +12,7 @@ import { openCommandPalette } from "~/commandPaletteBus";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
 import {
+  ENVIRONMENT_ID,
   fakeIntegrations,
   installFakeEnvironment,
   publishIntegrations,
@@ -106,11 +107,13 @@ it("an agent's link opens the entry: its detail once connected, otherwise a sear
     detectionSources: [],
   });
   {
-    const { screen } = await openApp("/settings/integrations?entry=linear");
+    const { screen } = await openApp(
+      `/settings/integrations?machine=${ENVIRONMENT_ID}&entry=linear`,
+    );
     await using _screen = screen;
     await expect.element(page.getByRole("dialog").getByText("Linear")).toBeVisible();
   }
-  const { screen } = await openApp("/settings/integrations?entry=notion");
+  const { screen } = await openApp(`/settings/integrations?machine=${ENVIRONMENT_ID}&entry=notion`);
   await using _screen = screen;
   await expect
     .element(page.getByRole("searchbox", { name: "Search integrations" }))
