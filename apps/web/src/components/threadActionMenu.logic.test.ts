@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildThreadActionMenuItems,
   isAssistantSubagent,
+  isNativeSubagent,
   threadActionRequiresOperate,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
@@ -139,6 +140,38 @@ describe("buildThreadActionMenuItems", () => {
     ];
     expect(projectOnly.filter((id) => ids.includes(id as never))).toEqual(shown ? projectOnly : []);
     expect(ids).toEqual(expect.arrayContaining(["copy-thread", "copy-thread-id"]));
+  });
+
+  it.each([
+    ["a project thread's subagent", "thread-1", ["copy-path", "copy-branch"]],
+    ["an assistant's subagent", "assistant:jarvis:1", []],
+  ] as const)("keeps only what applies on a native subagent: %s", (_name, parent, copyPlace) => {
+    const thread = { lineage: { parentThreadId: parent, relationshipToParent: "subagent" } };
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canFind: true,
+      canOpenSideBySide: true,
+      canShareWithGuest: true,
+      canLinkCard: true,
+      branch: "feature/retry",
+      projectFilter: { label: "Web", isActive: false },
+      subagent: isNativeSubagent(thread),
+      outsideProjects: isAssistantSubagent(thread),
+    });
+    expect(items.map((item) => item.id)).toEqual([
+      "find",
+      "open-side-by-side",
+      "pin",
+      "settle",
+      "mark-unread",
+      "copy",
+    ]);
+    expect(items.find((item) => item.id === "copy")?.children?.map((child) => child.id)).toEqual([
+      ...copyPlace,
+      "copy-thread",
+      "copy-thread-id",
+    ]);
+    expect(items.find((item) => item.id === "mark-unread")?.separatorBefore).toBe(true);
   });
 
   it.each([

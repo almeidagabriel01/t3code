@@ -113,6 +113,8 @@ export interface ThreadActionMenuState {
   readonly canRename?: boolean | undefined;
   /** An assistant's delegated subagent: it lives outside project lists, as the assistant chat does. */
   readonly outsideProjects?: boolean | undefined;
+  /** A native subagent: its parent run owns it, so only reading, pinning and settling apply. */
+  readonly subagent?: boolean | undefined;
   /** Set when an assistant launched this thread as a task. */
   readonly assistantTask?:
     | { readonly dismissed: boolean; readonly canDismiss: boolean }
@@ -126,6 +128,21 @@ export const isAssistantSubagent = (thread: {
 }) =>
   thread.lineage.parentThreadId !== null &&
   assistantIdFromThreadId(thread.lineage.parentThreadId) !== null;
+
+export const isNativeSubagent = (thread: {
+  readonly lineage: { readonly relationshipToParent?: string | null };
+}) => thread.lineage.relationshipToParent === "subagent";
+
+const SUBAGENT_ACTIONS: ReadonlySet<ThreadActionMenuId> = new Set([
+  "find",
+  "open-side-by-side",
+  "pin",
+  "unpin",
+  "settle",
+  "unsettle",
+  "mark-unread",
+  "copy",
+]);
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
@@ -338,9 +355,15 @@ export function buildThreadActionMenuItems(
           },
         ]),
   ];
+  const offered =
+    state.subagent === true
+      ? items
+          .filter((item) => SUBAGENT_ACTIONS.has(item.id))
+          .map((item) => (item.id === "mark-unread" ? { ...item, separatorBefore: true } : item))
+      : items;
   return state.canOperate
-    ? items
-    : items.map((item) =>
+    ? offered
+    : offered.map((item) =>
         threadActionRequiresOperate(item.id)
           ? {
               ...item,

@@ -172,6 +172,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   isAssistantSubagent,
+  isNativeSubagent,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -2453,6 +2454,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               outsideProjects: isAssistantSubagent(thread),
+              subagent: isNativeSubagent(thread),
               // A subagent row has no title input to rename in.
               canRename: !isAssistantSubagent(thread),
               supports: {

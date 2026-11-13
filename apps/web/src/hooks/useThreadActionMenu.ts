@@ -26,6 +26,7 @@ import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.sn
 import {
   buildThreadActionMenuItems,
   isAssistantSubagent,
+  isNativeSubagent,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -178,6 +179,7 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         assistant: assistantEntry ? { name: assistantEntry.assistant.name } : null,
         outsideProjects: isAssistantSubagent(thread),
+        subagent: isNativeSubagent(thread),
         assistantTask: assistantTaskMenuState(
           readAssistantTask(threadRef.environmentId, threadRef.threadId),
           thread,
