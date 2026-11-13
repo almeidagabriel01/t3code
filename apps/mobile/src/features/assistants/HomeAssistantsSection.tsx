@@ -293,104 +293,109 @@ function AssistantRow(props: {
           props.nested && "ml-3.5 border-l border-border pl-1",
         )}
       >
-        <Menu
-          actions={actions}
-          onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
-          shouldOpenOnLongPress
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={statusLabel(assistant.name, state)}
-            disabled={assistant.threadId === null}
-            onPress={() => flows.openConversation(assistant)}
-            className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
+        {/* The menu ignores layout classes, so the row's flex sits on this view. */}
+        <View className="min-w-0 flex-1">
+          <Menu
+            actions={actions}
+            onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+            shouldOpenOnLongPress
           >
-            <View>
-              <AssistantAvatar
-                assistant={assistant}
-                environmentId={environmentId}
-                mood={assistantFace(presence)}
-                size={24}
-              />
-              {state.working || state.needsYou ? (
-                <View className="absolute -right-0.5 -top-0.5">
-                  <SubagentStatusDot
-                    tone={state.working ? "working" : "completed"}
-                    placement="sheet"
-                  />
-                </View>
-              ) : null}
-            </View>
-            <Text
-              className={cn(
-                "shrink text-base font-t3-medium",
-                props.sidebar ? "text-drawer-foreground" : "text-foreground",
-              )}
-              numberOfLines={1}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={statusLabel(assistant.name, state)}
+              disabled={assistant.threadId === null}
+              onPress={() => flows.openConversation(assistant)}
+              className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
             >
-              {assistant.name}
-            </Text>
-            {assistant.role === "" ? null : (
-              <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
-                <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                  {assistant.role}
-                </Text>
-              </View>
-            )}
-            {props.environmentLabel ? (
-              <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
-                {props.environmentLabel}
-              </Text>
-            ) : null}
-            <View className="min-w-2 flex-1" />
-            {shownSites.map(({ site, project }) => (
-              <Pressable
-                key={`${site.environmentId}:${site.projectId}`}
-                testID="assistant-work-site"
-                accessibilityRole="button"
-                accessibilityLabel={`Working in ${project.title}`}
-                hitSlop={8}
-                onPress={() => flows.openConversation({ threadId: site.threadId })}
-                // Keeps the long press for the row's menu.
-                onLongPress={() => undefined}
-                className="active:opacity-70"
-              >
-                <ProjectFavicon
-                  environmentId={project.environmentId}
-                  faviconPath={project.faviconPath}
-                  projectIcon={project.projectIcon}
-                  size={16}
-                  projectTitle={project.title}
-                  workspaceRoot={project.workspaceRoot}
+              <View>
+                <AssistantAvatar
+                  assistant={assistant}
+                  environmentId={environmentId}
+                  mood={assistantFace(presence)}
+                  size={24}
                 />
-              </Pressable>
-            ))}
-            {workSites.length > shownSites.length ? (
-              <Text className={cn("text-2xs", muted)}>+{workSites.length - shownSites.length}</Text>
-            ) : null}
-            {meta !== null ? (
+                {state.working || state.needsYou ? (
+                  <View className="absolute -right-0.5 -top-0.5">
+                    <SubagentStatusDot
+                      tone={state.working ? "working" : "completed"}
+                      placement="sheet"
+                    />
+                  </View>
+                ) : null}
+              </View>
               <Text
-                testID="assistant-status"
                 className={cn(
-                  "max-w-[45%] shrink text-xs",
-                  moodTextClass(presence.mood, props.sidebar),
+                  "shrink text-base font-t3-medium",
+                  props.sidebar ? "text-drawer-foreground" : "text-foreground",
                 )}
                 numberOfLines={1}
               >
-                {meta}
+                {assistant.name}
               </Text>
-            ) : props.projectLabel && workSites.length === 0 ? (
-              <View
-                testID="assistant-project"
-                className="max-w-24 rounded-md border border-border px-1.5 py-px"
-              >
-                <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                  {props.projectLabel}
+              {assistant.role === "" ? null : (
+                <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
+                  <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                    {assistant.role}
+                  </Text>
+                </View>
+              )}
+              {props.environmentLabel ? (
+                <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
+                  {props.environmentLabel}
                 </Text>
-              </View>
-            ) : null}
-          </Pressable>
-        </Menu>
+              ) : null}
+              <View className="min-w-2 flex-1" />
+              {shownSites.map(({ site, project }) => (
+                <Pressable
+                  key={`${site.environmentId}:${site.projectId}`}
+                  testID="assistant-work-site"
+                  accessibilityRole="button"
+                  accessibilityLabel={`Working in ${project.title}`}
+                  hitSlop={8}
+                  onPress={() => flows.openConversation({ threadId: site.threadId })}
+                  // Keeps the long press for the row's menu.
+                  onLongPress={() => undefined}
+                  className="active:opacity-70"
+                >
+                  <ProjectFavicon
+                    environmentId={project.environmentId}
+                    faviconPath={project.faviconPath}
+                    projectIcon={project.projectIcon}
+                    size={16}
+                    projectTitle={project.title}
+                    workspaceRoot={project.workspaceRoot}
+                  />
+                </Pressable>
+              ))}
+              {workSites.length > shownSites.length ? (
+                <Text className={cn("text-2xs", muted)}>
+                  +{workSites.length - shownSites.length}
+                </Text>
+              ) : null}
+              {meta !== null ? (
+                <Text
+                  testID="assistant-status"
+                  className={cn(
+                    "max-w-[45%] shrink text-xs",
+                    moodTextClass(presence.mood, props.sidebar),
+                  )}
+                  numberOfLines={1}
+                >
+                  {meta}
+                </Text>
+              ) : props.projectLabel && workSites.length === 0 ? (
+                <View
+                  testID="assistant-project"
+                  className="max-w-24 rounded-md border border-border px-1.5 py-px"
+                >
+                  <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                    {props.projectLabel}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </Menu>
+        </View>
         {foldable ? (
           <Pressable
             accessibilityRole="button"

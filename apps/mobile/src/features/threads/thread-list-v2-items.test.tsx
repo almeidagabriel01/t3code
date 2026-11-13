@@ -84,9 +84,10 @@ vi.mock("../../state/thread-pr-presentation", () => ({ resolveThreadPrBadgeActio
 vi.mock("../../state/use-thread-pr", () => ({ useThreadPr: () => null }));
 vi.mock("../home/swipe-row-activation", () => ({ useSwipeRowDormant: () => false }));
 vi.mock("../home/thread-swipe-actions", () => ({
-  ThreadSwipeable: (props: { children: (close: () => void) => ReactNode }) => (
-    <div>{props.children(() => {})}</div>
-  ),
+  ThreadSwipeable: (props: {
+    compactActions: boolean;
+    children: (close: () => void) => ReactNode;
+  }) => <div data-compact={String(props.compactActions)}>{props.children(() => {})}</div>,
 }));
 vi.mock("./openThreadHandoff", () => ({ openThreadHandoff: vi.fn() }));
 vi.mock("./thread-handoff", () => ({ canHandoffThread: () => false }));
@@ -200,6 +201,7 @@ describe("ThreadListV2Row compact", () => {
     mocks.task = null;
     const list = await mount({ pinningSupported: true, reorderSupported: true });
     expect(list.textContent).toContain("Arrange threads…");
+    expect(list.querySelector("[data-compact]")?.getAttribute("data-compact")).toBe("false");
     const working = {
       ...(thread as object),
       pinnedAt: "2026-11-01T00:00:00.000Z",
@@ -214,6 +216,7 @@ describe("ThreadListV2Row compact", () => {
       reorderSupported: true,
     });
     expect(compact.textContent).not.toContain("Arrange threads…");
+    expect(compact.querySelector("[data-compact]")?.getAttribute("data-compact")).toBe("true");
     expect(compact.textContent).toContain("Unpin");
     const symbols = [...compact.querySelectorAll("s")].map((symbol) => symbol.textContent);
     expect(symbols).toContain("pin");

@@ -345,7 +345,7 @@ const hostRow = (item: HostItem) => (
 const render = (
   sidebar = true,
   labels = new Map<string, string>(),
-  extra: { renderThread?: (item: never) => ReactNode; drawn?: boolean } = {},
+  extra: { renderThread?: unknown; drawn?: boolean } = {},
 ) =>
   act(() =>
     root.render(
@@ -355,7 +355,7 @@ const render = (
           gutter={4}
           sidebar={sidebar}
           environmentLabelById={labels}
-          {...(extra.renderThread ? { renderThread: extra.renderThread } : {})}
+          {...(extra.renderThread ? { renderThread: extra.renderThread as never } : {})}
         />
         {extra.drawn === undefined ? null : <JumpProbe drawn={extra.drawn} />}
       </RegistryProvider>,
