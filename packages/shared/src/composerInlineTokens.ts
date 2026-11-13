@@ -42,7 +42,7 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
   /** Group members' handles: an `@handle` naming one is a member, not a file. */
   readonly memberHandles?: ReadonlyArray<string>;
-  /** Group projects' `#slug`s (see `assistantGroupProjectSlug`). */
+  /** Group projects' `#slug`s (see `assistantGroupProjectSlugs`). */
   readonly projectSlugs?: ReadonlyArray<string>;
 }
 

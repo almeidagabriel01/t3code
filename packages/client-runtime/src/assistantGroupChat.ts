@@ -446,10 +446,8 @@ export function assistantGroupMentionTarget<
     : null;
 }
 
-const linkProjects = (
-  text: string,
-  projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
-) => {
+const linkProjects = (text: string, projects: ReadonlyArray<MentionProject>) => {
+  if (!text.includes("#")) return text;
   const slugs = projectSlugs(projects);
   let out = "";
   let at = 0;
