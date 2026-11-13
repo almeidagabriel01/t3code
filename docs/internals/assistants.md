@@ -261,8 +261,8 @@ the editors lock the name once saved.
 
 Providers read connectors at session start through `McpProviderSessions.connectors(threadId)`, a
 late-bound source the runtime layer fills (provider-core sits below assistants). It resolves secrets
-then, answers from `AssistantDirectory.forThread`, and is empty for any non-assistant thread. One
-unreadable secret drops only that connector. Per provider:
+then, answers from `AssistantDirectory.forThread`, and appends the T3-wide servers the thread may use
+(see Integrations below). One unreadable secret drops only that connector. Per provider:
 
 - Claude: merged into `mcpServers` next to `t3-code`, never into `allowedTools`, so a read-only
   assistant still asks before calling a connector tool and the runtime mode governs the rest.
@@ -277,6 +277,24 @@ unreadable secret drops only that connector. Per provider:
 
 Command connectors run as the server's user outside any sandbox; the user wrote them, but a
 read-only access level does not confine them.
+
+## Integrations (T3-wide services behind the proxy)
+
+A connected integration never reaches a provider with its token. `GlobalMcpConnectors` hands the
+thread `<name>_t3` pointing at `/mcp/integrations/<name>` with the thread's T3 session bearer, and
+`IntegrationProxy` attaches the upstream token server-side, refreshing once on a 401. The proxy
+re-checks the thread's selection (`Assistant.integrations`) and the integration's availability on
+every request, so a change applies without restarting the session.
+
+The proxy is the access boundary for assistants, unlike connectors: read only blocks a write
+`tools/call` and Ask before acting files one decision per tool and arguments hash, which an
+approval forwards once. A tool counts as a write unless the upstream `tools/list` annotated it
+`readOnlyHint` or the catalog lists it as read-only. Because T3 already decided, Claude gets
+`mcp__<name>_t3__*` in `allowedTools` and Codex `default_tools_approval_mode = "approve"` on assistant
+threads; Cursor and ACP agents have no such switch and may prompt again. ACP agents without http
+MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrations work there
+although http connectors do not. OpenCode, Pi and Muse read no connectors, so integrations never
+reach them.
 
 ## Autonomy and the loop guard
 
