@@ -13,6 +13,7 @@ import {
   resolveRemoto,
   startLinuxRun,
   stopRemote,
+  withProjectBins,
 } from "./runnerExec.ts";
 
 const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runner-exec-"));
@@ -26,7 +27,7 @@ const fake = (body: string) => {
 };
 const M = "\\036remoto";
 
-const runWith = (remoto: string) => {
+const runWith = (remoto: string, script = "vp test run", cwd = dir) => {
   const stdout: Buffer[] = [];
   let stderr = "";
   const phases: string[] = [];
@@ -35,8 +36,9 @@ const runWith = (remoto: string) => {
   const run = startLinuxRun({
     remoto,
     program: "/bin/zsh",
-    args: ["-c", "vp test run"],
-    cwd: dir,
+    args: ["-c", script],
+    cwd,
+    root: dir,
     environment: process.env,
     machine: DEFAULT_MACHINE_CONFIG,
     macOnly: ["CaptureDevices.test.ts"],
@@ -61,8 +63,20 @@ describe("running on Linux through remoto", () => {
     ["/bin/zsh", ["-c", "vp test"], ["bash", "-c", "vp test"]],
     ["/opt/homebrew/bin/node", ["--test"], ["node", "--test"]],
     ["vp", ["test"], ["vp", "test"]],
+    // Paths inside the checkout become relative to the folder it runs from there.
+    [
+      "vp",
+      ["test", "run", "/w/repo/apps/web/src/a.test.ts"],
+      ["vp", "test", "run", "src/a.test.ts"],
+    ],
+    ["vp", ["test", "--root=/w/repo/apps/web"], ["vp", "test", "--root=."]],
+    ["vp", ["test", "--dir=/w/repo/packages/x"], ["vp", "test", "--dir=../../packages/x"]],
+    ["vp", ["test", "/tmp/out.json", "--x=/tmp/y"], ["vp", "test", "/tmp/out.json", "--x=/tmp/y"]],
+    ["/w/repo/node_modules/.bin/vitest", ["run"], ["../../node_modules/.bin/vitest", "run"]],
+    ["/w/repo/apps/web/run.sh", [], ["./run.sh"]],
+    ["./scripts/check.sh", [], ["./scripts/check.sh"]],
   ] as const)("%s %j runs there as %j", (program, args, expected) => {
-    expect(remoteCommand(program, args)).toEqual(expected);
+    expect(remoteCommand(program, args, "/w/repo/apps/web", "/w/repo")).toEqual(expected);
   });
 
   it("passes output through, strips markers into progress and keeps the command's code", async () => {
@@ -84,8 +98,43 @@ describe("running on Linux through remoto", () => {
     expect(result.progress).toMatchObject({ id: "app-1a2b3c4d", pgid: 42 });
     expect(result.platform).toEqual(["FAIL src/device/CaptureDevices.test.ts"]);
     expect(phases).toEqual(["syncing", "installing", "running", "running"]);
-    expect(out()).toBe("args:bash -c vp test run\nFAIL src/device/CaptureDevices.test.ts\n");
+    expect(out()).toBe(
+      `args:${withProjectBins(["bash", "-c", "vp test run"], dir, dir).join(" ")}\nFAIL src/device/CaptureDevices.test.ts\n`,
+    );
     expect(err()).toBe("to-stderr\npartial");
+  });
+
+  it.each([
+    ["/w", '"$PWD/node_modules/.bin:$PATH"'],
+    [
+      "/w/apps/web",
+      '"$PWD/node_modules/.bin:${PWD%/*}/node_modules/.bin:${PWD%/*/*}/node_modules/.bin:$PATH"',
+    ],
+  ])("from %s, Linux looks for project tools in %s first", (cwd, path) => {
+    expect(withProjectBins(["vp", "test"], cwd, "/w")).toEqual([
+      "bash",
+      "-c",
+      `export PATH=${path}; exec "$@"`,
+      "t3",
+      "vp",
+      "test",
+    ]);
+  });
+
+  it("runs the nearest project tool from the job's folder, then the checkout's", async () => {
+    const web = NodePath.join(dir, "apps", "web");
+    const tool = (folder: string, name: string, text: string) => {
+      const bin = NodePath.join(folder, "node_modules", ".bin");
+      NodeFS.mkdirSync(bin, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(bin, name), `#!/bin/sh\necho ${text}\n`, { mode: 0o755 });
+    };
+    tool(dir, "vp", "root-vp");
+    tool(dir, "vitest", "root-vitest");
+    tool(web, "vp", "web-vp");
+    // Stands in for `remoto-rodar`, which runs the command in the same folder of the copy.
+    const { run, out } = runWith(fake('exec "$@"'), "vp; vitest", web);
+    expect((await run.done).outcome).toEqual({ kind: "unavailable", touched: false });
+    expect(out()).toBe("web-vp\nroot-vitest\n");
   });
 
   it("reads a lost connection after the start as dropped, and exit 75 as unavailable", async () => {

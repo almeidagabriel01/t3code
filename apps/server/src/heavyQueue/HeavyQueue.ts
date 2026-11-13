@@ -22,8 +22,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { estimate, hasHeadroom, machineHold, SAMPLE_FRESH_MS, signatureOf } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
+import { withoutUsage } from "./classifyHeavyCommands.ts";
 import { hookScript, shellQuote } from "./heavyHook.ts";
 import * as QueueFile from "./queueFile.ts";
+import type { QueuedEntry } from "./runner.ts";
 
 const POLL_INTERVAL = "1 second";
 const STREAM_INTERVAL = "2 seconds";
@@ -73,6 +75,12 @@ export class HeavyQueue extends Context.Service<
     readonly cancel: (id: string) => Effect.Effect<void, HeavyQueueError>;
     /** How many entries may run at once; 1 is strictly one at a time. */
     readonly setMaxRunning: (maxRunning: number) => Effect.Effect<void, HeavyQueueError>;
+    /** The Mac counts as over its limits below this share of free memory. */
+    readonly setMacMemoryFloorPercent: (percent: number) => Effect.Effect<void, HeavyQueueError>;
+    /** The Mac counts as over its limits above this CPU use. */
+    readonly setMacCpuCeilingPercent: (percent: number) => Effect.Effect<void, HeavyQueueError>;
+    /** How long readings must stay past a limit, or back under it, before routing follows. */
+    readonly setHeavyOverLimitSeconds: (seconds: number) => Effect.Effect<void, HeavyQueueError>;
     readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
     /** Off starts every heavy job at once, waiting ones included; on restores the rules for new arrivals. */
     readonly setEnabled: (enabled: boolean) => Effect.Effect<void, HeavyQueueError>;
@@ -106,6 +114,11 @@ export class HeavyQueue extends Context.Service<
     ) => Effect.Effect<A, E | HeavyQueueError, R>;
     /** The shell prefix agents put before a heavy command. */
     readonly command: Effect.Effect<string>;
+    /** Where `line`, started now from `cwd`, would run; nothing is queued. */
+    readonly probe: (
+      line: string,
+      cwd: string,
+    ) => Effect.Effect<ReturnType<typeof QueueFile.probe>, HeavyQueueError>;
   }
 >()("t3/heavyQueue/HeavyQueue") {}
 
@@ -218,10 +231,16 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const { doc, plan } = QueueFile.readPlan(dir, now);
     const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
+    const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, { cpu: number; memoryBytes: number; durationMs: number }> = {};
     for (const entry of entries) {
-      if (entry.startedAt !== null || (doc.history[signatureOf(entry.label)] ?? []).length === 0) {
+      // Usage is only known for this Mac's runs; a job headed for Linux shows none.
+      if (
+        entry.startedAt !== null ||
+        plan.routes[entry.id] === "linux" ||
+        (doc.history[signatureOf(entry.label)] ?? []).length === 0
+      ) {
         continue;
       }
       const usual = estimate(doc.history, entry, 1);
@@ -229,15 +248,21 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
         estimates[entry.id] = { ...usual, durationMs: usual.durationMs };
     }
     return {
-      entries,
+      // A job's full line stays in the file; the row shows its label.
+      entries: entries.map(({ line: _line, routeReason: _reason, ...entry }: QueuedEntry) =>
+        entry.runner === "linux" ? withoutUsage(entry) : entry,
+      ),
       estimates,
       enabled,
       paused,
       rules,
       maxRunning,
+      macMemoryFloorPercent,
+      macCpuCeilingPercent,
+      heavyOverLimitSeconds,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
-      room: plan.room && (!fresh || hasHeadroom(sample)),
+      room: plan.room && (!fresh || hasHeadroom(sample, doc)),
       claudeHookInstalled: ClaudeSettingsHook.readHeavyHookInstalled(settingsPath),
       deviceIdleMinutes,
       machine: fresh
@@ -251,7 +276,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
           }
         : null,
       // With nothing held back, the limit the same reading is past, so the summary never claims room.
-      hold: plan.mac?.hold ?? (fresh ? machineHold(sample) : null),
+      hold: plan.mac?.hold ?? (fresh ? machineHold(sample, doc) : null),
       linux: linuxState(doc),
       macOnly: entries.filter((entry) => QueueFile.staysOnMac(doc, entry)).map((entry) => entry.id),
       routes: plan.routes,
@@ -332,6 +357,15 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     setMaxRunning: Effect.fn("HeavyQueue.setMaxRunning")((maxRunning: number) =>
       change(() => QueueFile.setMaxRunning(dir, maxRunning)),
     ),
+    setMacMemoryFloorPercent: Effect.fn("HeavyQueue.setMacMemoryFloorPercent")((percent: number) =>
+      change(() => QueueFile.setLimit(dir, "macMemoryFloorPercent", percent)),
+    ),
+    setMacCpuCeilingPercent: Effect.fn("HeavyQueue.setMacCpuCeilingPercent")((percent: number) =>
+      change(() => QueueFile.setLimit(dir, "macCpuCeilingPercent", percent)),
+    ),
+    setHeavyOverLimitSeconds: Effect.fn("HeavyQueue.setHeavyOverLimitSeconds")((seconds: number) =>
+      change(() => QueueFile.setLimit(dir, "heavyOverLimitSeconds", seconds)),
+    ),
     setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
       change(() => QueueFile.setPaused(dir, paused)),
     ),
@@ -376,6 +410,13 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     ),
     withSlot,
     command: Effect.succeed(command),
+    probe: Effect.fn("HeavyQueue.probe")(function* (line: string, cwd: string) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      return yield* Effect.try({
+        try: () => QueueFile.probe(dir, line, cwd, now),
+        catch: unavailable,
+      });
+    }),
   });
 });
 

@@ -15,7 +15,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { selectKnownTerminalSessions } from "../../state/terminalSessions";
 import { terminalEnvironment } from "../../state/terminal";
-import { toMachineShare } from "./resourceUsage.logic";
+import { toMachineShare } from "@t3tools/client-runtime/state/resourceTree";
 
 export interface EnvironmentResources {
   readonly environmentId: EnvironmentId;

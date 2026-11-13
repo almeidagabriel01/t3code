@@ -8,7 +8,8 @@ export interface SegmentedControlProps<Value extends number | string> {
     /** With icons, each segment stacks its icon over a short label, so more segments fit. */
     readonly icon?: AppSymbolName;
   }[];
-  readonly selected: Value;
+  /** Null selects nothing, as when the selected targets disagree. */
+  readonly selected: Value | null;
   readonly onSelect: (value: Value) => void;
   /** Compact uses a 32-point capsule; default uses 36 points on iOS and 40 on Android. */
   readonly size?: "default" | "compact";

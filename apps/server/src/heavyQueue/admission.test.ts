@@ -5,11 +5,14 @@ import type { HeavyQueueEntry } from "@t3tools/contracts";
 import {
   estimate,
   kindOf,
+  machineHold,
   plan,
   signatureOf,
+  sustain,
   workersFor,
   type PlanInput,
   type Run,
+  type Sustained,
 } from "./admission.ts";
 
 const GIB = 1024 ** 3;
@@ -43,6 +46,8 @@ const base: Omit<PlanInput, "entries"> = {
   sample: calm,
   lastStartAt: null,
   holding: false,
+  macMemoryFloorPercent: 20,
+  macCpuCeilingPercent: 70,
   now: NOW,
 };
 const run = (cpu: number, memGb: number, durationMs: number): Run => ({
@@ -451,5 +456,134 @@ describe("admission plan", () => {
     const blocked = plan({ ...base, entries, sample: { ...calm, availableMemoryBytes: 9 * GIB } });
     expect(blocked.holding).toBe(true);
     expect(blocked.room).toBe(false);
+  });
+});
+
+describe("the Mac's limits are settings", () => {
+  const limits = (macMemoryFloorPercent: number, macCpuCeilingPercent: number) => ({
+    macMemoryFloorPercent,
+    macCpuCeilingPercent,
+  });
+
+  it.each([
+    // 8 of 32 GiB free is 25%; 4 of 10 cores busy is 40%.
+    [limits(20, 70), null],
+    [limits(30, 70), "memory-floor"],
+    [limits(20, 35), "cpu"],
+    [limits(5, 100), null],
+  ] as const)("%o holds %s", (limit, hold) => {
+    const sample = { ...calm, availableMemoryBytes: 8 * GIB, busyCores: 4 };
+    expect(machineHold(sample, limit)).toBe(hold);
+    const entries = [entry("r", "vp run typecheck", 60_000), entry("a", "vp run typecheck")];
+    expect(plan({ ...base, ...limit, entries, sample }).hold).toBe(hold);
+  });
+
+  it("reopens five points past a configured floor and names the configured CPU limit", () => {
+    const entries = [entry("r", "vp run build", 60_000), entry("a", "vp run build")];
+    // 15.9 - 4 GiB is 37% of 32: above a 35% floor, below its 40% reopen point.
+    const tight = { ...calm, availableMemoryBytes: 15.9 * GIB };
+    const floor = { ...base, macMemoryFloorPercent: 35, entries, sample: tight };
+    expect(plan(floor).admit).toBe("a");
+    expect(plan({ ...floor, holding: true }).hold).toBe("job-memory");
+    const busy = plan({
+      ...base,
+      macCpuCeilingPercent: 40,
+      entries,
+      sample: { ...calm, busyCores: 1 },
+    });
+    expect(busy.reasons.a).toBe("needs ~4.0 cores; CPU 10%, limit 40%");
+  });
+});
+
+describe("limits judged on sustained readings", () => {
+  const WINDOW = 20_000;
+  /** Folds readings `[secondsIn, over]` and returns the verdict after each. */
+  const verdicts = (readings: ReadonlyArray<readonly [number, boolean]>) => {
+    let state: Sustained | null = null;
+    return readings.map(([seconds, over]) => {
+      state = sustain(state, over, seconds * 1000, WINDOW);
+      return state.overLimit;
+    });
+  };
+
+  it.each([
+    [
+      "a spike shorter than the window stays put",
+      [
+        [0, false],
+        [2, true],
+        [4, true],
+        [6, false],
+      ],
+      [false, false, false, false],
+    ],
+    [
+      "a sustained overload moves once it fills the window",
+      [
+        [0, true],
+        [10, true],
+        [20, true],
+        [30, true],
+      ],
+      [false, false, true, true],
+    ],
+    [
+      "a dip inside the overload restarts its run",
+      [
+        [0, true],
+        [10, false],
+        [20, true],
+        [30, true],
+        [40, true],
+      ],
+      [false, false, false, false, true],
+    ],
+    [
+      "back under for less than the window stays over",
+      [
+        [0, true],
+        [20, true],
+        [22, false],
+        [30, false],
+      ],
+      [false, true, true, true],
+    ],
+    [
+      "recovers once under for the whole window",
+      [
+        [0, true],
+        [20, true],
+        [22, false],
+        [42, false],
+      ],
+      [false, true, true, false],
+    ],
+    [
+      "a spike while recovering restarts the recovery",
+      [
+        [0, true],
+        [20, true],
+        [22, false],
+        [30, true],
+        [32, false],
+        [52, false],
+      ],
+      [false, true, true, true, true, false],
+    ],
+  ] as const)("%s", (_name, readings, expected) => {
+    expect(verdicts(readings)).toEqual(expected);
+  });
+
+  it("starts from room after a gap and from old files without the fields", () => {
+    expect(sustain(null, true, 0, WINDOW)).toEqual({
+      overLimit: false,
+      overLimitSince: 0,
+      underLimitSince: null,
+    });
+    expect(sustain({}, false, 5, WINDOW)).toEqual({
+      overLimit: false,
+      overLimitSince: null,
+      underLimitSince: 5,
+    });
   });
 });

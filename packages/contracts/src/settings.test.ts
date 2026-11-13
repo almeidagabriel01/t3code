@@ -605,6 +605,18 @@ describe("ServerSettings project overrides across versions", () => {
       addedByNewerServer: { mode: "kept" },
     });
   });
+
+  it("still reads settings saved with the removed Runner overflow", () => {
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      runnerWhere: "automatic",
+      runnerOverflow: 3,
+      projectSettingsOverrides: { [projectId]: { runnerWhere: "linux", runnerOverflow: 5 } },
+    });
+    expect(settings.runnerWhere).toBe("automatic");
+    expect(settings.projectSettingsOverrides[projectId]?.runnerWhere).toBe("linux");
+    expect(decodeServerSettingsPatch({ runnerOverflow: 3 })).toEqual({});
+  });
 });
 
 describe("resolveProjectProviderInstanceEnabled", () => {

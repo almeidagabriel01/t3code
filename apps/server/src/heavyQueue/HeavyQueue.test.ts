@@ -159,6 +159,10 @@ describe("HeavyQueue", () => {
           publisher: { pid: process.pid, home: dir, primary: true },
         });
         expect(JSON.stringify(hook(call))).toContain("--name 'vp run build'");
+        // Builds never leave this Mac, and asking queues nothing.
+        const before = Queue.read(dir);
+        expect(yield* queue.probe("vp run build", dir)).toMatchObject({ runsOn: "mac" });
+        expect(Queue.read(dir)).toEqual(before);
       }),
     ),
   );
@@ -273,6 +277,54 @@ describe("HeavyQueue", () => {
     ),
   );
 
+  it.effect("state shows usage for this Mac's jobs only, never a Linux job's wrapper", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        const checkout = NodePath.join(dir, "repo");
+        NodeFS.mkdirSync(NodePath.join(checkout, ".git"), { recursive: true });
+        const job = (id: string, cwd = checkout): HeavyQueueEntry => ({
+          ...holder,
+          id,
+          label: "vp test run",
+          cwd,
+        });
+        Queue.remove(dir, "holder");
+        // One Mac run of the command teaches its usual cost.
+        Queue.enqueue(dir, job("past", "/"));
+        Queue.tryStart(dir, "past");
+        Queue.recordSample(
+          dir,
+          { at: 1, busyCores: 1, cpuCount: 8, availableMemoryBytes: 5, totalMemoryBytes: 10 },
+          { past: { cpu: 3, memoryBytes: 1000 } },
+        );
+        Queue.remove(dir, "past");
+        Queue.publishRunner(dir, {
+          global: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, runnerWhere: "linux" },
+          machine: DEFAULT_MACHINE_CONFIG,
+          projects: [],
+          publisher: { pid: process.pid, home: dir, primary: true },
+        });
+        Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") });
+        Queue.enqueue(dir, job("linuxRun"));
+        expect(Queue.tryStart(dir, "linuxRun")).toMatchObject({ runner: "linux" });
+        // As a version that sampled the wrapper left it in the file.
+        const file = NodePath.join(dir, "queue.json");
+        const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+        doc.entries[0] = { ...doc.entries[0], cpu: 0.1, memory: 9, peakCpu: 0.2, peakMemory: 9 };
+        NodeFS.writeFileSync(file, JSON.stringify(doc));
+        Queue.enqueue(dir, job("macWaiter", "/"));
+        Queue.enqueue(dir, job("linuxWaiter"));
+        const state = yield* queue.state;
+        expect(state.routes).toMatchObject({ macWaiter: "mac", linuxWaiter: "linux" });
+        expect(Object.keys(state.estimates ?? {})).toEqual(["macWaiter"]);
+        const running = state.entries.find((entry) => entry.id === "linuxRun");
+        for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
+          expect(running).not.toHaveProperty(key);
+        }
+      }),
+    ),
+  );
+
   it.effect("state gives a waiter its command's usual cost only when it has history", () =>
     withQueue((dir, queue) =>
       Effect.gen(function* () {
@@ -343,6 +395,19 @@ describe("HeavyQueue", () => {
         yield* queue.setMaxRunning(1);
         expect((yield* queue.state).reasons["y"]).toBe("paused");
         expect((yield* queue.state).maxRunning).toBe(1);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 20,
+          macCpuCeilingPercent: 70,
+          heavyOverLimitSeconds: 20,
+        });
+        yield* queue.setMacMemoryFloorPercent(30);
+        yield* queue.setMacCpuCeilingPercent(90);
+        yield* queue.setHeavyOverLimitSeconds(60);
+        expect(yield* queue.state).toMatchObject({
+          macMemoryFloorPercent: 30,
+          macCpuCeilingPercent: 90,
+          heavyOverLimitSeconds: 60,
+        });
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);

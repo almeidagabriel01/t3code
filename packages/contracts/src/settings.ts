@@ -40,7 +40,9 @@ import {
   TrimmedString,
 } from "./baseSchemas.ts";
 import { ForkUpdateChannelSetting } from "./forkUpdates.ts";
+import { HeavyNoticesMode } from "./heavyNotices.ts";
 import {
+  HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   RunnerAskMinutes,
   RunnerDeadlineAction,
@@ -48,10 +50,11 @@ import {
   RunnerHost,
   RunnerLinuxSlots,
   RunnerOfflineAfterFailures,
-  RunnerOverflow,
   RunnerPatterns,
   RunnerSshTimeoutSeconds,
   RunnerStopWaitSeconds,
+  RunnerLinuxMemoryFloorPercent,
+  RunnerLinuxCpuCeilingPercent,
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
@@ -1362,7 +1365,6 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "speechProjectCustomWords",
   "runnerEnabled",
   "runnerWhere",
-  "runnerOverflow",
   "runnerUnavailable",
   "runnerAskMinutes",
   "runnerDeadlineAction",
@@ -1431,7 +1433,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
@@ -1715,9 +1716,6 @@ export const ServerSettings = Schema.Struct({
   runnerWhere: RunnerWhere.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerWhere)),
   ),
-  runnerOverflow: RunnerOverflow.pipe(
-    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerOverflow)),
-  ),
   runnerUnavailable: RunnerUnavailablePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerUnavailable)),
   ),
@@ -1753,6 +1751,17 @@ export const ServerSettings = Schema.Struct({
   ),
   runnerStopWaitSeconds: RunnerStopWaitSeconds.pipe(
     Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerStopWaitSeconds)),
+  ),
+  runnerLinuxMemoryFloorPercent: RunnerLinuxMemoryFloorPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent)),
+  ),
+  runnerLinuxCpuCeilingPercent: RunnerLinuxCpuCeilingPercent.pipe(
+    Schema.withDecodingDefault(Effect.succeed(RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent)),
+  ),
+  /** Which heavy job notices clients get: problems, machine changes, or none. */
+  heavyNotices: HeavyNoticesMode.pipe(Schema.withDecodingDefault(Effect.succeed("unexpected"))),
+  heavySlowAgentJobs: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_SLOW_AGENT_JOBS_DEFAULT)),
   ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2242,7 +2251,6 @@ const ServerSettingsPatchFields = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
   runnerWhere: Schema.optionalKey(RunnerWhere),
-  runnerOverflow: Schema.optionalKey(RunnerOverflow),
   runnerUnavailable: Schema.optionalKey(RunnerUnavailablePolicy),
   runnerAskMinutes: Schema.optionalKey(RunnerAskMinutes),
   runnerDeadlineAction: Schema.optionalKey(RunnerDeadlineAction),
@@ -2255,6 +2263,10 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerOfflineAfterFailures: Schema.optionalKey(RunnerOfflineAfterFailures),
   runnerSshTimeoutSeconds: Schema.optionalKey(RunnerSshTimeoutSeconds),
   runnerStopWaitSeconds: Schema.optionalKey(RunnerStopWaitSeconds),
+  runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
+  runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
+  heavyNotices: Schema.optionalKey(HeavyNoticesMode),
+  heavySlowAgentJobs: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

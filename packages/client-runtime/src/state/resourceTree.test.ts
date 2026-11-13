@@ -3,9 +3,11 @@ import type {
   ResourceTelemetryProcess,
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
+  formatCpu,
+  formatMemory,
   appBreakdown,
   attributeTerminalUsage,
   buildResourceTree,
@@ -14,7 +16,7 @@ import {
   orderResourceTree,
   resourceTreeKeys,
   toMachineShare,
-} from "./resourceUsage.logic";
+} from "./resourceTree.ts";
 
 const proc = (
   pid: number,
@@ -370,5 +372,13 @@ describe("toMachineShare", () => {
   it("returns the same object for the same snapshot", () => {
     const source = snapshot(10);
     expect(toMachineShare(source)).toBe(toMachineShare(source));
+  });
+});
+
+describe("formatMemory and formatCpu", () => {
+  it("switches between MB and GB, and keeps a decimal for small shares", () => {
+    expect(formatMemory(4.04 * 1024 ** 3)).toBe("4.04 GB");
+    expect(formatMemory(512 * 1024 ** 2)).toBe("512 MB");
+    expect([formatCpu(0), formatCpu(2.345), formatCpu(12.6)]).toEqual(["0%", "2.3%", "13%"]);
   });
 });

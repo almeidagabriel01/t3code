@@ -45,8 +45,10 @@ describe("peaksOf", () => {
     expect(peaks([entry("a", 10, true)])).toEqual({ a: { cpu: 3, memoryBytes: 600 } });
   });
 
-  it("skips waiting entries and entries missing from the snapshot", () => {
+  it("skips waiting entries, entries missing from the snapshot and Linux jobs", () => {
     expect(peaks([entry("w", 20, false), entry("gone", 99, true)])).toEqual({});
+    const linux = { ...entry("l", 10, true), runner: "linux" as const };
+    expect(Sampler.peaksOf([linux], processes, { l: 5000 })).toEqual({});
   });
 
   it("counts footprint instead of resident bytes, even for a job outside this server's tree", () => {
@@ -90,6 +92,16 @@ Summary Footprint: 6123379008 B`;
         footprints,
       ),
     ).toBe(3_000);
+  });
+
+  it("adds the daemons working for a job, each process once", () => {
+    // 20 is a build daemon outside 10's tree; 99 has already exited.
+    expect(Sampler.peaksOf([entry("a", 10, true)], processes, {}, { a: [20, 99] })).toEqual({
+      a: { cpu: 7, memoryBytes: 1599, daemons: [20] },
+    });
+    expect(Sampler.peaksOf([entry("a", 10, true)], processes, { a: 5000 }, { a: [20] })).toEqual({
+      a: { cpu: 7, memoryBytes: 5000, daemons: [20] },
+    });
   });
 
   it("survives a cycle in the parent links", () => {
@@ -139,6 +151,88 @@ describe("recordSample", () => {
         Queue.recordSample(dir, machine, { a: { cpu: cpu!, memoryBytes: memoryBytes! } });
       }
       expect(Queue.readDoc(dir).entries[0]).toMatchObject(expected);
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // CPU ceiling 70% of 10 cores = 7; the over-limit time is 20 s; one reading every 2 s.
+  // The slowed job runs at 1 core and comes back at 4 (no history: a heavy job's default).
+  it.each([
+    {
+      name: "slows only after CPU stays over the ceiling for the whole window",
+      steps: [
+        { seconds: 20, busy: 8, slowed: false, over: false },
+        { seconds: 2, busy: 8, slowed: false, over: true },
+      ],
+    },
+    {
+      name: "a dip under the ceiling restarts the window",
+      steps: [
+        { seconds: 16, busy: 8, slowed: false, over: false },
+        { seconds: 2, busy: 5, slowed: false, over: false },
+        { seconds: 20, busy: 8, slowed: false, over: false },
+        { seconds: 2, busy: 8, slowed: false, over: true },
+      ],
+    },
+    {
+      name: "stays slowed while the job at full speed would push CPU back over",
+      steps: [
+        { seconds: 22, busy: 8, slowed: false, over: true },
+        { seconds: 60, busy: 5, slowed: true, over: true },
+      ],
+    },
+    {
+      name: "restores once there is room for the job at full speed for the whole window",
+      steps: [
+        { seconds: 22, busy: 8, slowed: false, over: true },
+        { seconds: 20, busy: 3, slowed: true, over: true },
+        { seconds: 2, busy: 3, slowed: true, over: false },
+      ],
+    },
+  ])("$name", ({ steps }) => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-slow-"));
+    try {
+      Queue.enqueue(dir, { ...entry("a", process.pid, false), priority: "low" });
+      Queue.tryStart(dir, "a");
+      let at = 0;
+      for (const { seconds, busy, slowed, over } of steps) {
+        const step = { slowed: slowed ? ["a"] : [], restored: [], slowedDaemons: [] };
+        if (slowed) Queue.recordSlowdown(dir, step);
+        for (let left = seconds; left > 0; left -= 2) {
+          at += 2000;
+          const reading = {
+            at,
+            busyCores: busy,
+            cpuCount: 10,
+            availableMemoryBytes: 9,
+            totalMemoryBytes: 10,
+          };
+          Queue.recordSample(dir, reading, { a: { cpu: 1, memoryBytes: 1 } });
+        }
+        expect(Queue.readDoc(dir).sample?.slow?.overLimit).toBe(over);
+      }
+    } finally {
+      NodeFS.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a running job's daemons only while a sample finds them", () => {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-heavy-record-"));
+    try {
+      Queue.enqueue(dir, entry("a", process.pid, false));
+      Queue.tryStart(dir, "a");
+      const machine = {
+        at: 1,
+        busyCores: 1,
+        cpuCount: 8,
+        availableMemoryBytes: 5,
+        totalMemoryBytes: 10,
+      };
+      Queue.recordSample(dir, machine, { a: { cpu: 3, memoryBytes: 9, daemons: [50, 51] } });
+      expect(Queue.readDoc(dir).entries[0]?.daemons).toEqual([50, 51]);
+      Queue.recordSample(dir, machine, { a: { cpu: 1, memoryBytes: 9 } });
+      expect(Queue.readDoc(dir).entries[0]?.daemons).toBeUndefined();
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
-  type DevicePlatform,
   DeviceAccessDeniedError,
   DeviceHeldError,
   DeviceHostUnavailableError,
   DeviceId,
+  type DevicePlatform,
   EnvironmentId,
+  HEAVY_QUEUE_DEFAULTS,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -127,6 +128,7 @@ const layerHeavyQueueMock = Layer.mock(HeavyQueue.HeavyQueue)({
     linux: null,
     routes: {},
     macOnly: [],
+    ...HEAVY_QUEUE_DEFAULTS,
   }),
 });
 

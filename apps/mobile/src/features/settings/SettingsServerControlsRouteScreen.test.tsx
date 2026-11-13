@@ -189,12 +189,18 @@ vi.mock("./components/WorktreeSnapshotsSection", () => ({
 }));
 vi.mock("./components/HeavyQueueSection", () => ({
   HeavyCommandsSection: () => null,
-  HeavyQueueSection: (props: { environmentId: string; runner: object; machine?: string }) => (
-    <i
+  HeavyQueueSection: (props: {
+    environmentId: string;
+    runner: object;
+    machine?: string;
+    slowAgentJobs: { onChange: (value: boolean) => void };
+  }) => (
+    <button
       aria-label="heavy queue"
       data-env={props.environmentId}
       data-machine={props.machine}
       data-runner={JSON.stringify(props.runner)}
+      onClick={() => props.slowAgentJobs.onChange(false)}
     />
   ),
 }));
@@ -359,13 +365,15 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.runner!.severalMachines).toBe(true);
   });
 
-  it("passes the effective Runner mode to the heavy-work queue", () => {
+  it("passes the effective Runner mode to the heavy-work queue and saves its slow-down switch", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
-    expect(
-      JSON.parse(
-        container.querySelector<HTMLElement>('[aria-label="heavy queue"]')!.dataset.runner!,
-      ),
-    ).toEqual({ enabled: false, where: "mac", overflow: 3 });
+    const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
+    expect(JSON.parse(queue.dataset.runner!)).toEqual({ enabled: false, where: "mac" });
+    act(() => queue.click());
+    expect(mocks.updateSettings).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: { patch: { heavySlowAgentJobs: false } },
+    });
   });
 
   it("saves Runner settings for the environment, or as project overrides it can reset", async () => {
@@ -383,7 +391,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     project.serverConfig.settings = {
       ...project.serverConfig.settings,
       projectSettingsOverrides: {
-        ["project" as ProjectId]: { runnerWhere: "linux", runnerOverflow: 5 },
+        ["project" as ProjectId]: { runnerWhere: "linux", runnerAskMinutes: 7 },
       },
     };
     mocks.targets = [project];
@@ -399,7 +407,7 @@ describe("SettingsServerControlsRouteScreen", () => {
       input: {
         patch: {
           projectSettingsOverrides: {
-            project: { runnerWhere: "linux", runnerOverflow: 5, runnerEnabled: true },
+            project: { runnerWhere: "linux", runnerAskMinutes: 7, runnerEnabled: true },
           },
         },
       },
@@ -407,7 +415,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     await act(async () => mocks.runner!.reset("runnerWhere"));
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
       environmentId: "local",
-      input: { patch: { projectSettingsOverrides: { project: { runnerOverflow: 5 } } } },
+      input: { patch: { projectSettingsOverrides: { project: { runnerAskMinutes: 7 } } } },
     });
   });
 

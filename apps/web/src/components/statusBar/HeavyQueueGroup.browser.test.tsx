@@ -1,9 +1,10 @@
-import type {
-  EnvironmentId,
-  HeavyCommand,
-  HeavyCommandsState,
-  HeavyQueueEntry,
-  HeavyQueueState,
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  type EnvironmentId,
+  type HeavyCommand,
+  type HeavyCommandsState,
+  type HeavyQueueEntry,
+  type HeavyQueueState,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -31,7 +32,8 @@ const mocks = vi.hoisted(() => ({
   openThread: vi.fn(),
 }));
 
-vi.mock("../../state/heavyQueue", () => ({
+vi.mock("../../state/heavyQueue", async () => ({
+  resourceManagerOpenAtom: (await import("effect/reactivity")).Atom.make(false),
   useHeavyQueue: () => mocks.state,
   useHeavyCommands: () => mocks.commands,
 }));
@@ -47,6 +49,10 @@ vi.mock("../ProjectFavicon", () => ({
     <i data-testid="favicon">{project.title}</i>
   ),
 }));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScope: () => false,
+}));
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "env",
@@ -58,7 +64,9 @@ vi.mock("./useKillTarget", () => ({
   useStopHeavyCommand: () => mocks.stop,
 }));
 
-import { HeavyCommandsGroup, HeavyQueueGroup, ResourceSegment } from "./ResourceSegment";
+import { HeavyWorkSection } from "./HeavyQueueBody";
+import { MachineBar } from "./MachineBar";
+import { ResourceSegment } from "./ResourceSegment";
 
 const environmentId = "env" as EnvironmentId;
 const entry = (id: string, over: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry => ({
@@ -72,7 +80,12 @@ const entry = (id: string, over: Partial<HeavyQueueEntry> = {}): HeavyQueueEntry
   ...over,
 });
 
-function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueueState> = {}) {
+function setup(
+  entries: ReadonlyArray<HeavyQueueEntry>,
+  over: Partial<HeavyQueueState> = {},
+  commands: ReadonlyArray<HeavyCommand> = [],
+) {
+  localStorage.clear();
   for (const key of [
     "move",
     "startNow",
@@ -89,6 +102,8 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
   mocks.openThread.mockReset();
   mocks.actions.canChange = true;
   mocks.actions.canRoute = true;
+  mocks.commands = { commands, cpuCount: 8 };
+  mocks.stop = { canStop: true, stop: vi.fn() };
   mocks.state = {
     entries,
     enabled: true,
@@ -104,6 +119,7 @@ function setup(entries: ReadonlyArray<HeavyQueueEntry>, over: Partial<HeavyQueue
     linux: null,
     macOnly: [],
     routes: {},
+    ...HEAVY_QUEUE_DEFAULTS,
     ...over,
   };
 }
@@ -118,48 +134,104 @@ const LINUX = {
   availableMemoryBytes: 8 * 1024 ** 3,
   totalMemoryBytes: 16 * 1024 ** 3,
 };
+const MACHINE = {
+  busyCores: 2,
+  cpuCount: 8,
+  availableMemoryBytes: 3.4 * 1024 ** 3,
+  totalMemoryBytes: 16 * 1024 ** 3,
+  pressureLevel: null,
+  swapInBytesPerSecond: null,
+};
 const STARTED = "2026-01-01T00:00:00.000Z";
+const GIB = 1024 ** 3;
 
 const title = (id: string) => (id === "t1" ? "Fix build" : undefined);
 const group = () => (
-  <HeavyQueueGroup
+  <HeavyWorkSection
     environmentId={environmentId}
-    threadTitle={title}
-    projectIdOfThread={() => undefined}
-    onOpenThread={mocks.openThread}
+    commands={mocks.commands.commands}
+    cpuCount={mocks.commands.cpuCount}
+    threads={{
+      threadTitle: title,
+      projectIdOfThread: (id) => (id === "t1" ? "p2" : undefined),
+      onOpenThread: mocks.openThread,
+    }}
   />
 );
 const openMenu = (screen: Awaited<ReturnType<typeof render>>, label: string) =>
   userEvent.click(screen.getByRole("button", { name: `Actions for pnpm ${label}` }));
+const expand = (screen: Awaited<ReturnType<typeof render>>, name: string) =>
+  userEvent.click(screen.getByRole("button", { name, exact: true }));
 
-describe("HeavyQueueGroup", () => {
-  it("shows project, thread, reason, note and place for every entry", async () => {
+describe("HeavyWorkSection", () => {
+  it("expands a row to every fact, and shows the same facts in its tooltip", async () => {
     setup(
       [
         entry("test", {
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: STARTED,
           threadId: "t1",
           name: "Server tests",
+          cpu: 2,
+          memory: 3 * GIB,
+          peakCpu: 3,
+          peakMemory: 4 * GIB,
+          qos: "background",
         }),
-        entry("build", { note: "Moved by the user" }),
+        entry("build", { note: "Moved by the user", unconfirmed: true }),
         entry("e2e"),
       ],
-      { reasons: { build: "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare" } },
+      {
+        reasons: { build: "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare" },
+        rules: [{ root: "/work/app", priority: "first" }],
+        estimates: { e2e: { cpu: 4, memoryBytes: 3 * GIB, durationMs: 120_000 } },
+        machine: MACHINE,
+      },
     );
     await using screen = await render(group());
-    await expect.element(screen.getByText("Fix build")).toBeVisible();
-    await expect.element(screen.getByText("Server tests")).toBeVisible();
-    await expect.element(screen.getByText("pnpm test")).toBeVisible();
-    await expect.element(screen.getByText(/^Running · /)).toBeVisible();
-    await expect.element(screen.getByText(/^1st/)).toBeVisible();
-    await expect.element(screen.getByText(/^2nd/)).toBeVisible();
+    // Only the waiting reason earns a second line; places and the project chip sit on line one.
     await expect
-      .element(
-        screen.getByText(/needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare · Moved by the user/),
-      )
+      .element(screen.getByText("needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare"))
       .toBeVisible();
-    await expect.element(screen.getByText("1 of 3 running")).toBeVisible();
+    await expect.element(screen.getByText(/^1st · /)).toBeVisible();
+    await expect.element(screen.getByText(/^2nd · /)).toBeVisible();
     expect(screen.container.querySelectorAll('[data-testid="favicon"]')).toHaveLength(3);
+    expect(screen.container.textContent).not.toContain("Moved by the user");
+    // The running job uses 2 of 8 cores, in the shared CPU and Memory columns.
+    await expect.element(screen.getByText("25%", { exact: true })).toBeVisible();
+
+    await userEvent.hover(screen.getByRole("button", { name: "pnpm build", exact: true }));
+    await expect.element(screen.getByText("Moved by the user")).toBeVisible();
+
+    const running = screen.getByRole("button", { name: "Server tests", exact: true });
+    await userEvent.click(running);
+    await expect.element(running).toHaveAttribute("aria-expanded", "true");
+    for (const text of [
+      "pnpm test",
+      "/work/app/src",
+      "This Mac",
+      "Project: Always first · Low priority",
+      "Using 2.0 cores (25%) · 3.0 GB · peak 3.0 cores · 4.0 GB",
+      "pid 1",
+    ]) {
+      await expect.element(screen.getByText(text, { exact: true }).last()).toBeVisible();
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
+    expect(mocks.openThread).toHaveBeenCalledWith("t1");
+
+    await expand(screen, "pnpm build");
+    for (const text of [
+      "Moved by the user",
+      "Linux has not confirmed the earlier run stopped.",
+      "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare",
+    ]) {
+      await expect.element(screen.getByText(text, { exact: true }).last()).toBeVisible();
+    }
+    await expand(screen, "pnpm e2e");
+    await expect.element(screen.getByText("Usually ~4.0 cores · 3.0 GB · 2 min")).toBeVisible();
+    await expand(screen, "pnpm e2e");
+    await expect
+      .element(screen.getByRole("button", { name: "pnpm e2e", exact: true }))
+      .toHaveAttribute("aria-expanded", "false");
   });
 
   it.each([
@@ -168,47 +240,22 @@ describe("HeavyQueueGroup", () => {
     { menu: "build", item: "Move down", expected: ["build", "lint"] },
     { menu: "build", item: "Move to end", expected: ["build", null] },
   ])("$item on $menu moves it", async ({ menu, item, expected }) => {
-    setup([
-      entry("run", { startedAt: "2026-01-01T00:00:00.000Z" }),
-      entry("build"),
-      entry("e2e"),
-      entry("lint"),
-    ]);
+    setup([entry("run", { startedAt: STARTED }), entry("build"), entry("e2e"), entry("lint")]);
     await using screen = await render(group());
     await openMenu(screen, menu);
     await userEvent.click(screen.getByRole("menuitem", { name: item }));
     expect(mocks.actions.move).toHaveBeenCalledWith(...expected);
   });
 
-  it("starts a waiter now from its own button, not for the running one", async () => {
-    setup([entry("run", { startedAt: "2026-01-01T00:00:00.000Z" }), entry("b")]);
+  it("starts a waiter now from its menu, which the running job does not offer", async () => {
+    setup([entry("run", { startedAt: STARTED }), entry("b")]);
     await using screen = await render(group());
-    expect(screen.container.querySelectorAll('[aria-label^="Start "]')).toHaveLength(1);
-    await userEvent.click(screen.getByRole("button", { name: "Start pnpm b now" }));
+    await openMenu(screen, "run");
+    expect(screen.getByRole("menuitem", { name: "Start now" }).elements()).toHaveLength(0);
+    await userEvent.keyboard("{Escape}");
+    await openMenu(screen, "b");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Start now" }));
     expect(mocks.actions.startNow).toHaveBeenCalledWith("b");
-  });
-
-  it("shows each job's usage on one muted line", async () => {
-    setup(
-      [
-        entry("run", { startedAt: "2026-01-01T00:00:00.000Z", cpu: 2, memory: 3 * 1024 ** 3 }),
-        entry("b"),
-      ],
-      {
-        estimates: { b: { cpu: 4, memoryBytes: 3 * 1024 ** 3, durationMs: 120_000 } },
-        machine: {
-          busyCores: 2,
-          cpuCount: 8,
-          availableMemoryBytes: 8 * 1024 ** 3,
-          totalMemoryBytes: 16 * 1024 ** 3,
-          pressureLevel: null,
-          swapInBytesPerSecond: null,
-        },
-      },
-    );
-    await using screen = await render(group());
-    await expect.element(screen.getByText("Using 2.0 cores (25%) · 3.0 GB")).toBeVisible();
-    await expect.element(screen.getByText("Usually ~4.0 cores · 3.0 GB · 2 min")).toBeVisible();
   });
 
   it("greys out moves that would change nothing", async () => {
@@ -224,7 +271,7 @@ describe("HeavyQueueGroup", () => {
   });
 
   it("removes a waiter, stops the running one, and opens the thread", async () => {
-    setup([entry("run", { startedAt: "2026-01-01T00:00:00.000Z", threadId: "t1" }), entry("b")]);
+    setup([entry("run", { startedAt: STARTED, threadId: "t1" }), entry("b")]);
     await using screen = await render(group());
     await openMenu(screen, "b");
     await userEvent.click(screen.getByRole("menuitem", { name: "Remove from the queue" }));
@@ -235,8 +282,6 @@ describe("HeavyQueueGroup", () => {
     await openMenu(screen, "run");
     await userEvent.click(screen.getByRole("menuitem", { name: "Open thread" }));
     expect(mocks.openThread).toHaveBeenCalledWith("t1");
-    await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
-    expect(mocks.openThread).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -245,7 +290,6 @@ describe("HeavyQueueGroup", () => {
   ] as const)("sets the project's priority to %s from the menu", async (name, priority) => {
     setup([entry("a"), entry("b")], { rules: [{ root: "/work/app", priority: "first" }] });
     await using screen = await render(group());
-    await expect.element(screen.getByText("Always first").first()).toBeVisible();
     await openMenu(screen, "a");
     await userEvent.click(screen.getByRole("menuitemradio", { name }));
     expect(mocks.actions.setRule).toHaveBeenCalledWith("/work/app", priority);
@@ -253,7 +297,7 @@ describe("HeavyQueueGroup", () => {
 
   it("offers a running job only the CPU change that applies, and a waiter high priority", async () => {
     setup([
-      entry("run", { startedAt: "2026-01-01T00:00:00.000Z", priority: "low", qos: "normal" }),
+      entry("run", { startedAt: STARTED, priority: "low", qos: "normal" }),
       entry("b", { priority: "high" }),
     ]);
     await using screen = await render(group());
@@ -267,12 +311,20 @@ describe("HeavyQueueGroup", () => {
     expect(mocks.actions.setPriority).toHaveBeenCalledWith("run", "low");
   });
 
-  it("pauses and resumes from the switch, and says so in the summary", async () => {
-    setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" })], { paused: true });
+  it("pauses and resumes from the header, keeping the section collapsed", async () => {
+    setup([entry("a", { startedAt: STARTED })], { paused: true });
     await using screen = await render(group());
-    await expect.element(screen.getByText("1 of 3 running · paused")).toBeVisible();
-    await userEvent.click(screen.getByRole("switch", { name: "Pause the heavy work queue" }));
+    await expect.element(screen.getByLabelText("This Mac: 1 of 3 running")).toBeVisible();
+    const pause = screen.getByRole("button", { name: "Pause the heavy work queue" });
+    await expect.element(pause).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(pause);
     expect(mocks.actions.setPaused).toHaveBeenCalledWith(false);
+    // The pause sits above the header's toggle, so pressing it never folds the section.
+    await expect
+      .element(screen.getByRole("button", { name: "Heavy work (1)" }))
+      .toHaveAttribute("aria-expanded", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Heavy work (1)" }));
+    await expect.element(screen.getByText("pnpm a", { exact: true })).not.toBeInTheDocument();
   });
 
   it("disables everything without permission", async () => {
@@ -280,7 +332,7 @@ describe("HeavyQueueGroup", () => {
     mocks.actions.canChange = false;
     await using screen = await render(group());
     await expect
-      .element(screen.getByRole("switch", { name: "Pause the heavy work queue" }))
+      .element(screen.getByRole("button", { name: "Pause the heavy work queue" }))
       .toBeDisabled();
     await expect
       .element(screen.getByRole("button", { name: "Drag to reorder pnpm a" }))
@@ -297,27 +349,114 @@ describe("HeavyQueueGroup", () => {
     expect(empty.container.textContent).toBe("");
     setup([], { paused: true });
     await using paused = await render(group());
-    await expect.element(paused.getByText("0 of 3 running · paused")).toBeVisible();
+    await expect.element(paused.getByLabelText("This Mac: 0 of 3 running")).toBeVisible();
   });
 
-  it("shows Linux's status and where each job runs or would run", async () => {
+  it("groups jobs by machine, each running first and then waiting in its own line", async () => {
     setup(
       [
-        entry("run", { startedAt: STARTED, runner: "linux", phase: "syncing" }),
-        entry("next"),
-        entry("later"),
+        entry("m1"),
+        entry("l1"),
+        entry("mrun", { startedAt: STARTED }),
+        entry("m2"),
+        entry("lrun", { startedAt: STARTED, runner: "linux", phase: "installing" }),
+        entry("l2"),
       ],
-      { linux: LINUX, routes: { next: "linux" } },
+      { linux: LINUX, routes: { l1: "linux", l2: "linux" } },
+      [command({ name: "Agent tests", pid: 50 })],
     );
     await using screen = await render(group());
+    expect(screen.container.textContent).toMatch(
+      /This Mac.*pnpm mrun.*Agent tests.*pnpm m1.*1st · .*pnpm m2.*2nd · .*Linux.*pnpm lrun.*Installing.*pnpm l1.*1st · .*pnpm l2.*2nd · /s,
+    );
+    await expect.element(screen.getByLabelText("This Mac: 1 of 3 running")).toBeVisible();
+    await expect.element(screen.getByLabelText("Linux: 1 of 2 running")).toBeVisible();
+    // A Linux job's usage is not this Mac's to show.
+    await expand(screen, "pnpm lrun");
+    await expect.element(screen.getByText("Linux (remoto) · Installing")).toBeVisible();
+    expect(screen.getByText("Usage", { exact: true }).elements()).toHaveLength(0);
+  });
+
+  it("counts Linux's running jobs under Linux, never as the Mac's", async () => {
+    setup(
+      [
+        entry("l1", { startedAt: STARTED, runner: "linux", phase: "running" }),
+        entry("l2", { startedAt: STARTED, runner: "linux", phase: "syncing" }),
+      ],
+      { linux: { ...LINUX, running: 2 } },
+      [
+        command({ source: "queue", entryId: "l1", name: "pnpm l1", pid: 61 }),
+        command({ source: "queue", entryId: "l2", name: "pnpm l2", pid: 62 }),
+      ],
+    );
+    await using screen = await render(group());
+    await expect.element(screen.getByLabelText("This Mac: 0 of 3 running")).toBeVisible();
+    await expect.element(screen.getByLabelText("Linux: 2 of 2 running")).toBeVisible();
+    expect(screen.getByRole("group", { name: "This Mac" }).elements()).toHaveLength(0);
+    expect(screen.getByText("pnpm l1", { exact: true }).elements()).toHaveLength(1);
+    await expect.element(screen.getByText("Syncing", { exact: true })).toBeVisible();
+  });
+
+  it("keeps a job that still runs on Linux after the Runner went off, under Linux", async () => {
+    setup([entry("l", { startedAt: STARTED, runner: "linux" })]);
+    await using screen = await render(group());
+    await expect.element(screen.getByLabelText("This Mac: 0 of 3 running")).toBeVisible();
+    await expect.element(screen.getByLabelText("Linux: 1 running")).toBeVisible();
     await expect
-      .element(
-        screen.getByText("Linux online · 1 of 2 running · load 1.2 on 6 cores · 8.0 GB free"),
-      )
+      .element(screen.getByRole("group", { name: "Linux" }).getByText("pnpm l", { exact: true }))
       .toBeVisible();
-    await expect.element(screen.getByText("Linux · Syncing")).toBeVisible();
-    await expect.element(screen.getByText("Linux", { exact: true })).toBeVisible();
-    await expect.element(screen.getByText("This Mac", { exact: true })).toBeVisible();
+  });
+
+  it("moves a waiter within its machine's line from the menu", async () => {
+    setup([entry("m1"), entry("l1"), entry("m2")], { linux: LINUX, routes: { l1: "linux" } });
+    await using screen = await render(group());
+    await openMenu(screen, "l1");
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Run next" }))
+      .toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+    await openMenu(screen, "m2");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Move up" }));
+    expect(mocks.actions.move).toHaveBeenCalledWith("m2", "m1");
+  });
+
+  it.each([
+    // Lands right after m2 in the Mac's line, ahead of the Mac's next waiter.
+    { onto: "m2", over: "m2", expected: ["m1", "m3"] },
+    // The Linux line is not a drop target for a Mac waiter: it lands at the end of its own line.
+    { onto: "l1", over: "m3", expected: ["m1", null] },
+  ])("drags a waiter onto $onto and keeps it on its machine", async ({ onto, over, expected }) => {
+    setup([entry("m1"), entry("m2"), entry("l1"), entry("m3")], {
+      linux: LINUX,
+      routes: { l1: "linux" },
+    });
+    await using screen = await render(group());
+    const grip = screen.getByRole("button", { name: "Drag to reorder pnpm m1" }).element();
+    const from = grip.getBoundingClientRect();
+    const to = screen.getByText(`pnpm ${onto}`, { exact: true }).element().getBoundingClientRect();
+    const pointer = (type: string, x: number, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    const live = () =>
+      [...document.querySelectorAll("[aria-live]")].map((node) => node.textContent).join(" ");
+    const x = from.x + from.width / 2;
+    grip.dispatchEvent(pointer("pointerdown", x, from.y + from.height / 2));
+    document.dispatchEvent(pointer("pointermove", x, from.y + from.height / 2 + 10));
+    await vi.waitFor(() => expect(live()).toContain("Draggable item m1"));
+    const y = to.y + to.height / 2;
+    document.dispatchEvent(pointer("pointermove", x, y));
+    await vi.waitFor(() => expect(live()).toContain(`over droppable area ${over}`));
+    document.dispatchEvent(pointer("pointerup", x, y));
+    await vi.waitFor(() => expect(mocks.actions.move).toHaveBeenCalledTimes(1));
+    expect(mocks.actions.move).toHaveBeenCalledWith(...expected);
   });
 
   it("moves jobs between this Mac and Linux from the menu, with the confirmation each needs", async () => {
@@ -326,9 +465,6 @@ describe("HeavyQueueGroup", () => {
       routes: { w: "linux" },
     });
     await using screen = await render(group());
-    await expect
-      .element(screen.getByText("Linux has not confirmed the earlier run stopped."))
-      .toBeVisible();
     await openMenu(screen, "run");
     await expect.element(screen.getByRole("menuitem", { name: "Run on Linux" })).toBeVisible();
     expect(document.body.textContent).not.toContain("Run on this Mac");
@@ -424,16 +560,112 @@ describe("HeavyQueueGroup", () => {
   it("says the queue is off instead of looking idle, and offers to turn it back on", async () => {
     setup([], { enabled: false, paused: true });
     await using screen = await render(group());
+    expect(
+      screen.getByRole("button", { name: "Pause the heavy work queue" }).elements(),
+    ).toHaveLength(0);
+    await userEvent.hover(screen.getByRole("button", { name: "Turn on" }));
     await expect.element(screen.getByText("Queue off: heavy jobs start right away")).toBeVisible();
-    expect(screen.container.querySelector('[role="switch"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
     expect(mocks.actions.setEnabled).toHaveBeenCalledWith(true);
   });
 });
 
+const machineBar = () => <MachineBar environmentId={environmentId} t3={null} />;
+const hoverHint = async (screen: Awaited<ReturnType<typeof render>>, label: string) => {
+  await userEvent.hover(screen.getByLabelText(label).first());
+};
+
+describe("MachineBar", () => {
+  it("shows each machine's CPU, free memory and slots from one reading", async () => {
+    setup(
+      [entry("mrun", { startedAt: STARTED }), entry("l", { startedAt: STARTED, runner: "linux" })],
+      {
+        linux: LINUX,
+        machine: MACHINE,
+      },
+    );
+    await using screen = await render(machineBar());
+    const text = screen.container.textContent ?? "";
+    expect(text).toMatch(/This Mac.*25%.*3\.4 GB.*free.*1\/3.*Linux.*20%.*8\.0 GB.*free.*1\/2/s);
+    expect(screen.container.querySelector("[data-warn]")).toBeNull();
+    await hoverHint(screen, "1 of 3 running on this Mac");
+    await expect.element(screen.getByText("1 of 3 running on this Mac").last()).toBeVisible();
+    await userEvent.hover(screen.getByText("20%"));
+    await expect.element(screen.getByText("Load 1.2 on 6 cores")).toBeVisible();
+    await userEvent.hover(screen.getByLabelText("Linux online"));
+    await expect.element(screen.getByText("remoto · online")).toBeVisible();
+  });
+
+  it.each([
+    ["memory low", "memory-floor", "3.4 GB free of 16.0 GB · waiting: memory low"],
+    ["CPU busy", "cpu", "CPU 25% · 2.0 of 8 cores busy · waiting: CPU busy"],
+  ] as const)("colours the gauge %s is about and words it there", async (_name, hold, hint) => {
+    setup([entry("w")], { machine: MACHINE, hold });
+    await using screen = await render(machineBar());
+    expect(screen.container.querySelectorAll("[data-warn]")).toHaveLength(1);
+    await userEvent.hover(screen.getByText(hold === "cpu" ? "25%" : "3.4 GB", { exact: true }));
+    await expect.element(screen.getByText(hint)).toBeVisible();
+    expect(screen.container.textContent).not.toContain("waiting:");
+  });
+
+  it.each([
+    ["the pause", { paused: true }, "0 of 3 running on this Mac · paused"],
+    [
+      "a slot hold",
+      { hold: "slots" as const },
+      "0 of 3 running on this Mac · waiting: all 3 slots busy",
+    ],
+  ])("puts %s on the Mac's slots", async (_name, over, hint) => {
+    setup([entry("w")], { machine: MACHINE, ...over });
+    await using screen = await render(machineBar());
+    expect(screen.container.querySelector("[data-warn]")).toBeNull();
+    await hoverHint(screen, hint);
+    await expect.element(screen.getByText(hint).last()).toBeVisible();
+  });
+
+  it.each([
+    [
+      "offline",
+      { ...LINUX, online: false, error: "ssh timed out" },
+      "Offline",
+      "Linux offline: ssh timed out",
+    ],
+    ["being checked", { ...LINUX, online: null }, "Checking…", "Checking Linux (remoto)…"],
+  ])("shows Linux %s instead of stale readings", async (_name, linux, shown, hint) => {
+    setup([], { linux, machine: MACHINE });
+    await using screen = await render(machineBar());
+    await expect.element(screen.getByText(shown, { exact: true })).toBeVisible();
+    expect(screen.container.textContent).not.toContain("8.0 GB");
+    await userEvent.hover(screen.getByText(shown, { exact: true }));
+    await expect.element(screen.getByText(hint).last()).toBeVisible();
+  });
+
+  it("says the queue is off on the Mac's slots, and shows no Linux without the Runner", async () => {
+    setup([], { enabled: false, machine: MACHINE });
+    await using screen = await render(machineBar());
+    await expect.element(screen.getByText("Off", { exact: true })).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Linux");
+    await userEvent.hover(screen.getByText("Off", { exact: true }));
+    await expect.element(screen.getByText("Queue off: heavy jobs start right away")).toBeVisible();
+  });
+
+  it("shows T3's own total, never above the Mac's CPU", async () => {
+    setup([], { machine: MACHINE });
+    await using screen = await render(
+      <MachineBar
+        environmentId={environmentId}
+        t3={{ cpuPercent: 60, rssBytes: 2 * GIB, processCount: 4 }}
+      />,
+    );
+    await expect.element(screen.getByText("T3 total")).toBeVisible();
+    expect(screen.container.textContent).toContain("2.00 GB");
+    expect(screen.container.textContent?.match(/25%/g)).toHaveLength(2);
+  });
+});
+
 describe("ResourceSegment", () => {
   it("shows how many commands wait in the heavy queue", async () => {
-    setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" }), entry("b")]);
+    setup([entry("a", { startedAt: STARTED }), entry("b")]);
     await using screen = await render(<ResourceSegment />);
     await expect.element(screen.getByLabelText("2 in heavy work queue")).toBeVisible();
   });
@@ -445,17 +677,13 @@ describe("ResourceSegment", () => {
   });
 
   it("counts running jobs while the queue is off, without the pause mark", async () => {
-    setup([entry("a", { startedAt: "2026-01-01T00:00:00.000Z" })], {
-      enabled: false,
-      paused: true,
-    });
+    setup([entry("a", { startedAt: STARTED })], { enabled: false, paused: true });
     await using screen = await render(<ResourceSegment />);
     await expect.element(screen.getByLabelText("1 in heavy work queue")).toBeVisible();
     await expect.element(screen.getByLabelText("Heavy work queue paused")).not.toBeInTheDocument();
   });
 });
 
-const GIB = 1024 ** 3;
 const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
   source: "agent",
   pid: 12,
@@ -463,7 +691,7 @@ const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
   threadId: "t1",
   label: "/usr/bin/node /work/app/node_modules/.bin/vp test run",
   name: "Tests",
-  startedAt: "2026-01-01T00:00:00.000Z",
+  startedAt: STARTED,
   stoppable: true,
   cpu: 2.5,
   memory: GIB,
@@ -472,79 +700,60 @@ const command = (over: Partial<HeavyCommand>): HeavyCommand => ({
   ...over,
 });
 
-function setupCommands(commands: ReadonlyArray<HeavyCommand>, canStop = true) {
-  mocks.commands = { commands, cpuCount: 8 };
-  mocks.stop = { canStop, stop: vi.fn() };
-  mocks.openThread.mockReset();
-}
-
-const commandsGroup = () => (
-  <HeavyCommandsGroup
-    environmentId={environmentId}
-    threads={{
-      threadTitle: (id) => (id === "t1" ? "Fix build" : undefined),
-      projectIdOfThread: (id) => (id === "t1" ? "p2" : undefined),
-      onOpenThread: mocks.openThread,
-    }}
-  />
-);
-
-describe("HeavyCommandsGroup", () => {
-  it("renders nothing while no heavy command runs", async () => {
-    setupCommands([]);
-    await using screen = await render(commandsGroup());
-    expect(screen.container.textContent).toBe("");
+describe("heavy commands in Heavy work", () => {
+  it("lists each job once: a queue command is its entry, and a command on a job's pid is that job", async () => {
+    setup([entry("q", { startedAt: STARTED, pid: 30, name: "Build" })], {}, [
+      command({ source: "queue", entryId: "q", pid: 30, name: "Build", label: "pnpm q" }),
+      command({ pid: 30, name: "Build" }),
+      command({ source: "terminal", pid: 40, threadId: "t-gone", name: "cargo build" }),
+      command({ source: "detached", pid: 50, threadId: null, stoppable: false, name: "Stray" }),
+    ]);
+    await using screen = await render(group());
+    expect(screen.getByText("Build", { exact: true }).elements()).toHaveLength(1);
+    await expect.element(screen.getByText("cargo build")).toBeVisible();
+    // Detached work lives under Outside T3, not here.
+    expect(screen.getByText("Stray").elements()).toHaveLength(0);
+    await expect.element(screen.getByRole("button", { name: "Heavy work (2)" })).toBeVisible();
   });
 
-  it("lists queued and direct commands with their project, thread, usage and run time", async () => {
-    setupCommands([
-      command({
-        source: "queue",
-        entryId: "q1",
-        pid: 30,
-        threadId: null,
-        cwd: "/work/app/src",
-        name: "Build",
-        label: "pnpm build",
-      }),
-      command({}),
-      command({ source: "terminal", pid: 40, threadId: "t-gone", name: "cargo build" }),
-    ]);
-    await using screen = await render(commandsGroup());
-    await expect.element(screen.getByRole("button", { name: "Heavy commands (3)" })).toBeVisible();
-    // The favicon mock repeats each project title, so those match twice.
-    for (const text of ["Queued", "Agent", "Terminal", "App Project", "Package", "No project"]) {
-      await expect.element(screen.getByText(text, { exact: true }).first()).toBeVisible();
+  it("expands a direct command to its program, thread, source, usage and peak", async () => {
+    setup([], {}, [command({})]);
+    await using screen = await render(group());
+    // 2.5 of 8 cores, in the shared columns.
+    await expect.element(screen.getByText("31%", { exact: true })).toBeVisible();
+    await expand(screen, "Tests");
+    for (const text of [
+      "/usr/bin/node /work/app/node_modules/.bin/vp test run",
+      "Agent",
+      "Using 2.5 cores (31%) · 1.0 GB · peak 3.0 cores · 2.0 GB",
+      "pid 12",
+    ]) {
+      await expect.element(screen.getByText(text, { exact: true })).toBeVisible();
     }
-    // The row names the command; its full program line and peak usage live in tooltips.
-    await userEvent.hover(screen.getByText("Tests", { exact: true }));
-    await expect
-      .element(screen.getByText(/^node \/work\/app\/node_modules\/\.bin\/vp test run · pid \d+$/))
-      .toBeVisible();
-    await userEvent.hover(screen.getByText("31%").nth(1));
-    await expect.element(screen.getByText(/^Peak .+ · .+$/)).toBeVisible();
-    expect(screen.getByText(/^· \d/).elements()).toHaveLength(3);
     await userEvent.click(screen.getByRole("button", { name: "Fix build" }));
     expect(mocks.openThread).toHaveBeenCalledWith("t1");
-    await userEvent.click(screen.getByRole("button", { name: "Open thread" }));
-    expect(mocks.openThread).toHaveBeenLastCalledWith("t-gone");
   });
 
-  it("stops a command from its row, but never server-held work", async () => {
-    const server = command({ source: "queue", entryId: "s", name: "Checkpoint", stoppable: false });
+  it("stops a command from its menu, but never server-held work", async () => {
     const tests = command({});
-    setupCommands([server, tests]);
-    await using screen = await render(commandsGroup());
-    await expect.element(screen.getByRole("button", { name: "Stop Tests" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Stop Checkpoint" }).elements()).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Stop Tests" }));
+    setup([entry("s", { startedAt: STARTED, server: true, name: "Checkpoint" })], {}, [tests]);
+    await using screen = await render(group());
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Checkpoint" }));
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Stop" }))
+      .toHaveAttribute("aria-disabled", "true");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Tests" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Stop" }));
     expect(mocks.stop.stop).toHaveBeenCalledWith(tests);
   });
 
-  it("offers no Stop without permission", async () => {
-    setupCommands([command({})], false);
-    await using screen = await render(commandsGroup());
-    await expect.element(screen.getByText("Tests", { exact: true })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Stop Tests" }).elements()).toHaveLength(0);
+  it("offers no Stop without permission, only the thread", async () => {
+    setup([], {}, [command({})]);
+    mocks.stop = { canStop: false, stop: vi.fn() };
+    await using screen = await render(group());
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Tests" }));
+    await expect.element(screen.getByRole("menuitem", { name: "Open thread" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "Stop" }).elements()).toHaveLength(0);
   });
 });

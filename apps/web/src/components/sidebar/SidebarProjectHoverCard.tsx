@@ -1,5 +1,9 @@
 import type { ReactNode } from "react";
-import { attributeTerminalUsage, type ResourceUsage } from "../statusBar/resourceUsage.logic";
+import {
+  attributeTerminalUsage,
+  formatMemory,
+  type ResourceUsage,
+} from "@t3tools/client-runtime/state/resourceTree";
 import type { ProjectId } from "@t3tools/contracts";
 import { CopyIcon, PlugIcon, SquareIcon, SquareTerminalIcon } from "lucide-react";
 
@@ -8,7 +12,6 @@ import { useThreadShells } from "../../state/entities";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { Button } from "../ui/button";
 import { PreviewCard, PreviewCardPopup, PreviewCardTrigger } from "../ui/preview-card";
-import { formatMemory } from "../statusBar/statusBar.logic";
 import {
   useEnvironmentResources,
   useEnvironmentSnapshots,

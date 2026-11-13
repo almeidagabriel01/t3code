@@ -1,13 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off - the probe's fallback folder is the home folder.
+import * as NodeOS from "node:os";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as HeavyCommands from "../../../heavyQueue/HeavyCommands.ts";
 import * as HeavyQueue from "../../../heavyQueue/HeavyQueue.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as HostResources from "../../../resourceTelemetry/HostResources.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -46,7 +50,35 @@ const base = {
   routes: {},
   command: "t3 heavy --",
   commands: [],
+  destination: null,
 };
+
+const linux = {
+  host: "pc",
+  online: true,
+  slots: 2,
+  running: 0,
+  load1: null,
+  cpuCount: null,
+  availableMemoryBytes: null,
+  totalMemoryBytes: null,
+};
+const command = {
+  source: "agent" as const,
+  pid: 12,
+  startTimeMs: 1,
+  threadId: "other",
+  label: "/usr/bin/node vp test run",
+  name: "Tests",
+  startedAt: "2026-01-01T00:00:00.000Z",
+  stoppable: true,
+  cpu: 2.5,
+  memory: 1024,
+  peakCpu: 3,
+  peakMemory: 2048,
+};
+const toLinux = { runsOn: "linux" as const, reason: null, startsNow: true, linuxFull: false };
+const toMac = { runsOn: "mac" as const, reason: null, startsNow: true, linuxFull: false };
 
 describe("heavyStatus", () => {
   it.each([
@@ -102,7 +134,135 @@ describe("heavyStatus", () => {
   ])("$name", ({ change, askUser, high }) => {
     const status = heavyStatus({ ...base, ...change });
     expect(status.askUser).toBe(askUser);
-    expect(status.pressure.high).toBe(high);
+    expect(status.mac.pressure.high).toBe(high);
+    expect(status).not.toHaveProperty("runsOn");
+  });
+
+  it.each([
+    {
+      name: "Linux-bound with room: this Mac's pressure is no reason to ask",
+      change: { busyCores: 6, availableMemoryBytes: 9, linux, destination: toLinux },
+      askUser: false,
+    },
+    {
+      name: "Linux-bound, Linux offline or full: ask, naming Linux",
+      change: {
+        linux: { ...linux, online: false },
+        destination: {
+          ...toLinux,
+          reason: "Linux is unavailable: waiting for it",
+          startsNow: false,
+          linuxFull: true,
+        },
+      },
+      askUser: true,
+      reason: "Linux is unavailable: waiting for it",
+    },
+    {
+      name: "Linux-bound, a short wait such as a first health check: no ask",
+      change: { linux, destination: { ...toLinux, startsNow: false } },
+      askUser: false,
+    },
+    {
+      name: "Linux-bound with the queue off still asks when Linux is full",
+      change: {
+        enabled: false,
+        linux,
+        destination: { ...toLinux, startsNow: false, linuxFull: true },
+      },
+      askUser: true,
+    },
+    {
+      name: "Linux offline, falls back to this Mac under pressure: ask, naming the Mac",
+      change: {
+        busyCores: 6,
+        linux: { ...linux, online: false },
+        destination: { ...toMac, reason: "Linux is unavailable: running here" },
+      },
+      askUser: true,
+      reason: "Linux is unavailable: running here",
+    },
+    {
+      name: "Mac-bound under pressure: ask",
+      change: { busyCores: 6, linux, destination: { ...toMac, reason: "Needs git" } },
+      askUser: true,
+      reason: "Needs git",
+    },
+    {
+      name: "Mac-bound, queue off: never ask",
+      change: { enabled: false, busyCores: 6, destination: toMac },
+      askUser: false,
+    },
+    {
+      name: "Runner off, Mac under pressure: ask",
+      change: { busyCores: 6, destination: toMac },
+      askUser: true,
+    },
+    {
+      name: "runs directly, as a commit with no hook: never ask",
+      change: {
+        busyCores: 6,
+        destination: { ...toMac, runsOn: "direct" as const, reason: "No commit hook" },
+      },
+      askUser: false,
+      reason: "No commit hook",
+    },
+    {
+      name: "Mac-bound: Linux jobs never fill this Mac's slots",
+      change: {
+        maxRunning: 1,
+        linux,
+        entries: [{ ...entry("l", null, "t"), runner: "linux" as const }, entry("w", null, null)],
+        routes: { w: "linux" as const },
+        destination: toMac,
+      },
+      askUser: false,
+    },
+  ])("for a command: $name", ({ change, askUser, reason }) => {
+    const status = heavyStatus({ ...base, ...change });
+    expect(status.askUser).toBe(askUser);
+    expect(status).toMatchObject({ runsOn: change.destination.runsOn });
+    if (reason === undefined) expect(status).not.toHaveProperty("reason");
+    else expect(status).toMatchObject({ reason });
+  });
+
+  it("splits running, waiting positions and usage by machine", () => {
+    const status = heavyStatus({
+      ...base,
+      linux: { ...linux, running: 1 },
+      entries: [
+        { ...entry("on-linux", "other", "t"), runner: "linux" },
+        entry("on-mac", "other", "t"),
+        entry("w-linux", "me", null),
+        entry("w-mac", "other", null),
+        entry("w-mac-2", "me", null),
+      ],
+      routes: { "w-linux": "linux", "w-mac": "mac", "w-mac-2": "mac" },
+      commands: [
+        { ...command, entryId: "on-linux", pid: 1 },
+        { ...command, entryId: "on-mac", pid: 2 },
+        { ...command, source: "agent", pid: 3 },
+      ],
+    });
+    expect(status.mac).toMatchObject({ running: 1, maxRunning: 3 });
+    expect(status.running.map((r) => [r.id, r.runsOn])).toEqual([
+      ["on-linux", "linux"],
+      ["on-mac", "mac"],
+    ]);
+    expect(status.waiting.map((w) => [w.id, w.runsOn, w.position])).toEqual([
+      ["w-linux", "linux", 1],
+      ["w-mac", "mac", 1],
+      ["w-mac-2", "mac", 2],
+    ]);
+    expect(status.yours).toEqual([
+      { id: "w-linux", position: 1, runsOn: "linux" },
+      { id: "w-mac-2", position: 2, runsOn: "mac" },
+    ]);
+    expect(status.commands.map((c) => [c.pid, c.runsOn, c.cpuCores, c.peakMemoryBytes])).toEqual([
+      [1, "linux", null, null],
+      [2, "mac", 2.5, 2048],
+      [3, "mac", 2.5, 2048],
+    ]);
   });
 
   it("splits running from waiters and reports where this thread's entries stand", () => {
@@ -115,7 +275,7 @@ describe("heavyStatus", () => {
         entry("mine-running", "me", null),
       ],
     });
-    expect(status.running?.id).toBe("run");
+    expect(status.running.map((r) => r.id)).toEqual(["run"]);
     expect(status.waiting.map((w) => [w.id, w.position])).toEqual([
       ["w1", 1],
       ["w2", 2],
@@ -125,7 +285,7 @@ describe("heavyStatus", () => {
       { id: "w2", position: 2 },
       { id: "mine-running", position: 3 },
     ]);
-    expect(status.pressure).toMatchObject({ loadPerCore: 0.25, availableMemoryPercent: 50 });
+    expect(status.mac.pressure).toMatchObject({ loadPerCore: 0.25, availableMemoryPercent: 50 });
   });
 
   it("shows Linux and where each waiter runs only while the Runner is on", () => {
@@ -133,29 +293,26 @@ describe("heavyStatus", () => {
     const off = heavyStatus({ ...base, entries, routes: { w1: "mac" } });
     expect(off).not.toHaveProperty("linux");
     expect(off.waiting[0]).not.toHaveProperty("runsOn");
-    const linux = {
-      host: "pc",
-      online: true,
-      slots: 2,
-      running: 0,
-      load1: null,
-      cpuCount: null,
-      availableMemoryBytes: null,
-      totalMemoryBytes: null,
-    };
     const on = heavyStatus({ ...base, entries, linux, routes: { w1: "linux" } });
     expect(on).toMatchObject({ linux });
     expect(on.waiting[0]).toMatchObject({ runsOn: "linux" });
   });
 
   it("reads zero total memory as no memory pressure", () => {
-    expect(heavyStatus({ ...base, totalMemoryBytes: 0 }).pressure.availableMemoryPercent).toBe(100);
+    expect(heavyStatus({ ...base, totalMemoryBytes: 0 }).mac.pressure.availableMemoryPercent).toBe(
+      100,
+    );
   });
 });
 
 const promoted: Array<readonly [string, string | undefined]> = [];
 
-const callTool = (params: { action: "status" | "promote"; id?: string }, access?: "read-only") =>
+const probed: Array<readonly [string, string]> = [];
+
+const callTool = (
+  params: { action: "status" | "promote"; id?: string; commandLine?: string },
+  access?: "read-only",
+) =>
   Effect.gen(function* () {
     const toolkit = yield* HeavyToolkit.pipe(
       Effect.provide(McpToolAccess.HandlersLayer.layer(HeavyHandlers.layer)),
@@ -194,8 +351,21 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             linux: null,
             routes: {},
             macOnly: [],
+            ...HEAVY_QUEUE_DEFAULTS,
           }),
           command: Effect.succeed("t3 heavy --"),
+          probe: (line, cwd) =>
+            line === "broken"
+              ? Effect.fail(new HeavyQueueError({ reason: "unavailable", message: "No queue." }))
+              : Effect.sync(() => {
+                  probed.push([line, cwd]);
+                  return {
+                    runsOn: "linux" as const,
+                    reason: "Linux is unavailable: waiting for it",
+                    startsNow: false,
+                    linuxFull: true,
+                  };
+                }),
           promote: (id, note) =>
             id === "gone"
               ? Effect.fail(new HeavyQueueError({ reason: "not-found", message: "No such entry." }))
@@ -204,22 +374,7 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
         Layer.mock(HeavyCommands.HeavyCommands)({
           list: Effect.succeed({
             cpuCount: 8,
-            commands: [
-              {
-                source: "agent",
-                pid: 12,
-                startTimeMs: 1,
-                threadId: "other",
-                label: "/usr/bin/node vp test run",
-                name: "Tests",
-                startedAt: "2026-01-01T00:00:00.000Z",
-                stoppable: true,
-                cpu: 2.5,
-                memory: 1024,
-                peakCpu: 3,
-                peakMemory: 2048,
-              },
-            ],
+            commands: [command],
           }),
         }),
         Layer.mock(HostResources.HostResources)({
@@ -230,6 +385,9 @@ const callTool = (params: { action: "status" | "promote"; id?: string }, access?
             availableMemoryBytes: 5_000,
             totalMemoryBytes: 8_000,
           }),
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedNone,
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) => Effect.succeed(liveThreadShell(id)),
@@ -246,7 +404,7 @@ describe("t3_heavy", () => {
       expect(chunk.at(-1)!.result).toMatchObject({
         askUser: true,
         command: "t3 heavy --",
-        running: { id: "run" },
+        running: [{ id: "run" }],
         yours: [{ id: "w", position: 1 }],
         commands: [
           {
@@ -262,6 +420,27 @@ describe("t3_heavy", () => {
           },
         ],
       });
+    }),
+  );
+
+  it.effect("answers for the machine a command line would run on, from the thread's folder", () =>
+    Effect.gen(function* () {
+      probed.length = 0;
+      const chunk = yield* callTool({ action: "status", commandLine: "vp test run" });
+      expect(probed).toEqual([["vp test run", NodeOS.homedir()]]);
+      expect(chunk.at(-1)!.result).toMatchObject({
+        askUser: true,
+        runsOn: "linux",
+        reason: "Linux is unavailable: waiting for it",
+      });
+      const failed = yield* callTool({ action: "status", commandLine: "broken" });
+      expect(failed.at(-1)!.encodedResult).toMatchObject({
+        code: "orchestration_error",
+        message: "No queue.",
+      });
+      probed.length = 0;
+      yield* callTool({ action: "status", commandLine: "  " });
+      expect(probed).toEqual([]);
     }),
   );
 

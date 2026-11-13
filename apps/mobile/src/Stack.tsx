@@ -143,6 +143,7 @@ import { AssistantModelPickerRouteScreen } from "./features/assistants/Assistant
 import { DescribeAssistantRouteScreen } from "./features/assistants/DescribeAssistantRouteScreen";
 import { SettingsAssistantsRouteScreen } from "./features/assistants/SettingsAssistantsRouteScreen";
 import { SettingsDevicesRouteScreen } from "./features/settings/SettingsDevicesRouteScreen";
+import { ResourceManagerRouteScreen } from "./features/resources/ResourceManagerRouteScreen";
 import { SettingsComputerUseRouteScreen } from "./features/settings/SettingsComputerUseRouteScreen";
 import { SettingsMacPermissionsRouteScreen } from "./features/settings/SettingsMacPermissionsRouteScreen";
 import { SettingsImessageRouteScreen } from "./features/imessage/SettingsImessageRouteScreen";
@@ -246,6 +247,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsEnvironmentMaintenanceRouteScreen,
     linking: "settings/maintenance",
     options: settingsPage("Maintenance"),
+  }),
+  SettingsResourceManager: createNativeStackScreen({
+    screen: ResourceManagerRouteScreen,
+    linking: "settings/resources",
+    options: settingsPage("Resource Manager"),
   }),
   SettingsNotifications: createNativeStackScreen({
     screen: SettingsNotificationsRouteScreen,

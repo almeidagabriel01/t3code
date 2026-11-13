@@ -30,11 +30,54 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "fish"]);
 
-/** The Mac's `$SHELL -c` becomes `bash -c` there, and a Mac path to a program becomes its name. */
-export const remoteCommand = (program: string, args: ReadonlyArray<string>) => {
+/**
+ * The command as Linux runs it from the same folder of its synced copy: a path inside `root`
+ * becomes relative to `cwd` (alone or as `--flag=<path>`), the Mac's `$SHELL` becomes `bash`, and
+ * a program elsewhere on the Mac goes by its name.
+ */
+export const remoteCommand = (
+  program: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+) => {
+  const local = (path: string) => {
+    if (!NodePath.isAbsolute(path)) return null;
+    const relative = NodePath.relative(root, path);
+    if (relative.startsWith("..") || NodePath.isAbsolute(relative)) return null;
+    return NodePath.relative(cwd, path) || ".";
+  };
+  const arg = (value: string) => {
+    const flag = /^(-[\w.-]*=)(.+)$/.exec(value);
+    if (flag !== null) return flag[1]! + (local(flag[2]!) ?? flag[2]!);
+    return local(value) ?? value;
+  };
   const name = NodePath.basename(program);
-  if (SHELLS.has(name)) return ["bash", ...args];
-  return [program.includes("/") ? name : program, ...args];
+  if (SHELLS.has(name)) return ["bash", ...args.map(arg)];
+  const inside = local(program);
+  const remote =
+    inside === null
+      ? program.includes("/") && NodePath.isAbsolute(program)
+        ? name
+        : program
+      : inside.startsWith(".")
+        ? inside
+        : `./${inside}`;
+  return [remote, ...args.map(arg)];
+};
+
+/**
+ * Runs `command` with each `node_modules/.bin` from its folder up to the checkout first on PATH,
+ * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
+ * `remoto-rodar` sets its own PATH.
+ */
+export const withProjectBins = (command: ReadonlyArray<string>, cwd: string, root: string) => {
+  const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
+  const bins = Array.from(
+    { length: depth + 1 },
+    (_, up) => `${up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`}/node_modules/.bin`,
+  );
+  return ["bash", "-c", `export PATH="${bins.join(":")}:$PATH"; exec "$@"`, "t3", ...command];
 };
 
 const executable = (path: string) => {
@@ -142,6 +185,8 @@ export interface LinuxRunOptions {
   readonly program: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+  /** The checkout `remoto` syncs from `cwd`. */
+  readonly root: string;
   readonly environment: Env;
   readonly machine: RunnerMachineConfig;
   readonly macOnly: ReadonlyArray<string>;
@@ -188,7 +233,11 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
   const { machine } = options;
   const child = NodeChildProcess.spawn(
     options.remoto,
-    remoteCommand(options.program, options.args),
+    withProjectBins(
+      remoteCommand(options.program, options.args, options.cwd, options.root),
+      options.cwd,
+      options.root,
+    ),
     {
       cwd: options.cwd,
       stdio: ["ignore", "pipe", "pipe"],

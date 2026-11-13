@@ -393,6 +393,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         </span>
                         <span className="block truncate text-2xs text-sidebar-muted-foreground/75">
                           {SETTINGS_SECTION_LABELS[item.to]}
+                          {item.machine === undefined ? null : ` · ${item.machine}`}
                         </span>
                       </span>
                     </SidebarMenuButton>
