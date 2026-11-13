@@ -291,7 +291,7 @@ export function OutsideAppRows(props: {
     <UsageRow
       key={row.name}
       icon="square.grid.2x2"
-      iconLabel="Outside T3"
+      iconLabel="App"
       label={row.name}
       usage={row.usage}
       cores={props.cores}

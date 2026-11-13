@@ -14,7 +14,6 @@ import {
 } from "@t3tools/client-runtime/state/resourceTree";
 
 export const CPU_COLUMN = "w-12 text-right";
-const UNREAD_CPU = "--";
 export const MEM_COLUMN = "w-16 text-right";
 export const GUTTER = "flex w-5 shrink-0 items-center justify-end";
 export const METRICS = "flex shrink-0 items-center tabular-nums";
@@ -52,7 +51,7 @@ export function Metrics({
               <span aria-label={CPU_UNAVAILABLE} className={cn(CPU_COLUMN, "relative z-10")} />
             }
           >
-            {UNREAD_CPU}
+            --
           </TooltipTrigger>
           <TooltipPopup side="left">{CPU_UNAVAILABLE}</TooltipPopup>
         </Tooltip>

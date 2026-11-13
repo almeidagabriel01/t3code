@@ -1073,7 +1073,7 @@ describe("ResourceManagerRouteScreen", () => {
     ]);
     expect(outline(outside!)).toEqual([
       "Tablet X: Device, 10% · 1.00 GB",
-      "Google Chrome: Outside T3, 20% · 2.00 GB",
+      "Google Chrome: App, 20% · 2.00 GB",
     ]);
     expect(await expand(outside!, "Tablet X")).toContain(
       "NoteRuns outside T3, not counted in the T3 total",
