@@ -1,7 +1,9 @@
 import { isAssistantGroupThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -20,6 +22,13 @@ export class AssistantGroupReactor extends Context.Service<
   }
 >()("t3/assistants/AssistantGroupReactor") {}
 
+/** A stream that ends in error subscribes again, backing off up to half a minute. */
+const RESUBSCRIBE = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const groups = yield* AssistantGroups;
@@ -29,7 +38,10 @@ const make = Effect.gen(function* () {
     groups.start.pipe(
       Effect.andThen(
         forkParked(
-          Stream.runForEach(engine.streamDomainEvents, groups.handleRunEvent).pipe(
+          Stream.runForEach(
+            engine.streamDomainEvents.pipe(Stream.retry(RESUBSCRIBE)),
+            groups.handleRunEvent,
+          ).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("assistant group event stream failed", { cause }),
             ),
@@ -39,7 +51,7 @@ const make = Effect.gen(function* () {
       // A decision a member asked, or its answer from anywhere, updates the request's notice.
       Effect.andThen(
         forkParked(
-          Stream.runForEach(decisions.subscribe, (event) =>
+          Stream.runForEach(decisions.subscribe.pipe(Stream.retry(RESUBSCRIBE)), (event) =>
             event.type === "upserted" && isAssistantGroupThreadId(event.decision.fromThreadId)
               ? groups.syncWaitingThread(event.decision.fromThreadId)
               : Effect.void,
