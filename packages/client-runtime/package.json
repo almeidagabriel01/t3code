@@ -351,6 +351,14 @@
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"
     },
+    "./assistantCluster": {
+      "types": "./src/assistantCluster.ts",
+      "default": "./src/assistantCluster.ts"
+    },
+    "./assistantInfo": {
+      "types": "./src/assistantInfo.ts",
+      "default": "./src/assistantInfo.ts"
+    },
     "./assistantLiveWork": {
       "types": "./src/assistantLiveWork.ts",
       "default": "./src/assistantLiveWork.ts"

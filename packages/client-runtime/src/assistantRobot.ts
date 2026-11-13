@@ -219,6 +219,24 @@ export function assistantPresence(
   return own;
 }
 
+/** An assistant's presence as the sidebar reads it, out of every thread shell. */
+export function assistantPresenceOf<
+  S extends GroupPresenceThread & { readonly environmentId: string; readonly id: string },
+>(
+  assistant: { readonly id: string; readonly threadId: string | null } | null,
+  environmentId: string,
+  shells: ReadonlyArray<S>,
+): AssistantPresence {
+  if (assistant === null) return assistantPresence(null);
+  const thread =
+    assistant.threadId === null
+      ? null
+      : (shells.find(
+          (shell) => shell.environmentId === environmentId && shell.id === assistant.threadId,
+        ) ?? null);
+  return assistantPresence(thread, assistantGroupThreadsOf(shells, environmentId, assistant.id));
+}
+
 /** The `assistantEntryKey` of the member a group thread belongs to; undefined for other threads. */
 export function assistantGroupOwnerKey(shell: {
   readonly environmentId: string;
