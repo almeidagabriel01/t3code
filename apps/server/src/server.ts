@@ -222,6 +222,7 @@ import * as AssistantTaskReactor from "./assistants/AssistantTaskReactor.ts";
 import * as AssistantTasks from "./assistants/AssistantTasks.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as NeedsUser from "./autonomy/NeedsUser.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
 import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
@@ -827,6 +828,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provide(AssistantTaskReactor.layer),
     Layer.provide(AssistantTasks.layer),
+    Layer.provide(NeedsUser.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
   Layer.effectDiscard(
