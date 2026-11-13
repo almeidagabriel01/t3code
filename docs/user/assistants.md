@@ -103,7 +103,9 @@ When an assistant asks to run a command or take another gated action, the reques
 decision in **Activity** and on the mobile Home screen, so you can answer it without opening the
 conversation. **Approve** lets it run; **Deny**, **Dismiss** or letting it expire declines it.
 Answering in the conversation clears the decision. Only **Edit files** produces approvals: Full
-access never asks, and Read only can't run those actions at all.
+access never asks, and Read only can't run those actions at all. With **Notify me when something
+is waiting for me** on (see [Autonomy](#autonomy)), an approval or question in any other
+conversation also becomes a decision once it has waited past the delay, with the same rules.
 
 ## Let assistants use your computer
 
@@ -286,21 +288,33 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
 - **Channels.** The answer reaches you in **Activity** (T3 and the mobile app) and on **Telegram**
   (the first allowed user), even when you are not chatting with that assistant there. If Telegram
   is not set up, the section says so and links to its settings.
+- **Notify me when something is waiting for me.** A direct notice, with no model, whenever any
+  conversation waits on you: an approval, a question, an open decision or a paused group task. It
+  goes out after **Notify after** (1 minute by default), only once, and never for something you
+  answered in the meantime. It has its own switch, respects the pause switch and does not count
+  toward the daily limit.
 - **Notifications per day**, 20 by default.
+- **Messages from assistants per day**, 20 by default: short messages an assistant sends you itself.
 
 Each assistant decides for itself, under **Notifications** in its settings: **Only reply when I
 message it** (the default) never wakes on its own, **Reply and notify me** does. It can use its own
 rule list, only some projects, and its own channels; the most specific setting wins. An assistant's
-spending limit still applies. Assistants, subagents and delegated tasks never trigger anything, so
-an assistant can't set off itself.
+spending limit still applies. Assistants, subagents and delegated tasks never trigger rules, so an
+assistant can't set off itself; a one-time watch on one of those conversations still fires for the
+assistant that set it. Ask an assistant to turn its own notifications on or off and it changes this
+setting for you; it can only do that in a message you sent.
+
+An assistant can also send you a short message of its own, with a link to a conversation when it
+has one. It reaches Activity and Telegram (or iMessage when Telegram is off), never carries files or
+secrets, and stops while autonomy is paused.
 
 ### Reminders and watches
 
 Ask an assistant in plain words. "Remind me tomorrow at 9am to renew the domain" creates a one-time
 schedule. "Tell me when the checks on PR 42 pass" creates a **watch**: a filter (project, thread,
 event, PR) plus what to do when it matches, which can fire once or stay on, and can expire. Pause or
-delete a watch whenever you like; it stops immediately. Watches only wake assistants set to reply
-and notify. An assistant's settings list its watches under **Watches**, where you can also add,
+delete a watch whenever you like; it stops immediately. Watches and reminders work whatever the
+assistant's notification mode, and their answer reaches Activity and Telegram. An assistant's settings list its watches under **Watches**, where you can also add,
 edit, pause or delete one by hand.
 
 ## Spending limit
@@ -358,6 +372,13 @@ stays with the last one you picked. Send `@` on its own to list them. Telegram's
 too: `/name text` works like `@Name text`, and `/name` alone switches to that assistant. Approvals
 arrive as numbered choices: reply with the number. Only private chats with the bot are heard; groups and attachments
 are not. More than 10 messages a minute from one person are held back, with one notice.
+
+When **Notify me when something is waiting for me** is on (see [Autonomy](#autonomy)), the bot also
+tells you when any conversation waits on you: who is asking, the project and conversation, a short
+summary and a link to open it in T3 Code. Approvals and single-choice questions come with numbered
+choices; anything else says to answer in T3 Code. A number answers the newest card, and the bot then
+names the next one still waiting. Without Telegram, the notice goes to iMessage when it is on, and
+always to Activity.
 
 If the status shows an error, it says what to fix; T3 Code keeps retrying, waiting longer after each
 failure, and turning the switch off stops it at once. Two programs cannot read the same bot at the
