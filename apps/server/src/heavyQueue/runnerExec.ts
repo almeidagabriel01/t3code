@@ -10,6 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { RunnerMachineConfig } from "@t3tools/contracts";
 
+import { shellQuote } from "./heavyHook.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
@@ -82,10 +83,12 @@ export const withProjectBins = (
     { length: depth + 1 },
     (_, up) => `${up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`}/node_modules/.bin`,
   );
+  // The pre-flight: a program Linux can't find never starts, and says which one it was.
+  const program = shellQuote(command[0] ?? "");
   return [
     "bash",
     "-c",
-    `export PATH="${bins.join(":")}:$PATH"; exec "$@"`,
+    `export PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; exec "$@"`,
     "t3",
     ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,

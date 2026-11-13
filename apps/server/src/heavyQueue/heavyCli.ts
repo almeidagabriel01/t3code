@@ -1019,6 +1019,9 @@ const runLinuxPart = async (
     }
     process.exit(outcome.code);
   }
+  if (outcome.kind === "missing") {
+    return endLine(dir, id, { kind: "mac", reason: `Not installed on Linux: ${outcome.tool}` });
+  }
   endLine(dir, id, outcome);
 };
 

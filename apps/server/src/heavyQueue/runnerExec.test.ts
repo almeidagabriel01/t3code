@@ -86,7 +86,8 @@ describe("running on Linux through remoto", () => {
         `printf '${M} phase=syncing id=app-1a2b3c4d\\n' >&2`,
         `printf '${M} phase=installing\\n' >&2`,
         `printf '${M} phase=running pgid=42\\n' >&2`,
-        `echo "args:$*"`,
+        // printf, not echo: sh's echo reads the pre-flight's own backslashes.
+        `printf '%s\\n' "args:$*"`,
         "echo FAIL src/device/CaptureDevices.test.ts",
         "printf 'to-stderr\\npartial' >&2",
         `printf '${M} exit=3\\n' >&2`,
@@ -115,7 +116,7 @@ describe("running on Linux through remoto", () => {
     expect(withProjectBins(["vp", "test"], cwd, "/w")).toEqual([
       "bash",
       "-c",
-      `export PATH=${path}; exec "$@"`,
+      `export PATH=${path}; command -v -- 'vp' >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' 'vp' >&2; exit 127; }; exec "$@"`,
       "t3",
       "vp",
       "test",
@@ -148,6 +149,34 @@ describe("running on Linux through remoto", () => {
     const { run, out } = runWith(fake('exec "$@"'), "vp; vitest", web);
     expect((await run.done).outcome).toEqual({ kind: "unavailable", touched: false });
     expect(out()).toBe("web-vp\nroot-vitest\n");
+  });
+
+  it.each([
+    ["nope-not-installed", { kind: "missing", tool: "nope-not-installed" }, ""],
+    ["t3-present", { kind: "unavailable", touched: false }, "present\n"],
+  ] as const)("checks %s resolves there before running it", async (program, outcome, output) => {
+    const bin = NodePath.join(dir, "node_modules", ".bin");
+    NodeFS.mkdirSync(bin, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(bin, "t3-present"), "#!/bin/sh\necho present\n", {
+      mode: 0o755,
+    });
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      // Stands in for `remoto-rodar`: the wrapper runs as it would there.
+      remoto: fake('exec "$@"'),
+      program,
+      args: [],
+      cwd: dir,
+      root: dir,
+      environment: process.env,
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    expect((await run.done).outcome).toEqual(outcome);
+    expect(Buffer.concat(stdout).toString("utf8")).toBe(output);
   });
 
   it("reads a lost connection after the start as dropped, and exit 75 as unavailable", async () => {

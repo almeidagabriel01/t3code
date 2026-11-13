@@ -379,6 +379,30 @@ describe("t3 heavy", () => {
       expect(run.stderr()).toContain(`${NEEDS_GIT}; running the line on this Mac`);
     });
 
+    it("keeps a job on the Mac when Linux's pre-flight finds its tool missing", async () => {
+      const { dir, env } = setup(
+        `printf '${M} phase=running pgid=4\\n${M} missing=vp\\n${M} exit=127\\n' >&2; exit 127`,
+        { runnerDropped: "mac" },
+      );
+      const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("vp on mac: test run\n");
+      expect(run.stderr()).toContain("Not installed on Linux: vp; running the line on this Mac");
+    });
+
+    it.each([1, 2, 3])(
+      "returns a plain failure's exit %i unchanged, never rerunning it",
+      async (code) => {
+        const { dir, env } = setup(
+          `printf '${M} phase=running pgid=4\\n${M} exit=${code}\\n' >&2; exit ${code}`,
+          { runnerDropped: "mac", runnerUnavailable: "mac" },
+        );
+        const run = heavy(dir, ["/bin/sh", "-c", "vp test run"], env, ["--"], dir);
+        expect(await run.exited).toBe(code);
+        expect(run.stdout()).not.toContain("vp on mac");
+      },
+    );
+
     it("judges the whole line, not the label cut short for the row", async () => {
       const { dir, env } = setup(echoArgs);
       const line = `vp test run ${"a".repeat(200)} /etc/hosts`;

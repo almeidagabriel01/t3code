@@ -809,6 +809,8 @@ export interface RemoteProgress {
   readonly id: string | null;
   readonly pgid: number | null;
   readonly exit: number | null;
+  /** The program the pre-flight found missing there, which therefore never started. */
+  readonly missing: string | null;
 }
 
 export const NO_PROGRESS: RemoteProgress = {
@@ -818,6 +820,7 @@ export const NO_PROGRESS: RemoteProgress = {
   id: null,
   pgid: null,
   exit: null,
+  missing: null,
 };
 
 /** Folds one marker line (`phase=running pgid=123`, `exit=0`) into the progress so far. */
@@ -843,6 +846,10 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
         : progress.id,
     pgid: int(fields.pgid) ?? progress.pgid,
     exit: int(fields.exit) ?? progress.exit,
+    missing:
+      typeof fields.missing === "string" && fields.missing !== ""
+        ? fields.missing
+        : progress.missing,
   };
 };
 
@@ -851,10 +858,13 @@ export type RemoteOutcome =
   /** The command never started there; `touched` when `remoto` got as far as syncing. */
   | { readonly kind: "unavailable"; readonly touched: boolean }
   /** It started there and the connection ended without its exit code. */
-  | { readonly kind: "dropped" };
+  | { readonly kind: "dropped" }
+  /** The pre-flight found its program missing there: nothing ran. */
+  | { readonly kind: "missing"; readonly tool: string };
 
 /** The exit marker is the command's own code; without it, ssh's 255 is not the command's. */
 export const remoteOutcome = (progress: RemoteProgress): RemoteOutcome => {
+  if (progress.missing !== null) return { kind: "missing", tool: progress.missing };
   if (progress.exit !== null) return { kind: "finished", code: progress.exit };
   if (!progress.running) return { kind: "unavailable", touched: progress.syncing };
   return { kind: "dropped" };

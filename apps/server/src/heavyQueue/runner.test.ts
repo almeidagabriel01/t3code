@@ -919,6 +919,12 @@ describe("remoto markers", () => {
       ["phase=syncing id=app-1a2b3c4d", "phase=installing", "phase=running pgid=42"],
       { kind: "dropped" },
     ],
+    // The pre-flight found the program missing: it exits 127 there without running anything.
+    [
+      ["phase=syncing id=app-1a2b3c4d", "phase=running pgid=42", "missing=vp", "exit=127"],
+      { kind: "missing", tool: "vp" },
+    ],
+    [["phase=running pgid=42", "missing=", "exit=127"], { kind: "finished", code: 127 }],
     [["phase=syncing id=app-1a2b3c4d"], { kind: "unavailable", touched: true }],
     [[], { kind: "unavailable", touched: false }],
   ] as const)("%j ends as %j", (lines, outcome) => {
