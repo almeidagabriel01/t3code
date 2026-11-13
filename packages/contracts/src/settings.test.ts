@@ -74,6 +74,28 @@ describe("autonomy settings", () => {
   });
 });
 
+describe("retention and idle timeout settings", () => {
+  it("default for older settings files and validate patches", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      toolOutputHistoryDays: 30,
+      providerIdleTimeoutMinutes: 10,
+    });
+    expect(decodeServerSettingsPatch({ toolOutputHistoryDays: null })).toEqual({
+      toolOutputHistoryDays: null,
+    });
+    for (const bad of [{ toolOutputHistoryDays: 0 }, { toolOutputHistoryDays: 366 }]) {
+      expect(() => decodeServerSettingsPatch(bad)).toThrow();
+    }
+    for (const bad of [
+      { providerIdleTimeoutMinutes: null },
+      { providerIdleTimeoutMinutes: 0 },
+      { providerIdleTimeoutMinutes: 241 },
+    ]) {
+      expect(() => decodeServerSettingsPatch(bad)).toThrow();
+    }
+  });
+});
+
 describe("channel language setting", () => {
   it.each([
     [undefined, "auto"],

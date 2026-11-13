@@ -173,6 +173,28 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
+export const MIN_TOOL_OUTPUT_HISTORY_DAYS = 1;
+export const MAX_TOOL_OUTPUT_HISTORY_DAYS = 365;
+export const ToolOutputHistoryDays = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_TOOL_OUTPUT_HISTORY_DAYS,
+    maximum: MAX_TOOL_OUTPUT_HISTORY_DAYS,
+  }),
+);
+export type ToolOutputHistoryDays = typeof ToolOutputHistoryDays.Type;
+const DEFAULT_TOOL_OUTPUT_HISTORY_DAYS: ToolOutputHistoryDays = 30;
+
+export const MIN_PROVIDER_IDLE_TIMEOUT_MINUTES = 1;
+export const MAX_PROVIDER_IDLE_TIMEOUT_MINUTES = 240;
+export const ProviderIdleTimeoutMinutes = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
+    maximum: MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+  }),
+);
+export type ProviderIdleTimeoutMinutes = typeof ProviderIdleTimeoutMinutes.Type;
+const DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES: ProviderIdleTimeoutMinutes = 10;
+
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([
@@ -1750,6 +1772,12 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  toolOutputHistoryDays: Schema.NullOr(ToolOutputHistoryDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TOOL_OUTPUT_HISTORY_DAYS)),
+  ),
+  providerIdleTimeoutMinutes: ProviderIdleTimeoutMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES)),
+  ),
   compactIdleThreads: LegacyCompactIdleThreads.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -2234,6 +2262,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   deviceBlockedLinks: Schema.optionalKey(Schema.Array(DeviceLinkClientRef)),
   hiddenLinkedDeviceSources: Schema.optionalKey(Schema.Array(Schema.String)),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  toolOutputHistoryDays: Schema.optionalKey(Schema.NullOr(ToolOutputHistoryDays)),
+  providerIdleTimeoutMinutes: Schema.optionalKey(ProviderIdleTimeoutMinutes),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
