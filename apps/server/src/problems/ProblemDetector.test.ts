@@ -704,53 +704,62 @@ const record = (overrides: Record<string, unknown>) =>
   }) as unknown as HeavyEventRecord;
 
 describe("sources (PRO-30, PRO-32)", () => {
-  it.effect("a failed run files a card; replays, interrupts and own loops file nothing", () => {
-    const h = harness();
-    return run(
-      h,
-      Effect.gen(function* () {
-        const detector = yield* Detector.ProblemDetector;
-        const plain = { lineage: { relationshipToParent: null } };
-        h.shells.set("assistant:jarvis:1", { ...plain, projectId: "p1", title: "Jarvis" });
-        h.shells.set("sub", {
-          lineage: { relationshipToParent: "subagent" },
-          projectId: "p1",
-          title: "s",
-        });
-        h.shells.set("side", { ...plain, sideChatOf: "t1", projectId: "p1", title: "side" });
-        h.shells.set("child", {
-          ...plain,
-          delegatedFrom: { threadId: "t1" },
-          projectId: "p1",
-          title: "c",
-        });
-        h.runErrors.set("t1", "API Error: 529 Overloaded");
-        for (const event of [
-          failedRun("r1", "t1"),
-          failedRun("r1", "t1"),
-          failedRun("r2", "t1", { status: "interrupted" }),
-          failedRun("r3", "t1", { status: "cancelled" }),
-          failedRun("r4", "assistant:jarvis:1"),
-          failedRun("r5", "sub"),
-          failedRun("r6", "side"),
-          failedRun("r7", "child"),
-          failedRun("r8", "missing"),
-        ])
-          yield* detector.handleEvent(event);
-        yield* detector.tick;
-        const cards = yield* allCards;
-        assert.deepEqual(
-          cards.map((card) => card.title),
-          ["Provider: API Error: 529 Overloaded"],
-        );
-        assert.include(cards[0]!.description, "Agent run");
-        assert.deepEqual(
-          (yield* skips).map((row) => row.event_key),
-          ["run:r1"],
-        );
-      }),
-    );
-  });
+  it.effect(
+    "a failed run files a card; replays, interrupts, own loops and assistant tasks file nothing",
+    () => {
+      const h = harness();
+      return run(
+        h,
+        Effect.gen(function* () {
+          const detector = yield* Detector.ProblemDetector;
+          const plain = { lineage: { relationshipToParent: null } };
+          h.shells.set("assistant:jarvis:1", { ...plain, projectId: "p1", title: "Jarvis" });
+          h.shells.set("sub", {
+            lineage: { relationshipToParent: "subagent" },
+            projectId: "p1",
+            title: "s",
+          });
+          h.shells.set("side", { ...plain, sideChatOf: "t1", projectId: "p1", title: "side" });
+          h.shells.set("child", {
+            ...plain,
+            delegatedFrom: { threadId: "t1" },
+            projectId: "p1",
+            title: "c",
+          });
+          h.shells.set("task", { ...plain, projectId: "p1", title: "Jarvis's task" });
+          yield* (yield* SqlClient.SqlClient)`
+          INSERT INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at)
+          VALUES ('task', 'jarvis', 'p1', 'Jarvis''s task', '2026-01-01T00:00:00.000Z')`;
+          h.runErrors.set("task", "Tests failed");
+          h.runErrors.set("t1", "API Error: 529 Overloaded");
+          for (const event of [
+            failedRun("r9", "task"),
+            failedRun("r1", "t1"),
+            failedRun("r1", "t1"),
+            failedRun("r2", "t1", { status: "interrupted" }),
+            failedRun("r3", "t1", { status: "cancelled" }),
+            failedRun("r4", "assistant:jarvis:1"),
+            failedRun("r5", "sub"),
+            failedRun("r6", "side"),
+            failedRun("r7", "child"),
+            failedRun("r8", "missing"),
+          ])
+            yield* detector.handleEvent(event);
+          yield* detector.tick;
+          const cards = yield* allCards;
+          assert.deepEqual(
+            cards.map((card) => card.title),
+            ["Provider: API Error: 529 Overloaded"],
+          );
+          assert.include(cards[0]!.description, "Agent run");
+          assert.deepEqual(
+            (yield* skips).map((row) => row.event_key),
+            ["run:r1"],
+          );
+        }),
+      );
+    },
+  );
 
   it.effect("provider sessions in error, PR checks turning failing, Runner records", () => {
     const h = harness();

@@ -617,6 +617,9 @@ const make = Effect.gen(function* () {
             .getThreadShell(run.threadId)
             .pipe(Effect.orElseSucceed(() => null));
           if (shell === null || isOwnLoop(run.threadId, shell)) return;
+          // AssistantTaskReactor already wakes the task's assistant about this run.
+          const task = yield* sql`SELECT 1 FROM assistant_tasks WHERE thread_id = ${run.threadId}`;
+          if (task.length > 0) return;
           const found = runReport(run, yield* runError(run.threadId, run.id), nowMs);
           if (found !== null) yield* report({ ...found, threadTitle: shell.title });
           return;
