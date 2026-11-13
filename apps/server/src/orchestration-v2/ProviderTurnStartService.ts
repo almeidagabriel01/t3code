@@ -59,6 +59,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as MemorySnapshot from "../memory/MemorySnapshot.ts";
 import { runMemoryPrepareInput } from "./MemoryPrepareInput.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { endProcessBoundTurnItems, processBoundTurnItems } from "./processBoundWork.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -734,25 +735,49 @@ export const layer: Layer.Layer<
           }
         }
         const completedAt = yield* DateTime.now;
+        const abandonedTurnIds = new Set(abandonedTurns.map(({ turn }) => turn.id));
+        // The restart killed the process that ran the turn's commands, so end them with it.
+        const deadItems =
+          Option.isSome(liveSession) && liveSession.value.backgroundTasksEndWithProcess === true
+            ? processBoundTurnItems(
+                (yield* projectionStore.getThreadRecords(projection.thread.id, ["turnItems"], {
+                  turnItemRunIds: abandonedTurns.map(({ run: failedRun }) => failedRun.id),
+                  turnItemTypes: ["command_execution", "dynamic_tool"],
+                  turnItemStatuses: ["pending", "running", "waiting"],
+                })).turnItems,
+              ).filter(
+                (item) => item.providerTurnId !== null && abandonedTurnIds.has(item.providerTurnId),
+              )
+            : [];
         const repaired = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
-          events: yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
-            Effect.gen(function* () {
-              return {
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                type: "provider-turn.updated" as const,
-                threadId: projection.thread.id,
-                runId: failedRun.id,
-                nodeId: turn.nodeId,
-                providerInstanceId: failedRun.providerInstanceId,
-                occurredAt: completedAt,
-                payload: { ...turn, status: "interrupted" as const, completedAt },
-              };
-            }),
-          ),
+          events: [
+            ...(yield* Effect.forEach(abandonedTurns, ({ turn, run: failedRun }) =>
+              Effect.gen(function* () {
+                return {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "provider-turn.updated" as const,
+                  threadId: projection.thread.id,
+                  runId: failedRun.id,
+                  nodeId: turn.nodeId,
+                  providerInstanceId: failedRun.providerInstanceId,
+                  occurredAt: completedAt,
+                  payload: { ...turn, status: "interrupted" as const, completedAt },
+                };
+              }),
+            )),
+            ...(yield* endProcessBoundTurnItems({
+              items: deadItems,
+              nodes: projection.nodes,
+              status: "interrupted",
+              now: completedAt,
+              owner: { providerInstanceId: run.providerInstanceId },
+              allocateEventId: () => idAllocator.allocate.event({ threadId: projection.thread.id }),
+            })),
+          ],
         });
         if (!repaired.committed) return;
       }

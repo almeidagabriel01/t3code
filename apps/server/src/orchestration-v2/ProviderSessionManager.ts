@@ -1,6 +1,5 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -56,6 +55,7 @@ import { effectiveMemoryGrant } from "../memory/MemoryAccess.ts";
 import type { MemorySnapshotPolicy } from "../memory/MemorySnapshot.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
+import { endProcessBoundTurnItems, processBoundTurnItems } from "./processBoundWork.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -890,7 +890,7 @@ export const layerWithOptions = (
         for (const threadId of releasedThreadIds(input)) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
-            ["providerThreads", "runs", "turnItems"],
+            ["providerThreads", "turnItems"],
             {
               turnItemTypes: ["command_execution", "dynamic_tool"],
               turnItemStatuses: ["pending", "running", "waiting"],
@@ -902,9 +902,9 @@ export const layerWithOptions = (
               .map((providerThread) => providerThread.id),
           );
           // Session ids survive a restart, so only work that predates this release is ours.
-          const items = pendingBackgroundTurnItems(projection).filter(
+          const items = processBoundTurnItems(projection.turnItems).filter(
             (item) =>
-              item.providerThreadId !== null &&
+              item.providerThreadId != null &&
               sessionProviderThreadIds.has(item.providerThreadId) &&
               (item.startedAt === null ||
                 DateTime.isLessThanOrEqualTo(item.startedAt, input.releasedAt)),
@@ -913,31 +913,16 @@ export const layerWithOptions = (
           const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
             nodeIds: items.flatMap((item) => item.nodeId ?? []),
           });
-          for (const item of items) {
-            events.push({
-              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-              type: "turn-item.updated",
-              threadId,
-              ...(item.runId === null ? {} : { runId: item.runId }),
-              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-              driver: input.entry.runtime.driver,
-              occurredAt: now,
-              payload: { ...item, status, completedAt: now, updatedAt: now },
-            });
-          }
-          for (const node of nodes) {
-            if (!isOrchestrationV2WorkActive(node.status)) continue;
-            events.push({
-              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-              type: "node.updated",
-              threadId,
-              ...(node.runId === null ? {} : { runId: node.runId }),
-              nodeId: node.id,
-              driver: input.entry.runtime.driver,
-              occurredAt: now,
-              payload: { ...node, status, completedAt: now },
-            });
-          }
+          events.push(
+            ...(yield* endProcessBoundTurnItems({
+              items,
+              nodes,
+              status,
+              now,
+              owner: { driver: input.entry.runtime.driver },
+              allocateEventId: () => idAllocator.allocate.event({ threadId, providerSessionId }),
+            })),
+          );
         }
         if (events.length > 0) {
           yield* eventSink.write({ events });

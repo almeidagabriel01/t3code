@@ -302,6 +302,8 @@ function makeLocalCommandHarness(input: {
     readonly liveSession?: boolean;
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
+    readonly openCommand?: boolean;
+    readonly backgroundTasksEndWithProcess?: boolean;
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -728,6 +730,28 @@ function makeLocalCommandHarness(input: {
           completedAt: input.previousTurn.turnStatus === "running" ? null : now,
         },
       ],
+      turnItems: input.previousTurn.openCommand
+        ? [
+            {
+              id: "previous-open-command",
+              threadId,
+              runId: previousRunId,
+              nodeId: null,
+              providerThreadId: previousProviderThreadId,
+              providerTurnId: previousTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "command_execution",
+              input: "cd ~/DEV; ls",
+            } as OrchestrationV2ThreadProjection["turnItems"][number],
+          ]
+        : projection.turnItems,
     };
   }
   let providerBusy =
@@ -1041,6 +1065,9 @@ function makeLocalCommandHarness(input: {
                     driver: providerThread.driver,
                     providerSessionId,
                     interruptTurn,
+                    ...(input.previousTurn?.backgroundTasksEndWithProcess === true
+                      ? { backgroundTasksEndWithProcess: true }
+                      : {}),
                   } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
             ),
         }),
@@ -1369,6 +1396,32 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
       "existing-native-conversation",
     );
   }),
+);
+
+effectIt.effect.each([
+  { backgroundTasksEndWithProcess: true, commandStatus: "interrupted" },
+  { backgroundTasksEndWithProcess: false, commandStatus: "running" },
+] as const)(
+  "the restart that recovers an abandoned turn ends its commands when they die with the process: %j",
+  ({ backgroundTasksEndWithProcess, commandStatus }) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        previousTurn: {
+          runStatus: "failed",
+          turnStatus: "running",
+          openCommand: true,
+          backgroundTasksEndWithProcess,
+        },
+      });
+
+      yield* harness.start;
+
+      expect(harness.projection().turnItems[0]).toMatchObject({
+        id: "previous-open-command",
+        status: commandStatus,
+      });
+    }),
 );
 
 effectIt.effect.each([
