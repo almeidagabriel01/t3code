@@ -901,18 +901,21 @@ function dispatchModelSelection(
   return pinnedModelSelection(projection, run) ?? projection.thread.modelSelection;
 }
 
-/** Whether a message's selection is the user's own pick rather than an echo of the thread's. */
+/**
+ * Whether a message's selection is the user's own pick rather than an echo of the selection the
+ * thread will be on when the message's run starts.
+ */
 function pinsModelSelection(
   command: Pick<
     Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     "createdBy" | "modelSelection"
   >,
-  thread: Pick<OrchestrationV2ThreadProjection["thread"], "modelSelection">,
+  expected: ModelSelection,
 ): boolean {
   return (
     command.createdBy === "user" &&
     command.modelSelection !== undefined &&
-    !modelSelectionsEqual(command.modelSelection, thread.modelSelection)
+    !modelSelectionsEqual(command.modelSelection, expected)
   );
 }
 
@@ -2793,8 +2796,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * Switching away from a usage-limited provider ends the wait: queued work is released and the
-   * limited run continues on the new selection, so nothing waits for the old provider's reset.
+   * Switching away from a usage-limited provider ends the wait: the limited run continues on the
+   * new selection, then its held queue resumes, so nothing waits for the old provider's reset.
    */
   const continueLimitedRunOnSwitch = Effect.fn("Orchestrator.continueLimitedRunOnSwitch")(
     function* (
@@ -2802,9 +2805,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         OrchestrationV2Command,
         { readonly type: "thread.model-selection.set" | "provider.switch" }
       >,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-      now: DateTime.Utc,
     ) {
       const projection = yield* loadProjectionForCommand(
         command,
@@ -2818,20 +2819,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.runtimeRequests.some((request) => request.status === "pending")
       ) {
         return;
-      }
-      for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld !== true) continue;
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "run.updated",
-          threadId: command.threadId,
-          runId: run.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: { ...run, queueHeld: false },
-        });
       }
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -4624,7 +4611,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       thread.archivedAt === null &&
       thread.settledOverride !== "settled"
     ) {
-      yield* continueLimitedRunOnSwitch(command, events, effects, now);
+      yield* continueLimitedRunOnSwitch(command, effects);
     }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
@@ -6248,7 +6235,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = applyToProjection(projection, event);
     }
     let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    const modelSelectionPinned = pinsModelSelection(command, projection.thread);
+    const modelSelectionPinned = pinsModelSelection(command, queueTailModelSelection(projection));
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,

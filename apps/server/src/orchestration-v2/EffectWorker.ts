@@ -576,6 +576,12 @@ export const layerExecutor: Layer.Layer<
                 createdBy: "agent",
                 creationSource: "server",
               });
+              // Like the Resume button: work queued behind the limited run follows the continuation.
+              yield* threads.dispatch({
+                type: "queue.resume",
+                commandId: CommandId.make(`command:limit-continuation-queue:${effect.id}`),
+                threadId: effect.threadId,
+              });
             }).pipe(
               // The thread moved on (new run, archive, pending request): nothing left to continue.
               Effect.catchTags({

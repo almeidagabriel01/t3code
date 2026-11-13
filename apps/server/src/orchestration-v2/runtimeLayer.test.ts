@@ -6144,7 +6144,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const selections = [modelSelection, modelSelection, queuedSelection];
+      // The last pick equals the thread but not the pinned run ahead of it, so it pins too.
+      const selections = [modelSelection, modelSelection, queuedSelection, modelSelection];
       for (const [index, selection] of selections.entries()) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -6159,7 +6160,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
         });
       }
-      const [active, limited, available] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const [active, limited, available, back] = (yield* orchestrator.getThreadProjection(threadId))
+        .runs;
       assert.isDefined(active);
       assert.isDefined(limited);
       assert.isDefined(available);
@@ -6230,6 +6232,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.isUndefined(limited.modelSelectionPinned);
       assert.isTrue(available.modelSelectionPinned);
+      assert.isTrue(back?.modelSelectionPinned);
+      assert.deepEqual(back?.modelSelection, modelSelection);
       // Without a switch the next queued run follows the thread onto the limited provider.
       const blocked = yield* orchestrator
         .dispatch({
