@@ -446,6 +446,8 @@ export interface LinuxHealth extends Sustained {
   readonly error?: string;
   /** When the last failure counted; a check's claim moves `checkedAt` before it runs. */
   readonly failedAt?: number;
+  /** When it last came back online after being offline. */
+  readonly backOnlineAt?: number;
 }
 
 export const UNKNOWN_HEALTH: LinuxHealth = {
@@ -532,11 +534,13 @@ export const nextHealth = (
     const gapMs = 2 * (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
     const continuous = previous.okAt !== null && now - previous.okAt <= gapMs;
     const over = linuxOverBy(check.reading, machine) !== null;
+    const backOnlineAt = previous.online === false ? now : previous.backOnlineAt;
     return {
       online: true,
       failures: 0,
       checkedAt: now,
       okAt: now,
+      ...(backOnlineAt === undefined ? {} : { backOnlineAt }),
       ...check.reading,
       ...sustain(continuous ? previous : null, over, now, windowMs),
     };
@@ -553,10 +557,17 @@ export const nextHealth = (
   };
 };
 
-/** Linux can take this entry: the heartbeat says online and no `remoto` failed it since. */
-const linuxUpFor = (health: LinuxHealth, entry: HeavyQueueEntry) =>
-  health.online === true &&
-  (entry.linuxFailedAt === undefined || (health.okAt ?? 0) > entry.linuxFailedAt);
+/**
+ * Linux can take this entry: the heartbeat says online and no `remoto` failed it since. An
+ * environment failure would only repeat on the same Linux: it needs Linux to have been offline
+ * and come back since, unless the user sent it there.
+ */
+const linuxUpFor = (health: LinuxHealth, entry: HeavyQueueEntry) => {
+  const { linuxFailedAt, failure, route } = entry as QueuedEntry;
+  if (health.online !== true || linuxFailedAt === undefined) return health.online === true;
+  const since = failure !== undefined && route === undefined ? health.backOnlineAt : health.okAt;
+  return (since ?? 0) > linuxFailedAt;
+};
 
 /** Runs that may lose the link before a job counts Linux unavailable: one past going offline. */
 export const linkAttempts = (machine: RunnerMachineConfig) =>

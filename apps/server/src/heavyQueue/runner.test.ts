@@ -916,7 +916,7 @@ describe("Linux unavailable, deadline and dropped policies", () => {
       {},
       "linux-wait",
     ],
-  ] as const)("an environment failure under Wait, %s: %s", (_, extra, back, outcome) => {
+  ] as const)("an environment failure under Wait, %s", (_, extra, back, outcome) => {
     const entry = job("a", "vp test run", {
       dropped: true,
       failure: "sh: 1: tsgo: not found",
