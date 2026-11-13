@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { Assistant, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -49,6 +49,22 @@ export function sandboxNoteLine(environmentId: string | null): string {
 }
 
 /**
+ * The projects an assistant may work in, or "all" when its scope is not limited. The one source of
+ * that answer: every project permission check goes through it, never a group's project union.
+ */
+export const assistantProjects = (
+  assistant: Pick<Assistant, "scope" | "projectIds">,
+): ReadonlyArray<ProjectId> | "all" => (assistant.scope === "project" ? assistant.projectIds : "all");
+
+export const assistantWorksIn = (
+  assistant: Pick<Assistant, "scope" | "projectIds">,
+  projectId: ProjectId,
+): boolean => {
+  const projects = assistantProjects(assistant);
+  return projects === "all" || projects.includes(projectId);
+};
+
+/**
  * Why `threadId` may not start or message work in another project, or none when it may. Only a
  * project assistant is held: it works inside the projects on its list. `projectId` is the project the
  * work lands in (undefined when the caller names none, which means its home); `elsewhere` is true for
@@ -65,13 +81,12 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
   ) {
     if (Option.isNone(directory) || input.threadId === undefined) return Option.none<string>();
     const found = yield* directory.value.forThread(input.threadId);
-    if (Option.isNone(found) || found.value.assistant.scope !== "project") {
-      return Option.none<string>();
-    }
+    if (Option.isNone(found)) return Option.none<string>();
     const { assistant } = found.value;
     if (
-      input.elsewhere !== true &&
-      assistant.projectIds.includes(input.projectId ?? assistant.projectId)
+      assistantProjects(assistant) === "all" ||
+      (input.elsewhere !== true &&
+        assistantWorksIn(assistant, input.projectId ?? assistant.projectId))
     ) {
       return Option.none<string>();
     }
