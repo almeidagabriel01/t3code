@@ -317,6 +317,12 @@ export const HeavyQueueRouteInput = Schema.Struct({
 });
 export type HeavyQueueRouteInput = typeof HeavyQueueRouteInput.Type;
 
+/** Move all: every waiting job that can run on `runner` goes there; running jobs stay. */
+export const HeavyQueueRouteAllInput = Schema.Struct({ runner: HeavyRunner });
+export type HeavyQueueRouteAllInput = typeof HeavyQueueRouteAllInput.Type;
+export const HeavyQueueRouteAllResult = Schema.Struct({ moved: Schema.Array(Schema.String) });
+export type HeavyQueueRouteAllResult = typeof HeavyQueueRouteAllResult.Type;
+
 export const HeavyQueueSetRuleInput = Schema.Struct({
   root: Schema.String,
   priority: Schema.NullOr(Schema.Literals(["first", "last"])),

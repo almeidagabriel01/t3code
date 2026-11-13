@@ -836,6 +836,27 @@ describe("Runner in the queue file", () => {
     ]);
   });
 
+  it("Move all routes the waiters that can run there, never running, Mac-only or unconfirmed ones", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    Queue.enqueue(dir, test("r"));
+    expect(Queue.tryStart(dir, "r", NOW)).toMatchObject({ runner: "linux" });
+    const waiters = [
+      test("a"),
+      test("b", { ask: { reason: "unavailable", deadlineAt: new Date(NOW).toISOString() } }),
+      test("x", { label: "xcodebuild test" }),
+      test("u", { unconfirmed: true }),
+    ];
+    for (const waiter of waiters) Queue.enqueue(dir, waiter);
+    const routes = () => Object.fromEntries(Queue.read(dir).map((e) => [e.id, e.route ?? null]));
+    expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["a", "b"]);
+    expect(routes()).toEqual({ r: null, a: "mac", b: "mac", x: null, u: null });
+    expect(Queue.read(dir).find((e) => e.id === "b")).not.toHaveProperty("ask");
+    expect(Queue.routeAll(dir, "mac", NOW)).toEqual([]);
+    expect(Queue.routeAll(dir, "linux", NOW)).toEqual(["a", "b"]);
+    expect(routes()).toEqual({ r: null, a: "linux", b: "linux", x: null, u: null });
+    expect(Queue.read(dir).find((e) => e.id === "r")).not.toHaveProperty("requeue");
+  });
+
   it("forcing a rerun clears the unconfirmed hold", () => {
     const dir = queueWith(block());
     Queue.enqueue(dir, test("a", { unconfirmed: true }));

@@ -563,6 +563,8 @@ import {
   HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
+  HeavyQueueRouteAllInput,
+  HeavyQueueRouteAllResult,
   HeavyQueueRouteInput,
   HeavyQueueState,
 } from "./heavyQueue.ts";
@@ -867,6 +869,7 @@ export const WS_METHODS = {
   heavyQueueSetEnabled: "heavyQueue.setEnabled",
   heavyQueueSetRule: "heavyQueue.setRule",
   heavyQueueRoute: "heavyQueue.route",
+  heavyQueueRouteAll: "heavyQueue.routeAll",
   heavyQueueSetMaxRunning: "heavyQueue.setMaxRunning",
   heavyQueueSetMacMemoryFloorPercent: "heavyQueue.setMacMemoryFloorPercent",
   heavyQueueSetMacCpuCeilingPercent: "heavyQueue.setMacCpuCeilingPercent",
@@ -2713,6 +2716,12 @@ const WsHeavyQueueRouteRpc = Rpc.make(WS_METHODS.heavyQueueRoute, {
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
 });
 
+const WsHeavyQueueRouteAllRpc = Rpc.make(WS_METHODS.heavyQueueRouteAll, {
+  payload: HeavyQueueRouteAllInput,
+  success: HeavyQueueRouteAllResult,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSetRuleRpc = Rpc.make(WS_METHODS.heavyQueueSetRule, {
   payload: HeavyQueueSetRuleInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -3190,6 +3199,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetEnabledRpc,
   WsHeavyQueueSetRuleRpc,
   WsHeavyQueueRouteRpc,
+  WsHeavyQueueRouteAllRpc,
   WsHeavyQueueSetMaxRunningRpc,
   WsHeavyQueueSetMacMemoryFloorPercentRpc,
   WsHeavyQueueSetMacCpuCeilingPercentRpc,

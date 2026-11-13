@@ -111,6 +111,10 @@ export class HeavyQueue extends Context.Service<
       runner: HeavyRunner,
       force: boolean,
     ) => Effect.Effect<void, HeavyQueueError>;
+    /** Move all: routes every waiter that can run on `runner` there; returns the moved ids. */
+    readonly routeAll: (
+      runner: HeavyRunner,
+    ) => Effect.Effect<ReadonlyArray<string>, HeavyQueueError>;
     /** A null priority clears the folder's rule. */
     readonly setRule: (
       root: string,
@@ -422,6 +426,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     ),
     route: Effect.fn("HeavyQueue.route")((id: string, runner: HeavyRunner, force: boolean) =>
       act("moved", () => QueueFile.route(dir, id, runner, force)),
+    ),
+    routeAll: Effect.fn("HeavyQueue.routeAll")((runner: HeavyRunner) =>
+      Effect.try({ try: () => QueueFile.routeAll(dir, runner), catch: unavailable }).pipe(
+        Effect.tap(() => announce),
+      ),
     ),
     setRule: Effect.fn("HeavyQueue.setRule")((root: string, priority: "first" | "last" | null) =>
       change(() => QueueFile.setRule(dir, root, priority)),

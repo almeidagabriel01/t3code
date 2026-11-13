@@ -51,6 +51,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.heavyQueueSetEnabled]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetRule]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueRoute]: AuthTerminalOperateScope,
+  [WS_METHODS.heavyQueueRouteAll]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMaxRunning]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: AuthTerminalOperateScope,
   [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: AuthTerminalOperateScope,

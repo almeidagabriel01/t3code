@@ -1145,6 +1145,39 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
     }));
   });
 
+/**
+ * Move all: routes every waiter the plan places on the other machine to `runner`, as `route`
+ * would each one, and returns their ids. Running jobs, Mac-only work bound for Linux and runs
+ * Linux has not confirmed stopped stay where they are.
+ */
+export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc): Decided<ReadonlyArray<string>> => {
+      const { routes } = planOf(doc, now);
+      const moves = doc.entries.filter(
+        (entry) =>
+          entry.startedAt === null &&
+          (routes[entry.id] ?? "mac") !== runner &&
+          entry.unconfirmed !== true &&
+          !(runner === "linux" && staysOnMac(doc, entry)),
+      );
+      const moved = new Set(moves.map((entry) => entry.id));
+      return {
+        doc: {
+          ...doc,
+          entries: doc.entries.map((entry) => {
+            if (!moved.has(entry.id)) return entry;
+            const { ask: _ask, forced: _forced, ...rest } = entry;
+            return { ...rest, route: runner };
+          }),
+        },
+        result: [...moved],
+      };
+    },
+    now,
+  );
+
 /** A Linux job's phase and the run folder and process group `remoto` reported. */
 export const setProgress = (
   dir: string,

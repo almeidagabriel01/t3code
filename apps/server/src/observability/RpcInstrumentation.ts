@@ -171,6 +171,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.heavyQueueSetEnabled]: "heavyQueue",
   [WS_METHODS.heavyQueueSetRule]: "heavyQueue",
   [WS_METHODS.heavyQueueRoute]: "heavyQueue",
+  [WS_METHODS.heavyQueueRouteAll]: "heavyQueue",
   [WS_METHODS.heavyQueueSetMaxRunning]: "heavyQueue",
   [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: "heavyQueue",
   [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: "heavyQueue",

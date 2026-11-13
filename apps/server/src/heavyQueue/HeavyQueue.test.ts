@@ -361,6 +361,9 @@ describe("HeavyQueue", () => {
         for (const key of ["cpu", "memory", "peakCpu", "peakMemory"]) {
           expect(running).not.toHaveProperty(key);
         }
+        // Move all to this Mac takes the Linux waiter and leaves the running job.
+        expect(yield* queue.routeAll("mac")).toEqual(["linuxWaiter"]);
+        expect((yield* queue.state).routes).toMatchObject({ linuxWaiter: "mac" });
       }),
     ),
   );
