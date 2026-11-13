@@ -1711,7 +1711,12 @@ export const layer: Layer.Layer<
                     run: input.run,
                     rootNode: input.rootNode,
                     checkpointScope: input.checkpointScope,
-                    providerThread,
+                    // The restart took its background tasks with it, as a release does.
+                    providerThread:
+                      abandonedProviderTurn !== null &&
+                      input.session.backgroundTasksEndWithProcess === true
+                        ? { ...providerThread, pendingBackgroundTasks: [] }
+                        : providerThread,
                     attempt: input.attempt,
                     writeIfRunCurrent: {
                       activeAttemptId: input.attempt.id,

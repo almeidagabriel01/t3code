@@ -326,7 +326,13 @@ const make = Effect.gen(function* () {
     const id = yield* random.uuidV4().pipe(Effect.orDie);
     yield* threads
       .dispatch(command(CommandId.make(`assistant-cmd:${id}`)))
-      .pipe(Effect.catch(threadFailure("Could not update the assistant's conversation.")));
+      .pipe(
+        Effect.catch((cause) =>
+          cause._tag === "OrchestratorProviderSelectionBusyError"
+            ? Effect.fail(assistantError("invalid", cause.message))
+            : threadFailure("Could not update the assistant's conversation.")(cause),
+        ),
+      );
   });
 
   /** A muted line in the conversation; a failure to write it never fails the change it reports. */
@@ -808,7 +814,14 @@ const make = Effect.gen(function* () {
                   commandId,
                   threadId: previousThreadId,
                   runtimeMode: runtimeModeForToolAccess(next.toolAccess),
-                }));
+                })).pipe(
+                  // A busy thread keeps its mode, so the row keeps the access it still runs with.
+                  Effect.tapError(
+                    () =>
+                      sql`UPDATE assistants SET tool_access = ${row.tool_access}
+                        WHERE assistant_id = ${row.assistant_id}`,
+                  ),
+                );
               }
               if (archivedAt !== null && row.archived_at === null) {
                 yield* archiveThread(previousThreadId, true);

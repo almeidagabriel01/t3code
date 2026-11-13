@@ -303,6 +303,8 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
     readonly openCommand?: boolean;
+    readonly roster?: boolean;
+    readonly backgroundTasksEndWithProcess?: true;
   };
   /**
    * A side chat whose context targets this run, an earlier run that failed or was cancelled before
@@ -714,6 +716,9 @@ function makeLocalCommandHarness(input: {
             nativeId: "existing-native-conversation",
             strength: "strong",
           },
+          ...(input.previousTurn.roster === true
+            ? { pendingBackgroundTasks: [{ taskId: "dev-server", kind: "command" as const }] }
+            : {}),
         },
       ],
       providerTurns: [
@@ -1064,6 +1069,8 @@ function makeLocalCommandHarness(input: {
                     driver: providerThread.driver,
                     providerSessionId,
                     interruptTurn,
+                    backgroundTasksEndWithProcess:
+                      input.previousTurn?.backgroundTasksEndWithProcess,
                   } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime),
             ),
         }),
@@ -1394,9 +1401,15 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
   }),
 );
 
-effectIt.effect.each([{ liveSession: true }, { liveSession: false }] as const)(
-  "recovering an abandoned turn ends its open commands: %j",
-  ({ liveSession }) =>
+effectIt.effect.each([
+  { liveSession: true, endsWithProcess: true, roster: [] },
+  // Its tasks can outlive the restart, as on release.
+  { liveSession: true, endsWithProcess: false, roster: ["dev-server"] },
+  // Release or boot recovery owns the roster of a session that is already gone.
+  { liveSession: false, endsWithProcess: true, roster: ["dev-server"] },
+] as const)(
+  "recovering an abandoned turn ends its open commands and the restarted roster: %j",
+  ({ liveSession, endsWithProcess, roster }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
         text: "Continue",
@@ -1404,7 +1417,9 @@ effectIt.effect.each([{ liveSession: true }, { liveSession: false }] as const)(
           runStatus: "failed",
           turnStatus: "running",
           openCommand: true,
+          roster: true,
           liveSession,
+          ...(endsWithProcess ? { backgroundTasksEndWithProcess: true as const } : {}),
         },
       });
 
@@ -1414,6 +1429,11 @@ effectIt.effect.each([{ liveSession: true }, { liveSession: false }] as const)(
         id: "previous-open-command",
         status: "interrupted",
       });
+      expect(
+        (harness.projection().providerThreads[0]?.pendingBackgroundTasks ?? []).map(
+          (task) => task.taskId,
+        ),
+      ).toEqual(roster);
     }),
 );
 

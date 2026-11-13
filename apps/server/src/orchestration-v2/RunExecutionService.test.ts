@@ -2979,12 +2979,19 @@ it.effect.each([
 );
 
 it.effect.each([
-  { interrupt: "succeeds", commandStatus: "interrupted" },
+  { interrupt: "succeeds", endsWithProcess: true, commandStatus: "interrupted", roster: [] },
   // The stored turn stays running, so the next start ends both.
-  { interrupt: "fails", commandStatus: undefined },
+  { interrupt: "fails", endsWithProcess: true, commandStatus: undefined, roster: ["dev-server"] },
+  // Its background tasks can outlive the restart, as on release.
+  {
+    interrupt: "succeeds",
+    endsWithProcess: false,
+    commandStatus: "interrupted",
+    roster: ["dev-server"],
+  },
 ] as const)(
-  "ends the open commands of a turn a failed stream abandons when its interrupt succeeds: %j",
-  ({ interrupt, commandStatus }) =>
+  "ends the open commands and roster of a turn a failed stream abandons when its interrupt succeeds: %j",
+  ({ interrupt, endsWithProcess, commandStatus, roster }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const key = `abandoned-command:${interrupt}`;
@@ -3007,9 +3014,13 @@ it.effect.each([
         type: "command_execution" as const,
         input: "cd ~/DEV; ls",
       };
-      const { written } = yield* captureRootRunTermination({
+      const { written, finalEvents } = yield* captureRootRunTermination({
         key,
         shouldFinalizeRun: () => Effect.succeed(true),
+        ...(endsWithProcess ? { backgroundTasksEndWithProcess: true as const } : {}),
+        pendingBackgroundTasks: [
+          { taskId: "dev-server", kind: "command", description: "python3 -m http.server" },
+        ],
         events: () =>
           Stream.make(
             {
@@ -3055,6 +3066,13 @@ it.effect.each([
       assert.equal(
         written.findLast((item) => item.id === command.id && item.status !== "running")?.status,
         commandStatus,
+      );
+      const finalThread = finalEvents.findLast((event) => event.type === "provider-thread.updated");
+      assert.deepEqual(
+        finalThread?.type === "provider-thread.updated"
+          ? (finalThread.payload.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+          : undefined,
+        [...roster],
       );
     }),
 );
@@ -3264,6 +3282,8 @@ function captureRootRunTermination(input: {
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
+  readonly backgroundTasksEndWithProcess?: true;
+  readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -3418,6 +3438,7 @@ function captureRootRunTermination(input: {
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),
           hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread,
+          backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess,
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
@@ -3435,6 +3456,7 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          pendingBackgroundTasks: input.pendingBackgroundTasks,
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
