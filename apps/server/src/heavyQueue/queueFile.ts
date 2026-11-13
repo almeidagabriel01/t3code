@@ -32,6 +32,7 @@ import {
   sustain,
   workersFor,
 } from "./admission.ts";
+import { COMMIT_RUNS_DIRECT, commitRoute } from "./commitHooks.ts";
 import { interceptBashCall, lineParts } from "./heavyHook.ts";
 import {
   deadlineRecord,
@@ -679,17 +680,27 @@ export const readPlan = (dir: string, now = Date.now()) => {
 export const probe = (dir: string, line: string, cwd: string, now = Date.now()) => {
   const doc = readDoc(dir);
   const parts = lineParts(line);
+  const at = startFolder(parts.dirs, cwd, NodeOS.homedir());
+  const commit = commitRoute(parts.command, at);
+  if (commit === "direct") {
+    return {
+      runsOn: "direct" as const,
+      reason: COMMIT_RUNS_DIRECT,
+      startsNow: true,
+      linuxFull: false,
+    };
+  }
   const id = `probe-${now}`;
   const withProbe = insertNew(doc, {
     id,
     pid: process.pid,
     threadId: null,
     label: parts.command,
-    cwd: startFolder(parts.dirs, cwd, NodeOS.homedir()),
+    cwd: at,
     createdAt: new Date(now).toISOString(),
     startedAt: null,
-    // As `t3 heavy` queues an agent's job, behind the user's own.
-    priority: "low",
+    // As `t3 heavy` queues an agent's job, behind the user's own; a hooked commit goes first.
+    priority: commit === "first" ? "high" : "low",
     ...(parts.remoto ? { where: "linux" as const } : {}),
   });
   const plan = planOf(withProbe, now);
@@ -1089,7 +1100,10 @@ export const answerBashCall = (
     isObject(hookInput) && isObject(hookInput.tool_input) ? hookInput.tool_input.command : null;
   const at =
     typeof command === "string" ? startFolder(lineParts(command).dirs, cwd, NodeOS.homedir()) : cwd;
-  return interceptBashCall(hookInput, prefix, modeFor(doc, at), environment);
+  const answer = interceptBashCall(hookInput, prefix, modeFor(doc, at), environment);
+  return answer !== null && typeof command === "string" && commitRoute(command, at) === "direct"
+    ? null
+    : answer;
 };
 
 /** Where a shell line's leading `cd` folders (from `lineParts`) land, starting at `cwd`. */

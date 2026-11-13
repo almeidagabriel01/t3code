@@ -14,7 +14,8 @@ const round = (value: number) => Math.round(value * 100) / 100;
 
 /** Where the queue's own plan would send a command started now (`HeavyQueue.probe`). */
 export interface Destination {
-  readonly runsOn: HeavyRunner;
+  /** "direct": the hook leaves it alone, as a commit with no hook to run. */
+  readonly runsOn: HeavyRunner | "direct";
   readonly reason: string | null;
   readonly startsNow: boolean;
   /** Linux is offline, over its limits or out of slots. */
@@ -84,7 +85,11 @@ export const heavyStatus = (input: {
   const runnerOfEntry = new Map(input.entries.map((entry) => [entry.id, runnerOf(entry)]));
   return {
     askUser:
-      destination?.runsOn === "linux" ? !destination.startsNow && destination.linuxFull : macAsk,
+      destination?.runsOn === "direct"
+        ? false
+        : destination?.runsOn === "linux"
+          ? !destination.startsNow && destination.linuxFull
+          : macAsk,
     ...(destination === null
       ? {}
       : {

@@ -583,6 +583,24 @@ describe("t3 heavy", () => {
       });
     });
 
+    it("runs a commit with no hook as written, and queues a hooked one first", () => {
+      const parent = tempDir();
+      const root = NodePath.join(parent, "repo");
+      NodeFS.mkdirSync(root);
+      NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: root });
+      const modeAt = () => ({ enabled: true, runner: false });
+      const line = { program: SH, args: ["-c", "cd repo && git commit -m x"], where: undefined };
+      const direct = { program: "git", args: ["commit", "-m", "x"], where: undefined };
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      expect(heavyLaunch(direct, root, "/h", modeAt, false)).toEqual({ kind: "direct" });
+      NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
+      expect(heavyLaunch(line, parent, "/h", modeAt, false)).toMatchObject({
+        kind: "queue",
+        cwd: root,
+        priority: "high",
+      });
+    });
+
     const config = {
       ...DEFAULT_PROJECT_CONFIG,
       runnerEnabled: true,

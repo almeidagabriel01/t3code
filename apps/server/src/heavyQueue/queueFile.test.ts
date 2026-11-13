@@ -1038,5 +1038,32 @@ describe("Runner in the queue file", () => {
         Queue.answerBashCall(dir, call("cd /w/off && vp test run", "/w/on"), PREFIX),
       ).toBeNull();
     });
+
+    it("queues a commit only where a commit hook runs, judged in the folder its cd names", () => {
+      const dir = queueWith(block(config({ runnerEnabled: false })));
+      const parent = tempDir();
+      const root = NodePath.join(parent, "repo");
+      NodeFS.mkdirSync(root);
+      NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: root });
+      const commit = call("cd repo && git commit -m 'fix: x'", parent);
+      expect(Queue.answerBashCall(dir, commit, PREFIX)).toBeNull();
+      expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toEqual({
+        runsOn: "direct",
+        reason: "No commit hook in this repository: runs directly",
+        startsNow: true,
+        linuxFull: false,
+      });
+      NodeFS.writeFileSync(NodePath.join(root, ".git/hooks/pre-commit"), "exit 0", { mode: 0o755 });
+      expect(Queue.answerBashCall(dir, commit, PREFIX)).not.toBeNull();
+      // It would go ahead of an agent's waiting build.
+      Queue.enqueue(dir, test("busy"));
+      expect(Queue.tryStart(dir, "busy", NOW)).toMatchObject({ status: "started" });
+      Queue.enqueue(dir, { ...test("build"), priority: "low" });
+      expect(Queue.probe(dir, commit.tool_input.command, parent, NOW)).toMatchObject({
+        runsOn: "mac",
+        startsNow: false,
+      });
+      expect(Queue.read(dir).map((e) => e.id)).toEqual(["busy", "build"]);
+    });
   });
 });
