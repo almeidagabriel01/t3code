@@ -107,6 +107,7 @@ import { useNotesEnvironmentIds } from "../state/notes";
 import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { projectPanelPaletteItems } from "./projectPanels/projectPanelPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
+import { offerProjectAssistantAccess } from "./assistants/ProjectAssistantAccessDialog";
 import { openAssistantWork } from "./assistants/assistantWorkState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
@@ -2385,6 +2386,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
+    offerProjectAssistantAccess(input.environmentId, projectId);
     setOpen(false);
   };
 
