@@ -272,6 +272,22 @@ describe("formatTelegramMessages size", () => {
     expect(pieces[0]!.plain.endsWith("1. Approve\n2. Deny\nReply with the number.")).toBe(true);
   });
 
+  it.each([
+    ["quotes", `${">".repeat(5000)} x`],
+    ["lists", `${"- ".repeat(5000)}x`],
+  ])("survives deeply nested %s", (_name, text) => {
+    const pieces = formatTelegramMessages({ text, markdown: true });
+    expect(pieces.length).toBeGreaterThan(0);
+    expectSendable(pieces);
+  });
+
+  it("bounds a huge reply to its start and its end, keeping the question", () => {
+    const text = `${"```\n" + "log line\n".repeat(60_000) + "```"}\n\n## Esperando você\n\nPosso apagar os logs?`;
+    const pieces = formatTelegramMessages({ text, markdown: true });
+    expectSendable(pieces);
+    expect(pieces.at(-1)!.plain.endsWith("Esperando você\n\nPosso apagar os logs?")).toBe(true);
+  });
+
   it("gives the same pieces every time", () => {
     const input = { text: paragraphs(10, 200).join("\n\n"), markdown: true, senderName: "J" };
     expect(formatTelegramMessages(input)).toEqual(formatTelegramMessages(input));

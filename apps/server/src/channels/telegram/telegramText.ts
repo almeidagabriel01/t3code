@@ -33,6 +33,21 @@ const PART_MARKER_ROOM = 8;
 /** Below this, the outline of the rest goes in a message of its own. */
 const MIN_SUMMARY_ROOM = 300;
 const SUMMARY_LINE_LIMIT = 200;
+/**
+ * Formatting runs inline with delivery, and parsing and splitting grow faster than the input, so a
+ * reply is cut to its start and its end (where a question sits) long before it could be slow.
+ * Three parts hold ~12k characters, so nothing that could be sent is lost.
+ */
+const INPUT_HEAD = 24_000;
+const INPUT_TAIL = 8_000;
+/**
+ * The Markdown parser is quadratic in, and recurses on, list and quote nesting. Nesting deeper
+ * than this is nothing a reply needs, so such text goes as written.
+ */
+const MAX_NESTING = 32;
+const MAX_LEADING_SPACE = 400;
+/** Deeper lists stop indenting, so the output stays linear in the input. */
+const MAX_INDENT = 6;
 /** Headings that hand something to the user, not ones that report on it ("Decisões tomadas"). */
 const WAITING_HEADING =
   /esperando (?:por )?(?:você|vc|sua|seu)|aguardando (?:você|vc|sua|seu)|preciso de (?:você|vc|sua|seu)|waiting (?:on|for) you|needs? (?:you|your)|decis(?:ão|ao|ões|oes) pendentes?|pending decisions?|decision needed|^\s*perguntas?\b|questions? for you|^\s*open questions?\b|ação necessária|acao necessaria|action (?:needed|required)/i;
@@ -192,7 +207,7 @@ function listItemHtml(item: ListItem, marker: string, ctx: Context, depth: numbe
   const body = item.children
     .map((child) => blockHtml(child, ctx, child.type === "list" ? depth + 1 : depth))
     .join("\n");
-  return `${"    ".repeat(depth)}${marker} ${box}${body}`;
+  return `${"    ".repeat(Math.min(depth, MAX_INDENT))}${marker} ${box}${body}`;
 }
 
 const listMarker = (
@@ -350,23 +365,33 @@ const plainUnit = (source: string): Unit => {
 
 /** Packs whole lines into code blocks of at most `budget`; a longer line is cut by halves. */
 function fitCode(code: string, lang: string | null | undefined, budget: number) {
+  const overhead = codeHtml("", lang).length;
   const pieces: Array<string> = [];
   let current: Array<string> = [];
+  let size = overhead;
   const flush = () => {
     if (current.length > 0) pieces.push(codeHtml(current.join("\n"), lang));
     current = [];
+    size = overhead;
   };
-  const lines = code.split("\n");
-  while (lines.length > 0) {
-    const line = lines.shift()!;
-    if (codeHtml([...current, line].join("\n"), lang).length <= budget) {
+  // Pending lines, last first, so a cut line's halves go back on top in order.
+  const pending = code.split("\n").reverse();
+  while (pending.length > 0) {
+    const line = pending.pop()!;
+    const added = escapeHtml(line).length + (current.length > 0 ? 1 : 0);
+    if (size + added <= budget) {
       current.push(line);
+      size += added;
       continue;
     }
     flush();
-    if (codeHtml(line, lang).length <= budget) current.push(line);
-    else if (line.length > 1) lines.unshift(...halve(line, false));
-    else pieces.push(codeHtml(line, lang));
+    if (overhead + escapeHtml(line).length <= budget) {
+      current.push(line);
+      size += escapeHtml(line).length;
+    } else if (line.length > 1) {
+      const [head, tail] = halve(line, false);
+      pending.push(tail, head);
+    } else pieces.push(codeHtml(line, lang));
   }
   flush();
   return pieces;
@@ -462,6 +487,54 @@ function outline(units: ReadonlyArray<Unit>, room: number, strings: ChannelStrin
   return [...lines, note].join("\n");
 }
 
+/** The list and quote markers that open a line, counted in one pass. */
+function nestingOf(line: string): number {
+  let depth = 0;
+  let index = 0;
+  for (;;) {
+    while (line[index] === " " || line[index] === "\t") index += 1;
+    if (index > MAX_LEADING_SPACE) return Number.POSITIVE_INFINITY;
+    const char = line[index];
+    if (char === ">") index += 1;
+    else if (
+      (char === "-" || char === "*" || char === "+") &&
+      /[ \t]/.test(line[index + 1] ?? "")
+    ) {
+      index += 2;
+    } else {
+      let digits = index;
+      while (digits - index < 9 && line[digits]! >= "0" && line[digits]! <= "9") digits += 1;
+      const close = line[digits];
+      if (
+        digits === index ||
+        (close !== "." && close !== ")") ||
+        !/[ \t]/.test(line[digits + 1] ?? "")
+      ) {
+        return depth;
+      }
+      index = digits + 2;
+    }
+    depth += 1;
+  }
+}
+
+const tooNested = (text: string) => text.split("\n").some((line) => nestingOf(line) > MAX_NESTING);
+
+/** Cuts at a paragraph break near `index` when there is one; never inside a surrogate pair. */
+const boundary = (text: string, index: number, direction: "before" | "after") => {
+  const breakAt =
+    direction === "before" ? text.lastIndexOf("\n\n", index) : text.indexOf("\n\n", index);
+  const near = breakAt >= 0 && Math.abs(breakAt - index) < 2_000 ? breakAt : index;
+  return /[\uDC00-\uDFFF]/.test(text.charAt(near)) ? near + 1 : near;
+};
+
+function bounded(text: string, note: string): string {
+  if (text.length <= INPUT_HEAD + INPUT_TAIL) return text;
+  const head = text.slice(0, boundary(text, INPUT_HEAD, "before"));
+  const tail = text.slice(boundary(text, text.length - INPUT_TAIL, "after"));
+  return `${head.trimEnd()}\n\n${note}\n\n${tail.trimStart()}`;
+}
+
 const piece = (html: string): TelegramText => ({ html, plain: telegramPlainText(html) });
 
 /**
@@ -475,9 +548,26 @@ export function formatTelegramMessages(
 ): Array<TelegramText> {
   const strings = channelStrings(input.language ?? "en");
   const ctx: Context = { strings, hostedAppUrl: options.hostedAppUrl };
-  // Markdown that renders to nothing (only link definitions) is sent as written, not as an empty message.
-  const parsed = input.markdown === true ? markdownUnits(input.text, ctx) : [];
-  const units = parsed.length > 0 ? parsed : plainUnits(input.text);
+  const text = bounded(input.text, "[…]");
+  if (input.markdown !== true || tooNested(text)) {
+    return compose(input, plainUnits(text), ctx);
+  }
+  try {
+    // Markdown that renders to nothing (only link definitions) is sent as written, not as an empty message.
+    const parsed = markdownUnits(text, ctx);
+    return compose(input, parsed.length > 0 ? parsed : plainUnits(text), ctx);
+  } catch {
+    // Pathological nesting can exhaust the stack; the reply still goes out, as escaped text.
+    return compose(input, plainUnits(text), ctx);
+  }
+}
+
+function compose(
+  input: TelegramMessageInput,
+  units: ReadonlyArray<Unit>,
+  ctx: Context,
+): Array<TelegramText> {
+  const { strings } = ctx;
   const choices =
     input.choices !== undefined && input.choices.length > 0
       ? plainUnit(numberedChoices(input.choices, strings.replyWithNumber))
@@ -496,7 +586,7 @@ export function formatTelegramMessages(
       ),
     );
 
-  const start = input.markdown === true ? waitingStart(units, ctx) : undefined;
+  const start = waitingStart(units, ctx);
   const waiting = [
     ...(start === undefined ? [] : units.slice(start)),
     ...(choices ? [choices] : []),
