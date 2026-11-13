@@ -113,6 +113,7 @@ const make = Effect.gen(function* () {
       destination: target.address,
       senderName: target.assistantName,
       text,
+      ...(answer === undefined ? {} : { markdown: true }),
       language,
     });
   });

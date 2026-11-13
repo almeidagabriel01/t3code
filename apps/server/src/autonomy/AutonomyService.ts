@@ -527,6 +527,7 @@ const make = Effect.gen(function* () {
           destination: chat,
           senderName: assistant.name,
           text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
+          markdown: true,
           language,
         });
       }
@@ -1172,6 +1173,7 @@ const make = Effect.gen(function* () {
         destination: chat,
         senderName: assistant.name,
         text: withLink(language),
+        markdown: true,
         language,
       });
     }

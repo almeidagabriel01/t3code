@@ -114,6 +114,7 @@ it.effect("a finished run posts its last assistant message once, however often i
       destination: dmAddress,
       text: "Here you go.",
       senderName: "Jarvis",
+      markdown: true,
       language: "en",
     });
     assert.lengthOf(reads, 1);
