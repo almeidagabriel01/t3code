@@ -213,7 +213,12 @@ const AssistantRow = memo(function AssistantRow(props: {
     }
   };
   return (
-    <li className={cn("list-none py-px", props.nested && "ms-3.5 border-s border-foreground/10")}>
+    <li
+      className={cn(
+        "@container/assistant-row list-none py-px",
+        props.nested && "ms-3.5 border-s border-foreground/10",
+      )}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -237,23 +242,26 @@ const AssistantRow = memo(function AssistantRow(props: {
           startThreadDrag(event.nativeEvent, threadRef, assistant.name);
         }}
       >
-        <span className="relative inline-flex shrink-0">
-          <AssistantAvatar
-            assistant={assistant}
-            mood={assistantFace(presence)}
-            className="size-5"
-          />
-          {statusDot ? (
-            <span
-              aria-hidden
-              data-testid="assistant-status-dot"
-              className={cn(
-                "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
-                statusDot,
-              )}
+        <Tooltip disabled={!statusDot || meta === null}>
+          <TooltipTrigger render={<span className="relative inline-flex shrink-0" />}>
+            <AssistantAvatar
+              assistant={assistant}
+              mood={assistantFace(presence)}
+              className="size-5"
             />
-          ) : null}
-        </span>
+            {statusDot ? (
+              <span
+                aria-hidden
+                data-testid="assistant-status-dot"
+                className={cn(
+                  "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
+                  statusDot,
+                )}
+              />
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{meta}</TooltipPopup>
+        </Tooltip>
         <span className="max-w-[55%] shrink-0 truncate">{assistant.name}</span>
         {assistant.role === "" ? null : (
           <Badge variant="outline" size="sm" data-testid="assistant-role">
@@ -275,6 +283,8 @@ const AssistantRow = memo(function AssistantRow(props: {
             data-mood={presence.mood}
             className={cn(
               "min-w-0 max-w-[45%] truncate text-xs font-normal",
+              // The dot carries the status where the row is too narrow for its text.
+              statusDot && "@max-[19rem]/assistant-row:hidden",
               MOOD_TEXT[presence.mood],
             )}
           >

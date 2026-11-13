@@ -31,6 +31,7 @@ const { mocks } = vi.hoisted(() => ({
     }>,
     collapsed: false,
     showAll: false,
+    rowWidth: undefined as number | undefined,
     tasks: [] as Array<{
       threadId: string;
       title: string;
@@ -86,9 +87,14 @@ vi.mock("react-native", () => ({
     accessibilityLabel?: string;
     accessibilityState?: { expanded?: boolean };
     disabled?: boolean;
+    onLayout?: (event: { nativeEvent: { layout: { width: number } } }) => void;
     children?: ReactNode;
   }) => (
     <button
+      ref={(node) => {
+        if (node && mocks.rowWidth !== undefined)
+          props.onLayout?.({ nativeEvent: { layout: { width: mocks.rowWidth } } });
+      }}
       aria-label={props.accessibilityLabel}
       aria-expanded={props.accessibilityState?.expanded}
       disabled={props.disabled}
@@ -381,6 +387,7 @@ beforeEach(() => {
   Object.assign(mocks, {
     collapsed: false,
     showAll: false,
+    rowWidth: undefined,
     presence: {},
     notified: new Set(),
     active: make(2),
@@ -839,6 +846,14 @@ describe("HomeAssistantsSection", () => {
     mocks.presence.t0 = { mood: "working", detail: "W", since: null };
     render();
     expect(container.textContent).toContain("dot:working");
+    const status = () => container.querySelector('[data-testid="assistant-status"]');
+    expect(status()?.textContent).toBe("Working");
+    // A row too narrow for the text keeps the dot, and its label still says it works.
+    mocks.rowWidth = 296;
+    render();
+    expect(status()).toBeNull();
+    expect(container.textContent).toContain("dot:working");
+    expect(container.querySelector('[aria-label="Bot0, working"]')).not.toBeNull();
     mocks.presence = {};
     mocks.notified.add("t0");
     render();
