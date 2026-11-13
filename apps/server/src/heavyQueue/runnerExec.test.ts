@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { DEFAULT_MACHINE_CONFIG } from "./runner.ts";
 import {
+  bringBack,
   changedInputs,
   checkLinux,
   confirmed,
@@ -403,6 +404,118 @@ describe("ssh calls around a Linux run", () => {
     expect(await removeRunnerCopy(DEFAULT_MACHINE_CONFIG, env(fake(body)), "app-0123abcd")).toBe(
       result,
     );
+  });
+});
+
+describe("bringing results back", () => {
+  const T0 = 1_800_000_000;
+  const COPY = "app-0123abcd";
+  /** Linux's home with the copy and the job's start marker, and the Mac checkout. */
+  const setup = () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(dir, "linux-home-"));
+    const copy = NodePath.join(home, "runs", COPY);
+    NodeFS.mkdirSync(copy, { recursive: true });
+    const marker = `${copy}.t3-start-job-1`;
+    NodeFS.writeFileSync(marker, "");
+    NodeFS.utimesSync(marker, T0, T0);
+    const root = NodeFS.mkdtempSync(NodePath.join(dir, "mac-"));
+    const environment = {
+      ...process.env,
+      T3_FAKE_HOME: home,
+      // Runs the command in Linux's home, as ssh would.
+      T3CODE_RUNNER_SSH: fake('eval "c=\\${$#}"; cd "$T3_FAKE_HOME" && exec sh -c "$c"'),
+      // Copies each listed file from the copy there, as rsync --files-from would.
+      T3CODE_RUNNER_RSYNC: fake(
+        [
+          'for a; do case "$a" in --files-from=*) list="${a#--files-from=}";; esac; done',
+          'eval "src=\\${$(($# - 1))}"; eval "dst=\\${$#}"; src="$T3_FAKE_HOME/${src#*:}"',
+          'while IFS= read -r f; do mkdir -p "$dst$(dirname "$f")"; cp "$src$f" "$dst$f"; done < "$list"',
+        ].join("\n"),
+      ),
+    };
+    const back = () =>
+      bringBack({
+        machine: DEFAULT_MACHINE_CONFIG,
+        environment,
+        copyId: COPY,
+        job: "job-1",
+        root,
+        since: T0 * 1000,
+      });
+    return { copy, marker, root, environment, back };
+  };
+  const write = (path: string, text: string, at: number) => {
+    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+    NodeFS.writeFileSync(path, text);
+    NodeFS.utimesSync(path, at, at);
+  };
+
+  it.each([
+    ["created", "sub/new.txt", "after", null, "copied"],
+    ["changed", "changed.txt", "after", "before", "copied"],
+    ["changed on this Mac during the job", "conflict.txt", "after", "after", "skipped"],
+    ["older than the job", "old.txt", "before", "before", "left"],
+    ["in node_modules", "node_modules/x/index.js", "after", null, "left"],
+    ["in a nested node_modules", "apps/web/node_modules/y.js", "after", null, "left"],
+    ["in .git", ".git/HEAD", "after", null, "left"],
+  ] as const)("a file %s (%s) is %s", async (_, path, linux, mac, result) => {
+    const { copy, marker, root, back } = setup();
+    write(NodePath.join(copy, path), "linux", linux === "after" ? T0 + 10 : T0 - 10);
+    if (mac !== null) write(NodePath.join(root, path), "mac", mac === "after" ? T0 + 5 : T0 - 100);
+    expect(await back()).toEqual({
+      copied: result === "copied" ? [path] : [],
+      skipped: result === "skipped" ? [path] : [],
+    });
+    const here = NodePath.join(root, path);
+    expect(NodeFS.existsSync(here) ? NodeFS.readFileSync(here, "utf8") : null).toBe(
+      result === "copied" ? "linux" : mac === null ? null : "mac",
+    );
+    expect(NodeFS.existsSync(marker)).toBe(false);
+  });
+
+  it("is null when Linux can't list or send them, and leaves this Mac alone", async () => {
+    const { copy, root, marker, environment } = setup();
+    write(NodePath.join(copy, "new.txt"), "linux", T0 + 10);
+    const args = { machine: DEFAULT_MACHINE_CONFIG, copyId: COPY, job: "job-1", root, since: 0 };
+    const down = { ...environment, T3CODE_RUNNER_SSH: fake("exit 255") };
+    expect(await bringBack({ ...args, environment: down })).toBeNull();
+    const failing = { ...environment, T3CODE_RUNNER_RSYNC: fake("exit 12") };
+    expect(await bringBack({ ...args, environment: failing })).toBeNull();
+    expect(NodeFS.existsSync(NodePath.join(root, "new.txt"))).toBe(false);
+    // The listing took the marker: with none left, there is nothing to list.
+    expect(NodeFS.existsSync(marker)).toBe(false);
+    expect(await bringBack({ ...args, environment })).toBeNull();
+  });
+
+  it.each([
+    ["on", "job-1", true],
+    ["off", undefined, false],
+  ] as const)(
+    "with the setting %s, the wrapper marks the job's start: %s",
+    async (_, job, marked) => {
+      const root = NodeFS.mkdtempSync(NodePath.join(dir, "marked-"));
+      const run = startLinuxRun({
+        // Stands in for `remoto-rodar`: the wrapper runs as it would there.
+        remoto: fake('exec "$@"'),
+        program: "true",
+        args: [],
+        cwd: root,
+        root,
+        environment: process.env,
+        machine: DEFAULT_MACHINE_CONFIG,
+        macOnly: [],
+        ...(job === undefined ? {} : { startMarker: job }),
+        onProgress: () => {},
+        stdout: () => {},
+        stderr: () => {},
+      });
+      await run.done;
+      expect(NodeFS.existsSync(`${root}.t3-start-job-1`)).toBe(marked);
+    },
+  );
+
+  it("refuses ids that could escape the runs folder", () => {
+    expect(() => withProjectBins(["vp"], "/w", "/w", [], "../x")).toThrow(/Unsafe/);
   });
 });
 

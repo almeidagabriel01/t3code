@@ -580,6 +580,41 @@ describe("t3 heavy", () => {
       expect(runs(dir)).toBe("2");
     });
 
+    it.each([true, false])("Bring results back %s copies what the job wrote there", async (on) => {
+      const { dir, env } = setup(
+        `printf '${M} phase=syncing id=app-1\\n${M} phase=running pgid=4\\n${M} exit=0\\n' >&2`,
+        { runnerBringBack: on },
+      );
+      // Changed here after the run's sync began.
+      const mine = NodePath.join(dir, "mine.txt");
+      NodeFS.writeFileSync(mine, "mine");
+      NodeFS.utimesSync(mine, 4e9, 4e9);
+      const ssh = script(
+        dir,
+        "ssh-list",
+        `case "$*" in *t3-start*) printf './out.txt\\n./mine.txt\\n';; *loadavg*) printf '0.5 0.4 0.3 1/2 3\\n6\\nMem: 100 10 20 0 0 80\\n';; *) echo gone;; esac`,
+      );
+      const rsync = script(
+        dir,
+        "rsync-fake",
+        `for a; do case "$a" in --files-from=*) l="\${a#--files-from=}";; esac; done; eval "d=\\\${$#}"; while read -r f; do echo from-linux > "$d$f"; done < "$l"`,
+      );
+      const run = heavy(
+        dir,
+        ["/bin/sh", "-c", "vp test run"],
+        { ...env, T3CODE_RUNNER_SSH: ssh, T3CODE_RUNNER_RSYNC: rsync },
+        ["--"],
+        dir,
+      );
+      expect(await run.exited).toBe(0);
+      const out = NodePath.join(dir, "out.txt");
+      expect(NodeFS.existsSync(out) ? NodeFS.readFileSync(out, "utf8") : null).toBe(
+        on ? "from-linux\n" : null,
+      );
+      expect(NodeFS.readFileSync(mine, "utf8")).toBe("mine");
+      expect(run.stderr().includes("Not copied back (changed on this Mac): mine.txt\n")).toBe(on);
+    });
+
     it("Tell the agent hands back a run Linux dropped once Linux is offline, never running it here", async () => {
       const { dir, env } = setup(
         [
@@ -601,10 +636,13 @@ describe("t3 heavy", () => {
         { at: 4e12, busyCores: 0, cpuCount: 10, availableMemoryBytes: 30, totalMemoryBytes: 32 },
         null,
       );
-      const run = heavy(dir, ["/bin/sh", "-c", "vp test run; echo after"], {
-        ...env,
-        T3CODE_RUNNER_SSH: ssh,
-      });
+      const run = heavy(
+        dir,
+        ["/bin/sh", "-c", "vp test run; echo after"],
+        { ...env, T3CODE_RUNNER_SSH: ssh },
+        ["--"],
+        dir,
+      );
       await run.until("err", "Linux: running");
       NodeFS.writeFileSync(down, "");
       const fail = { ok: false as const, error: "ssh: connect to host pc: Connection refused" };

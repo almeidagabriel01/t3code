@@ -58,6 +58,7 @@ import {
   outsideTie,
 } from "./runner.ts";
 import {
+  bringBack,
   changedInputs,
   checkLinux,
   confirmed,
@@ -1066,6 +1067,9 @@ const runLinuxPart = async (
   let recorded: string | null = null;
   let lastError: string | null = null;
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
+  const bringsBack = configFor(doc, cwd).runnerBringBack;
+  /** When the latest run's sync began, on this Mac's clock. */
+  let since = 0;
   const fault = (seen: FaultSeen) => {
     const found = faultOf(seen, lastError, {
       command: labelOf(program, args),
@@ -1073,8 +1077,9 @@ const runLinuxPart = async (
     });
     if (found !== null) recordFault(dir, id, found);
   };
-  const start = () =>
-    startLinuxRun({
+  const start = () => {
+    since = Date.now();
+    return startLinuxRun({
       remoto,
       program: command.program,
       args: command.args,
@@ -1085,6 +1090,7 @@ const runLinuxPart = async (
       machine: linkMachine(machine, doc.sample),
       macOnly: configFor(doc, cwd).runnerMacOnly,
       env,
+      ...(bringsBack ? { startMarker: id } : {}),
       stdout: (chunk) => process.stdout.write(chunk),
       stderr: (text) => {
         process.stderr.write(text);
@@ -1107,6 +1113,7 @@ const runLinuxPart = async (
         });
       },
     });
+  };
   let run = start();
   // The job stopping or moving signals the whole group; that ends this part without a verdict.
   let stopped = false;
@@ -1116,13 +1123,13 @@ const runLinuxPart = async (
       run.kill(signal);
     });
   }
-  let { outcome, platform, install } = await run.done;
+  let { outcome, progress, platform, install } = await run.done;
   // An install unfinished in the copy is Linux's, not the code's: once more there, settled now.
   if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
     jobNote(`[t3 heavy] ${INSTALL_FAILED}\n`);
     recorded = null;
     run = start();
-    ({ outcome, platform, install } = await run.done);
+    ({ outcome, progress, platform, install } = await run.done);
     if (!stopped && install !== null && outcome.kind === "finished" && outcome.code !== 0) {
       fault({ kind: "install", package: install });
       return endLine(dir, id, { kind: "environment", reason: INSTALL_FAILED });
@@ -1130,6 +1137,19 @@ const runLinuxPart = async (
   }
   if (stopped) process.exit(143);
   if (outcome.kind === "finished") {
+    if (bringsBack && progress.id !== null) {
+      const back = await bringBack({
+        machine: linkMachine(machine, doc.sample),
+        environment: process.env,
+        copyId: progress.id,
+        job: id,
+        root,
+        since,
+      });
+      for (const path of back?.skipped ?? []) {
+        jobNote(`[t3 heavy] Not copied back (changed on this Mac): ${path}\n`);
+      }
+    }
     fault({ kind: "exit", code: outcome.code, program: command.program });
     // A tool or file Linux lacks is its environment's failure, which the policy decides.
     const error = lastError as string | null;

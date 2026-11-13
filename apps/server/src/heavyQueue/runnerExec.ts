@@ -127,6 +127,7 @@ export const withProjectBins = (
   cwd: string,
   root: string,
   env: ReadonlyArray<string> = [],
+  startMarker: string | null = null,
 ) => {
   const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
   const folders = Array.from({ length: depth + 1 }, (_, up) =>
@@ -141,14 +142,25 @@ export const withProjectBins = (
   const settle = `for e in ${electrons.join(" ")}; do [ -f "$e/install.js" ] || continue; [ -f "$e/path.txt" ] && [ -e "$e/dist/$(cat "$e/path.txt")" ] && continue; printf '\\036remoto phase=installing\\n' >&2; (cd "$e" && node install.js) >&2 || { printf '\\036remoto install=electron\\n' >&2; exit 1; }; printf '\\036remoto phase=running\\n' >&2; done`;
   // The pre-flight: a program Linux can't find never starts, and says which one it was.
   const program = shellQuote(command[0] ?? "");
+  // Bring results back: what the command writes after this is newer than the marker.
+  const mark =
+    startMarker === null ? "" : ` touch -- "$T3_COPY"${shellQuote(markerSuffix(startMarker))};`;
   return [
     "bash",
     "-c",
-    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle}; exec "$@"`,
+    `export T3_COPY="${folders[depth]}" PATH="${bins.join(":")}:$PATH"; command -v -- ${program} >/dev/null 2>&1 || { printf '\\036remoto missing=%s\\n' ${program} >&2; exit 127; }; ${settle};${mark} exec "$@"`,
     "t3",
     ...(env.length === 0 ? [] : ["env", ...env]),
     ...command,
   ];
+};
+
+const SAFE_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
+
+/** Beside the copy (`runs/<id>.t3-start-<job>`), so `remoto`'s sync never deletes it. */
+const markerSuffix = (job: string) => {
+  if (!SAFE_NAME.test(job)) throw new Error(`Unsafe job id: ${job}`);
+  return `.t3-start-${job}`;
 };
 
 type Git = (args: ReadonlyArray<string>) => string | null;
@@ -304,6 +316,92 @@ export const checkLinux = async (
   return { ok: false, error: why === "" ? `ssh exited ${result.code ?? "on timeout"}` : why };
 };
 
+const run = (
+  program: string,
+  args: ReadonlyArray<string>,
+  environment: Env,
+): Promise<{ readonly code: number | null; readonly stdout: string }> =>
+  new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      program,
+      args,
+      { env: { ...process.env, ...environment }, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => {
+        const code = error === null ? 0 : typeof error.code === "number" ? error.code : null;
+        resolve({ code, stdout: String(stdout) });
+      },
+    );
+  });
+
+export interface BroughtBack {
+  readonly copied: ReadonlyArray<string>;
+  /** Changed on this Mac after `since`: left as they are. */
+  readonly skipped: ReadonlyArray<string>;
+}
+
+/**
+ * Copies back to `root` the files job `job` created or changed in copy `copyId` there: those
+ * newer than its start marker, never under `node_modules` or `.git`. A file this Mac changed
+ * after `since` (when the run's sync began) stays as it is. Null when Linux couldn't list or
+ * send them.
+ */
+export const bringBack = async (options: {
+  readonly machine: RunnerMachineConfig;
+  readonly environment: Env;
+  readonly copyId: string;
+  readonly job: string;
+  readonly root: string;
+  readonly since: number;
+}): Promise<BroughtBack | null> => {
+  const { machine, environment, copyId, root } = options;
+  if (!SAFE_NAME.test(copyId)) throw new Error(`Unsafe run id: ${copyId}`);
+  const marker = `../${copyId}${markerSuffix(options.job)}`;
+  const listed = await ssh(
+    machine,
+    environment,
+    [
+      `cd runs/${copyId} && [ -e ${marker} ] || exit 1`,
+      `find . \\( -name node_modules -o -name .git \\) -prune -o -type f -newer ${marker} -print || exit 1`,
+      `rm -f ${marker}`,
+    ].join("\n"),
+    (machine.runnerSshTimeoutSeconds + 60) * 1000,
+  );
+  if (listed.code !== 0) return null;
+  const copied: string[] = [];
+  const skipped: string[] = [];
+  for (const line of listed.stdout.split("\n")) {
+    const path = line.replace(/^\.\//, "");
+    if (path === "" || path === line) continue;
+    let changedHere = false;
+    try {
+      changedHere = NodeFS.statSync(NodePath.join(root, path)).mtimeMs > options.since;
+    } catch {
+      // Not on this Mac: the job created it.
+    }
+    (changedHere ? skipped : copied).push(path);
+  }
+  if (copied.length > 0) {
+    const list = NodePath.join(NodeOS.tmpdir(), `t3-bring-back-${process.pid}-${copyId}`);
+    NodeFS.writeFileSync(list, `${copied.join("\n")}\n`);
+    const shell = [sshProgram(environment), ...sshArgs(machine, environment, "").slice(0, -2)];
+    const sent = await run(
+      environment.T3CODE_RUNNER_RSYNC ?? "rsync",
+      [
+        "-a",
+        "-e",
+        shell.join(" "),
+        `--files-from=${list}`,
+        `${machine.runnerHost}:runs/${copyId}/`,
+        `${root}/`,
+      ],
+      environment,
+    );
+    NodeFS.rmSync(list, { force: true });
+    if (sent.code !== 0) return null;
+  }
+  return { copied, skipped };
+};
+
 export type CopyRemovalResult = "removed" | "busy" | "unreachable";
 
 /** Deletes the Linux copy of a removed worktree; anything but a confirmed answer leaves it pending. */
@@ -358,6 +456,8 @@ export interface LinuxRunOptions {
   readonly macOnly: ReadonlyArray<string>;
   /** `NAME=value` pairs the command runs with there. */
   readonly env?: ReadonlyArray<string>;
+  /** The job whose start the wrapper marks there, so `bringBack` finds what it wrote. */
+  readonly startMarker?: string;
   readonly onProgress: (progress: RemoteProgress) => void;
   readonly stdout: (chunk: Buffer) => void;
   readonly stderr: (text: string) => void;
@@ -408,6 +508,7 @@ export const startLinuxRun = (options: LinuxRunOptions): LinuxRun => {
       options.cwd,
       options.root,
       options.env,
+      options.startMarker ?? null,
     ),
     {
       cwd: options.cwd,
