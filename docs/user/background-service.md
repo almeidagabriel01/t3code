@@ -60,7 +60,9 @@ Mac that hosts T3 Code (with the [Runner](#runner-heavy-work-on-a-linux-pc) on,
 listed commands can run on a Linux PC instead, in its own line). Agents put the command behind `t3 heavy`, and the
 queue starts jobs in order. In Claude sessions T3 Code starts, heavy Bash
 commands (tests, builds, type checks, `git commit` with its hooks, simulators)
-go through the queue on their own, even when the agent forgets. Open the **Resource Manager** in the status bar:
+go through the queue on their own, even when the agent forgets. A `git commit`
+waits only when the repository has a commit hook, and then goes ahead of other
+waiting jobs; without one it runs at once. Open the **Resource Manager** in the status bar:
 its top bar shows each machine's CPU, free memory and slots, and a gauge turns
 amber when it is what holds the queue ("memory low", "CPU busy"; hover it for
 the reading). **Heavy work** lists each job once, by machine, running first and
