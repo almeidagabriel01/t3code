@@ -22,8 +22,17 @@ const { mocks } = vi.hoisted(() => ({
     alert: vi.fn(),
     selectDetail: vi.fn(),
     titles: {} as Record<string, string>,
-    shells: [] as Array<{ environmentId: string; id: string; projectId: string }>,
+    shells: [] as Array<{
+      environmentId: string;
+      id: string;
+      projectId: string;
+      title?: string;
+      runtime?: { status: string } | null;
+    }>,
     host: null as unknown,
+    telemetry: null as unknown,
+    devices: null as unknown,
+    terminals: [] as unknown[],
     focused: true,
     environments: [] as Array<{
       environmentId: string;
@@ -89,6 +98,7 @@ vi.mock("../../state/entities", () => ({
       ? null
       : { title: mocks.titles[ref.threadId], projectId: "p2" },
   useQuietThreadShells: () => mocks.shells,
+  useThreadShells: () => mocks.shells,
   useProjects: () => [
     { id: "p1", environmentId: "env", workspaceRoot: "/work/app", title: "App Project" },
     { id: "p2", environmentId: "env", workspaceRoot: "/work/api", title: "Api Project" },
@@ -116,8 +126,24 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { id: string }) =>
     (mocks.commands[command.id] ??= vi.fn(async () => ({ _tag: "Success", value: undefined }))),
 }));
-vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: mocks.host }) }));
-vi.mock("../../state/server", () => ({ serverEnvironment: { hostResources: () => "host" } }));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (atom: "host" | "telemetry" | "devices" | null) => ({
+    data: atom === null ? undefined : mocks[atom],
+  }),
+}));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { hostResources: () => "host", resourceTelemetry: () => "telemetry" },
+}));
+vi.mock("../../state/device", () => ({
+  deviceEnvironment: {
+    state: () => "devices",
+    shutdown: { permissionAtom: () => "p", id: "shutdown" },
+  },
+}));
+vi.mock("../../state/terminal", () => ({ terminalEnvironment: { close: { id: "close" } } }));
+vi.mock("../../state/use-terminal-session", () => ({
+  useKnownTerminalSessions: () => ({ sessions: mocks.terminals }),
+}));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: mocks.environments }),
@@ -126,8 +152,26 @@ vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("../settings/components/SettingsScreen", () => ({
-  SettingsScreen: (props: { title: string; children: ReactNode }) => (
-    <main aria-label={props.title}>{props.children}</main>
+  SettingsScreen: (props: {
+    title: string;
+    menus?: Array<{
+      title: string;
+      items: Array<{ id: string; title: string; selected?: boolean; onPress: () => void }>;
+    }>;
+    children: ReactNode;
+  }) => (
+    <main aria-label={props.title}>
+      {props.menus?.map((menu) => (
+        <nav key={menu.title} aria-label={menu.title}>
+          {menu.items.map((item) => (
+            <button key={item.id} aria-pressed={item.selected} onClick={item.onPress}>
+              {item.title}
+            </button>
+          ))}
+        </nav>
+      ))}
+      {props.children}
+    </main>
   ),
 }));
 vi.mock("../settings/components/SettingsSection", () => ({
@@ -235,7 +279,12 @@ async function render(node: ReactNode) {
   await act(async () => root.render(node));
   const button = (name: string, nth = 0) =>
     [...host.querySelectorAll("button")].filter((b) => b.textContent === name)[nth]!;
-  return { host, button, unmount: () => act(() => root.unmount()) };
+  return {
+    host,
+    button,
+    rerender: (next: ReactNode) => act(async () => root.render(next)),
+    unmount: () => act(() => root.unmount()),
+  };
 }
 
 const mount = (commands: ReadonlyArray<HeavyCommand> = []) =>
@@ -277,6 +326,9 @@ afterEach(() => {
   mocks.shells = [];
   mocks.commands = {};
   mocks.host = null;
+  mocks.telemetry = null;
+  mocks.devices = null;
+  mocks.terminals = [];
   mocks.focused = true;
   mocks.environments = [];
   vi.clearAllMocks();
@@ -845,6 +897,167 @@ describe("ResourceManagerRouteScreen", () => {
     const hidden = await screen();
     expect(hidden.host.querySelector("section")).toBeNull();
     await hidden.unmount();
+  });
+
+  it("lists projects, devices, T3 Code and outside devices from telemetry, sorted by the Sort menu", async () => {
+    mocks.environments = [
+      { environmentId: "env", label: "Studio", connection: { phase: "connected" } },
+    ];
+    setup([]);
+    const proc = (
+      pid: number,
+      childPids: number[],
+      memory: number,
+      cpu: number,
+      name: string,
+      command = name,
+      category = "server-child",
+    ) => ({
+      identity: { pid, startTimeMs: 0 },
+      childPids,
+      residentBytes: memory,
+      cpuPercent: cpu,
+      category,
+      name,
+      command,
+    });
+    const group = { currentCpuPercent: 80, currentRssBytes: 3 * GIB, processCount: 6 };
+    mocks.telemetry = {
+      cpuCount: 8,
+      processes: [
+        proc(1, [], GIB, 8, "T3 Code", "T3 Code", "electron-main"),
+        proc(50, [51], GIB / 2, 8, "claude"),
+        proc(52, [], 1024 ** 2, 0, "codex"),
+        proc(51, [], GIB, 600, "node", "node build.js"),
+        proc(60, [], 100 * 1024 ** 2, 8, "zsh"),
+        proc(70, [71], 1024 ** 2, 0, "hub"),
+        proc(71, [], GIB, 80, "qemu-system-aarch64", "qemu-system-aarch64 -avd Pixel_9"),
+        proc(
+          80,
+          [],
+          GIB,
+          80,
+          "qemu-system-x86",
+          "qemu-system-x86 -avd Tablet_X",
+          "external-device",
+        ),
+      ],
+      owners: [
+        { kind: "agent", pid: 50, threadId: "t1" },
+        { kind: "agent", pid: 52, threadId: "t2" },
+        { kind: "device-hub", pid: 70 },
+      ],
+      groups: { backend: group, electron: group, monitor: group, allT3: group },
+    };
+    mocks.devices = {
+      hosts: [{ kind: "local", id: "h" }],
+      devices: [
+        {
+          booted: true,
+          physical: false,
+          hostId: "h",
+          platform: "android",
+          id: "emu-1",
+          name: "Pixel_9",
+        },
+      ],
+    };
+    mocks.terminals = [
+      {
+        target: { environmentId: "env", threadId: "t2", terminalId: "term-1" },
+        state: {
+          status: "running",
+          hasRunningSubprocess: true,
+          summary: { label: "dev server", pid: 60, cwd: "/work/app" },
+        },
+      },
+    ];
+    mocks.shells = [
+      { environmentId: "env", id: "t1", projectId: "p1", title: "Fix build", runtime: null },
+      {
+        environmentId: "env",
+        id: "t2",
+        projectId: "p1",
+        title: "Docs",
+        runtime: { status: "running" },
+      },
+    ];
+    const view = await screen();
+    expect(sections(view.host)).toEqual([null, "App Project", "Devices", "T3 Code", "Outside T3"]);
+    expect(view.host.textContent).not.toContain("Nothing running right now");
+    expect(view.host.textContent).toContain("T3 total · 10% · ");
+    const [, project, devices, app, outside] = [...view.host.querySelectorAll("section")];
+    expect(outline(project!)).toEqual([
+      "Fix build: Agent, 76% · 1.50 GB",
+      "dev server: Terminal, 1.0% · 100 MB",
+      "Docs: Agent, 0% · 1 MB",
+    ]);
+    expect(row(project!, "Docs").textContent).not.toContain("idle");
+    expect(row(project!, "Fix build").textContent).toBe("Fix build76% · 1.50 GBidle");
+    expect(row(project!, "dev server").textContent).toContain("running");
+    expect(await expand(project!, "Fix build")).toContain(
+      "ThreadFix buildNoteIdle agent session, kept open for follow-ups",
+    );
+    expect(row(project!, "Fix build").parentElement!.parentElement!.textContent).toContain(
+      "node build.js · pid 51",
+    );
+    expect(
+      [...project!.querySelectorAll(".text-warning-foreground")].map((el) => el.textContent),
+    ).toEqual(["build.js", "75% · 1.00 GB"]);
+
+    const names = () => outline(project!).map((line) => line.split(":")[0]);
+    const telemetry = mocks.telemetry as { processes: Array<ReturnType<typeof proc>> };
+    mocks.telemetry = {
+      ...telemetry,
+      processes: telemetry.processes.map((p) =>
+        p.identity.pid === 52 ? { ...p, residentBytes: 4 * GIB } : p,
+      ),
+    };
+    await view.rerender(<ResourceManagerRouteScreen />);
+    expect(row(project!, "Docs").textContent).toContain("4.00 GB");
+    expect(names()).toEqual(["Fix build", "dev server", "Docs"]);
+
+    await act(async () => view.button("Name").click());
+    expect(names()).toEqual(["dev server", "Docs", "Fix build"]);
+    expect(view.button("Name").getAttribute("aria-pressed")).toBe("true");
+    expect(view.button("Memory").getAttribute("aria-pressed")).toBe("false");
+    await act(async () => view.button("Memory").click());
+    expect(names()).toEqual(["Docs", "Fix build", "dev server"]);
+
+    await act(async () => view.button("End terminal").click());
+    expect(mocks.alert.mock.calls[0]![0]).toBe(
+      'Close terminal "dev server" and stop its processes?',
+    );
+    mocks.commands.close!.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("Terminal is gone")),
+    });
+    await act(async () => alertButtons(0)[1]!.onPress?.());
+    expect(mocks.commands.close).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { threadId: "t2", terminalId: "term-1" },
+    });
+    expect(mocks.alert).toHaveBeenLastCalledWith("Could not close terminal", "Terminal is gone");
+
+    expect(row(devices!, "Pixel 9")).toBeDefined();
+    await act(async () => view.button("Shut down").click());
+    await act(async () => alertButtons(2)[1]!.onPress?.());
+    expect(mocks.commands.shutdown).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { hostId: "h", deviceId: "emu-1", platform: "android" },
+    });
+
+    expect(outline(app!)).toEqual(["T3 Code: 1, 1.0% · 1.00 GB"]);
+    await act(async () => row(app!, "T3 Code").click());
+    expect(outline(app!)).toEqual([
+      "T3 Code: 1, 1.0% · 1.00 GB",
+      "Desktop main (1): Desktop main, 1.0% · 1.00 GB",
+    ]);
+    expect(await expand(outside!, "Tablet X")).toContain(
+      "NoteRuns outside T3, not counted in the T3 total",
+    );
+    expect(outside!.querySelector("button")).toBeNull();
+    await view.unmount();
   });
 
   it.each([

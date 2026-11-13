@@ -237,7 +237,7 @@ export function Glyph(props: { readonly name: AppSymbolName }) {
 }
 
 /** One labelled fact of an expanded row; `mono` for command lines and paths. */
-interface Fact {
+export interface Fact {
   readonly label: string;
   readonly value: string;
   readonly mono?: boolean;
@@ -296,7 +296,7 @@ function ProjectChip(props: { readonly title: string | undefined }) {
  * A heavy row: status icon, name, project chip and a short state. A press keeps every fact open
  * below it; prompts that need an answer stay under the row.
  */
-function HeavyRow(props: {
+export function HeavyRow(props: {
   readonly name: string;
   readonly icon: AppSymbolName;
   readonly iconLabel: string;
@@ -306,6 +306,8 @@ function HeavyRow(props: {
   /** Shown only when the eye needs it, such as why a job waits. */
   readonly secondLine?: string | undefined;
   readonly facts: ReadonlyArray<Fact>;
+  /** More to show while open, under the facts, such as a row's processes. */
+  readonly details?: ReactNode;
   readonly menu: ReactNode;
   readonly children?: ReactNode;
 }) {
@@ -363,7 +365,8 @@ function HeavyRow(props: {
         <View className="pr-2 pl-1">{props.menu}</View>
       </View>
       {props.children}
-      {open ? <Facts facts={props.facts} /> : null}
+      {open && props.facts.length > 0 ? <Facts facts={props.facts} /> : null}
+      {open ? props.details : null}
     </View>
   );
 }
@@ -422,13 +425,18 @@ function RunnerAskRows(props: {
   );
 }
 
-function useOpenThread(environmentId: EnvironmentId) {
+export function useOpenThread(environmentId: EnvironmentId) {
   const selectDetail = useSelectWorkspaceDetail();
   return (threadId: string) =>
     selectDetail({ name: "Thread", params: { environmentId: String(environmentId), threadId } });
 }
 
-const menuItem = (id: string, title: string, image: string, disabled = false): MenuAction => ({
+export const menuItem = (
+  id: string,
+  title: string,
+  image: string,
+  disabled = false,
+): MenuAction => ({
   id,
   title,
   image,

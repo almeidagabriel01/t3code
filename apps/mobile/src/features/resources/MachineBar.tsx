@@ -1,4 +1,9 @@
 import {
+  formatCpu,
+  formatMemory,
+  type ResourceUsage,
+} from "@t3tools/client-runtime/state/resourceTree";
+import {
   machineBar,
   type MachineBarRow,
   type MachineGauge,
@@ -90,7 +95,13 @@ function Slots(props: { readonly row: MachineBarRow }) {
 }
 
 /** One machine: name, slots and its two gauges; a press shows the exact readings under it. */
-function MachineRow(props: { readonly row: MachineBarRow; readonly children?: ReactNode }) {
+const T3_TOTAL_HINT = "T3 Code and the agents, terminals and devices it runs.";
+
+function MachineRow(props: {
+  readonly row: MachineBarRow;
+  readonly hint?: string | null;
+  readonly children?: ReactNode;
+}) {
   const { row } = props;
   const [open, setOpen] = useState(false);
   const { name, icon } = MACHINE[row.runner];
@@ -101,6 +112,7 @@ function MachineRow(props: { readonly row: MachineBarRow; readonly children?: Re
     row.memory?.hint,
     row.offline !== null && row.offline.hint !== row.statusHint ? row.offline.hint : null,
     row.slots?.hint ?? row.queueOff,
+    props.hint,
   ].filter((hint): hint is string => hint !== null && hint !== undefined && hint !== "");
   const warned = row.cpu?.warn === true || row.memory?.warn === true;
   return (
@@ -171,8 +183,8 @@ function MachineRow(props: { readonly row: MachineBarRow; readonly children?: Re
 export function MachineBar(props: {
   readonly environmentId: EnvironmentId;
   readonly state: HeavyQueueState;
-  /** Extra lines under This Mac, such as what T3 itself uses. */
-  readonly macExtra?: ReactNode;
+  /** What T3 Code and everything it runs use, shown under This Mac. */
+  readonly t3?: ResourceUsage | null;
 }) {
   const { environmentId, state } = props;
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
@@ -182,9 +194,21 @@ export function MachineBar(props: {
       : null,
   ).data;
   const { mac, linux } = machineBar(state, host);
+  const { t3 } = props;
+  const macCpuPercent = mac.cpu?.share == null ? null : mac.cpu.share * 100;
   return (
     <View accessibilityRole="list" accessibilityLabel="Machines">
-      <MachineRow row={mac}>{props.macExtra}</MachineRow>
+      <MachineRow row={mac} hint={t3 == null ? null : T3_TOTAL_HINT}>
+        {t3 == null ? null : (
+          <Text
+            textRole="footnote"
+            numberOfLines={1}
+            className="pl-6 text-foreground-muted tabular-nums"
+          >
+            {`T3 total · ${formatCpu(macCpuPercent === null ? t3.cpuPercent : Math.min(t3.cpuPercent, macCpuPercent))} · ${formatMemory(t3.rssBytes)}`}
+          </Text>
+        )}
+      </MachineRow>
       {linux === null ? null : <MachineRow row={linux} />}
     </View>
   );

@@ -52,21 +52,25 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HeavyCommandRows, type HeavyCommandThreads } from "./HeavyCommandsBody";
 import { HeavyWorkSection } from "./HeavyQueueBody";
 import { MachineBar } from "./MachineBar";
-import { processLabel } from "./processLabel.logic";
+import { processLabel } from "@t3tools/client-runtime/state/processLabel";
 import {
   addUsage,
-  buildResourceTree,
+  APP_GROUP_LABEL,
+  environmentResourceTree,
   deviceRowLabel,
   deviceShutdownTargets,
   EMPTY_USAGE,
+  formatMemory,
+  isHeavyProcess,
   orderResourceTree,
   resourceTreeKeys,
+  runningTerminals,
   type AppProcessGroup,
   type DevicePlatform,
   type DeviceRow,
   type ResourceSort,
   type ResourceUsage,
-} from "./resourceUsage.logic";
+} from "@t3tools/client-runtime/state/resourceTree";
 import {
   CPU_COLUMN,
   FOCUS_RING,
@@ -80,7 +84,6 @@ import {
   ROW_LINE,
   UNDER_NAME,
 } from "./ResourceMetrics";
-import { formatMemory } from "./statusBar.logic";
 import { isStatusBarItemShown, STATUS_BAR_RESOURCE_ITEM } from "./statusBarItems.logic";
 import { useCloseTerminal, useShutDownDevice } from "./useKillTarget";
 import {
@@ -92,12 +95,6 @@ import {
 type SortOption = ResourceSort;
 type ProjectInfo = ProjectFaviconProject & { readonly title: string };
 
-const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
-  main: "Desktop main",
-  renderer: "Renderers",
-  server: "Server",
-  other: "Other processes",
-};
 const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
   main: AppWindowIcon,
   renderer: MonitorIcon,
@@ -106,10 +103,7 @@ const APP_GROUP_ICON: Record<AppProcessGroup, typeof AppWindowIcon> = {
 };
 const UNATTRIBUTED = "Unattributed";
 
-// Half a core; process CPU arrives as a share of the whole machine.
-const HEAVY_CPU_PERCENT_OF_CORE = 50;
 const HostCoresContext = createContext(1);
-const HEAVY_RSS_BYTES = 1024 ** 3;
 
 const DEVICE_ICON: Record<DevicePlatform, typeof SmartphoneIcon> = {
   android: SmartphoneIcon,
@@ -126,9 +120,7 @@ function ProcessList({
   return (
     <div className="pb-1">
       {processes.map((process) => {
-        const heavy =
-          process.cpuPercent * cores >= HEAVY_CPU_PERCENT_OF_CORE ||
-          process.residentBytes >= HEAVY_RSS_BYTES;
+        const heavy = isHeavyProcess(process, cores);
         const label = processLabel(process);
         return (
           <div
@@ -375,25 +367,10 @@ export function EnvironmentSection({
     projectIdOfThread: (threadId) => infoOf(threadId)?.projectId,
     onOpenThread: (threadId) => openThread(threadId as ThreadId),
   };
-  const sessions = new Map(
-    resources.terminals
-      .filter((session) => session.state.status === "running")
-      .map((session) => [`${session.target.threadId}:${session.target.terminalId}`, session]),
-  );
-  const owners = snapshot?.owners ?? [];
-  const ranked = buildResourceTree({
-    processes: snapshot?.processes ?? [],
-    terminals: [...sessions].map(([key, session]) => ({
-      key,
-      name: session.state.summary?.label || session.target.terminalId,
-      threadId: session.target.threadId,
-      projectKey: infoOf(session.target.threadId)?.projectId ?? null,
-      pid: session.state.summary?.pid ?? null,
-    })),
-    agents: owners.flatMap((owner) =>
-      owner.kind === "agent" ? [{ pid: owner.pid, threadId: owner.threadId }] : [],
-    ),
-    hubPids: owners.flatMap((owner) => (owner.kind === "device-hub" ? [owner.pid] : [])),
+  const sessions = runningTerminals(resources.terminals);
+  const ranked = environmentResourceTree({
+    snapshot,
+    terminals: sessions,
     sort,
     projectOfThread: (threadId) => infoOf(threadId)?.projectId ?? null,
     projectTitle: (projectKey) =>

@@ -5,8 +5,11 @@ import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import type { ResourceUsage } from "./resourceUsage.logic";
-import { formatMemory } from "./statusBar.logic";
+import {
+  formatCpu,
+  formatMemory,
+  type ResourceUsage,
+} from "@t3tools/client-runtime/state/resourceTree";
 
 export const CPU_COLUMN = "w-12 text-right";
 export const MEM_COLUMN = "w-16 text-right";
@@ -22,10 +25,6 @@ export const GLYPH =
   "flex size-4 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-3.5";
 /** Aligns a row's second line, or its expanded details, under its name. */
 export const UNDER_NAME = "pl-9";
-
-// Shares of the whole machine are small; one decimal keeps a busy process from reading as 0%.
-export const formatCpu = (cpuPercent: number) =>
-  cpuPercent > 0 && cpuPercent < 10 ? `${cpuPercent.toFixed(1)}%` : `${Math.round(cpuPercent)}%`;
 
 /** `null` reads "--" (not sampled yet); `undefined` leaves the cells empty (nothing to sample here). */
 export function Metrics({

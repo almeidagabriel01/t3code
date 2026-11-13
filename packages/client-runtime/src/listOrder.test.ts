@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
 
-import { keepOrder, withArrivedKeys } from "./useOrderWhileOpen";
+import { keepOrder, withArrivedKeys } from "./listOrder.ts";
 
 describe("keepOrder", () => {
   it("keeps the opening order and puts new items after it", () => {

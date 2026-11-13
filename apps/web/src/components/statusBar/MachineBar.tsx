@@ -17,9 +17,13 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { FOCUS_RING, formatCpu, GLYPH } from "./ResourceMetrics";
-import type { ResourceUsage } from "./resourceUsage.logic";
-import { formatMemory, sparklinePoints } from "./statusBar.logic";
+import { FOCUS_RING, GLYPH } from "./ResourceMetrics";
+import {
+  formatCpu,
+  formatMemory,
+  type ResourceUsage,
+} from "@t3tools/client-runtime/state/resourceTree";
+import { sparklinePoints } from "./statusBar.logic";
 
 const HISTORY_INPUT = { windowMs: 5 * 60_000, bucketMs: 15_000 } as const;
 const HISTORY_REFRESH_MS = 15_000;

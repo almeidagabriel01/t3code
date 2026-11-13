@@ -6,14 +6,29 @@ import type {
   ResourceTelemetrySnapshot,
 } from "@t3tools/contracts";
 
-import { keepOrder } from "../../hooks/useOrderWhileOpen";
-import { processLabel } from "./processLabel.logic";
+import { keepOrder } from "../listOrder.ts";
+import type { KnownTerminalSession } from "./terminal.ts";
+import { processLabel } from "./processLabel.ts";
 
 export interface ResourceUsage {
   readonly rssBytes: number;
   readonly cpuPercent: number;
   readonly processCount: number;
 }
+
+// Shares of the whole machine are small; one decimal keeps a busy process from reading as 0%.
+export const formatCpu = (cpuPercent: number) =>
+  cpuPercent > 0 && cpuPercent < 10 ? `${cpuPercent.toFixed(1)}%` : `${Math.round(cpuPercent)}%`;
+
+export function formatMemory(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
+
+/** Half a core or a gigabyte; process CPU arrives as a share of the whole machine. */
+export const isHeavyProcess = (process: ResourceTelemetryProcess, cores: number) =>
+  process.cpuPercent * cores >= 50 || process.residentBytes >= 1024 ** 3;
 
 export const EMPTY_USAGE: ResourceUsage = { rssBytes: 0, cpuPercent: 0, processCount: 0 };
 
@@ -96,6 +111,13 @@ export function attributeTerminalUsage(
 
 export type AppProcessGroup = "main" | "renderer" | "server" | "other";
 
+export const APP_GROUP_LABEL: Record<AppProcessGroup, string> = {
+  main: "Desktop main",
+  renderer: "Renderers",
+  server: "Server",
+  other: "Other processes",
+};
+
 const APP_GROUP_BY_CATEGORY: Partial<
   Record<ResourceTelemetryProcess["category"], AppProcessGroup>
 > = {
@@ -147,7 +169,7 @@ export function appBreakdown(
             }),
           EMPTY_USAGE,
         ),
-        processes: members.toSorted(compareProcesses(sort)),
+        processes: [...members].sort(compareProcesses(sort)),
       },
     ];
   });
@@ -393,7 +415,7 @@ export function buildResourceTree(input: {
   const deviceClaim = claimUsage(processes, deviceList, claimed);
   const compareProcess = compareProcesses(sort);
   const sortedProcesses = (claim: ReturnType<typeof claimUsage>, key: string) =>
-    (claim.processes.get(key) ?? []).toSorted(compareProcess);
+    [...(claim.processes.get(key) ?? [])].sort(compareProcess);
 
   const rowsByProject = new Map<string | null, ProjectRow[]>();
   const push = (projectKey: string | null, row: ProjectRow) =>
@@ -423,7 +445,7 @@ export function buildResourceTree(input: {
 
   const compare = compareUsage(sort);
   const projects = [...rowsByProject].map(([projectKey, rows]): ProjectNode => {
-    const ordered = rows.toSorted((a, b) => compare(a.usage, b.usage, a.name, b.name));
+    const ordered = [...rows].sort((a, b) => compare(a.usage, b.usage, a.name, b.name));
     return {
       projectKey,
       title: input.projectTitle(projectKey),
@@ -440,9 +462,50 @@ export function buildResourceTree(input: {
       processes: sortedProcesses(deviceClaim, device.key),
     }))
     .filter((device) => device.usage.processCount > 0)
-    .toSorted((a, b) => compare(a.usage, b.usage, a.label, b.label));
+    .sort((a, b) => compare(a.usage, b.usage, a.label, b.label));
 
   return { projects, devices, app: appBreakdown(processes, claimed, sort) };
+}
+
+/** Running terminals by `threadId:terminalId`, the key their tree rows carry. */
+export function runningTerminals(
+  sessions: ReadonlyArray<KnownTerminalSession>,
+): ReadonlyMap<string, KnownTerminalSession> {
+  return new Map(
+    sessions
+      .filter((session) => session.state.status === "running")
+      .map((session) => [`${session.target.threadId}:${session.target.terminalId}`, session]),
+  );
+}
+
+/** One environment's tree: its running terminals, then the agents and device hub the snapshot's owners name. */
+export function environmentResourceTree(input: {
+  readonly snapshot: ResourceTelemetrySnapshot | null;
+  readonly terminals: ReadonlyMap<string, KnownTerminalSession>;
+  readonly sort: ResourceSort;
+  readonly projectOfThread: (threadId: string) => string | null;
+  readonly projectTitle: (projectKey: string | null) => string;
+  readonly threadTitle: (threadId: string) => string;
+}): ResourceTree {
+  const owners = input.snapshot?.owners ?? [];
+  return buildResourceTree({
+    processes: input.snapshot?.processes ?? [],
+    terminals: [...input.terminals].map(([key, session]) => ({
+      key,
+      name: session.state.summary?.label || session.target.terminalId,
+      threadId: session.target.threadId,
+      projectKey: input.projectOfThread(session.target.threadId),
+      pid: session.state.summary?.pid ?? null,
+    })),
+    agents: owners.flatMap((owner) =>
+      owner.kind === "agent" ? [{ pid: owner.pid, threadId: owner.threadId }] : [],
+    ),
+    hubPids: owners.flatMap((owner) => (owner.kind === "device-hub" ? [owner.pid] : [])),
+    sort: input.sort,
+    projectOfThread: input.projectOfThread,
+    projectTitle: input.projectTitle,
+    threadTitle: input.threadTitle,
+  });
 }
 
 /**

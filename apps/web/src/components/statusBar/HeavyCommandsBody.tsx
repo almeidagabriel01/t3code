@@ -33,7 +33,7 @@ import {
   ROW_LINE,
   UNDER_NAME,
 } from "./ResourceMetrics";
-import type { ResourceUsage } from "./resourceUsage.logic";
+import type { ResourceUsage } from "@t3tools/client-runtime/state/resourceTree";
 import { useStopHeavyCommand } from "./useKillTarget";
 
 const ELAPSED_REFRESH_MS = 5_000;

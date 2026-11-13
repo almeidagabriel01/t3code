@@ -69,7 +69,8 @@ give one with `--name`; otherwise T3 derives it from the command), its project
 and how long it has run or waited. A waiting job says why it has not started
 ("swapping 40 MB/s", "needs ~4.0 GB; 4.4 GB free, 3.2 GB kept spare"). Hover a
 job, or click it, for the rest: the full command, folder, thread, priority,
-usage and notes. On mobile it is under Settings → Maintenance.
+usage and notes. On mobile, open Settings → Maintenance → **Resource Manager**
+and tap a row for the rest.
 
 To see only one project's jobs, open **Heavy work** from a thread's right panel
 (on mobile, **Project → Heavy work** in the thread menu). Waiting jobs keep their
