@@ -14,6 +14,8 @@ export interface ComposerGroupMentions {
     readonly handle: string;
     readonly name: string;
     readonly accent: string;
+    /** The member's face as an image, once it is drawn. */
+    readonly iconUri?: string;
   }>;
   readonly projects: ReadonlyArray<{ readonly id: string; readonly name: string }>;
 }
@@ -44,13 +46,18 @@ function memberAccent(member: Pick<Assistant, "id" | "avatar">): string {
 export function composerGroupMentions(
   members: ReadonlyArray<Pick<Assistant, "id" | "avatar" | "handle" | "name">>,
   projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  faces: ReadonlyMap<string, string> = new Map(),
 ): ComposerGroupMentions {
   return {
-    members: members.map((member) => ({
-      handle: member.handle,
-      name: member.name,
-      accent: memberAccent(member),
-    })),
+    members: members.map((member) => {
+      const iconUri = faces.get(member.id);
+      return {
+        handle: member.handle,
+        name: member.name,
+        accent: memberAccent(member),
+        ...(iconUri === undefined ? {} : { iconUri }),
+      };
+    }),
     projects: projects.map((project) => ({ id: project.id, name: project.name })),
   };
 }
@@ -62,11 +69,19 @@ export function groupMentionTokenOptions(mentions: ComposerGroupMentions | undef
     : assistantGroupMentionTargets(mentions.members, mentions.projects);
 }
 
-/** A member or project token's chip: the name as label, a face or folder icon, and its colour. */
+/**
+ * A member or project token's chip: the name as label, a face or folder icon, and its colour.
+ * `iconUri` is the member's face image; without it the chip draws `icon`, tinted.
+ */
 export function groupMentionChip(
   token: { readonly type: string; readonly value: string },
   mentions: ComposerGroupMentions | undefined,
-): { readonly label: string; readonly icon: ContextChipIconRef; readonly accent: string } | null {
+): {
+  readonly label: string;
+  readonly icon: ContextChipIconRef;
+  readonly accent: string;
+  readonly iconUri?: string;
+} | null {
   if (mentions === undefined || (token.type !== "member" && token.type !== "project")) return null;
   const target = assistantGroupMentionTarget(
     token.type,
@@ -79,7 +94,12 @@ export function groupMentionChip(
     return { label: target.project.name, icon: PROJECT_ICON, accent: PROJECT_ACCENT };
   }
   const member = target.member ?? EVERYONE;
-  return { label: member.name, icon: MEMBER_ICON, accent: member.accent };
+  return {
+    label: member.name,
+    icon: MEMBER_ICON,
+    accent: member.accent,
+    ...("iconUri" in member && member.iconUri !== undefined ? { iconUri: member.iconUri } : {}),
+  };
 }
 
 /** A pressed chip is a member or project: it opens nothing. */

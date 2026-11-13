@@ -56,6 +56,7 @@ import {
   groupMentionLinkChip,
   type ComposerGroupMentions,
 } from "../../lib/groupMentionChips";
+import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import {
   SelectableMarkdownText,
@@ -102,8 +103,8 @@ const mentionChip = (
     ? undefined
     : {
         label: chip.label,
-        icon: contextChipIconSource(chip.icon),
-        chip: { accent: chip.accent, tintsIcon: true },
+        icon: chip.iconUri === undefined ? contextChipIconSource(chip.icon) : { uri: chip.iconUri },
+        chip: { accent: chip.accent, tintsIcon: chip.iconUri === undefined },
       };
 };
 
@@ -141,7 +142,11 @@ function GroupMarkdown(props: {
   readonly projects: ReadonlyArray<GroupComposerProject>;
   readonly textStyle: NativeMarkdownTextStyle;
 }) {
-  const mentions = composerGroupMentions(props.members, props.projects);
+  const mentions = composerGroupMentions(
+    props.members,
+    props.projects,
+    useAssistantFaceImages(props.members),
+  );
   return (
     <SelectableMarkdownText
       markdown={assistantGroupMarkdownMentions(props.text, props.members, props.projects)}

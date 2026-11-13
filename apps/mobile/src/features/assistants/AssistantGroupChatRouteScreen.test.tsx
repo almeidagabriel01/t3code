@@ -231,6 +231,7 @@ vi.mock("../../components/ui/FilePreviewModal", () => ({
     <div data-testid="preview">{props.source && `${props.source.kind}:${props.source.name}`}</div>
   ),
 }));
+vi.mock("../../native/ChipIconImages", () => ({ useAssistantFaceImages: () => new Map() }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: Children }));
 vi.mock("react-native-keyboard-controller", () => ({ KeyboardAvoidingView: Children }));
 vi.mock("@legendapp/list/react-native", () => ({

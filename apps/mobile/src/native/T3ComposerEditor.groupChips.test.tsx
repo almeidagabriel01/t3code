@@ -50,7 +50,14 @@ const MENTIONS: ComposerGroupMentions = {
   projects: [{ id: "p1", name: "Alpha" }],
 };
 
-type Chip = { type: string; source: string; label: string; iconUri: string; accent: string };
+type Chip = {
+  type: string;
+  source: string;
+  label: string;
+  iconUri: string;
+  accent: string;
+  tintsIcon: boolean;
+};
 
 async function chipsFrom(
   Editor: typeof IosEditor,
@@ -70,7 +77,14 @@ async function chipsFrom(
   await act(async () => root.unmount());
   const document_ = JSON.parse(native.documentJson) as { tokensJson: string };
   return (JSON.parse(document_.tokensJson) as Chip[]).map(
-    ({ type, source, label, iconUri, accent }) => ({ type, source, label, iconUri, accent }),
+    ({ type, source, label, iconUri, accent, tintsIcon }) => ({
+      type,
+      source,
+      label,
+      iconUri,
+      accent,
+      tintsIcon,
+    }),
   );
 }
 
@@ -86,6 +100,7 @@ it.each([
       label: "Ada Lovelace",
       iconUri: "chip:bot",
       accent: "#336699",
+      tintsIcon: true,
     },
     {
       type: "project",
@@ -93,7 +108,14 @@ it.each([
       label: "Alpha",
       iconUri: "chip:folder",
       accent: "#0090cd",
+      tintsIcon: true,
     },
+  ]);
+  // Once the member's face is drawn, the chip shows it untinted.
+  const face = "file:///cache/t3-chip-icons/ada.png";
+  const withFace = { ...MENTIONS, members: [{ ...MENTIONS.members[0]!, iconUri: face }] };
+  expect(await chipsFrom(Editor, "@ada", withFace)).toEqual([
+    expect.objectContaining({ type: "member", iconUri: face, tintsIcon: false }),
   ]);
   // Outside a group the same text keeps the thread composer's file mention and plain `#`.
   expect(await chipsFrom(Editor, "@ada fix #alpha now")).toEqual([

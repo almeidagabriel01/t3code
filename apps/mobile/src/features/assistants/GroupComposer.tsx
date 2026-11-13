@@ -28,6 +28,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
+import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -303,6 +304,7 @@ export function GroupComposer(props: {
   ) => Promise<GroupSendResult>;
 }) {
   const draftKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  const faces = useAssistantFaceImages(props.members);
   const { text } = useComposerDraft(draftKey);
   const [selection, setSelection] = useState(() => ({ start: text.length, end: text.length }));
   const [contentHeight, setContentHeight] = useState(0);
@@ -486,7 +488,7 @@ export function GroupComposer(props: {
             ref={editor}
             draftKey={draftKey}
             environmentId={props.environmentId}
-            groupMentions={composerGroupMentions(props.members, props.projects)}
+            groupMentions={composerGroupMentions(props.members, props.projects, faces)}
             multiline
             value={text}
             selection={selection}

@@ -213,8 +213,8 @@ export function ComposerEditor({
             accent: contextChipAccent(group.accent, theme, chipTextColor),
             label: group.label,
             detail: "",
-            iconUri: contextChipIconUri(group.icon),
-            tintsIcon: true,
+            iconUri: group.iconUri ?? contextChipIconUri(group.icon),
+            tintsIcon: group.iconUri === undefined,
           };
         }
         return {

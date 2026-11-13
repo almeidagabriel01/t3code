@@ -36,6 +36,18 @@ describe("group mention chips", () => {
       label: "Billing API",
       icon: { kind: "chip", name: "folder" },
     });
+    const face = "file:///cache/t3-chip-icons/ada.png";
+    const withFace = composerGroupMentions(
+      [{ id: "a1", handle: "Ada", name: "Ada Lovelace", avatar: null }] as never,
+      [],
+      new Map([["a1", face]]),
+    );
+    expect(groupMentionLinkChip("t3-mention:mention/ada", withFace)).toMatchObject({
+      iconUri: face,
+    });
+    expect(groupMentionLinkChip("t3-mention:mention/everyone", withFace)).not.toHaveProperty(
+      "iconUri",
+    );
     expect(groupMentionLinkChip("t3-mention:mention", mentions)).toBeNull();
     expect(groupMentionLinkChip("https://ada", mentions)).toBeNull();
   });
