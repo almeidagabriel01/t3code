@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ASSISTANT_GROUP_REPLY_MAX_CHARS,
   type AssistantError,
   type AssistantsEvent,
   AssistantTeamId,
@@ -1183,10 +1184,10 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
       yield* refusal(call.result({ callerThreadId: cyThread, text: "x" })),
       "invalid: No task of yours is running in this group.",
     );
-    const long = "q".repeat(501);
+    const long = "q".repeat(ASSISTANT_GROUP_REPLY_MAX_CHARS + 1);
     assert.include(
       yield* refusal(call.reply({ callerThreadId: ada, messageId: "gm:none", text: long })),
-      "under 500 characters",
+      `under ${ASSISTANT_GROUP_REPLY_MAX_CHARS} characters`,
     );
     const answer = (yield* h.messages).find((row) => row.author === "assistant")!;
     for (const [messageId, expected] of [

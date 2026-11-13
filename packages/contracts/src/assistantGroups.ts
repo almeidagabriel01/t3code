@@ -27,7 +27,7 @@ export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;
 export const ASSISTANT_GROUP_HANDOFF_LIMIT = 8;
 /** Member-to-member replies per request, whoever writes them. */
 export const ASSISTANT_GROUP_REPLY_LIMIT = 2;
-export const ASSISTANT_GROUP_REPLY_MAX_CHARS = 500;
+export const ASSISTANT_GROUP_REPLY_MAX_CHARS = 2_000;
 export const ASSISTANT_GROUP_MESSAGE_MAX_CHARS = 20_000;
 export const ASSISTANT_GROUP_PAGE_SIZE = 50;
 

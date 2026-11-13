@@ -1,4 +1,8 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  ASSISTANT_GROUP_REPLY_LIMIT,
+  ASSISTANT_GROUP_REPLY_MAX_CHARS,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -63,7 +67,11 @@ export type GroupParameters = typeof GroupParameters.Type;
 const GroupTool = Tool.make("t3_group", {
   description: [
     "Only inside a group task (your message holds a <t3_group_task> block). Renaming a group or changing its members is not done here: that is t3_assistant `group_update`, and only when the user asks.",
-    '`history` {beforeSeq?}: older group chat messages. `assign` {member, text, expectedResult?, sourceSeqs?, resources?}: give a member a subtask; you continue once it is done. expectedResult: what done looks like. sourceSeqs: #numbers of the messages it rests on. resources: what it uses alone ("folder:<path>", "browser"); subtasks sharing one run in turn. `transfer` {member, text?}: hand your whole task to a member who fits it better; stop working on it after. `reply` {seq, text}: ask the member who wrote message #seq one short question (under 500 characters, at most 2 per request); you continue with the answer. `cancel` {taskId, text?}: stop a subtask you gave, with a reason. `result` {text}: post your answer to the group explicitly; otherwise your final message is posted.',
+    '`history` {beforeSeq?}: older group chat messages. `assign` {member, text, expectedResult?, sourceSeqs?, resources?}: give a member a subtask; you continue once it is done. expectedResult: what done looks like. sourceSeqs: #numbers of the messages it rests on. resources: what it uses alone ("folder:<path>", "browser"); subtasks sharing one run in turn. `transfer` {member, text?}: hand your whole task to a member who fits it better; stop working on it after. `reply` {seq, text}: ask the member who wrote message #seq one short question (under ' +
+      ASSISTANT_GROUP_REPLY_MAX_CHARS +
+      " characters, at most " +
+      ASSISTANT_GROUP_REPLY_LIMIT +
+      " per request); you continue with the answer. `cancel` {taskId, text?}: stop a subtask you gave, with a reason. `result` {text}: post your answer to the group explicitly; otherwise your final message is posted.",
     "Routines of this group: `routines` lists them. `routine_save` {routineId? (to edit), title?, text, runAt | at (+weekdays 0-6) | everyMinutes, enabled?, maxRuns?, missedRun?: skip|once} creates or edits one that posts `text` in this chat on a schedule; `enabled` false pauses, true resumes. `routine_run` {routineId} runs it now; `routine_delete` {routineId}. Creating, editing, pausing, running or deleting a routine works only when the user asked for it in this group; otherwise it is refused, so tell the user and do not retry. Each change leaves a line in the chat. For a schedule in this group use these, not schedule_task.",
     "Your final message is posted to the group chat as you, so write it for the group.",
   ].join(" "),
