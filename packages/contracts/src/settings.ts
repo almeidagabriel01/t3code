@@ -42,6 +42,7 @@ import {
 import { ForkUpdateChannelSetting } from "./forkUpdates.ts";
 import { HeavyNoticesMode } from "./heavyNotices.ts";
 import {
+  HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   RunnerAskMinutes,
   RunnerDeadlineAction,
@@ -1727,6 +1728,9 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Which heavy job notices clients get: problems, machine changes, or none. */
   heavyNotices: HeavyNoticesMode.pipe(Schema.withDecodingDefault(Effect.succeed("unexpected"))),
+  heavySlowAgentJobs: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_SLOW_AGENT_JOBS_DEFAULT)),
+  ),
   /** Enabling the Device panel must not grant providers device control. */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -2228,6 +2232,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   runnerLinuxMemoryFloorPercent: Schema.optionalKey(RunnerLinuxMemoryFloorPercent),
   runnerLinuxCpuCeilingPercent: Schema.optionalKey(RunnerLinuxCpuCeilingPercent),
   heavyNotices: Schema.optionalKey(HeavyNoticesMode),
+  heavySlowAgentJobs: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

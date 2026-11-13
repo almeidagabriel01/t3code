@@ -195,17 +195,21 @@ describe("heavy queue file", () => {
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "waiting", paused: true });
     Queue.setPriority(dir, "b", "high");
     expect(Queue.tryStart(dir, "b")).toMatchObject({ status: "started" });
-    expect(Queue.setPriority(dir, "a", "high")).toMatchObject({
-      result: "ok",
-      entry: { id: "a", priority: "low" },
-    });
-    expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("forced");
     // An agent's job waits "low" yet runs at normal QoS: the two never share a field.
     expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("qos");
+    // The user's choice for a running job is kept, and T3 stops slowing it on its own.
+    Queue.recordSlowdown(dir, { slowed: ["a", "missing"], restored: [], slowedDaemons: [] });
+    expect(Queue.read(dir).find((e) => e.id === "a")).toMatchObject({ slowed: true });
+    expect(Queue.setPriority(dir, "a", "high")).toMatchObject({
+      result: "ok",
+      entry: { id: "a", priority: "high" },
+    });
+    expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("forced");
+    expect(Queue.read(dir).find((e) => e.id === "a")).not.toHaveProperty("slowed");
     Queue.setQos(dir, "a", "background");
     Queue.setQos(dir, "waiter-never-started", "normal");
     expect(Queue.read(dir).find((e) => e.id === "a")).toMatchObject({
-      priority: "low",
+      priority: "high",
       qos: "background",
     });
     expect(Queue.setPriority(dir, "gone", "high")).toEqual({ result: "not-found" });

@@ -4,6 +4,7 @@
  * run ended. The queue file, the CLI, the hook and the server all decide through these.
  */
 import {
+  HEAVY_SLOW_AGENT_JOBS_DEFAULT,
   RUNNER_DEFAULTS,
   type HeavyQueueEntry,
   type HeavyRunner,
@@ -46,6 +47,7 @@ export const DEFAULT_MACHINE_CONFIG: RunnerMachineConfig = {
   runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
   runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
   runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+  heavySlowAgentJobs: HEAVY_SLOW_AGENT_JOBS_DEFAULT,
 };
 
 /** What a T3 server publishes into the queue file from its settings. */

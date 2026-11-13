@@ -22,6 +22,8 @@ export interface Sample {
   readonly overLimit?: boolean;
   readonly overLimitSince?: number | null;
   readonly underLimitSince?: number | null;
+  /** Whether agents' running jobs should run slowed: CPU alone, counting slowed jobs at full speed. */
+  readonly slow?: Sustained;
 }
 
 /** The Mac's limits, kept in the queue file so a waiter reads them without a server. */

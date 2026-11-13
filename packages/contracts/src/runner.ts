@@ -101,7 +101,10 @@ export const RUNNER_MACHINE_KEYS = [
   "runnerStopWaitSeconds",
   "runnerLinuxMemoryFloorPercent",
   "runnerLinuxCpuCeilingPercent",
+  "heavySlowAgentJobs",
 ] as const;
+/** Agents' running jobs drop to background CPU priority while this Mac stays over its CPU ceiling. */
+export const HEAVY_SLOW_AGENT_JOBS_DEFAULT = true;
 export type RunnerKey = keyof typeof RUNNER_DEFAULTS;
 
 /** Why `value` is not a valid `key`, for people; null when it is. */
@@ -173,5 +176,6 @@ export const RunnerMachineConfig = Schema.Struct({
   runnerStopWaitSeconds: Schema.Int,
   runnerLinuxMemoryFloorPercent: Schema.Int,
   runnerLinuxCpuCeilingPercent: Schema.Int,
+  heavySlowAgentJobs: Schema.Boolean,
 });
 export type RunnerMachineConfig = typeof RunnerMachineConfig.Type;

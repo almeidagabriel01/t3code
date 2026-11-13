@@ -17,6 +17,7 @@ import { childrenByParent, treeUsage } from "./classifyHeavyCommands.ts";
 import { adoptedRoots, attributeDaemons, readClues } from "./daemons.ts";
 import { treePids } from "./HeavyQueue.ts";
 import * as QueueFile from "./queueFile.ts";
+import { applySlowdown, isNoop, slowdownStep } from "./slowdown.ts";
 
 const SAMPLE_INTERVAL = "2 seconds";
 
@@ -169,9 +170,11 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
     Effect.gen(function* () {
       const host = yield* HostResources;
       const telemetry = yield* ResourceTelemetry;
+      const platform = yield* HostProcess.Platform;
       const tick = Effect.gen(function* () {
-        const entries = QueueFile.read(dir);
-        if (entries.length === 0) return;
+        const { entries, slowedDaemons } = QueueFile.readDoc(dir);
+        // Daemons left lowered after their job ended are restored even with the queue empty.
+        if (entries.length === 0 && slowedDaemons.length === 0) return;
         const reading = yield* host.read;
         const running = entries.some((entry) => entry.startedAt !== null);
         // Devices live for minutes, so the last snapshot finds them while nothing runs.
@@ -187,10 +190,11 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
             .map((process) => process.identity.pid),
           daemons,
         );
-        QueueFile.recordSample(
+        const at = yield* Clock.currentTimeMillis;
+        const doc = QueueFile.recordSample(
           dir,
           {
-            at: yield* Clock.currentTimeMillis,
+            at,
             // The host reading's short-window utilisation tracks load now; the load average lags a minute.
             busyCores:
               reading.cpuUtilization === null
@@ -207,6 +211,11 @@ export const layer = (dir: string = QueueFile.defaultQueueDir()) =>
           },
           running ? peaksOf(entries, processes, footprints.jobs, daemons) : {},
         );
+        if (platform !== "darwin") return;
+        const step = slowdownStep(doc, processes, at);
+        if (isNoop(step, doc.slowedDaemons)) return;
+        yield* applySlowdown(step);
+        QueueFile.recordSlowdown(dir, step);
       }).pipe(Effect.ignore);
       yield* tick.pipe(
         Effect.andThen(Effect.sleep(SAMPLE_INTERVAL)),

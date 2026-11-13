@@ -33,6 +33,7 @@ describe("the Runner block a server publishes", () => {
       ...DEFAULT_SERVER_SETTINGS,
       runnerAskMinutes: 4,
       runnerHost: "pc",
+      heavySlowAgentJobs: false,
       projectSettingsOverrides: {
         [app]: {
           runnerEnabled: true,
@@ -59,6 +60,7 @@ describe("the Runner block a server publishes", () => {
       runnerStopWaitSeconds: RUNNER_DEFAULTS.runnerStopWaitSeconds,
       runnerLinuxMemoryFloorPercent: RUNNER_DEFAULTS.runnerLinuxMemoryFloorPercent,
       runnerLinuxCpuCeilingPercent: RUNNER_DEFAULTS.runnerLinuxCpuCeilingPercent,
+      heavySlowAgentJobs: false,
     });
     expect(block.projects[0]).toEqual({
       root: "/code/app",

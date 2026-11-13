@@ -21,6 +21,7 @@ import {
   DEFAULT_MAX_RUNNING,
   hasHeadroom,
   HISTORY_RUNS,
+  estimate,
   medianDuration,
   signatureOf,
   type History,
@@ -133,6 +134,14 @@ interface QueueDoc {
   readonly linux: LinuxHealth;
   /** Recent transitions that may need a notice, newest last. */
   readonly events: ReadonlyArray<HeavyEventRecord>;
+  /** Daemons outside any job tree that T3 lowered to background CPU priority, to restore later. */
+  readonly slowedDaemons: ReadonlyArray<ProcessIdentity>;
+}
+
+/** A pid with its start time, so a reused pid never reads as the same process. */
+export interface ProcessIdentity {
+  readonly pid: number;
+  readonly startTimeMs: number;
 }
 
 const DEFAULT_DEVICE_IDLE_MINUTES = 20;
@@ -153,6 +162,7 @@ const EMPTY_DOC: QueueDoc = {
   runner: null,
   linux: UNKNOWN_HEALTH,
   events: [],
+  slowedDaemons: [],
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -199,6 +209,7 @@ const loadDoc = (dir: string): QueueDoc => {
       runner?: unknown;
       events?: unknown;
       linux?: unknown;
+      slowedDaemons?: unknown;
     } | null;
     const record = isObject(parsed) ? parsed : null;
     return {
@@ -233,6 +244,14 @@ const loadDoc = (dir: string): QueueDoc => {
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
       events: parseLog(parsed?.events),
+      slowedDaemons: Array.isArray(record?.slowedDaemons)
+        ? record.slowedDaemons.filter(
+            (value: unknown): value is ProcessIdentity =>
+              isObject(value) &&
+              typeof value.pid === "number" &&
+              typeof value.startTimeMs === "number",
+          )
+        : [],
     };
   } catch {
     return EMPTY_DOC;
@@ -713,32 +732,68 @@ export const recordSample = (
       reading.at,
       doc.heavyOverLimitSeconds * 1000,
     );
+    const entries = doc.entries.map((entry) => {
+      const peak = peaks[entry.id];
+      // On Linux the local tree is only `remoto`'s wrapper, not the job.
+      if (entry.startedAt === null || peak === undefined || entry.runner === "linux") {
+        return entry;
+      }
+      const { daemons: _daemons, ...rest } = entry;
+      return {
+        ...rest,
+        ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
+        cpu: peak.cpu,
+        memory: peak.memoryBytes,
+        peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
+        peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
+      };
+    });
+    // A slowed job takes back what it uses at full speed, so restoring waits for room for that.
+    const comeback = entries
+      .filter((entry) => entry.slowed === true)
+      .reduce((sum, entry) => {
+        const full = Math.max(
+          entry.peakCpu ?? 0,
+          estimate(doc.history, entry, reading.cpuCount).cpu,
+        );
+        return sum + Math.max(0, full - (entry.cpu ?? 0));
+      }, 0);
+    const slow = sustain(
+      continuous ? (doc.sample?.slow ?? null) : null,
+      reading.busyCores + comeback > (doc.macCpuCeilingPercent / 100) * reading.cpuCount,
+      reading.at,
+      doc.heavyOverLimitSeconds * 1000,
+    );
     // Admission's short headroom check uses the same unbroken run of readings under the limits.
-    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince };
-    return {
-      doc: {
-        ...doc,
-        sample,
-        entries: doc.entries.map((entry) => {
-          const peak = peaks[entry.id];
-          // On Linux the local tree is only `remoto`'s wrapper, not the job.
-          if (entry.startedAt === null || peak === undefined || entry.runner === "linux") {
-            return entry;
-          }
-          const { daemons: _daemons, ...rest } = entry;
-          return {
-            ...rest,
-            ...(peak.daemons === undefined ? {} : { daemons: peak.daemons }),
-            cpu: peak.cpu,
-            memory: peak.memoryBytes,
-            peakCpu: Math.max(entry.peakCpu ?? 0, peak.cpu),
-            peakMemory: Math.max(entry.peakMemory ?? 0, peak.memoryBytes),
-          };
-        }),
-      },
-      result: undefined,
-    };
+    const sample: Sample = { ...reading, ...limit, headroomSince: limit.underLimitSince, slow };
+    const next: QueueDoc = { ...doc, sample, entries };
+    return { doc: next, result: next };
   });
+
+/** Records a slowdown step the sampler applied: entries slowed or restored, daemons held lowered. */
+export const recordSlowdown = (
+  dir: string,
+  step: {
+    readonly slowed: ReadonlyArray<string>;
+    readonly restored: ReadonlyArray<string>;
+    readonly slowedDaemons: ReadonlyArray<ProcessIdentity>;
+  },
+) =>
+  mutate(dir, (doc) => ({
+    doc: {
+      ...doc,
+      slowedDaemons: step.slowedDaemons,
+      entries: doc.entries.map((entry) => {
+        if (step.slowed.includes(entry.id) && entry.startedAt !== null) {
+          return { ...entry, slowed: true, qos: "background" as const };
+        }
+        if (!step.restored.includes(entry.id)) return entry;
+        const { slowed: _slowed, ...rest } = entry;
+        return { ...rest, qos: "normal" as const };
+      }),
+    },
+    result: undefined,
+  }));
 
 /** Waiter-side election: the first caller under the lock to find the reading stale becomes the sampler. */
 export const recordSampleIfStale = (
@@ -818,7 +873,15 @@ export const setPriority = (dir: string, id: string, priority: "low" | "high") =
   mutate(dir, (doc): Decided<{ readonly result: MoveResult; readonly entry?: HeavyQueueEntry }> => {
     const target = doc.entries.find((entry) => entry.id === id);
     if (target === undefined) return { doc, result: { result: "not-found" } };
-    if (target.startedAt !== null) return { doc, result: { result: "ok", entry: target } };
+    if (target.startedAt !== null) {
+      // The user's choice for a running job stands: T3 stops slowing or restoring it on its own.
+      const { slowed: _slowed, ...rest } = target;
+      const running: HeavyQueueEntry = { ...rest, priority };
+      return {
+        doc: { ...doc, entries: doc.entries.map((entry) => (entry.id === id ? running : entry)) },
+        result: { result: "ok", entry: running },
+      };
+    }
     const { forced: _forced, ...rest } = target;
     const updated: HeavyQueueEntry = {
       ...rest,

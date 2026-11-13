@@ -71,6 +71,8 @@ export const HeavyQueueEntry = Schema.Struct({
   peakMemory: Schema.optionalKey(Schema.Number),
   /** Pids of build daemons outside its tree that work for it (Gradle's, Kotlin's), counted in its usage. */
   daemons: Schema.optionalKey(Schema.Array(Schema.Int)),
+  /** T3 lowered it to background CPU priority while the Mac stayed over its CPU ceiling. */
+  slowed: Schema.optionalKey(Schema.Boolean),
   /** Where a running entry runs; absent means this Mac. */
   runner: Schema.optionalKey(HeavyRunner),
   /** Where the job itself asked to run (`t3 heavy --runner`), over the project's setting. */
