@@ -1,3 +1,9 @@
+import {
+  assistantGroupMentions,
+  assistantGroupProjectMentionRanges,
+  foldAssistantGroupText,
+} from "@t3tools/contracts";
+
 import { markdownMathRanges } from "./markdownMath.ts";
 
 export type ComposerInlineToken =
@@ -46,7 +52,6 @@ const SKILL_MENTION_SOURCE =
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
-const PROJECT_TOKEN_REGEX = /(^|\s)#([\p{L}\p{N}][\p{L}\p{N}_./-]*)(?=\s)/gu;
 // Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
 const FILE_LINK_TOKEN_REGEX = new RegExp(
@@ -59,10 +64,7 @@ const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 const DECORATOR_CALL_REFERENCE_REGEX = /^[\p{ID_Start}_$][\p{ID_Continue}.$\u200c\u200d]*\(/u;
 
-function collectMentionTokens(
-  text: string,
-  memberHandles: ReadonlySet<string> = new Set(),
-): ComposerInlineToken[] {
+function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
 
   for (const match of text.matchAll(FILE_LINK_TOKEN_REGEX)) {
@@ -105,10 +107,9 @@ function collectMentionTokens(
     }
     const start = (match.index ?? 0) + prefix.length;
     const end = start + fullMatch.length - prefix.length;
-    const member = quotedPath === undefined && memberHandles.has(path.toLowerCase());
     matches.push({
-      type: member ? "member" : "mention",
-      value: member ? path.toLowerCase() : path,
+      type: "mention",
+      value: path,
       source: text.slice(start, end),
       start,
       end,
@@ -146,18 +147,31 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const handles = new Set(options.memberHandles?.map((handle) => handle.toLowerCase()));
-  const matches = collectMentionTokens(text, handles);
-  const slugs = new Set(options.projectSlugs);
-  if (slugs.size > 0) {
-    for (const match of text.matchAll(PROJECT_TOKEN_REGEX)) {
-      const prefix = match[1] ?? "";
-      const slug = (match[2] ?? "").toLowerCase();
-      if (!slugs.has(slug)) continue;
-      const start = (match.index ?? 0) + prefix.length;
-      const end = start + match[0].length - prefix.length;
-      matches.push({ type: "project", value: slug, source: text.slice(start, end), start, end });
-    }
+  // Group tokens come from the server's parser, so a chip shows exactly what the server reads.
+  const handles = options.memberHandles ?? [];
+  const members =
+    handles.length === 0
+      ? []
+      : assistantGroupMentions(
+          text,
+          handles.map((handle) => ({ handle, name: handle })),
+        );
+  const memberStarts = new Set(members.map((mention) => mention.start));
+  const matches = collectMentionTokens(text).filter((match) => !memberStarts.has(match.start));
+  for (const { start, end, member } of members) {
+    // The server reads `@everyone` in any group, listed or not.
+    const value = member === null ? "everyone" : foldAssistantGroupText(member.handle);
+    matches.push({ type: "member", value, source: text.slice(start, end), start, end });
+  }
+  const projects = (options.projectSlugs ?? []).map((slug) => ({ id: slug, name: slug }));
+  for (const { start, end, project } of assistantGroupProjectMentionRanges(text, projects)) {
+    matches.push({
+      type: "project",
+      value: project.id,
+      source: text.slice(start, end),
+      start,
+      end,
+    });
   }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {

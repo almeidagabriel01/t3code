@@ -55,14 +55,64 @@ describe("collectComposerInlineTokens", () => {
       ["project", "billing-api", "#billing-api"],
       ["mention", "README.md", "@README.md"],
       ["member", "beto_qa", "@beto_qa"],
+      ["member", "ada", "@ada"],
     ]);
     for (const token of tokens) expect(text.slice(token.start, token.end)).toBe(token.source);
   });
 
+  const GROUP = {
+    memberHandles: ["ada", "everyone"],
+    projectSlugs: ["core", "core-api", "core-2"],
+  };
+  it.each<[string, ReadonlyArray<readonly [string, string, string]>]>([
+    ["@ada", [["member", "ada", "@ada"]]],
+    ["#core", [["project", "core", "#core"]]],
+    ...[",", ".", "!", "?", ")"].flatMap((mark): Array<[string, [[string, string, string]]]> => [
+      [`hi @ada${mark} ok`, [["member", "ada", "@ada"]]],
+      [`run #core${mark} ok`, [["project", "core", "#core"]]],
+    ]),
+    [
+      "(@ada #core)",
+      [
+        ["member", "ada", "@ada"],
+        ["project", "core", "#core"],
+      ],
+    ],
+    [
+      "first\n@ada fix\n#core-api now",
+      [
+        ["member", "ada", "@ada"],
+        ["project", "core-api", "#core-api"],
+      ],
+    ],
+    [
+      "@Everyone in #Core-2",
+      [
+        ["member", "everyone", "@Everyone"],
+        ["project", "core-2", "#Core-2"],
+      ],
+    ],
+    ["mail a@b.com or ada@x.dev", []],
+    ["a # b #", []],
+    ["see issue#core and `@ada #core`", []],
+    ["@adam #corex #core-apis ", [["mention", "adam", "@adam"]]],
+    ["@README.md ", [["mention", "README.md", "@README.md"]]],
+    ["[ada](src/ada) ", [["mention", "src/ada", "[ada](src/ada)"]]],
+  ])("reads group tokens in %j as the server does", (text, expected) => {
+    const tokens = collectComposerInlineTokens(text, GROUP);
+    expect(tokens.map((token) => [token.type, token.value, token.source])).toEqual(expected);
+  });
+
   it("keeps @handles as file mentions and #words as text outside a group", () => {
     expect(
-      collectComposerInlineTokens("@ada #billing-api ").map((token) => [token.type, token.value]),
-    ).toEqual([["mention", "ada"]]);
+      collectComposerInlineTokens("@ada @everyone #billing-api ").map((token) => [
+        token.type,
+        token.value,
+      ]),
+    ).toEqual([
+      ["mention", "ada"],
+      ["mention", "everyone"],
+    ]);
   });
 
   it("leaves digits-only dollar amounts and compact monetary expressions as text", () => {
