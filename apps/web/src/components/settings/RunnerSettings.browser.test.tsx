@@ -155,14 +155,14 @@ it("edits a command list as chips: remove, add on Enter, skip repeats, cap the l
     screen.getByRole("button", { name: "Remove vitest from Can run on Linux" }),
   );
   const add = screen.getByLabelText("Add a command to Can run on Linux");
-  await add.fill(" pytest ");
+  await add.fill(" rspec ");
   await userEvent.keyboard("{Enter}");
   await add.fill("lint");
   await userEvent.click(screen.getByRole("button", { name: "Add to Can run on Linux" }));
   await expect.element(add).toHaveValue("");
   expect(patches()).toEqual([
     { runnerLinuxCommands: RUNNER_DEFAULTS.runnerLinuxCommands.filter((c) => c !== "vitest") },
-    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "pytest"] },
+    { runnerLinuxCommands: [...RUNNER_DEFAULTS.runnerLinuxCommands, "rspec"] },
   ]);
 
   await using full = await setup({

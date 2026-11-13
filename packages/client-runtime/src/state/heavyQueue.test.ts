@@ -10,6 +10,7 @@ it("builds a guarded command for every queue control, including the on/off switc
     "cancel",
     "commands",
     "move",
+    "notices",
     "promote",
     "route",
     "setClaudeHook",
