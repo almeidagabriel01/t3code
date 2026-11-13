@@ -40,41 +40,64 @@ const failureOf = (exit: Exit.Exit<unknown, unknown>) => {
   return error?._tag === "Some" ? (error.value as TelegramApiError) : undefined;
 };
 
-it.effect("reads the bot, sends text without a parse mode, and posts to the token's own URL", () =>
-  Effect.gen(function* () {
-    const me = yield* withFetch(
-      () => json({ ok: true, result: { id: 1, username: "my_bot" } }),
-      (api) => api.getMe,
-    );
-    assert.deepStrictEqual(Exit.isSuccess(me.exit) && me.exit.value, { username: "my_bot" });
-    assert.strictEqual(me.requests[0]?.url, `https://api.telegram.org/bot${TOKEN}/getMe`);
-    assert.strictEqual(me.requests[0]?.init.redirect, "manual");
-    assert.strictEqual(me.requests[0]?.init.credentials, "omit");
+it.effect(
+  "reads the bot, sends HTML, falls back to the plain copy on a 400, and posts to the token's own URL",
+  () =>
+    Effect.gen(function* () {
+      const me = yield* withFetch(
+        () => json({ ok: true, result: { id: 1, username: "my_bot" } }),
+        (api) => api.getMe,
+      );
+      assert.deepStrictEqual(Exit.isSuccess(me.exit) && me.exit.value, { username: "my_bot" });
+      assert.strictEqual(me.requests[0]?.url, `https://api.telegram.org/bot${TOKEN}/getMe`);
+      assert.strictEqual(me.requests[0]?.init.redirect, "manual");
+      assert.strictEqual(me.requests[0]?.init.credentials, "omit");
 
-    const sent = yield* withFetch(
-      () => json({ ok: true, result: { message_id: 77 } }),
-      (api) => api.sendMessage({ chatId: "42", text: "*not markup* <b>" }),
-    );
-    assert.deepStrictEqual(Exit.isSuccess(sent.exit) && sent.exit.value, { messageId: "77" });
-    const body = sent.requests[0]?.body as Record<string, unknown>;
-    assert.strictEqual(body.chat_id, "42");
-    assert.strictEqual(body.text, "*not markup* <b>");
-    assert.isFalse("parse_mode" in body);
+      const sent = yield* withFetch(
+        () => json({ ok: true, result: { message_id: 77 } }),
+        (api) =>
+          api.sendMessage({ chatId: "42", text: { html: "<b>a &lt; b</b>", plain: "a < b" } }),
+      );
+      assert.deepStrictEqual(Exit.isSuccess(sent.exit) && sent.exit.value, { messageId: "77" });
+      assert.lengthOf(sent.requests, 1);
+      const body = sent.requests[0]?.body as Record<string, unknown>;
+      assert.strictEqual(body.chat_id, "42");
+      assert.strictEqual(body.text, "<b>a &lt; b</b>");
+      assert.strictEqual(body.parse_mode, "HTML");
 
-    // A reply without a readable id still counts as sent.
-    const noId = yield* withFetch(
-      () => json({ ok: true, result: true }),
-      (api) => api.sendMessage({ chatId: "42", text: "hi" }),
-    );
-    assert.deepStrictEqual(Exit.isSuccess(noId.exit) && noId.exit.value, { messageId: "" });
-    const noName = yield* withFetch(
-      () => json({ ok: true, result: {} }),
-      (api) => api.getMe,
-    );
-    assert.deepStrictEqual(Exit.isSuccess(noName.exit) && noName.exit.value, {
-      username: undefined,
-    });
-  }),
+      // HTML Telegram cannot parse is refused with a 400; the plain copy goes instead, once.
+      const fallback = yield* withFetch(
+        (_url, request) =>
+          (request as { parse_mode?: string }).parse_mode === "HTML"
+            ? json(
+                { ok: false, error_code: 400, description: "Bad Request: can't parse entities" },
+                400,
+              )
+            : json({ ok: true, result: { message_id: 78 } }),
+        (api) => api.sendMessage({ chatId: "42", text: { html: "<b>broken", plain: "broken" } }),
+      );
+      assert.deepStrictEqual(Exit.isSuccess(fallback.exit) && fallback.exit.value, {
+        messageId: "78",
+      });
+      assert.lengthOf(fallback.requests, 2);
+      const plainBody = fallback.requests[1]?.body as Record<string, unknown>;
+      assert.strictEqual(plainBody.text, "broken");
+      assert.isFalse("parse_mode" in plainBody);
+
+      // A reply without a readable id still counts as sent.
+      const noId = yield* withFetch(
+        () => json({ ok: true, result: true }),
+        (api) => api.sendMessage({ chatId: "42", text: { html: "hi", plain: "hi" } }),
+      );
+      assert.deepStrictEqual(Exit.isSuccess(noId.exit) && noId.exit.value, { messageId: "" });
+      const noName = yield* withFetch(
+        () => json({ ok: true, result: {} }),
+        (api) => api.getMe,
+      );
+      assert.deepStrictEqual(Exit.isSuccess(noName.exit) && noName.exit.value, {
+        username: undefined,
+      });
+    }),
 );
 
 it.effect("keeps every readable update, and acknowledges one that is not a message", () =>
@@ -144,7 +167,7 @@ it.effect("turns every failure into a fixed code that never carries the token", 
         7,
       ],
       [json({ ok: false, error_code: 403 }, 403), "chat_not_found", "not_sent"],
-      [json({ ok: false, error_code: 400 }, 400), "chat_not_found", "not_sent"],
+      [json({ ok: false, error_code: 400 }, 400), "bad_request", "not_sent"],
       [json({ ok: false, error_code: 502 }, 502), "unreachable", "unknown"],
       [json({ ok: false, error_code: 418 }, 418), "unreachable", "not_sent"],
       [new Response("<html>", { status: 200 }), "unreachable", "unknown"],
@@ -159,7 +182,7 @@ it.effect("turns every failure into a fixed code that never carries the token", 
     for (const [response, code, outcome, retryAfter] of cases) {
       const { exit } = yield* withFetch(
         async () => (typeof response === "function" ? response() : response.clone()),
-        (api) => api.sendMessage({ chatId: "1", text: "x" }),
+        (api) => api.sendMessage({ chatId: "1", text: { html: "x", plain: "x" } }),
       );
       const error = failureOf(exit);
       assert.strictEqual(error?.code, code);

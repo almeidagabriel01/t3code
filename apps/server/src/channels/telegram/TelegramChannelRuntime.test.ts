@@ -272,7 +272,8 @@ it.effect(
         assert.deepStrictEqual(yield* runtime.status, { status: "running" });
         const sendCall = state.calls.findLast((call) => call.method === "sendMessage");
         assert.deepStrictEqual(sendCall?.body.chat_id, "111");
-        assert.strictEqual(sendCall?.body.text, "Jarvis: hi");
+        assert.strictEqual(sendCall?.body.text, "<b>Jarvis:</b> hi");
+        assert.strictEqual(sendCall?.body.parse_mode, "HTML");
       }),
     ).pipe(Effect.provide(layer));
   },

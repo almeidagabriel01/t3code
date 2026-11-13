@@ -373,6 +373,11 @@ too: `/name text` works like `@Name text`, and `/name` alone switches to that as
 arrive as numbered choices: reply with the number. Only private chats with the bot are heard; groups and attachments
 are not. More than 10 messages a minute from one person are held back, with one notice.
 
+Replies keep their formatting, and a link to a conversation opens it in the browser or the app. A
+reply too long for one message comes as up to three numbered parts. When it ends with a question
+or a decision for you, that part arrives whole after a short outline of the rest; the full reply
+is always in T3 Code.
+
 When **Notify me when something is waiting for me** is on (see [Autonomy](#autonomy)), the bot also
 tells you when any conversation waits on you: who is asking, the project and conversation, a short
 summary and a link to open it in T3 Code. Approvals and single-choice questions come with numbered

@@ -21,6 +21,11 @@ export interface ChannelStrings {
   readonly rateLimited: string;
   readonly replyWithNumber: string;
   readonly truncatedNote: string;
+  /** Ends a long reply cut down to its outline so the part that waits on you fits one message. */
+  readonly summaryNote: string;
+  readonly codeSummary: (lines: number) => string;
+  /** Names a thread link that carries no title of its own. */
+  readonly threadLink: string;
   readonly approvalNotice: string;
   readonly couldNotFinish: (detail: string | undefined) => string;
   readonly withdrawn: string;
@@ -77,6 +82,9 @@ const en: ChannelStrings = {
   rateLimited: "You're sending messages too fast. I'll read new ones again in a minute.",
   replyWithNumber: "Reply with the number.",
   truncatedNote: "… The rest of this reply was too long to send.",
+  summaryNote: "Summary. The full reply is in T3.",
+  codeSummary: (lines) => `[code, ${lines} ${lines === 1 ? "line" : "lines"}]`,
+  threadLink: "Thread",
   approvalNotice:
     "Your message is waiting for the owner's approval in T3 Code. You can chat here once they allow you.",
   couldNotFinish: (detail) =>
@@ -138,6 +146,9 @@ const ptBR: ChannelStrings = {
   rateLimited: "Você está mandando mensagens rápido demais. Volto a ler as novas em um minuto.",
   replyWithNumber: "Responda com o número.",
   truncatedNote: "… O resto desta resposta era longo demais para enviar.",
+  summaryNote: "Resumo. A resposta completa está no T3.",
+  codeSummary: (lines) => `[código, ${lines} ${lines === 1 ? "linha" : "linhas"}]`,
+  threadLink: "Thread",
   approvalNotice:
     "Sua mensagem está aguardando a aprovação do dono no T3 Code. Você poderá conversar aqui assim que ele liberar.",
   couldNotFinish: (detail) =>

@@ -7,7 +7,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { TelegramApiError, type TelegramApi } from "./telegramApi.ts";
-import { TELEGRAM_CHUNK_LIMIT, formatTelegramMessages } from "./telegramText.ts";
 import { makeTelegramTransport, type TelegramSendReport } from "./telegramTransport.ts";
 
 const message = (patch: Partial<ChannelOutboundMessage> = {}): ChannelOutboundMessage => ({
@@ -30,9 +29,9 @@ const harness = (
     setMyCommands: () => Effect.void,
     sendMessage: ({ text }) =>
       Effect.suspend(() => {
-        const failure = script(text, sent.length + 1);
+        const failure = script(text.html, sent.length + 1);
         if (failure !== undefined) return Effect.fail(failure);
-        sent.push(text);
+        sent.push(text.html);
         return Effect.succeed({ messageId: String(sent.length) });
       }),
   };
@@ -42,6 +41,7 @@ const harness = (
       connectionId: "telegram",
       api: Effect.sync(() => (state.active ? api : undefined)),
       sql,
+      hostedAppUrl: "https://app.t3.codes",
       report: (result) => Effect.sync(() => void reports.push(result)),
     });
   });
@@ -53,31 +53,6 @@ const failure = <A>(exit: Exit.Exit<A, ChannelGatewayError>) => {
   const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
   return Option.isSome(error) ? error.value : undefined;
 };
-
-it("splits a long reply under Telegram's limit and sends it as plain text", () => {
-  const long = Array.from({ length: 5 }, (_, i) => `${i} ${"word ".repeat(300)}`).join("\n\n");
-  const pieces = formatTelegramMessages({ senderName: "Jarvis", text: long });
-  assert.isAbove(pieces.length, 1);
-  for (const piece of pieces) {
-    assert.isAtMost(piece.length, 4096);
-    assert.isTrue(piece.startsWith("Jarvis: "));
-  }
-  const choices = formatTelegramMessages({
-    senderName: "Jarvis",
-    text: "**Run it?**",
-    choices: [
-      { label: "Yes", value: "y" },
-      { label: "No", value: "n" },
-    ],
-  });
-  assert.deepStrictEqual(choices, ["Jarvis: Run it?\n\n1. Yes\n2. No\nReply with the number."]);
-  const huge = formatTelegramMessages({
-    senderName: "Jarvis",
-    text: Array.from({ length: 12 }, () => "x".repeat(TELEGRAM_CHUNK_LIMIT)).join("\n\n"),
-  });
-  assert.lengthOf(huge, 6);
-  assert.isTrue(huge.at(-1)?.endsWith("too long to send."));
-});
 
 it.effect("sends each piece once, reports success, and answers with the last message id", () => {
   const { sent, reports, transport } = harness();
