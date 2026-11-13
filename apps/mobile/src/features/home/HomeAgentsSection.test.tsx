@@ -27,6 +27,9 @@ vi.mock("../../components/ui/AppActivityIndicator", () => ({
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-03-09T10:10:00Z") }));
+vi.mock("../../state/assistants", () => ({
+  useAssistantLiveWork: () => ({ taskThreadKeys: new Set(["hub:task"]) }),
+}));
 vi.mock("../../state/decisions", () => ({ useOpenDecisionThreadKeys: () => new Set<string>() }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [
@@ -104,11 +107,12 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 
 describe("HomeAgentsSection", () => {
-  it("renders nothing when no agent works or finished unseen", () => {
+  it("renders nothing when no agent outside an assistant works or finished unseen", () => {
     render([
       shell("quiet"),
       shell("ask", { hasPendingUserInput: true }),
       working("assistant:a", null),
+      working("task", null),
     ]);
     expect(container.textContent).toBe("");
   });

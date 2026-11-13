@@ -12,6 +12,7 @@ import {
   DEFAULT_PROJECT_CONFIG,
   eligibilityOf,
   foldMarker,
+  installFailure,
   matchesAny,
   mayPublish,
   nextHealth,
@@ -611,8 +612,10 @@ describe("patterns and eligibility", () => {
     ["vp run dev:desktop", "exclusive", "Always on this Mac: vp run dev:desktop"],
     ["echo hi", "mac-only", "Nothing in it runs on Linux"],
     ["./scripts/ci.sh", "not-listed", "Not on the Can run on Linux list: ci.sh"],
-    // The Linux copy has no `.git`: what diffs against it stays here.
-    ["vp run check:changed", "mac-only", NEEDS_GIT],
+    // The Linux copy has no `.git`: what diffs against it stays here, except check:changed,
+    // whose changed files this Mac computes and hands over.
+    ["vp run check:changed", "linux", null],
+    ["timeout 3500 vp run check:changed origin/main", "linux", null],
     ["vp test run --changed", "mac-only", NEEDS_GIT],
     ["npx jest --onlyChanged", "mac-only", NEEDS_GIT],
     ["vp test run --changedSince=origin/main", "mac-only", NEEDS_GIT],
@@ -623,9 +626,70 @@ describe("patterns and eligibility", () => {
     ['vp test run src/a.test.ts -t "the title changed"', "linux", null],
     ["vp test run -t staged", "linux", null],
     ["vp test run --reporter=changed", "linux", null],
-    ["pnpm --filter web check:changed", "mac-only", NEEDS_GIT],
+    ["pnpm --filter web check:changed", "linux", null],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
+  });
+
+  // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
+  const open = {
+    ...at,
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerMacOnly: [], runnerLinuxCommands: ["*"] },
+  };
+  it.each([
+    ["pnpm install", "pnpm install"],
+    ["vp i", "vp i"],
+    ["npm ci", "npm ci"],
+    ["yarn add react", "yarn add react"],
+    ["pnpm --filter web remove lodash", "pnpm web remove"],
+    ["xcodebuild -scheme App test", "xcodebuild App test"],
+    ["adb install app.apk", "adb install app.apk"],
+    ["pnpm exec next start", "pnpm exec next"],
+    ["vp run dev", "vp run dev"],
+    ["pnpm start", "pnpm start"],
+    ["npm run watch:css", "npm run watch:css"],
+    ["npx vite", "npx vite"],
+    ["npx next dev", "npx next dev"],
+  ])("%s stays on this Mac whatever the lists say", (label, name) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, open)).toEqual({
+      eligibility: "mac-only",
+      reason: `Always on this Mac: ${name}`,
+    });
+  });
+  it.each(["vp test run", "npx vite build", "pnpm run build", "./scripts/ci.sh"])(
+    "%s may still leave",
+    (label) => {
+      expect(eligibilityOf({ label, cwd: "/w" }, open).eligibility).toBe("linux");
+    },
+  );
+
+  // The queue read each script when the job was queued; the Runner judges its text.
+  it.each([
+    ["vp test run", "linux", null],
+    ["cd sub && vp run lint", "linux", null],
+    ["vp run build", "not-listed", "Not on the Can run on Linux list: vp run build"],
+    [
+      "git add . && git commit -m x",
+      "mac-only",
+      "Commits run here: the pre-commit edits this Mac's repository",
+    ],
+    ["vp test run /etc/hosts", "mac-only", "Uses a file outside the project: /etc/hosts"],
+    [null, "mac-only", "Couldn't read this script"],
+  ] as const)("a script outside the project running %j is %s", (body, eligibility, reason) => {
+    for (const label of ["bash /tmp/s/v.sh", "/tmp/s/v.sh --fast"]) {
+      const scripts = { "/tmp/s/v.sh": body };
+      expect(eligibilityOf({ label, cwd: "/w", scripts }, at)).toEqual({ eligibility, reason });
+    }
+  });
+
+  it("a job the hook queued on this Mac shows why", () => {
+    const entry = {
+      ...job("s", "bash missing.sh"),
+      where: "mac" as const,
+      routeReason: "Couldn't read this script",
+    };
+    const plan = planRoutes(input([entry], {}, { runnerOn: true }));
+    expect(plan.reasons.s).toContain("Couldn't read this script");
   });
 
   it("judges the full line a long label was cut from, and device opens held by a server", () => {
@@ -872,6 +936,36 @@ describe("Linux health", () => {
   });
 });
 
+describe("an install unfinished in a fresh Linux copy", () => {
+  it.each([
+    [
+      "failed to create directory '/home/dev/runs/t3-1a2b3c4d/node_modules/.pnpm/electron@44.10.1_supports-color@8.1.1/node_modules/electron/dist/locales': File exists (os error 17)",
+      "electron",
+    ],
+    [
+      'Error: Electron failed to install correctly. Please delete `node_modules/electron` and run "npx install-electron --no" manually.',
+      "electron",
+    ],
+    [
+      "browserType.launch: Executable doesn't exist at /home/dev/.cache/ms-playwright/chromium-1200/chrome-linux/chrome",
+      "playwright",
+    ],
+    ["Error: Could not find Chrome (ver. 131.0.6778.85). This can occur if either", "puppeteer"],
+    ["The cypress npm package is installed, but the Cypress binary is missing.", "cypress"],
+    [
+      "Error: EEXIST: file already exists, mkdir '/home/dev/runs/a/node_modules/@scope/tool/bin'",
+      "@scope/tool",
+    ],
+    ["Error: EEXIST: file already exists, mkdir 'node_modules/sharp/vendor'", "sharp"],
+    // The code's own failures, even ones about files that exist.
+    ["AssertionError: expected 1 to be 2", null],
+    ["Error: EEXIST: file already exists, mkdir '/tmp/out'", null],
+    ["FAIL src/node_modules.test.ts > writes the folder", null],
+  ] as const)("%j is an install failure of %j", (line, pkg) => {
+    expect(installFailure(line)).toBe(pkg);
+  });
+});
+
 describe("remoto markers", () => {
   const fold = (...lines: string[]) =>
     lines.reduce((progress, line) => foldMarker(progress, `${MARKER}${line}`), NO_PROGRESS);
@@ -885,10 +979,23 @@ describe("remoto markers", () => {
       ["phase=syncing id=app-1a2b3c4d", "phase=installing", "phase=running pgid=42"],
       { kind: "dropped" },
     ],
+    // The pre-flight found the program missing: it exits 127 there without running anything.
+    [
+      ["phase=syncing id=app-1a2b3c4d", "phase=running pgid=42", "missing=vp", "exit=127"],
+      { kind: "missing", tool: "vp" },
+    ],
+    [["phase=running pgid=42", "missing=", "exit=127"], { kind: "finished", code: 127 }],
+    // The wrapper couldn't finish a lazy install: the run ends with the code, the package noted.
+    [["phase=running pgid=42", "install=electron", "exit=1"], { kind: "finished", code: 1 }],
     [["phase=syncing id=app-1a2b3c4d"], { kind: "unavailable", touched: true }],
     [[], { kind: "unavailable", touched: false }],
   ] as const)("%j ends as %j", (lines, outcome) => {
     expect(remoteOutcome(fold(...lines))).toEqual(outcome);
+  });
+
+  it("notes the package whose install the wrapper couldn't finish", () => {
+    expect(fold("phase=running pgid=42", "install=electron", "exit=1").install).toBe("electron");
+    expect(fold("phase=running pgid=42", "install=", "exit=1").install).toBeNull();
   });
 
   it("keeps the run folder and process group, and ignores unsafe ids", () => {

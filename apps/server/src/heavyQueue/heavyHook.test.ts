@@ -58,6 +58,20 @@ const HEAVY: ReadonlyArray<readonly [string, string]> = [
   ["nohup sh -c 'npx tsc --noEmit > /tmp/t.out' &", "nohup sh -c 'npx tsc --noEmit > /tmp/t.out'"],
   ["X=$(vp test run 2>&1 | tail -1)", "vp test run 2>&1"],
   ["nice -n 10 vp test run", "nice -n 10 vp test run"],
+  // A prefix option's value is not the program.
+  [
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+    "timeout -s KILL -k 5 3500 vp run check:changed",
+  ],
+  ["timeout --signal TERM 60 vp test run", "timeout --signal TERM 60 vp test run"],
+  ["nice --adjustment 5 vp test run", "nice --adjustment 5 vp test run"],
+  ["env -u CI -C apps/server vp test run", "env -u CI -C apps/server vp test run"],
+  ["caffeinate -w 123 vp test run", "caffeinate -w 123 vp test run"],
+  ["time -f %e vp test run", "time -f %e vp test run"],
+  [
+    "nohup env -u CI timeout -s INT 10 vp test run",
+    "nohup env -u CI timeout -s INT 10 vp test run",
+  ],
 ];
 
 const LIGHT = [
@@ -152,7 +166,7 @@ describe("the PreToolUse answer", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         updatedInput: {
-          command: `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
+          command: `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && vp test run '\\''it'\\'''\\''s'\\'''`,
           description: "Server tests",
           timeout: 600_000,
           run_in_background: false,
@@ -162,6 +176,17 @@ describe("the PreToolUse answer", () => {
       },
     });
     expect(answer!.hookSpecificOutput).not.toHaveProperty("permissionDecision");
+  });
+
+  it.each([
+    ["toolu_9", " --request-id 'toolu_9' --name"],
+    ["", " --name"],
+    [42, " --name"],
+  ])("passes the call's tool-use id %j on, so a repeat attaches to its job", (id, expected) => {
+    const answer = queueBashCall({ ...bash({ command: "vp build" }), tool_use_id: id }, PREFIX);
+    expect(answer!.hookSpecificOutput.updatedInput.command).toContain(
+      `${PREFIX}${expected} 'vp build'`,
+    );
   });
 
   it("never lowers a longer timeout and leaves a background call's limit alone", () => {
@@ -184,6 +209,55 @@ describe("the PreToolUse answer", () => {
     ["a non-object tool input", { tool_name: "Bash", tool_input: "vp test" }, {}],
   ])("leaves %s alone", (_why, input, env) => {
     expect(queueBashCall(input, PREFIX, env)).toBeNull();
+  });
+});
+
+describe("scripts the line runs", () => {
+  const files: Record<string, string | null> = {
+    "/tmp/s/verify.sh": "cd /w && vp test run",
+    "./verify": "#!/bin/bash\nset -e\nvp run typecheck\n",
+    "./env-verify": "#!/usr/bin/env zsh\nnpx tsc --noEmit\n",
+    "./tool": "#!/usr/bin/env node\nrequire('x')\n",
+    "light.sh": "echo hi\nls\n",
+    "./light.sh": "echo hi\n",
+    "missing.sh": null,
+  };
+  const read = (word: string) => files[word] ?? null;
+  const command = (line: string) =>
+    queueBashCall(bash({ command: line }), PREFIX, {}, { readScript: read })?.hookSpecificOutput
+      .updatedInput.command ?? null;
+
+  it.each([
+    ["bash /tmp/s/verify.sh", "bash /tmp/s/verify.sh"],
+    ["sh -e /tmp/s/verify.sh a b", "sh /tmp/s/verify.sh a"],
+    ["/tmp/s/verify.sh", "verify.sh"],
+    ["./verify", "verify"],
+    ["./env-verify --fast", "env-verify"],
+    ["cd /w && ./verify", "verify"],
+  ])("queues %j, whose script runs heavy work, as %j", (line, name) => {
+    expect(command(line)).toBe(
+      `${PREFIX} --request-id 'toolu_1' --name '${name}' -- "\${SHELL:-/bin/sh}" -c '${line}'`,
+    );
+  });
+
+  it.each(["bash light.sh", "./tool", "./light.sh", "bash -c 'echo hi'", "sh -s < light.sh"])(
+    "leaves %j alone: its script runs nothing heavy, or it is no script",
+    (line) => {
+      expect(command(line)).toBeNull();
+    },
+  );
+
+  it.each(["bash missing.sh", "./missing.sh"])(
+    "queues %j on this Mac when the script can't be read",
+    (line) => {
+      expect(command(line)).toContain(
+        `--runner mac --route-reason 'Couldn'\\''t read this script' --name`,
+      );
+    },
+  );
+
+  it("reads no script without a reader, as before", () => {
+    expect(queueBashCall(bash({ command: "bash /tmp/s/verify.sh" }), PREFIX)).toBeNull();
   });
 });
 
@@ -217,7 +291,7 @@ describe("an agent's own remoto call", () => {
       { runner: true },
     );
     expect(answer!.hookSpecificOutput.updatedInput.command).toBe(
-      `${PREFIX} --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
+      `${PREFIX} --request-id 'toolu_1' --name 'vp test run' -- "\${SHELL:-/bin/sh}" -c 'cd apps/server && remoto vp test run'`,
     );
     const script = queueBashCall(bash({ command: "remoto ./x.sh" }), PREFIX, {}, { runner: true });
     expect(script!.hookSpecificOutput.updatedInput.command).toContain("--name 'x.sh'");
@@ -285,6 +359,13 @@ describe("the sh pre-filter installed for sessions outside T3", () => {
     "hands %j to T3, as the classifier calls it heavy",
     (command) => {
       expect(heavySegment(command)).not.toBeNull();
+      expect(run(reached, command)).toBe("T3");
+    },
+  );
+
+  it.each(["bash verify.sh", "./verify", "sh /tmp/s/check.sh --all", "zsh -e run.zsh"])(
+    "hands %j to T3, which reads the script it runs",
+    (command) => {
       expect(run(reached, command)).toBe("T3");
     },
   );

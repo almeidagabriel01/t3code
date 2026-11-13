@@ -258,15 +258,26 @@ export interface AgentsSectionEntry extends ActivityEntry {
   readonly at: string | null;
 }
 
-/** The sidebar's Agents section: Activity's rows by rank, newest first in each group. */
-export function selectAgentsSection(entries: readonly ActivityEntry[]): {
+const ownedByAssistant = (entry: ActivityEntry, assistantTaskKeys: ReadonlySet<string>) =>
+  assistantTaskKeys.has(entry.key) ||
+  isAssistantThreadId(entry.thread.lineage.parentThreadId ?? "") ||
+  isAssistantThreadId(entry.thread.delegatedFrom?.threadId ?? "");
+
+/**
+ * The sidebar's Agents section: Activity's rows by rank, newest first in each group. Threads an
+ * assistant owns (its launched tasks, by thread key, and its chats' children) are listed under it.
+ */
+export function selectAgentsSection(
+  entries: readonly ActivityEntry[],
+  assistantTaskKeys: ReadonlySet<string> = new Set(),
+): {
   readonly needsYou: AgentsSectionEntry[];
   readonly working: AgentsSectionEntry[];
   readonly done: AgentsSectionEntry[];
 } {
   const stamped = (rank: ActivityRank, pick: (entry: ActivityEntry) => string | null) =>
     entries
-      .filter((entry) => entry.rank === rank)
+      .filter((entry) => entry.rank === rank && !ownedByAssistant(entry, assistantTaskKeys))
       .map((entry): AgentsSectionEntry => ({ ...entry, at: pick(entry) }))
       .sort((left, right) => firstValidTimestampMs(right.at) - firstValidTimestampMs(left.at));
   return {

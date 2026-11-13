@@ -56,6 +56,47 @@ describe("heavy queue file", () => {
     expect(Queue.tryStart(dir, "gone")).toEqual({ status: "removed" });
   });
 
+  it.each([
+    ["waiting", false, 0, "attached"],
+    ["running", true, 0, "attached"],
+    ["ended with 3", false, 3, { code: 3 }],
+    ["ended over an hour ago", false, -1, "added"],
+  ] as const)(
+    "a repeated request whose job is %s is not added again",
+    (_state, start, code, result) => {
+      const dir = tempDir();
+      const at = Date.parse("2026-01-01T00:00:00.000Z");
+      expect(Queue.enqueue(dir, entry("req-1"), at)).toBe("added");
+      if (start) Queue.tryStart(dir, "req-1", at);
+      if (code !== 0) Queue.finish(dir, "req-1", Math.abs(code), at);
+      const later = at + (code < 0 ? 3_600_001 : 1000);
+      expect(Queue.enqueue(dir, entry("req-1"), later)).toEqual(result);
+      expect(ids(dir)).toEqual(code > 0 ? [] : ["req-1"]);
+    },
+  );
+
+  it("keeps the last 200 results", () => {
+    const dir = tempDir();
+    const at = Date.parse("2026-01-01T00:00:00.000Z");
+    for (let n = 0; n < 201; n += 1) Queue.finish(dir, `r${n}`, 1, at);
+    expect(Queue.enqueue(dir, entry("r0"), at)).toBe("added");
+    expect(Queue.enqueue(dir, entry("r200"), at)).toEqual({ code: 1 });
+  });
+
+  it("reads a script up to 64 KB from the folder, and nothing else", () => {
+    const dir = tempDir();
+    NodeFS.writeFileSync(NodePath.join(dir, "small.sh"), "vp test run");
+    NodeFS.writeFileSync(NodePath.join(dir, "big.sh"), "x".repeat(64 * 1024 + 1));
+    NodeFS.mkdirSync(NodePath.join(dir, "folder.sh"));
+    const read = Queue.scriptReader(dir, dir);
+    expect(read("small.sh")).toBe("vp test run");
+    expect(read(`${dir}/small.sh`)).toBe("vp test run");
+    expect(read("~/small.sh")).toBe("vp test run");
+    expect(read("big.sh")).toBeNull();
+    expect(read("folder.sh")).toBeNull();
+    expect(read("missing.sh")).toBeNull();
+  });
+
   it("prunes entries whose process died, so the next waiter starts", () => {
     const dir = tempDir();
     Queue.enqueue(dir, entry("dead", deadPid()));
