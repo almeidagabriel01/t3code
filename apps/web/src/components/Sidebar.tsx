@@ -828,6 +828,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     renamingThreadRef !== null && canOperateRenamingThread
       ? scopedThreadKey(renamingThreadRef)
       : null;
+  // A thread can have two rows (its project's and an assistant's copy); only the one acted on edits.
+  const [renamingRowKey, setRenamingRowKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
@@ -1267,9 +1269,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
   };
 
-  const startThreadRename = (threadRef: ScopedThreadRef, title: string) => {
+  const startThreadRename = (threadRef: ScopedThreadRef, title: string, rowKey?: string) => {
     if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
     setRenamingThreadRef(threadRef);
+    setRenamingRowKey(rowKey ?? scopedThreadKey(threadRef));
     setRenamingTitle(title);
   };
   const cancelThreadRename = () => setRenamingThreadRef(null);
@@ -2370,7 +2373,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, rowKey?: string) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -2575,7 +2578,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           }
           case "rename":
-            startThreadRename(threadRef, thread.title);
+            startThreadRename(threadRef, thread.title, rowKey);
             return;
           case "share-guest":
             openGuestShareDialog(threadRef);
@@ -3170,7 +3173,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           onRenameTitleChange: setRenamingTitle,
                           onCommitRename: commitThreadRename,
                           onCancelRename: cancelThreadRename,
-                          isRenaming: renamingThreadKey === threadKey,
+                          isRenaming:
+                            renamingThreadKey === threadKey && renamingRowKey === threadKey,
                           renamingTitle: renamingThreadKey === threadKey ? renamingTitle : "",
                           onContextMenu: handleThreadContextMenu,
                           onSettle: attemptSettle,
@@ -3226,9 +3230,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sectionRowKey={sectionRowKey}
                             // A sweep runs down the project list, which this copy is not in.
                             onActionSweepStart={ignoreActionSweep}
-                            // A task its project lists renames there; one input commits on blur.
                             isRenaming={
-                              renamingThreadKey === threadKey && !threadByKey.has(threadKey)
+                              renamingThreadKey === threadKey && renamingRowKey === sectionRowKey
                             }
                           />
                         );

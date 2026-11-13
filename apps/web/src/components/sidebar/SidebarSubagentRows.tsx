@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/models";
 import { resolveSidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, PinIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -22,6 +22,9 @@ function subagentDotClass(thread: EnvironmentThreadShell): string {
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" || status === "input") return "bg-amber-500 dark:bg-amber-300/90";
   if (status === "request") return "bg-guest";
+  // Only a pinned child is listed after it ends.
+  if (status === "failed") return "bg-destructive";
+  if (status === "ready") return "bg-muted-foreground/50";
   return "bg-sky-500 dark:bg-sky-300/80";
 }
 
@@ -41,6 +44,7 @@ function SubagentRow(props: {
       <button
         type="button"
         data-testid="sidebar-subagent-row"
+        data-status={resolveSidebarThreadStatus(thread)}
         onClick={() => props.onOpen(threadRef)}
         onPointerDown={(event) => startThreadDrag(event.nativeEvent, threadRef, thread.title)}
         onContextMenu={
@@ -58,6 +62,13 @@ function SubagentRow(props: {
           className={cn("size-1.5 shrink-0 rounded-full", subagentDotClass(thread))}
         />
         <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+        {thread.pinnedAt != null ? (
+          <PinIcon
+            aria-label="Pinned"
+            role="img"
+            className="size-3 shrink-0 text-muted-foreground/65"
+          />
+        ) : null}
         {props.jumpLabel ? (
           <JumpHintBadge label={props.jumpLabel} />
         ) : (

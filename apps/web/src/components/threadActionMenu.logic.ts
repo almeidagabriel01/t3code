@@ -154,6 +154,23 @@ export function buildThreadActionMenuItems(
   // Branch, path and project actions belong to project threads.
   const inProject = !isAssistant && state.outsideProjects !== true;
   const branch = inProject ? state.branch : null;
+  // Rename and regenerate drop out on some rows; the group's first item carries its separator.
+  const titleGroup: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(isAssistant || state.canRename === false
+      ? []
+      : [{ id: "rename" as const, label: "Rename thread", icon: "pencil" }]),
+    ...(state.supports.titleRegeneration && !isAssistant
+      ? [
+          {
+            id: "regenerate-title" as const,
+            label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
+            icon: "refresh-cw",
+            disabled: state.isRegeneratingTitle,
+          },
+        ]
+      : []),
+    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+  ];
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
@@ -208,20 +225,7 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    ...(isAssistant || state.canRename === false
-      ? []
-      : [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]),
-    ...(state.supports.titleRegeneration && !isAssistant
-      ? [
-          {
-            id: "regenerate-title" as const,
-            label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
-            icon: "refresh-cw",
-            disabled: state.isRegeneratingTitle,
-          },
-        ]
-      : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...titleGroup.map((item, index) => (index === 0 ? { ...item, separatorBefore: true } : item)),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),

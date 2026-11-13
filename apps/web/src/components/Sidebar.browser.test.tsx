@@ -18,6 +18,7 @@ import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSett
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { selectActiveMainFileSurface, useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects, useQuietThreadShells } from "../state/entities";
+import * as session from "../state/session";
 import { THREAD_TAB_DROP_EVENT, type ThreadTabDropDetail } from "./chat/threadContextDrag";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
@@ -35,6 +36,7 @@ vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("./assistants/useAssistantSidebarModel", { spy: true });
+vi.mock("../state/session", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -242,6 +244,63 @@ describe("sidebar thread pick", () => {
   });
 });
 
+/** One assistant whose task is also its project's thread, so the sidebar draws it twice. */
+function mockTaskCopy() {
+  const activeProject = project("active");
+  const task = threadShell(activeProject.id, 1);
+  const environmentId = activeProject.environmentId;
+  const entry = {
+    environmentId,
+    assistant: { id: "jarvis", name: "Jarvis", threadId: null, role: "", scope: "all" },
+  } as never as AssistantSidebarModel["active"][number];
+  vi.mocked(useAssistantSidebarModel).mockReturnValue({
+    enabled: true,
+    collapsed: false,
+    showAll: false,
+    expandedGroups: [],
+    active: [entry],
+    teams: [],
+    ranked: [],
+    shown: [{ entry, presence: { mood: "idle" } }],
+    hidden: 0,
+    items: new Map([
+      [
+        "local:jarvis",
+        {
+          sections: {
+            pinned: [],
+            open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
+            snoozed: [],
+            settled: [],
+          },
+          expanded: true,
+          subagents: [],
+        },
+      ],
+    ]),
+    threadKeys: [],
+  } as never as AssistantSidebarModel);
+  vi.mocked(useProjects).mockReturnValue([activeProject]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([task]);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: null,
+    defaultProjectRef: { environmentId, projectId: activeProject.id },
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn().mockResolvedValue(null),
+    routeDraftId: null,
+    routeThreadRef: null,
+  });
+  return task;
+}
+
+const sidebarElement = () => (
+  <SidebarProvider>
+    <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+  </SidebarProvider>
+);
+
 describe("sidebar assistants section", () => {
   it("numbers its rows before the projects' and draws a task as a second, unsortable row", async () => {
     const activeProject = project("active");
@@ -343,59 +402,27 @@ describe("sidebar assistants section", () => {
     );
   });
 
-  it("drags a task's second row into a split of its project", async () => {
-    const activeProject = project("active");
-    const task = threadShell(activeProject.id, 1);
-    const environmentId = activeProject.environmentId;
-    const entry = {
-      environmentId,
-      assistant: { id: "jarvis", name: "Jarvis", threadId: null, role: "", scope: "all" },
-    } as never as AssistantSidebarModel["active"][number];
-    vi.mocked(useAssistantSidebarModel).mockReturnValue({
-      enabled: true,
-      collapsed: false,
-      showAll: false,
-      expandedGroups: [],
-      active: [entry],
-      teams: [],
-      ranked: [],
-      shown: [{ entry, presence: { mood: "idle" } }],
-      hidden: 0,
-      items: new Map([
-        [
-          "local:jarvis",
-          {
-            sections: {
-              pinned: [],
-              open: [{ task: { threadId: task.id }, shell: task, state: "running" }],
-              snoozed: [],
-              settled: [],
-            },
-            expanded: true,
-            subagents: [],
-          },
-        ],
-      ]),
-      threadKeys: [],
-    } as never as AssistantSidebarModel);
-    vi.mocked(readThreadShell).mockReturnValue(task);
-    vi.mocked(useProjects).mockReturnValue([activeProject]);
-    vi.mocked(useQuietThreadShells).mockReturnValue([task]);
-    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: null } as never);
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: { environmentId, projectId: activeProject.id },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef: null,
-    });
-    await using screen = await render(
-      <SidebarProvider>
-        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
-      </SidebarProvider>,
+  it("renames a task in place on the row acted on, not on its project's row", async () => {
+    const task = mockTaskCopy();
+    using _scope = vi.spyOn(session, "readEnvironmentScope").mockReturnValue(true);
+    using _liveScope = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
+    await using screen = await render(sidebarElement());
+    const copyKey = `assistant:local:jarvis/local:${task.id}`;
+    const copy = await vi.waitUntil(() =>
+      screen.container.querySelector<HTMLElement>(`[data-sidebar-row="${copyKey}"]`),
     );
+    await userEvent.dblClick(copy);
+    const inputs = () =>
+      [...screen.container.querySelectorAll('input[aria-label="Thread title"]')].map((input) =>
+        input.closest("li")?.querySelector("[data-sidebar-row]")?.getAttribute("data-sidebar-row"),
+      );
+    await vi.waitFor(() => expect(inputs()).toEqual([copyKey]));
+  });
+
+  it("drags a task's second row into a split of its project", async () => {
+    const task = mockTaskCopy();
+    vi.mocked(readThreadShell).mockReturnValue(task);
+    await using screen = await render(sidebarElement());
     const copy = await vi.waitUntil(() =>
       screen.container.querySelector(
         `[data-sidebar-row="assistant:local:jarvis/local:${task.id}"]`,

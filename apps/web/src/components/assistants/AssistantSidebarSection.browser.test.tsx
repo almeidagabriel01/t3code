@@ -312,7 +312,10 @@ describe("AssistantSidebarSection", () => {
   });
 
   it("numbers the rows it draws for ⌘1–9 and draws tasks with the sidebar's own rows", async () => {
-    setup(["Jarvis"], { moods: { "task-1": "working" } });
+    // child-3 finished; it stays listed because it is pinned.
+    setup(["Jarvis"], {
+      moods: { "task-1": "working", "child-1": "working", "child-2": "working" },
+    });
     state.settled = new Set(["task-2"]);
     state.tasks = [
       { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
@@ -361,6 +364,19 @@ describe("AssistantSidebarSection", () => {
       expect.stringContaining("Pinned first"),
       expect.stringContaining("Pinned later"),
       expect.stringContaining("Review the diff"),
+    ]);
+    const subagentRows = [
+      ...screen.container.querySelectorAll('[data-testid="sidebar-subagent-row"]'),
+    ];
+    expect(
+      subagentRows.map((row) => [
+        row.getAttribute("data-status"),
+        row.querySelector('[aria-label="Pinned"]') !== null,
+      ]),
+    ).toEqual([
+      ["ready", true],
+      ["working", true],
+      ["working", false],
     ]);
     expect(threadKeys(screen.container)).toEqual([
       "env:assistant:jarvis:1",

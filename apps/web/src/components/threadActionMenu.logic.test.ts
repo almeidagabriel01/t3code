@@ -141,11 +141,19 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids).toEqual(expect.arrayContaining(["copy-thread", "copy-thread-id"]));
   });
 
-  it("leaves rename out where the row has no title input", () => {
-    const ids = (canRename: boolean) =>
-      buildThreadActionMenuItems({ ...baseState, canRename }).map((item) => item.id);
-    expect(ids(true)).toContain("rename");
-    expect(ids(false)).not.toContain("rename");
+  it.each([
+    ["a project thread", {}, "rename"],
+    ["a row with no title input", { canRename: false }, "regenerate-title"],
+    ["an assistant chat", { assistant: { name: "Jarvis" } }, "mark-unread"],
+  ] as const)("opens the title group with a separator on %s", (_name, extra, first) => {
+    const items = buildThreadActionMenuItems({ ...baseState, ...extra });
+    const group = items.filter((item) =>
+      ["rename", "regenerate-title", "mark-unread"].includes(item.id),
+    );
+    expect(group[0]?.id).toBe(first);
+    expect(group.map((item) => item.separatorBefore === true)).toEqual(
+      group.map((_, index) => index === 0),
+    );
   });
 
   it.each([
