@@ -4,6 +4,7 @@ import type { Ref } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
+import type { ComposerGroupMentions } from "../lib/groupMentionChips";
 
 export type { ComposerEnterBehavior };
 
@@ -46,6 +47,8 @@ export interface ComposerEditorProps {
       Partial<Pick<ServerProviderSkill, "path">>
   >;
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
+  /** Group chat: `@handle` and `#slug` become member and project chips instead of file mentions. */
+  readonly groupMentions?: ComposerGroupMentions;
   readonly selection?: ComposerEditorSelection;
   readonly placeholder?: string;
   readonly autoFocus?: boolean;
