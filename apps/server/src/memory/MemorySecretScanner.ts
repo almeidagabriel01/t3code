@@ -10,14 +10,19 @@ export type MemoryScanResult =
     };
 
 export const MEMORY_SCANNER_POLICY_VERSION = 1;
+// PEM (RSA, EC, OpenSSH, PKCS#8…) and OpenPGP armor all name the key in the header line.
+const PRIVATE_KEY_LABEL = String.raw`[A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?`;
 const rules = [
-  ["pem_private_key", /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/],
+  ["pem_private_key", new RegExp(`-----BEGIN ${PRIVATE_KEY_LABEL}-----`)],
   [
     "provider_token",
-    /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/,
+    /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AIza[A-Za-z0-9_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})(?![A-Za-z0-9_-])/,
   ],
   ["aws_access_key", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/],
-  ["slack_token", /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/],
+  ["slack_token", /\bx(?:ox[baprs]|app)-[A-Za-z0-9-]{20,}\b/],
+  // Three base64url parts, the first a JSON header ("{" encodes as "eyJ").
+  ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/],
+  ["telegram_bot_token", /(?<![A-Za-z0-9_-])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/],
 ] as const;
 // Authority/provenance IDs are validated by strict codecs, not scanned as prose.
 const contentFields = new Set([
@@ -52,13 +57,40 @@ export function scanMemoryValue(value: unknown): MemoryScanResult {
 }
 
 export const MEMORY_REDACTION_MARKER = "[redacted]";
-const redactions = [
+const MARK = MEMORY_REDACTION_MARKER;
+/**
+ * Credentials only their context identifies. They are redacted, never blocked on: the context words
+ * ("Cookie:", "mysql") appear in ordinary notes, so each pattern also asks for a value shaped like one.
+ */
+const contextual: ReadonlyArray<
+  readonly [RegExp, (match: string, ...groups: Array<string>) => string]
+> = [
+  // A header value of one long token, with or without a scheme ("Authorization: abc…", "Basic …").
+  [
+    /\b((?:Proxy-)?Authorization)(\s*:\s*)(?:[A-Za-z]+\s+)?[A-Za-z0-9._~+/=-]{16,}/gi,
+    (_m, name, separator) => `${name}${separator}${MARK}`,
+  ],
+  // Only a header that carries name=value pairs, not the word "Cookie:" in prose.
+  [
+    /\b((?:Set-)?Cookie)(\s*:\s*)[^\s=;:]+=[^\r\n]*/gi,
+    (_m, name, separator) => `${name}${separator}${MARK}`,
+  ],
+  // `-p<password>` glued to the flag; a bare `-p` asks for it interactively.
+  [/\b(mysql(?:dump|admin|sh)?\b[^\n]*?\s-p)(?=\S)[^\s]+/g, (_m, prefix) => `${prefix}${MARK}`],
+];
+const redactions: ReadonlyArray<RegExp> = [
   // The scanner flags the header; redaction also drops the key body that follows it.
-  /-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|$)/g,
+  new RegExp(
+    `-----BEGIN ${PRIVATE_KEY_LABEL}-----[\\s\\S]*?(?:-----END ${PRIVATE_KEY_LABEL}-----|$)`,
+    "g",
+  ),
   ...rules.slice(1).map(([, pattern]) => new RegExp(pattern.source, "g")),
 ];
 const redactString = (text: string) =>
-  redactions.reduce((acc, pattern) => acc.replace(pattern, MEMORY_REDACTION_MARKER), text);
+  contextual.reduce(
+    (acc, [pattern, replace]) => acc.replace(pattern, replace),
+    redactions.reduce((acc, pattern) => acc.replace(pattern, MARK), text),
+  );
 
 /** Replaces every secret the scanner detects in memory text with a fixed marker. */
 export const redactMemoryText = <T extends { readonly text: string; readonly judgment?: string }>(

@@ -64,6 +64,18 @@ describe("memory redaction", () => {
     aws: "AKIA" + "B".repeat(16),
     slack: "xoxb-" + "C".repeat(24),
     pem: "-----BEGIN RSA PRIVATE KEY-----\nMIIFAKEBODY\n-----END RSA PRIVATE KEY-----",
+    pkcs8: "-----BEGIN PRIVATE KEY-----\nMIIFAKEBODY\n-----END PRIVATE KEY-----",
+    pgp: "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBFAKE\n-----END PGP PRIVATE KEY BLOCK-----",
+    stripe_live: "sk_live_" + "D".repeat(24),
+    stripe_test: "sk_test_" + "D".repeat(24),
+    stripe_restricted: "rk_live_" + "D".repeat(24),
+    google: "AIza" + "E".repeat(35),
+    gitlab: "glpat-" + "F".repeat(20),
+    npm: "npm_" + "G".repeat(36),
+    hugging_face: "hf_" + "H".repeat(34),
+    slack_app: "xapp-1-A0" + "J".repeat(10) + "-1234567890-" + "a".repeat(24),
+    jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    telegram_bot: "123456789:" + "AAH" + "k".repeat(32),
   };
   it.each(Object.entries(secrets))(
     "replaces %s in text and judgment, leaving a scan-clean value",
@@ -78,6 +90,38 @@ describe("memory redaction", () => {
       assert.strictEqual(scanMemoryValue(value).kind, "allowed");
     },
   );
+  it.each([
+    [
+      "header without a scheme",
+      "Authorization: abcdef0123456789abcdef",
+      "Authorization: [redacted]",
+    ],
+    [
+      "proxy header",
+      "Proxy-Authorization: Basic dXNlcjpwYXNzd29yZA==",
+      "Proxy-Authorization: [redacted]",
+    ],
+    ["cookie header", "Cookie: session=abc123; theme=dark", "Cookie: [redacted]"],
+    ["set-cookie header", "Set-Cookie: sid=31d4d96e407aad42; Path=/", "Set-Cookie: [redacted]"],
+    [
+      "mysql password flag",
+      "run mysql -u root -phunter2 shop",
+      "run mysql -u root -p[redacted] shop",
+    ],
+  ])("redacts a %s, keeping its name", (_label, text, expected) => {
+    assert.strictEqual(redactMemoryText({ text }).text, expected);
+  });
+  it.each([
+    "Authorization: only admins can approve this step.",
+    "Cookie: a small file the browser keeps.",
+    "mysql -p prompts for the password.",
+    "Use JWT (eyJ...) for auth; npm_modules is not a token.",
+    "The meeting is at 10:30 and the build id is 12345678:short.",
+    "hf_hub and rk_ prefixes in prose",
+  ])("leaves ordinary text alone: %s", (text) => {
+    assert.strictEqual(redactMemoryText({ text }).text, text);
+    assert.strictEqual(scanMemoryValue({ text }).kind, "allowed");
+  });
   it("leaves ordinary text untouched and keeps judgment absent", () => {
     const value = { text: "Prefer targeted checks." };
     assert.deepStrictEqual(redactMemoryText(value), value);
