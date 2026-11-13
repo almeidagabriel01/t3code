@@ -11,13 +11,20 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
-/** Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. */
+/**
+ * Binds dictation to a plain textarea draft; the shortcut targets it only while it has focus. A
+ * field that is not a textarea reads and places its own selection.
+ */
 export function useTextFieldSpeech(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId?: ProjectId | null | undefined;
   readonly ownerKey: string;
   readonly text: string;
-  readonly textareaRef: RefObject<HTMLTextAreaElement | null>;
+  readonly textareaRef: RefObject<HTMLElement | null>;
+  readonly selection?: {
+    readonly read: () => { readonly start: number; readonly end: number };
+    readonly place: (selection: { readonly start: number; readonly end: number }) => void;
+  };
   readonly onTextChange: (text: string) => void;
   readonly disabled?: boolean | undefined;
 }) {
@@ -35,18 +42,25 @@ export function useTextFieldSpeech(input: {
     disabled: input.disabled,
     offerSetup: false,
     readDraft: () => {
+      const custom = latest.current.selection;
+      if (custom) return { text: latest.current.text, selection: custom.read() };
       const field = latest.current.textareaRef.current;
-      const cursor = field?.selectionStart ?? latest.current.text.length;
+      if (!(field instanceof HTMLTextAreaElement)) {
+        const end = latest.current.text.length;
+        return { text: latest.current.text, selection: { start: end, end } };
+      }
       return {
-        text: field?.value ?? latest.current.text,
-        selection: { start: cursor, end: field?.selectionEnd ?? cursor },
+        text: field.value,
+        selection: { start: field.selectionStart, end: field.selectionEnd },
       };
     },
     commitDraft: (text, selection) => {
       latest.current.onTextChange(text);
       window.requestAnimationFrame(() => {
+        const custom = latest.current.selection;
+        if (custom) return custom.place(selection);
         const field = latest.current.textareaRef.current;
-        if (!field) return;
+        if (!(field instanceof HTMLTextAreaElement)) return;
         field.focus({ preventScroll: true });
         field.setSelectionRange(selection.start, selection.end);
       });
