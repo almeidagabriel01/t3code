@@ -236,6 +236,7 @@ import * as HeavyQueue from "./heavyQueue/HeavyQueue.ts";
 import * as HeavyQueueSampler from "./heavyQueue/HeavyQueueSampler.ts";
 import * as RunnerPublisher from "./heavyQueue/RunnerPublisher.ts";
 import * as HeavyQueueNotices from "./heavyQueue/HeavyQueueNotices.ts";
+import * as ProblemDetector from "./problems/ProblemDetector.ts";
 import * as HeavyCommands from "./heavyQueue/HeavyCommands.ts";
 import * as KeepAwake from "./keepAwake/KeepAwake.ts";
 import * as TelegramChannelRuntime from "./channels/telegram/TelegramChannelRuntime.ts";
@@ -745,6 +746,9 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+// Layers memoize by reference: the problem detector reads the same notices the server starts.
+const layerHeavyQueueNotices = HeavyQueueNotices.layer();
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMemoryStarted,
   layerMemorySync,
@@ -760,7 +764,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HeavyQueueSampler.layer(),
   RunnerPublisher.layer(),
   HeavyCommands.layer(),
-  HeavyQueueNotices.layer(),
+  layerHeavyQueueNotices,
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* (yield* ProblemDetector.ProblemDetector).start();
+    }),
+  ).pipe(Layer.provideMerge(ProblemDetector.layer.pipe(Layer.provide(layerHeavyQueueNotices)))),
   StorageCleanup.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
