@@ -134,10 +134,7 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
     canRoute,
     canRouteAll,
     moveAll: async (runner: HeavyRunner) =>
-      report(
-        "Could not move it",
-        await routeAllCommand({ environmentId, input: { runner } }),
-      ),
+      report("Could not move it", await routeAllCommand({ environmentId, input: { runner } })),
     route: async (id: string, action: Pick<RouteAction, "runner" | "confirm" | "force">) => {
       if (action.confirm !== null && !(await confirmKill(action.confirm))) return;
       report(

@@ -508,7 +508,7 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         machine: "linux",
         one: `${name} went to Linux`,
         many: (n) => `${jobs(n)} went to Linux`,
-        description: "Hybrid: this Mac had no room",
+        description: "Hybrid: shorter queue here",
       });
   }
 };

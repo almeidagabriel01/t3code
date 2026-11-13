@@ -123,6 +123,8 @@ describe("what an admission records", () => {
     ["Mac-bound on the Mac", "mac", "mac", null],
     ["Hybrid on the Mac", "automatic", "mac", null],
     ["Hybrid on Linux", "automatic", "linux", "hybrid"],
+    ["Mac first on the Mac", "macFirst", "mac", null],
+    ["Mac first on Linux", "macFirst", "linux", null],
     ["Linux-bound on the Mac", "linux", "mac", "displaced"],
   ] as const)("%s", (_name, intent, runner, kind) => {
     expect(startRecord(waiter, intent, runner, NOW)?.kind ?? null).toBe(kind);
@@ -506,7 +508,7 @@ describe("notices for machine changes", () => {
     expect(titles({ records: [record(startRecord(waiter, "automatic", "linux", NOW))] })).toEqual([
       {
         one: "pnpm test went to Linux",
-        description: "Hybrid: this Mac had no room",
+        description: "Hybrid: shorter queue here",
         category: "planned",
         machine: "linux",
       },
