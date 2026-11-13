@@ -294,7 +294,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - On mobile, close the keyboard before showing a leave or discard prompt: a prompt over an open keyboard leaves a stale keyboard height on the next screen.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.
 - Do not report "done" with known pending items. Finish them, or name them as explicit decisions.
-- A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only: `@vitest/coverage-v8` as a committed devDependency fails knip.
+- A fork phase closes only when tests execute at least 90% of the lines it added on each of server, web and mobile, screens included (the developer's call; it overrides "leave out tests for rendered markup" for fork work, but tests still assert behavior). Measure with v8 coverage installed for the run only, never through package.json or the lockfile, since a shared worktree's other agents then fail knip on commit: symlink `@vitest/coverage-v8` from the pnpm store into `node_modules` and remove the link after, or measure on the PC.
 
 ### Keeping these rules current
 
