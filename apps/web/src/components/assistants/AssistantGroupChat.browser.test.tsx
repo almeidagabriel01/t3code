@@ -1168,10 +1168,10 @@ it("sets a member's own model in the chosen project from the group menu, and rem
   await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
   await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
   await expect.element(page.getByText("No exception for Ada in this project.")).toBeVisible();
-  // Not the global default's name: without a project or group default, Ada runs on her own.
+  // Without a project, group or own default, Ada runs on the user's default model.
   await expect
     .element(page.getByRole("button", { name: "Model for Ada" }))
-    .toHaveTextContent("Default model");
+    .toHaveTextContent("Your default model");
   await expect
     .element(page.getByRole("button", { name: "Remove exception" }))
     .not.toBeInTheDocument();

@@ -171,7 +171,7 @@ function MemberModelFields(props: {
         ? "Group default"
         : member.defaultModelSelection
           ? "Member's default"
-          : "Default model";
+          : "Your default model";
   const save = (value: ModelSelection | null) => {
     const reason = value === null ? null : modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return setError(reason);
