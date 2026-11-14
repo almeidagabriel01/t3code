@@ -78,8 +78,9 @@ describe("memory redaction", () => {
     telegram_bot: "123456789:" + "AAH" + "k".repeat(32),
   };
   it.each(Object.entries(secrets))(
-    "replaces %s in text and judgment, leaving a scan-clean value",
+    "blocks %s, then replaces it in text and judgment, leaving a scan-clean value",
     (_label, secret) => {
+      assert.strictEqual(scanMemoryValue({ text: secret }).kind, "blocked");
       const value = redactMemoryText({
         text: `use ${secret} here`,
         judgment: `also ${secret}`,
@@ -88,6 +89,17 @@ describe("memory redaction", () => {
       assert.strictEqual(value.text, `use ${MEMORY_REDACTION_MARKER} here`);
       assert.strictEqual(value.judgment, `also ${MEMORY_REDACTION_MARKER}`);
       assert.strictEqual(scanMemoryValue(value).kind, "allowed");
+    },
+  );
+  it.each(["bot", "https://api.telegram.org/bot", "see bot"])(
+    "blocks and redacts a Telegram token glued to %s",
+    (prefix) => {
+      const text = `${prefix}${secrets.telegram_bot}/getMe`;
+      assert.strictEqual(scanMemoryValue({ text }).kind, "blocked");
+      assert.strictEqual(
+        redactMemoryText({ text }).text,
+        `${prefix}${MEMORY_REDACTION_MARKER}/getMe`,
+      );
     },
   );
   it.each([
