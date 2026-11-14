@@ -5,7 +5,11 @@ import type {
   ServerProvider,
   UsageLimitAlertThreshold,
 } from "@t3tools/contracts";
-import { usageLimitAlertChoices, usageLimitAlertRows } from "@t3tools/shared/usageLimitAlerts";
+import {
+  usageLimitAlertChoices,
+  usageLimitAlertOverride,
+  usageLimitAlertRows,
+} from "@t3tools/shared/usageLimitAlerts";
 import { Link } from "@tanstack/react-router";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -51,7 +55,12 @@ export function UsageLimitAlertsSection({
     updateSettings({
       usageLimitAlerts: {
         // The zone of the client that saved it names the reset time in the message.
-        [instanceId]: { windows: { [windowId]: threshold }, timeZone: LOCAL_TIME_ZONE },
+        [instanceId]: {
+          windows: {
+            [windowId]: usageLimitAlertOverride({ driver: provider.driver, windowId, threshold }),
+          },
+          timeZone: LOCAL_TIME_ZONE,
+        },
       },
     });
 
@@ -84,7 +93,7 @@ export function UsageLimitAlertsSection({
           <SettingsRow
             key={row.windowId}
             title={row.label}
-            description="Your assistant tells you once, in the app and on Telegram, when this much is left."
+            description="Your assistant messages you once when this much is left."
             control={
               <Select
                 value={value}

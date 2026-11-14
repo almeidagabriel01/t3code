@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   mergeUsageLimitAlerts,
   usageLimitAlertChoices,
+  usageLimitAlertOverride,
   usageLimitAlertRows,
   usageLimitAlertThreshold,
 } from "./usageLimitAlerts.ts";
@@ -24,7 +25,7 @@ describe("usageLimitAlertThreshold", () => {
 });
 
 describe("mergeUsageLimitAlerts", () => {
-  it("merges per window, keeps the zone, and drops an emptied instance", () => {
+  it("merges per window, keeps the zone, and drops an instance left with neither", () => {
     const current = { a: { windows: { seven_day: 20 as const }, timeZone: "UTC" } };
     const added = mergeUsageLimitAlerts(current, { a: { windows: { five_hour: "off" } } });
     expect(added).toEqual({ a: { windows: { seven_day: 20, five_hour: "off" }, timeZone: "UTC" } });
@@ -36,10 +37,30 @@ describe("mergeUsageLimitAlerts", () => {
       a: { windows: { five_hour: "off" }, timeZone: "America/Sao_Paulo" },
     });
 
-    expect(mergeUsageLimitAlerts(rezoned, { a: { windows: { five_hour: null } } })).toEqual({});
+    // Back on defaults, the zone still names the reset time of the default alerts.
+    expect(mergeUsageLimitAlerts(rezoned, { a: { windows: { five_hour: null } } })).toEqual({
+      a: { windows: {}, timeZone: "America/Sao_Paulo" },
+    });
+    expect(mergeUsageLimitAlerts({}, { a: { timeZone: "UTC" } })).toEqual({
+      a: { windows: {}, timeZone: "UTC" },
+    });
+    const single = { a: { windows: { x: 5 as const } } };
+    expect(mergeUsageLimitAlerts(single, { a: { windows: { x: null } } })).toEqual({});
     expect(mergeUsageLimitAlerts(current, { a: null, b: { windows: { x: 5 } } })).toEqual({
       b: { windows: { x: 5 } },
     });
+  });
+});
+
+describe("usageLimitAlertOverride", () => {
+  it.each([
+    ["claudeAgent", "seven_day", 15, null],
+    ["claudeAgent", "seven_day", "off", "off"],
+    ["claudeAgent", "seven_day", 20, 20],
+    ["claudeAgent", "five_hour", "off", null],
+    ["claudeAgent", "five_hour", 15, 15],
+  ] as const)("%s %s picked %j stores %j", (driver, windowId, threshold, expected) => {
+    expect(usageLimitAlertOverride({ driver, windowId, threshold })).toBe(expected);
   });
 });
 

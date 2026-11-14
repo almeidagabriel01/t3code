@@ -4,6 +4,7 @@ import {
   type UsageLimitAlertConfig,
   type UsageLimitAlertConfigPatch,
   type UsageLimitAlerts,
+  type UsageLimitAlertThreshold,
 } from "@t3tools/contracts";
 
 /** Factory defaults by driver and window id; every other window starts off. */
@@ -30,6 +31,16 @@ export function defaultUsageLimitAlertWindows(driver: string): ReadonlyArray<str
   return Object.keys(DEFAULT_THRESHOLDS[driver] ?? {});
 }
 
+/** What a pick stores: the window's default clears the override, so a later default applies. */
+export function usageLimitAlertOverride(input: {
+  readonly driver: string;
+  readonly windowId: string;
+  readonly threshold: UsageLimitAlertThreshold;
+}): UsageLimitAlertThreshold | null {
+  const fallback = DEFAULT_THRESHOLDS[input.driver]?.[input.windowId] ?? "off";
+  return input.threshold === fallback ? null : input.threshold;
+}
+
 /** Per-window merge; an instance left with no override and no zone is dropped. */
 export function mergeUsageLimitAlerts(
   current: UsageLimitAlerts,
@@ -49,7 +60,7 @@ export function mergeUsageLimitAlerts(
       else windows[windowId] = threshold;
     }
     const timeZone = entry.timeZone ?? next[instanceId]?.timeZone;
-    if (Object.keys(windows).length === 0) delete next[instanceId];
+    if (Object.keys(windows).length === 0 && timeZone === undefined) delete next[instanceId];
     else next[instanceId] = { windows, ...(timeZone === undefined ? {} : { timeZone }) };
   }
   return next as UsageLimitAlerts;

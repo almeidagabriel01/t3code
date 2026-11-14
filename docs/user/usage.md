@@ -174,8 +174,8 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Get an alert before a limit runs out
 
-Your default assistant tells you once, in its chat and on Telegram, when a subscription window
-drops to a share you pick. Claude's weekly limit alerts at 15% left out of the box. Every other
+Your default assistant messages you once, in its chat and on its channels such as Telegram, when a
+subscription window drops to a share you pick. Claude's weekly limit alerts at 15% left out of the box. Every other
 window, including the 5-hour session and per-model weekly limits, starts off.
 
 Change it in **Settings → Providers**, under **Limit alerts** on each provider's card. On mobile,
@@ -188,7 +188,8 @@ open **Settings → Limit alerts**. Each window takes its own share, or **Off**.
   often until they recover.
 - Each window alerts once. It alerts again after it resets, or after the share left climbs five
   points above your pick and drops back.
-- The reset time is shown in the time zone of the device that last saved the alert.
+- The reset time is shown in the time zone of the device that last changed the alert, or the
+  server's time zone until you change one.
 
 ## Connect a CLIProxyAPI hub
 

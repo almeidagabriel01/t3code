@@ -90,6 +90,7 @@ function EnvironmentAlerts(props: {
                   onPressAction={({ nativeEvent }) => {
                     const patch = usageAlertPatch({
                       instanceId: section.instanceId,
+                      driver: section.driver,
                       windowId: row.windowId,
                       choiceId: nativeEvent.event,
                       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -110,8 +111,7 @@ function EnvironmentAlerts(props: {
                         {row.label}
                       </Text>
                       <Text textRole="footnote" className="text-foreground-muted">
-                        Your assistant tells you once, in the app and on Telegram, when this much is
-                        left.
+                        Your assistant messages you once when this much is left.
                       </Text>
                     </View>
                     <Text textRole="footnote" className="tabular-nums text-foreground-muted">

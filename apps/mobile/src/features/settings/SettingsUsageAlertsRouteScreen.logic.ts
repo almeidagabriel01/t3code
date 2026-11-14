@@ -1,9 +1,14 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
 import type { ServerSettings } from "@t3tools/contracts";
-import { usageLimitAlertChoices, usageLimitAlertRows } from "@t3tools/shared/usageLimitAlerts";
+import {
+  usageLimitAlertChoices,
+  usageLimitAlertOverride,
+  usageLimitAlertRows,
+} from "@t3tools/shared/usageLimitAlerts";
 
 export interface UsageAlertSection {
   readonly instanceId: string;
+  readonly driver: string;
   readonly title: string;
   readonly rows: ReturnType<typeof usageLimitAlertRows>;
 }
@@ -17,6 +22,7 @@ export function usageAlertSections(
     .filter((provider) => provider.enabled)
     .map((provider) => ({
       instanceId: provider.instanceId,
+      driver: provider.driver,
       title:
         provider.displayName?.trim() || PROVIDER_DISPLAY_NAMES[provider.driver] || provider.driver,
       rows: usageLimitAlertRows({
@@ -46,6 +52,7 @@ export function usageAlertMenuActions(threshold: number | null) {
 
 export function usageAlertPatch(input: {
   readonly instanceId: string;
+  readonly driver: string;
   readonly windowId: string;
   readonly choiceId: string;
   readonly timeZone: string;
@@ -54,7 +61,16 @@ export function usageAlertPatch(input: {
   if (choice !== "off" && !Number.isInteger(choice)) return null;
   return {
     usageLimitAlerts: {
-      [input.instanceId]: { windows: { [input.windowId]: choice }, timeZone: input.timeZone },
+      [input.instanceId]: {
+        windows: {
+          [input.windowId]: usageLimitAlertOverride({
+            driver: input.driver,
+            windowId: input.windowId,
+            threshold: choice,
+          }),
+        },
+        timeZone: input.timeZone,
+      },
     },
   };
 }

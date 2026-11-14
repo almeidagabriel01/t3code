@@ -138,20 +138,23 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     expect(section.textContent).toContain("15%");
     expect(section.textContent).toContain("Session");
     expect(section.textContent).toContain("30%");
-    expect(section.textContent).toContain("Your assistant tells you once");
+    expect(section.textContent).toContain("Your assistant messages you once");
     expect(host.querySelector("[data-note]")).toBeNull();
     await unmount();
   });
 
-  it("writes the chosen threshold, or off, per window", async () => {
+  it("writes the chosen threshold, off, or a return to the default, per window", async () => {
     const { host, unmount } = await mount({ windows: [weekly] });
     const items = [...host.querySelectorAll("[role=menuitemradio]")];
     expect(items.find((i) => i.getAttribute("aria-checked") === "true")?.textContent).toBe("15%");
     await click(items.find((i) => i.textContent === "5%"));
     await click(items.find((i) => i.textContent === "Off"));
+    await click(items.find((i) => i.textContent === "15%"));
     const sent = (n: number) => mocks.update.mock.calls[n]![0].input.patch.usageLimitAlerts.claude;
     expect(sent(0).windows).toEqual({ seven_day: 5 });
     expect(sent(1).windows).toEqual({ seven_day: "off" });
+    // Picking the default clears the override.
+    expect(sent(2).windows).toEqual({ seven_day: null });
     expect(typeof sent(0).timeZone).toBe("string");
     await unmount();
   });
