@@ -16,6 +16,7 @@ import {
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
+  isQuietAssistantReply,
   taskEventActivity,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
@@ -115,6 +116,17 @@ describe("assistantTaskRows", () => {
 
   it("lists nothing for no tasks", () => {
     expect(assistantTaskRows([], () => undefined)).toEqual([]);
+  });
+});
+
+describe("isQuietAssistantReply", () => {
+  it.each([
+    ["NO_REPLY", true],
+    ["`NO_REPLY`.", true],
+    ["Nothing new.\n\nNO_REPLY", false],
+    ["The build broke.", false],
+  ])("%j → %s", (text, quiet) => {
+    expect(isQuietAssistantReply(text)).toBe(quiet);
   });
 });
 

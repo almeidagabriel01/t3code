@@ -1553,11 +1553,7 @@ describe("deriveMessagesTimelineRows", () => {
         senderThreadId: ThreadId.make("thread-task"),
       });
     const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        event("run-1"),
-        event("run-2"),
-        entry("quiet", "assistant", "Nothing new.\n\nNO_REPLY"),
-      ],
+      timelineEntries: [event("run-1"), event("run-2"), entry("quiet", "assistant", "`NO_REPLY`")],
       latestRun: null,
       isWorking: false,
       expandedRunIds: new Set(),

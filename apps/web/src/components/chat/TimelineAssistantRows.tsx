@@ -51,8 +51,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
       onImageExpand={ctx.onImageExpand}
     />
   );
-  const foldLong =
-    !row.message.streaming && ctx.threadRef !== null && isAssistantThreadId(ctx.threadRef.threadId);
+  // The wrapper stays mounted while streaming, so the markdown is not rebuilt when it ends.
+  const inAssistantThread = ctx.threadRef !== null && isAssistantThreadId(ctx.threadRef.threadId);
 
   return (
     <>
@@ -66,8 +66,10 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            {foldLong ? (
-              <CollapsibleMessageBody text={messageText}>{markdown}</CollapsibleMessageBody>
+            {inAssistantThread ? (
+              <CollapsibleMessageBody text={messageText} collapsible={!row.message.streaming}>
+                {markdown}
+              </CollapsibleMessageBody>
             ) : (
               markdown
             )}

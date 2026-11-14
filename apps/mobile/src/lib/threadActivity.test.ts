@@ -830,7 +830,7 @@ describe("buildThreadFeed", () => {
   });
 
   it("shows no row for a quiet assistant reply", () => {
-    const quiet = { ...assistantMessage(), text: "Nothing new.\nNO_REPLY" };
+    const quiet = { ...assistantMessage(), text: "NO_REPLY" };
     expect(
       buildThreadFeed([projected(userMessage(), 0), projected(quiet, 1)]).map((e) => e.id),
     ).toEqual(["message-user"]);

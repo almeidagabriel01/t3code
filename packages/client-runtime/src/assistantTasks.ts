@@ -130,5 +130,9 @@ export function taskEventActivity(
   };
 }
 
-/** An assistant's reply to an event with nothing new; clients do not show it. */
-export const isQuietAssistantReply = isQuietReply;
+/**
+ * A reply that is only the quiet token: it says nothing, so clients drop it. A reply with
+ * text before the token stays visible in T3, since a hidden message could not be read at all.
+ */
+export const isQuietAssistantReply = (text: string): boolean =>
+  !text.trim().includes("\n") && isQuietReply(text);
