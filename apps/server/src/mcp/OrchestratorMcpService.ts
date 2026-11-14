@@ -103,6 +103,7 @@ import { copyTransfer, removeTransfer, transferText } from "../assistants/Assist
 import { ServerConfig } from "../config.ts";
 import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProjectModelSelectionService from "../orchestration-v2/ProjectModelSelectionService.ts";
 import {
   subagentResultForRun,
   delegatedTaskProgress,
@@ -124,7 +125,6 @@ import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingEr
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   clientModeCeiling,
@@ -1062,6 +1062,7 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const projectModelSelection = yield* ProjectModelSelectionService.ProjectModelSelectionService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
   const assistantRequests = yield* Effect.serviceOption(AssistantRequests);
@@ -1110,21 +1111,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const projectDefaultModelSelection = Effect.fn("OrchestratorMcpService.projectDefaultModel")(
-    function* (project: Effect.Success<ReturnType<typeof requireProject>>) {
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
-      );
-      const selection = resolveProjectSettings(settings, project.id, project).settings
-        .defaultModelSelection;
-      return selection === null
-        ? yield* failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          )
-        : selection;
-    },
-  );
+  /** New work with no explicit model follows the project's precedence, never the caller's model. */
+  const projectDefaultModelSelection = (projectId: ProjectId) =>
+    projectModelSelection.resolveForNewThread({ projectId }).pipe(
+      Effect.map(({ selection }) => selection),
+      Effect.mapError((error) => failure("orchestration_error", error.message)),
+    );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -1341,9 +1333,7 @@ const make = Effect.gen(function* () {
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
     const instanceId =
       input.target?.providerInstanceId ??
-      (input.target?.driverKind === undefined
-        ? input.parent.thread.modelSelection.instanceId
-        : undefined);
+      (input.target?.driverKind === undefined ? input.base.instanceId : undefined);
     const resolved = resolveTarget(input);
     if (instanceId === undefined) return resolved;
     return resolved.pipe(
@@ -1359,6 +1349,8 @@ const make = Effect.gen(function* () {
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    /** What an omitted provider, model, or options resolve to. */
+    readonly base: ModelSelection;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -1384,12 +1376,12 @@ const make = Effect.gen(function* () {
       const healthyCandidates = candidates.filter(
         (candidate) => providerConstraints(candidate, true).length === 0,
       );
-      const inheritedCandidate = healthyCandidates.find(
-        (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
+      const baseCandidate = healthyCandidates.find(
+        (candidate) => candidate.instanceId === input.base.instanceId,
       );
       const orderedCandidates = [
-        ...(inheritedCandidate === undefined ? [] : [inheritedCandidate]),
-        ...healthyCandidates.filter((candidate) => candidate !== inheritedCandidate),
+        ...(baseCandidate === undefined ? [] : [baseCandidate]),
+        ...healthyCandidates.filter((candidate) => candidate !== baseCandidate),
       ];
       for (const candidate of orderedCandidates) {
         const enabledForProject =
@@ -1412,7 +1404,7 @@ const make = Effect.gen(function* () {
         );
       }
     }
-    instanceId ??= input.parent.thread.modelSelection.instanceId;
+    instanceId ??= input.base.instanceId;
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -1438,17 +1430,14 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
+    const base = input.base;
     const requestedModel = input.target?.model;
     const model =
-      requestedModel ??
-      (instanceId === inheritedSelection.instanceId
-        ? inheritedSelection.model
-        : provider.models[0]?.slug);
+      requestedModel ?? (instanceId === base.instanceId ? base.model : provider.models[0]?.slug);
     if (model === undefined) {
       return yield* failure(
         "model_unavailable",
-        `Provider ${instanceId} has no model available for inheritance.`,
+        `Provider ${instanceId} has no model available. Pass target.model.`,
       );
     }
     if (
@@ -1475,13 +1464,9 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+    const inheritsOptions = instanceId === base.instanceId && model === base.model;
     let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
-          descriptors,
-        )
+      ? knownOptions(withLegacyUltracodeEffort(descriptors, base.options), descriptors)
       : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
@@ -2019,7 +2004,7 @@ const make = Effect.gen(function* () {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
-      const project = yield* requireProject(projectId);
+      yield* requireProject(projectId);
       const bindToCurrentThread =
         input.bindToCurrentThread ??
         (parent !== undefined && parent.thread.projectId === projectId);
@@ -2036,8 +2021,11 @@ const make = Effect.gen(function* () {
         yield* refuseOutsideSandbox(scope, undefined);
         yield* refuseOutsideProject(scope, { projectId });
       }
+      // A bound task runs in this thread and keeps its model; a new thread follows the project.
       const modelSelection =
-        parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        bindToCurrentThread && parent !== undefined
+          ? parent.thread.modelSelection
+          : yield* projectDefaultModelSelection(projectId);
       const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
       const title =
         input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -2359,7 +2347,11 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
-      const inherited = parent?.thread.modelSelection;
+      // What an omitted target gets: the project's default, not this thread's model.
+      const inherited =
+        parent === undefined
+          ? undefined
+          : yield* projectDefaultModelSelection(parent.thread.projectId);
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2394,7 +2386,11 @@ const make = Effect.gen(function* () {
             searchTerms,
             isPinned: (model) =>
               model.isCustom ||
-              (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
+              // The default, and the caller's own model so it can name it to keep it.
+              [inherited, parent?.thread.modelSelection].some(
+                (selection) =>
+                  selection?.instanceId === provider.instanceId && selection.model === model.slug,
+              ) ||
               (settings.favorites ?? []).some(
                 (favorite) =>
                   favorite.provider === provider.instanceId && favorite.model === model.slug,
@@ -2488,6 +2484,7 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
+        base: yield* projectDefaultModelSelection(parent.thread.projectId),
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -2902,6 +2899,9 @@ const make = Effect.gen(function* () {
                 : null;
               const target = yield* resolveTargetRechecking({
                 parent,
+                base:
+                  committedThread?.modelSelection ??
+                  (yield* projectDefaultModelSelection(parent.thread.projectId)),
                 target:
                   committedThread === null
                     ? request.target
@@ -3616,6 +3616,7 @@ export const layer: Layer.Layer<
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
   | ProjectService.ProjectService
+  | ProjectModelSelectionService.ProjectModelSelectionService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
   | RemoteDelegation.RemoteDelegation

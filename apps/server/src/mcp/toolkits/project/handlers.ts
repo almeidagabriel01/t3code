@@ -24,9 +24,7 @@ import * as Repositories from "../../../sourceControl/SourceControlRepositorySer
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
-import * as DateTime from "effect/DateTime";
-import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import * as ProjectModelSelection from "../../../orchestration-v2/ProjectModelSelectionService.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -179,9 +177,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
-        // A caller outside a thread has nothing to inherit, so it starts with the
-        // project's effective defaults, as the composer does. Its mode stays
-        // within the ceiling it was approved with.
+        // A caller outside a thread has no mode to inherit, so it starts with the
+        // project's default mode, within the ceiling it was approved with.
         const projectDefaults =
           caller === undefined && !replaying
             ? yield* ServerSettings.ServerSettingsService.pipe(
@@ -195,29 +192,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )
             : undefined;
+        // Neither the caller's model nor a usage-limit fallback: the project's precedence decides.
         const modelSelection =
           input.modelSelection ??
           launchedModel ??
-          caller?.modelSelection ??
-          (projectDefaults
-            ? resolveNewThreadModelSelection({
-                defaultSelection: projectDefaults.defaultModelSelection,
-                fallbackSelections: fallbackModelSelectionsOf(projectDefaults),
-                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
-                  Effect.flatMap((registry) => registry.getProviders),
-                ),
-                settings: projectDefaults,
-                projectId,
-                now: DateTime.toEpochMillis(yield* DateTime.now),
-              }).selection
-            : null) ??
-          undefined;
-        if (modelSelection === undefined)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message:
-              "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
-          });
+          (yield* ProjectModelSelection.ProjectModelSelectionService.pipe(
+            Effect.flatMap((service) => service.resolveForNewThread({ projectId })),
+            Effect.mapError(unavailable),
+          )).selection;
         let startedRuntimeMode =
           projectDefaults !== undefined && input.runtimeMode === undefined
             ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
