@@ -90,7 +90,7 @@ function Actions(props: { readonly children: ReactNode }) {
 function ActionButton(props: ButtonProps) {
   return (
     <View className="min-w-0 flex-1">
-      <Button size="compact" fullWidth {...props} />
+      <Button size="tile" fullWidth {...props} />
     </View>
   );
 }
