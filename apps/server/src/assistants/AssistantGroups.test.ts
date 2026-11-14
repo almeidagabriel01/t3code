@@ -1805,7 +1805,7 @@ it.effect.each([
       yield* h.finishTask(child.taskId, "completed", "Build is green.");
       yield* h.finish(0, "completed", "done");
 
-      // The next message to the same member in the same request is back on the default.
+      // The next message in the same request is that request's work too; its own model wins.
       const ask = (more: Partial<AssistantGroupsPostInput>) =>
         groups.post(
           { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
@@ -1813,10 +1813,11 @@ it.effect.each([
         );
       yield* ask({});
       assert.equal(h.sent.at(-1)!.threadId, ada);
-      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
-      yield* h.finish(h.sent.length - 1, "completed", "done");
-      yield* ask({ modelSelection: opus });
       assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      const sonnet = selection(claude, "sonnet");
+      yield* ask({ modelSelection: sonnet });
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, sonnet);
       assert.deepEqual(yield* settings.getSettings, before);
     }).pipe(Effect.provide(h.layer));
   },
@@ -3149,6 +3150,47 @@ it.effect("member tools refuse misuse with a reason the model can act on", () =>
     );
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect.each([
+  ["the request's", true],
+  ["the asker's message", false],
+] as const)(
+  "a question between members runs on %s model, like the work it is part of",
+  ([, onRequest]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@beto prepare", ...(onRequest ? { modelSelection: opus } : {}) },
+        h.user,
+      );
+      yield* h.finish(0, "completed", "Beto's draft");
+      const [, betoAnswer] = yield* h.messages;
+      yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "@ada review it",
+          replyToMessageId: request.message.id,
+          ...(onRequest ? {} : { modelSelection: opus }),
+        },
+        h.user,
+      );
+      assert.deepEqual(h.fakeThreads.get(h.threadOf("ada"))!.modelSelection, opus);
+      yield* groups.member.reply({
+        callerThreadId: h.threadOf("ada"),
+        messageId: betoAnswer!.message_id,
+        text: "Which build?",
+      });
+      assert.equal(h.sent.at(-1)!.threadId, h.threadOf("beto"));
+      assert.deepEqual(h.fakeThreads.get(h.threadOf("beto"))!.modelSelection, opus);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("questions between members: two per request, a reply task only answers", () => {
   const h = harness();

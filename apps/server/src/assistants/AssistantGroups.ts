@@ -1464,9 +1464,14 @@ const make = Effect.gen(function* () {
     const requestId = task.request_id ?? task.request_message_id;
     const request = yield* getMessage(requestId);
     if (request === undefined) return yield* failed("request_missing");
-    // Its subtasks inherit the message, so a hand-off stays on the model the user picked.
+    // The model of the message that opened this task's tree, else the request's: hand-offs and
+    // questions between members run on the model the user picked for that work.
+    const root = task.root_id === task.task_id ? task : yield* getTask(task.root_id);
     const explicit =
-      decodeModelSelectionJson((yield* getMessage(task.request_message_id))?.model_selection) ??
+      decodeModelSelectionJson(
+        (yield* getMessage(root?.request_message_id ?? task.request_message_id))?.model_selection,
+      ) ??
+      decodeModelSelectionJson(request.model_selection) ??
       undefined;
     const exec = yield* ensureRequestThread(team, owner, request, explicit).pipe(Effect.result);
     if (exec._tag === "Failure") {
