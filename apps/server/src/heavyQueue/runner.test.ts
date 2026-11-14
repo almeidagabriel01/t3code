@@ -969,14 +969,14 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     (["linux", "automatic", "macFirst"] as const).flatMap((where) =>
       (
         [
-          ["mac", "mac-start"],
-          ["wait", "linux-wait"],
-          ["ask", "ask"],
-          ["agent", "cancel"],
+          ["mac", "mac-start", "running here"],
+          ["wait", "linux-wait", "waiting for it"],
+          ["ask", "ask", "asking you"],
+          ["agent", "cancel", null],
         ] as const
-      ).map(([policy, outcome]) => [where, policy, outcome] as const),
+      ).map(([policy, outcome, reason]) => [where, policy, outcome, reason] as const),
     ),
-  )("%s, environment failure under %s → %s", (where, policy, outcome) => {
+  )("%s, environment failure under %s → %s", (where, policy, outcome, reason) => {
     const entry = job("a", "vp test run", {
       dropped: true,
       failure: "sh: 1: tsgo: not found",
@@ -986,11 +986,15 @@ describe("Linux unavailable, deadline and dropped policies", () => {
       input(
         [entry],
         { runnerWhere: where, runnerDropped: policy },
-        { health: { ...READ, okAt: NOW - 100 } },
+        { health: { ...READ, okAt: NOW - 100 }, runnerOn: true },
       ),
     );
     expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
     if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+    // The row names the Linux failure, never "Linux is unavailable" while Linux is online.
+    if (reason === null)
+      expect(plan.cancels.a).toBe("Linux couldn't run this: sh: 1: tsgo: not found");
+    else expect(plan.reasons.a).toBe(`Linux couldn't run this: sh: 1: tsgo: not found: ${reason}`);
   });
 
   it("an open question holds the job until its deadline", () => {
