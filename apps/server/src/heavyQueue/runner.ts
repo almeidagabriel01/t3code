@@ -881,7 +881,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
           macRoom(entry)
         )
           onMac = true;
-      } else onMac = !macOver && !past;
+      } else onMac = !macOver && (!past || health.overLimit);
       if (onMac) {
         toMac(entry, hybrid ? "Hybrid: shorter queue here" : "Mac first: this Mac has room");
         continue;

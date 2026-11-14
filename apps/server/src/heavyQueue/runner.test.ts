@@ -178,9 +178,10 @@ describe("routing matrix", () => {
     const linuxStart: Outcome = linuxRoom ? "linux-start" : "linux-wait";
     // Both over their limits: it holds, with the queue on or off.
     if (mac === "over" && linux === "overloaded") return "linux-wait";
-    // Mac first, sending to Linux from 2 jobs: 1 runs here except when the Mac is full.
+    // Mac first, sending to Linux from 2 jobs: 1 runs here except when the Mac is full, and past
+    // its count still runs here while Linux is over its limits (RUN-13).
     if (where === "macFirst") {
-      if (mac !== "over" && mac !== "full") return onMac;
+      if (mac !== "over" && (mac !== "full" || linux === "overloaded")) return onMac;
       return queue === "paused" ? "linux-wait" : linuxStart;
     }
     // Hybrid: the smaller backlog per slot (3 here, 2 there), the Mac on a tie.
@@ -494,6 +495,15 @@ describe("Mac first, Hybrid and Everything", () => {
         over: MAC_OVER,
         route: "linux",
         admit: "linux",
+      },
+      {
+        enabled,
+        name: "Mac first, past its count with Linux over its limits",
+        config: { runnerWhere: "macFirst" as const, runnerMacFirstAfter: 1 },
+        entries: [runningOn("m0", "mac")],
+        over: { health: OVERLOADED },
+        route: "mac",
+        reason: /^Mac first: this Mac has room/,
       },
       {
         enabled,
