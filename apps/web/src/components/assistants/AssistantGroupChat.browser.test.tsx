@@ -19,6 +19,7 @@ import "~/index.css";
 import { AppRoot } from "~/AppRoot";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { formatUpcomingTimestamp } from "~/timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
@@ -376,7 +377,8 @@ it("replies to a member's message and sends the reply link, or drops it", async 
   await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
 });
 
-it("shows a task's expected result and resources, and why a queued one waits", async () => {
+it("shows a task's expected result and resources, and why a queued or limited one waits", async () => {
+  const resetAt = "2099-03-04T09:30:00.000Z";
   publishGroupChat(
     [message(1)],
     [
@@ -387,10 +389,20 @@ it("shows a task's expected result and resources, and why a queued one waits", a
         resources: ["folder:/w/app", "browser"],
       }),
       task("plain", 1, { createdAt: "2026-03-17T19:01:00.000Z" }),
+      task("limited", 1, {
+        status: "usage_limited",
+        resetAt,
+        createdAt: "2026-03-17T19:02:00.000Z",
+      }),
     ],
   );
   await using _screen = await openChat();
   const cards = main().getByTestId("group-task-card");
+  await expect
+    .element(cards.nth(2).getByTestId("group-task-waiting"))
+    .toHaveTextContent(
+      `Limit until ${formatUpcomingTimestamp(resetAt, DEFAULT_CLIENT_SETTINGS.timestampFormat)}`,
+    );
   await expect
     .element(cards.first().getByTestId("group-task-expected"))
     .toHaveTextContent("Expected: the build is green");

@@ -21,6 +21,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const STATUS_VARIANT = {
   queued: "outline",
@@ -59,7 +60,9 @@ export function GroupTaskCard(props: {
   );
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
-  const waiting = assistantGroupWaitingReason(task);
+  const limitLabel = useUsageLimitLabel();
+  const waiting =
+    task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   return (
     <div
       data-testid="group-task-card"

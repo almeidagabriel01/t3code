@@ -23,6 +23,7 @@ import { useAssistantFlows } from "./useAssistantFlows";
 const MOOD_OF_STATE: Record<AssistantTaskState, AssistantMood> = {
   running: "working",
   waiting: "needs",
+  usage_limited: "needs",
   failed: "failed",
   done: "idle",
 };
