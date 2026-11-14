@@ -698,9 +698,10 @@ export function GroupComposer(props: {
               onCancel={voice.cancel}
             />
             <ComposerActionButton
-              accessibilityLabel="Send"
+              accessibilityLabel={sending ? "Sending" : "Send"}
               icon="arrow.up"
               variant="primary"
+              busy={sending}
               disabled={!canSend}
               onPress={() => void send()}
             />

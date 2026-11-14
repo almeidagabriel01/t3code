@@ -225,10 +225,12 @@ vi.mock("../../components/ComposerToolbar", () => ({
   ComposerActionButton: (props: {
     accessibilityLabel: string;
     disabled?: boolean;
+    busy?: boolean;
     onPress: () => void;
   }) => (
     <button
       aria-label={props.accessibilityLabel}
+      aria-busy={props.busy}
       disabled={props.disabled}
       onClick={props.onPress}
     />
@@ -1158,6 +1160,23 @@ describe("group composer", () => {
     });
     await act(async () => finishFlush());
     expect(mocks.post).toHaveBeenCalledOnce();
+  });
+
+  it("says the send is on its way and takes no second tap or Return until it settles", async () => {
+    render();
+    await type("@ada go");
+    let settle!: (reply: unknown) => void;
+    mocks.post.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+    await click("Send");
+    const button = byLabel("Sending");
+    expect([button?.disabled, button?.getAttribute("aria-busy")]).toEqual([true, "true"]);
+    await act(async () => {
+      button?.click();
+      mocks.editor!.onSubmit!(false);
+    });
+    expect(mocks.post).toHaveBeenCalledOnce();
+    await act(async () => settle({ ok: true, value: {} }));
+    expect(byLabel("Send")?.getAttribute("aria-busy")).not.toBe("true");
   });
 
   it("posts @member and #project as typed, and gives the editor the group's chips", async () => {
