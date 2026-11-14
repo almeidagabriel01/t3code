@@ -51,7 +51,10 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { firstUsableProviderModel } from "../orchestration-v2/ProjectModelSelectionService.ts";
+import {
+  firstUsableProviderModel,
+  ProjectModelSelectionService,
+} from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -187,6 +190,7 @@ const make = Effect.gen(function* () {
   const connectors = yield* AssistantConnectors.AssistantConnectors;
   const tasks = yield* AssistantTasks;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const projectModelSelection = yield* ProjectModelSelectionService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -311,7 +315,16 @@ const make = Effect.gen(function* () {
         projectId,
         title: row.name,
         generateTitle: false,
-        modelSelection: modelSelection ?? (yield* defaultModelSelection(projectId)),
+        // A new conversation follows (assistant, project); in the home project, the assistant's default.
+        modelSelection:
+          modelSelection ??
+          (yield* projectModelSelection
+            .resolveForNewThread({ projectId, assistantId: row.assistant_id as AssistantId })
+            .pipe(
+              Effect.mapError(() =>
+                assistantError("storage", "Could not work out the conversation's model."),
+              ),
+            )).selection,
         runtimeMode: runtimeModeForToolAccess(toAssistant(row).toolAccess),
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
@@ -630,6 +643,7 @@ const make = Effect.gen(function* () {
             if (existing[0] !== undefined) return toAssistant(existing[0]);
           }
           yield* handleTaken(handle);
+          yield* checkDefaultModel(input.modelSelection, null);
           const saved =
             input.mcpServers === undefined
               ? undefined
@@ -639,14 +653,17 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, ask_before_acting,
-              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, created_at, updated_at
+              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json,
+              default_model_selection, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${home}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
               ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
               ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope}, ${projectIdsJson},
-              ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
+              ${saved === undefined ? null : encodeMcpServers(saved.servers)},
+              ${input.modelSelection === undefined ? null : encodeModelSelectionJson(input.modelSelection)},
+              ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -762,6 +779,12 @@ const make = Effect.gen(function* () {
           if (projectChanged) {
             // A thread can't change projects: the new project gets the next generation.
             const generation = row.generation + 1;
+            // The new conversation resolves its model from the stored default, so store it first.
+            if (input.defaultModelSelection !== undefined) {
+              yield* sql`
+                UPDATE assistants SET default_model_selection = ${next.defaultModelSelectionJson}
+                WHERE assistant_id = ${row.assistant_id}`;
+            }
             const threadId = yield* launchGeneration(
               {
                 ...row,
@@ -770,7 +793,7 @@ const make = Effect.gen(function* () {
                 project_id: next.projectId,
               },
               generation,
-              input.modelSelection ?? previous?.modelSelection,
+              input.modelSelection,
             );
             yield* sql`
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},

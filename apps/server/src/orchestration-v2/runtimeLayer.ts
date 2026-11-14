@@ -411,6 +411,10 @@ const layerAssistantConnectorsProvided = AssistantConnectors.layer.pipe(
   Layer.provide(Layer.merge(ServerSecretStore.layer, AssistantDirectory.layer)),
 );
 
+const layerProjectModelSelectionProvided = ProjectModelSelectionService.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+);
+
 // One instance: the group service watches the same change stream the clients are served from.
 const layerAssistantServiceProvided = AssistantService.layer.pipe(
   Layer.provide(
@@ -422,6 +426,7 @@ const layerAssistantServiceProvided = AssistantService.layer.pipe(
       layerManagedProjectFoldersProvided,
       layerProjectService,
       layerScheduledTaskProvided,
+      layerProjectModelSelectionProvided,
     ),
   ),
 );
@@ -478,7 +483,7 @@ export const layerProduction = Layer.mergeAll(
   ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
   layerAssistantServiceProvided,
   layerAssistantGroupsProvided,
-  ProjectModelSelectionService.layer.pipe(Layer.provide(ProjectStore.layer)),
+  layerProjectModelSelectionProvided,
   // Fills the gate a group's scheduled tasks post through.
   AssistantGroups.installLayer.pipe(
     Layer.provide(Layer.merge(layerAssistantGroupsProvided, AssistantGroupGate.gateLayer)),
