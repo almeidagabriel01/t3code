@@ -17,7 +17,10 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
   projects, but adding more projects does not. An assistant with real projects is a **project
   assistant**: it shows a project badge, is listed under each of its projects, and may only launch,
   delegate and message work inside them (see [Project assistants](#project-assistants)).
-- **Model**. Change it from the model picker in the conversation, or in the assistant's settings.
+- **Model**. Change it from the model picker in the conversation. **Default model** in the
+  assistant's settings is the model its new conversations start on when the project sets none;
+  **Use your default** clears it. A project can give the assistant its own model under **Model by
+  assistant** in the project's settings.
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
@@ -292,7 +295,9 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   conversation waits on you: an approval, a question, an open decision or a paused group task. It
   goes out after **Notify after** (1 minute by default), only once, and never for something you
   answered in the meantime. It has its own switch, respects the pause switch and does not count
-  toward the daily limit.
+  toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
+  with the project, provider, the time it resets and the task, once per provider and limit window.
+  Tasks waiting on a limit show **Limit until** and the reset time instead of failing.
 - **Notifications per day**, 20 by default.
 - **Messages from assistants per day**, 20 by default: short messages an assistant sends you itself.
 

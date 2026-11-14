@@ -192,6 +192,15 @@ a folder, such as `~/work`. The deepest matching folder wins, and a project's ow
 still overrides it. The model setting for a project then shows that it is inherited from the
 folder.
 
+**Model by assistant**, below a project's **Model**, gives one assistant a different model in that
+project. New work for a project starts on one model, chosen in this order: a model named in the
+request itself, the assistant's model for the project, the project's model, the assistant's
+**Default model**, then your default model. That covers new threads, delegated tasks, threads an
+agent launches and scheduled tasks; they no longer copy the model of the thread that started them.
+A thread keeps the model it started on until you change it there. A provider that reaches its usage
+limit is never swapped for another one on its own: the work waits for the limit to reset, or for you
+to pick another provider in that thread.
+
 New worktrees initialize git submodules recursively. If that step is slow because the repository
 declares many nested submodules, set **Submodules** in **Settings → Worktrees** under Advanced (with the project
 selected to override it there) to **Top level only** to stop at the ones the repository declares
