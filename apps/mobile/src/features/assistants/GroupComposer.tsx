@@ -93,7 +93,7 @@ function ToolbarChip(props: {
   readonly chevron?: boolean;
   /** Only the icon, when the row is too full for the label. */
   readonly iconOnly?: boolean;
-  /** A longer label (a model) that takes all the room the row has. */
+  /** A model's name, which may run wider than the other chips. */
   readonly wide?: boolean;
   /** A dot after the label, always in view; the accessibility label says what it marks. */
   readonly marked?: boolean;
@@ -105,7 +105,7 @@ function ToolbarChip(props: {
       accessibilityLabel={props.accessibilityLabel}
       disabled={props.disabled}
       onPress={props.onPress}
-      className={`h-8 ${props.wide ? "" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
+      className={`h-8 ${props.wide ? "max-w-56" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
       {props.iconOnly ? null : (
@@ -567,8 +567,8 @@ export function GroupComposer(props: {
                 disabled
               />
             ) : (
-              // The project reads in full; the model beside it is the one cut short.
-              <MenuSlot keep>
+              // A long project name gives way first, so the model's name stays whole.
+              <MenuSlot>
                 <Menu
                   accessibilityLabel="Project"
                   actions={[
@@ -599,7 +599,7 @@ export function GroupComposer(props: {
               </MenuSlot>
             )}
             {projectModel === null || runProject === null ? null : projectModel.forMessage ? (
-              <MenuSlot>
+              <MenuSlot keep>
                 <Menu
                   accessibilityLabel="Model for this message"
                   title="This message only"
@@ -624,7 +624,7 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             ) : (
-              <MenuSlot>
+              <MenuSlot keep>
                 <ToolbarChip
                   icon="cube"
                   label={projectModel.shortLabel}
