@@ -1,5 +1,5 @@
 import { MessageSquareIcon, XIcon } from "lucide-react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import { useTheme } from "~/hooks/useTheme";
@@ -11,7 +11,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 export const TAB_CLASS =
-  "group/tab my-1 flex shrink cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-xs select-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "group/tab my-1 flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-xs select-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 export function tabStateClass(active: boolean) {
   return active
@@ -37,6 +37,16 @@ export function activateOnKey(event: KeyboardEvent, activate: () => void) {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   activate();
+}
+
+/** Tabs never shrink below a readable name, so the strip scrolls to the one that becomes active. */
+export function useRevealActiveTab(active: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the strip, outside React, to the tab that became active
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
+  return ref;
 }
 
 /** On a tablist: the arrows, Home and End move focus between its tabs; a tab activates itself. */
@@ -96,8 +106,10 @@ export function FileTab(props: {
 }) {
   const { resolvedTheme } = useTheme();
   const name = fileName(props.surface);
+  const ref = useRevealActiveTab(props.active);
   return (
     <div
+      ref={ref}
       role="tab"
       aria-label={name}
       aria-selected={props.active}
@@ -109,7 +121,7 @@ export function FileTab(props: {
         if (event.button === 1) props.onClose();
       }}
       onKeyDown={(event) => activateOnKey(event, props.onActivate)}
-      className={cn(TAB_CLASS, "max-w-44 min-w-20", tabStateClass(props.active))}
+      className={cn(TAB_CLASS, "max-w-44", tabStateClass(props.active))}
     >
       <span className="relative flex shrink-0">
         <PierreEntryIcon
@@ -148,16 +160,18 @@ export function MainFileTabs(props: {
 }) {
   const chatActive = props.activeFileId === null;
   const title = props.title.trim() || "Thread";
+  const chatRef = useRevealActiveTab(chatActive);
   return (
     <div role="tablist" aria-label="Open tabs" className={STRIP_CLASS} onKeyDown={moveTabFocus}>
       <div
+        ref={chatRef}
         role="tab"
         aria-label={title}
         aria-selected={chatActive}
         tabIndex={chatActive ? 0 : -1}
         onClick={props.onShowChat}
         onKeyDown={(event) => activateOnKey(event, props.onShowChat)}
-        className={cn(TAB_CLASS, "w-40 min-w-24 pr-2.5", tabStateClass(chatActive))}
+        className={cn(TAB_CLASS, "w-40 pr-2.5", tabStateClass(chatActive))}
       >
         <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
         <Tooltip>

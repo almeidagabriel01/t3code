@@ -65,6 +65,7 @@ import {
   TAB_CLASS,
   TabCloseButton,
   tabStateClass,
+  useRevealActiveTab,
 } from "./MainFileTabs";
 import {
   dropThreadContext,
@@ -390,9 +391,7 @@ function ThreadTabBlock(props: {
   return (
     <div
       {...threadTabProps(props.tabKey)}
-      className="relative flex shrink items-stretch gap-px not-first:before:pointer-events-none not-first:before:absolute not-first:before:inset-y-2 not-first:before:-left-0.5 not-first:before:w-px not-first:before:bg-foreground/10"
-      // Its tabs' min widths (min-w-24, min-w-20 and gap-px), so tabs shrink before the strip scrolls.
-      style={{ minWidth: `calc(6rem + ${files.length} * (5rem + 1px))` }}
+      className="relative flex shrink-0 items-stretch gap-px not-first:before:pointer-events-none not-first:before:absolute not-first:before:inset-y-2 not-first:before:-left-0.5 not-first:before:w-px not-first:before:bg-foreground/10"
     >
       <ThreadTab
         tabKey={props.tabKey}
@@ -445,6 +444,7 @@ function ThreadTab(props: {
   const shell = useQuietThreadShell(ref);
   const status = useThreadTabStatus(props.tabKey);
   const navigateToThreadKey = useNavigateToThreadKey();
+  const tabRef = useRevealActiveTab(props.active);
   const deleted = shell?.deletedAt != null;
   const title = shell?.title.trim() || "Thread";
   const close = () => props.onClose(props.tabKey);
@@ -455,6 +455,7 @@ function ThreadTab(props: {
   };
   return (
     <div
+      ref={tabRef}
       role="tab"
       aria-label={title}
       aria-selected={props.active}
@@ -473,7 +474,7 @@ function ThreadTab(props: {
       onPointerDown={(event) => {
         if (ref) startThreadTabDrag(event.nativeEvent, ref, title, props.projectKey);
       }}
-      className={cn(TAB_CLASS, "w-40 min-w-24", tabStateClass(props.active))}
+      className={cn(TAB_CLASS, "w-40", tabStateClass(props.active))}
     >
       <span className="relative flex shrink-0">
         <MessageSquareIcon aria-hidden className="size-3.5" />

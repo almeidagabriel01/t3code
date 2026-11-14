@@ -256,6 +256,26 @@ describe("thread tabs", () => {
     expect(workspace()?.groups[0]?.tabs).toEqual(["env:b"]);
   });
 
+  it("keeps tab names readable in a narrow row, scrolling to the active tab", async () => {
+    await setup({
+      ...sideBySide(),
+      groups: [{ id: "main", tabs: ["env:a", "env:b"], active: "env:a" }],
+      layout: leaf("main"),
+    });
+    for (const name of ["one.ts", "two.ts", "three.ts", "four.ts", "Transcript.tsx"]) {
+      panels().openFile(ref("a"), `src/${name}`);
+    }
+    await using screen = await render(<Harness route="a" width={420} />, { router: "/env/a" });
+    const active = screen.getByRole("tab", { name: "Transcript.tsx" });
+    await expect.element(active).toHaveAttribute("aria-selected", "true");
+    const labels = screen.getByRole("tablist").element().querySelectorAll(".truncate");
+    for (const label of labels) expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+    const strip = screen.getByRole("tablist").element().getBoundingClientRect();
+    const tab = active.element().getBoundingClientRect();
+    expect(tab.left).toBeGreaterThanOrEqual(strip.left);
+    expect(tab.right).toBeLessThanOrEqual(strip.right + 1);
+  });
+
   it("closes a split group's shown file with Cmd+W before its thread", async () => {
     await setup(sideBySide());
     panels().openFile(ref("c"), "c.ts");
