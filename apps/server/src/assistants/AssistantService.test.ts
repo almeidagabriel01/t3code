@@ -1496,11 +1496,14 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       readSeq: 0,
       unreadCount: 0,
       working: false,
+      runningCount: 0,
       preview: null,
+      previewProjectId: null,
+      scopes: [],
     });
     yield* sql`INSERT INTO assistant_group_messages
-      (message_id, team_id, seq, author, kind, text, created_at)
-      VALUES ('m1', ${team.id}, 1, 'assistant', 'message', 'Done', '2026-01-01')`;
+      (message_id, team_id, seq, author, kind, text, request_id, created_at)
+      VALUES ('m1', ${team.id}, 1, 'assistant', 'message', 'Done', 'm1', '2026-01-01')`;
     yield* PubSub.takeAll(changes);
     // The snapshot arrives after the stream subscribed, so the refresh lands behind it.
     const events = yield* assistants.subscribe.pipe(
