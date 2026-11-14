@@ -25,6 +25,7 @@ import {
   assistantGroupMarkdownMentions,
   assistantGroupTextParts,
   assistantGroupPauseReasonLabel,
+  assistantGroupTaskReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
   assistantGroupRunningTasks,
@@ -200,6 +201,19 @@ describe("group feed", () => {
     assert.match(assistantGroupPauseReasonLabel("handoff_limit"), /since your last action/);
     assert.match(assistantGroupPauseReasonLabel("no_delivery"), /without a delivery/);
     assert.strictEqual(assistantGroupPauseReasonLabel("brand_new"), "Paused");
+    for (const [task, label] of [
+      [
+        { status: "failed", reason: "thread_unavailable" },
+        "Couldn't open the member's conversation",
+      ],
+      [{ status: "failed", reason: "could_not_start" }, "Couldn't start the task"],
+      [{ status: "failed", reason: "brand_new" }, null],
+      [{ status: "failed", reason: null }, null],
+      [{ status: "paused", reason: "stopped" }, "Stopped"],
+      [{ status: "running", reason: "stopped" }, null],
+    ] as const) {
+      assert.strictEqual(assistantGroupTaskReasonLabel(task), label);
+    }
     assert.strictEqual(assistantGroupPauseReasonLabel(null), "Paused");
   });
 });

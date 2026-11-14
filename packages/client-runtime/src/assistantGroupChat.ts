@@ -297,6 +297,23 @@ export function assistantGroupPauseReasonLabel(reason: string | null): string {
   return (reason !== null ? PAUSE_REASON_LABEL[reason] : undefined) ?? "Paused";
 }
 
+const FAILURE_REASON_LABEL: Record<string, string> = {
+  thread_unavailable: "Couldn't open the member's conversation",
+  could_not_start: "Couldn't start the task",
+};
+
+/** The words under a paused or failed task card; null when there is nothing to add. */
+export function assistantGroupTaskReasonLabel(task: {
+  readonly status: string;
+  readonly reason: string | null;
+}): string | null {
+  if (task.status === "paused") return assistantGroupPauseReasonLabel(task.reason);
+  if (task.status === "failed" && task.reason !== null) {
+    return FAILURE_REASON_LABEL[task.reason] ?? null;
+  }
+  return null;
+}
+
 /** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
 export function assistantGroupWaitingReason(
   task: Pick<AssistantGroupTask, "status" | "reason">,
