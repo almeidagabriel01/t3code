@@ -29,6 +29,8 @@ import {
 } from "./admission.ts";
 import {
   commitOnly,
+  FOLDER_FLAGS,
+  lineParts,
   nameOf,
   readLine,
   TYPE_CHECKERS,
@@ -314,13 +316,82 @@ const tieOf = (
 
 const SHELL_PROGRAMS = new Set(["sh", "bash", "zsh", "dash"]);
 
-/** The text a shell part runs with `-c`, which goes to Linux whole; undefined for anything else. */
-const shellTextOf = (part: Part) => {
-  if (!SHELL_PROGRAMS.has(part.program)) return undefined;
-  const flag = part.values.findIndex(
-    (value, at) => at > part.programAt && /^-[a-z]*c[a-z]*$/.test(value),
+const programName = (path: string | undefined) => path?.split("/").pop() ?? "";
+
+/** Where the text a shell runs with `-c` sits in its words (program first), or -1. */
+const shellTextAt = (values: ReadonlyArray<string>) => {
+  if (!SHELL_PROGRAMS.has(programName(values[0]))) return -1;
+  const flag = values.findIndex((value, at) => at > 0 && /^-[a-z]*c[a-z]*$/.test(value));
+  return flag < 0 || values[flag + 1] === undefined ? -1 : flag + 1;
+};
+
+/** The text a shell runs with `-c` (words program first), which goes to Linux whole. */
+export const shellTextOf = (values: ReadonlyArray<string>) => values[shellTextAt(values)];
+
+/** Where a shell line's leading `cd` folders (from `lineParts`) land, starting at `cwd`. */
+export const startFolder = (dirs: ReadonlyArray<string>, cwd: string, home: string) =>
+  dirs.reduce((at, dir) => resolvePath(at, dir.replace(/^~(?=$|\/)/, home)), cwd);
+
+/**
+ * A part that names its own folder (a folder flag such as `pnpm -C`, or a `sh -c` text's leading
+ * `cd`s) in another checkout than `cwd`'s: that folder, and its words (program first) with the
+ * folder taken out, so Linux syncs that checkout and runs it from there. Null otherwise.
+ */
+export const movedPart = (
+  values: ReadonlyArray<string>,
+  cwd: string,
+  home: string,
+  rootOf: (cwd: string) => string | null,
+): { readonly cwd: string; readonly values: ReadonlyArray<string> } | null => {
+  let folder: string | undefined;
+  let rest = values;
+  const text = shellTextAt(values);
+  if (text > 0) {
+    const { dirs, command } = lineParts(values[text]!);
+    if (dirs.length > 0) {
+      folder = startFolder(dirs, cwd, home);
+      rest = values.with(text, command);
+    }
+  } else {
+    // ponytail: read before the subcommand only, as these tools take them.
+    const flags = FOLDER_FLAGS[programName(values[0])] ?? [];
+    for (let at = 1; at < values.length; at++) {
+      const value = values[at]!;
+      const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
+      if (flag !== undefined) {
+        const joined = value !== flag;
+        folder = joined ? value.slice(flag.length + 1) : values[at + 1];
+        rest = joined ? values.with(at, `${flag}=.`) : values.with(at + 1, ".");
+        if (folder !== undefined) folder = resolvePath(cwd, folder);
+        break;
+      }
+      if (!value.startsWith("-")) break;
+    }
+  }
+  if (folder === undefined) return null;
+  const root = rootOf(folder);
+  return root !== null && root !== rootOf(cwd) ? { cwd: folder, values: rest } : null;
+};
+
+/**
+ * How Linux judges a script or `sh -c` text it runs whole, from `cwd` in the copy of `root`: like a
+ * line, with a folder outside that checkout missing there, and any git step needing this Mac.
+ */
+export const bodyVerdict = (
+  body: string,
+  cwd: string,
+  root: string | null,
+  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  where?: RunnerWhere,
+): Verdict => {
+  const verdict = eligibilityOf(
+    { label: body, cwd, ...(where === undefined ? {} : { where }) },
+    { ...context, rootOf: (dir) => (root !== null && inside(dir, root) ? root : null) },
   );
-  return flag < 0 ? undefined : part.values[flag + 1];
+  if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") return verdict;
+  return readLine(body).parts.some((part) => part.program === "git")
+    ? { eligibility: "mac-only", reason: NEEDS_GIT }
+    : verdict;
 };
 
 const literalValue = (word: Word, vars: ReadonlyMap<string, string | null>, cwd: string) => {
@@ -366,22 +437,34 @@ export const eligibilityOf = (
     const { command } = part;
     const cwd = cwdAt(command.scope);
     if (work.has(part)) {
-      const tie = tieOf(part, cwd, vars, rootOf, config);
+      // A part naming a folder in another checkout runs from there (`linux-part` does the same).
+      const moved =
+        cwd === null
+          ? null
+          : movedPart(
+              part.command.words
+                .slice(part.remoteAt)
+                .map((word) => literalValue(word, vars, cwd) ?? word.value),
+              cwd,
+              home,
+              rootOf,
+            );
+      const at = moved?.cwd ?? cwd;
+      const tie = tieOf(part, at, vars, rootOf, config);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
       if (part.script?.body === null) return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
       // A script or `sh -c` text runs there whole: one level of it is judged like a line.
-      const body = part.script?.body ?? shellTextOf(part);
+      const body =
+        part.script?.body ?? shellTextOf(moved?.values ?? part.values.slice(part.programAt));
       if (body !== undefined) {
         // It runs in this part's copy, so a folder outside that checkout is not there.
-        const outer = cwd === null ? null : rootOf(cwd);
-        const inner = eligibilityOf(
-          {
-            label: body,
-            cwd: cwd ?? entry.cwd,
-            ...(entry.where === undefined ? {} : { where: entry.where }),
-          },
-          { ...context, rootOf: (dir) => (outer !== null && inside(dir, outer) ? outer : null) },
+        const inner = bodyVerdict(
+          body,
+          at ?? entry.cwd,
+          at === null ? null : rootOf(at),
+          context,
+          entry.where,
         );
         if (inner.eligibility === "mac-only" || inner.eligibility === "exclusive") return inner;
         if (inner.eligibility === "not-listed") notListed ??= inner.reason;

@@ -354,6 +354,78 @@ describe("t3 heavy", () => {
       );
     });
 
+    it.each([
+      // A folder flag, or a `sh -c` text's leading `cd`, in another checkout (a worktree here).
+      [
+        (o: string) => `pnpm -C ${o}/apps/server exec vp test run x.test.ts`,
+        "pnpm|-C|.|exec|vp|test|run|x.test.ts|",
+        "apps/server",
+      ],
+      [
+        (o: string) => `pnpm --dir=${o} exec vp test run x.test.ts`,
+        "pnpm|--dir=.|exec|vp|test|run|x.test.ts|",
+        "",
+      ],
+      [
+        (o: string) => `O=${o}; sh -c "cd $O/apps/server && vp test run x.test.ts"`,
+        "bash|-c|vp test run x.test.ts|",
+        "apps/server",
+      ],
+      [
+        () => "sh -c 'cd ~/other/apps/server && vp test run x.test.ts'",
+        "bash|-c|vp test run x.test.ts|",
+        "apps/server",
+      ],
+    ])(
+      "a part naming a folder in another checkout runs on Linux from there",
+      async (line, argv, sub) => {
+        const { dir, env } = setup(
+          [
+            `printf '${M} phase=running pgid=4\\n' >&2`,
+            `printf '%s|' "$@"; [ -e made ] && echo " in $(pwd -P) after made" || echo " in $(pwd -P)"`,
+            `printf '${M} exit=0\\n' >&2`,
+          ].join("\n"),
+        );
+        const home = tempDir();
+        const other = NodePath.join(home, "other");
+        const folder = NodePath.join(other, sub);
+        NodeFS.mkdirSync(NodePath.join(other, "apps", "server"), { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(other, ".git"),
+          `gitdir: ${home}/main/.git/worktrees/other\n`,
+        );
+        // The step chained before it runs here first, in that folder.
+        const full = `touch ${NodePath.join(folder, "made")} && ${line(other)}`;
+        const run = heavyHere(dir, ["/bin/sh", "-c", full], { ...env, HOME: home });
+        expect(await run.exited).toBe(0);
+        expect(run.stdout()).toBe(`${argv} in ${NodeFS.realpathSync(folder)} after made\n`);
+      },
+    );
+
+    it.each([
+      // Two unrelated checkouts: neither copy has both, which the queue sees before Linux.
+      [
+        (o: string, x: string) => `pnpm -C ${o} exec vp test run ${x}/a.test.ts`,
+        "pnpm on mac: -C",
+        "",
+      ],
+      // Expanded, the text's folder is in no checkout: Linux would not have it.
+      [
+        (_: string, x: string) => `D=${x}; sh -c "cd $D && vp test run"`,
+        "vp on mac: test run",
+        "Runs outside a git checkout",
+      ],
+    ])("keeps %# on this Mac when Linux can't have all its folders", async (line, ran, why) => {
+      const { dir, env } = setup(echoArgs);
+      script(NodePath.join(dir, "bin"), "pnpm", 'echo "pnpm on mac: $*"');
+      const other = tempDir();
+      NodeFS.mkdirSync(NodePath.join(other, ".git"));
+      const run = heavyHere(dir, ["/bin/sh", "-c", line(other, tempDir())], env);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toContain(ran);
+      expect(run.stderr()).toContain(why);
+    });
+
     it("sends only the work to Linux: its log stays here, free of markers", async () => {
       const { dir, env } = setup(echoArgs);
       const log = NodePath.join(dir, "out.log");
@@ -1036,12 +1108,43 @@ describe("t3 heavy", () => {
         "linux",
         "X sh -c 'cd /w/repo/apps/server && vp test run'",
       ],
-      ["remoto sh -c 'cd ~/code && vp test run'", "Runs outside a git checkout: /home/me/code"],
+      ["remoto sh -c 'cd ~/code && vp test run'", "linux", "X sh -c 'cd ~/code && vp test run'"],
       ["sh -c 'vp test run /w/other/a.test.ts'", `${OUTSIDE}/w/other/a.test.ts`],
       ["sh -c 'echo a | vp test run'", "Reads its input from this Mac: vp test run"],
       ["L=/private/tmp/r.json; vp test run --outputFile=$L", `${OUTSIDE}/private/tmp/r.json`],
       ["vp test run ../../elsewhere/a.test.ts", `${OUTSIDE}/elsewhere/a.test.ts`],
       ["cd /nowhere && vp test run", "Runs outside a git checkout: /nowhere"],
+      // A part naming a folder in another checkout runs from that one; `linux-part` moves it.
+      [
+        "cd /w/other && git checkout --ours a && cd apps/server && pnpm exec vp test run a.test.ts",
+        "linux",
+        "git checkout --ours a && cd apps/server && X pnpm exec vp test run a.test.ts",
+        "/w/other",
+      ],
+      [
+        "git -C /w/other checkout --ours a && cd /w/other/apps/server && vp test run",
+        "linux",
+        "git -C /w/other checkout --ours a && cd /w/other/apps/server && X vp test run",
+      ],
+      [
+        "pnpm -C /w/other/apps/server exec vp test run",
+        "linux",
+        "X pnpm -C /w/other/apps/server exec vp test run",
+      ],
+      ["pnpm --dir=/w/other exec vp test run", "linux", "X pnpm --dir=/w/other exec vp test run"],
+      ["pnpm -C ~/code exec vp test run", "linux", "X pnpm -C ~/code exec vp test run"],
+      [
+        "pnpm -C /w/repo/apps/web exec vp test run",
+        "linux",
+        "X pnpm -C /w/repo/apps/web exec vp test run",
+      ],
+      ["pnpm -C /w/other exec vp test run /abs/a.test.ts", `${OUTSIDE}/abs/a.test.ts`],
+      ["sh -c 'cd /w/other && vp test run'", "linux", "X sh -c 'cd /w/other && vp test run'"],
+      ["sh -c 'cd /w/other && vp test run /abs/a.test.ts'", `${OUTSIDE}/abs/a.test.ts`],
+      ["sh -c 'cd /nowhere && vp test run'", "Runs outside a git checkout: /nowhere"],
+      // Linux has no git: a git step inside a text it runs whole keeps the text here.
+      ["sh -c 'cd /w/other && git checkout --ours a && vp test run'", NEEDS_GIT],
+      ["sh -c 'git stash && vp test run'", NEEDS_GIT],
       // The rest of what keeps work here, each with its reason.
       ["git commit -m 'fix: t3 heavy'", COMMITS],
       ['git add a && git commit -m "x" && vp test run', COMMITS],
