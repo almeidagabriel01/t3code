@@ -12,6 +12,7 @@ import type {
 
 import {
   assistantGroupActivity,
+  assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
   applyAssistantGroupHistory,
   applyAssistantGroupsEvent,
@@ -481,6 +482,14 @@ it.each([
   ["needs-project", null, "Needs project"],
 ] as const)("assistantGroupActivity(%s)", (status, expected, label) => {
   assert.deepStrictEqual(assistantGroupActivity(status), { title: "", status: expected, label });
+});
+
+it.each([
+  [{}, "Worked"],
+  [{ workedMs: 42_000 }, "Worked for 42s"],
+  [{ workedMs: 125_000 }, "Worked for 2m 5s"],
+])("assistantGroupWorkedLabel(%o)", (message, label) => {
+  assert.strictEqual(assistantGroupWorkedLabel(message), label);
 });
 
 it.each([

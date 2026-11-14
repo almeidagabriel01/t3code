@@ -20,6 +20,7 @@ import {
   type AssistantGroupRequestBlock,
   type AssistantGroupRequestStatus,
   assistantGroupMessageExcerpt,
+  assistantGroupWorkedLabel,
   assistantGroupActivity,
   assistantGroupAnswerRoot,
 } from "@t3tools/client-runtime/assistantGroupChat";
@@ -584,10 +585,9 @@ function FeedRow(
         </View>
         {quoted("start")}
         {answered === undefined ? null : (
-          // ponytail: plain "Worked" until answers carry how long the member worked.
           <View className="flex-row items-center">
             <WorkedForFold
-              label="Worked"
+              label={assistantGroupWorkedLabel(message)}
               expanded={workedOpen}
               loading={false}
               error={null}

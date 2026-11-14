@@ -20,6 +20,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
@@ -649,6 +650,15 @@ export function assistantGroupActivity(
         ? ACTIVITY_LABEL[status]
         : TASK_EVENT_STATUS_LABEL[eventStatus],
   };
+}
+
+/** An answer's Worked fold label, as the thread words a finished turn. */
+export function assistantGroupWorkedLabel(
+  message: Pick<AssistantGroupMessage, "workedMs">,
+): string {
+  return message.workedMs === undefined
+    ? "Worked"
+    : `Worked for ${formatDuration(message.workedMs)}`;
 }
 
 /**

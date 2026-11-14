@@ -23,6 +23,7 @@ import {
   type AssistantGroupRequestStatus,
   assistantGroupMentionHref,
   assistantGroupMessageExcerpt,
+  assistantGroupWorkedLabel,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import type {
@@ -629,9 +630,8 @@ function FeedRow(props: {
         <Who member={author} fallback={name} createdAt={message.createdAt} />
         {replyLine === null ? null : <div className="-ms-1.5">{replyLine}</div>}
         {answered === undefined ? null : (
-          // ponytail: plain "Worked" until answers carry how long the member worked.
           <WorkedForFold
-            label="Worked"
+            label={assistantGroupWorkedLabel(message)}
             expanded={workedOpen}
             loading={false}
             error={null}
