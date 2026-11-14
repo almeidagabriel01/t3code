@@ -17,7 +17,14 @@ import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 const layer = ChannelOutbox.layer.pipe(
-  Layer.provideMerge(projectsLayer({ acme: "Acme <App>" })),
+  Layer.provideMerge(
+    projectsLayer({
+      acme: "Acme <App>",
+      lined: "Acme\n\tMobile   App ",
+      blank: " \n\t ",
+      leaky: "Acme password=hunter2x9",
+    }),
+  ),
   Layer.provideMerge(ChannelTransport.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
@@ -80,6 +87,9 @@ it.effect.each([
   ["the assistants home", "scratch", undefined],
   ["an unknown or deleted project", "gone", undefined],
   ["no project", null, undefined],
+  ["a title written over several lines", "lined", "Acme Mobile App"],
+  ["a title of only whitespace", "blank", undefined],
+  ["a title holding a credential", "leaky", "Acme password=[redacted]"],
 ])("stores the project title for %s", ([, projectId, title]) =>
   Effect.gen(function* () {
     const outbox = yield* ChannelOutbox.ChannelOutbox;

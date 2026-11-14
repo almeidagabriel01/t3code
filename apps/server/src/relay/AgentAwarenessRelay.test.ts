@@ -49,6 +49,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
@@ -355,6 +356,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
       listShells: unused,
       getById: () => Effect.succeedSome(project),
     }),
+    Effect.provideService(ManagedProjectFolders, {
+      namedProjectsRoot: "",
+      isAssistantHomeProject: (id) => Effect.succeed(id === "home-project"),
+    } as never),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
@@ -709,6 +714,17 @@ describe("AgentAwarenessRelay", () => {
         assert.equal(pushed[0]?.threadTitle, "Release crew");
         assert.equal(pushed[0]?.projectTitle, "[Project] Shipped the release");
         assert.equal(pushed[0]?.deepLink, "/assistant-groups/relay-environment/team-1");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("names no project for work in the assistants home", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send } = yield* setup;
+        yield* relay.publishThread(GROUP_THREAD);
+        yield* send({ type: "teamUpserted", team: team(false, null, "home-project") });
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(alerts(publications)[0]?.projectTitle, "Shipped the release");
       }).pipe(Effect.scoped),
     );
 

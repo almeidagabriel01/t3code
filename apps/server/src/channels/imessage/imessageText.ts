@@ -2,6 +2,7 @@ import type { ChannelChoice } from "@t3tools/contracts";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { hostedThreadLink, replaceThreadLinks } from "@t3tools/shared/threadLinks";
 
+import { channelProjectTitle } from "../channelRedaction.ts";
 import { channelStrings, type ResolvedChannelLanguage } from "../channelStrings.ts";
 
 /** Characters per message; longer replies are split at paragraph boundaries. */
@@ -104,7 +105,8 @@ export function formatChannelMessages(
   const choices =
     input.choices !== undefined && input.choices.length > 0 ? input.choices : undefined;
   const room = maxMessages - (choices === undefined ? 0 : 1);
-  const tag = input.project === undefined ? "" : projectNoticePrefix(input.project, "");
+  const project = channelProjectTitle(input.project);
+  const tag = project === undefined ? "" : projectNoticePrefix(project, "");
   const limit = Math.max(1, chunkLimit - tag.length);
   const body = chunkParagraphs(toPlainText(input.text), limit);
   const kept = body.length <= room ? body : [...body.slice(0, room - 1), strings.truncatedNote];

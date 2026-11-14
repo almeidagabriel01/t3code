@@ -57,6 +57,8 @@ import {
 import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { channelProjectTitleOf } from "../channels/channelRedaction.ts";
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 
@@ -410,6 +412,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
+  const folders = yield* ManagedProjectFolders;
   const sql = yield* SqlClient.SqlClient;
   const decisions = yield* DecisionService.DecisionService;
   const assistants = yield* AssistantService.AssistantService;
@@ -1020,21 +1023,18 @@ export const make = Effect.gen(function* () {
     if (rows[0]?.thread_id == null) return;
     const threadId = ThreadId.make(rows[0].thread_id);
     const preview = (team.chat?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
-    const previewProjectId = team.chat?.previewProjectId;
-    const project =
-      previewProjectId == null
-        ? Option.none<Project>()
-        : yield* projects
-            .getById(previewProjectId)
-            .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
+    const projectTitle = yield* channelProjectTitleOf(
+      { projects, folders },
+      team.chat?.previewProjectId,
+    );
     groupFinishes.set(threadId, {
       title: team.name,
       preview:
         preview === ""
           ? team.name
-          : Option.isSome(project)
-            ? projectNoticePrefix(project.value.title, preview)
-            : preview,
+          : projectTitle === undefined
+            ? preview
+            : projectNoticePrefix(projectTitle, preview),
       deepLink: buildAssistantGroupDeepLink({
         environmentId: yield* serverEnvironment.getEnvironmentId,
         teamId: team.id,

@@ -20,6 +20,7 @@ import {
   type ChannelStrings,
   type ResolvedChannelLanguage,
 } from "../channelStrings.ts";
+import { channelProjectTitle } from "../channelRedaction.ts";
 import { numberedChoices } from "../imessage/imessageText.ts";
 
 /**
@@ -575,9 +576,10 @@ function compose(
     input.choices !== undefined && input.choices.length > 0
       ? plainUnit(numberedChoices(input.choices, strings.replyWithNumber))
       : undefined;
+  const sender = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
+  const project = channelProjectTitle(input.project);
   const prefix =
-    (input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `) +
-    (input.project === undefined ? "" : escapeHtml(projectNoticePrefix(input.project, "")));
+    project === undefined ? sender : sender + escapeHtml(projectNoticePrefix(project, ""));
   const all = choices === undefined ? units : [...units, choices];
   if (all.length === 0) return [];
   const whole = all.map((unit) => unit.html).join("\n\n");

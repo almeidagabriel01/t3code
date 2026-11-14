@@ -14,7 +14,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { redactChannelText } from "./channelRedaction.ts";
+import { channelProjectTitleOf, redactChannelText } from "./channelRedaction.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 const MAX_ATTEMPTS = 10;
@@ -78,26 +78,15 @@ const make = Effect.gen(function* () {
 
   const wake = Queue.offer(wakeups, undefined).pipe(Effect.asVoid);
 
-  const projectTitle = (projectId: ProjectId | null | undefined) =>
-    projectId === null || projectId === undefined
-      ? Effect.undefined
-      : Effect.gen(function* () {
-          if (yield* folders.isAssistantHomeProject(projectId)) return undefined;
-          const project = yield* projects.getById(projectId);
-          return Option.isSome(project) ? project.value.title : undefined;
-        }).pipe(Effect.catchCause(() => Effect.undefined));
-
   const enqueue: ChannelOutbox["Service"]["enqueue"] = Effect.fn("ChannelOutbox.enqueue")(
     function* ({ projectId, ...written }) {
       // The one way out to a chat app: whoever wrote it, nothing recognizable as a credential
       // is stored here or reaches a third-party server.
-      const title = yield* projectTitle(projectId);
+      const title = yield* channelProjectTitleOf({ projects, folders }, projectId);
       const message = {
         ...written,
         text: redactChannelText(written.text),
-        ...(title === undefined || title.trim() === ""
-          ? {}
-          : { project: redactChannelText(title) }),
+        ...(title === undefined ? {} : { project: title }),
         ...(written.choices === undefined
           ? {}
           : {

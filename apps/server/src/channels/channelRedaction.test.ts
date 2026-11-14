@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { containsSecret, redactChannelText } from "./channelRedaction.ts";
+import { channelProjectTitle, containsSecret, redactChannelText } from "./channelRedaction.ts";
 
 describe("redactChannelText", () => {
   it.each([
@@ -49,4 +49,17 @@ describe("redactChannelText", () => {
       expect(redactChannelText(input)).toBe(input);
     },
   );
+});
+
+describe("channelProjectTitle", () => {
+  it.each([
+    ["Acme <App>", "Acme <App>"],
+    ["Acme\n\tMobile   App ", "Acme Mobile App"],
+    [" \n\t ", undefined],
+    ["", undefined],
+    [undefined, undefined],
+    ["Acme password=hunter2x9", "Acme password=[redacted]"],
+  ])("%j shows as %j", (title, shown) => {
+    expect(channelProjectTitle(title)).toBe(shown);
+  });
 });

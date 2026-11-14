@@ -148,6 +148,10 @@ describe("formatTelegramMessages conversion", () => {
       formatTelegramMessages({ text: "hi", senderName: "Jarvis", project: "a<b" })[0]!.html,
     ).toBe("<b>Jarvis:</b> [a&lt;b] hi");
     expect(formatTelegramMessages({ text: "hi", project: "app" })[0]!.html).toBe("[app] hi");
+    expect(formatTelegramMessages({ text: "hi", project: "My\n\tapp " })[0]!.html).toBe(
+      "[My app] hi",
+    );
+    expect(formatTelegramMessages({ text: "hi", project: " \n " })[0]!.html).toBe("hi");
     expect(formatTelegramMessages({ text: "hi", senderName: "Jarvis" })[0]!.html).toBe(
       "<b>Jarvis:</b> hi",
     );

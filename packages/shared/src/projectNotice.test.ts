@@ -7,6 +7,7 @@ describe("projectNoticePrefix", () => {
     ["t3code", "Done.", "[t3code] Done."],
     ["My app", "", "[My app] "],
     ["a<b", "x", "[a<b] x"],
+    ["My\n\tapp  core ", "x", "[My app core] x"],
   ])("%s + %j", (title, text, expected) => {
     expect(projectNoticePrefix(title, text)).toBe(expected);
   });
