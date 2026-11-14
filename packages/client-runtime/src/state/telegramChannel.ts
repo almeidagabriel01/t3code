@@ -27,6 +27,7 @@ export function applyTelegramStatusEvent(
     lastDeliveryError: _lastDeliveryError,
     botUsername: _botUsername,
     pendingSenders: _pendingSenders,
+    undeliveredCount: _undeliveredCount,
     ...rest
   } = settings;
   const botUsername = event.botUsername ?? settings.botUsername;
@@ -39,6 +40,7 @@ export function applyTelegramStatusEvent(
       : { lastDeliveryError: event.lastDeliveryError }),
     ...(botUsername === undefined ? {} : { botUsername }),
     ...(event.pendingSenders === undefined ? {} : { pendingSenders: event.pendingSenders }),
+    ...(event.undeliveredCount === undefined ? {} : { undeliveredCount: event.undeliveredCount }),
   };
 }
 
@@ -66,8 +68,28 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
         key: ({ environmentId }: { environmentId: string }) => environmentId,
       },
     }),
+    resendUndelivered: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:telegram-channel:resend-undelivered",
+      tag: WS_METHODS.telegramChannelResendUndelivered,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }: { environmentId: string }) => environmentId,
+      },
+    }),
   };
 }
+
+/** The notice beside the resend action; null when every reply arrived. */
+export const telegramUndeliveredLabel = (
+  settings: Pick<TelegramChannelSettings, "undeliveredCount">,
+): string | null => {
+  const count = settings.undeliveredCount ?? 0;
+  if (count === 0) return null;
+  return count === 1
+    ? "1 reply did not reach Telegram."
+    : `${count} replies did not reach Telegram.`;
+};
 
 /** What a person types for a Telegram user id: digits only, as the server stores it. */
 export const compactTelegramUserId = (value: string) => value.replace(/\D/g, "");

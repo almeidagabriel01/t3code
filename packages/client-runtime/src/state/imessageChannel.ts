@@ -19,7 +19,12 @@ export function applyImessageStatusEvent(
   settings: ImessageChannelSettings,
   event: ImessageChannelStatusEvent,
 ): ImessageChannelSettings {
-  const { lastError: _lastError, lastDeliveryError: _lastDeliveryError, ...rest } = settings;
+  const {
+    lastError: _lastError,
+    lastDeliveryError: _lastDeliveryError,
+    undeliveredCount: _undeliveredCount,
+    ...rest
+  } = settings;
   return {
     ...rest,
     status: event.status,
@@ -27,6 +32,7 @@ export function applyImessageStatusEvent(
     ...(event.lastDeliveryError === undefined
       ? {}
       : { lastDeliveryError: event.lastDeliveryError }),
+    ...(event.undeliveredCount === undefined ? {} : { undeliveredCount: event.undeliveredCount }),
   };
 }
 
@@ -60,8 +66,28 @@ export function createImessageChannelEnvironmentAtoms<R, E>(
         key: ({ environmentId }: { environmentId: string }) => environmentId,
       },
     }),
+    resendUndelivered: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:imessage-channel:resend-undelivered",
+      tag: WS_METHODS.imessageChannelResendUndelivered,
+      scheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }: { environmentId: string }) => environmentId,
+      },
+    }),
   };
 }
+
+/** The notice beside the resend action; null when every reply arrived. */
+export const imessageUndeliveredLabel = (
+  settings: Pick<ImessageChannelSettings, "undeliveredCount">,
+): string | null => {
+  const count = settings.undeliveredCount ?? 0;
+  if (count === 0) return null;
+  return count === 1
+    ? "1 reply did not reach Messages."
+    : `${count} replies did not reach Messages.`;
+};
 
 const CALLING_CODES: Readonly<Record<string, string>> = {
   AR: "54",
