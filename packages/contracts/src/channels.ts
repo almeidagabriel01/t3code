@@ -79,6 +79,8 @@ export const ChannelOutboundMessage = Schema.Struct({
   choices: Schema.optional(Schema.Array(ChannelChoice)),
   /** The language of T3's own phrases the transport adds, such as the numbered-choices hint. */
   language: Schema.optional(Schema.Literals(["en", "pt-BR"])),
+  /** The project the message is about, shown before the text; absent for none, the assistants home or a deleted project. */
+  project: Schema.optional(TrimmedNonEmptyString),
 });
 export type ChannelOutboundMessage = typeof ChannelOutboundMessage.Type;
 

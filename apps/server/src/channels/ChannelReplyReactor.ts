@@ -4,6 +4,8 @@ import {
   type ChannelReplyAddress,
   type Decision,
   type OrchestrationV2DomainEvent,
+  type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -91,6 +93,13 @@ const make = Effect.gen(function* () {
         };
   });
 
+  /** The thread's project; none when it cannot be read. */
+  const projectOf = (threadId: string) =>
+    engine.getThreadShell(threadId as ThreadId).pipe(
+      Effect.map((shell): ProjectId | null => shell?.projectId ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+
   const postRun = Effect.fn("ChannelReplyReactor.postRun")(function* (
     run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }>["payload"],
   ) {
@@ -123,6 +132,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: target.address,
+      projectId: yield* projectOf(run.threadId),
       senderName: target.assistantName,
       text,
       ...(answer === undefined ? {} : { markdown: true }),
@@ -175,6 +185,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
+          projectId: yield* projectOf(decision.fromThreadId),
           senderName: target.assistantName,
           text: [shown.title, context.text, link].filter((part) => part !== "").join("\n\n"),
           ...(context.cut
@@ -200,6 +211,7 @@ const make = Effect.gen(function* () {
       yield* outbox.enqueue({
         deliveryId: `channel-decision-settled:${decision.id}`,
         destination,
+        projectId: yield* projectOf(decision.fromThreadId),
         senderName,
         // The settled line reads "<title> — <outcome>"; chat has no other place to put the title.
         // oxlint-disable-next-line t3code/no-em-dash-copy -- fixed product format

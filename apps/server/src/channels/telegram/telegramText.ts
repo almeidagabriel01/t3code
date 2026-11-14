@@ -12,6 +12,7 @@ import {
   type RootContent,
   type Table,
 } from "@t3tools/shared/markdownAst";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 import {
@@ -62,6 +63,8 @@ export interface TelegramMessageInput {
   readonly text: string;
   /** Starts the first line of every part; absent for the bot's own notices. */
   readonly senderName?: string | undefined;
+  /** The project the message is about; shown after the sender on every part. */
+  readonly project?: string | undefined;
   /** True when an assistant wrote the text; T3's own phrases are never read as Markdown. */
   readonly markdown?: boolean | undefined;
   readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
@@ -572,7 +575,9 @@ function compose(
     input.choices !== undefined && input.choices.length > 0
       ? plainUnit(numberedChoices(input.choices, strings.replyWithNumber))
       : undefined;
-  const prefix = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
+  const prefix =
+    (input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `) +
+    (input.project === undefined ? "" : escapeHtml(projectNoticePrefix(input.project, "")));
   const all = choices === undefined ? units : [...units, choices];
   if (all.length === 0) return [];
   const whole = all.map((unit) => unit.html).join("\n\n");

@@ -143,6 +143,16 @@ describe("formatTelegramMessages conversion", () => {
     ]);
   });
 
+  it("puts the project after the speaker, escaped, and nothing when absent", () => {
+    expect(
+      formatTelegramMessages({ text: "hi", senderName: "Jarvis", project: "a<b" })[0]!.html,
+    ).toBe("<b>Jarvis:</b> [a&lt;b] hi");
+    expect(formatTelegramMessages({ text: "hi", project: "app" })[0]!.html).toBe("[app] hi");
+    expect(formatTelegramMessages({ text: "hi", senderName: "Jarvis" })[0]!.html).toBe(
+      "<b>Jarvis:</b> hi",
+    );
+  });
+
   it("never reads T3's own phrases or names as markup", () => {
     expect(one("Title *x* <y> & [a](b)", { markdown: false, senderName: "a_b*<c>" })).toBe(
       "<b>a_b*&lt;c&gt;:</b> Title *x* &lt;y&gt; &amp; [a](b)",
@@ -175,12 +185,19 @@ const paragraphs = (count: number, size: number) =>
 describe("formatTelegramMessages size", () => {
   it("splits a long reply into numbered parts at block boundaries", () => {
     const text = paragraphs(6, 250).join("\n\n");
-    const pieces = formatTelegramMessages({ text, markdown: true, senderName: "Jarvis" });
+    const pieces = formatTelegramMessages({
+      text,
+      markdown: true,
+      senderName: "Jarvis",
+      project: "app",
+    });
     expect(pieces.length).toBeGreaterThan(1);
     expect(pieces.length).toBeLessThanOrEqual(TELEGRAM_MAX_PARTS);
     expectSendable(pieces);
     pieces.forEach((piece, index) =>
-      expect(piece.html.startsWith(`<b>Jarvis:</b> (${index + 1}/${pieces.length}) `)).toBe(true),
+      expect(piece.html.startsWith(`<b>Jarvis:</b> [app] (${index + 1}/${pieces.length}) `)).toBe(
+        true,
+      ),
     );
     const sent = pieces.map((piece) => piece.plain).join("\n");
     for (const paragraph of paragraphs(6, 250)) expect(sent).toContain(paragraph);

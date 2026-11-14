@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./projectNotice": {
+      "types": "./src/projectNotice.ts",
+      "import": "./src/projectNotice.ts"
+    },
     "./heavyEntryName": {
       "types": "./src/heavyEntryName.ts",
       "import": "./src/heavyEntryName.ts"

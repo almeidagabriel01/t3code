@@ -6,11 +6,18 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { deliveryError, dmAddress, fakeTransport, outboxRows } from "./channelBridgeTestSupport.ts";
+import {
+  deliveryError,
+  dmAddress,
+  fakeTransport,
+  outboxRows,
+  projectsLayer,
+} from "./channelBridgeTestSupport.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 const layer = ChannelOutbox.layer.pipe(
+  Layer.provideMerge(projectsLayer({ acme: "Acme <App>" })),
   Layer.provideMerge(ChannelTransport.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
@@ -65,6 +72,20 @@ it.effect("redacts every message once, before it is stored or reaches a transpor
     const rows = yield* outboxRows;
     assert.notInclude(JSON.stringify(rows), token);
     assert.notInclude(JSON.stringify(rows), "hunter2");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([
+  ["a real project", "acme", "Acme <App>"],
+  ["the assistants home", "scratch", undefined],
+  ["an unknown or deleted project", "gone", undefined],
+  ["no project", null, undefined],
+])("stores the project title for %s", ([, projectId, title]) =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    yield* outbox.enqueue({ ...message("p"), projectId: projectId as never });
+    const rows = yield* outboxRows;
+    assert.deepEqual(rows[0]?.message.project, title);
   }).pipe(Effect.provide(layer)),
 );
 

@@ -23,6 +23,7 @@ import {
   fakeTransport,
   otherChatAddress,
   outboxRows,
+  projectsLayer,
 } from "./channelBridgeTestSupport.ts";
 
 const thread = "assistant:jarvis:2";
@@ -43,11 +44,15 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        projectsLayer({ acme: "Acme" }),
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(ServerEnvironment)({ getEnvironmentId: Effect.succeed("env-1" as never) }),
-        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.empty,
+          getThreadShell: () => Effect.succeed({ projectId: "acme" } as never),
+        }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: () => Effect.succeed({} as never),
           getThreadRecords: (_threadId, _kinds, filter) => {
@@ -125,6 +130,7 @@ it.effect("a finished run posts its last assistant message once, however often i
       senderName: "Jarvis",
       markdown: true,
       language: "en",
+      project: "Acme",
     });
     assert.lengthOf(reads, 1);
   }).pipe(Effect.provide(layer));
@@ -326,6 +332,7 @@ it.effect("an open decision becomes a card with its options, posted once", () =>
         { label: "No", value: "no" },
       ],
       language: "en",
+      project: "Acme",
     });
   }).pipe(Effect.provide(layer));
 });
@@ -428,6 +435,7 @@ it.effect.each(settlements)(
         senderName: "Jarvis",
         text: `Deploy? — ${settlement.line}`,
         language: "en",
+        project: "Acme",
       });
     }).pipe(Effect.provide(layer));
   },

@@ -33,6 +33,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TaskEventNotices from "../assistants/TaskEventNotices.ts";
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -153,6 +154,10 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         // Every run lands a new commit here, so each is news; TaskEventNotices tests the quiet ones.
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           resolveCommit: () => Effect.sync(() => ({ commitSha: `sha-${++commits}` }) as never),
+        }),
+        Layer.mock(ManagedProjectFolders)({
+          namedProjectsRoot: "",
+          isAssistantHomeProject: () => Effect.succeed(false),
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeedSome({ title: "acme/app" } as never),
@@ -988,6 +993,7 @@ it.effect(
         chatId: "4242",
       });
       assert.equal(first.senderName, "T3 Code");
+      assert.equal(first.project, "acme/app");
       assert.deepEqual(first.choices, [
         { label: "Approve", value: "accept" },
         { label: "Deny", value: "decline" },
@@ -997,7 +1003,7 @@ it.effect(
         [
           "Claude is waiting for you",
           "Claude wants to run a command",
-          "Project: acme/app · Thread: Fix login",
+          "Thread: Fix login",
           "```sh\nvp test run\n```\n\nReason: Run the tests",
           "Open in T3: https://app.t3.codes/threads/env-1/t1",
         ].join("\n\n"),

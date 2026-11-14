@@ -539,14 +539,6 @@ const make = Effect.gen(function* () {
       Effect.map((environmentId) => hostedThreadLink({ environmentId, threadId })),
     );
 
-  const projectName = (projectId: string | null) =>
-    projectId === null
-      ? Effect.succeed(null)
-      : projects.getById(projectId as ProjectId).pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (project) => project.title })),
-          Effect.orElseSucceed(() => null),
-        );
-
   type FinishedRun = {
     readonly id: string;
     readonly threadId: ThreadId;
@@ -582,6 +574,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-run:${run.id}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
           text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), origin) ?? text}`,
           markdown: true,
@@ -928,7 +921,6 @@ const make = Effect.gen(function* () {
         agent: input.agent,
         title: shown.title,
         context: input.context?.(language) ?? shown.context,
-        projectName: yield* projectName(input.projectId),
         threadTitle: input.threadTitle,
         link: yield* linkTo(input.threadId),
         answerable: input.answerable,
@@ -938,6 +930,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: chat,
+      projectId: input.projectId as ProjectId | null,
       senderName: "T3 Code",
       text: card.text,
       ...(card.answerable
@@ -1285,6 +1278,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-notify:${input.key}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
           text: withLink(language),
           markdown: true,

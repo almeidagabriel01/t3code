@@ -86,6 +86,18 @@ describe("formatImessageMessages", () => {
     for (const message of messages) expect(message.startsWith("Jarvis: ")).toBe(true);
   });
 
+  it("puts the project after the speaker on every chunk, within the limit", () => {
+    const text = Array.from({ length: 3 }, () => "y".repeat(IMESSAGE_CHUNK_LIMIT - 10)).join(
+      "\n\n",
+    );
+    const messages = formatImessageMessages({ senderName: "Jarvis", text, project: "app" });
+    expect(messages).toHaveLength(3);
+    for (const message of messages) {
+      expect(message.startsWith("Jarvis: [app] y")).toBe(true);
+      expect(message.length - "Jarvis: ".length).toBeLessThanOrEqual(IMESSAGE_CHUNK_LIMIT);
+    }
+  });
+
   it("keeps a short reply as one plain message", () => {
     expect(formatImessageMessages({ senderName: "Jarvis", text: "**Done**" })).toEqual([
       "Jarvis: Done",

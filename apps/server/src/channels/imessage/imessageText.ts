@@ -1,4 +1,5 @@
 import type { ChannelChoice } from "@t3tools/contracts";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { hostedThreadLink, replaceThreadLinks } from "@t3tools/shared/threadLinks";
 
 import { channelStrings, type ResolvedChannelLanguage } from "../channelStrings.ts";
@@ -91,6 +92,8 @@ export function formatChannelMessages(
   input: {
     readonly senderName: string;
     readonly text: string;
+    /** The project the message is about; shown after the sender on every chunk. */
+    readonly project?: string | undefined;
     readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
     /** The language of the phrases added here; English when absent. */
     readonly language?: ResolvedChannelLanguage | undefined;
@@ -101,16 +104,18 @@ export function formatChannelMessages(
   const choices =
     input.choices !== undefined && input.choices.length > 0 ? input.choices : undefined;
   const room = maxMessages - (choices === undefined ? 0 : 1);
-  const body = chunkParagraphs(toPlainText(input.text), chunkLimit);
+  const tag = input.project === undefined ? "" : projectNoticePrefix(input.project, "");
+  const limit = Math.max(1, chunkLimit - tag.length);
+  const body = chunkParagraphs(toPlainText(input.text), limit);
   const kept = body.length <= room ? body : [...body.slice(0, room - 1), strings.truncatedNote];
   if (choices !== undefined) {
     const block = numberedChoices(choices, strings.replyWithNumber);
     const last = kept.at(-1);
-    if (last !== undefined && last.length + block.length + 2 <= chunkLimit) {
+    if (last !== undefined && last.length + block.length + 2 <= limit) {
       kept[kept.length - 1] = `${last}\n\n${block}`;
     } else kept.push(block);
   }
-  return kept.map((chunk) => `${input.senderName}: ${chunk}`);
+  return kept.map((chunk) => `${input.senderName}: ${tag}${chunk}`);
 }
 
 export const formatImessageMessages = (input: Parameters<typeof formatChannelMessages>[0]) =>
