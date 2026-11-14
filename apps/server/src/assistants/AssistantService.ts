@@ -1159,10 +1159,8 @@ const make = Effect.gen(function* () {
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
             yield* retire(previousThreadId);
           } else {
-            const previous =
-              previousThreadId === null ? undefined : yield* inspectThread(previousThreadId);
             const generation = row.generation + 1;
-            const threadId = yield* launchGeneration(row, generation, previous?.modelSelection);
+            const threadId = yield* launchGeneration(row, generation, undefined);
             yield* sql`
               UPDATE assistants SET thread_id = ${threadId}, generation = ${generation}, updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;

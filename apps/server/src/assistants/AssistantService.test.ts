@@ -346,15 +346,20 @@ it.effect("create derives a handle, keeps it reserved, and launches in the chose
 });
 
 it.effect(
-  "reset moves the pointer before archiving the old conversation and keeps its model",
+  "reset moves the pointer before archiving the old conversation and follows the project's model",
   () => {
     const { layer, threads, pointers, launched, retargets } = harness();
     return Effect.gen(function* () {
       const assistants = yield* Assistants.AssistantService;
       const made = yield* assistants.create(create({ modelSelection: model("m1") }));
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [repo]: { defaultModelSelection: model("repo") } },
+      });
       const reset = yield* assistants.reset({ assistantId: made.id });
       assert.equal(reset.threadId, `assistant:${made.id}:2`);
-      assert.equal(threads.get(reset.threadId!)!.modelSelection.model, "m1");
+      // The old conversation's model is not carried over.
+      assert.equal(threads.get(reset.threadId!)!.modelSelection.model, "repo");
       assert.deepEqual(pointers.at(-1), {
         type: "thread.archive",
         threadId: `assistant:${made.id}:1`,
