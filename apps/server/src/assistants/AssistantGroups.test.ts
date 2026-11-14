@@ -220,8 +220,30 @@ const harness = (options: Options = {}) => {
           ),
         });
       }) as never,
-      dispatch: ((command: { type: string; threadId: string; commandId: string; runId?: string }) =>
-        Effect.sync(() => {
+      dispatch: ((command: {
+        type: string;
+        threadId: string;
+        commandId: string;
+        runId?: string;
+        modelSelection?: ModelSelection;
+      }) => {
+        // Like the Orchestrator: another provider waits until the thread's turn has ended.
+        if (command.type === "thread.model-selection.set") {
+          const thread = fakeThreads.get(command.threadId)!;
+          const busy = (runs.get(command.threadId) ?? []).some((run) =>
+            ["running", "waiting"].includes(run.status),
+          );
+          if (busy && thread.modelSelection.instanceId !== command.modelSelection!.instanceId) {
+            return Effect.fail(
+              new Orchestrator.OrchestratorProviderSelectionBusyError({
+                commandId: command.commandId as never,
+                threadId: command.threadId as never,
+              }),
+            );
+          }
+          thread.modelSelection = command.modelSelection!;
+        }
+        return Effect.sync(() => {
           dispatched.push(command);
           const thread = fakeThreads.get(command.threadId);
           if (thread !== undefined) {
@@ -233,7 +255,8 @@ const harness = (options: Options = {}) => {
               thread.title = (command as { title?: string }).title ?? thread.title;
           }
           return {} as never;
-        })) as never,
+        });
+      }) as never,
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getRuntimeResponseContext: ((_threadId: string, requestId: string) =>
@@ -930,6 +953,53 @@ it.effect(
         ],
       );
       assert.lengthOf(yield* h.sqlRows("SELECT * FROM assistant_group_threads"), 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a request given its project later moves its threads to that project's model once each is free",
+  () => {
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const one = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto one", projectId: p1 },
+        h.user,
+      );
+      // As a request from before requests had projects: started, with none.
+      yield* sql`UPDATE assistant_group_messages SET project_id = NULL WHERE message_id = ${one.message.id}`;
+      const ada = requestThreadId("ada", TEAM, one.message.id);
+      const beto = requestThreadId("beto", TEAM, one.message.id);
+      // Beto picked another model in his thread: that choice stays.
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      const switches = () =>
+        h.dispatched.filter((command) => command.type === "thread.model-selection.set");
+
+      yield* groups.post(
+        { teamId: TEAM, text: "this is for p2", replyToMessageId: one.message.id, projectId: p2 },
+        h.user,
+      );
+      // Ada's turn is still running, so her provider changes when it ends.
+      assert.lengthOf(switches(), 0);
+      yield* h.finish(0, "completed", "done");
+      yield* h.finish(1, "completed", "done");
+      assert.deepEqual(
+        switches().map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p2-model"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.lengthOf(h.launched, 2);
     }).pipe(Effect.provide(h.layer));
   },
 );

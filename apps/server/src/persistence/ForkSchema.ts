@@ -743,6 +743,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
+  // The model the project gave the thread, and one it moves to once its turn ends.
+  yield* addColumns("assistant_group_request_threads", [
+    ["followed_model_selection", "TEXT"],
+    ["pending_model_selection", "TEXT"],
+  ]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (
