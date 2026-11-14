@@ -214,6 +214,10 @@ it("sorts rows into sections, filters by search and category, and shows source n
   await expect.element(page.getByText("Not seen yet (open a Claude conversation)")).toBeVisible();
   // A row with nothing to do is not a button.
   expect(row("scratch").getByRole("button").query()).toBeNull();
+  // Server addresses keep their end visible; catalog descriptions truncate at the end.
+  const address = row("scratch").getByText("https://scratch.example.com/mcp").element();
+  expect(address.closest("[dir=rtl]")).not.toBeNull();
+  expect(row("Notion").getByText("Notion tools").element().closest("[dir=rtl]")).toBeNull();
 
   await userEvent.click(row("local-docs").getByRole("button", { name: /local-docs/ }));
   expect(harness.customServers).toHaveBeenCalledTimes(1);
