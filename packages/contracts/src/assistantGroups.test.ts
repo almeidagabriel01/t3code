@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AssistantGroupMessage,
+  AssistantGroupsEvent,
   AssistantGroupsPostInput,
   assistantGroupAddress,
   assistantGroupMentions,
@@ -98,12 +99,53 @@ describe("assistantGroupTaskActions", () => {
     ["queued", ["stop"]],
     ["running", ["stop"]],
     ["waiting", ["stop"]],
+    ["usage_limited", ["stop"]],
     ["paused", ["resume", "reassign", "cancel"]],
     ["failed", ["resume", "reassign", "cancel"]],
     ["completed", []],
     ["cancelled", []],
   ] as const)("%s", (status, expected) => {
     expect(assistantGroupTaskActions({ status })).toEqual(expected);
+  });
+});
+
+const decodeGroupsEvent = Schema.decodeUnknownSync(AssistantGroupsEvent);
+
+describe("group task status on the wire", () => {
+  const task = (status: string, extra: Record<string, unknown> = {}) => ({
+    id: `task-${status}`,
+    teamId: "team-1",
+    rootId: `task-${status}`,
+    parentId: null,
+    kind: "root",
+    requestMessageId: "message-1",
+    ownerId: "ada",
+    instruction: "Do it",
+    status,
+    reason: null,
+    threadId: "assistant:ada:g-0123456789abcdef",
+    createdAt: "2026-11-13T12:00:00.000Z",
+    updatedAt: "2026-11-13T12:00:00.000Z",
+    ...extra,
+  });
+
+  it("keeps the list when a newer server sends a status this client does not know", () => {
+    const event = decodeGroupsEvent({
+      type: "snapshot",
+      messages: [],
+      tasks: [
+        task("running"),
+        task("usage_limited", { resetAt: "2026-11-13T18:00:00.000Z" }),
+        task("added_by_newer_server"),
+      ],
+      hasMore: false,
+    });
+
+    expect(event.type === "snapshot" && event.tasks).toMatchObject([
+      { status: "running" },
+      { status: "usage_limited", resetAt: "2026-11-13T18:00:00.000Z" },
+      { status: "failed" },
+    ]);
   });
 });
 

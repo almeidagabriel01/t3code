@@ -24,6 +24,7 @@ const STATUS_TONE: Record<AssistantGroupTask["status"], string> = {
   queued: "text-foreground-muted",
   running: "text-primary-text",
   waiting: "text-warning-foreground",
+  usage_limited: "text-warning-foreground",
   completed: "text-success-foreground",
   paused: "text-warning-foreground",
   cancelled: "text-foreground-muted",

@@ -150,6 +150,7 @@ export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "running",
   "waiting",
+  "usage_limited",
   "completed",
   "failed",
   "cancelled",
@@ -220,6 +221,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
+  resetAt: Schema.optional(IsoDateTime).annotate({
+    description: "When a `usage_limited` task's provider limit resets, if known.",
+  }),
   workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),

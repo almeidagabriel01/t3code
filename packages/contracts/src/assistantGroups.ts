@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -95,6 +96,7 @@ export const AssistantGroupTaskStatus = Schema.Literals([
   "queued",
   "running",
   "waiting",
+  "usage_limited",
   "completed",
   "paused",
   "cancelled",
@@ -115,7 +117,12 @@ export const AssistantGroupTask = Schema.Struct({
   requestMessageId: AssistantGroupMessageId,
   ownerId: AssistantId,
   instruction: Schema.String,
-  status: AssistantGroupTaskStatus,
+  /** A status from a newer server reads as failed instead of failing the whole list. */
+  status: AssistantGroupTaskStatus.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("failed" as const)),
+  ),
+  /** When a `usage_limited` task's provider limit resets, if known. */
+  resetAt: Schema.optionalKey(IsoDateTime),
   /** Why it paused: stopped, no_delivery, handoff_limit, member_removed, group_archived. Unknown ones show as paused. A queued task blocked by a resource says "waiting for <resource> (used by <member>)". */
   reason: Schema.NullOr(Schema.String),
   /** The owner's hidden thread for this group, where the work happens. */
@@ -142,6 +149,7 @@ export function assistantGroupTaskActions(
     case "queued":
     case "running":
     case "waiting":
+    case "usage_limited":
       return ["stop"];
     case "paused":
       return ["resume", "reassign", "cancel"];

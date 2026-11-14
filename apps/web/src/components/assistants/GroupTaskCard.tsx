@@ -26,6 +26,7 @@ const STATUS_VARIANT = {
   queued: "outline",
   running: "info",
   waiting: "warning",
+  usage_limited: "warning",
   completed: "success",
   paused: "warning",
   cancelled: "outline",

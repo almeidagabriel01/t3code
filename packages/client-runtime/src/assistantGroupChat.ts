@@ -277,6 +277,7 @@ export const ASSISTANT_GROUP_STATUS_LABEL: Record<AssistantGroupTaskStatus, stri
   queued: "Queued",
   running: "Running",
   waiting: "Waiting",
+  usage_limited: "Usage limit",
   completed: "Completed",
   paused: "Paused",
   cancelled: "Cancelled",
