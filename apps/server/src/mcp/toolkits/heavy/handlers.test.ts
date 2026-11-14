@@ -310,6 +310,7 @@ const promoted: Array<readonly [string, string | undefined]> = [];
 const probed: Array<readonly [string, string]> = [];
 
 const movedAll: Array<"mac" | "linux"> = [];
+let nextMoved: ReadonlyArray<string> = ["w"];
 
 const callTool = (
   params: {
@@ -380,7 +381,7 @@ const callTool = (
           routeAll: (runner) =>
             Effect.sync(() => {
               movedAll.push(runner);
-              return ["w"];
+              return nextMoved;
             }),
         }),
         Layer.mock(HeavyCommands.HeavyCommands)({
@@ -483,13 +484,25 @@ describe("t3_heavy", () => {
   it.effect("move_all sends the waiters to `to` and answers with the moved ids", () =>
     Effect.gen(function* () {
       movedAll.length = 0;
+      nextMoved = ["w"];
       const chunk = yield* callTool({ action: "move_all", to: "linux" });
       expect(movedAll).toEqual(["linux"]);
       expect(chunk.at(-1)!.result).toMatchObject({ moved: ["w"], yours: [{ id: "w" }] });
+      expect(chunk.at(-1)!.result).not.toHaveProperty("note");
       const noTarget = yield* callTool({ action: "move_all" });
       expect(noTarget.at(-1)!.encodedResult).toMatchObject({ code: "invalid_request" });
       yield* callTool({ action: "move_all", to: "mac" }, "read-only");
       expect(movedAll).toEqual(["linux"]);
+      // Nothing movable says why: Linux not online (this mock's Runner is off), or no job can go.
+      nextMoved = [];
+      for (const [to, note] of [
+        ["linux", "Nothing moved: Linux is unavailable."],
+        ["mac", "Nothing moved: no waiting job can move to this Mac."],
+      ] as const) {
+        const none = yield* callTool({ action: "move_all", to });
+        expect(none.at(-1)!.result).toMatchObject({ moved: [], note });
+      }
+      nextMoved = ["w"];
       // Status alone moves nothing and says nothing about moves.
       expect((yield* callTool({ action: "status" })).at(-1)!.result).not.toHaveProperty("moved");
     }),

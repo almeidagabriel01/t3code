@@ -96,7 +96,13 @@ export const layer = McpToolAccess.toLayer(HeavyToolkit, {
         commands: running.commands,
         destination,
       });
-      return moved === undefined ? status : { ...status, moved };
+      if (moved === undefined) return status;
+      if (moved.length > 0) return { ...status, moved };
+      const note =
+        to === "linux" && state.linux?.online !== true
+          ? "Nothing moved: Linux is unavailable."
+          : `Nothing moved: no waiting job can move to ${to === "linux" ? "Linux" : "this Mac"}.`;
+      return { ...status, moved, note };
     }),
   ),
 });

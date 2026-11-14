@@ -1074,9 +1074,11 @@ export const setRule = (dir: string, root: string, priority: HeavyQueueRule["pri
     };
   });
 
-/** Exclusive work and its project's Mac-only list never leave this Mac. */
+/** Exclusive work, its project's Mac-only list and projects with the Runner off never leave this Mac. */
 export const staysOnMac = (doc: QueueDoc, entry: HeavyQueueEntry) => {
-  const { eligibility } = eligibilityOf(entry, contextOf(doc)(entry.cwd));
+  const context = contextOf(doc)(entry.cwd);
+  if (!context.config.runnerEnabled) return true;
+  const { eligibility } = eligibilityOf(entry, context);
   return eligibility === "exclusive" || eligibility === "mac-only";
 };
 
@@ -1148,25 +1150,21 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
 
 /**
  * Move all: routes every waiter the plan places on the other machine to `runner`, as `route`
- * would each one, and returns their ids. Running jobs, runs Linux has not confirmed stopped,
- * and for Linux, Mac-only work, jobs asked for this Mac and projects with the Runner off stay.
+ * would each one, and returns their ids. Running jobs and runs Linux has not confirmed stopped
+ * stay; for Linux, so do Mac-only work and jobs asked for this Mac, and everything unless Linux is online.
  */
 export const routeAll = (dir: string, runner: HeavyRunner, now = Date.now()) =>
   mutate(
     dir,
     (doc): Decided<ReadonlyArray<string>> => {
+      if (runner === "linux" && doc.linux.online !== true) return { doc, result: [] };
       const { routes } = planOf(doc, now);
       const moves = doc.entries.filter(
         (entry) =>
           entry.startedAt === null &&
           (routes[entry.id] ?? "mac") !== runner &&
           entry.unconfirmed !== true &&
-          !(
-            runner === "linux" &&
-            (entry.where === "mac" ||
-              !configFor(doc, entry.cwd).runnerEnabled ||
-              staysOnMac(doc, entry))
-          ),
+          !(runner === "linux" && (entry.where === "mac" || staysOnMac(doc, entry))),
       );
       const moved = new Set(moves.map((entry) => entry.id));
       return {

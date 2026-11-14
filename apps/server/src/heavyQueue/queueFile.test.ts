@@ -871,8 +871,23 @@ describe("Runner in the queue file", () => {
     const off = queueWith(block(config({ runnerEnabled: false })));
     Queue.enqueue(off, test("a"));
     expect(Queue.routeAll(off, "linux", NOW)).toEqual([]);
+    expect(Queue.route(off, "a", "linux")).toBe("not-allowed");
     expect(Queue.read(off)[0]).not.toHaveProperty("route");
   });
+
+  it.each([
+    ["offline", false],
+    ["not checked yet", null],
+  ] as const)(
+    "Move all sends nothing to Linux while it is %s, and still brings waiters back",
+    (_name, online) => {
+      const dir = queueWith(block(config({ runnerWhere: "automatic" })), online);
+      Queue.enqueue(dir, test("a"));
+      Queue.enqueue(dir, test("b", { route: "linux" }));
+      expect(Queue.routeAll(dir, "linux", NOW)).toEqual([]);
+      expect(Queue.routeAll(dir, "mac", NOW)).toEqual(["b"]);
+    },
+  );
 
   it("forcing a rerun clears the unconfirmed hold", () => {
     const dir = queueWith(block());
