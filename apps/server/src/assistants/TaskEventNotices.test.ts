@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -29,8 +28,6 @@ const harness = () => {
     started: new Map<string, { readonly id: string; readonly senderThreadId?: ThreadId }>(),
     /** Changed files per checkpoint id. */
     files: new Map<string, number>(),
-    /** The capture effect each run's end enqueued, by run id. */
-    captures: new Map<string, "pending" | "running" | "succeeded" | "failed" | "cancelled">(),
     queued: [] as Array<QueuedEvent>,
     failSend: false,
     dieSend: false,
@@ -90,14 +87,6 @@ const harness = () => {
                     sends.push({ messageId: input.messageId, text: input.text });
                     return {} as never;
                   }),
-        }),
-        Layer.mock(EffectOutbox.EffectOutboxV2)({
-          listByCommandId: (commandId) =>
-            Effect.sync(() => {
-              const runId = commandId.replace("command:effect:checkpoint.capture:", "");
-              const status = state.captures.get(runId);
-              return status === undefined ? [] : [{ status } as never];
-            }),
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeedNone,
@@ -268,77 +257,19 @@ it.effect("a backlog keeps only the newest queued event per task", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect.each([
-  {
-    name: "completed with its checkpoint",
-    status: "completed",
-    capture: undefined,
-    expected: "sent",
-  },
-  { name: "failed", status: "failed", capture: undefined, expected: "sent" },
-  { name: "cancelled from the queue", status: "cancelled", capture: undefined, expected: "sent" },
-  {
-    name: "cancelled while capturing",
-    status: "cancelled",
-    capture: "pending",
-    expected: "pending",
-  },
-  {
-    name: "interrupted while capturing",
-    status: "interrupted",
-    capture: "running",
-    expected: "pending",
-  },
-  // Captured, but the run it re-sends has not reached the door yet.
-  {
-    name: "interrupted and captured",
-    status: "interrupted",
-    capture: "succeeded",
-    expected: "pending",
-  },
-  {
-    name: "interrupted with nowhere to capture",
-    status: "interrupted",
-    capture: undefined,
-    expected: "sent",
-  },
-  {
-    name: "interrupted whose capture failed",
-    status: "interrupted",
-    capture: "failed",
-    expected: "sent",
-  },
-] as const)("a $name run without a checkpoint is $expected", ({ status, capture, expected }) => {
-  const h = harness();
-  return Effect.gen(function* () {
-    yield* launched(h);
-    // Changed files make each judged run news, so only waiting can hold it back.
-    h.state.files.set("checkpoint:r2", 1);
-    if (capture !== undefined) h.state.captures.set("r2", capture);
-    const subject = run("r2", {
-      status,
-      checkpointId: status === "completed" ? "checkpoint:r2" : null,
-    });
-    assert.strictEqual(yield* (yield* TaskEventNotices).send(notice(subject)), expected);
-  }).pipe(Effect.provide(h.layer));
-});
-
-it.effect("a stopped run waits for its checkpoint, then is told once", () => {
+it.effect("a stopped run is judged at once, and told when its checkpoint brings changes", () => {
   const h = harness();
   return Effect.gen(function* () {
     yield* launched(h);
     const notices = yield* TaskEventNotices;
-    h.state.captures.set("r2", "pending");
-    const stopped = run("r2", { status: "interrupted", checkpointId: null });
-    assert.strictEqual(yield* notices.send(notice(stopped)), "pending");
-    assert.strictEqual(
-      yield* notices.send(notice({ ...stopped, checkpointId: "checkpoint:r2" as never })),
-      "sent",
-    );
-    assert.strictEqual(
-      yield* notices.send(notice({ ...stopped, checkpointId: "checkpoint:r2" as never })),
-      "unchanged",
-    );
+    const stopped = (id: string, checkpointId: string | null = null) =>
+      notice(run(id, { status: "interrupted", checkpointId }));
+    // The capture may fail or end without re-sending the run, so nothing waits on it.
+    assert.strictEqual(yield* notices.send(stopped("r2")), "sent");
+    assert.strictEqual(yield* notices.send(stopped("r2", "checkpoint:r2")), "unchanged");
+    h.state.files.set("checkpoint:r3", 1);
+    assert.strictEqual(yield* notices.send(stopped("r3")), "unchanged");
+    assert.strictEqual(yield* notices.send(stopped("r3", "checkpoint:r3")), "sent");
   }).pipe(Effect.provide(h.layer));
 });
 

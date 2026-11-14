@@ -14,7 +14,6 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -33,7 +32,10 @@ interface RunFacts extends NoticeMark {
   readonly changedFiles: number;
 }
 
-/** A run is news when it was asked for, changed files or HEAD, or ended in another state. */
+/**
+ * A run is news when it was asked for, changed files or HEAD, or ended in another state. A stopped
+ * run is judged before its checkpoint; only news is marked, so the capture's re-send is judged again.
+ */
 function isNews(previous: NoticeMark | undefined, run: RunFacts): boolean {
   if (previous === undefined) return true;
   if (previous.runId === run.runId) return false;
@@ -45,7 +47,7 @@ function isNews(previous: NoticeMark | undefined, run: RunFacts): boolean {
   );
 }
 
-export type NoticeOutcome = "sent" | "unchanged" | "pending" | "failed";
+export type NoticeOutcome = "sent" | "unchanged" | "failed";
 
 export interface TaskEventNotice {
   /** The conversation to wake. */
@@ -83,39 +85,14 @@ interface NoticeRow {
   readonly message_id: string;
 }
 
-/** A capture still to run, or one whose re-sent run has not reached this door yet. */
-const CAPTURE_COMING = new Set<EffectOutbox.OrchestrationEffectStatusV2>([
-  "pending",
-  "running",
-  "succeeded",
-]);
-
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const outbox = yield* EffectOutbox.EffectOutboxV2;
   // Reactors call in from separate fibers; a judgment and its mark must not interleave.
   const lock = yield* Semaphore.make(1);
-
-  /**
-   * A stopped run ends before its checkpoint, and the capture re-sends the run with it. Only the
-   * capture effect the run's end enqueued says one is coming: a failed run, a run cancelled from
-   * the queue or a thread with nowhere to capture has none, and is judged at once.
-   */
-  const awaitsCapture = Effect.fn("TaskEventNotices.awaitsCapture")(function* (
-    run: TaskEventNotice["run"],
-  ) {
-    if (run.checkpointId !== null || (run.status !== "interrupted" && run.status !== "cancelled")) {
-      return false;
-    }
-    const captures = yield* outbox
-      .listByCommandId(CommandId.make(`command:effect:checkpoint.capture:${run.id}`))
-      .pipe(Effect.orElseSucceed(() => []));
-    return captures.some((capture) => CAPTURE_COMING.has(capture.status));
-  });
 
   const headOf = Effect.fn("TaskEventNotices.headOf")(function* (threadId: ThreadId) {
     const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
@@ -213,7 +190,6 @@ const make = Effect.gen(function* () {
 
   const send: TaskEventNotices["Service"]["send"] = Effect.fn("TaskEventNotices.send")(
     function* (notice) {
-      if (yield* awaitsCapture(notice.run)) return "pending" as const;
       const facts = yield* factsOf(notice.run);
       return yield* lock
         .withPermits(1)(

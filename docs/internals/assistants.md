@@ -221,7 +221,7 @@ Three things follow the row, none of them a new mechanism:
 - Every run-end wake, from a task or a watch, goes through `TaskEventNotices`, the one door that
   remembers what each assistant was told per subject thread (`assistant_task_notices`). A run with no
   answer to an agent, no changed files, no new HEAD and the same end state wakes no one, and a new
-  event drops older queued events about the same task. A stopped run waits for its checkpoint first.
+  event drops older queued events about the same task. A stopped run is judged at once; if that finds nothing, its checkpoint can still make it news.
 - An assistant ends an event turn with `NO_REPLY` (`QUIET_REPLY`) when nothing is new.
   `assistantRunReply` is the one exit for chat apps, group chat and autonomy delivery: a quiet event
   turn posts nothing and other event turns send `briefReply`, while user and routine turns go out
