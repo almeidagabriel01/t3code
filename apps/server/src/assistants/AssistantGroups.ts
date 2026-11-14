@@ -2656,6 +2656,10 @@ const make = Effect.gen(function* () {
           yield* finishRun(event.payload);
           const owner = yield* threadRowOf(event.payload.threadId);
           if (owner === undefined) return;
+          if (ENDED_RUN.has(event.payload.status)) {
+            const team = yield* loadTeam(owner.team_id).pipe(Effect.orElseSucceed(() => undefined));
+            if (team !== undefined) yield* cancelOutsideProject(team);
+          }
           // An idle thread shows the new provider without waiting for its next task.
           if (ENDED_RUN.has(event.payload.status)) yield* applyPendingModel(owner.thread_id);
           // A request that ended while this run was still stopping settles now that it has.
@@ -3203,6 +3207,46 @@ const make = Effect.gen(function* () {
   }, storage);
 
   /** Members that left lose their open work and their thread; an archived group pauses everything. */
+  /**
+   * Work in a project its member no longer reaches (taken from the group or from the member): a
+   * running turn ends on its own, and nothing else starts there. Runs again as each run ends, as a
+   * turn that ran into a usage limit would continue in that project.
+   */
+  const cancelOutsideProject = Effect.fn("AssistantGroups.cancelOutsideProject")(function* (
+    team: AssistantTeam,
+  ) {
+    const waiting = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks
+      WHERE team_id = ${team.id} AND status IN ${sql.in(OPEN.filter((status) => status !== "running"))}`;
+    if (waiting.length === 0) return;
+    const members = yield* activeMembers(team);
+    let cancelled = false;
+    for (const task of waiting) {
+      const owner = members.find((member) => member.assistant_id === task.owner_id);
+      if (owner === undefined) continue;
+      const requestId = task.request_id ?? task.request_message_id;
+      const stored = (yield* sql<ThreadRow>`
+        SELECT * FROM assistant_group_request_threads
+        WHERE request_id = ${requestId} AND assistant_id = ${owner.assistant_id}`)[0];
+      const thread =
+        stored === undefined ? undefined : yield* inspectThread(stored.thread_id as ThreadId);
+      // Where the work runs, as `ensureRequestThread` decides it.
+      const projectId =
+        thread !== undefined && thread.deletedAt === null
+          ? thread.projectId
+          : ((yield* getMessage(requestId))?.project_id ?? owner.project_id);
+      if (worksIn(owner, team, projectId)) continue;
+      yield* haltTask(task);
+      yield* patchTask(task, { status: "cancelled", reason: "outside_project" });
+      cancelled = true;
+    }
+    if (cancelled) {
+      for (const requestId of new Set(waiting.map((task) => task.request_id))) {
+        yield* closeRequestIfDone(requestId);
+      }
+    }
+  });
+
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
     const legacy = yield* sql<ThreadRow>`
       SELECT team_id, assistant_id, thread_id, seen_seq, NULL AS request_id
@@ -3226,6 +3270,7 @@ const make = Effect.gen(function* () {
       for (const task of tasks) yield* pauseTask(task, "member_removed");
     }
     yield* archiveThreads(rows.filter((row) => gone.has(row.assistant_id)));
+    yield* cancelOutsideProject(team);
     if (team.archivedAt !== null) {
       const open = yield* sql<TaskRow>`
         SELECT * FROM assistant_group_tasks

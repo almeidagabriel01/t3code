@@ -4723,3 +4723,57 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect(
+  "a project taken from the group lets running turns end and cancels the work still to start there",
+  () => {
+    const h = harness({ projects: { ada: ["p1"], beto: ["p1"], cy: ["p1"] } });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_teams SET project_ids_json = '["p2"]' WHERE team_id = ${TEAM}`;
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto @cy fix the app", projectId: p2 },
+        h.user,
+      );
+      const beto = requestThreadId("beto", TEAM, request.message.id);
+      const [limitedRun] = h.runs.get(beto)!;
+      Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(1, "failed");
+      const statuses = () =>
+        h.tasks.pipe(Effect.map((rows) => rows.map((row) => `${row.owner_id}:${row.status}`)));
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:usage_limited", "cy:queued"]);
+
+      yield* sql`UPDATE assistant_teams SET project_ids_json = '[]' WHERE team_id = ${TEAM}`;
+      const team = {
+        id: TEAM,
+        name: `Team ${TEAM}`,
+        memberIds: ["ada", "beto", "cy"],
+        leadId: null,
+        archivedAt: null,
+        projectIds: [],
+      } as never;
+      yield* groups.handleAssistantEvent({ type: "teamUpserted", team });
+      // Ada's turn goes on; Beto's continuation is disarmed; Cy's never starts.
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:cancelled", "cy:cancelled"]);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.stop" || command.type === "run.stop")
+          .map((command) => command.threadId),
+        [beto],
+      );
+      assert.isFalse(
+        h.dispatched.some((command) => command.threadId === ada && command.type.endsWith("stop")),
+      );
+      // Her turn then runs into a usage limit: it would continue there, so it is cancelled too.
+      const [adaRun] = h.runs.get(ada)!;
+      Object.assign(adaRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(adaRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(0, "failed");
+      assert.deepEqual(yield* statuses(), ["ada:cancelled", "beto:cancelled", "cy:cancelled"]);
+      assert.lengthOf(h.sent, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
