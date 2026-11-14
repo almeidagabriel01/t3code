@@ -11,6 +11,8 @@ describe("redactChannelText", () => {
     ],
     ["PGPASSWORD='hunter22' psql", "PGPASSWORD=[redacted] psql"],
     ['{"client_secret": "s3cr3t"}', '{"client_secret": [redacted]}'],
+    ['password: "hunter2xyz"', "password: [redacted]"],
+    ["API_KEY=a1b2c3d4e5", "API_KEY=[redacted]"],
     [
       "git clone https://bob:ghp_x@github.com/acme/app",
       "git clone https://[redacted]@github.com/acme/app",
@@ -28,6 +30,10 @@ describe("redactChannelText", () => {
     "Rename tokenizer.ts to lexer.ts",
     "The password field is now required.",
     "https://github.com/acme/app/pull/42",
+    "interface X { apiKey: string; token: Token }",
+    "max_tokens: 4096",
+    "secret: z.string()",
+    "// token: the session",
   ])("leaves ordinary text alone: %s", (input) => {
     expect(redactChannelText(input)).toBe(input);
     expect(containsSecret(input)).toBe(false);
