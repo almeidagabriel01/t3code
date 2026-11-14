@@ -766,10 +766,17 @@ describe("Runner in the queue file", () => {
     expect(Queue.readDoc(dir).events.map((event) => event.kind)).not.toContain("linux-lost");
   });
 
-  it("a flapping link asks nobody again once the user chose to wait", () => {
-    const dir = queueWith(block(config({ runnerWhere: "linux" })), false);
+  // A hand route lasts until the entry ends: an answer, or a move while Linux was up.
+  it.each([
+    ["answered Wait for Linux", false],
+    ["moved to Linux by hand", true],
+  ] as const)("a flapping link asks nobody again once %s", (_, online) => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerUnavailable: "ask" })),
+      online,
+    );
     Queue.enqueue(dir, test("a"));
-    Queue.tryStart(dir, "a", NOW);
+    if (!online) Queue.tryStart(dir, "a", NOW);
     expect(Queue.route(dir, "a", "linux")).toBe("ok");
     const back = flap(dir, 30_000);
     expect(Queue.tryStart(dir, "a", back)).toMatchObject({
