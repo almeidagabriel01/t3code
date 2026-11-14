@@ -1052,6 +1052,47 @@ it.effect(
   },
 );
 
+it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    // The user writes in Ada's thread: a turn that is no task, still running.
+    const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+    h.runs.get(ada)!.push(manual);
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    manual.status = "completed";
+    yield* groups.handleRunEvent({
+      type: "run.updated",
+      payload: {
+        id: manual.id,
+        threadId: ada,
+        userMessageId: manual.userMessageId,
+        status: "completed",
+      },
+    } as never as OrchestrationV2DomainEvent);
+
+    // The send makes the thread busy, so the move has to land before it.
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+      h.user,
+    );
+    assert.equal(h.sent.at(-1)!.threadId, ada);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("a task that cannot start fails with a reason the user can see", () => {
   const h = harness();
   return Effect.gen(function* () {

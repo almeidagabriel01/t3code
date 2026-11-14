@@ -1358,6 +1358,8 @@ const make = Effect.gen(function* () {
       exec.success.threadId,
       attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
     );
+    // A turn that was no task (the user writing in the thread) may have deferred a move.
+    yield* applyPendingModel(exec.success.threadId);
     const sent = yield* threads
       .sendToThread({
         projectId: exec.success.projectId,
@@ -2593,7 +2595,7 @@ const make = Effect.gen(function* () {
           yield* finishRun(event.payload);
           const owner = yield* threadRowOf(event.payload.threadId);
           if (owner === undefined) return;
-          // Before the pump, so the thread's next task starts on the new provider.
+          // An idle thread shows the new provider without waiting for its next task.
           if (ENDED_RUN.has(event.payload.status)) yield* applyPendingModel(owner.thread_id);
           // A request that ended while this run was still stopping settles now that it has.
           if (ENDED_RUN.has(event.payload.status)) yield* closeRequestIfDone(owner.request_id);
