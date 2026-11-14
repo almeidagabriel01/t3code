@@ -77,11 +77,12 @@ const ORIGIN_PLACES: Readonly<Record<Exclude<DetectedOrigin, "t3">, string>> = {
 
 type DetectedCopy = Pick<DetectedServer, "origin" | "loaded" | "enabled">;
 
-/** A copy with no reported status works as configured; any status but "connected" does not. */
+// Claude reports statuses once, at session start, so "pending" (still starting) is no outcome yet:
+// it reads like an unreported copy. Any other status but "connected" means it does not work.
 const detectedState = (server: DetectedCopy): "connected" | "needs-sign-in" | "not-connected" =>
   !server.enabled
     ? "not-connected"
-    : server.loaded === undefined || server.loaded === "connected"
+    : server.loaded === undefined || server.loaded === "connected" || server.loaded === "pending"
       ? "connected"
       : server.loaded === "needs-auth"
         ? "needs-sign-in"

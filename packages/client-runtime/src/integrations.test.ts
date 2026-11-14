@@ -138,7 +138,7 @@ const COPIES: ReadonlyArray<[DetectedServer, string]> = [
   [detected("a", "claude-code", null, { loaded: "connected" }), "Connected in Claude Code"],
   [detected("a", "claude-code", null, { loaded: "needs-auth" }), "In Claude Code, not signed in"],
   [detected("a", "claude-code", null, { loaded: "failed" }), "In Claude Code, not connected"],
-  [detected("a", "claude-code", null, { loaded: "pending" }), "In Claude Code, not connected"],
+  [detected("a", "claude-code", null, { loaded: "pending" }), "Connected in Claude Code"],
   [
     detected("a", "claude-code", null, { approval: "pending", enabled: false }),
     "In Claude Code, not connected",
