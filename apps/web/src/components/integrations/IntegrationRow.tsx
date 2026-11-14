@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { StartTruncatedPath } from "../StartTruncatedPath";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -88,7 +89,10 @@ export function IntegrationRow(props: {
             </Badge>
           ))}
         </span>
-        {row.description === "" ? null : (
+        {row.description === "" ? null : row.entry === null ? (
+          // Rows without a catalog entry describe themselves by their URL or command.
+          <StartTruncatedPath path={row.description} className="text-xs text-muted-foreground" />
+        ) : (
           <span className="truncate text-xs text-muted-foreground">{row.description}</span>
         )}
         {row.note === null ? null : (
