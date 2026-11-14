@@ -326,6 +326,17 @@ describe("dragging threads onto the thread area", () => {
     // The composer takes a sidebar drop as a mention; a thread without tabs finds no zone.
     await act(() => moveThreadContextDrag(center(screen.getByTestId("composer").element()), label));
     expect(preview()).toBeNull();
+    // A sidebar thread splits down from the band just above the composer; a tab keeps the full body.
+    const composerTop = screen.getByTestId("composer").element().getBoundingClientRect().top;
+    const aboveComposer = { x: rect.left + rect.width / 2, y: composerTop - 5 };
+    await act(() => moveThreadContextDrag(aboveComposer, label));
+    expect(preview()?.dataset.threadTabDropPreview).toBe("down");
+    const sidebarDown = preview()?.getBoundingClientRect().toJSON();
+    const tabLabel = { ...label, fromTab: true };
+    await act(() => moveThreadContextDrag(aboveComposer, tabLabel));
+    expect(preview()?.dataset.threadTabDropPreview).toBe("center");
+    await act(() => moveThreadContextDrag({ ...aboveComposer, y: rect.bottom - 5 }, tabLabel));
+    expect(preview()?.getBoundingClientRect().toJSON()).toEqual(sidebarDown);
     await act(() => moveThreadContextDrag(rightEdge, { ...label, projectKey: null }));
     expect(preview()).toBeNull();
     await act(() => moveThreadContextDrag(rightEdge, { ...label, count: 2, threadKey: null }));
