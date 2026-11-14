@@ -1097,31 +1097,32 @@ export const layer = Layer.effect(
               yield* Effect.exit(postToGroup(active, prompt, fireKey))
             : active.threadId === null
               ? yield* Effect.exit(
-                  threadLaunch
-                    .launch({
-                      commandId,
-                      projectId: active.projectId,
-                      title: active.title,
-                      modelSelection: yield* newThreadModel(active),
-                      runtimeMode: active.runtimeMode,
-                      interactionMode: active.interactionMode,
-                      workspaceStrategy: active.workspaceStrategy,
-                      initialMessage: {
-                        messageId,
-                        scheduledTaskId: active.id,
-                        memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
-                        text: prompt,
-                        attachments: [],
-                      },
-                      createdBy: active.createdBy,
-                      creationSource: active.creationSource,
-                    })
-                    .pipe(
-                      Effect.map((launched) => launched.threadId),
-                      Effect.tap((threadId) =>
-                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                      ),
+                  newThreadModel(active).pipe(
+                    Effect.flatMap((modelSelection) =>
+                      threadLaunch.launch({
+                        commandId,
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          scheduledTaskId: active.id,
+                          memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      }),
                     ),
+                    Effect.map((launched) => launched.threadId),
+                    Effect.tap((threadId) =>
+                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                    ),
+                  ),
                 )
               : yield* Effect.exit(
                   // The stored selection only seeds fresh threads. A bound run

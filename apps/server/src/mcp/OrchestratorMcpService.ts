@@ -2222,7 +2222,13 @@ const make = Effect.gen(function* () {
           ),
         );
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput, { memoryGrantCeiling })
+          .upsert(upsertInput, {
+            memoryGrantCeiling,
+            // Unbound from its thread, it stops reusing that thread's model.
+            ...(existing.threadId !== null && threadId === null
+              ? { modelFollowsProject: true }
+              : {}),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),

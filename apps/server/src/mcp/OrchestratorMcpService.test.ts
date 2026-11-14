@@ -3029,6 +3029,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
+      follows?: Ref.Ref<ReadonlyArray<boolean | undefined>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -3058,12 +3059,17 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks: [task] }),
-              upsert: (input) =>
+              upsert: (input, captured) =>
                 Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
                   Effect.andThen(
                     modes === undefined
                       ? Effect.void
                       : Ref.update(modes, (all) => [...all, input.threadMode]),
+                  ),
+                  Effect.andThen(
+                    follows === undefined
+                      ? Effect.void
+                      : Ref.update(follows, (all) => [...all, captured?.modelFollowsProject]),
                   ),
                   Effect.as({ task }),
                 ),
@@ -3148,16 +3154,23 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
     );
 
-    it.effect("follows the default branch when a task is unbound from its thread", () =>
+    it.effect("follows the default branch and the project's model when a task is unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const follows = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
-            service(masterRepository, saved, {
-              ...existing,
-              threadId: ThreadId.make("thread:scheduled-base"),
-              threadMode: "continue",
-            }),
+            service(
+              masterRepository,
+              saved,
+              {
+                ...existing,
+                threadId: ThreadId.make("thread:scheduled-base"),
+                threadMode: "continue",
+              },
+              undefined,
+              follows,
+            ),
           ),
         );
         yield* mcp.updateScheduledTask(client, {
@@ -3167,20 +3180,24 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+        // Its new threads take the project's model when they run, not the old thread's.
+        assert.deepEqual(yield* Ref.get(follows), [true]);
       }),
     );
 
-    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+    it.effect("keeps the saved workspace and model choice when an unbound task stays unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const follows = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(masterRepository, saved, existing, undefined, follows)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
         assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
+        assert.deepEqual(yield* Ref.get(follows), [undefined]);
       }),
     );
 
