@@ -9,9 +9,11 @@ import {
 } from "@t3tools/client-runtime/integrations";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import type { AssistantIntegrations, AssistantWorkspace, EnvironmentId } from "@t3tools/contracts";
-import { View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
@@ -30,6 +32,7 @@ export function AssistantIntegrationsSection(props: {
 }) {
   const state = useIntegrationsState(props.environmentId);
   const config = useEnvironmentServerConfig(props.environmentId);
+  const navigation = useNavigation();
   if (state === null) return null;
   const provider = config?.providers.find((item) => item.instanceId === props.instanceId);
   const picker = assistantIntegrationPicker({
@@ -43,11 +46,14 @@ export function AssistantIntegrationsSection(props: {
     <View className="gap-2">
       <FieldHeader
         label="Integrations"
-        description={
+        description={[
+          "Services it can use, such as your calendar or email. Changes it makes there follow its tool access.",
           unsupported
             ? notAvailableOnLabel(resolveProviderInstanceDisplayName(provider))
-            : (sandboxWorkNote(props.workspace) ?? undefined)
-        }
+            : sandboxWorkNote(props.workspace),
+        ]
+          .filter((line) => line !== null)
+          .join("\n")}
       />
       <ListSection>
         <ChoiceRow
@@ -63,6 +69,22 @@ export function AssistantIntegrationsSection(props: {
           onPress={() => props.onChange(selectionForMode("selected", props.value, state))}
         />
       </ListSection>
+      {picker.mode === "selected" && picker.items.length === 0 ? (
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="No integrations to choose yet. Connect one in Settings → Integrations."
+          onPress={() => navigation.navigate("SettingsIntegrations")}
+          className="min-h-11 justify-center px-2 active:opacity-70"
+        >
+          <Text textRole="footnote" className="text-foreground-muted">
+            No integrations to choose yet. Connect one in{" "}
+            <Text textRole="footnote" className="text-foreground underline">
+              Settings → Integrations
+            </Text>
+            .
+          </Text>
+        </Pressable>
+      ) : null}
       {picker.mode === "all" || picker.items.length === 0 ? null : (
         <ListSection>
           {picker.items.map((item) => (

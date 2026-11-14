@@ -120,7 +120,10 @@ export function IntegrationRow(props: {
         </button>
       )}
       {props.action}
-      {props.menu.length === 0 ? null : (
+      {props.menu.length === 0 ? (
+        // Same box as the menu trigger, so every row's action button lines up.
+        <span aria-hidden className="size-7 shrink-0 sm:size-6" />
+      ) : (
         <Menu>
           <MenuTrigger
             render={
