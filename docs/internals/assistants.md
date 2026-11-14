@@ -190,7 +190,8 @@ has stopped tasks. Servers without `doneTasks` fall back to the group's open tot
 The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes each
 tab's finish as a completion of that tab's last speaker's hidden thread, titled with the group and
 deep-linked to `/assistant-groups/<env>/<team>?tab=<tab key>` (the relay takes any `/` path; apps
-older than the tab link reject it and open that thread instead). Members' own completions are
+older than the tab link reject it and open that thread instead). Tabs that end on one thread before
+its push goes out share that push, which names them and opens All. Members' own completions are
 silent, so the relay worker needs no change.
 
 A group's instructions and memories are columns on `assistant_teams` (`instructions`, `memories_json`)

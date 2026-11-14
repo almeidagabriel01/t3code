@@ -787,6 +787,59 @@ describe("AgentAwarenessRelay", () => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("joins two tabs that end on one thread into a push for All", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send, sql } = yield* setup;
+        // The lead's last General line has no request, so it lives in the lead's group thread.
+        yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+          VALUES ('team-1', 'lead', ${GROUP_THREAD})`;
+        yield* sql`INSERT INTO assistant_group_messages
+          (message_id, team_id, seq, author, assistant_id, kind, text, created_at)
+          VALUES ('m7', 'team-1', 3, 'assistant', 'lead', 'message', 'Noted', ${NOW})`;
+        yield* send({
+          type: "teamUpserted",
+          team: team([
+            ["project-1", 1],
+            ["home-project", 1],
+            [null, 1],
+          ]),
+        });
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* settle(relay);
+        assert.deepStrictEqual(
+          alerts(publications).map((alert) => [alert.threadId, alert.projectTitle, alert.deepLink]),
+          [
+            [
+              GROUP_THREAD,
+              "Work finished: Project, General",
+              "/assistant-groups/relay-environment/team-1?tab=all",
+            ],
+          ],
+        );
+        // Once that push is out, the next end on the thread is its own tab's push again.
+        yield* send({
+          type: "teamUpserted",
+          team: team([
+            ["project-1", 1],
+            ["home-project", 1],
+          ]),
+        });
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* settle(relay);
+        assert.deepStrictEqual(
+          alerts(publications)
+            .slice(1)
+            .map((alert) => [alert.projectTitle, alert.deepLink]),
+          [
+            [
+              "[Project] Shipped the release",
+              "/assistant-groups/relay-environment/team-1?tab=project%3Aproject-1",
+            ],
+          ],
+        );
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("pushes nothing for an archived group or a member finishing alone", () =>
       Effect.gen(function* () {
         const { relay, publications, send } = yield* setup;

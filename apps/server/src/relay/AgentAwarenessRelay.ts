@@ -461,10 +461,15 @@ export const make = Effect.gen(function* () {
   };
 
   // A member's hidden thread carries the group's finish: the relay only knows threads.
-  const groupFinishes = new Map<
-    ThreadId,
-    { readonly title: string; readonly preview: string; readonly deepLink: string }
-  >();
+  interface GroupFinish {
+    readonly title: string;
+    readonly preview: string;
+    readonly deepLink: string;
+    readonly tabs: ReadonlyArray<ProjectId | null>;
+    /** Its push went out, so a later end on the thread is a push of its own. */
+    readonly sent: boolean;
+  }
+  const groupFinishes = new Map<ThreadId, GroupFinish>();
   const isGroupThread = (threadId: ThreadId) =>
     assistantIdFromThreadId(threadId) === null
       ? Effect.succeed(false)
@@ -650,6 +655,7 @@ export const make = Effect.gen(function* () {
     // A member's own completion is silent: the group's finish replaces it, so n members do not buzz n times.
     const basePhase = baseSnapshot.state?.phase;
     let snapshot = baseSnapshot;
+    let groupFinish: GroupFinish | undefined;
     if (
       baseSnapshot.state !== null &&
       (basePhase === "completed" || basePhase === "running" || basePhase === "starting") &&
@@ -659,6 +665,7 @@ export const make = Effect.gen(function* () {
       if (basePhase !== "completed") {
         groupFinishes.delete(threadId);
       } else {
+        groupFinish = finish;
         snapshot = {
           ...baseSnapshot,
           state:
@@ -787,6 +794,9 @@ export const make = Effect.gen(function* () {
       state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
+    if (groupFinish !== undefined && groupFinishes.get(threadId) === groupFinish) {
+      groupFinishes.set(threadId, { ...groupFinish, sent: true });
+    }
     if (state !== null && childRequestId !== undefined) {
       childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
     }
@@ -1030,6 +1040,28 @@ export const make = Effect.gen(function* () {
     const threadId = ThreadId.make(rows[0].thread_id);
     const preview = rows[0].text.replace(/\s+/g, " ").trim().slice(0, 120);
     const projectTitle = yield* channelProjectTitleOf({ projects, folders }, projectId);
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
+    // Tabs ending on one thread before its push goes out share that push, which opens All.
+    const pending = groupFinishes.get(threadId);
+    const earlier = pending === undefined || pending.sent ? [] : pending.tabs;
+    if (earlier.length > 0 && !(earlier.length === 1 && earlier[0] === projectId)) {
+      const tabs = earlier.includes(projectId) ? earlier : [...earlier, projectId];
+      const names = yield* Effect.forEach(tabs, (tab) =>
+        tab === null
+          ? Effect.succeed("General")
+          : channelProjectTitleOf({ projects, folders }, tab),
+      );
+      const named = names.filter((name) => name !== undefined);
+      groupFinishes.set(threadId, {
+        title: team.name,
+        preview: named.length === 0 ? "Work finished" : `Work finished: ${named.join(", ")}`,
+        deepLink: `${buildAssistantGroupDeepLink({ environmentId, teamId: team.id })}?tab=all`,
+        tabs,
+        sent: false,
+      });
+      yield* enqueueThreadPublish(threadId);
+      return;
+    }
     groupFinishes.set(threadId, {
       title: team.name,
       preview:
@@ -1038,11 +1070,9 @@ export const make = Effect.gen(function* () {
           : projectTitle === undefined
             ? preview
             : projectNoticePrefix(projectTitle, preview),
-      deepLink: buildAssistantGroupDeepLink({
-        environmentId: yield* serverEnvironment.getEnvironmentId,
-        teamId: team.id,
-        projectId,
-      }),
+      deepLink: buildAssistantGroupDeepLink({ environmentId, teamId: team.id, projectId }),
+      tabs: [projectId],
+      sent: false,
     });
     yield* enqueueThreadPublish(threadId);
   });
