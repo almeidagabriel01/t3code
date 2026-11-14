@@ -75,8 +75,12 @@ const contextual: ReadonlyArray<
     /\b((?:Set-)?Cookie)(\s*:\s*)[^\s=;:]+=[^\r\n]*/gi,
     (_m, name, separator) => `${name}${separator}${MARK}`,
   ],
-  // `-p<password>` glued to the flag; a bare `-p` asks for it interactively.
-  [/\b(mysql(?:dump|admin|sh)?\b[^\n]*?\s-p)(?=\S)[^\s]+/g, (_m, prefix) => `${prefix}${MARK}`],
+  // `-p<password>` glued to the flag; a bare `-p` asks for it interactively. Bounded: a line of
+  // repeated "mysql" with no flag is otherwise quadratic.
+  [
+    /\b(mysql(?:dump|admin|sh)?\b[^\n]{0,200}?\s-p)(?=\S)[^\s]+/g,
+    (_m, prefix) => `${prefix}${MARK}`,
+  ],
 ];
 const redactions: ReadonlyArray<RegExp> = [
   // The scanner flags the header; redaction also drops the key body that follows it.

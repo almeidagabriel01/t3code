@@ -122,6 +122,14 @@ describe("memory redaction", () => {
     assert.strictEqual(redactMemoryText({ text }).text, text);
     assert.strictEqual(scanMemoryValue({ text }).kind, "allowed");
   });
+  it("stays linear on a long line of mysql words without a flag", () => {
+    const text = "mysql ".repeat(100_000);
+    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- ReDoS bound: the quadratic form takes seconds, linear well under 100 ms
+    const started = performance.now();
+    redactMemoryText({ text });
+    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- see above
+    assert.isBelow(performance.now() - started, 100);
+  });
   it("leaves ordinary text untouched and keeps judgment absent", () => {
     const value = { text: "Prefer targeted checks." };
     assert.deepStrictEqual(redactMemoryText(value), value);
