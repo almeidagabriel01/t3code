@@ -81,6 +81,8 @@ const boxProject = ProjectId.make("project:box");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.4" };
+/** The box project's own default, which a task with no model there runs on. */
+const boxDefault = { instanceId, model: "gpt-5.4-mini" };
 
 type LaunchedWith = Pick<
   ThreadLaunch.ThreadLaunchInput,
@@ -564,7 +566,11 @@ const boxToolkitLayer = (thread: BoxThread) => {
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      ServerSettings.layerTest({
+        projectSettingsOverrides: { [boxProject]: { defaultModelSelection: boxDefault } },
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
 };
@@ -1154,7 +1160,7 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task named only by environment inherits the parent's model, within the link", () =>
+it.effect("a task named only by environment runs on that project's model, within the link", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -1173,9 +1179,9 @@ it.effect("a task named only by environment inherits the parent's model, within 
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model, and the link's modes rather than the parent's.
+      // The project's model there, not the parent's, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection,
+        modelSelection: boxDefault,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });
