@@ -147,7 +147,7 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
       ? Option.getOrNull(yield* directory.value.sandboxEnvironmentId)
       : null;
   // The note lists the effective projects; its own list alone would miss its groups' projects.
-  const projectIds = yield* effectiveProjectIdsOf(directory.value, assistant);
+  const projectIds = yield* effectiveProjectIdsOf(directory.value, assistant, found.value.team);
   const named = [...new Set([...projectIds, ...teams.flatMap(({ team }) => team.projectIds)])];
   const titles =
     named.length > 0 && directory.value.projectTitles !== undefined

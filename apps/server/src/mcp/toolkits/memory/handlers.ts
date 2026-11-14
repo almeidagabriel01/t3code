@@ -168,7 +168,11 @@ const assistantProjects = Effect.gen(function* () {
   if (thread === undefined || Option.isNone(directory)) return undefined;
   const found = yield* directory.value.forThread(thread.threadId);
   if (Option.isNone(found) || found.value.assistant.scope !== "project") return undefined;
-  const projectIds = yield* effectiveProjectIdsOf(directory.value, found.value.assistant);
+  const projectIds = yield* effectiveProjectIdsOf(
+    directory.value,
+    found.value.assistant,
+    found.value.team,
+  );
   const titles =
     directory.value.projectTitles === undefined
       ? {}
