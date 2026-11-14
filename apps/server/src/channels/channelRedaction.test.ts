@@ -32,4 +32,15 @@ describe("redactChannelText", () => {
     expect(redactChannelText(input)).toBe(input);
     expect(containsSecret(input)).toBe(false);
   });
+
+  it.each(["a.".repeat(100_000), "token.".repeat(40_000)])(
+    "stays linear on adversarial input (%#)",
+    (input) => {
+      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- ReDoS bound: the quadratic form takes seconds, linear well under 100 ms
+      const started = performance.now();
+      redactChannelText(input);
+      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- see above
+      expect(performance.now() - started).toBeLessThan(100);
+    },
+  );
 });
