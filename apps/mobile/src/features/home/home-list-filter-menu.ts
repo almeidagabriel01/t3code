@@ -16,6 +16,31 @@ export interface HomeListFilterMenuProject {
   readonly environmentIds?: ReadonlyArray<EnvironmentId>;
 }
 
+/** Names the machines of projects whose label another project in the list shares. */
+export function sameNameMachineLabels(
+  projects: ReadonlyArray<{ readonly label: string }>,
+  environments: ReadonlyArray<HomeListFilterMenuEnvironment>,
+) {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const { label } of projects) {
+    if (seen.has(label)) shared.add(label);
+    seen.add(label);
+  }
+  return (project: {
+    readonly label: string;
+    readonly environmentIds?: ReadonlyArray<EnvironmentId>;
+  }): string | undefined => {
+    if (!shared.has(project.label)) return undefined;
+    const names = new Set(
+      (project.environmentIds ?? []).flatMap(
+        (id) => environments.find((environment) => environment.environmentId === id)?.label ?? [],
+      ),
+    );
+    return [...names].join(", ") || undefined;
+  };
+}
+
 export function buildHomeListFilterMenuItems(props: {
   readonly environments: ReadonlyArray<HomeListFilterMenuEnvironment>;
   readonly projects: ReadonlyArray<HomeListFilterMenuProject>;
@@ -48,21 +73,7 @@ export function buildHomeListFilterMenuItems(props: {
     },
   ];
 
-  const seenLabels = new Set<string>();
-  const sharedLabels = new Set<string>();
-  for (const { label } of props.projects) {
-    if (seenLabels.has(label)) sharedLabels.add(label);
-    seenLabels.add(label);
-  }
-  const environmentNames = (project: HomeListFilterMenuProject) =>
-    [
-      ...new Set(
-        (project.environmentIds ?? []).flatMap(
-          (id) =>
-            props.environments.find((environment) => environment.environmentId === id)?.label ?? [],
-        ),
-      ),
-    ].join(", ") || undefined;
+  const machineOf = sameNameMachineLabels(props.projects, props.environments);
 
   if (props.projects.length > 0) {
     items.push({
@@ -79,7 +90,7 @@ export function buildHomeListFilterMenuItems(props: {
         ...props.projects.map((project) => ({
           id: `project:${project.key}`,
           title: project.needsAttention ? `${project.label} •` : project.label,
-          subtitle: sharedLabels.has(project.label) ? environmentNames(project) : undefined,
+          subtitle: machineOf(project),
           selected: props.selectedProjectKey === project.key,
           onPress: () => props.onProjectChange(project.key),
         })),

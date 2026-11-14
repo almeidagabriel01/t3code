@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 
 import type { AppBarMenu } from "../../../components/ui/AppBar.types";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
+import { sameNameMachineLabels } from "../../home/home-list-filter-menu";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 import { settingsProjectsLabel } from "../settings-environment-filter.logic";
 
@@ -20,6 +21,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
     toggleProject,
     selectAllProjects,
   } = useSettingsEnvironmentFilter();
+  const machineOf = sameNameMachineLabels(selectableProjectGroups, availableTargets);
   return {
     title: "Filter settings environments and projects",
     // iOS rebuilds a header button whose icon changes, which closes its open menu after each pick.
@@ -69,6 +71,10 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
           ...selectableProjectGroups.map((group) => ({
             id: `project:${group.key}`,
             title: projectMenuLabel(group),
+            subtitle: machineOf({
+              label: group.label,
+              environmentIds: group.members.map((member) => member.project.environmentId),
+            }),
             selected: selectedProjectKeys?.has(group.key) ?? false,
             keepsMenuPresented: true,
             onPress: () => toggleProject(group.key),
