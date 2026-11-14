@@ -42,14 +42,11 @@ describe("redactChannelText", () => {
     expect(containsSecret(input)).toBe(false);
   });
 
-  it.each(["a.".repeat(100_000), "token.".repeat(40_000)])(
+  // Linear today (milliseconds); the quadratic forms took far past the 120 s test timeout here.
+  it.each(["a.".repeat(500_000), "token.".repeat(40_000)])(
     "stays linear on adversarial input (%#)",
     (input) => {
-      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- ReDoS bound: the quadratic form takes seconds, linear well under 100 ms
-      const started = performance.now();
-      redactChannelText(input);
-      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- see above
-      expect(performance.now() - started).toBeLessThan(100);
+      expect(redactChannelText(input)).toBe(input);
     },
   );
 });

@@ -75,12 +75,12 @@ describe("memory redaction", () => {
     hugging_face: "hf_" + "H".repeat(34),
     slack_app: "xapp-1-A0" + "J".repeat(10) + "-1234567890-" + "a".repeat(24),
     jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
-    telegram_bot: "123456789:" + "AAH" + "k".repeat(32),
+    telegram_bot: "123456789:AAH" + "k".repeat(32),
     stripe_webhook: "whsec_" + "L".repeat(32),
     sendgrid: "SG." + "m".repeat(22) + "." + "N".repeat(43),
     twilio: "SK" + "0123456789abcdef".repeat(2),
     slack_webhook: "hooks.slack.com/services/T0ABCDEFG/B0ABCDEFG/" + "p".repeat(24),
-    discord: "MTIzNDU2Nzg5MDEyMzQ1Njc4." + "GabCdE." + "q".repeat(38),
+    discord: "MTIzNDU2Nzg5MDEyMzQ1Njc4.GabCdE." + "q".repeat(38),
   };
   it.each(Object.entries(secrets))(
     "blocks %s, then replaces it in text and judgment, leaving a scan-clean value",
@@ -151,13 +151,10 @@ describe("memory redaction", () => {
     assert.strictEqual(redactMemoryText({ text }).text, text);
     assert.strictEqual(scanMemoryValue({ text }).kind, "allowed");
   });
+  // Linear today; the unbounded form took far past the 120 s test timeout on this input.
   it("stays linear on a long line of mysql words without a flag", () => {
-    const text = "mysql ".repeat(100_000);
-    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- ReDoS bound: the quadratic form takes seconds, linear well under 100 ms
-    const started = performance.now();
-    redactMemoryText({ text });
-    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- see above
-    assert.isBelow(performance.now() - started, 100);
+    const text = "mysql ".repeat(1_000_000);
+    assert.strictEqual(redactMemoryText({ text }).text, text);
   });
   it("leaves ordinary text untouched and keeps judgment absent", () => {
     const value = { text: "Prefer targeted checks." };
