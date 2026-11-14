@@ -1262,6 +1262,7 @@ export function AssistantGroupChatRouteScreen({
           projects: projects.filter((project) => project.environmentId === environmentId),
           assistants: people.byId,
           saved: savedTab.saved,
+          loading: savedTab.loading,
         });
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const feed = useRef<GroupFeedHandle>(null);

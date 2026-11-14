@@ -66,7 +66,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     markdownRender: vi.fn(),
     subscribe: vi.fn(),
     /** Mobile preferences as the atom holds them; saving replaces them and re-renders. */
-    preferences: {} as { assistantGroupTabs?: Record<string, string> },
+    /** null while the device's preferences are still being read. */
+    preferences: {} as { assistantGroupTabs?: Record<string, string> } | null,
     preferenceListeners: new Set<() => void>(),
     savePreferences: vi.fn(),
     navigate: vi.fn(),
@@ -684,7 +685,10 @@ vi.mock("@effect/atom-react", async () => {
       useSyncExternalStore(subscribe, () => {
         if (held !== mocks.preferences) {
           held = mocks.preferences;
-          result = AsyncResult.success(mocks.preferences);
+          result =
+            mocks.preferences === null
+              ? AsyncResult.initial()
+              : AsyncResult.success(mocks.preferences);
         }
         return result;
       }),
@@ -879,7 +883,8 @@ beforeEach(() => {
   mocks.preferenceListeners.clear();
   mocks.savePreferences.mockImplementation(
     (update: { transform: (current: typeof mocks.preferences) => object }) => {
-      mocks.preferences = { ...mocks.preferences, ...update.transform(mocks.preferences) };
+      const current = mocks.preferences ?? {};
+      mocks.preferences = { ...current, ...update.transform(current) };
       for (const listener of mocks.preferenceListeners) listener();
     },
   );
@@ -1751,6 +1756,18 @@ describe("requests", () => {
     expect(Boolean(row.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
       android,
     );
+  });
+
+  it("opens on the saved tab only once the device's preferences are read, never All first", async () => {
+    mocks.preferences = null;
+    tabbed();
+    expect(container.querySelector('[data-testid="group-tabs"]')).toBeNull();
+    expect(container.querySelector('[data-testid="list"]')).toBeNull();
+    act(() => {
+      mocks.preferences = { assistantGroupTabs: { "hub:g1": "project:p2" } };
+      for (const listener of mocks.preferenceListeners) listener();
+    });
+    expect(selected(TAB.beta)).toBe("true");
   });
 
   it("switches tabs keeping the draft, sets the composer's project, and reopens on the saved tab", async () => {

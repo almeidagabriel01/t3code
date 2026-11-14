@@ -1049,6 +1049,7 @@ describe("assistant group tabs", () => {
     scopes: ReturnType<typeof scope>[] | undefined,
     saved: string | null,
     loadedProjects = projects,
+    loading = false,
   ) =>
     assistantGroupTabView({
       team: {
@@ -1060,6 +1061,7 @@ describe("assistant group tabs", () => {
       projects: loadedProjects,
       assistants: { has: () => true },
       saved,
+      loading,
     });
   const viewKeys = (result: ReturnType<typeof view>) => ({
     pending: result.pending,
@@ -1125,6 +1127,16 @@ describe("assistant group tabs", () => {
       "projects still loading",
       view([P1, P2], [scope(P1), scope(P2)], "project:p1", []),
       { pending: true, tabs: null, tab: null },
+    ],
+    [
+      "the saved tab still loading",
+      view([P1, P2], [scope(P1), scope(P2)], null, projects, true),
+      { pending: true, tabs: null, tab: null },
+    ],
+    [
+      "older server while the saved tab loads",
+      view([P1, P2], undefined, null, projects, true),
+      { pending: false, tabs: null, tab: null },
     ],
   ])("view: %s", (_name, result, expected) => {
     assert.deepStrictEqual(viewKeys(result), expected);

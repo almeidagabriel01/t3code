@@ -13,6 +13,8 @@ export function useGroupTabPreference(environmentId: EnvironmentId, teamId: Assi
     saved: AsyncResult.isSuccess(preferences)
       ? preferences.value.assistantGroupTabs?.[group]
       : undefined,
+    // Only the first read: a failed one opens on All rather than never opening.
+    loading: AsyncResult.isInitial(preferences),
     /** A function decides from the tab saved when it runs; null keeps that one. */
     save: (tab: string | ((saved: string | undefined) => string | null)) =>
       savePreferences({

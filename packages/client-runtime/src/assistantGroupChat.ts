@@ -450,16 +450,24 @@ export function assistantGroupTabsPending(input: {
   );
 }
 
-/** The tabs to show and the open one; while members or projects load, pending and none. */
+/**
+ * The tabs to show and the open one; while members, projects or the saved tab load, pending and
+ * none. A server without scopes has no tabs, so it never waits for the saved one.
+ */
 export function assistantGroupTabView(input: {
   readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat">;
   readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   readonly assistants: { readonly has: (id: string) => boolean };
   readonly saved: string | null | undefined;
+  /** The saved tab is still being read. */
+  readonly loading?: boolean;
 }) {
   // Decided before keeping the saved tab: a project still loading would otherwise show as removed.
-  if (assistantGroupTabs(input) === null && assistantGroupTabsPending(input)) {
+  if (
+    (input.loading === true && input.team.chat?.scopes !== undefined) ||
+    (assistantGroupTabs(input) === null && assistantGroupTabsPending(input))
+  ) {
     return { pending: true, tabs: null, tab: null };
   }
   const tabs = assistantGroupTabs({ ...input, active: input.saved });
