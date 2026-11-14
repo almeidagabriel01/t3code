@@ -8,6 +8,7 @@ import {
   assistantGroupMarkdownMentions,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
+  assistantGroupRequestProject,
   assistantGroupBoundaryLabel,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
@@ -1028,10 +1029,8 @@ export function AssistantGroupChatRouteScreen({
     selectDetail({ name: "Thread", params });
   };
 
-  const requestProject = (requestId: AssistantGroupMessage["requestId"]) => {
-    if (requestId === undefined || chat === null) return null;
-    return (chat.messages.get(requestId) ?? chat.requests.get(requestId))?.projectId ?? null;
-  };
+  const requestProject = (requestId: AssistantGroupMessage["requestId"]) =>
+    chat === null ? null : assistantGroupRequestProject(chat, requestId);
   const requestRoot = (requestId: AssistantGroupMessage["requestId"]) => {
     const projectId = requestProject(requestId);
     return (

@@ -23,6 +23,7 @@ import {
   assistantGroupFinished,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
+  assistantGroupRequestProject,
   filterAssistantGroupFeed,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
@@ -171,6 +172,11 @@ describe("group requests", () => {
     })!;
     assert.isTrue(state.requests.has("m2" as never));
     assert.strictEqual(oldestAssistantGroupSeq(state), 5);
+    // A request's project comes from its root, on the page or off it; none without a request.
+    assert.strictEqual(assistantGroupRequestProject(state, "m2" as never), site);
+    assert.strictEqual(assistantGroupRequestProject(state, "m1" as never), core);
+    assert.isNull(assistantGroupRequestProject(state, undefined));
+    assert.isNull(assistantGroupRequestProject(state, "m9" as never));
     const merged = applyAssistantGroupHistory(state, {
       messages: [root, inRequest(3, 3)],
       tasks: [],

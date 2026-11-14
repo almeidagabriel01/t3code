@@ -12,6 +12,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
+  assistantGroupRequestProject,
   assistantGroupRunningCount,
   ASSISTANT_GROUP_ALL_PROJECTS_LABEL,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
@@ -1102,11 +1103,7 @@ export function AssistantGroupChat(props: {
     }
     const lead = members.find((member) => member.id === team.leadId);
     const requestRoot = (state: AssistantGroupChatState, message: AssistantGroupMessage) => {
-      const requestId = message.requestId;
-      const projectId =
-        requestId === undefined
-          ? undefined
-          : (state.messages.get(requestId) ?? state.requests.get(requestId))?.projectId;
+      const projectId = assistantGroupRequestProject(state, message.requestId);
       return projects.find(
         (project) => project.environmentId === environmentId && project.id === projectId,
       )?.workspaceRoot;
@@ -1128,12 +1125,7 @@ export function AssistantGroupChat(props: {
           archived={archived}
           onJump={jumpTo}
           onReply={(message, name) => {
-            const requestId = message.requestId;
-            const root =
-              requestId === undefined
-                ? undefined
-                : (state.messages.get(requestId) ?? state.requests.get(requestId));
-            const projectId = root?.projectId ?? null;
+            const projectId = assistantGroupRequestProject(state, message.requestId);
             setReplyTo({
               id: message.id,
               projectId,

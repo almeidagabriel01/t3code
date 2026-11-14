@@ -279,6 +279,15 @@ export function assistantGroupRequestFeed(
   return [...blocks, ...loose].sort((a, b) => seqOf(a) - seqOf(b));
 }
 
+/** The project a request runs in, from its root on the page or off it. */
+export function assistantGroupRequestProject(
+  state: AssistantGroupChatState,
+  requestId: AssistantGroupMessageId | undefined,
+): ProjectId | null {
+  if (requestId === undefined) return null;
+  return (state.messages.get(requestId) ?? state.requests.get(requestId))?.projectId ?? null;
+}
+
 /** The projects the loaded requests run in, in first-seen order, for the filter. */
 export function assistantGroupFeedProjects(
   items: ReadonlyArray<AssistantGroupFeedItem>,
