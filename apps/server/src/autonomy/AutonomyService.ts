@@ -479,6 +479,18 @@ const make = Effect.gen(function* () {
     return own === undefined ? undefined : decodeReplyAddress(own.address);
   });
 
+  /** A chat app is switched on but has no chat to the user yet: no allowed user, no message from them. */
+  const chatNotReady = Effect.fn("AutonomyService.chatNotReady")(function* (
+    channels: ReadonlyArray<AutonomyChannel>,
+  ) {
+    if (channels.includes("telegram")) {
+      const snapshot = yield* telegram.get.pipe(Effect.orElseSucceed(() => null));
+      if (snapshot?.enabled === true && snapshot.tokenConfigured) return true;
+    }
+    const messages = yield* imessage.get.pipe(Effect.orElseSucceed(() => null));
+    return messages?.enabled === true;
+  });
+
   const linkTo = (threadId: ThreadId) =>
     environment.getEnvironmentId.pipe(
       Effect.map((environmentId) => hostedThreadLink({ environmentId, threadId })),
@@ -812,7 +824,10 @@ const make = Effect.gen(function* () {
       INSERT OR IGNORE INTO autonomy_needs_you (subject_key, decision_id, created_at)
       VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
 
-  /** The card in the user's chat; Activity already shows the decision itself. */
+  /**
+   * The card in the user's chat; Activity already shows the decision itself. False while a chat app
+   * is on but cannot reach the user yet, so the next sweep tries again instead of marking it told.
+   */
   const sendNeedsYou = Effect.fn("AutonomyService.sendNeedsYou")(function* (input: {
     readonly decision: Decision;
     readonly agent: string;
@@ -824,12 +839,12 @@ const make = Effect.gen(function* () {
     readonly context?: (language: ResolvedChannelLanguage) => string;
   }) {
     const chat = yield* ownerChat(input.config.channels);
-    if (chat === undefined) return;
+    if (chat === undefined) return !(yield* chatNotReady(input.config.channels));
     if (
       input.answerable &&
       (yield* sql`SELECT 1 FROM channel_cards WHERE decision_id = ${input.decision.id}`).length > 0
     ) {
-      return;
+      return true;
     }
     const language = yield* channelLanguage.current;
     const shown = localizeDecision(input.decision, language);
@@ -861,6 +876,7 @@ const make = Effect.gen(function* () {
         INSERT OR IGNORE INTO channel_cards (decision_id, delivery_id)
         VALUES (${input.decision.id}, ${deliveryId})`;
     }
+    return true;
   });
 
   const notifyRequest = Effect.fn("AutonomyService.notifyRequest")(function* (
@@ -896,16 +912,18 @@ const make = Effect.gen(function* () {
       ...(built.answerable ? { approvalRequestId: requestId } : {}),
     });
     if (decision.status !== "open") return yield* markTold(subject, decision.id, nowMs);
-    yield* sendNeedsYou({
-      decision,
-      agent,
-      threadId,
-      projectId: shell.projectId,
-      threadTitle: shell.title,
-      answerable: built.answerable,
-      config,
-    });
-    yield* markTold(subject, decision.id, nowMs);
+    if (
+      yield* sendNeedsYou({
+        decision,
+        agent,
+        threadId,
+        projectId: shell.projectId,
+        threadTitle: shell.title,
+        answerable: built.answerable,
+        config,
+      })
+    )
+      yield* markTold(subject, decision.id, nowMs);
   });
 
   const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
@@ -918,16 +936,18 @@ const make = Effect.gen(function* () {
     const shell = yield* engine
       .getThreadShell(decision.fromThreadId)
       .pipe(Effect.orElseSucceed(() => null));
-    yield* sendNeedsYou({
-      decision,
-      agent: yield* agentName(decision.fromThreadId, shell?.providerInstanceId),
-      threadId: decision.fromThreadId,
-      projectId: shell?.projectId ?? null,
-      threadTitle: decision.threadTitle,
-      answerable: true,
-      config,
-    });
-    yield* markTold(subject, decision.id, nowMs);
+    if (
+      yield* sendNeedsYou({
+        decision,
+        agent: yield* agentName(decision.fromThreadId, shell?.providerInstanceId),
+        threadId: decision.fromThreadId,
+        projectId: shell?.projectId ?? null,
+        threadTitle: decision.threadTitle,
+        answerable: true,
+        config,
+      })
+    )
+      yield* markTold(subject, decision.id, nowMs);
   });
 
   interface PausedTask {
@@ -965,17 +985,19 @@ const make = Effect.gen(function* () {
       context: contextIn("en"),
       options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
     });
-    yield* sendNeedsYou({
-      decision,
-      agent: task.owner_name,
-      threadId,
-      projectId: task.project_id,
-      threadTitle: task.team_name,
-      answerable: false,
-      config,
-      context: contextIn,
-    });
-    yield* markTold(subject, decision.id, nowMs);
+    if (
+      yield* sendNeedsYou({
+        decision,
+        agent: task.owner_name,
+        threadId,
+        projectId: task.project_id,
+        threadTitle: task.team_name,
+        answerable: false,
+        config,
+        context: contextIn,
+      })
+    )
+      yield* markTold(subject, decision.id, nowMs);
   });
 
   /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */

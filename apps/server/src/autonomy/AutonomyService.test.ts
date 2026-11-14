@@ -986,6 +986,23 @@ it.effect("without Telegram the waiting request is only in Activity, answerable 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: ["111"] }));
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "iMessage carries the card when Telegram is not set up and the user wrote from it",
   () => {
