@@ -27,8 +27,9 @@ describe("assistantRunReply", () => {
     { origin: "group", text: "NO_REPLY", expected: undefined },
     { origin: "assistant", text: "  ", expected: undefined },
     { origin: "assistant", text: undefined, expected: undefined },
-    // The user's own question always gets its whole answer, even a literal token.
-    { origin: "user", text: "NO_REPLY", expected: "NO_REPLY" },
+    // Asked-for answers go whole, under the same quiet rule the T3 thread shows.
+    { origin: "routine", text: "NO_REPLY", expected: undefined },
+    { origin: "user", text: `${longReport}\n\nNO_REPLY`, expected: longReport },
     { origin: "user", text: longReport, expected: longReport },
     { origin: "routine", text: longReport, expected: longReport },
   ] as const)("$origin: $text", ({ origin, text, expected }) => {

@@ -104,7 +104,7 @@ export function assistantRunReply(
   text: string | undefined,
   origin: TurnOrigin,
 ): string | undefined {
-  if (text === undefined || text.trim() === "") return undefined;
-  if (asksForFullAnswer(origin)) return text;
-  return isQuietReply(text) ? undefined : briefReply(withoutQuietToken(text));
+  if (text === undefined || text.trim() === "" || isQuietReply(text)) return undefined;
+  const said = withoutQuietToken(text);
+  return asksForFullAnswer(origin) ? said : briefReply(said);
 }
