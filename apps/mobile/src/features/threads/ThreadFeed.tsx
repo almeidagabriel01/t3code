@@ -53,6 +53,7 @@ import {
   type ChatAttachment,
   type ChatFileAttachment,
   type ChatImageAttachment,
+  isAssistantThreadId,
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
@@ -269,6 +270,10 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { TaskEventActivityRow } from "./TaskEventActivityRow";
+import { FoldableContent } from "../../components/FoldableContent";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
+import { isLongMessage } from "@t3tools/client-runtime/messageFold";
 import { assistantSenders, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
 import { AssistantFeedMessage } from "../assistants/AssistantPresence";
 import {
@@ -1136,6 +1141,8 @@ function ArtifactTemplateCard(props: {
   );
 }
 
+const ASSISTANT_FOLDED_HEIGHT = 240;
+
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
@@ -1403,6 +1410,29 @@ function OpenSenderThreadButton(props: {
     >
       <Text className="font-t3-medium text-xs text-foreground-secondary">Open thread</Text>
     </Pressable>
+  );
+}
+
+function ThreadTaskEventRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly activity: NonNullable<ReturnType<typeof taskEventActivity>>;
+}) {
+  const openLinkedThread = useOpenLinkedThread();
+  const { activity } = props;
+  return (
+    <View className="mb-0.5 px-1">
+      <TaskEventActivityRow
+        title={activity.title}
+        label={activity.label}
+        status={activity.status}
+        onOpen={() =>
+          openLinkedThread({
+            environmentId: String(props.environmentId),
+            threadId: activity.threadId,
+          })
+        }
+      />
+    </View>
   );
 }
 
@@ -1896,6 +1926,10 @@ function renderFeedEntry(
         />
       );
     }
+    const taskEvent = isUser ? taskEventActivity(message) : null;
+    if (taskEvent !== null) {
+      return <ThreadTaskEventRow environmentId={props.environmentId} activity={taskEvent} />;
+    }
     if (isUser && presentation.attribution === "automation") {
       const rowId = `automation:${message.id}`;
       return (
@@ -2260,15 +2294,25 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              environmentId={props.environmentId}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <FoldableContent
+              foldable={
+                isAssistantThreadId(props.threadId) &&
+                !message.streaming &&
+                !assistantTurnStillInProgress &&
+                isLongMessage(renderedText)
+              }
+              foldedHeight={ASSISTANT_FOLDED_HEIGHT}
+            >
+              <AssistantMarkdownContent
+                markdown={renderedText}
+                environmentId={props.environmentId}
+                markdownStyles={styles}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </FoldableContent>
           </MarkdownImageAvailableWidthContext>
         ) : null}
         <MessageAttachmentList
@@ -3749,6 +3793,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ) {
                 return "message:assistant-progress";
               }
+              if (taskEventActivity(entry.message) !== null) return "message:task-event";
               const { attribution } = resolveUserMessagePresentation(entry.message);
               return attribution === "automation" || attribution === "agent"
                 ? `message:${attribution}`

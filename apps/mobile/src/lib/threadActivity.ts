@@ -2,6 +2,7 @@ import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { isQuietAssistantReply } from "@t3tools/client-runtime/assistantTasks";
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -2277,6 +2278,7 @@ export function buildThreadFeed(
     )
       continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (item.type === "assistant_message" && isQuietAssistantReply(item.text)) continue;
     if (
       item.type === "run_interrupt_request" ||
       (item.type === "run_interrupt_result" &&

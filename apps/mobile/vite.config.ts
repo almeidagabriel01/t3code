@@ -122,6 +122,7 @@ const reactTests = [
   "src/features/assistants/HomeAssistantsSection.test.tsx",
   "src/features/assistants/ProjectAssistantFaces.test.tsx",
   "src/features/assistants/AssistantTaskChip.test.tsx",
+  "src/features/threads/TaskEventActivityRow.test.tsx",
   "src/features/home/useHomeSectionPreferences.test.tsx",
   "src/features/home/HomeNeedsYouSection.test.tsx",
   "src/features/home/UnreadActionsMenu.test.tsx",

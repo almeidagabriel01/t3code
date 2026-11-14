@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -243,8 +244,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isGuestMessage: context?.guest !== undefined,
           text,
         });
+        const taskEvent = message ? taskEventActivity(message) : null;
         const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+          (taskEvent && `${taskEvent.title} · ${taskEvent.label}`) ||
+          controls.displayText ||
+          (attachments.length > 0 ? "Attachments" : "Queued message");
         return (
           <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
             <QueueRowSwipeable
