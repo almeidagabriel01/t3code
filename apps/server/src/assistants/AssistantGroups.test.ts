@@ -3536,6 +3536,24 @@ it.effect("two requests in different projects run together, each seeing only its
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("an outside assistant's post without a project takes none the group lacks", () => {
+  const h = harness({
+    members: ["ada", "cy"],
+    lead: "ada",
+    routable: [codex],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.agentPost({
+      callerThreadId: ThreadId.make("assistant:beto:1"),
+      group: TEAM,
+      text: "check the site",
+    });
+    assert.isUndefined(posted.message.projectId);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("only a member that may work in the request's project gets its work", () => {
   const h = harness({ projects: { ada: ["p1", "p2"], beto: ["p1"] } });
   return Effect.gen(function* () {

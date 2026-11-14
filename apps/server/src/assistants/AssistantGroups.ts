@@ -2718,9 +2718,9 @@ const make = Effect.gen(function* () {
       const team = byId ?? matches[0];
       if (team === undefined) return yield* assistantError("not_found", "Group not found.");
       const wantedProject = input.project?.trim() ?? "";
+      const projects = yield* groupProjects(yield* activeMembers(toAssistantTeam(team)));
       let projectId: ProjectId | undefined;
       if (wantedProject !== "") {
-        const projects = yield* groupProjects(yield* activeMembers(toAssistantTeam(team)));
         const found = projects.filter(
           (project) =>
             project.id === wantedProject ||
@@ -2740,9 +2740,15 @@ const make = Effect.gen(function* () {
       if (Option.isSome(outside)) return yield* invalid(outside.value);
       if (projectId === undefined) {
         const poster = yield* directory.forThread(input.callerThreadId);
-        // A project assistant's work stays in its home project unless it names another of its own.
-        if (Option.isSome(poster) && assistantProjects(poster.value.assistant) !== "all") {
-          projectId = poster.value.assistant.projectId as ProjectId;
+        // A project assistant's work stays in its home project, when the group has it, unless it
+        // names another of its own.
+        const home = Option.isSome(poster) ? poster.value.assistant : undefined;
+        if (
+          home !== undefined &&
+          assistantProjects(home) !== "all" &&
+          projects.some((project) => project.id === home.projectId)
+        ) {
+          projectId = home.projectId;
         }
       }
       const assistantId = assistantIdFromThreadId(input.callerThreadId);
