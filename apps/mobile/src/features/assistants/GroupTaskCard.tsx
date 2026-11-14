@@ -2,7 +2,7 @@ import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
-  assistantGroupPauseReasonLabel,
+  assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
@@ -56,6 +56,7 @@ export function GroupTaskCard(props: {
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
   const waiting = assistantGroupWaitingReason(task);
+  const reason = assistantGroupTaskReasonLabel(task);
   return (
     <View
       testID="group-task-card"
@@ -103,11 +104,7 @@ export function GroupTaskCard(props: {
           {needs} · Open the conversation to answer
         </Text>
       )}
-      {task.status === "paused" ? (
-        <Text className="text-xs text-foreground-muted">
-          {assistantGroupPauseReasonLabel(task.reason)}
-        </Text>
-      ) : null}
+      {reason === null ? null : <Text className="text-xs text-foreground-muted">{reason}</Text>}
       <View className="flex-row flex-wrap items-center gap-1.5">
         {assistantGroupTaskActions(task).map((action) =>
           action === "reassign" ? (
