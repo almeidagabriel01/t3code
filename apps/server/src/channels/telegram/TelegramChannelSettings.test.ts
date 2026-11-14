@@ -9,10 +9,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import * as Secrets from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
+import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./TelegramChannelRuntime.ts";
 import * as Settings from "./TelegramChannelSettings.ts";
 
@@ -44,6 +48,12 @@ const harness = () => {
     Layer.provideMerge(Secrets.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-telegram-settings-" })),
     Layer.provideMerge(runtime),
+    Layer.provideMerge(
+      ChannelOutbox.layer.pipe(
+        Layer.provideMerge(ChannelTransport.layer),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+      ),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
   );
   return { applied, dismissed, layer };
@@ -187,5 +197,46 @@ it.effect("brings the saved configuration up at start, and stays off when it can
     const damaged = yield* reason(reloaded.get);
     assert.strictEqual(damaged?.reason, "persistence_failed");
     assert.strictEqual(yield* fs.readFileString(file), "{ not json");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("shows what never reached Telegram and puts it back in line on resend", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const settings = yield* Settings.TelegramChannelSettings;
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const sql = yield* SqlClient.SqlClient;
+    assert.isUndefined((yield* settings.get).undeliveredCount);
+    for (const [id, kind, state] of [
+      ["t1", "telegram", "ambiguous"],
+      ["t2", "telegram", "failed"],
+      ["i1", "imessage", "failed"],
+      ["t3", "telegram", "sent"],
+    ] as const) {
+      const message = JSON.stringify({
+        deliveryId: id,
+        destination:
+          kind === "telegram"
+            ? { kind, connectionId: "telegram", chatId: "1" }
+            : { kind, connectionId: "c1", chatGuid: "g" },
+        text: "hi",
+        senderName: "Jarvis",
+      });
+      yield* sql`
+        INSERT INTO channel_outbox (delivery_id, message_json, state, next_attempt_at, created_at)
+        VALUES (${id}, ${message}, ${state}, '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')`;
+    }
+    yield* outbox.drain;
+    assert.strictEqual((yield* settings.get).undeliveredCount, 2);
+    const [streamed] = yield* Stream.runCollect(Stream.take(settings.streamStatus, 1));
+    assert.strictEqual(streamed?.undeliveredCount, 2);
+    assert.deepStrictEqual(yield* settings.resendUndelivered, { requeued: 2 });
+    assert.isUndefined((yield* settings.get).undeliveredCount);
+    const states = yield* sql<{ readonly state: string }>`
+      SELECT state FROM channel_outbox ORDER BY rowid`;
+    assert.deepStrictEqual(
+      states.map((row) => row.state),
+      ["pending", "pending", "failed", "sent"],
+    );
   }).pipe(Effect.provide(layer));
 });

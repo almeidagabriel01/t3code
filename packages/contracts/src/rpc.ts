@@ -532,6 +532,8 @@ import {
   ImessageChannelCheckAccessResult,
   ImessageChannelConfigureInput,
   ImessageChannelGetSettingsInput,
+  ImessageChannelResendUndeliveredInput,
+  ImessageChannelResendUndeliveredResult,
   ImessageChannelSettings,
   ImessageChannelSettingsError,
   ImessageChannelStatusEvent,
@@ -540,6 +542,8 @@ import {
 import {
   TelegramChannelConfigureInput,
   TelegramChannelGetSettingsInput,
+  TelegramChannelResendUndeliveredInput,
+  TelegramChannelResendUndeliveredResult,
   TelegramChannelSettings,
   TelegramChannelSettingsError,
   TelegramChannelStatusEvent,
@@ -853,6 +857,7 @@ export const WS_METHODS = {
   imessageChannelConfigure: "imessageChannel.configure",
   imessageChannelSubscribeStatus: "imessageChannel.subscribeStatus",
   imessageChannelCheckAccess: "imessageChannel.checkAccess",
+  imessageChannelResendUndelivered: "imessageChannel.resendUndelivered",
   keepAwakeSubscribeStatus: "keepAwake.subscribeStatus",
   heavyQueueSubscribe: "heavyQueue.subscribe",
   heavyQueuePromote: "heavyQueue.promote",
@@ -872,6 +877,7 @@ export const WS_METHODS = {
   telegramChannelGetSettings: "telegramChannel.getSettings",
   telegramChannelConfigure: "telegramChannel.configure",
   telegramChannelSubscribeStatus: "telegramChannel.subscribeStatus",
+  telegramChannelResendUndelivered: "telegramChannel.resendUndelivered",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2662,6 +2668,14 @@ const WsImessageChannelCheckAccessRpc = Rpc.make(WS_METHODS.imessageChannelCheck
   success: ImessageChannelCheckAccessResult,
   error: ImessageChannelRpcErrors,
 });
+const WsImessageChannelResendUndeliveredRpc = Rpc.make(
+  WS_METHODS.imessageChannelResendUndelivered,
+  {
+    payload: ImessageChannelResendUndeliveredInput,
+    success: ImessageChannelResendUndeliveredResult,
+    error: ImessageChannelRpcErrors,
+  },
+);
 
 const WsHeavyQueueSubscribeRpc = Rpc.make(WS_METHODS.heavyQueueSubscribe, {
   payload: Schema.Struct({}),
@@ -2770,6 +2784,14 @@ const WsTelegramChannelSubscribeStatusRpc = Rpc.make(WS_METHODS.telegramChannelS
   error: TelegramChannelRpcErrors,
   stream: true,
 });
+const WsTelegramChannelResendUndeliveredRpc = Rpc.make(
+  WS_METHODS.telegramChannelResendUndelivered,
+  {
+    payload: TelegramChannelResendUndeliveredInput,
+    success: TelegramChannelResendUndeliveredResult,
+    error: TelegramChannelRpcErrors,
+  },
+);
 
 const WsKanbanSubscribeRpc = Rpc.make(WS_METHODS.kanbanSubscribe, {
   payload: KanbanSubscribeInput,
@@ -3141,6 +3163,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsImessageChannelConfigureRpc,
   WsImessageChannelSubscribeStatusRpc,
   WsImessageChannelCheckAccessRpc,
+  WsImessageChannelResendUndeliveredRpc,
   WsKeepAwakeSubscribeStatusRpc,
   WsHeavyQueueSubscribeRpc,
   WsHeavyQueuePromoteRpc,
@@ -3160,6 +3183,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTelegramChannelGetSettingsRpc,
   WsTelegramChannelConfigureRpc,
   WsTelegramChannelSubscribeStatusRpc,
+  WsTelegramChannelResendUndeliveredRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

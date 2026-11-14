@@ -3,6 +3,7 @@
  * holds whether iMessage is on and which handles are heard. `start` must run once at server start.
  */
 import {
+  type ImessageChannelResendUndeliveredResult,
   ImessageChannelSettingsError,
   type ImessageChannelCheckAccessResult,
   type ImessageChannelConfigureInput,
@@ -23,6 +24,7 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import * as ImessageChannelRuntime from "./ImessageChannelRuntime.ts";
 import { normalizeHandle } from "./imessageHandles.ts";
 
@@ -67,6 +69,8 @@ export class ImessageChannelSettings extends Context.Service<
     ) => Effect.Effect<ImessageChannelSettingsSnapshot, ImessageChannelSettingsError>;
     /** The current status first, then each change. */
     readonly streamStatus: Stream.Stream<ImessageChannelStatusEvent>;
+    /** Puts every message the chat app never confirmed back in line. */
+    readonly resendUndelivered: Effect.Effect<ImessageChannelResendUndeliveredResult>;
     /** Whether the server can read Messages now, so the permission shows before enabling. */
     readonly checkAccess: Effect.Effect<ImessageChannelCheckAccessResult>;
     /** Brings the saved configuration up; failures are logged and leave iMessage off. */
@@ -82,6 +86,7 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* ServerConfig.ServerConfig;
   const runtime = yield* ImessageChannelRuntime.ImessageChannelRuntime;
+  const outbox = yield* ChannelOutbox.ChannelOutbox;
   const settingsPath = path.join(config.stateDir, SETTINGS_FILE_NAME);
   const lock = yield* Semaphore.make(1);
   const supported = (options.platform ?? (yield* HostProcess.Platform)) === "darwin";
@@ -140,11 +145,13 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
     stored: StoredSettings,
   ) {
     const status = yield* runtime.status;
+    const undelivered = yield* ChannelOutbox.undeliveredField(outbox, "imessage");
     return {
       enabled: stored.enabled,
       allowedHandles: stored.allowedHandles,
       selfHandles: stored.selfHandles,
       ...status,
+      ...undelivered,
     } satisfies ImessageChannelSettingsSnapshot;
   });
 
@@ -174,7 +181,8 @@ export const make = Effect.fn("ImessageChannelSettings.make")(function* (
   return ImessageChannelSettings.of({
     get: Effect.flatMap(readStored, snapshot),
     configure,
-    streamStatus: runtime.streamStatus,
+    streamStatus: ChannelOutbox.withUndeliveredCount(outbox, "imessage", runtime.streamStatus),
+    resendUndelivered: outbox.resend("imessage").pipe(Effect.map((requeued) => ({ requeued }))),
     checkAccess: runtime.checkAccess,
     start: lock.withPermits(1)(
       Effect.flatMap(readStored, apply).pipe(

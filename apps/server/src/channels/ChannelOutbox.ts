@@ -42,6 +42,27 @@ interface OutboxRow {
   readonly last_error_code: string | null;
 }
 
+/** Adds the channel's undelivered count to each status a settings service streams. */
+export const withUndeliveredCount = <S extends object>(
+  outbox: ChannelOutbox["Service"],
+  kind: ChannelKind,
+  status: Stream.Stream<S>,
+) =>
+  Stream.zipLatest(status, outbox.undeliveredCount(kind)).pipe(
+    Stream.map(([current, count]) =>
+      count === 0 ? current : { ...current, undeliveredCount: count },
+    ),
+  );
+
+/** The channel's undelivered count as a status field; nothing when there are none. */
+export const undeliveredField = Effect.fn("ChannelOutbox.undeliveredField")(function* (
+  outbox: ChannelOutbox["Service"],
+  kind: ChannelKind,
+) {
+  const count = Option.getOrElse(yield* Stream.runHead(outbox.undeliveredCount(kind)), () => 0);
+  return count === 0 ? {} : { undeliveredCount: count };
+});
+
 export class ChannelOutbox extends Context.Service<
   ChannelOutbox,
   {

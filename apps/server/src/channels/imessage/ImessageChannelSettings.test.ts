@@ -11,6 +11,9 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../../config.ts";
+import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
+import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./ImessageChannelRuntime.ts";
 import * as Settings from "./ImessageChannelSettings.ts";
 
@@ -33,6 +36,12 @@ const harness = (platform: NodeJS.Platform = "darwin") => {
   const layer = Layer.effect(Settings.ImessageChannelSettings, Settings.make({ platform })).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-imessage-settings-" })),
     Layer.provideMerge(runtime),
+    Layer.provideMerge(
+      ChannelOutbox.layer.pipe(
+        Layer.provideMerge(ChannelTransport.layer),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+      ),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
   );
   return { applied, state, layer };
@@ -215,7 +224,7 @@ it.effect("checkAccess and the status stream come from the runtime", () => {
       access: "full_disk_access_missing",
       ownHandles: [],
     });
-    assert.deepStrictEqual(yield* Stream.runCollect(settings.streamStatus), [
+    assert.deepStrictEqual(yield* Stream.runCollect(Stream.take(settings.streamStatus, 1)), [
       { status: "running" },
     ]);
   }).pipe(Effect.provide(layer));
