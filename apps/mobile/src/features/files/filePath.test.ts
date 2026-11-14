@@ -17,10 +17,21 @@ describe("resolveFileLinkPath", () => {
     expect(fileRoutePathSegments(expected).join("/")).toBe(expected);
   });
 
-  it("does not turn an unresolved home into a workspace path", () => {
+  it.each([
+    ["/repo", "../other-repo/x.ts", "/other-repo/x.ts"],
+    ["C:\\repo", "..\\other-repo\\x.ts", "C:\\other-repo\\x.ts"],
+    ["/repo", "a/../b.ts", "b.ts"],
+    ["/repo", "/repo/src/x.ts", "/repo/src/x.ts"],
+    ["/repo", "/other-repo/x.ts", "/other-repo/x.ts"],
+  ])("resolves a link from %s: %s", (cwd, path, expected) => {
+    expect(resolveFileLinkPath(cwd, path)).toBe(expected);
+  });
+
+  it("does not turn an unresolved link into a workspace path", () => {
     expect(resolveFileLinkPath("/repo", "~/notes.md")).toBeNull();
     expect(resolveFileLinkPath(null, "~/notes.md")).toBeNull();
-    expect(resolveFileLinkPath("/repo", "../notes.md")).toBeNull();
+    expect(resolveFileLinkPath(null, "../notes.md")).toBeNull();
+    expect(resolveFileLinkPath("/repo", ".")).toBeNull();
   });
 });
 
