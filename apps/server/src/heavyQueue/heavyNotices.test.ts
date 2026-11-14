@@ -233,13 +233,6 @@ describe("faults T3 records for the problem detector", () => {
       "disk-full:install-no-space",
       "ENOSPC: no space left on device, write",
     ],
-    [
-      "sync timed out",
-      sync,
-      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
-      "linux-sync:rsync-timeout",
-      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
-    ],
     ["sync with no line", sync, null, "linux-sync:unknown", "Linux sync failed"],
     [
       "sync out of memory",
@@ -249,22 +242,31 @@ describe("faults T3 records for the problem detector", () => {
       "fatal: Cannot allocate memory",
     ],
     [
-      "dropped mid-run",
-      { kind: "lost" },
-      "Connection to pc closed by remote host.",
-      "linux-lost:closed",
-      "Connection to pc closed by remote host.",
+      "sync failed in rsync itself",
+      sync,
+      "rsync error: some files/attrs were not transferred (code 23) at main.c(1338)",
+      "linux-sync:rsync-unknown",
+      "rsync error: some files/attrs were not transferred (code 23) at main.c(1338)",
     ],
     [
-      "host name unknown",
-      { kind: "unreachable" },
-      "ssh: Could not resolve hostname pc: nodename nor servname provided",
-      "network:unreachable-dns",
-      "ssh: Could not resolve hostname pc: nodename nor servname provided",
+      "dropped with T3's own error",
+      { kind: "lost" },
+      "remoto-rodar: line 40: syntax error: unexpected end of file",
+      "linux-lost:unknown",
+      "remoto-rodar: line 40: syntax error: unexpected end of file",
     ],
-    // The PC being unreachable is Linux offline, not a fault, at whatever step it shows.
+    // The PC or the network being away is Linux offline, not a fault, at whatever step it shows.
     ...[
       "[remoto] PC indisponível.",
+      "ssh: Could not resolve hostname pc: nodename nor servname provided, or not known",
+      "ssh: Could not resolve hostname pc: Name or service not known",
+      "ssh: Could not resolve hostname pc: Temporary failure in name resolution",
+      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
+      "[sender] io timeout after 30 seconds -- exiting",
+      "Connection to pc closed by remote host.",
+      "Connection closed by 192.168.10.109 port 2222",
+      "client_loop: send disconnect: Broken pipe",
+      "read: Connection reset by peer",
       "ssh: connect to host pc port 22: Operation timed out",
       "ssh: connect to host pc port 22: Connection timed out",
       "ssh: connect to host pc port 22: Host is down",
@@ -307,6 +309,10 @@ describe("faults T3 records for the problem detector", () => {
       "ssh: connect to host pc port 22: Host is down",
     ],
     ["[remoto] PC indisponível.\n", "[remoto] PC indisponível."],
+    [
+      "ssh: Could not resolve hostname pc: Name or service not known\nrsync: connection unexpectedly closed (0 bytes received so far) [sender]\nrsync error: unexplained error (code 255) at io.c(232)\n",
+      "ssh: Could not resolve hostname pc: Name or service not known",
+    ],
     ["Error: connect ECONNREFUSED 127.0.0.1:5432 (Connection refused)\n", null],
     ["rsync error: timeout in data send/receive (code 30) at io.c(201)\n", null],
   ])("finds the unreachable line in %j", (text, line) => {
@@ -317,13 +323,18 @@ describe("faults T3 records for the problem detector", () => {
   it("gives the same cause for the same fault, whatever the numbers or paths", () => {
     const one = faultOf(
       sync,
-      "rsync error: timeout in data send/receive (code 30) at io.c(201)",
+      "rsync error: some files/attrs were not transferred (code 23) at main.c(1338)",
       job,
     );
-    const two = faultOf(sync, "rsync error: timeout in data receive (code 12) at main.c(9)", {
-      command: "vp lint",
-      projectFolder: "/w/other",
-    });
+    const two = faultOf(
+      sync,
+      "rsync error: some files could not be transferred (code 23) at main.c(9)",
+      {
+        command: "vp lint",
+        projectFolder: "/w/other",
+      },
+    );
+    expect(one?.cause).toBe("linux-sync:rsync-unknown");
     expect(two?.cause).toBe(one?.cause);
   });
 

@@ -94,24 +94,15 @@ const PC_CAUSES: ReadonlyArray<readonly [RegExp, FaultReason, string]> = [
     "sign-in-expired",
     "ssh-key",
   ],
-  [
-    /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i,
-    "network",
-    "dns",
-  ],
 ];
-/** The PC is down or off the network: Linux is offline, which the heartbeat shows; no fault. */
+/** The PC or the network is away: Linux is offline, which the heartbeat shows, or dropped; no fault. */
 const PC_UNREACHABLE =
-  /PC indisponível|connect to host .*timed out|Connection timed out|Host is down|Connection refused|No route to host|Network is unreachable/i;
+  /PC indisponível|Could not resolve hostname|Name or service not known|Temporary failure in name resolution|timed? ?out|Host is down|Connection refused|No route to host|Network is unreachable|Connection (?:reset|closed)|closed by remote host|Broken pipe/i;
 /** ssh's or `remoto`'s own line saying the PC is unreachable; later output (rsync's) must not hide it. */
 export const unreachableLine = (text: string) =>
-  /^(?:ssh: connect to host .*|\[remoto\] PC indisponível.*)$/m.exec(
+  /^(?:ssh: (?:connect to host|Could not resolve hostname) .*|\[remoto\] PC indisponível.*)$/m.exec(
     text.replace(/\r/g, ""),
   )?.[0] ?? null;
-const LINK_CAUSES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/timed? ?out/i, "timeout"],
-  [/Connection (?:reset|closed)|closed by remote host|Broken pipe/i, "closed"],
-];
 /** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
 const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
 
@@ -150,11 +141,7 @@ export const faultOf = (
       "Dependency install on Linux failed",
     );
   }
-  const link =
-    line === null
-      ? "unknown"
-      : (LINK_CAUSES.find(([pattern]) => pattern.test(line))?.[1] ?? "unknown");
-  const via = line !== null && /rsync/i.test(line) ? `rsync-${link}` : link;
+  const via = line !== null && /rsync/i.test(line) ? "rsync-unknown" : "unknown";
   if (seen.kind === "sync") return fault("linux-sync", via, "Linux sync failed");
   if (seen.kind === "lost") return fault("linux-lost", via, "Linux dropped the job");
   return null;
