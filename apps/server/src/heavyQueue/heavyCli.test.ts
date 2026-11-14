@@ -332,6 +332,14 @@ describe("t3 heavy", () => {
       const bare = heavyHere(dir, ["remoto", "vp", "test", "run"], env);
       expect(await bare.exited).toBe(0);
       expect(bare.stdout()).toMatch(/^vp\|test\|run\| in /);
+      // An absolute cd and a pipe: Linux gets the argv alone, the grep reads it here.
+      const piped = heavyHere(
+        dir,
+        ["/bin/sh", "-c", `cd ${sub} && remoto vp test run a.test.ts 2>&1 | grep -E 'vp|zz'`],
+        env,
+      );
+      expect(await piped.exited).toBe(0);
+      expect(piped.stdout()).toBe(`vp|test|run|a.test.ts| in ${NodeFS.realpathSync(sub)}\n`);
     });
 
     const echoArgs = [
@@ -424,6 +432,31 @@ describe("t3 heavy", () => {
       expect(await run.exited).toBe(0);
       expect(run.stdout()).toContain(ran);
       expect(run.stderr()).toContain(why);
+    });
+
+    it("finds the copy from the folder as remoto sees it, past a link inside the checkout", async () => {
+      const { dir, env } = setup("");
+      const other = tempDir();
+      NodeFS.mkdirSync(NodePath.join(other, ".git"));
+      NodeFS.mkdirSync(NodePath.join(other, "apps", "server"), { recursive: true });
+      NodeFS.symlinkSync(NodePath.join(other, "apps", "server"), NodePath.join(other, "link"));
+      // Stands in for `remoto-rodar`, which runs the wrapper in the folder `pwd -P` names.
+      const remoto = script(
+        dir,
+        "remoto-rodar",
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          'cd "$(pwd -P)" && "$@" | sed "s/^/linux: /"; code=$?',
+          `printf '${M} exit=%s\\n' "$code" >&2`,
+          'exit "$code"',
+        ].join("\n"),
+      );
+      const line = `O=${other}; sh -c "cd $O/link && vp test run $O/x.test.ts"`;
+      const run = heavyHere(dir, ["/bin/sh", "-c", line], { ...env, T3CODE_REMOTO: remoto });
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe(
+        `linux: vp on mac: test run ${NodeFS.realpathSync(other)}/x.test.ts\n`,
+      );
     });
 
     it("sends only the work to Linux: its log stays here, free of markers", async () => {
@@ -1094,6 +1127,14 @@ describe("t3 heavy", () => {
       ["npx vue-tsc --noEmit", "linux", "X npx vue-tsc --noEmit"],
       // An agent's own `remoto` asks for Linux; T3 takes its word out and decides.
       ["remoto vp test run", "linux", "X vp test run"],
+      ["cd apps/server && remoto vp test run", "linux", "X vp test run", "/w/repo/apps/server"],
+      // Only the work goes there: the cd, pipe and redirect stay on this Mac.
+      [
+        "cd /w/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
+        "linux",
+        "X pnpm exec vp test run a.test.ts 2>&1 | grep -E 'x|y'",
+        "/w/repo/apps/web",
+      ],
       ["cd apps/server && remoto vp run build", "linux", "X vp run build", "/w/repo/apps/server"],
       ["ls && remoto vp test run", "linux", "ls && X vp test run"],
       // Paths inside a checkout translate there; outside it, the part stays.

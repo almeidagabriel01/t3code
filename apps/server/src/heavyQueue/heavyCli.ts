@@ -1048,6 +1048,7 @@ const runLinuxPart = async (
   const home = NodeOS.homedir();
   // The shell has expanded the part by now: what only it knew (`$FILES`, `cd $d`) is plain.
   // A folder it names in another checkout is where it runs: that checkout is the one synced.
+  // Its folder and root keep the spelling it used, so its other paths compare alike.
   const moved = movedPart([given, ...givenArgs], process.cwd(), home, (folder) =>
     NodeFS.existsSync(folder) ? gitRootOf(folder) : null,
   );
