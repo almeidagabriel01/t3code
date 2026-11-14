@@ -307,6 +307,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./assistantTaskEvents": {
+      "types": "./src/assistantTaskEvents.ts",
+      "import": "./src/assistantTaskEvents.ts"
+    },
     "./kanbanSubtasks": {
       "types": "./src/kanbanSubtasks.ts",
       "import": "./src/kanbanSubtasks.ts"
