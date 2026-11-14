@@ -2726,12 +2726,15 @@ code {
   transform-box: fill-box;
   transform-origin: center;
   animation: assistant-robot-blink 5.5s infinite;
+  animation-play-state: var(--visible-animation-state, paused);
 }
 
 [data-assistant-motion="glance"] .assistant-robot-eyes {
   animation: assistant-robot-glance 6s infinite;
+  animation-play-state: var(--visible-animation-state, paused);
 }
 
 [data-assistant-motion="think"] .assistant-robot-tip {
   animation: assistant-robot-think 2.4s infinite;
+  animation-play-state: var(--visible-animation-state, paused);
 }

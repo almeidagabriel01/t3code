@@ -18,10 +18,15 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
+import type { AppBarMenuItem, AppBarProps, AppBarTitlePress } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { AppBarTitleButton } from "./AppBarTitleButton";
 import { useControlTheme } from "./useControlTheme";
+
+function titlePressOptions(title: string, titlePress: AppBarTitlePress) {
+  return { headerTitle: () => <AppBarTitleButton title={title} {...titlePress} /> };
+}
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -111,6 +116,7 @@ export function AppBar(props: AppBarProps) {
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
+          ...(props.titlePress ? titlePressOptions(props.title, props.titlePress) : undefined),
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
             : undefined),

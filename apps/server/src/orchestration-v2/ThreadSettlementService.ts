@@ -45,6 +45,7 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const RUN_ENDS_BY_CWD_CAPACITY = 2_048;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -307,9 +308,23 @@ export const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // A shell merge or close sends no event, and the branch lookup caches an open pull request for
-  // a minute, so these threads' next lookup reads the host fresh.
+  // A shell merge or close sends no event, and the branch lookup caches an open pull request,
+  // so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
+  // Branch lookups reuse their last result until git changes on disk; a finished run in the cwd
+  // bumps its count, so the next lookup there reads git and the host again.
+  const runEndedThreads = new Set<ThreadId>();
+  // Values come from one counter, so a cwd evicted and bumped again never reuses an old key.
+  const runEndsByCwd = new Map<string, number>();
+  let runEndCount = 0;
+  const bumpRunEnds = (cwd: string) => {
+    runEndsByCwd.delete(cwd);
+    if (runEndsByCwd.size >= RUN_ENDS_BY_CWD_CAPACITY) {
+      const oldest = runEndsByCwd.keys().next().value;
+      if (oldest !== undefined) runEndsByCwd.delete(oldest);
+    }
+    runEndsByCwd.set(cwd, ++runEndCount);
+  };
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -321,9 +336,19 @@ export const make = Effect.gen(function* () {
   ) {
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
+      // Nothing reads these marks while settlement is off.
+      runEndedThreads.clear();
+      shellClosedThreads.clear();
       return;
     }
     const threads = yield* projections.getSettlementCandidates(threadId);
+    // A thread this sweep no longer covers never reads its marks again.
+    const covered = new Set(threads.map((thread) => thread.id));
+    for (const marks of [runEndedThreads, shellClosedThreads]) {
+      for (const id of threadId === undefined ? [...marks] : [threadId]) {
+        if (!covered.has(id)) marks.delete(id);
+      }
+    }
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
@@ -397,24 +422,36 @@ export const make = Effect.gen(function* () {
           thread.linkedPullRequest != null ||
           thread.branchPullRequest != null,
       );
+    const lookupCwd = Effect.fnUntraced(function* (thread: (typeof threads)[number]) {
+      const project = projects.get(thread.projectId);
+      if (project === undefined) return undefined;
+      // A worktree folder can outlive its .git, and git there fails with not_a_repository.
+      // An unreadable .git keeps the worktree, so git fails there and the thread is skipped.
+      return thread.worktreePath !== null &&
+        (yield* fileSystem
+          .exists(path.join(thread.worktreePath, ".git"))
+          .pipe(Effect.orElseSucceed(() => true)))
+        ? thread.worktreePath
+        : project.workspaceRoot;
+    });
+    yield* Effect.forEach(
+      threads.filter((thread) => runEndedThreads.delete(thread.id)),
+      (thread) =>
+        lookupCwd(thread).pipe(
+          Effect.map((cwd) => {
+            if (cwd !== undefined) bumpRunEnds(cwd);
+          }),
+        ),
+      { concurrency: 8, discard: true },
+    );
     const lookupCwdByThreadId = new Map<string, string>();
     yield* Effect.forEach(
       lookupCandidates,
       (thread) =>
         Effect.gen(function* () {
-          const project = projects.get(thread.projectId);
-          if (project === undefined || thread.branch === null) return;
-          // A worktree folder can outlive its .git, and git there fails with not_a_repository.
-          // An unreadable .git keeps the worktree, so git fails there and the thread is skipped.
-          lookupCwdByThreadId.set(
-            thread.id,
-            thread.worktreePath !== null &&
-              (yield* fileSystem
-                .exists(path.join(thread.worktreePath, ".git"))
-                .pipe(Effect.orElseSucceed(() => true)))
-              ? thread.worktreePath
-              : project.workspaceRoot,
-          );
+          if (thread.branch === null) return;
+          const cwd = yield* lookupCwd(thread);
+          if (cwd !== undefined) lookupCwdByThreadId.set(thread.id, cwd);
         }),
       { concurrency: 8, discard: true },
     );
@@ -526,7 +563,10 @@ export const make = Effect.gen(function* () {
         return yield* Effect.die(new Error("thread project not found"));
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
-      return yield* git.branchPullRequest({ cwd, branch: thread.branch }, { refresh });
+      return yield* git.branchPullRequest(
+        { cwd, branch: thread.branch },
+        { refresh, reuseKey: String(runEndsByCwd.get(cwd) ?? 0) },
+      );
     });
 
     yield* Effect.forEach(
@@ -672,11 +712,15 @@ export const make = Effect.gen(function* () {
           ? enqueueThread(event.threadId)
           : Effect.void;
       case "run.updated":
-        return ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          event.payload.status,
-        )
-          ? enqueueThread(event.threadId)
-          : Effect.void;
+        if (
+          !["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+            event.payload.status,
+          )
+        ) {
+          return Effect.void;
+        }
+        runEndedThreads.add(event.threadId);
+        return enqueueThread(event.threadId);
       default:
         return Effect.void;
     }

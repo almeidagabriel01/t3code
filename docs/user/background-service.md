@@ -1,5 +1,15 @@
 # Running T3 Code in the background
 
+## Desktop app at sign-in
+
+On macOS and Windows, the desktop app starts when you sign in, so agents, the
+Runner and channels come back after a restart without opening it. It starts
+without a window; click its Dock icon or open T3 Code again to show one. Turn this off in
+Settings → General → Open at login. If macOS shows the setting as turned off in
+System Settings → Login Items, turn T3 Code on there.
+
+## Service
+
 On Linux and macOS, T3 Code can run as a service for your user so you do not need
 to keep a terminal open.
 
@@ -376,6 +386,11 @@ still hold the freed space on disk until a one-time offline repair returns it
 and turns on automatic shrinking. Settings > Maintenance (web and desktop) or
 Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
 reclaimed.
+
+**Summarize old tool output** (Settings > Maintenance, off by default; 30 days
+when you turn it on) replaces detailed tool output older than that, such as
+file contents and command output, with a one-line summary. Messages stay. The
+summary cannot be undone. The freed space returns to disk through the repair below.
 
 When the desktop app or the background service runs T3 Code on that machine,
 select **Reclaim** in Settings on web or desktop. T3 Code checks for free disk

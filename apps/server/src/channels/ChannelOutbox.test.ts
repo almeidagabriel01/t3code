@@ -48,6 +48,26 @@ it.effect("enqueue is idempotent and rows are delivered in creation order", () =
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("redacts every message once, before it is stored or reaches a transport", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { sent, transport } = fakeTransport();
+    yield* registry.register(transport);
+    const token = "ghp_" + "Z".repeat(32);
+    yield* outbox.enqueue({
+      ...message("s", `deploy with ${token} and password=hunter2`),
+      choices: [{ label: `use ${token}`, value: "a" }],
+    });
+    yield* outbox.drain;
+    assert.deepEqual(sent[0]?.text, "deploy with [redacted] and password=[redacted]");
+    assert.deepEqual(sent[0]?.choices, [{ label: "use [redacted]", value: "a" }]);
+    const rows = yield* outboxRows;
+    assert.notInclude(JSON.stringify(rows), token);
+    assert.notInclude(JSON.stringify(rows), "hunter2");
+  }).pipe(Effect.provide(layer)),
+);
+
 const failures = [
   { name: "unknown outcome", error: { deliveryOutcome: "unknown" as const }, state: "ambiguous" },
   ...(["automation_denied", "messages_not_signed_in", "chat_not_found"] as const).map((code) => ({

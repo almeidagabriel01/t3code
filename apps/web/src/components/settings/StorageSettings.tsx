@@ -1,4 +1,9 @@
 import {
+  MAX_TOOL_OUTPUT_HISTORY_DAYS,
+  MIN_TOOL_OUTPUT_HISTORY_DAYS,
+  SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS,
+} from "@t3tools/contracts/settings";
+import {
   MERGED_WORKTREE_DAYS,
   type StorageCleanupReport,
   type StorageCleanupSettings,
@@ -117,11 +122,15 @@ function RetentionControl({
   value,
   onChange,
   minimum = 1,
+  maximum = 3650,
+  enabledValue = 8,
 }: {
   label: string;
   value: number | null;
   onChange: (value: number | null) => void;
   minimum?: number;
+  maximum?: number;
+  enabledValue?: number;
 }) {
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
@@ -136,7 +145,7 @@ function RetentionControl({
         <NumberField
           value={draft}
           min={minimum}
-          max={3650}
+          max={maximum}
           step={1}
           size="sm"
           className="w-auto"
@@ -144,7 +153,7 @@ function RetentionControl({
           onValueCommitted={(next) => {
             if (next === null) setDraft(value);
             else {
-              const days = Math.min(3650, Math.max(minimum, Math.round(next)));
+              const days = Math.min(maximum, Math.max(minimum, Math.round(next)));
               setDraft(days);
               onChange(days);
             }
@@ -169,7 +178,7 @@ function RetentionControl({
       <Switch
         aria-label={label}
         checked={value !== null}
-        onCheckedChange={(enabled) => onChange(enabled ? 8 : null)}
+        onCheckedChange={(enabled) => onChange(enabled ? enabledValue : null)}
       />
     </div>
   );
@@ -922,6 +931,24 @@ export function StorageCleanupSections() {
                 label="Delete old worktree snapshots"
                 value={settings.worktreeSnapshotsAfterDays}
                 onChange={(worktreeSnapshotsAfterDays) => update({ worktreeSnapshotsAfterDays })}
+              />
+            }
+          />
+        </AnimatedHeight>
+        <AnimatedHeight>
+          <SettingsRow
+            title="Summarize old tool output"
+            settingKeys={["toolOutputHistoryDays"]}
+            description="Replace detailed tool output in thread history, such as screenshots, file contents and command output, with a short summary after this many days. Off keeps everything."
+            serverScoped
+            control={
+              <RetentionControl
+                label="Summarize old tool output"
+                value={scopedSettings.toolOutputHistoryDays}
+                minimum={MIN_TOOL_OUTPUT_HISTORY_DAYS}
+                maximum={MAX_TOOL_OUTPUT_HISTORY_DAYS}
+                enabledValue={SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS}
+                onChange={(toolOutputHistoryDays) => updateSettings({ toolOutputHistoryDays })}
               />
             }
           />

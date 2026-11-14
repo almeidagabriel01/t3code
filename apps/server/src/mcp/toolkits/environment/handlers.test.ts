@@ -2,9 +2,12 @@ import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -94,4 +97,120 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       ),
     );
   }),
+);
+
+it.effect(
+  "problem detection is set globally and per project, keeping the project's other overrides",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project-a");
+      const stored = yield* Ref.make<ServerSettings>({
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [projectId]: { continueThreadsAfterServerUpdate: false } },
+      });
+      const patches: Array<ServerSettingsPatch> = [];
+      const layerDependencies = Layer.mergeAll(
+        ThreadCommandExecutor.layer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId,
+          requestNamespace: "provider:preferences",
+          thread: {
+            threadId,
+            providerSessionId: "provider:preferences",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          },
+          client: undefined,
+          capabilities: new Set(["orchestration" as const]),
+          issuedAt: 0,
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(liveThreadShell(threadId)),
+        }),
+        Layer.mock(Environment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({
+            environmentId,
+            label: "Test",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0",
+            capabilities: { repositoryIdentity: false },
+          }),
+        }),
+        Layer.mock(Settings.ServerSettingsService)({
+          getSettings: Ref.get(stored),
+          updateSettings: (patch) => {
+            patches.push(patch);
+            return Ref.updateAndGet(stored, (current) => {
+              const overrides = { ...current.projectSettingsOverrides };
+              for (const [id, next] of Object.entries(patch.projectSettingsOverrides ?? {})) {
+                if (next === null) delete overrides[id as ProjectId];
+                else overrides[id as ProjectId] = next;
+              }
+              return {
+                ...current,
+                ...(patch.detectProblems === undefined
+                  ? {}
+                  : { detectProblems: patch.detectProblems }),
+                projectSettingsOverrides: overrides,
+              };
+            });
+          },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const toolkit = yield* EnvironmentToolkit;
+        const update = (input: Record<string, unknown>) =>
+          toolkit.handle("t3_environment_preferences_update", input as never).pipe(
+            Stream.unwrap,
+            Stream.runCollect,
+            Effect.map((results) => results.at(-1)?.result as Record<string, unknown>),
+          );
+        const rows: Array<{
+          input: Record<string, unknown>;
+          detectProblems: boolean;
+          overrides: Record<string, unknown>;
+          inProjects: Record<string, boolean>;
+        }> = [
+          {
+            input: { detectProblems: false },
+            detectProblems: false,
+            overrides: { continueThreadsAfterServerUpdate: false },
+            inProjects: {},
+          },
+          {
+            input: { detectProblemsInProject: { projectId, enabled: true } },
+            detectProblems: false,
+            overrides: { continueThreadsAfterServerUpdate: false, detectProblems: true },
+            inProjects: { [projectId]: true },
+          },
+          {
+            input: { detectProblemsInProject: { projectId, enabled: null } },
+            detectProblems: false,
+            overrides: { continueThreadsAfterServerUpdate: false },
+            inProjects: {},
+          },
+        ];
+        for (const row of rows) {
+          const result = yield* update(row.input);
+          expect(result, JSON.stringify(row.input)).toMatchObject({
+            detectProblems: row.detectProblems,
+            detectProblemsInProjects: row.inProjects,
+          });
+          expect((yield* Ref.get(stored)).projectSettingsOverrides[projectId]).toEqual(
+            row.overrides,
+          );
+        }
+        // A project whose only override was detection loses its whole entry.
+        yield* Ref.update(stored, (current) => ({ ...current, projectSettingsOverrides: {} }));
+        yield* update({ detectProblemsInProject: { projectId, enabled: false } });
+        yield* update({ detectProblemsInProject: { projectId, enabled: null } });
+        expect(patches.at(-1)?.projectSettingsOverrides).toEqual({ [projectId]: null });
+        expect(patches.every((patch) => !("detectProblemsInProject" in patch))).toBe(true);
+      }).pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(EnvironmentHandlers.layer).pipe(
+            Layer.provideMerge(layerDependencies),
+          ),
+        ),
+      );
+    }),
 );

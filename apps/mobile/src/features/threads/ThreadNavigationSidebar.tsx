@@ -4,9 +4,9 @@ import {
   useAssistantSectionJumpThreads,
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
-import { HomeAgentsSection } from "../home/HomeAgentsSection";
-import { HomeNeedsYouSection } from "../home/HomeNeedsYouSection";
-import { HomeDecisionsSection } from "../decisions/HomeDecisionsSection";
+import { NeedsYouZone } from "../home/NeedsYouZone";
+import { ProjectsZoneHeader } from "../home/ProjectsZoneHeader";
+import { useSidebarZones } from "../home/useSidebarZones";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
@@ -271,6 +271,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder();
+  const zones = useSidebarZones();
   const {
     layout: threadListV2Layout,
     items: threadListV2Items,
@@ -296,6 +297,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
+    hiddenThreadKeys: zones.ownedThreadKeys,
   });
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
@@ -546,6 +548,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const assistantsHeader =
     props.searchQuery.trim().length > 0 ? null : (
       <>
+        <NeedsYouZone gutter={4} sidebar />
         <HomeAssistantsSection
           sidebar
           gutter={4}
@@ -564,15 +567,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             sidebar
           />
         )}
-        <HomeAgentsSection threads={threads} now={now} gutter={4} sidebar />
-        <HomeNeedsYouSection
-          threads={threads}
-          now={now}
-          gutter={4}
-          sidebar
-          renderRow={(item) => renderListItem({ item })}
-        />
-        <HomeDecisionsSection gutter={4} />
+        <ProjectsZoneHeader threads={threads} now={now} gutter={4} sidebar />
       </>
     );
   const header = (
@@ -687,7 +682,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           overflow: "hidden",
         }}
       >
-        {listItems.length === 0 ? (
+        {listItems.length === 0 && (props.searchQuery.trim().length > 0 || zones.empty) ? (
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>

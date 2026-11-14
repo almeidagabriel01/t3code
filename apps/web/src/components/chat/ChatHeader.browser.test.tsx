@@ -20,8 +20,37 @@ vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) 
 vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
   useThreadActionMenu: () => ({ openMenu, closeMenu: () => {} }),
 }));
+const threadAssistant = vi.hoisted(() => ({
+  entry: null as unknown,
+  taskOwner: null as unknown,
+  messages: [] as ReadonlyArray<{ id: string; senderThreadId?: string }>,
+}));
+vi.mock(import("../../state/assistants"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useThreadAssistant: (() => threadAssistant.entry) as never,
+  useTaskAssistant: (() => threadAssistant.taskOwner) as never,
+  useAssistantEntries: (() => ({
+    active: threadAssistant.taskOwner === null ? [] : [threadAssistant.taskOwner],
+    archived: [],
+    environmentIds: [],
+  })) as never,
+}));
+vi.mock(import("../../state/entities"), async (importOriginal) => {
+  const original = await importOriginal();
+  return {
+    ...original,
+    useQuietThreadProjection: ((ref: Parameters<typeof original.useQuietThreadProjection>[0]) => {
+      const real = original.useQuietThreadProjection(ref);
+      return threadAssistant.messages.length === 0
+        ? real
+        : { projection: { thread: {}, messages: threadAssistant.messages } };
+    }) as never,
+  };
+});
 
 import { render, stubGlobal } from "../../../test/render";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { assistantInfoAtom, closeAssistantInfo } from "../assistants/assistantInfoState";
 import { ChatHeader } from "./ChatHeader";
 
 function header(title: string) {
@@ -73,10 +102,74 @@ it.each(["blur", "Enter"] as const)(
   },
 );
 
+it("an assistant chat's name toggles Assistant info; ⋯ and right-click open the thread menu", async () => {
+  openMenu.mockClear();
+  closeAssistantInfo();
+  using _entry = {
+    [Symbol.dispose]: () => {
+      threadAssistant.entry = null;
+    },
+  };
+  threadAssistant.entry = {
+    environmentId: EnvironmentId.make("environment"),
+    assistant: { id: "jarvis", name: "Jarvis", avatar: null, icon: null },
+  };
+  await using screen = await render(header("assistant thread"));
+  const name = screen.getByRole("button", { name: "Jarvis, Assistant info" });
+  await name.click();
+  expect(appAtomRegistry.get(assistantInfoAtom)).toEqual({
+    kind: "assistant",
+    environmentId: "environment",
+    assistantId: "jarvis",
+  });
+  await name.click();
+  expect(appAtomRegistry.get(assistantInfoAtom)).toBeNull();
+  expect(openMenu).not.toHaveBeenCalled();
+
+  await screen.getByRole("button", { name: "Thread actions for Jarvis" }).click();
+  expect(openMenu).toHaveBeenCalledOnce();
+  await name.click({ button: "right" });
+  expect(openMenu).toHaveBeenCalledTimes(2);
+  expect(appAtomRegistry.get(assistantInfoAtom)).toBeNull();
+});
+
 it("opens the thread menu on a desktop title click without waiting", async () => {
   openMenu.mockClear();
   using _bridge = stubGlobal("desktopBridge", {});
   await using screen = await render(header("New thread"));
   await screen.getByRole("button", { name: "Thread actions for New thread" }).click();
   expect(openMenu).toHaveBeenCalledOnce();
+});
+
+it("a task thread its own assistant wrote in shows one assistant control", async () => {
+  using _task = {
+    [Symbol.dispose]: () => {
+      threadAssistant.taskOwner = null;
+      threadAssistant.messages = [];
+    },
+  };
+  threadAssistant.taskOwner = {
+    environmentId: EnvironmentId.make("environment"),
+    assistant: {
+      id: "qa",
+      name: "QA",
+      avatar: null,
+      icon: null,
+      toolAccess: "edit",
+      askBeforeActing: false,
+      threadId: ThreadId.make("assistant:qa:1"),
+    },
+  };
+  threadAssistant.messages = [
+    { id: "m1", senderThreadId: "assistant:qa:1" },
+    { id: "m2", senderThreadId: "assistant:qa:1" },
+  ];
+  await using screen = await render(header("go"));
+  await expect
+    .element(screen.getByRole("button", { name: "Assistants in this thread: 1" }))
+    .toBeInTheDocument();
+  const assistantControls = [
+    ...screen.container.querySelectorAll<HTMLElement>("button[aria-label]"),
+  ].filter((button) => /QA|Assistants in this thread/.test(button.getAttribute("aria-label")!));
+  expect(assistantControls).toHaveLength(1);
 });

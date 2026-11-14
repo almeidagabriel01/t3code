@@ -6,6 +6,8 @@ import {
   AUTONOMY_RULE_OPTIONS,
   AUTONOMY_USER_MESSAGES_BOUNDS,
   AUTONOMY_WAKES_BOUNDS,
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_LABEL,
   parseBoundedInt,
   withAutonomyChannel,
   withAutonomyRule,
@@ -123,7 +125,8 @@ export function AutonomySettingsSection(props: {
   readonly suffix: string;
 }) {
   const { environmentId } = props;
-  const { autonomy, write } = useAutonomySettings(environmentId);
+  const { autonomy, write, detectProblems, writeDetectProblems } =
+    useAutonomySettings(environmentId);
   const telegramAvailable = useTelegramEnvironmentIds().includes(environmentId);
   const paused = !autonomy.enabled;
   return (
@@ -137,6 +140,13 @@ export function AutonomySettingsSection(props: {
         description="The pause switch for all assistants on this server."
         value={autonomy.enabled}
         onValueChange={(enabled) => void write({ ...autonomy, enabled })}
+      />
+      <ListToggleRow
+        icon="exclamationmark.shield"
+        label={DETECT_PROBLEMS_LABEL}
+        description={DETECT_PROBLEMS_DESCRIPTION}
+        value={detectProblems}
+        onValueChange={(on) => void writeDetectProblems(on)}
       />
       <ListToggleRow
         icon="envelope.badge"

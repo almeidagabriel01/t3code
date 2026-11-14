@@ -50,12 +50,21 @@ import { HeavyNoticesSection } from "./components/HeavyNoticesSection";
 import { HeavyQueueSection } from "./components/HeavyQueueSection";
 import { RunnerSection } from "./components/RunnerSection";
 import { WorktreeCleanupSections } from "./components/WorktreeCleanupSections";
+import {
+  ProviderIdleTimeoutSection,
+  ToolOutputHistorySection,
+} from "./components/ServerRetentionSections";
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import {
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_IN_PROJECT_LABEL,
+  DETECT_PROBLEMS_LABEL,
+} from "@t3tools/client-runtime/autonomy";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -84,7 +93,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNamePrefix",
     "branchNameInstructions",
   ],
-  maintenance: ["continueThreadsAfterServerUpdate", ...RUNNER_PROJECT_KEYS],
+  maintenance: ["continueThreadsAfterServerUpdate", "detectProblems", ...RUNNER_PROJECT_KEYS],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -666,6 +675,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }
                   />
                 ) : null}
+                {!projectSelected ? (
+                  <>
+                    <ToolOutputHistorySection
+                      days={reference.settings.toolOutputHistoryDays}
+                      disabled={disabledFor("toolOutputHistoryDays")}
+                      onChange={(days) => write({ toolOutputHistoryDays: days })}
+                    />
+                    <ProviderIdleTimeoutSection
+                      minutes={reference.settings.providerIdleTimeoutMinutes}
+                      disabled={disabledFor("providerIdleTimeoutMinutes")}
+                      onChange={(minutes) => write({ providerIdleTimeoutMinutes: minutes })}
+                    />
+                  </>
+                ) : null}
                 <SettingsSection title="Updates">
                   <SettingsSwitchRow
                     icon="arrow.clockwise"
@@ -693,6 +716,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                     />
                   </View>
+                </SettingsSection>
+                <SettingsSection title="Diagnostics">
+                  <SettingsSwitchRow
+                    icon="exclamationmark.shield"
+                    label={
+                      projectSelected ? DETECT_PROBLEMS_IN_PROJECT_LABEL : DETECT_PROBLEMS_LABEL
+                    }
+                    subtitle={
+                      projectSelected
+                        ? managed("detectProblems")
+                        : managedSubtitle("detectProblems", DETECT_PROBLEMS_DESCRIPTION)
+                    }
+                    value={uniform("detectProblems")}
+                    disabled={disabledFor("detectProblems")}
+                    onValueChange={(value) => write({ detectProblems: value })}
+                  />
                 </SettingsSection>
               </>
             ) : null}

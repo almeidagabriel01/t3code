@@ -182,7 +182,7 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
 project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
 takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
-Three things follow the row, none of them a new mechanism:
+These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not
   flagging threads) lets `assistantNote` prepend a short `<t3_assistant_task>` block with
@@ -191,6 +191,21 @@ Three things follow the row, none of them a new mechanism:
 - `AssistantTaskReactor` queues a message to the owner's current conversation when a run of the task
   thread ends. The message id derives from the run, so a replay wakes once, and it carries the task
   thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
+  A completed run whose thread goes on by itself does not wake: a newer run is already lined up,
+  or `backgroundWorkHoldsCompletion` holds it (the same rule as the task's parked status), minus
+  pull request watches, which end silently on merge. The run that really ends reports. A failed,
+  cancelled or interrupted run always reports.
+- The same reactor wakes the owner when the task (or a `delegate_task` child of an assistant
+  conversation) starts waiting on the user, from `NeedsUser.changes` (`autonomy/NeedsUser.ts`, the one
+  definition of "waits on the user": pending non-machine requests and open decisions that are neither
+  notices nor approval mirrors; the Telegram/Activity notice reads `NeedsUser.pending`). The id
+  derives from the wait, a resolution cancels the wake if it is still queued, and a delegated child's
+  question is left to `DelegatedTaskQuestionReactor`, which already wakes its parent. The owner is
+  found up the subagent chain, so a task's own workers count. Each (re)subscription of
+  `NeedsUser.changes` subscribes first and then emits what already waits as `opened` (requests
+  through `subscribeDomainEvents`, which anchors on the event sink's sequence; decisions through
+  the snapshot their service takes after subscribing). So a start, or a wait that opened while a
+  stream was down, still wakes; the deterministic wake ids absorb the overlap. Assistant and group member threads are never followed this way.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
@@ -261,8 +276,8 @@ the editors lock the name once saved.
 
 Providers read connectors at session start through `McpProviderSessions.connectors(threadId)`, a
 late-bound source the runtime layer fills (provider-core sits below assistants). It resolves secrets
-then, answers from `AssistantDirectory.forThread`, and is empty for any non-assistant thread. One
-unreadable secret drops only that connector. Per provider:
+then, answers from `AssistantDirectory.forThread`, and appends the T3-wide servers the thread may use
+(see Integrations below). One unreadable secret drops only that connector. Per provider:
 
 - Claude: merged into `mcpServers` next to `t3-code`, never into `allowedTools`, so a read-only
   assistant still asks before calling a connector tool and the runtime mode governs the rest.
@@ -277,6 +292,49 @@ unreadable secret drops only that connector. Per provider:
 
 Command connectors run as the server's user outside any sandbox; the user wrote them, but a
 read-only access level does not confine them.
+
+## Integrations (T3-wide services behind the proxy)
+
+A connected integration never reaches a provider with its token. `GlobalMcpConnectors` hands the
+thread `<name>_t3` pointing at `/mcp/integrations/<name>` with the thread's T3 session bearer, and
+`IntegrationProxy` attaches the upstream token server-side, refreshing once on a 401. The proxy
+re-checks the thread's selection (`Assistant.integrations`) and the integration's availability on
+every request, so a change applies without restarting the session.
+
+The proxy is the access boundary for assistants, unlike connectors: read only blocks a write
+`tools/call` and Ask before acting files one decision per tool and arguments hash, which an
+approval forwards once. A tool counts as a write unless the upstream `tools/list` annotated it
+`readOnlyHint` or the catalog lists it as read-only. Annotations live in memory and a provider lists
+tools once per session, so after a T3 restart the proxy sends its own `tools/list` in the provider's
+MCP session (one at a time per integration) before deciding. Because T3 already decided, Claude gets
+`mcp__<name>_t3__*` in `allowedTools` and Codex `default_tools_approval_mode = "approve"` on assistant
+threads only; other threads keep the provider's own prompts under their runtime mode. Cursor and ACP
+agents have no such switch and may prompt again. ACP agents without http
+MCP (Grok, Kiro) reach the proxy through the stdio `acp-mcp-bridge`, so integrations work there
+although http connectors do not. OpenCode, Pi and Muse read no connectors, so integrations never
+reach them.
+
+`IntegrationDetector` reads Claude Code and Codex MCP config read-only per provider instance and
+never writes it. File presence does not prove a server works, so D7 (the provider's own copy wins
+and T3 does not inject its proxy) counts only a Codex entry that is enabled, or a Claude user-scope,
+plugin or claude.ai server whose latest session init reported `connected`. The adapter passes that
+init list through `McpProviderSessions.reportLoadedServers`, and the detector stores it per instance
+so a restart does not re-offer Connect. Local and project scope stay out of D7 because the init list
+is per cwd. Detected rows carry key names only, and their id is keyed over the values, so a copy
+request made after the file changed finds nothing.
+The detector re-parses a config file only when its mtime or size changes, so a test that rewrites a
+fixture in place must change one of them.
+
+Sign-in picks its redirect in `beginConnect` from what the client reports, not from how it is
+connected: the server's `/oauth/integrations/callback` when the client reaches this server over
+HTTPS or, from a web page, loopback HTTP; otherwise the desktop's loopback listener; otherwise the
+user pastes the final address. A desktop with a listener uses loopback even over HTTPS, and
+`loopback-only` catalog entries never use the server route. Pending flows (state and PKCE verifier)
+live in memory only. Any client cancels a pending sign-in by integration name, because the flow may
+have started on another device; a desktop listener stops when the pushed state no longer has it.
+
+Agents get `t3_integration` `list` and `read` only. It has no connect action, and its result is built
+field by field from `IntegrationsState`, so a new field there never reaches an agent by accident.
 
 ## Autonomy and the loop guard
 
@@ -296,6 +354,29 @@ whose request id starts with `autonomy:`; `DecisionService` settles such a notic
 the assistant anything, otherwise dismissing it would wake the assistant again. Telegram goes to the
 first allowed user's chat, unless a reply target already points at Telegram (the reply reactor posts
 the run there).
+
+## Problem detection
+
+`ProblemDetector` (`apps/server/src/problems/`) files one kanban card per failure cause, with no
+model. Sources only `report` an occurrence, keyed by what happened (a run id, an outage, a check
+result), never by its delivery, so a replayed event or a restart is a no-op. `tick` then processes
+each pending occurrence on its own and records a skip reason for the ones it drops, so one bad row
+never stops the rest. Every kanban write uses a command id derived from the occurrence key, which
+makes a crash between the card and the bookkeeping safe to retry.
+
+- **Cause.** The fingerprint is source, project, subject, the normalized command and the first line
+  of the normalized error (numbers, paths, ids, hashes and times stripped). A cause has one open
+  card; when that card is done, archived or deleted, the next occurrence starts a new generation
+  that names the previous card. A card never carries another project's data.
+- **Owner.** `selectOwner` is the single rule (project assistant with the project, then scope all;
+  ties go to notifying, then the oldest) and agrees with `projectScopeRefusal`. Each tick re-checks
+  the owner of every open card, so removing an assistant's access hands the card on.
+- **Wake.** A filed card queues a wake for its owner; a burst across projects becomes one message
+  per owner. It reuses `autonomy_wakes` (source `problem`), the daily limits, the pause switch and
+  the spending gate, so a held wake waits instead of being dropped. The owner's final answer is
+  the user's notice, prefixed with the approved header line.
+- **Replaces the fan-out.** With detection on for a project, the `run_failed` and `pr_checks_failed`
+  rules no longer wake every assistant there; watches still fire.
 
 ## iMessage channel
 

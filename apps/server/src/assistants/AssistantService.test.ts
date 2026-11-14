@@ -63,6 +63,7 @@ interface FakeThread {
 const harness = () => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
+  const inspected: string[] = [];
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
   const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
@@ -79,6 +80,7 @@ const harness = () => {
         const sql = yield* SqlClient.SqlClient;
         return {
           getThreadRecords: (threadId: string) => {
+            inspected.push(threadId);
             const thread = threads.get(threadId);
             return thread === undefined
               ? Effect.fail(new Error("missing") as never)
@@ -212,6 +214,7 @@ const harness = () => {
     secretValues,
     layer,
     threads,
+    inspected,
     launched,
     dispatched,
     refusedCommands,
@@ -265,6 +268,40 @@ it.effect("a deleted conversation is replaced by the next generation", () => {
     assert.equal(jarvis.generation, 2);
     assert.equal((yield* assistants.ensureDefault).threadId, jarvisThread(2));
     assert.lengthOf(launched, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("listing healthy assistants inspects no thread and relaunches only deleted ones", () => {
+  const { layer, threads, launched, inspected } = harness();
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const assistants = yield* Assistants.AssistantService;
+    yield* assistants.ensureDefault;
+    const other = yield* assistants.create(create());
+    const third = yield* assistants.create(create({ name: "Third One" }));
+    const project = (threadId: string, deletedAt: string | null) =>
+      sql`INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, deleted_at, payload_json
+          ) VALUES (${threadId}, 'p', 't', 'codex', 'full-access', 'default', 'now', 'now', ${deletedAt}, '{}')`;
+    yield* project(jarvisThread(1), null);
+    yield* project(other.threadId!, null);
+    yield* project(third.threadId!, null);
+
+    inspected.length = 0;
+    const before = launched.length;
+    yield* assistants.list;
+    assert.lengthOf(inspected, 0);
+    assert.lengthOf(launched, before);
+
+    // Unknown to the projection stays put, as an unreadable thread always did.
+    yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${third.threadId!}`;
+    threads.get(other.threadId!)!.deletedAt = "now";
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'now' WHERE thread_id = ${other.threadId!}`;
+    const all = yield* assistants.list;
+    assert.lengthOf(launched, before + 1);
+    assert.equal(all.find((a) => a.id === other.id)!.generation, 2);
+    assert.equal(all.find((a) => a.id === third.id)!.threadId, third.threadId);
   }).pipe(Effect.provide(layer));
 });
 
@@ -742,6 +779,26 @@ it.effect(
   },
 );
 
+it.effect("the integration selection defaults to all, saves and survives unrelated updates", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const plain = yield* assistants.create(create({ name: "Plain" }));
+    assert.deepEqual(plain.integrations, { mode: "all" });
+    const chosen = yield* assistants.create(
+      create({ name: "Scheduler", integrations: { mode: "selected", names: ["google-calendar"] } }),
+    );
+    assert.deepEqual(chosen.integrations, { mode: "selected", names: ["google-calendar"] });
+    const renamed = yield* assistants.update({ assistantId: chosen.id, role: "Ops" });
+    assert.deepEqual(renamed.integrations, { mode: "selected", names: ["google-calendar"] });
+    const opened = yield* assistants.update({
+      assistantId: chosen.id,
+      integrations: { mode: "all" },
+    });
+    assert.deepEqual(opened.integrations, { mode: "all" });
+  }).pipe(Effect.provide(layer), Effect.orDie);
+});
+
 it.effect(
   "connector secrets are write-only: reads show keys, omitted keeps, empty clears, deletes clean up",
   () => {
@@ -832,6 +889,27 @@ it.effect(
       );
       assert.equal(bad.reason, "invalid");
       assert.equal(secretValues.size, 0);
+
+      // A connector saved before the URL rule tightened survives a save that leaves its URL alone.
+      const legacy = {
+        name: "lan",
+        transport: "http" as const,
+        url: "http://192.168.1.5/mcp",
+        args: [],
+        headers: [],
+        env: [],
+        enabled: true,
+      };
+      const lanInput = { name: "lan", transport: "http" as const, url: legacy.url, enabled: true };
+      const resaved = yield* connectors.save(made.id, [legacy], [lanInput, docs([])]);
+      assert.deepEqual(
+        resaved.servers.map((server) => server.url),
+        [legacy.url, "https://docs.example.test/mcp"],
+      );
+      const edited = yield* Effect.flip(
+        connectors.save(made.id, [legacy], [{ ...lanInput, url: "http://192.168.1.6/mcp" }]),
+      );
+      assert.equal(edited.reason, "invalid");
 
       yield* assistants.update({
         assistantId: made.id,
@@ -1259,6 +1337,9 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       unreadCount: 0,
       working: false,
       preview: null,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
     });
     yield* sql`INSERT INTO assistant_group_messages
       (message_id, team_id, seq, author, kind, text, created_at)
@@ -1281,6 +1362,48 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
     );
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
   }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a team counts the requests of its current conversation that wait on the user", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const sql = yield* SqlClient.SqlClient;
+    const ana = yield* assistants.create(create({ name: "Ana" }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    const message = (id: string, seq: number, kind = "message") =>
+      sql`INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text, created_at)
+        VALUES (${id}, ${team.id}, ${seq}, 'user', ${kind}, 'x', '2026-01-01')`;
+    const task = (id: string, request: string, status: string, reason: string | null, root = id) =>
+      sql`INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+          owner_id, instruction, status, reason, created_at, updated_at)
+        VALUES (${id}, ${team.id}, ${root}, ${root === id ? "root" : "child"}, ${request}, ${ana.id},
+          'x', ${status}, ${reason}, '2026-01-01', '2026-01-01')`;
+    yield* message("old", 1);
+    yield* message("cut", 2, "boundary");
+    for (const seq of [3, 4, 5, 6, 7]) yield* message(`m${seq}`, seq);
+    // Before the boundary: no longer offered in the chat, so never counted.
+    yield* task("t-old-paused", "old", "paused", "handoff_limit");
+    yield* task("t-old-failed", "old", "failed", null);
+    // One paused request is one, however many of its tasks paused with it.
+    yield* task("t-hop", "m3", "paused", "handoff_limit");
+    yield* task("t-hop-child", "m3", "paused", "handoff_limit", "t-hop");
+    yield* task("t-unknown", "m4", "paused", "something_new");
+    // Paused by the user or by an archive: nothing to ask them.
+    yield* task("t-stopped", "m5", "paused", "stopped");
+    yield* task("t-archived", "m5", "paused", "group_archived");
+    yield* task("t-failed", "m6", "failed", "failed");
+    // A failed child is reported to its parent, which goes on.
+    yield* task("t-root", "m7", "running", null);
+    yield* task("t-child-failed", "m7", "failed", null, "t-root");
+    yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id, seen_seq)
+      VALUES (${team.id}, ${ana.id}, 'assistant:ana:g-1', 0)`;
+    const [counted] = (yield* assistants.teams).filter((candidate) => candidate.id === team.id);
+    assert.deepEqual(
+      [counted?.chat?.pausedTasks, counted?.chat?.failedTasks, counted?.chat?.threadIds],
+      [2, 1, ["assistant:ana:g-1"]],
+    );
+  }).pipe(Effect.provide(layer));
 });
 
 it.effect(

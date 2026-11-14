@@ -23,6 +23,8 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
 import { assistantDialogAtom } from "./assistantDialogState";
+import { closeAssistantInfo } from "./assistantInfoState";
+import { assistantWorkAtom } from "./assistantWorkState";
 import {
   assistantGroupRoutinesAtom,
   assistantGroupSettingsAtom,
@@ -110,7 +112,14 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
-  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+  integrations: { mode: "all" },
+  autonomy: {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  },
   archivedAt: null,
   createdAt: WHEN,
   updatedAt: WHEN,
@@ -160,7 +169,16 @@ const task = (id: string, request: number, overrides: Partial<AssistantGroupTask
   }) as AssistantGroupTask;
 
 const people = () => [
-  assistant("ada", "Ada", { role: "CFO" }),
+  assistant("ada", "Ada", {
+    role: "CFO",
+    autonomy: {
+      mode: "reply-only",
+      rules: null,
+      projectIds: null,
+      channels: null,
+      onProblem: "fix-small",
+    },
+  }),
   assistant("bo", "Bo"),
   assistant("jarvis", "Jarvis", { isDefault: true }),
 ];
@@ -172,6 +190,7 @@ async function openChat(options: { team?: AssistantTeam } = {}) {
   appAtomRegistry.set(assistantDialogAtom, null);
   appAtomRegistry.set(assistantTeamDialogAtom, null);
   appAtomRegistry.set(assistantGroupSettingsAtom, null);
+  closeAssistantInfo();
   Object.assign(fakeGroupChat, {
     posts: [],
     taskActions: [],
@@ -510,6 +529,116 @@ it("runs the header menu: edit, new assistant, routines and archive", async () =
   appAtomRegistry.set(assistantGroupRoutinesAtom, null);
 });
 
+it("opens Group info from the header beside a usable chat, and closes it three ways", async () => {
+  publishGroupChat(
+    [message(1)],
+    [
+      task("first", 1),
+      task("second", 1, {
+        ownerId: "bo" as AssistantId,
+        createdAt: "2026-03-17T19:01:00.000Z",
+        threadId: `assistant:bo:g-${"1".repeat(16)}` as ThreadId,
+      }),
+      task("waits", 1, { status: "queued" }),
+    ],
+  );
+  await using _screen = await openChat({
+    team: team({ memberIds: ["ada", "bo", "jarvis", "gone"] as AssistantId[] }),
+  });
+  const trigger = main().getByRole("button", { name: "Leadership, Group info" });
+  expect(
+    trigger
+      .element()
+      .querySelector("[data-assistant-cluster]")
+      ?.getAttribute("data-assistant-cluster"),
+  ).toBe("4");
+  const panel = page.getByTestId("assistant-info-panel");
+
+  await userEvent.click(trigger);
+  await expect.element(panel.getByRole("heading", { name: "Group info" })).toBeVisible();
+  await expect.element(panel.getByText("4 members · 2 running")).toBeVisible();
+  const working = panel.getByTestId("group-info-working");
+  await expect.element(working.first()).toHaveTextContent("instruction of firstRunning");
+  await expect.element(working.nth(1)).toHaveTextContent("instruction of secondRunning");
+  expect(working.all()).toHaveLength(2);
+  const members = panel.getByTestId("group-info-member");
+  expect(members.all().map((row) => row.element().textContent)).toEqual([
+    expect.stringMatching(/^JarvisLead/),
+    expect.stringMatching(/^Ada/),
+    expect.stringMatching(/^Bo/),
+    "Assistant",
+  ]);
+
+  await userEvent.fill(composer(), "still typing");
+  await expect.element(composer()).toHaveValue("still typing");
+  await userEvent.click(trigger);
+  await expect.element(panel).not.toBeInTheDocument();
+
+  await userEvent.click(trigger);
+  await userEvent.click(panel.getByRole("heading", { name: "Group info" }));
+  await userEvent.keyboard("{Escape}");
+  await expect.element(panel).not.toBeInTheDocument();
+
+  await userEvent.click(trigger);
+  await userEvent.click(panel.getByRole("button", { name: "Close" }));
+  await expect.element(panel).not.toBeInTheDocument();
+});
+
+it("Group info opens the group's settings, routines and dialogs, and archives it", async () => {
+  publishGroupChat([message(1)]);
+  await using _screen = await openChat();
+  const panel = page.getByTestId("assistant-info-panel");
+  await userEvent.click(main().getByRole("button", { name: "Leadership, Group info" }));
+  await expect.element(panel.getByText("Nothing running")).toBeVisible();
+
+  await userEvent.click(panel.getByRole("button", { name: "Edit group" }));
+  expect(appAtomRegistry.get(assistantTeamDialogAtom)).toMatchObject({ teamId: "t1" });
+  appAtomRegistry.set(assistantTeamDialogAtom, null);
+  for (const label of ["Group settings", "Instructions", "Memories"]) {
+    await userEvent.click(panel.getByRole("button", { name: label }));
+    expect(appAtomRegistry.get(assistantGroupSettingsAtom)).toMatchObject({ teamId: "t1" });
+    appAtomRegistry.set(assistantGroupSettingsAtom, null);
+  }
+  await userEvent.click(panel.getByRole("button", { name: "Routines" }));
+  expect(appAtomRegistry.get(assistantGroupRoutinesAtom)).toMatchObject({ teamId: "t1" });
+  appAtomRegistry.set(assistantGroupRoutinesAtom, null);
+
+  await userEvent.click(panel.getByRole("button", { name: "Archive group" }));
+  await userEvent.click(page.getByRole("button", { name: "Confirm" }));
+  await eventually(() =>
+    expect(fakeTeamEdits.updates).toMatchObject([{ teamId: "t1", archived: true }]),
+  );
+  await userEvent.click(panel.getByRole("button", { name: "Open chat" }));
+  await expect.element(panel).not.toBeInTheDocument();
+});
+
+it("a member row opens Assistant info with its role, groups and access", async () => {
+  publishGroupChat([message(1)]);
+  await using _screen = await openChat();
+  const panel = page.getByTestId("assistant-info-panel");
+  await userEvent.click(main().getByRole("button", { name: "Leadership, Group info" }));
+  await userEvent.click(panel.getByTestId("group-info-member").nth(1));
+
+  await expect.element(panel.getByRole("heading", { name: "Assistant info" })).toBeVisible();
+  await expect.element(panel.getByText("CFO")).toBeVisible();
+  await expect.element(panel.getByText("All projects")).toBeVisible();
+  const access = panel.getByRole("region", { name: "Access" });
+  await expect
+    .element(access)
+    .toHaveTextContent("AccessTool accessEdit filesWhen it finds a problemFix small things");
+  const groups = panel.getByRole("region", { name: "Groups" });
+  await expect.element(groups.getByRole("button", { name: "Leadership" })).toBeVisible();
+
+  await userEvent.click(panel.getByRole("button", { name: "Edit" }));
+  expect(appAtomRegistry.get(assistantDialogAtom)).toMatchObject({ assistantId: "ada" });
+  appAtomRegistry.set(assistantDialogAtom, null);
+  await userEvent.click(panel.getByRole("button", { name: "Work" }));
+  expect(appAtomRegistry.get(assistantWorkAtom)).toMatchObject({ assistantId: "ada" });
+  appAtomRegistry.set(assistantWorkAtom, null);
+  await userEvent.click(groups.getByRole("button", { name: "Leadership" }));
+  await expect.element(panel).not.toBeInTheDocument();
+});
+
 it("opens a group's chat from the command palette and says when it is gone", async () => {
   publishGroupChat([]);
   const screen = await openChat();
@@ -676,6 +805,9 @@ const chatOf = (overrides: Partial<NonNullable<AssistantTeam["chat"]>> = {}) => 
   unreadCount: 2,
   working: false,
   preview: null,
+  pausedTasks: 0,
+  failedTasks: 0,
+  threadIds: [],
   ...overrides,
 });
 const unreadChat = () =>
@@ -690,7 +822,7 @@ it("shows the unread count, a New line above the first unread message, and marks
   unreadChat();
   await using _screen = await openChat({ team: team({ chat: chatOf() }) });
   const row = page.getByTestId("sidebar-assistant-fold");
-  await expect.element(row.getByTestId("group-unread")).toHaveTextContent("2");
+  await expect.element(row.getByTestId("zone-indicator")).toHaveAttribute("aria-label", "2 unread");
   await expect.element(main().getByTestId("group-new-divider")).toBeVisible();
   // The line sits directly above the first answer the user had not read, not above their own message.
   const feed = main().getByTestId("group-feed").element();
@@ -708,7 +840,9 @@ it("shows no badge and no New line and marks nothing when everything is read", a
   });
   await expect.element(main().getByText("second answer")).toBeVisible();
   await expect.element(main().getByTestId("group-new-divider")).not.toBeInTheDocument();
-  await expect.element(page.getByTestId("group-unread")).not.toBeInTheDocument();
+  await expect
+    .element(page.getByTestId("sidebar-assistant-fold").getByTestId("zone-indicator"))
+    .not.toBeInTheDocument();
   expect(fakeGroupChat.reads).toEqual([]);
 });
 

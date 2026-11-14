@@ -143,6 +143,14 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Answer what needs you from the sidebar
+
+The top of the sidebar, and of Home on mobile, lists everything waiting on you under **Needs you**,
+oldest first: approvals, questions and decisions from any thread, including the ones assistants
+started. Approve or deny, pick an option or type a one-line answer right there, or choose **Open**
+to go to the thread. A request with several questions opens in its thread. The section is gone
+while nothing waits.
+
 ### Follow what needs you in Activity
 
 On web and desktop, choose the bell at the top of the sidebar or in the rail, or press
@@ -160,8 +168,8 @@ unacknowledged wakes on connections you can change. **Clear read** also removes 
 already read from the list. Work in progress and pending requests stay. Nothing is archived or
 deleted.
 
-On mobile, Home shows the same threads in a **Needs you** section, and the tablet sidebar does too.
-Its menu has **Mark all as read** and **Clear read**.
+On mobile, **Mark all as read** and **Clear read** are in the **⋯** menu beside **Projects** on Home
+and in the tablet sidebar.
 
 On macOS, the desktop app also puts the same view in the menu bar: threads that need you, running
 threads and pinned threads, from every connected environment, with **New thread**, **Open T3 Code**
@@ -293,7 +301,9 @@ thread** from its long-press menu on mobile.
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
-another provider instance.
+another provider instance: the limited turn continues there right away, followed
+by any queued messages. Queued messages always start on the thread's current
+provider, unless you picked a different model in that message.
 Press **Resume** in an empty composer to continue a limited or interrupted turn
 manually. Do this when the provider reports no reset time, because nothing
 continues the turn on its own.
@@ -314,7 +324,7 @@ the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, a thread's active subagents are listed under it in the sidebar.
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.

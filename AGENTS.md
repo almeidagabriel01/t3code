@@ -238,6 +238,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Capture with short content as well as long. Sticky and floating chrome that looks right on a full page can float mid-screen on a near-empty one; its container must fill the pane.
 - On the mobile simulator, Expo's floating "Tools button" sits over the thread header's right button and swallows taps. Turn it off in the dev menu before driving the header.
 - The iOS simulator's Files picker is empty until you copy a file into `File Provider Storage/` under `xcrun simctl get_app_container <udid> com.apple.DocumentsApp groups` (the LocalStorage group); it then shows under Browse → On My iPhone.
+- Mobile react tests inline `Platform.OS` at build time (`T3_MOBILE_TEST_PLATFORM`, default iOS), so mocking it does nothing: cover both platforms through a pure function that takes the platform as an argument.
 - Never start Metro with `CI=1`: Expo then stops watching files, so edits never reach the device and every device test runs stale code. Prove a reload with a visible text change before trusting a result.
 - Pair a mobile dev client with `.agents/skills/test-t3-mobile/scripts/pair-client.sh`; it opens `t3code-dev://connections/new`, while `t3code-dev://pair` is "Route not found".
 - The Android Files picker ignores a scripted tap on a file row: long-press the row to select it, then tap "Select" in the top bar.
@@ -289,7 +290,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Every fork feature ships on web, desktop and mobile with equivalent flows. Mobile is not a reduced copy: when the web flow is simplified, simplify mobile the same way.
 - Mobile tablets (iPad, Android tablets) render `ThreadNavigationSidebar`, not `HomeScreen`: a Home section goes in both. That sidebar sits outside any navigator screen, so nothing it renders may call `useRoute`; open things by id with `useSelectWorkspaceDetail` or `useNavigateToPullRequest`.
 - On Android, `Menu shouldOpenOnLongPress` injects `onLongPress` into its direct child: that child must pass it to its `Pressable`, or a long press just taps.
-- The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`.
+- The mobile `Menu` ignores layout classes on itself (`self-start`, margins): put them on a wrapping `View`. Android anchors the popup to the `Menu`'s own frame, so a `self-end` child of a full-width `Menu` opens its menu at the left edge.
 - A mobile multi-pick menu sets `keepsMenuPresented` on its items, and `inline` on its sections for iOS (a nested iOS submenu collapses after each pick). On Android a mounted Compose `DropdownMenuItem` keeps its old trailing slot, so its key includes the checked state.
 - On mobile, close the keyboard before showing a leave or discard prompt: a prompt over an open keyboard leaves a stale keyboard height on the next screen.
 - Every user action has its reverse and its entry points (header, menus, palette, settings), and agents can reach it through MCP tools when that makes sense.

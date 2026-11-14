@@ -30,6 +30,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/assistants"
+  | "/settings/integrations"
   | "/settings/imessage"
   | "/settings/telegram"
   | "/settings/memory"
@@ -72,6 +73,8 @@ export interface SettingsSearchItem {
   readonly desktopOnly?: boolean;
   readonly macOnly?: boolean;
   readonly windowsOnly?: boolean;
+  /** macOS and Windows, where the desktop app can register a login item. */
+  readonly loginItemsOnly?: boolean;
   readonly releaseChannelOnly?: boolean;
   readonly secretsFeatureOnly?: boolean;
   readonly cloudOnly?: boolean;
@@ -84,6 +87,7 @@ export interface SettingsSearchItem {
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
   readonly requiresMemory?: boolean;
+  readonly requiresIntegrations?: boolean;
   readonly requiresImessage?: boolean;
   readonly requiresTelegram?: boolean;
   readonly macProviderSettingsOnly?: boolean;
@@ -107,6 +111,7 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasMemory?: boolean;
+  readonly hasIntegrations?: boolean;
   readonly hasImessage?: boolean;
   readonly hasTelegram?: boolean;
   readonly hasMacProviderSettingsEnvironment?: boolean;
@@ -128,6 +133,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/assistants": "Assistants",
+  "/settings/integrations": "Integrations",
   "/settings/imessage": "iMessage",
   "/settings/telegram": "Telegram",
   "/settings/memory": "Memory",
@@ -175,6 +181,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/providers",
       "/settings/assistants",
+      "/settings/integrations",
       "/settings/imessage",
       "/settings/telegram",
       "/settings/memory",
@@ -541,15 +548,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "sidebar-show-assistants-section",
-    title: "Show Assistants section",
+    title: "Show Teams section",
     to: "/settings/general",
-    searchTerms: ["sidebar assistants jarvis pinned hide"],
-  },
-  {
-    id: "sidebar-show-agents-section",
-    title: "Show Agents section",
-    to: "/settings/general",
-    searchTerms: ["sidebar working finished unread agents across projects pinned"],
+    searchTerms: ["sidebar assistants teams groups jarvis pinned hide"],
   },
   {
     id: "sidebar-show-subagents",
@@ -728,6 +729,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/assistants",
     searchTerms: [
       "assistants jarvis named assistant instructions tool access read only full access reset conversation archive",
+    ],
+  },
+  {
+    id: "integrations",
+    title: "Integrations",
+    to: "/settings/integrations",
+    requiresIntegrations: true,
+    searchTerms: [
+      "integrations connectors connect sign in oauth token mcp google calendar gmail linear github notion slack claude.ai codex own app client id redirect",
     ],
   },
   {
@@ -964,6 +974,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["claude context compaction idle cache tokens usage summary resume"],
   },
   {
+    id: "close-idle-claude-agents",
+    title: "Close idle Claude agents",
+    to: "/settings/providers",
+    scope: "environment-defaults",
+    searchTerms: ["claude process memory idle timeout minutes stop resume"],
+  },
+  {
     id: "auto-settle-merged-threads",
     title: "Auto-settle merged threads",
     to: "/settings/threads",
@@ -1155,6 +1172,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["confirmation desktop app exit direct hold double click press twice"],
     desktopOnly: true,
+  },
+  {
+    id: "open-at-login",
+    title: "Open at login",
+    to: "/settings/general",
+    searchTerms: ["launch start startup sign in login items restart reboot background"],
+    desktopOnly: true,
+    loginItemsOnly: true,
   },
   {
     id: "show-in-menu-bar",
@@ -1436,6 +1461,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Diagnostics",
     to: "/settings/maintenance",
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
+  },
+  {
+    id: "detect-problems",
+    title: "Detect problems",
+    to: "/settings/maintenance",
+    scope: "project-defaults",
+    searchTerms: ["problem cards failures assistants watch errors ignore noisy project"],
   },
   {
     id: "open-source-licenses",
@@ -1915,6 +1947,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/assistants": null,
+  "/settings/integrations": null,
   "/settings/imessage": null,
   "/settings/telegram": null,
   "/settings/memory": null,
@@ -1939,7 +1972,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
-  "/settings/integrations": "/settings/browser",
   "/settings/storage": "/settings/maintenance",
   "/settings/beta": "/settings/labs",
 };
@@ -1948,6 +1980,8 @@ const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/source-control",
   "/settings/connections",
+  // Its old browser and device rows moved out before the path became Integrations.
+  "/settings/integrations",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
 // Section anchors that moved but are not search results themselves.
@@ -2051,6 +2085,7 @@ export function filterAvailableSettingsSearchItems(
   return items.filter(
     (item) =>
       (!item.requiresMemory || availability.hasMemory === true) &&
+      (!item.requiresIntegrations || availability.hasIntegrations === true) &&
       (!item.requiresImessage || availability.hasImessage === true) &&
       (!item.requiresTelegram || availability.hasTelegram === true) &&
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
@@ -2083,7 +2118,8 @@ export function settingsForThisPlatform(
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
       (!item.macOnly || isMacPlatform(platform)) &&
-      (!item.windowsOnly || isWindowsPlatform(platform)),
+      (!item.windowsOnly || isWindowsPlatform(platform)) &&
+      (!item.loginItemsOnly || isMacPlatform(platform) || isWindowsPlatform(platform)),
   );
 }
 

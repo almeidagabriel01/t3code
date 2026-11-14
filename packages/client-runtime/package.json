@@ -351,6 +351,18 @@
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"
     },
+    "./sidebarZones": {
+      "types": "./src/sidebarZones.ts",
+      "default": "./src/sidebarZones.ts"
+    },
+    "./assistantCluster": {
+      "types": "./src/assistantCluster.ts",
+      "default": "./src/assistantCluster.ts"
+    },
+    "./assistantInfo": {
+      "types": "./src/assistantInfo.ts",
+      "default": "./src/assistantInfo.ts"
+    },
     "./assistantLiveWork": {
       "types": "./src/assistantLiveWork.ts",
       "default": "./src/assistantLiveWork.ts"
@@ -366,6 +378,14 @@
     "./state/assistants": {
       "types": "./src/state/assistants.ts",
       "default": "./src/state/assistants.ts"
+    },
+    "./integrations": {
+      "types": "./src/integrations.ts",
+      "default": "./src/integrations.ts"
+    },
+    "./state/integrations": {
+      "types": "./src/state/integrations.ts",
+      "default": "./src/state/integrations.ts"
     },
     "./state/mac-permissions": {
       "types": "./src/state/macPermissions.ts",

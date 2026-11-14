@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Environment from "../environment/ServerEnvironment.ts";
 import * as RuntimeIdentity from "../runtimeIdentity.ts";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
@@ -113,58 +114,56 @@ const make = Effect.gen(function* () {
     snapshot.memoryEnabled
       ? query(decodeSelection(resolveMemoryModelSelection(snapshot, undefined), strict))
       : Effect.succeed(null);
-  const readSource = Effect.fn("MemoryWorker.readSource")(function* (work: Store.MemoryWork) {
+  // Runs in the caller's transaction, so catch-up can read on its reader snapshot.
+  const readSourceIn = Effect.fn("MemoryWorker.readSource")(function* (work: Store.MemoryWork) {
     if (
       work.metadata.kind !== "summary" ||
       work.metadata.sourceThread.environmentId !== environmentId
     )
       return yield* new MemoryWorkerError({ code: "identity_mismatch" });
     const meta = work.metadata;
-    return yield* store
-      .transact(
-        Effect.gen(function* () {
-          const thread = yield* query(
-            sql`SELECT 1 FROM orchestration_v2_projection_threads WHERE thread_id=${meta.sourceThread.threadId} AND deleted_at IS NULL`,
-          );
-          if (!thread.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
-          if (yield* query(SourceScan.isDelegatedChildThread(sql, meta.sourceThread.threadId)))
-            return yield* new MemoryWorkerError({ code: "source_invalidated" });
-          const newer = yield* query(
-            sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${meta.sourceThread.threadId} AND sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (event_type='thread.deleted' OR event_type='message.updated' OR (event_type='run.updated' AND json_extract(payload_json,'$.status') IN ('completed','failed','interrupted','cancelled','rolled_back'))) LIMIT 1`,
-          );
-          if (newer.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
-          const excluded = yield* store.readSuppressions(
-            M.MemorySpaceId.make(
-              work.space.startsWith("_local:") ? Service.memoryStableUuid(work.space) : work.space,
-            ),
-            meta.memoryId,
-          );
-          const exclusions = excluded.flatMap((r) =>
-            r.kind === "sourceExclusion" &&
-            r.exclusion.sourceThread.environmentId === environmentId &&
-            r.exclusion.sourceThread.threadId === meta.sourceThread.threadId
-              ? r.exclusion.messageIds
-              : [],
-          );
-          // Filter eligibility before the bound; historical updates and skipped messages cannot fill a chunk.
-          const rows = yield* query(
-            SourceScan.readEligibleSourceRows(sql, {
-              threadId: meta.sourceThread.threadId,
-              afterSequence: meta.fromSequence ?? 0,
-              throughSequence: meta.sourceWatermark.throughSequence,
-              observedSequence:
-                meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence,
-              excluded: exclusions,
-              limit: 102,
-            }),
-          );
-          return yield* SourceScan.boundSourcePage(rows, meta.sourceWatermark).pipe(
-            Effect.mapError(workerError),
-          );
+    return yield* Effect.gen(function* () {
+      const thread = yield* query(
+        sql`SELECT 1 FROM orchestration_v2_projection_threads WHERE thread_id=${meta.sourceThread.threadId} AND deleted_at IS NULL`,
+      );
+      if (!thread.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
+      if (yield* query(SourceScan.isDelegatedChildThread(sql, meta.sourceThread.threadId)))
+        return yield* new MemoryWorkerError({ code: "source_invalidated" });
+      const newer = yield* query(
+        sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${meta.sourceThread.threadId} AND sequence>${meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence} AND (event_type='thread.deleted' OR event_type='message.updated' OR (event_type='run.updated' AND json_extract(payload_json,'$.status') IN ('completed','failed','interrupted','cancelled','rolled_back'))) LIMIT 1`,
+      );
+      if (newer.length) return yield* new MemoryWorkerError({ code: "source_invalidated" });
+      const excluded = yield* store.readSuppressions(
+        M.MemorySpaceId.make(
+          work.space.startsWith("_local:") ? Service.memoryStableUuid(work.space) : work.space,
+        ),
+        meta.memoryId,
+      );
+      const exclusions = excluded.flatMap((r) =>
+        r.kind === "sourceExclusion" &&
+        r.exclusion.sourceThread.environmentId === environmentId &&
+        r.exclusion.sourceThread.threadId === meta.sourceThread.threadId
+          ? r.exclusion.messageIds
+          : [],
+      );
+      // Filter eligibility before the bound; historical updates and skipped messages cannot fill a chunk.
+      const rows = yield* query(
+        SourceScan.readEligibleSourceRows(sql, {
+          threadId: meta.sourceThread.threadId,
+          afterSequence: meta.fromSequence ?? 0,
+          throughSequence: meta.sourceWatermark.throughSequence,
+          observedSequence: meta.observedThroughSequence ?? meta.sourceWatermark.throughSequence,
+          excluded: exclusions,
+          limit: 102,
         }),
-      )
-      .pipe(Effect.mapError(workerError));
+      );
+      return yield* SourceScan.boundSourcePage(rows, meta.sourceWatermark).pipe(
+        Effect.mapError(workerError),
+      );
+    }).pipe(Effect.mapError(workerError));
   });
+  const readSource = (work: Store.MemoryWork) =>
+    store.transact(readSourceIn(work)).pipe(Effect.mapError(workerError));
   const promotionsFor = (
     promotions: SummaryPromotions | undefined,
     thread: M.ScopedThreadRef,
@@ -251,67 +250,73 @@ const make = Effect.gen(function* () {
     }
     return payload.evidence.some((e) => e.origin !== "model" && e.messageIds.length > 0);
   });
-  const catchUp = Effect.fn("MemoryWorker.catchUp")(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const watermark = yield* store.readThreadHookWatermark();
-    const rows = yield* query(
-      sql<{
-        sequence: number;
-        event_id: string;
-        stream_id: string;
-        event_type: string;
-        payload_json: string;
-        occurred_at: string;
-      }>`SELECT sequence,event_id,stream_id,event_type,payload_json,occurred_at FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND sequence>${watermark} ORDER BY sequence LIMIT 100`,
+  /** Completed summary and consolidation progress of one thread. */
+  const readProgress = (threadId: string) =>
+    query(sql<{
+      watermark: number | null;
+      consolidated: number | null;
+      consolidated_at: number | null;
+    }>`SELECT max(CASE WHEN status='completed' THEN json_extract(metadata_json,'$.sourceWatermark.throughSequence') END) AS watermark,
+          max(CASE WHEN kind='consolidate' AND status='completed' THEN json_extract(metadata_json,'$.sourceWatermark.throughSequence') END) AS consolidated,
+          max(CASE WHEN kind='consolidate' AND status='completed' AND json_extract(metadata_json,'$.sourceWatermark.throughSequence')>=coalesce(json_extract(metadata_json,'$.observedThroughSequence'),0) THEN json_extract(metadata_json,'$.completedAt') END) AS consolidated_at FROM memory_outbox WHERE kind IN ('summary','consolidate') AND json_extract(metadata_json,'$.sourceThread.environmentId')=${environmentId} AND json_extract(metadata_json,'$.sourceThread.threadId')=${threadId}`).pipe(
+      Effect.map((rows) => ({
+        watermark: rows[0]?.watermark ?? null,
+        consolidated: rows[0]?.consolidated ?? null,
+        consolidatedAt: rows[0]?.consolidated_at ?? null,
+      })),
     );
-    const snapshot = yield* query(settings.getSettings);
-    const modelSelection = yield* memoryModel(snapshot);
-    const space = snapshot.memoryHub.mode === "disabled" ? null : snapshot.memoryHub.memorySpaceId;
-    // With memory off nothing can be recovered; turning it on changes the key and rescans.
-    const scanKey =
-      modelSelection === null ? undefined : `${space ?? ""}|${encodeSelection(modelSelection)}`;
-    const scanContinuations =
-      scanKey !== undefined && (scanKey !== continuationScanKey || now >= continuationScanDueAt);
-    // Recovers live threads whose latest terminal run has unsummarized messages or a due
-    // consolidation, probing each thread's tail by index so cost follows the thread count.
-    // Work ids are deterministic, so re-deriving a settled run repeats a no-op insert.
-    const continuations = scanContinuations
-      ? yield* query(
-          selectContinuationCandidates(sql, {
-            environmentId,
-            watermark,
-            now,
-            limit: continuationPageSize,
-          }),
-        )
-      : [];
-    const settleScan = Effect.sync(() => {
-      if (!scanContinuations) return;
-      continuationScanKey = scanKey;
-      continuationScanDueAt =
-        continuations.length === continuationPageSize
-          ? 0
-          : now + MEMORY_CONTINUATION_SCAN_INTERVAL_MS;
-    });
-    if (!rows.length && !continuations.length) return yield* settleScan;
-    const continuationSequences = new Set(continuations.map((row) => row.sequence));
-    const work: Store.MemoryWork[] = [];
-    yield* store
-      .transact(
+  type Progress = Effect.Success<ReturnType<typeof readProgress>>;
+  /**
+   * Reads one reader snapshot and decides the hook's next batch without writing. The writer is
+   * the server's only one, and this read took seconds on large histories.
+   */
+  const planCatchUp = Effect.fn("MemoryWorker.planCatchUp")(function* (input: {
+    readonly now: number;
+    readonly modelSelection: M.MemoryModelSelection | null;
+    readonly space: M.MemorySpaceId | null;
+    readonly scanContinuations: boolean;
+  }) {
+    const { now, modelSelection, space } = input;
+    return yield* sql
+      .withTransaction(
         Effect.gen(function* () {
+          const watermark = yield* store.readThreadHookWatermark();
+          const rows = yield* query(
+            sql<{
+              sequence: number;
+              event_id: string;
+              stream_id: string;
+              event_type: string;
+              payload_json: string;
+              occurred_at: string;
+            }>`SELECT sequence,event_id,stream_id,event_type,payload_json,occurred_at FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND sequence>${watermark} ORDER BY sequence LIMIT 100`,
+          );
+          // Recovers live threads whose latest terminal run has unsummarized messages or a due
+          // consolidation, probing each thread's tail by index so cost follows the thread count.
+          // Work ids are deterministic, so re-deriving a settled run repeats a no-op insert.
+          const continuations = input.scanContinuations
+            ? yield* query(
+                selectContinuationCandidates(sql, {
+                  environmentId,
+                  watermark,
+                  now,
+                  limit: continuationPageSize,
+                }),
+              )
+            : [];
+          const continuationSequences = new Set(continuations.map((row) => row.sequence));
+          const actions: Array<{ kind: "delete" | "cancel"; thread: M.ScopedThreadRef }> = [];
+          const work: Store.MemoryWork[] = [];
+          // What the write phase must find unchanged before applying this plan.
+          const progress = new Map<string, Progress>();
+          // Deletes apply only in the write phase, so later rows of a deleted thread skip here.
+          const deleted = new Set<string>();
           for (const row of [...rows, ...continuations]) {
+            if (deleted.has(row.stream_id)) continue;
             const thread = { environmentId, threadId: M.ThreadId.make(row.stream_id) };
             if (row.event_type === "thread.deleted") {
-              yield* store.deleteThreadLineage(thread);
-              yield* store.cancelThreadWork(thread);
-              yield* store
-                .forgetLocalIntent(environmentId, `${environmentId}:${row.stream_id}:summary`)
-                .pipe(
-                  Effect.catchTags({
-                    MemoryStoreConflict: (error) =>
-                      error.code === "space_mismatch" ? Effect.void : Effect.fail(error),
-                  }),
-                );
+              deleted.add(row.stream_id);
+              actions.push({ kind: "delete", thread });
               for (let index = work.length - 1; index >= 0; index--) {
                 const queued = work[index]?.metadata;
                 if (queued?.kind === "summary" && queued.sourceThread.threadId === thread.threadId)
@@ -322,7 +327,7 @@ const make = Effect.gen(function* () {
             if (row.event_type !== "run.updated") continue;
             const run = yield* query(decodeRun(row.payload_json));
             if (run.status === "rolled_back") {
-              yield* store.cancelThreadWork(thread);
+              actions.push({ kind: "cancel", thread });
               continue;
             }
             if (!terminal.has(run.status)) continue;
@@ -340,20 +345,15 @@ const make = Effect.gen(function* () {
             if (!source[0]) continue;
             const key = `${environmentId}:${row.stream_id}`;
             const memoryId = M.MemoryId.make(Service.memoryStableUuid(`${key}:summary`));
-            const latest = yield* query(sql<{
-              watermark: number;
-              consolidated: number | null;
-              consolidated_at: number | null;
-            }>`SELECT max(CASE WHEN status='completed' THEN json_extract(metadata_json,'$.sourceWatermark.throughSequence') END) AS watermark,
-          max(CASE WHEN kind='consolidate' AND status='completed' THEN json_extract(metadata_json,'$.sourceWatermark.throughSequence') END) AS consolidated,
-          max(CASE WHEN kind='consolidate' AND status='completed' AND json_extract(metadata_json,'$.sourceWatermark.throughSequence')>=coalesce(json_extract(metadata_json,'$.observedThroughSequence'),0) THEN json_extract(metadata_json,'$.completedAt') END) AS consolidated_at FROM memory_outbox WHERE kind IN ('summary','consolidate') AND json_extract(metadata_json,'$.sourceThread.environmentId')=${environmentId} AND json_extract(metadata_json,'$.sourceThread.threadId')=${row.stream_id}`);
+            const latest = progress.get(row.stream_id) ?? (yield* readProgress(row.stream_id));
+            progress.set(row.stream_id, latest);
             const mode =
-              now - (latest[0]?.consolidated_at ?? Date.parse(source[0].occurred_at)) >= 86400000
+              now - (latest.consolidatedAt ?? Date.parse(source[0].occurred_at)) >= 86400000
                 ? ("consolidate" as const)
                 : ("summary" as const);
             // Extraction and consolidation consume independent source ranges.
             const fromSequence =
-              mode === "consolidate" ? (latest[0]?.consolidated ?? 0) : (latest[0]?.watermark ?? 0);
+              mode === "consolidate" ? (latest.consolidated ?? 0) : (latest.watermark ?? 0);
             const delta = yield* query(
               sql`SELECT 1 FROM orchestration_events WHERE application_event_version=2 AND aggregate_kind='thread' AND stream_id=${row.stream_id} AND event_type='message.updated' AND sequence>${fromSequence} AND sequence<=${row.sequence} LIMIT 1`,
             );
@@ -388,7 +388,7 @@ const make = Effect.gen(function* () {
                 modelSelection,
               },
             };
-            const chunk = yield* readSource(candidate).pipe(
+            const chunk = yield* readSourceIn(candidate).pipe(
               Effect.catchTags({
                 MemoryWorkerError: (error) =>
                   error.code === "source_invalidated"
@@ -432,15 +432,80 @@ const make = Effect.gen(function* () {
               },
             });
           }
-          yield* store.commitThreadHook({
-            expectedWatermark: watermark,
+          return {
+            watermark,
             throughWatermark: rows.at(-1)?.sequence ?? watermark,
+            empty: !rows.length && !continuations.length,
+            continuationCount: continuations.length,
+            actions,
             work,
+            progress,
+          };
+        }),
+      )
+      .pipe(NodeSqliteClient.readOnly, Effect.mapError(workerError));
+  });
+  /** Applies a plan only if nothing it read has moved since; otherwise the next sweep replans. */
+  const applyCatchUp = Effect.fn("MemoryWorker.applyCatchUp")(function* (
+    plan: Effect.Success<ReturnType<typeof planCatchUp>>,
+  ) {
+    return yield* store
+      .transact(
+        Effect.gen(function* () {
+          if ((yield* store.readThreadHookWatermark()) !== plan.watermark) return false;
+          for (const [threadId, planned] of plan.progress) {
+            const current = yield* readProgress(threadId);
+            if (
+              current.watermark !== planned.watermark ||
+              current.consolidated !== planned.consolidated ||
+              current.consolidatedAt !== planned.consolidatedAt
+            )
+              return false;
+          }
+          for (const { kind, thread } of plan.actions) {
+            if (kind === "cancel") {
+              yield* store.cancelThreadWork(thread);
+              continue;
+            }
+            yield* store.deleteThreadLineage(thread);
+            yield* store.cancelThreadWork(thread);
+            yield* store
+              .forgetLocalIntent(environmentId, `${environmentId}:${thread.threadId}:summary`)
+              .pipe(
+                Effect.catchTags({
+                  MemoryStoreConflict: (error) =>
+                    error.code === "space_mismatch" ? Effect.void : Effect.fail(error),
+                }),
+              );
+          }
+          yield* store.commitThreadHook({
+            expectedWatermark: plan.watermark,
+            throughWatermark: plan.throughWatermark,
+            work: plan.work,
           });
+          return true;
         }),
       )
       .pipe(Effect.mapError(workerError));
-    yield* settleScan;
+  });
+  const catchUp = Effect.fn("MemoryWorker.catchUp")(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const snapshot = yield* query(settings.getSettings);
+    const modelSelection = yield* memoryModel(snapshot);
+    const space = snapshot.memoryHub.mode === "disabled" ? null : snapshot.memoryHub.memorySpaceId;
+    // With memory off nothing can be recovered; turning it on changes the key and rescans.
+    const scanKey =
+      modelSelection === null ? undefined : `${space ?? ""}|${encodeSelection(modelSelection)}`;
+    const scanContinuations =
+      scanKey !== undefined && (scanKey !== continuationScanKey || now >= continuationScanDueAt);
+    const plan = yield* planCatchUp({ now, modelSelection, space, scanContinuations });
+    if (!plan.empty && !(yield* applyCatchUp(plan))) return;
+    if (!scanContinuations) return;
+    continuationScanKey = scanKey;
+    continuationScanDueAt =
+      plan.continuationCount === continuationPageSize
+        ? 0
+        : now + MEMORY_CONTINUATION_SCAN_INTERVAL_MS;
   });
   const execute = Effect.fn("MemoryWorker.execute")(function* (claimed: Store.MemoryWork) {
     let work = claimed;

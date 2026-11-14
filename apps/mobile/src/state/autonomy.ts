@@ -30,10 +30,15 @@ export function useAutonomySettings(environmentId: EnvironmentId | null) {
   });
   return {
     autonomy: settings?.autonomy ?? DEFAULT_AUTONOMY_SETTINGS,
+    detectProblems: settings?.detectProblems ?? true,
     write: (next: AutonomySettings) =>
       environmentId === null
         ? undefined
         : update({ environmentId, input: { patch: { autonomy: next } } }),
+    writeDetectProblems: (detectProblems: boolean) =>
+      environmentId === null
+        ? undefined
+        : update({ environmentId, input: { patch: { detectProblems } } }),
   };
 }
 

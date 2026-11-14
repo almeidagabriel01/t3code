@@ -75,7 +75,7 @@ vi.mock("../../state/thread-order", () => ({ threadArrangementOpenAtom: {} }));
 vi.mock("../../state/threads", () => ({ threadEnvironment: { visit: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./use-visible-second-clock", () => ({ useVisibleSecondClock: () => 0 }));
-vi.mock("../../lib/clock", () => ({ useNowAfter: () => 0 }));
+vi.mock("../../lib/clock", () => ({ useNowAfter: () => 0, useNowMinuteMs: () => 0 }));
 vi.mock("../../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: mocks.copyText }));
 vi.mock("../../lib/useUniwindTheme", () => ({ useUniwindTheme: () => "light" }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));

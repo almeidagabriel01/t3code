@@ -10,6 +10,7 @@ import {
 import {
   ArchiveIcon,
   BotIcon,
+  BlocksIcon,
   BrainIcon,
   CalendarClockIcon,
   createLucideIcon,
@@ -108,6 +109,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/assistants": UserRoundIcon,
+  "/settings/integrations": BlocksIcon,
   "/settings/imessage": MessageCircleIcon,
   "/settings/telegram": SendIcon,
   "/settings/memory": BrainIcon,
@@ -160,6 +162,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     paths: group.paths.filter(
       (to) =>
         (to !== "/settings/memory" &&
+          to !== "/settings/integrations" &&
           to !== "/settings/imessage" &&
           to !== "/settings/telegram" &&
           to !== "/settings/mac-permissions" &&

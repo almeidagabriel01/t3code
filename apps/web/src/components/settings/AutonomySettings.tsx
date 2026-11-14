@@ -5,6 +5,8 @@ import {
   AUTONOMY_RULE_OPTIONS,
   AUTONOMY_USER_MESSAGES_BOUNDS,
   AUTONOMY_WAKES_BOUNDS,
+  DETECT_PROBLEMS_DESCRIPTION,
+  DETECT_PROBLEMS_LABEL,
   parseBoundedInt,
   withAutonomyChannel,
   withAutonomyRule,
@@ -92,6 +94,10 @@ export function AutonomySection(props: {
 }) {
   const { environmentId } = props;
   const autonomy = useEnvironmentSettings(environmentId, (settings) => settings.autonomy);
+  const detectProblems = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.detectProblems,
+  );
   const update = useUpdateEnvironmentSettings(environmentId);
   const telegramIds = useTelegramEnvironmentIds();
   const write = (next: AutonomySettings) => update({ autonomy: next });
@@ -107,6 +113,17 @@ export function AutonomySection(props: {
             checked={autonomy.enabled}
             aria-label="Assistants can notify you"
             onCheckedChange={(enabled) => write({ ...autonomy, enabled })}
+          />
+        }
+      />
+      <SettingsRow
+        title={DETECT_PROBLEMS_LABEL}
+        description={DETECT_PROBLEMS_DESCRIPTION}
+        control={
+          <Switch
+            checked={detectProblems}
+            aria-label={DETECT_PROBLEMS_LABEL}
+            onCheckedChange={(on) => update({ detectProblems: on })}
           />
         }
       />

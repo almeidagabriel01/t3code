@@ -178,6 +178,29 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
+export const MIN_TOOL_OUTPUT_HISTORY_DAYS = 1;
+export const MAX_TOOL_OUTPUT_HISTORY_DAYS = 365;
+export const ToolOutputHistoryDays = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_TOOL_OUTPUT_HISTORY_DAYS,
+    maximum: MAX_TOOL_OUTPUT_HISTORY_DAYS,
+  }),
+);
+export type ToolOutputHistoryDays = typeof ToolOutputHistoryDays.Type;
+/** Offered when the user turns the summary on; it stays off until then because it cannot be undone. */
+export const SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS: ToolOutputHistoryDays = 30;
+
+export const MIN_PROVIDER_IDLE_TIMEOUT_MINUTES = 1;
+export const MAX_PROVIDER_IDLE_TIMEOUT_MINUTES = 240;
+export const ProviderIdleTimeoutMinutes = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
+    maximum: MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+  }),
+);
+export type ProviderIdleTimeoutMinutes = typeof ProviderIdleTimeoutMinutes.Type;
+const DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES: ProviderIdleTimeoutMinutes = 10;
+
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([
@@ -623,9 +646,6 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("activity" as const)),
   ),
   sidebarShowSubagents: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarShowAgentsSection: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  sidebarAgentsCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  sidebarAgentsDoneCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarShowAssistantsSection: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -1363,6 +1383,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
+  "detectProblems",
   "responseStreamingMode",
   "speechProjectCustomWords",
   "runnerEnabled",
@@ -1434,6 +1455,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  detectProblems: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   runnerEnabled: Schema.optionalKey(Schema.Boolean),
@@ -1660,6 +1682,8 @@ export const ServerSettings = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  /** Assistants watch for failures and file one card per cause; a project can turn it off. */
+  detectProblems: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
@@ -1807,6 +1831,12 @@ export const ServerSettings = Schema.Struct({
   ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+  toolOutputHistoryDays: Schema.NullOr(ToolOutputHistoryDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  providerIdleTimeoutMinutes: ProviderIdleTimeoutMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES)),
   ),
   compactIdleThreads: LegacyCompactIdleThreads.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -2218,6 +2248,7 @@ const ServerSettingsPatchFields = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  detectProblems: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
@@ -2300,6 +2331,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   deviceBlockedLinks: Schema.optionalKey(Schema.Array(DeviceLinkClientRef)),
   hiddenLinkedDeviceSources: Schema.optionalKey(Schema.Array(Schema.String)),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  toolOutputHistoryDays: Schema.optionalKey(Schema.NullOr(ToolOutputHistoryDays)),
+  providerIdleTimeoutMinutes: Schema.optionalKey(ProviderIdleTimeoutMinutes),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
@@ -2515,9 +2548,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarThreadOrder: Schema.optionalKey(SidebarThreadOrder),
   sidebarShowSubagents: Schema.optionalKey(Schema.Boolean),
-  sidebarShowAgentsSection: Schema.optionalKey(Schema.Boolean),
-  sidebarAgentsCollapsed: Schema.optionalKey(Schema.Boolean),
-  sidebarAgentsDoneCollapsed: Schema.optionalKey(Schema.Boolean),
   sidebarShowAssistantsSection: Schema.optionalKey(Schema.Boolean),
   sidebarAssistantsCollapsed: Schema.optionalKey(Schema.Boolean),
   sidebarAssistantsExpandedGroups: Schema.optionalKey(Schema.Array(Schema.String)),

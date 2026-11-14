@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantMetaLabel, rankAssistants, visibleAssistants } from "./assistantList.ts";
+import {
+  ASSISTANT_ATTENTION_ORDER,
+  assistantAttention,
+  assistantGroupAttention,
+  assistantGroupFoldKey,
+  assistantGroupFolds,
+  rankAssistants,
+  toggleFoldKey,
+  visibleAssistants,
+} from "./assistantList.ts";
 
 const entry = (name: string, threadId: string | null = `assistant:${name}:1`) => ({
   environmentId: "env",
@@ -86,16 +95,241 @@ describe("visibleAssistants", () => {
   });
 });
 
-describe("assistantMetaLabel", () => {
+describe("assistantGroupFolds", () => {
+  const ranked = (list: ReadonlyArray<readonly [string, string, string?]>) =>
+    list.map(([name, mood, environmentId = "env"]) => ({
+      entry: { environmentId, assistant: { id: name, name, threadId: null } },
+      presence: { mood, detail: "", since: null, reading: false, queued: 0 },
+    })) as unknown as Parameters<typeof assistantGroupFolds>[0];
+  const team = (id: string, memberIds: string[], environmentId = "env") => ({
+    environmentId,
+    team: { id, memberIds },
+  });
   it.each([
-    ["needs", "Needs your approval in Leadership", "Needs you"],
-    ["working", "Reading the repo", "Working"],
-    ["working", "Working in Leadership", "Working in Leadership"],
-    ["failed", "Last run failed", "Last run failed"],
-    ["idle", "Idle", null],
-  ] as const)("%s / %s", (mood, detail, expected) => {
-    expect(assistantMetaLabel({ mood, detail, since: null, reading: false, queued: 0 })).toBe(
-      expected,
-    );
+    {
+      name: "no groups leaves everyone loose",
+      ranked: [["jarvis", "idle"]] as const,
+      teams: [],
+      loose: ["jarvis"],
+      groups: [],
+    },
+    {
+      name: "a member stands only in its group, in rank order",
+      ranked: [
+        ["cid", "needs"],
+        ["bob", "working"],
+        ["jarvis", "idle"],
+        ["ada", "idle"],
+      ] as const,
+      teams: [team("dev", ["ada", "bob", "cid", "ghost"])],
+      loose: ["jarvis"],
+      groups: [{ id: "dev", members: ["cid", "bob", "ada"] }],
+    },
+    {
+      name: "one assistant in two groups shows under each",
+      ranked: [
+        ["ada", "working"],
+        ["bob", "idle"],
+      ] as const,
+      teams: [team("dev", ["ada"]), team("content", ["ada", "bob"]), team("empty", [])],
+      loose: [],
+      groups: [
+        { id: "dev", members: ["ada"] },
+        { id: "content", members: ["ada", "bob"] },
+        { id: "empty", members: [] },
+      ],
+    },
+    {
+      name: "a group only takes members from its own environment",
+      ranked: [
+        ["ada", "idle", "env"],
+        ["ada", "idle", "other"],
+      ] as const,
+      teams: [team("dev", ["ada"], "other")],
+      loose: ["env:ada"],
+      groups: [{ id: "dev", members: ["other:ada"] }],
+    },
+  ])("$name", (row) => {
+    const label = (item: { entry: { environmentId: string; assistant: { id: string } } }) =>
+      row.name.includes("environment")
+        ? `${item.entry.environmentId}:${item.entry.assistant.id}`
+        : item.entry.assistant.id;
+    const result = assistantGroupFolds(ranked(row.ranked), row.teams);
+    expect(result.loose.map(label)).toEqual(row.loose);
+    expect(
+      result.groups.map((group) => ({
+        id: group.team.team.id,
+        members: group.members.map(label),
+      })),
+    ).toEqual(row.groups);
+  });
+
+  it("toggles one fold key and keeps the others", () => {
+    const key = assistantGroupFoldKey("env", "dev");
+    expect(key).toBe("group:env:dev");
+    expect(toggleFoldKey(["project:env:p1"], key)).toEqual(["project:env:p1", key]);
+    expect(toggleFoldKey(["project:env:p1", key], key)).toEqual(["project:env:p1"]);
+  });
+});
+
+describe("assistantAttention", () => {
+  type Fields = {
+    approvals?: boolean;
+    input?: boolean;
+    guests?: number;
+    runtime?: string;
+    errorClass?: string;
+    blocked?: boolean;
+    decision?: boolean;
+  };
+  const thread = (id: string, fields: Fields = {}) => ({
+    environmentId: "env",
+    id,
+    hasPendingApprovals: fields.approvals === true,
+    hasPendingUserInput: fields.input === true,
+    pendingSubagentRequest: null,
+    pendingGuestMessageCount: fields.guests ?? 0,
+    blockedOnThreadWait: fields.blocked === true,
+    runtime:
+      fields.runtime === undefined
+        ? null
+        : { status: fields.runtime, lastErrorClass: fields.errorClass ?? null },
+    decision: fields.decision === true,
+  });
+  type Row = {
+    name: string;
+    threads?: ReadonlyArray<ReturnType<typeof thread>>;
+    pausedTasks?: number;
+    failedTasks?: number;
+    working?: boolean;
+    unseenDone?: boolean;
+    expected: string | null;
+  };
+  it.each<Row>([
+    {
+      name: "nothing to say",
+      threads: [thread("a"), thread("b", { runtime: "idle" })],
+      expected: null,
+    },
+    { name: "approval", threads: [thread("a", { approvals: true })], expected: "approval" },
+    { name: "a question", threads: [thread("a", { input: true })], expected: "input" },
+    { name: "a guest request", threads: [thread("a", { guests: 1 })], expected: "request" },
+    { name: "an open decision", threads: [thread("a", { decision: true })], expected: "decision" },
+    {
+      name: "a decision does not hide an approval in the same thread",
+      threads: [thread("a", { approvals: true, decision: true })],
+      expected: "approval",
+    },
+    { name: "a paused task", pausedTasks: 1, expected: "paused" },
+    {
+      name: "a usage limit",
+      threads: [thread("a", { runtime: "failed", errorClass: "usage_limit" })],
+      expected: "limited",
+    },
+    { name: "a failed thread", threads: [thread("a", { runtime: "failed" })], expected: "failed" },
+    { name: "a failed task", failedTasks: 1, expected: "failed" },
+    {
+      name: "a running thread",
+      threads: [thread("a", { runtime: "running" })],
+      expected: "working",
+    },
+    { name: "a queued task with no thread yet", working: true, expected: "working" },
+    {
+      name: "a thread waiting on another is not counted",
+      threads: [thread("a", { runtime: "running", blocked: true })],
+      expected: null,
+    },
+    { name: "unseen finished work", unseenDone: true, expected: "done" },
+    {
+      name: "needs you over failed, working and done",
+      threads: [thread("a", { runtime: "failed" }), thread("b", { runtime: "running" })],
+      pausedTasks: 1,
+      unseenDone: true,
+      expected: "paused",
+    },
+    {
+      name: "failed over working and done",
+      threads: [thread("a", { runtime: "running" })],
+      failedTasks: 1,
+      unseenDone: true,
+      expected: "failed",
+    },
+    { name: "working over done", working: true, unseenDone: true, expected: "working" },
+  ])("$name", ({ threads = [], expected, ...rest }) => {
+    expect(
+      assistantAttention({
+        threads: threads as never,
+        hasOpenDecision: (candidate) => (candidate as unknown as { decision: boolean }).decision,
+        ...rest,
+      }),
+    ).toBe(expected);
+  });
+
+  it("orders waiting on the user first, then failure, work and unseen results", () => {
+    expect(ASSISTANT_ATTENTION_ORDER).toEqual([
+      "approval",
+      "input",
+      "request",
+      "decision",
+      "paused",
+      "limited",
+      "failed",
+      "working",
+      "done",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "a thread outside the group or environment",
+      shells: ["g-other-ada!", "other:own-ada!"],
+      chat: {},
+      expected: null,
+    },
+    { name: "a member's own conversation", shells: ["own-ada!"], chat: {}, expected: "approval" },
+    {
+      name: "a member's thread for this group",
+      shells: ["g-dev-ada~"],
+      chat: {},
+      expected: "working",
+    },
+    { name: "a paused task", shells: [], chat: { pausedTasks: 1 }, expected: "paused" },
+    { name: "a failed task", shells: [], chat: { failedTasks: 2 }, expected: "failed" },
+    { name: "a task with no thread yet", shells: [], chat: { working: true }, expected: "working" },
+    { name: "unread news in its chat", shells: [], chat: { unreadCount: 1 }, expected: "done" },
+    {
+      name: "a group with no chat yet",
+      shells: ["own-ada~", "g-dev-ada!"],
+      chat: null,
+      expected: "working",
+    },
+  ] as const)("reads a group's status from $name", ({ shells, chat, expected }) => {
+    // "!" waits for approval, "~" runs; "other:" puts the thread in another environment.
+    const threads = shells.map((spec) => {
+      const id = spec.replace(/^other:|[!~]$/g, "");
+      return {
+        ...shell(id, { approvals: spec.endsWith("!"), working: spec.endsWith("~") }),
+        environmentId: spec.startsWith("other:") ? "other" : "env",
+      };
+    });
+    expect(
+      assistantGroupAttention({
+        shells: threads,
+        hasOpenDecision: () => false,
+        environmentId: "env",
+        memberThreadIds: ["own-ada", null],
+        chat:
+          chat === null
+            ? null
+            : {
+                threadIds: ["g-dev-ada"],
+                pausedTasks: 0,
+                failedTasks: 0,
+                working: false,
+                unreadCount: 0,
+                ...chat,
+              },
+      }),
+    ).toBe(expected);
   });
 });

@@ -1775,6 +1775,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   headers: {},
                   env: { TOKEN: "t" },
                 },
+                {
+                  name: "linear_t3",
+                  transport: "http",
+                  url: "http://127.0.0.1:43123/mcp/integrations/linear",
+                  args: [],
+                  headers: { Authorization: "Bearer secret-codex-token" },
+                  env: {},
+                  proxy: { preApproved: true },
+                },
               ]
             : [],
         ),
@@ -1818,6 +1827,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               http_headers: { "X-Key": "k" },
             },
             "mcp_servers.files": { command: "npx", args: ["srv"], env: { TOKEN: "t" } },
+            "mcp_servers.linear_t3": {
+              url: "http://127.0.0.1:43123/mcp/integrations/linear",
+              http_headers: { Authorization: "Bearer secret-codex-token" },
+              default_tools_approval_mode: "approve",
+            },
             "mcp_servers.t3-code": {
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,

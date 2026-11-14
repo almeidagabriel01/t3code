@@ -1,4 +1,4 @@
-import type { AssistantId, AssistantTeam, AssistantTeamId } from "@t3tools/contracts";
+import type { AssistantId, AssistantTeam, AssistantTeamId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -18,6 +18,9 @@ export interface AssistantTeamRow {
   readonly unread_count?: number;
   readonly open_tasks?: number;
   readonly preview?: string | null;
+  readonly paused_tasks?: number;
+  readonly failed_tasks?: number;
+  readonly thread_ids_json?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -45,6 +48,12 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           unreadCount: row.unread_count ?? 0,
           working: (row.open_tasks ?? 0) > 0,
           preview: row.preview ?? null,
+          pausedTasks: row.paused_tasks ?? 0,
+          failedTasks: row.failed_tasks ?? 0,
+          threadIds: Option.getOrElse(
+            decodeMemberIds(row.thread_ids_json ?? "[]"),
+            () => [],
+          ) as ThreadId[],
         },
       }),
   createdAt: row.created_at,

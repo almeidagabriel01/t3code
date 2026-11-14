@@ -74,6 +74,39 @@ describe("autonomy settings", () => {
       maxUserMessagesPerDay: 20,
     });
   });
+
+  it("detects problems by default, and a project may turn detection off for itself", () => {
+    expect(decodeServerSettings({}).detectProblems).toBe(true);
+    expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("detectProblems");
+    const projectId = ProjectId.make("project-a");
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { [projectId]: { detectProblems: false } },
+    });
+    expect(settings.projectSettingsOverrides[projectId]?.detectProblems).toBe(false);
+    expect(decodeServerSettingsPatch({ detectProblems: false }).detectProblems).toBe(false);
+  });
+});
+
+describe("retention and idle timeout settings", () => {
+  it("default for older settings files and validate patches", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      toolOutputHistoryDays: null,
+      providerIdleTimeoutMinutes: 10,
+    });
+    expect(decodeServerSettingsPatch({ toolOutputHistoryDays: null })).toEqual({
+      toolOutputHistoryDays: null,
+    });
+    for (const bad of [{ toolOutputHistoryDays: 0 }, { toolOutputHistoryDays: 366 }]) {
+      expect(() => decodeServerSettingsPatch(bad)).toThrow();
+    }
+    for (const bad of [
+      { providerIdleTimeoutMinutes: null },
+      { providerIdleTimeoutMinutes: 0 },
+      { providerIdleTimeoutMinutes: 241 },
+    ]) {
+      expect(() => decodeServerSettingsPatch(bad)).toThrow();
+    }
+  });
 });
 
 describe("channel language setting", () => {
@@ -440,6 +473,21 @@ describe("ClientSettings notifications", () => {
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("showInMenuBar");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("inAppNotificationsEnabled");
     expect(decodeClientSettingsPatch({})).not.toHaveProperty("notificationMode");
+  });
+});
+
+describe("ClientSettings removed keys", () => {
+  it("decodes settings saved with the removed Agents section keys", () => {
+    const stored = {
+      sidebarShowAgentsSection: false,
+      sidebarAgentsCollapsed: true,
+      sidebarAgentsDoneCollapsed: false,
+      sidebarShowAssistantsSection: false,
+    };
+    const settings = decodeClientSettings(stored);
+    expect(settings.sidebarShowAssistantsSection).toBe(false);
+    expect(settings).not.toHaveProperty("sidebarShowAgentsSection");
+    expect(decodeClientSettingsPatch(stored)).toEqual({ sidebarShowAssistantsSection: false });
   });
 });
 

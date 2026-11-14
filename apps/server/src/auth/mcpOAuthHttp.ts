@@ -24,7 +24,7 @@ import { renderErrorPage } from "./mcpOAuthHtml.ts";
 const APPROVAL_PAGE_PATH = "/connect-agent";
 const HOSTED_APPROVAL_PATH = "/approve-agent";
 
-const PAGE_HEADERS = {
+export const PAGE_HEADERS = {
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
   "x-frame-options": "DENY",

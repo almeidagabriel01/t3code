@@ -28,6 +28,12 @@ vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentServerConfigsAtom: Atom.make(new Map()).pipe(Atom.keepAlive) };
 });
+vi.mock("./assistants", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    threadOwnershipAtom: Atom.make({ ownedThreadKeys: new Set<string>() }).pipe(Atom.keepAlive),
+  };
+});
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");
   return { queuedThreadKeysAtom: Atom.make(new Set<string>()).pipe(Atom.keepAlive) };

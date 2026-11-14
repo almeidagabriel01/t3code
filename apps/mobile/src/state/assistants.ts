@@ -51,6 +51,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { environmentThreadShells } from "./threads";
+import { buildThreadOwnership, sameKeySet, type ThreadOwnership } from "./threadOwnership";
 import { useAtomCommand } from "./use-atom-command";
 
 const assistantsEnvironment = createAssistantsEnvironmentAtoms(connectionAtomRuntime);
@@ -203,6 +204,25 @@ const assistantTasksByAssistantAtom = Atom.make((get) => {
 /** Every active assistant's tasks by `env:assistantId`, so Home derives its whole section at once. */
 export function useAssistantTasksByAssistant(): ReadonlyMap<string, ReadonlyArray<AssistantTask>> {
   return useAtomValue(assistantTasksByAssistantAtom);
+}
+
+/** Who started each listed thread; read by the project lists, their move planner and Needs you. */
+export const threadOwnershipAtom = Atom.make((get): ThreadOwnership => {
+  const entries = get(assistantEntriesAtom);
+  const next = buildThreadOwnership({
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+    active: entries.active,
+    activeTeams: entries.activeTeams,
+    tasksByAssistant: get(assistantTasksByAssistantAtom),
+  });
+  const previous = Option.getOrNull(get.self<ThreadOwnership>());
+  return previous !== null && sameKeySet(previous.ownedThreadKeys, next.ownedThreadKeys)
+    ? { ...next, ownedThreadKeys: previous.ownedThreadKeys }
+    : next;
+}).pipe(Atom.withLabel("mobile-thread-ownership"));
+
+export function useThreadOwnership(): ThreadOwnership {
+  return useAtomValue(threadOwnershipAtom);
 }
 
 /** The assistant that launched this thread as a task, or null for any other thread. */

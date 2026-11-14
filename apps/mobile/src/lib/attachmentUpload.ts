@@ -431,6 +431,19 @@ const connectedPreparedConnectionAtom = Atom.family((environmentId: EnvironmentI
   ).pipe(Atom.withLabel(`mobile-upload-connection:${environmentId}`)),
 );
 
+/** The environment's HTTP base URL once its socket is back, or null after the wait. */
+export async function waitForEnvironmentConnection(
+  environmentId: EnvironmentId,
+): Promise<string | null> {
+  const atom = connectedPreparedConnectionAtom(environmentId);
+  const release = appAtomRegistry.mount(atom);
+  try {
+    return Option.getOrNull(Option.map(await waitForConnection(atom), (c) => c.httpBaseUrl));
+  } finally {
+    release();
+  }
+}
+
 function waitForConnection<A>(atom: Atom.Atom<Option.Option<A>>): Promise<Option.Option<A>> {
   const current = appAtomRegistry.get(atom);
   if (Option.isSome(current)) return Promise.resolve(current);

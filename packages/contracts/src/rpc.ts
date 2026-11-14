@@ -46,6 +46,19 @@ import {
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
 } from "./globalSkillsRpc.ts";
+import {
+  INTEGRATIONS_WS_METHODS,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSubscribeRpc,
+  WsIntegrationsUpdateRpc,
+  WsIntegrationsMakeAvailableRpc,
+} from "./integrations.ts";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -435,6 +448,7 @@ import {
   KanbanCardIdInput,
   KanbanCardMoveInput,
   KanbanCardThreadLinkInput,
+  KanbanCardSetProblemIgnoredInput,
   KanbanCardUpdateInput,
   KanbanColumnCreateInput,
   KanbanColumnDeleteInput,
@@ -623,6 +637,7 @@ import {
 
 export const WS_METHODS = {
   ...GLOBAL_SKILLS_WS_METHODS,
+  ...INTEGRATIONS_WS_METHODS,
   ...MEMORY_WS_METHODS,
 
   projectsListEntries: "projects.listEntries",
@@ -810,6 +825,7 @@ export const WS_METHODS = {
   kanbanCardComment: "kanban.cardComment",
   kanbanCardLinkThread: "kanban.cardLinkThread",
   kanbanCardUnlinkThread: "kanban.cardUnlinkThread",
+  kanbanCardSetProblemIgnored: "kanban.cardSetProblemIgnored",
 
   notesList: "notes.list",
   notesRead: "notes.read",
@@ -2952,6 +2968,12 @@ const WsKanbanCardUnlinkThreadRpc = Rpc.make(WS_METHODS.kanbanCardUnlinkThread, 
   error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
 });
 
+const WsKanbanCardSetProblemIgnoredRpc = Rpc.make(WS_METHODS.kanbanCardSetProblemIgnored, {
+  payload: KanbanCardSetProblemIgnoredInput,
+  success: KanbanMutationResult,
+  error: Schema.Union([KanbanError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -3043,6 +3065,16 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
 export const WsRpcGroup = RpcGroup.make(
   WsGlobalSkillsRemoveRpc,
   WsGlobalSkillsRescanRpc,
+  WsIntegrationsSubscribeRpc,
+  WsIntegrationsBeginConnectRpc,
+  WsIntegrationsCompleteConnectRpc,
+  WsIntegrationsCancelConnectRpc,
+  WsIntegrationsDisconnectRpc,
+  WsIntegrationsSaveTokenRpc,
+  WsIntegrationsSaveOwnAppRpc,
+  WsIntegrationsRemoveOwnAppRpc,
+  WsIntegrationsUpdateRpc,
+  WsIntegrationsMakeAvailableRpc,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -3141,6 +3173,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsKanbanCardCommentRpc,
   WsKanbanCardLinkThreadRpc,
   WsKanbanCardUnlinkThreadRpc,
+  WsKanbanCardSetProblemIgnoredRpc,
   WsNotesListRpc,
   WsNotesReadRpc,
   WsNotesWriteRpc,

@@ -76,6 +76,7 @@ import {
   encodeAutonomy,
   encodeAvatar,
   encodeBudget,
+  encodeIntegrations,
   encodeMcpServers,
   toAssistant,
   encodeProjectIds,
@@ -461,9 +462,15 @@ const make = Effect.gen(function* () {
   const ensureAll = Effect.gen(function* () {
     yield* backfillScopes;
     yield* seedDefault;
-    const active = (yield* allRows).filter((row) => row.archived_at === null);
+    // A thread the projection does not know is left alone, as inspectThread does; only no thread
+    // or a deleted one relaunches. ensureLaunched re-checks each row it is given.
+    const stale = yield* sql<{ readonly assistant_id: string }>`
+      SELECT a.assistant_id FROM assistants a
+      LEFT JOIN orchestration_v2_projection_threads t ON t.thread_id = a.thread_id
+      WHERE a.archived_at IS NULL AND (a.thread_id IS NULL OR t.deleted_at IS NOT NULL)
+      ORDER BY a.is_default DESC, a.created_at ASC`;
     yield* Effect.forEach(
-      active,
+      stale,
       (row) =>
         ensureLaunched(row.assistant_id).pipe(
           Effect.catch((cause) =>
@@ -637,14 +644,17 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, ask_before_acting,
-              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, created_at, updated_at
+              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, integrations_json,
+              created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${home}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
               ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
               ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope}, ${projectIdsJson},
-              ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
+              ${saved === undefined ? null : encodeMcpServers(saved.servers)},
+              ${input.integrations === undefined ? null : encodeIntegrations(input.integrations)},
+              ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -740,6 +750,10 @@ const make = Effect.gen(function* () {
                   : encodeAvatar(input.avatar),
             scope: resolved?.scope ?? row.scope,
             projectIdsJson: resolved?.json ?? row.project_ids_json ?? null,
+            integrationsJson:
+              input.integrations === undefined
+                ? (row.integrations_json ?? null)
+                : encodeIntegrations(input.integrations),
           };
           const saved =
             input.mcpServers === undefined
@@ -771,7 +785,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -783,7 +797,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, integrations_json = ${next.integrationsJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&

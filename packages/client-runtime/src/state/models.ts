@@ -193,6 +193,12 @@ export interface EnvironmentThreadShell {
   readonly hasPendingUserInput: boolean;
   readonly pendingUserInputAt?: string | null;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
+  /** The thread's own pending runtime request, of any kind; Needs you lists it by id. */
+  readonly pendingRequest?: {
+    readonly id: string;
+    readonly kind: string;
+    readonly createdAt: string;
+  } | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
   /** Messages waiting behind the active run. */
@@ -353,6 +359,14 @@ export function presentThreadShell(
         ? iso(thread.pendingRuntimeRequest.createdAt)
         : null,
     pendingSubagentRequest,
+    pendingRequest:
+      thread.pendingRuntimeRequest === null
+        ? null
+        : {
+            id: thread.pendingRuntimeRequest.id,
+            kind: thread.pendingRuntimeRequest.kind,
+            createdAt: iso(thread.pendingRuntimeRequest.createdAt),
+          },
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     queuedMessageCount: thread.queuedMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
@@ -434,4 +448,14 @@ export function formatWorkingDurationLabel(elapsedMs: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * A running row's elapsed time, read from the shared minute tick: a list of rows re-renders once a
+ * minute instead of every second. The thread itself still counts seconds.
+ */
+export function formatRowWorkingDurationLabel(elapsedMs: number): string {
+  return Number.isFinite(elapsedMs) && elapsedMs >= 60_000
+    ? formatWorkingDurationLabel(elapsedMs)
+    : "<1m";
 }

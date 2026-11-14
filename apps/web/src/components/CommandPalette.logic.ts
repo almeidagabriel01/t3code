@@ -22,6 +22,7 @@ import {
 import {
   type Assistant,
   type AssistantId,
+  type AssistantTeam,
   type ScopedThreadRef,
   type EnvironmentId,
   type ProjectId,
@@ -38,6 +39,7 @@ import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 import { isSidebarHiddenThread } from "./Sidebar.logic";
+import type { AssistantInfoTarget } from "./assistants/assistantInfoState";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
@@ -62,6 +64,69 @@ export function buildAssistantWorkActionItems(input: {
     icon: input.icon,
     run: async () => input.open({ environmentId, assistantId: assistant.id }),
   }));
+}
+
+const GROUP_CHAT_PATH = /^\/group\/([^/]+)\/([^/]+)\/?$/;
+
+/** "Assistant info" in an assistant's chat and "Group info" in a group chat; nothing elsewhere. */
+export function buildAssistantInfoActionItems(input: {
+  readonly pathname: string;
+  readonly activeThread: { readonly environmentId: string; readonly id: string } | null;
+  readonly assistants: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly assistant: Pick<Assistant, "id" | "name" | "threadId">;
+  }>;
+  readonly teams: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly team: Pick<AssistantTeam, "id" | "name">;
+  }>;
+  readonly icon: ReactNode;
+  readonly open: (target: AssistantInfoTarget) => void;
+}): CommandPaletteActionItem[] {
+  const group = GROUP_CHAT_PATH.exec(input.pathname);
+  if (group) {
+    const [environmentId, teamId] = [decodeURIComponent(group[1]!), decodeURIComponent(group[2]!)];
+    const entry = input.teams.find(
+      (candidate) => candidate.environmentId === environmentId && candidate.team.id === teamId,
+    );
+    if (!entry) return [];
+    return [
+      {
+        kind: "action",
+        value: `action:group-info:${entry.environmentId}:${entry.team.id}`,
+        searchTerms: ["group", "info", "members", "team", entry.team.name],
+        title: "Group info",
+        icon: input.icon,
+        run: async () =>
+          input.open({ kind: "group", environmentId: entry.environmentId, teamId: entry.team.id }),
+      },
+    ];
+  }
+  const thread = input.activeThread;
+  const entry =
+    thread === null
+      ? undefined
+      : input.assistants.find(
+          (candidate) =>
+            candidate.environmentId === thread.environmentId &&
+            candidate.assistant.threadId === thread.id,
+        );
+  if (!entry) return [];
+  return [
+    {
+      kind: "action",
+      value: `action:assistant-info:${entry.environmentId}:${entry.assistant.id}`,
+      searchTerms: ["assistant", "info", "projects", "access", entry.assistant.name],
+      title: "Assistant info",
+      icon: input.icon,
+      run: async () =>
+        input.open({
+          kind: "assistant",
+          environmentId: entry.environmentId,
+          assistantId: entry.assistant.id,
+        }),
+    },
+  ];
 }
 
 export function buildLinkedThreadActionItems(

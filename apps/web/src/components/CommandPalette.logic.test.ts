@@ -13,6 +13,7 @@ import {
   buildNestedSearchItems,
   resolveCommandPaletteProject,
   buildThreadActionItems,
+  buildAssistantInfoActionItems,
   buildAssistantWorkActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
@@ -838,6 +839,73 @@ describe("buildAssistantWorkActionItems", () => {
     const many = build([entry("local", "ada", "Ada"), entry("remote", "ada", "Ada")]);
     expect(many.items.map((item) => item.description)).toEqual(["label:local", "label:remote"]);
     expect(many.items[0]!.searchTerms).toContain("Ada");
+  });
+});
+
+describe("buildAssistantInfoActionItems", () => {
+  const local = EnvironmentId.make("local");
+  const assistants = [
+    {
+      environmentId: local,
+      assistant: { id: AssistantId.make("ada"), name: "Ada", threadId: ThreadId.make("chat-ada") },
+    },
+  ];
+  const teams = [{ environmentId: local, team: { id: "core", name: "Core" } as never }];
+
+  it.each([
+    {
+      name: "a group chat offers Group info",
+      pathname: "/group/local/core",
+      activeThread: null,
+      expected: {
+        title: "Group info",
+        target: { kind: "group", environmentId: local, teamId: "core" },
+      },
+    },
+    {
+      name: "an unknown group offers nothing",
+      pathname: "/group/local/gone",
+      activeThread: null,
+      expected: null,
+    },
+    {
+      name: "an assistant's chat offers Assistant info",
+      pathname: "/local/chat-ada",
+      activeThread: { environmentId: "local", id: "chat-ada" },
+      expected: {
+        title: "Assistant info",
+        target: { kind: "assistant", environmentId: local, assistantId: "ada" },
+      },
+    },
+    {
+      name: "a plain thread offers nothing",
+      pathname: "/local/other",
+      activeThread: { environmentId: "local", id: "other" },
+      expected: null,
+    },
+    {
+      name: "the same thread id in another environment offers nothing",
+      pathname: "/remote/chat-ada",
+      activeThread: { environmentId: "remote", id: "chat-ada" },
+      expected: null,
+    },
+  ])("$name", async ({ pathname, activeThread, expected }) => {
+    const open = vi.fn();
+    const items = buildAssistantInfoActionItems({
+      pathname,
+      activeThread,
+      assistants,
+      teams,
+      icon: null,
+      open,
+    });
+    if (expected === null) {
+      expect(items).toEqual([]);
+      return;
+    }
+    expect(items.map((item) => item.title)).toEqual([expected.title]);
+    await items[0]!.run();
+    expect(open).toHaveBeenCalledWith(expected.target);
   });
 });
 

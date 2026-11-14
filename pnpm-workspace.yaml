@@ -117,6 +117,7 @@ overrides:
   "@pierre/diffs": 1.7.0-beta.3
   "@react-native-ai/apple": 0.12.0
   "@react-native-menu/menu": 2.0.0
+  "@expo/ui": 58.0.27
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
@@ -263,6 +264,8 @@ patchedDependencies:
   "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  # Android: DropdownMenu forwards a border to Compose, so menus keep a visible edge in dark themes.
+  "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

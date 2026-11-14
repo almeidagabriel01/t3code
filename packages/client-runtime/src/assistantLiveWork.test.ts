@@ -8,7 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantLiveWork, assistantSites, projectAssistantFaces } from "./assistantLiveWork.ts";
+import {
+  assistantLiveWork,
+  assistantWorkingNow,
+  projectAssistantFaces,
+} from "./assistantLiveWork.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
 
@@ -130,6 +134,23 @@ describe("assistantLiveWork", () => {
     ).toEqual(sites.toSorted());
   });
 
+  it("Working now keeps every live thread of one assistant, newest first", () => {
+    const work = assistantLiveWork({
+      tasks: [
+        task("old", "ada", { createdAt: "2026-11-12T09:00:00.000Z" }),
+        task("new", "ada", { createdAt: "2026-11-12T12:00:00.000Z" }),
+        task("bo1", "bo"),
+      ],
+      shells: [shell("old"), shell("new"), shell("bo1")],
+    });
+    expect(work.sites.map((site) => site.threadId)).not.toContain("old");
+    expect(assistantWorkingNow(work, env, "ada").map((site) => site.threadId)).toEqual([
+      "new",
+      "old",
+    ]);
+    expect(assistantWorkingNow(work, "other-env", "ada")).toEqual([]);
+  });
+
   it("groups live children under their assistant, oldest first, across its threads", () => {
     const work = assistantLiveWork({
       tasks: [],
@@ -166,25 +187,6 @@ describe("assistantLiveWork", () => {
       shells: [shell("live"), shell("done", { status: "completed" }), shell("gone")],
     });
     expect([...work.taskThreadKeys].toSorted()).toEqual(["env:done", "env:live"]);
-  });
-});
-
-describe("assistantSites", () => {
-  it("keeps the assistant's own sites in listed projects only", () => {
-    const work = assistantLiveWork({
-      tasks: [task("t1"), task("t2", "bo")],
-      shells: [
-        shell("t1", { project: "web" }),
-        shell("t2", { project: "web" }),
-        shell("c1", { parent: "assistant:ada:1", project: "assistants-home" }),
-      ],
-    });
-    expect(
-      assistantSites(work, "env", "ada", (projectId) => projectId !== "assistants-home").map(
-        (site) => site.threadId,
-      ),
-    ).toEqual(["t1"]);
-    expect(assistantSites(work, "other-env", "ada", () => true)).toEqual([]);
   });
 });
 

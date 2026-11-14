@@ -1,5 +1,5 @@
 import { MessageSquareIcon, XIcon } from "lucide-react";
-import type { KeyboardEvent, MouseEvent } from "react";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef } from "react";
 
 import { cn } from "~/lib/utils";
 import { useTheme } from "~/hooks/useTheme";
@@ -9,8 +9,10 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
+// Every tab takes an equal share of the row, capped at its own width, so short labels stay whole
+// and long ones split what is left. `TabLabel` sets how far a tab may shrink.
 export const TAB_CLASS =
-  "group/tab my-1 flex shrink cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-xs select-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  "group/tab my-1 flex max-w-max grow basis-0 cursor-pointer items-center gap-1.5 rounded-md pr-1 pl-2 text-xs select-none focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 export function tabStateClass(active: boolean) {
   return active
@@ -19,7 +21,7 @@ export function tabStateClass(active: boolean) {
 }
 
 const STRIP_CLASS =
-  "flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]";
+  "@container flex h-8 shrink-0 items-stretch gap-px overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]";
 
 function fileName(surface: ThreadFileSurface) {
   return surface.relativePath.split("/").findLast(Boolean) ?? surface.relativePath;
@@ -34,6 +36,47 @@ function activateOnKey(event: KeyboardEvent, activate: () => void) {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   activate();
+}
+
+/** A strip out of room scrolls, so the tab brings itself into view when it becomes active. */
+export function useRevealWhenActive(active: boolean) {
+  const ref = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the strip, a DOM position React does not own
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active]);
+  return ref;
+}
+
+/**
+ * The label wraps anywhere, so only its hidden copy, capped at a few characters (more on the
+ * active tab, less in a narrow strip), holds the tab's minimum width; a shorter label is never
+ * padded out.
+ */
+export function TabLabel(props: {
+  readonly text: string;
+  readonly tooltip: string;
+  readonly active: boolean;
+  readonly className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            data-label={props.text}
+            className={cn(
+              "min-w-0 flex-1 after:invisible after:block after:h-0 after:overflow-hidden after:whitespace-nowrap after:content-[attr(data-label)]",
+              props.active ? "after:max-w-[min(8rem,25cqw)]" : "after:max-w-[min(2.5rem,8cqw)]",
+            )}
+          />
+        }
+      >
+        <span className={cn("line-clamp-1 break-all", props.className)}>{props.text}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** Muted at rest; shows on the active tab, on hover and on focus. */
@@ -81,8 +124,10 @@ export function FileTab(props: {
 }) {
   const { resolvedTheme } = useTheme();
   const name = fileName(props.surface);
+  const ref = useRevealWhenActive(props.active);
   return (
     <div
+      ref={ref}
       role="tab"
       aria-label={name}
       aria-selected={props.active}
@@ -94,7 +139,7 @@ export function FileTab(props: {
         if (event.button === 1) props.onClose();
       }}
       onKeyDown={(event) => activateOnKey(event, props.onActivate)}
-      className={cn(TAB_CLASS, "max-w-44 min-w-20", tabStateClass(props.active))}
+      className={cn(TAB_CLASS, tabStateClass(props.active))}
     >
       <span className="relative flex shrink-0">
         <PierreEntryIcon
@@ -110,12 +155,7 @@ export function FileTab(props: {
           />
         ) : null}
       </span>
-      <Tooltip>
-        <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-          {name}
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">{props.surface.relativePath}</TooltipPopup>
-      </Tooltip>
+      <TabLabel text={name} tooltip={props.surface.relativePath} active={props.active} />
       <TabCloseButton label={`Close ${name}`} active={props.active} onClose={props.onClose} />
     </div>
   );
@@ -133,24 +173,21 @@ export function MainFileTabs(props: {
 }) {
   const chatActive = props.activeFileId === null;
   const title = props.title.trim() || "Thread";
+  const chatRef = useRevealWhenActive(chatActive);
   return (
     <div role="tablist" aria-label="Open tabs" className={STRIP_CLASS}>
       <div
+        ref={chatRef}
         role="tab"
         aria-label={title}
         aria-selected={chatActive}
         tabIndex={chatActive ? 0 : -1}
         onClick={props.onShowChat}
         onKeyDown={(event) => activateOnKey(event, props.onShowChat)}
-        className={cn(TAB_CLASS, "w-40 min-w-24 pr-2.5", tabStateClass(chatActive))}
+        className={cn(TAB_CLASS, "pr-2.5", tabStateClass(chatActive))}
       >
         <MessageSquareIcon aria-hidden className="size-3.5 shrink-0" />
-        <Tooltip>
-          <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-            {title}
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">{title}</TooltipPopup>
-        </Tooltip>
+        <TabLabel text={title} tooltip={title} active={chatActive} />
       </div>
       {props.files.map((surface) => (
         <FileTab

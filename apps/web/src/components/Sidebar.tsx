@@ -29,7 +29,7 @@ import {
   type DragStartEvent,
   type Modifier,
 } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
@@ -66,6 +66,8 @@ import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import { CheckIcon, ChevronDownIcon, FolderIcon, ListFilterIcon, PlusIcon } from "lucide-react";
 import {
+  Fragment,
+  memo,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -266,9 +268,11 @@ import { useAssistantSidebarModel } from "./assistants/useAssistantSidebarModel"
 import { setTaskDismissed } from "./assistants/useAssistantFlows";
 import { readAssistantTask } from "../state/assistants";
 import { assistantTaskMenuState } from "@t3tools/client-runtime/assistantTasks";
-import { AgentsSidebarSection } from "./sidebar/AgentsSidebarSection";
+import { NeedsYouSection } from "./sidebar/NeedsYouSection";
+import { useSidebarZones } from "./sidebar/useSidebarZones";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
-import { SidebarProjectGroups } from "./sidebar/SidebarProjectGroups";
+import { SubagentRows } from "./sidebar/SidebarSubagentRows";
+import { SidebarProjectGroups, StableSortableContext } from "./sidebar/SidebarProjectGroups";
 import {
   buildProjectListItems,
   groupListItemsByScope,
@@ -329,6 +333,8 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 }).pipe(Atom.withLabel("sidebar-provider-entries"));
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
+// Any thread change rebuilds every row element; rows whose props are unchanged skip useSortable.
+const MemoSortableThreadRow = memo(SortableThreadRow);
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -393,6 +399,8 @@ function useSidebarThreads(input: {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly projectGroups: readonly SidebarProjectSnapshot[];
+  /** Threads an assistant owns; Teams draws them, so the project lists leave them out. */
+  readonly ownedThreadKeys: ReadonlySet<string>;
 }) {
   const {
     projectScopeKey,
@@ -404,6 +412,7 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups,
+    ownedThreadKeys,
   } = input;
   const threadOrder = useClientSettings((s) => s.sidebarThreadOrder);
   const lastVisitedAtByKey = useUiStateStore((store) => store.threadLastVisitedAtById);
@@ -447,13 +456,17 @@ function useSidebarThreads(input: {
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
+  // Search still lists owned threads; only the project lists, and what numbers them, drop them.
+  const inProjects = (thread: EnvironmentThreadShell) =>
+    !ownedThreadKeys.has(threadShellKey(thread));
+  const projectSettledThreads = settledThreads.filter(inProjects);
   const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    projectSettledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
   const projectLayout = useSidebarProjectLayout({
     projectGroups,
-    pinnedThreads,
-    unsettledThreads: [...activeThreads, ...snoozedThreads],
-    settledThreads: settledThreads.filter(
+    pinnedThreads: pinnedThreads.filter(inProjects),
+    unsettledThreads: [...activeThreads, ...snoozedThreads].filter(inProjects),
+    settledThreads: projectSettledThreads.filter(
       (thread) =>
         olderSettledShelf.isListed(thread) || threadShellKey(thread) === routeRowThreadKey,
     ),
@@ -924,6 +937,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  const zones = useSidebarZones();
 
   // History, the palette and links can open a thread the scope hides or the list
   // scrolled away; a remount starts at the top, so each mount scrolls to the open
@@ -935,7 +949,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
-    findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
+    // An owned thread is drawn under its assistant, so it never widens the project scope.
+    findThread: (key) =>
+      zones.ownedThreadKeys.has(key)
+        ? undefined
+        : threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
   const projectScopeKey = projectScopeKeys.length === 0 ? null : projectScopeKeys.join("\n");
@@ -1080,6 +1098,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     projectGroups: scopedProjectGroups.length === 0 ? projectGroups : scopedProjectGroups,
+    ownedThreadKeys: zones.ownedThreadKeys,
   });
   const subagentChildrenByParent = activeSubagentChildrenByParent(threads);
 
@@ -1162,7 +1181,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const settledThreadKeysRef = useRef(settledThreadKeys);
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
-  const assistantModel = useAssistantSidebarModel();
+  const assistantModel = useAssistantSidebarModel(zones);
   // ⌘1–9 and next/previous walk this one list, so they can't disagree.
   const navigationThreadKeys = sidebarNavigationThreadKeys(
     assistantModel.threadKeys,
@@ -1204,6 +1223,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       params: { environmentId, teamId },
     });
   };
+  // The zones' rows memoize on their props; a handler rebuilt each render would redraw them all.
+  const openZoneThread = useStableCallback((threadRef: ScopedThreadRef) => {
+    void navigateToThread(threadRef);
+  });
+  const openZoneGroup = useStableCallback(
+    (environmentId: EnvironmentId, teamId: AssistantTeamId) => {
+      void navigateToGroup(environmentId, teamId);
+    },
+  );
+  const projectOfZone = useStableCallback((environmentId: EnvironmentId, projectId: ProjectId) =>
+    projectByKey.get(`${environmentId}:${projectId}`),
+  );
+  const assistantEntryByKey = new Map(
+    [...zones.layout.ungrouped, ...zones.layout.folders.flatMap((folder) => folder.members)].map(
+      ({ entry }) => [`${entry.environmentId}:${entry.assistant.id}`, entry] as const,
+    ),
+  );
+  const teamNameByKey = new Map(
+    zones.layout.folders.map(
+      ({ team }) => [`${team.environmentId}:${team.team.id}`, team.team.name] as const,
+    ),
+  );
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
@@ -1310,26 +1351,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    if (isTrailingDoubleClick(event.detail)) {
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  // threadRowProps captures this late in render, which would cost it the compiler's memo.
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      if (isTrailingDoubleClick(event.detail)) {
+        return;
+      }
+      navigateToThread(threadRef);
+    },
+  );
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -1542,10 +1586,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
   const pointerSensorOptions = {
     distance: SIDEBAR_DRAG_DISTANCE,
-    onAttach: attachDragSensor,
-    onFinish: finishThreadDrag,
-    onMove: moveThreadContextDrag,
-    onDrop: dropThreadContextDrag,
+    onAttach: useStableCallback(attachDragSensor),
+    onFinish: useStableCallback(finishThreadDrag),
+    onMove: useStableCallback(moveThreadContextDrag),
+    onDrop: useStableCallback(dropThreadContextDrag),
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
@@ -3090,7 +3134,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 onDragOver={handleThreadDragOver}
                 onDragEnd={handleThreadDragEnd}
               >
-                <SortableContext
+                <StableSortableContext
                   items={projectLayout.layout.map((entry) =>
                     projectDragId(entry.project.projectKey),
                   )}
@@ -3197,7 +3241,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         return (
-                          <SortableThreadRow
+                          <MemoSortableThreadRow
                             key={threadKey}
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
@@ -3223,45 +3267,59 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
                         const sectionRowKey = `${assistantRow}/${threadKey}`;
+                        const subagents = subagentChildrenByParent.get(threadKey);
                         return (
-                          <StaticThreadRow
-                            key={sectionRowKey}
-                            {...threadRowProps(thread, section, assistantRow)}
-                            // One line, lighter than a project's rows.
-                            variant="folder"
-                            sectionRowKey={sectionRowKey}
-                            // A sweep runs down the project list, which this copy is not in.
-                            onActionSweepStart={ignoreActionSweep}
-                            onDismissTask={
-                              canDismiss && (section === "active" || section === "pinned")
-                                ? dismissTask
-                                : undefined
-                            }
-                            isRenaming={
-                              renamingThreadKey === threadKey && renamingRowKey === sectionRowKey
-                            }
-                          />
+                          <Fragment key={sectionRowKey}>
+                            <StaticThreadRow
+                              {...threadRowProps(thread, section, assistantRow)}
+                              // One line, lighter than a project's rows.
+                              variant="folder"
+                              sectionRowKey={sectionRowKey}
+                              // A sweep runs down the project list, which this copy is not in.
+                              onActionSweepStart={ignoreActionSweep}
+                              onDismissTask={
+                                canDismiss && (section === "active" || section === "pinned")
+                                  ? dismissTask
+                                  : undefined
+                              }
+                              isRenaming={
+                                renamingThreadKey === threadKey && renamingRowKey === sectionRowKey
+                              }
+                              // The only row of an owned thread, so the clicked row is the one revealed.
+                              revealRef={
+                                routeRowThreadKey === threadKey ? revealActiveRow : undefined
+                              }
+                            />
+                            {subagents === undefined ? null : (
+                              <SubagentRows onOpen={navigateToThread}>{subagents}</SubagentRows>
+                            )}
+                          </Fragment>
                         );
                       };
                       const items: ReactNode[] = [];
+                      items.push(
+                        <NeedsYouSection
+                          key="needs-you"
+                          items={zones.items}
+                          assistantByKey={assistantEntryByKey}
+                          teamNameByKey={teamNameByKey}
+                          projectOf={projectOfZone}
+                          onOpenThread={openZoneThread}
+                        />,
+                      );
                       items.push(
                         <AssistantSidebarSection
                           key="assistants"
                           model={assistantModel}
                           routeThreadKey={routeThreadKey}
+                          routeRowThreadKey={routeRowThreadKey}
+                          revealRow={revealActiveRow}
                           environmentLabelById={environmentLabelById}
-                          onOpenThread={navigateToThread}
-                          onOpenGroup={navigateToGroup}
+                          onOpenThread={openZoneThread}
+                          onOpenGroup={openZoneGroup}
                           jumpLabelByKey={showJumpHints ? jumpLabelByKey : null}
                           renderTaskRow={renderAssistantTaskRow}
                           onThreadContextMenu={handleThreadContextMenu}
-                        />,
-                      );
-                      items.push(
-                        <AgentsSidebarSection
-                          key="agents"
-                          routeThreadKey={routeThreadKey}
-                          onOpenThread={navigateToThread}
                         />,
                       );
                       items.push(
@@ -3342,7 +3400,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       </li>
                     ) : null}
                   </ul>
-                </SortableContext>
+                </StableSortableContext>
               </DndContext>
             </TooltipProvider>
           ) : null}

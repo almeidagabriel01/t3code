@@ -5,11 +5,15 @@ import {
   formatCardDuration,
   inputToDueAt,
   KANBAN_PRIORITIES,
+  problemCardLines,
+  problemIgnoreLabel,
+  problemPreviousCardLabel,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import type {
   EnvironmentId,
   KanbanCard,
   KanbanCardEvent,
+  KanbanCardProblem,
   KanbanColumnId,
   KanbanLabelId,
   KanbanPriority,
@@ -20,6 +24,8 @@ import {
   AlignLeftIcon,
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BellOffIcon,
+  BellRingIcon,
   BotIcon,
   CalendarDaysIcon,
   CircleCheckBigIcon,
@@ -210,7 +216,12 @@ function Description(props: {
           className="-mx-2 rounded-lg px-2 py-1 hover:bg-accent/30"
           onDoubleClick={props.disabled ? undefined : edit}
         >
-          <ChatMarkdown text={props.text} cwd={props.cwd} environmentId={props.environmentId} />
+          <ChatMarkdown
+            text={props.text}
+            cwd={props.cwd}
+            environmentId={props.environmentId}
+            lineBreaks
+          />
         </div>
       )}
     </section>
@@ -248,6 +259,42 @@ export function LabelMenuItems(props: {
   );
 }
 
+function KanbanCardProblemSection(props: {
+  readonly problem: KanbanCardProblem;
+  readonly previous: KanbanCard | undefined;
+  readonly disabled: boolean;
+  readonly onToggleIgnored: () => void;
+  readonly onOpenCard: (card: KanbanCard) => void;
+}) {
+  const { problem, previous } = props;
+  return (
+    <section className="grid gap-1.5 text-sm">
+      {problemCardLines(problem).map((line) => (
+        <p key={line}>{line}</p>
+      ))}
+      {problem.previousCardNumber === null ? null : previous === undefined ? (
+        <p className="text-muted-foreground">
+          {problemPreviousCardLabel(problem.previousCardNumber)}
+        </p>
+      ) : (
+        <button
+          type="button"
+          className="w-fit cursor-pointer rounded-sm text-start underline-offset-2 outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          onClick={() => props.onOpenCard(previous)}
+        >
+          {problemPreviousCardLabel(problem.previousCardNumber)}
+        </button>
+      )}
+      {props.disabled ? null : (
+        <Button size="xs" variant="outline" className="mt-1 w-fit" onClick={props.onToggleIgnored}>
+          {problem.ignored ? <BellRingIcon /> : <BellOffIcon />}
+          {problemIgnoreLabel(problem.ignored)}
+        </Button>
+      )}
+    </section>
+  );
+}
+
 export function KanbanCardDetail(props: {
   readonly environmentId: EnvironmentId;
   readonly board: KanbanBoardState;
@@ -265,6 +312,11 @@ export function KanbanCardDetail(props: {
     archive,
     toggleLabel,
   } = useKanbanCardCommands(environmentId, board, card);
+  const toggleProblemIgnored = () =>
+    void actions.setCardProblemIgnored({
+      cardId: card.id,
+      ignored: !(card.problem?.ignored ?? false),
+    });
   const query = useEnvironmentQuery(
     kanbanEnvironment.card({ environmentId, input: { cardId: card.id } }),
   );
@@ -373,6 +425,12 @@ export function KanbanCardDetail(props: {
                     {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
                     {archived ? "Restore" : "Archive"}
                   </MenuItem>
+                  {card.problem ? (
+                    <MenuItem onClick={toggleProblemIgnored}>
+                      {card.problem.ignored ? <BellRingIcon /> : <BellOffIcon />}
+                      {problemIgnoreLabel(card.problem.ignored)}
+                    </MenuItem>
+                  ) : null}
                   <MenuSeparator />
                   <MenuItem variant="destructive" onClick={() => void remove()}>
                     <Trash2Icon />
@@ -729,6 +787,21 @@ export function KanbanCardDetail(props: {
                 onChange={(relations) => void patch(relations)}
                 onOpenCard={props.onOpenCard}
               />
+
+              {card.problem ? (
+                <>
+                  <div className="my-2 border-t" />
+                  <KanbanCardProblemSection
+                    problem={card.problem}
+                    previous={[...board.cards.values()].find(
+                      (entry) => entry.number === card.problem?.previousCardNumber,
+                    )}
+                    disabled={disabled}
+                    onToggleIgnored={toggleProblemIgnored}
+                    onOpenCard={props.onOpenCard}
+                  />
+                </>
+              ) : null}
 
               <div className="my-2 border-t" />
               <KanbanLinkedAgents

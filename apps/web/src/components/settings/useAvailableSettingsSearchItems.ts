@@ -66,6 +66,12 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
         isMemoryEnvironmentAvailable(environment.serverConfig?.environment.capabilities),
     ) === true;
+  const hasIntegrations =
+    environments.some(
+      (environment) =>
+        (scopeSearch.machine === undefined || environment.environmentId === scopeSearch.machine) &&
+        environment.serverConfig?.environment.capabilities.integrations === true,
+    ) === true;
   const hasImessage =
     environments.some(
       (environment) =>
@@ -108,6 +114,7 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     managedTunnelActive,
     hasPeerLinkHost,
     hasMemory,
+    hasIntegrations,
     hasImessage,
     hasTelegram,
     hasMacProviderSettingsEnvironment,
