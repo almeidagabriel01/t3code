@@ -127,6 +127,18 @@ describe("ProjectModelPickerRouteScreen", () => {
     ]);
     render("beto");
     expect(mocks.picker!.selected).toEqual(codex("gpt-5.5"));
+    // Without the project's own model, the global default is not what Beto runs on.
+    const hub = environment("hub", {});
+    mocks.environments = [
+      {
+        ...hub,
+        serverConfig: {
+          settings: { ...hub.serverConfig.settings, defaultModelSelection: codex("gpt-5.4") },
+        },
+      },
+    ];
+    render("beto");
+    expect(mocks.picker!.selected).toBeNull();
   });
 
   it("saves nothing without permission, and says so when the project is not connected", () => {

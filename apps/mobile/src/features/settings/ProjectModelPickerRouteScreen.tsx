@@ -52,11 +52,14 @@ export function ProjectModelPickerRouteScreen({
     );
   }
   const projectDefault = first.settings.defaultModelSelection;
+  // Without an exception the assistant runs on the project's own model; failing that, on a group's
+  // or its own default this screen cannot see, so nothing is marked.
   const selected =
     assistantId === undefined
       ? projectDefault
       : (first.environment.serverConfig.settings.projectSettingsOverrides[first.projectId]
-          ?.assistantModelSelections?.[assistantId] ?? projectDefault);
+          ?.assistantModelSelections?.[assistantId] ??
+        (first.sources.defaultModelSelection === "environment" ? null : projectDefault));
   return (
     <SettingsModelPicker
       title={assistantId === undefined ? "Project model" : "Assistant model"}
