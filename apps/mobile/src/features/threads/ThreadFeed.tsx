@@ -1415,10 +1415,15 @@ function OpenSenderThreadButton(props: {
 
 function ThreadTaskEventRow(props: {
   readonly environmentId: EnvironmentId;
+  readonly message: Parameters<typeof taskEventActivity>[0];
   readonly activity: NonNullable<ReturnType<typeof taskEventActivity>>;
 }) {
   const openLinkedThread = useOpenLinkedThread();
-  const { activity } = props;
+  const shell = useQuietThreadShell(
+    scopeThreadRef(props.environmentId, props.activity.threadId as ThreadId),
+  );
+  // An event T3 did not write carries no title; the task thread's own one stands in.
+  const activity = taskEventActivity(props.message, shell?.title.trim() || null) ?? props.activity;
   return (
     <View className="mb-0.5 px-1">
       <TaskEventActivityRow
@@ -1928,7 +1933,13 @@ function renderFeedEntry(
     }
     const taskEvent = isUser ? taskEventActivity(message) : null;
     if (taskEvent !== null) {
-      return <ThreadTaskEventRow environmentId={props.environmentId} activity={taskEvent} />;
+      return (
+        <ThreadTaskEventRow
+          environmentId={props.environmentId}
+          message={message}
+          activity={taskEvent}
+        />
+      );
     }
     if (isUser && presentation.attribution === "automation") {
       const rowId = `automation:${message.id}`;
