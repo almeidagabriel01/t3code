@@ -70,6 +70,8 @@ import * as DocsHandlers from "./toolkits/docs/handlers.ts";
 import { DocsToolkit } from "./toolkits/docs/tools.ts";
 import * as UserDocs from "../userDocs/UserDocs.ts";
 import * as NoteHandlers from "./toolkits/note/handlers.ts";
+import * as IntegrationHandlers from "./toolkits/integration/handlers.ts";
+import { IntegrationToolkit } from "./toolkits/integration/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1264,6 +1266,8 @@ const layerKanbanToolkit = toolkitRegistration(KanbanToolkit, KanbanHandlers.lay
 
 const layerNoteToolkit = toolkitRegistration(NoteToolkit, NoteHandlers.layer);
 
+const layerIntegrationToolkit = toolkitRegistration(IntegrationToolkit, IntegrationHandlers.layer);
+
 const layerDecisionToolkit = toolkitRegistration(DecisionToolkit, DecisionHandlers.layer);
 
 const layerWatchToolkit = toolkitRegistration(WatchToolkit, WatchHandlers.layer);
@@ -1377,6 +1381,7 @@ export const layerTools = Layer.mergeAll(
   layerProjectRegistration,
   layerKanbanToolkit,
   layerNoteToolkit,
+  layerIntegrationToolkit,
   layerDecisionToolkit,
   layerAssistantToolkit,
   layerGroupToolkit,

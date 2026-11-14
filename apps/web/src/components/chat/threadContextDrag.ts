@@ -174,9 +174,12 @@ function findTabDrop(
   const stripGroupId = strip?.getAttribute(STRIP_ATTRIBUTE);
   if (strip && stripGroupId) {
     const stripRect = strip.getBoundingClientRect();
-    const tabRects = [...strip.querySelectorAll(`[${TAB_ATTRIBUTE}]`)].map((tab) =>
-      tab.getBoundingClientRect(),
-    );
+    // Thread blocks are `display: contents`, so each spans its first to its last tab.
+    const tabRects = [...strip.querySelectorAll(`[${TAB_ATTRIBUTE}]`)].map((block) => {
+      const left = block.firstElementChild?.getBoundingClientRect().left ?? 0;
+      const right = block.lastElementChild?.getBoundingClientRect().right ?? left;
+      return { left, right, width: right - left };
+    });
     const index = resolveTabInsertIndex(tabRects, point.x);
     const x = tabRects[index]?.left ?? tabRects.at(-1)?.right ?? stripRect.left;
     return {

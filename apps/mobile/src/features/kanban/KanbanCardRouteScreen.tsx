@@ -7,6 +7,9 @@ import {
   findCardInBoards,
   KANBAN_PRIORITIES,
   KANBAN_PRIORITY_LABELS,
+  problemCardLines,
+  problemIgnoreLabel,
+  problemPreviousCardLabel,
 } from "@t3tools/client-runtime/state/kanbanLogic";
 import { parseAttachmentImageSrc } from "@t3tools/shared/attachmentImageRefs";
 import { subtaskProgress, subtasksOf } from "@t3tools/shared/kanbanSubtasks";
@@ -315,6 +318,9 @@ function KanbanCardDetail(props: {
     board.columns.find((entry) => entry.id === id)?.name ?? "a column";
   const result = query.data;
   const parentCard = card.parentCardId === null ? undefined : board.cards.get(card.parentCardId);
+  const previousCard = [...board.cards.values()].find(
+    (entry) => entry.number === card.problem?.previousCardNumber,
+  );
   const subtasks = subtasksOf(board.cards.values(), cardId);
   const subtaskCount = subtaskProgress(subtasks, board.columns);
 
@@ -542,6 +548,7 @@ function KanbanCardDetail(props: {
               textStyle={markdownStyles.nativeTextStyle}
               onLinkPress={(href) => void Linking.openURL(href)}
               renderImage={renderDescriptionImage}
+              preserveSoftBreaks
             />
             {disabled ? null : (
               <Button
@@ -667,6 +674,43 @@ function KanbanCardDetail(props: {
               />
             )}
           </Section>
+        ) : null}
+
+        {card.problem ? (
+          <View className="gap-2 rounded-2xl bg-grouped-card px-4 py-3">
+            {problemCardLines(card.problem).map((line) => (
+              <Text key={line} textRole="body">
+                {line}
+              </Text>
+            ))}
+            {card.problem.previousCardNumber === null ? null : (
+              <Button
+                label={problemPreviousCardLabel(card.problem.previousCardNumber)}
+                tone="text"
+                disabled={previousCard === undefined}
+                onPress={() =>
+                  previousCard &&
+                  navigation.navigate("SettingsKanbanCard", {
+                    environmentId,
+                    cardId: previousCard.id,
+                  })
+                }
+              />
+            )}
+            {disabled ? null : (
+              <Button
+                label={problemIgnoreLabel(card.problem.ignored)}
+                icon={card.problem.ignored ? "bell.badge" : "bell.slash"}
+                tone="secondary"
+                onPress={() =>
+                  void actions.setCardProblemIgnored({
+                    cardId,
+                    ignored: !card.problem!.ignored,
+                  })
+                }
+              />
+            )}
+          </View>
         ) : null}
 
         {card.linkedThreadIds.length > 0 || !disabled ? (

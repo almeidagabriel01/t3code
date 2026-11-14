@@ -54,6 +54,7 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/assistants";
+import { useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
@@ -82,6 +83,7 @@ import {
   autonomyPauseItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
+  assistantInfoItems,
   type CommandPaletteItem,
   type CommandPaletteResult,
 } from "./commandPaletteItems";
@@ -254,8 +256,10 @@ export function CommandPalette(props: {
   const hasMac = useMacEnvironmentIds().length > 0;
   const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
-  const assistants = useAssistantEntries().active;
+  const assistantEntries = useAssistantEntries();
+  const assistants = assistantEntries.active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
   const openAssistantTeam = useOpenAssistantTeam();
@@ -506,6 +510,23 @@ export function CommandPalette(props: {
           }),
       });
     }
+    actions.push(
+      ...assistantInfoItems({
+        pathname: props.pathname,
+        assistants,
+        teams: assistantEntries.activeTeams,
+        openAssistant: (entry) =>
+          navigation.navigate("AssistantInfo", {
+            environmentId: entry.environmentId,
+            assistantId: entry.assistant.id,
+          }),
+        openGroup: (entry) =>
+          navigation.navigate("AssistantGroupInfo", {
+            environmentId: entry.environmentId,
+            teamId: entry.team.id,
+          }),
+      }),
+    );
     const [firstAssistant] = assistants;
     if (firstAssistant) {
       actions.push({
@@ -539,6 +560,15 @@ export function CommandPalette(props: {
         title: "Assistants",
         searchTerms: ["assistants", "groups", "team", "agents", "page"],
         run: () => openSettings(navigation, "SettingsAssistants"),
+      });
+    }
+    if (hasIntegrations) {
+      actions.push({
+        key: "integrations",
+        kind: "action",
+        title: "Integrations",
+        searchTerms: ["integrations", "connect", "sign in", "mcp", "token"],
+        run: () => openSettings(navigation, "SettingsIntegrations"),
       });
     }
     const projectByKey = new Map(
@@ -666,7 +696,10 @@ export function CommandPalette(props: {
     hasDevices,
     hasComputerUseHost,
     assistants,
+    assistantEntries.activeTeams,
+    props.pathname,
     hasAssistantsEnvironment,
+    hasIntegrations,
     openAssistantTeam,
     autonomyPause,
     openAssistantEditor,

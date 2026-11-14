@@ -43,6 +43,7 @@ import { AssistantService } from "../assistants/AssistantService.ts";
 import { ComputerUse } from "../computerUse/ComputerUse.ts";
 import { DecisionService } from "../decisions/DecisionService.ts";
 import { KanbanService } from "../kanban/KanbanService.ts";
+import { ProblemDetector } from "../problems/ProblemDetector.ts";
 import { NoteWorkService } from "../notes/NoteWorkService.ts";
 import { NotesService } from "../notes/NotesService.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
@@ -50,6 +51,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { ProcessResourceMonitor } from "../diagnostics/ProcessResourceMonitor.ts";
 import { HostResources } from "../resourceTelemetry/HostResources.ts";
+import { IntegrationAuth } from "../integrations/IntegrationAuth.ts";
 import { ResourceTelemetry } from "../resourceTelemetry/ResourceTelemetry.ts";
 import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
 import { CommandReceiptStoreV2 } from "../orchestration-v2/CommandReceiptStore.ts";
@@ -78,6 +80,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(KanbanService)({}),
+  Layer.mock(ProblemDetector)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(MemoryService)({ importPorts: {} as MemoryService["Service"]["importPorts"] }),
@@ -107,6 +110,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(CommandReceiptStoreV2)({}),
   Layer.mock(CheckpointDiffQuery)({}),
   Layer.mock(HostResources)({}),
+  Layer.mock(IntegrationAuth)({ catalog: [] }),
   Layer.mock(ProcessResourceMonitor)({}),
   Layer.mock(ResourceTelemetry)({}),
   Layer.mock(AutonomyService.AutonomyService)({}),

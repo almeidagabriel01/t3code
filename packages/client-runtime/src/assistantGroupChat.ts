@@ -411,12 +411,16 @@ export function assistantGroupFinished(
   };
 }
 
-/** "N running" count for the header: tasks being worked right now. */
-export function assistantGroupRunningCount(state: AssistantGroupChatState): number {
-  let count = 0;
-  for (const task of state.tasks.values()) if (task.status === "running") count += 1;
-  return count;
-}
+/** The group's running tasks, oldest first: its Working now rows and its "N running". */
+export const assistantGroupRunningTasks = (
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupTask> =>
+  [...state.tasks.values()]
+    .filter((task) => task.status === "running")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+export const assistantGroupRunningCount = (state: AssistantGroupChatState): number =>
+  assistantGroupRunningTasks(state).length;
 
 /** The divider's wording, for a boundary message's `new` or `compact` text. */
 export function assistantGroupBoundaryLabel(message: Pick<AssistantGroupMessage, "text">): string {

@@ -662,6 +662,42 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     );
   });
 
+  it("pre-approves only proxied integrations T3's gate already decides for", () => {
+    const mcpSession = mcpSessionFor(ThreadId.make("assistant:sam:1"));
+    const authorizationHeader = mcpSession.authorizationHeader;
+    const proxied = (name: string, preApproved: boolean) => ({
+      name,
+      transport: "http" as const,
+      url: `http://127.0.0.1:43123/mcp/integrations/${name}`,
+      args: [],
+      headers: { Authorization: authorizationHeader },
+      env: {},
+      proxy: { preApproved },
+    });
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+      connectors: [proxied("linear_t3", true), proxied("notion_t3", false)],
+    });
+    assert.deepEqual(overrides.allowedTools, [
+      ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD,
+      "mcp__linear_t3__*",
+    ]);
+    assert.deepEqual(overrides.mcpServers?.linear_t3, {
+      type: "http",
+      url: "http://127.0.0.1:43123/mcp/integrations/linear_t3",
+      headers: { Authorization: authorizationHeader },
+    });
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession: undefined,
+        readOnlySandbox: false,
+        connectors: [proxied("linear_t3", true)],
+      }).allowedTools,
+      ["mcp__linear_t3__*"],
+    );
+  });
+
   it("invalidates live-query reuse when MCP credentials rotate", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);

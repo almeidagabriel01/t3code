@@ -6120,7 +6120,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("keeps queued user selections and pauses only the limited provider", () =>
+  it.effect("queued runs follow the thread selection and only a user pick stays pinned", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -6144,7 +6144,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const selections = [modelSelection, modelSelection, queuedSelection];
+      // The last pick equals the thread but not the pinned run ahead of it, so it pins too.
+      const selections = [modelSelection, modelSelection, queuedSelection, modelSelection];
       for (const [index, selection] of selections.entries()) {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -6159,7 +6160,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
         });
       }
-      const [active, limited, available] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const [active, limited, available, back] = (yield* orchestrator.getThreadProjection(threadId))
+        .runs;
       assert.isDefined(active);
       assert.isDefined(limited);
       assert.isDefined(available);
@@ -6228,15 +6230,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
         ],
       });
-      yield* orchestrator.dispatch({
-        type: "thread.model-selection.set",
-        commandId: CommandId.make(`${threadId}:select-other`),
-        threadId,
-        modelSelection: queuedSelection,
-      });
-      yield* orchestrator.resumeQueuedRuns;
-      const held = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(held.runs.find((run) => run.id === limited.id)?.status, "queued");
+      assert.isUndefined(limited.modelSelectionPinned);
+      assert.isTrue(available.modelSelectionPinned);
+      assert.isTrue(back?.modelSelectionPinned);
+      assert.deepEqual(back?.modelSelection, modelSelection);
+      // Without a switch the next queued run follows the thread onto the limited provider.
       const blocked = yield* orchestrator
         .dispatch({
           type: "queue.resume",
@@ -6248,38 +6246,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       yield* orchestrator.dispatch({
         type: "thread.model-selection.set",
-        commandId: CommandId.make(`${threadId}:select-original`),
+        commandId: CommandId.make(`${threadId}:select-other`),
         threadId,
-        modelSelection,
-      });
-      yield* orchestrator.dispatch({
-        type: "queued-run.cancel",
-        commandId: CommandId.make(`${threadId}:cancel-limited`),
-        threadId,
-        runId: limited.id,
-      });
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`${threadId}:hold-available`),
-            type: "run.updated",
-            threadId,
-            runId: available.id,
-            occurredAt: now,
-            payload: { ...available, queueHeld: true },
-          },
-        ],
-      });
-      yield* orchestrator.dispatch({
-        type: "queue.resume",
-        commandId: CommandId.make(`${threadId}:resume-available`),
-        threadId,
+        modelSelection: queuedSelection,
       });
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
-      const started = after.runs.find((run) => run.id === available.id);
+      const started = after.runs.find((run) => run.id === limited.id);
       assert.equal(started?.status, "starting");
       assert.deepEqual(started?.modelSelection, queuedSelection);
+      assert.equal(started?.providerInstanceId, alternateInstanceId);
+      assert.equal(after.runs.find((run) => run.id === available.id)?.status, "queued");
       assert.deepEqual(after.thread.modelSelection, queuedSelection);
     }),
   );
@@ -8717,6 +8694,147 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           yield* orchestrator.dispatch(scheduledResume);
         }
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+      }),
+  );
+
+  it.effect.each(["unchanged", "switched"] as const)(
+    "automatic limit resume never moves the thread's selection (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`auto-resume-selection:${scenario}`);
+        const projectId = ProjectId.make(`auto-resume-selection:project:${scenario}`);
+        const pickedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
+        const now = yield* DateTime.now;
+        yield* seedProject({
+          projectId,
+          title: "Auto resume project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:start`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:start`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        // A user's own pick queued behind the limited run must not leak into the resume.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:picked`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:picked`),
+          text: "Use the other provider.",
+          attachments: [],
+          modelSelection: pickedSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const [source, picked] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+          OrchestrationV2Run,
+          OrchestrationV2Run,
+        ];
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:hold`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...picked, queueHeld: true },
+            },
+            {
+              id: EventId.make(`${threadId}:failed`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...source, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}:error`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${threadId}:error`),
+                type: "error",
+                threadId,
+                runId: source.id,
+                nodeId: source.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Weekly limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shellOf = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
+          snapshot.threads.find((thread) => thread.id === threadId),
+        );
+        yield* orchestrator.dispatch(
+          limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now))!,
+        );
+        const scheduledResume = limitRecoveryCommand((yield* shellOf)!, true, Date.parse(resetAt));
+        assert.isNotNull(scheduledResume);
+        const expectedSelection = scenario === "switched" ? pickedSelection : modelSelection;
+        if (scenario === "switched") {
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:switch`),
+            threadId,
+            modelSelection: pickedSelection,
+          });
+        }
+        yield* TestClock.adjust("1 minute");
+        yield* orchestrator.dispatch(scheduledResume!);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.thread.modelSelection, expectedSelection);
+        const resumed = after.runs.filter((run) => run.usageLimitContinuationOfRunId === source.id);
+        if (scenario === "switched") {
+          // The limited provider is never resumed once the thread moved away from it.
+          assert.lengthOf(resumed, 0);
+        } else {
+          assert.lengthOf(resumed, 1);
+          assert.deepEqual(resumed[0]?.modelSelection, modelSelection);
+          assert.equal(after.runs.find((run) => run.id === picked.id)?.status, "queued");
+        }
       }),
   );
 

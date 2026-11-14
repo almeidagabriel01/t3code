@@ -59,6 +59,13 @@ vi.mock("../../state/preferences", () => ({
   updateMobilePreferencesAtom: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
+vi.mock("../../components/ui/NumberField", () => ({
+  NumberField: (props: {
+    label: string;
+    value: number;
+    onValueChange: (value: number) => void;
+  }) => <button aria-label={props.label} onClick={() => props.onValueChange(props.value + 1)} />,
+}));
 vi.mock("./components/SourceControlSignInSection", () => ({
   SourceControlSignInSection: () => null,
 }));
@@ -257,6 +264,8 @@ function environment(environmentId: string, label: string) {
         ...DEFAULT_SERVER_SETTINGS,
         defaultAutoPull: false,
         sidebarAutoSettleOnMerge: false,
+        // Off by default; on, the days field renders.
+        toolOutputHistoryDays: 30,
       },
       environment: {
         capabilities: {
@@ -432,6 +441,29 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.runner!.mixed("runnerHost")).toBe(true);
   });
 
+  it.each([
+    [false, "Detect problems", { detectProblems: false }],
+    [
+      true,
+      "Detect problems in this project",
+      { projectSettingsOverrides: { project: { detectProblems: false } } },
+    ],
+  ] as const)(
+    "turns problem detection off from Maintenance (project selected: %s)",
+    async (projectSelected, label, patch) => {
+      mocks.projectSelected = projectSelected;
+      act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+      const toggle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+        (button) => button.textContent === label,
+      )!;
+      await act(async () => toggle.click());
+      expect(mocks.updateSettings).toHaveBeenCalledWith({
+        environmentId: "local",
+        input: { patch: expect.objectContaining(patch) },
+      });
+    },
+  );
+
   it("saves the keep-awake mode picked on the Maintenance page", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
     const section = container.querySelector<HTMLButtonElement>('[aria-label="keep awake"]')!;
@@ -441,6 +473,15 @@ describe("SettingsServerControlsRouteScreen", () => {
       environmentId: "local",
       input: { patch: { keepAwake: "always" } },
     });
+  });
+
+  it.each([
+    { label: "Days to keep tool output", patch: { toolOutputHistoryDays: 31 } },
+    { label: "Minutes before an idle agent closes", patch: { providerIdleTimeoutMinutes: 11 } },
+  ])("saves $label on the Maintenance page", ({ label, patch }) => {
+    act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
+    act(() => container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ environmentId: "local", input: { patch } });
   });
 
   it("saves the snapshot retention picked on the Maintenance page", () => {

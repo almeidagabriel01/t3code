@@ -19,6 +19,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProblemDetector from "../../../problems/ProblemDetector.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -34,6 +35,7 @@ const providerInstanceId = ProviderInstanceId.make("codex");
 
 const delegated: Array<{ task: string; title?: string | undefined }> = [];
 const failingTitles = new Set<string>();
+const ignoreCalls: Array<{ cardId: string; ignored: boolean; commandId: string }> = [];
 
 interface LinkOrigin {
   sessionId: string;
@@ -103,6 +105,12 @@ const dependencies = (threadId: ThreadId, { kanban, client, threads, link }: Cal
           { id: otherProjectId, title: "Beta" },
           { id: scratchProjectId, title: "No project" },
         ] as unknown as ReadonlyArray<OrchestrationProjectShell>),
+    }),
+    Layer.mock(ProblemDetector.ProblemDetector)({
+      setIgnored: (input) => {
+        ignoreCalls.push(input);
+        return Effect.succeed({ cardId: input.cardId } as never);
+      },
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
@@ -677,4 +685,41 @@ it.effect("project none reports when threads without a project are unavailable",
       message: "Threads without a project are not available on this environment.",
     });
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "a problem card shows its problem state, and the user's ignore goes to the detector",
+  () =>
+    Effect.gen(function* () {
+      ignoreCalls.length = 0;
+      const { call, kanban } = yield* harness();
+      const plain = yield* call({ action: "create_card", title: "Plain" });
+      expect(plain).not.toHaveProperty("problem");
+      yield* call({ action: "create_card", title: "CI: lint fails" });
+      const card = yield* call({ action: "read_card", card: "#2" });
+      const problem = {
+        kind: "ci" as const,
+        count: 3,
+        ownerName: "Ops",
+        previousCardNumber: null,
+        ignored: false,
+      };
+      yield* kanban.cardSetProblem({
+        commandId: CommandId.make("set-problem"),
+        cardId: card.id,
+        problem,
+      });
+      expect((yield* call({ action: "read_card", card: "#2" })).problem).toEqual(problem);
+
+      yield* call({ action: "ignore_problem", card: "#2", clientRequestId: "ignore" });
+      yield* call({ action: "stop_ignoring", card: "#2", clientRequestId: "undo" });
+      expect(ignoreCalls).toEqual([
+        { cardId: card.id, ignored: true, commandId: expect.stringContaining(":ignore:problem") },
+        { cardId: card.id, ignored: false, commandId: expect.stringContaining(":undo:problem") },
+      ]);
+      expect(yield* call({ action: "ignore_problem", card: "#9" })).toMatchObject({
+        code: "invalid_request",
+      });
+      expect(ignoreCalls).toHaveLength(2);
+    }).pipe(Effect.scoped),
 );

@@ -2,6 +2,7 @@ import {
   type Assistant,
   type AssistantId,
   AssistantAvatar,
+  AssistantIntegrations,
   AssistantMcpServer,
   type AssistantTeam,
   type AssistantToolAccess,
@@ -11,6 +12,7 @@ import {
   isAssistantThreadId,
   AssistantAutonomy,
   DEFAULT_ASSISTANT_AUTONOMY,
+  DEFAULT_ASSISTANT_INTEGRATIONS,
   ProviderBudget,
   type ProjectId,
   type ThreadId,
@@ -45,6 +47,7 @@ export interface AssistantRow {
   /** "project" when it lives in a real project; null until the service has worked it out. */
   readonly scope: string | null;
   readonly mcp_servers_json: string | null;
+  readonly integrations_json?: string | null;
   /** JSON array of the project ids a project assistant may work in; null reads as just `project_id`. */
   readonly project_ids_json?: string | null;
   readonly created_at: string;
@@ -80,6 +83,18 @@ export const encodeMcpServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(AssistantMcpServer)),
 );
 
+const IntegrationsJson = Schema.fromJsonString(AssistantIntegrations);
+// A selection that no longer decodes falls back to all, the default before it was set.
+const decodeIntegrations = Schema.decodeOption(IntegrationsJson);
+export const encodeIntegrations = Schema.encodeSync(IntegrationsJson);
+const integrationsOf = (row: AssistantRow): AssistantIntegrations =>
+  row.integrations_json == null
+    ? DEFAULT_ASSISTANT_INTEGRATIONS
+    : Option.getOrElse(
+        decodeIntegrations(row.integrations_json),
+        () => DEFAULT_ASSISTANT_INTEGRATIONS,
+      );
+
 const ProjectIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeProjectIds = Schema.decodeOption(ProjectIdsJson);
 export const encodeProjectIds = Schema.encodeSync(ProjectIdsJson);
@@ -113,6 +128,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
   avatar: row.avatar_json === null ? null : Option.getOrNull(decodeAvatarOption(row.avatar_json)),
   scope: row.scope === "project" ? "project" : "all",
   mcpServers: decodeMcpServers(row.mcp_servers_json),
+  integrations: integrationsOf(row),
   budget: row.budget_json === null ? null : decodeBudget(row.budget_json),
   autonomy:
     row.autonomy_json === null

@@ -39,7 +39,7 @@ describe("assistantAdvancedSummary", () => {
 
   it("summarizes the defaults of a new assistant", () => {
     expect(assistantAdvancedSummary(base)).toBe(
-      "Edit files · This Mac · no spending limit · no connectors · asks before messaging other threads",
+      "Edit files · This Mac · no spending limit · no custom servers · asks before messaging other threads",
     );
   });
 
@@ -47,8 +47,8 @@ describe("assistantAdvancedSummary", () => {
     [{ workspace: "sandbox" }, "Sandbox container"],
     [{ budget: { enabled: true, amount: " 5 " } }, "$5 limit"],
     [{ budget: { enabled: true, amount: "" } }, "spending limit"],
-    [{ connectors: [1] }, "1 connector"],
-    [{ connectors: [1, 2] }, "2 connectors"],
+    [{ connectors: [1] }, "1 custom server"],
+    [{ connectors: [1, 2] }, "2 custom servers"],
     [{ askBeforeActing: false }, "messages other threads freely"],
     [{ toolAccess: "full" }, "Full access"],
   ] as const)("reflects %j", (change, part) => {

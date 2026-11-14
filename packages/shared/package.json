@@ -307,6 +307,10 @@
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
     },
+    "./settingsLinks": {
+      "types": "./src/settingsLinks.ts",
+      "import": "./src/settingsLinks.ts"
+    },
     "./kanbanSubtasks": {
       "types": "./src/kanbanSubtasks.ts",
       "import": "./src/kanbanSubtasks.ts"
@@ -479,6 +483,10 @@
       "types": "./src/assistantTaskStatus.ts",
       "import": "./src/assistantTaskStatus.ts"
     },
+    "./needsUser": {
+      "types": "./src/needsUser.ts",
+      "import": "./src/needsUser.ts"
+    },
     "./orchestrationV2PendingBackgroundWork": {
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
@@ -546,6 +554,10 @@
     "./generatedImageMarkdown": {
       "types": "./src/generatedImageMarkdown.ts",
       "import": "./src/generatedImageMarkdown.ts"
+    },
+    "./markdownAst": {
+      "types": "./src/markdownAst.ts",
+      "import": "./src/markdownAst.ts"
     },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",

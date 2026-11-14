@@ -1,6 +1,6 @@
-import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import { formatRowWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 
-import { useNowSecond } from "../../hooks/useNowSecond";
+import { useNowMinuteMs } from "../../hooks/useNowMinute";
 
 export function WorkingDuration(props: { startedAt: string | null }) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
@@ -8,11 +8,10 @@ export function WorkingDuration(props: { startedAt: string | null }) {
   return <WorkingDurationLabel startedMs={startedMs} />;
 }
 
-// Self-ticking so only this span re-renders each second, not the whole row;
-// the shared tick lands every working row's update in the same frame.
+// Self-ticking on the shared minute tick, so a running row re-renders only this span, once a minute.
 function WorkingDurationLabel(props: { startedMs: number }) {
-  const nowMs = useNowSecond();
+  const nowMs = useNowMinuteMs();
   return (
-    <span className="tabular-nums">{formatWorkingDurationLabel(nowMs - props.startedMs)}</span>
+    <span className="tabular-nums">{formatRowWorkingDurationLabel(nowMs - props.startedMs)}</span>
   );
 }

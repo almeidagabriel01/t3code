@@ -5,8 +5,11 @@ import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
 import {
   ASSISTANT_ACCENTS,
   assistantAccent,
-  assistantInitial,
+  assistantPresenceSections,
+  assistantPresenceStatus,
+  assistantSenderLook,
   assistantSenders,
+  assistantThreadSenders,
   messageAssistantId,
 } from "./assistantPresence.ts";
 
@@ -51,6 +54,36 @@ describe("assistantSenders", () => {
   });
 });
 
+describe("assistantThreadSenders", () => {
+  const qa = { id: "qa", name: "QA" } as Assistant;
+  const sender = (assistant: Assistant, count: number) => ({
+    assistantId: assistant.id,
+    assistant,
+    firstMessageId: `${assistant.id}-1`,
+    lastMessageId: `${assistant.id}-${count}`,
+    count,
+  });
+  const ownerOnly = { assistantId: "qa", assistant: qa, firstMessageId: "", lastMessageId: "" };
+  it.each([
+    { name: "no task, no senders", senders: [], owner: null, expected: [] },
+    { name: "a sender only", senders: [sender(jarvis, 2)], owner: null, expected: ["jarvis:2"] },
+    { name: "the owner with no message", senders: [], owner: qa, expected: ["qa:0"] },
+    { name: "the owner who also wrote", senders: [sender(qa, 2)], owner: qa, expected: ["qa:2"] },
+    {
+      name: "the owner and another sender",
+      senders: [sender(jarvis, 1)],
+      owner: qa,
+      expected: ["qa:0", "jarvis:1"],
+    },
+  ])("one entry per assistant: $name", ({ senders, owner, expected }) => {
+    const merged = assistantThreadSenders(senders, owner);
+    expect(merged.map((entry) => `${entry.assistantId}:${entry.count}`)).toEqual(expected);
+    if (owner !== null && !senders.some((entry) => entry.assistantId === owner.id)) {
+      expect(merged[0]).toEqual({ ...ownerOnly, count: 0 });
+    }
+  });
+});
+
 describe("assistant icons", () => {
   it("has one drawable definition per contract id and ignores unknown ids", () => {
     expect(ASSISTANT_ICONS.map((icon) => icon.id)).toEqual([...ASSISTANT_ICON_IDS]);
@@ -71,7 +104,57 @@ describe("assistant look", () => {
   it("keeps one accent per assistant and an uppercase initial", () => {
     expect(assistantAccent("jarvis")).toBe(assistantAccent("jarvis"));
     expect(ASSISTANT_ACCENTS).toContain(assistantAccent("revisor"));
-    expect(assistantInitial(" bia ")).toBe("B");
-    expect(assistantInitial("")).toBe("?");
+  });
+});
+
+describe("assistantSenderLook", () => {
+  const presence = (mood: string) => ({ mood }) as never;
+  const qa = { assistantId: "qa", assistant: { id: "qa" } as Assistant };
+  it.each([
+    { name: "no task: presence", task: null, mood: "working", expected: ["working", true] },
+    { name: "no task: idle", task: null, mood: "idle", expected: ["idle", false] },
+    { name: "task running", task: "running", mood: "idle", expected: ["working", true] },
+    { name: "task waiting", task: "waiting", mood: "idle", expected: ["waiting", true] },
+    { name: "task failed", task: "failed", mood: "working", expected: ["failed", false] },
+    { name: "task done", task: "done", mood: "working", expected: ["done", false] },
+  ] as const)("face and section agree: $name", ({ task, mood, expected }) => {
+    const look = assistantSenderLook(
+      qa,
+      presence(mood),
+      task === null ? null : { assistantId: "qa", state: task },
+    );
+    expect([look.face, look.working]).toEqual(expected);
+  });
+
+  it("a task of another assistant and a removed assistant fall back to presence", () => {
+    const other = { assistantId: "qa", state: "failed" as const };
+    expect(
+      assistantSenderLook({ assistantId: "ada", assistant: null }, presence("idle"), other),
+    ).toEqual({ face: "sleeping", working: false });
+  });
+});
+
+describe("presence rows", () => {
+  it.each([
+    [false, 1, false, "Idle · 1 message here"],
+    [false, 6, false, "Idle · 6 messages here"],
+    [true, 2, true, "Working · 2 messages here · Asks before acting"],
+    [true, 0, true, "Working · Asks before acting"],
+  ])("working %s, %i messages, asks %s → %s", (working, count, asks, expected) => {
+    expect(assistantPresenceStatus(working, { count }, asks)).toBe(expected);
+  });
+
+  it.each([
+    { name: "mixed", working: ["b", "d"], expected: { working: ["b", "d"], idle: ["a", "c"] } },
+    { name: "all idle", working: [], expected: { working: [], idle: ["a", "b", "c", "d"] } },
+    {
+      name: "all working",
+      working: ["a", "b", "c", "d"],
+      expected: { working: ["a", "b", "c", "d"], idle: [] },
+    },
+  ])("lists Working before Idle in speaking order: $name", ({ working, expected }) => {
+    expect(assistantPresenceSections(["a", "b", "c", "d"], (id) => working.includes(id))).toEqual(
+      expected,
+    );
   });
 });

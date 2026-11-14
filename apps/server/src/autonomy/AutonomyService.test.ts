@@ -10,6 +10,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -34,12 +35,14 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
+import * as NeedsUser from "./NeedsUser.ts";
 
 const awake: AssistantAutonomy = {
   mode: "reply-and-notify",
   rules: null,
   projectIds: null,
   channels: null,
+  onProblem: "offer",
 };
 const ON: AutonomySettings = { ...DEFAULT_AUTONOMY_SETTINGS, enabled: true };
 
@@ -62,6 +65,7 @@ const plain: Shell = {
 
 const harness = (language: "en" | "pt-BR" = "en") => {
   const settings = Ref.makeUnsafe<AutonomySettings>(ON);
+  const detectProblems = Ref.makeUnsafe(false);
   const shells = new Map<string, Shell | null>();
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
@@ -80,6 +84,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   });
   const dispatched: Array<Record<string, unknown>> = [];
   const layer = Autonomy.layer.pipe(
+    Layer.provideMerge(NeedsUser.layer),
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
@@ -127,7 +132,12 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           getEnvironmentId: Effect.succeed("env-1" as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
+          getSettings: Effect.all([Ref.get(settings), Ref.get(detectProblems)]).pipe(
+            Effect.map(
+              ([autonomy, detect]) =>
+                ({ autonomy, detectProblems: detect, projectSettingsOverrides: {} }) as never,
+            ),
+          ),
         }),
         Layer.mock(AssistantSpend)({
           budgetRefusal: () =>
@@ -146,6 +156,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   return {
     layer,
     settings,
+    detectProblems,
     shells,
     sent,
     refusal,
@@ -986,6 +997,89 @@ it.effect("without Telegram the waiting request is only in Activity, answerable 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("what already waited before the first run is never told, what came after is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "old", threadId: "t1", createdAt: "1969-12-31T23:00:00.000Z" });
+    yield* pendingRequest(h, { id: "new", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => row.delivery_id.startsWith("needs-you:")),
+      [true],
+    );
+    const decisions = yield* DecisionService.DecisionService;
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["new"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a baseline that could not be recorded at start never lets the old backlog through",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM autonomy_needs_you WHERE subject_key = 'baseline'`;
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "old", threadId: "t1" });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a card the chat app refused or may not have shown is told again later", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* pendingRequest(h, { id: "r2", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [first, second] = yield* outboxRows;
+    yield* sql`UPDATE channel_outbox SET state = 'failed' WHERE delivery_id = ${first!.delivery_id}`;
+    yield* sql`UPDATE channel_outbox SET state = 'ambiguous' WHERE delivery_id = ${second!.delivery_id}`;
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["failed", "ambiguous"],
+    );
+    yield* TestClock.adjust(31 * MIN);
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["pending", "pending"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: ["111"] }));
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "iMessage carries the card when Telegram is not set up and the user wrote from it",
   () => {
@@ -1039,6 +1133,62 @@ it.effect("secrets in a waiting command never reach the chat", () => {
     const [row] = yield* outboxRows;
     assert.include(row!.message.text, "GITHUB_TOKEN=[redacted] gh pr merge");
     assert.notInclude(row!.message.text, "ghp_");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a secret at the edge of the clipped context is redacted before the cut", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, {
+      id: "r1",
+      threadId: "t1",
+      item: {
+        type: "approval_request",
+        requestId: "r1",
+        prompt: `echo ${"a".repeat(1_180)} ghp_${"Z".repeat(32)}`,
+      },
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [row] = yield* outboxRows;
+    assert.notInclude(row!.message.text, "ghp_");
+    assert.notInclude(row!.message.text, "ZZZZ");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a command cut to fit the card cannot be approved from the chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    h.shells.set("t1", plain);
+    for (const [id, length] of [
+      ["card", 2_000],
+      ["decision", 5_000],
+    ] as const) {
+      yield* pendingRequest(h, {
+        id,
+        threadId: "t1",
+        item: { type: "approval_request", requestId: id, prompt: `echo ${"a".repeat(length)}` },
+      });
+    }
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 2);
+    for (const { message } of rows) {
+      assert.isUndefined(message.choices);
+      assert.include(message.text, "(cut short — open it in T3)");
+      assert.include(message.text, "https://app.t3.codes/threads/env-1/t1");
+    }
+    assert.lengthOf(yield* cards, 0);
+    // Cut at the decision's own limit, it is not an approval in Activity either.
+    const cut = (yield* decisions.list({})).find((decision) =>
+      decision.context.includes("a".repeat(4_000).slice(0, 3_900)),
+    );
+    assert.isUndefined(cut?.approvalRequestId);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1185,6 +1335,48 @@ it.effect(
   },
 );
 
+it.effect("a paused branch of a group request is told once, for its top task", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+    const task = (id: string, parent: string | null) => sql`
+      INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
+         status, reason, created_at, updated_at)
+      VALUES (${id}, 'team-1', 'root', ${parent}, ${parent === null ? "root" : "subtask"}, 'msg-1',
+        'ana', ${`Do ${id}`}, 'paused', 'handoff_limit', ${T0}, ${T0})`;
+    yield* task("root", null);
+    yield* task("child", "root");
+    yield* task("grandchild", "child");
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 1);
+    assert.include(rows[0]!.message.text, "Do root");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a message whose delivery could not be queued is not counted as sent", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    const say = service.notifyUser({ assistantId: "jarvis", key: "k1", text: "Deploy done." });
+    yield* sql`ALTER TABLE channel_outbox RENAME TO channel_outbox_away`;
+    const failed = yield* Effect.exit(say);
+    yield* sql`ALTER TABLE channel_outbox_away RENAME TO channel_outbox`;
+    assert.isTrue(Exit.isFailure(failed));
+    assert.equal((yield* say).status, "sent");
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
 const scheduledRun = (
   status: string,
   runId: string,
@@ -1296,3 +1488,108 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect(
+  "with Detect problems on, failures stop waking every assistant by rule; watches still fire",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant();
+      yield* addAssistant(awake, "ana");
+      h.shells.set("t1", plain);
+      yield* service.upsertWatch({
+        assistantId: "ana",
+        title: "failures",
+        filter: { event: "run_failed" },
+        instruction: "",
+        oneShot: false,
+        expiresAt: null,
+      });
+      yield* Ref.set(h.detectProblems, true);
+      yield* service.handleEvent(run("failed", "r1"));
+      yield* service.handleEvent(
+        ev("thread.pull-request-link-updated", "t1", {
+          number: 3,
+          url: "u",
+          snapshot: { checksState: "failing", updatedAt: "x" },
+        }),
+      );
+      assert.deepEqual(
+        h.sent.map((wake) => [wake.threadId, wake.text.split("\n")[0]]),
+        [["assistant:ana:1", "[Autonomy] Watch: failures"]],
+      );
+      // Off again: the old fan-out returns.
+      yield* Ref.set(h.detectProblems, false);
+      yield* service.handleEvent(run("failed", "r2"));
+      assert.sameMembers(
+        h.sent.slice(1).map((wake) => wake.threadId),
+        ["assistant:jarvis:1", "assistant:ana:1", "assistant:ana:1"],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a problem wake's answer reaches the user after the server's line, once", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant();
+    h.shells.set("assistant:jarvis:1", { ...plain, title: "Jarvis" });
+    const header = "Problem in acme: Disk full. Card #4.";
+    for (const [key, answer] of [
+      ["problem:jarvis:1:c1", "Clearing the build cache should fix it. Start?"],
+      ["problem:jarvis:2:c2", "Your token is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
+        VALUES (${key}, 'jarvis', 'assistant:jarvis:1', 'problem', ${header}, '2026-01-01')`;
+      h.answers.set("assistant:jarvis:1", answer);
+      for (let i = 0; i < 2; i++) {
+        yield* service.handleEvent(
+          run("completed", `run-${key}`, "assistant:jarvis:1", `autonomy-wake:${key}`),
+        );
+      }
+    }
+    const texts = (yield* outboxRows).map((row) => row.message.text);
+    assert.deepEqual(texts, [
+      `${header}\n\nClearing the build cache should fix it. Start?`,
+      header,
+    ]);
+    const counted = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM autonomy_wakes WHERE source = 'notify'`;
+    assert.equal(counted[0]!.n, 2);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("tells the user as T3 Code, in Activity when a thread carries it, once per key", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    const notice = { text: "No assistant can work on acme. Give one access in Assistants." };
+    for (let i = 0; i < 2; i++) {
+      yield* service.tellUser({
+        ...notice,
+        key: "k1",
+        projectId: "p1" as never,
+        threadId: "t1" as never,
+      });
+    }
+    yield* service.tellUser({ ...notice, key: "k2", projectId: "p1" as never, threadId: null });
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => [row.message.senderName, row.message.text]),
+      [
+        ["T3 Code", notice.text],
+        ["T3 Code", notice.text],
+      ],
+    );
+    const open = yield* decisions.list({});
+    assert.deepEqual(
+      open.map((decision) => decision.title),
+      [notice.text],
+    );
+  }).pipe(Effect.provide(h.layer));
+});

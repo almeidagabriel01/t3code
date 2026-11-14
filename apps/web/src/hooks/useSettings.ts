@@ -223,7 +223,12 @@ export function persistClientSettingsPatch(
     if (deferPatch) {
       try {
         if (clientSettingsHydrationStatus !== "ready") {
-          await hydrateClientSettings();
+          await hydrateClientSettings().catch((error: unknown) => {
+            // Unreadable storage: the change still holds for this session, but it is never written
+            // over preferences that could not be read.
+            replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+            throw error;
+          });
         }
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {

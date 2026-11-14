@@ -69,6 +69,14 @@ describe("decision client guards", () => {
   });
 });
 
+describe("kanban problem client guards", () => {
+  it("guards ignoring and un-ignoring a problem like other card writes", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.kanbanCardSetProblemIgnored, {})).toEqual([
+      "orchestration:operate",
+    ]);
+  });
+});
+
 describe("device client guards", () => {
   it("guards takeover and phone input as driving a device, and access policies and Wi-Fi pairing as settings", () => {
     for (const method of [WS_METHODS.deviceSetHold, WS_METHODS.deviceInput])
@@ -188,5 +196,23 @@ describe("file explorer client guards", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.projectsChangeEntry, {})).toEqual([
       "filesystem:write",
     ]);
+  });
+});
+
+describe("integration client guards", () => {
+  it("guards every credential change with settings write and leaves the subscription open", () => {
+    for (const method of [
+      WS_METHODS.integrationsBeginConnect,
+      WS_METHODS.integrationsCompleteConnect,
+      WS_METHODS.integrationsCancelConnect,
+      WS_METHODS.integrationsDisconnect,
+      WS_METHODS.integrationsSaveToken,
+      WS_METHODS.integrationsSaveOwnApp,
+      WS_METHODS.integrationsRemoveOwnApp,
+      WS_METHODS.integrationsUpdate,
+      WS_METHODS.integrationsMakeAvailable,
+    ])
+      expect(clientRpcRequiredScopes(method, {})).toEqual(["settings:write"]);
+    expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, WS_METHODS.integrationsSubscribe)).toBe(false);
   });
 });

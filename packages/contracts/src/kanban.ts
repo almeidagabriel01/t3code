@@ -198,6 +198,40 @@ export const KanbanCardAttachment = Schema.Struct({
 });
 export type KanbanCardAttachment = typeof KanbanCardAttachment.Type;
 
+/** What the problem detector files a card for; the title starts with the kind's name. */
+export const PROBLEM_KINDS = [
+  "environment",
+  "provider",
+  "ci",
+  "scheduled-task",
+  "connection",
+  "repeated",
+] as const;
+export const ProblemKind = Schema.Literals(PROBLEM_KINDS);
+export type ProblemKind = typeof ProblemKind.Type;
+
+export const PROBLEM_KIND_TITLES: Record<ProblemKind, string> = {
+  environment: "Environment",
+  provider: "Provider",
+  ci: "CI",
+  "scheduled-task": "Scheduled task",
+  connection: "Connection",
+  repeated: "Repeated failure",
+};
+
+/** Set on cards the problem detector filed: one card per cause, kept current as it recurs. */
+export const KanbanCardProblem = Schema.Struct({
+  kind: ProblemKind,
+  count: PositiveInt,
+  /** The assistant handling it; null when no assistant may work on the project. */
+  ownerName: Schema.NullOr(Schema.String),
+  /** The card this cause had before it was done or archived. */
+  previousCardNumber: Schema.NullOr(PositiveInt),
+  /** No new cards or notices for this cause until the user stops ignoring it. */
+  ignored: Schema.Boolean,
+});
+export type KanbanCardProblem = typeof KanbanCardProblem.Type;
+
 export const KanbanBoard = Schema.Struct({
   id: KanbanBoardId,
   projectId: ProjectId,
@@ -237,6 +271,7 @@ export const KanbanCard = Schema.Struct({
   coverAttachmentId: Schema.NullOr(AttachmentId).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  problem: Schema.NullOr(KanbanCardProblem).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdBy: KanbanActor,
   createdAt: IsoDateTime,
@@ -493,6 +528,11 @@ export const KanbanCardThreadLinkInput = Schema.Struct({
   cardId: KanbanCardId,
   threadId: ThreadId,
 });
+export const KanbanCardSetProblemIgnoredInput = Schema.Struct({
+  ...command,
+  cardId: KanbanCardId,
+  ignored: Schema.Boolean,
+});
 
 export type KanbanBoardEnsureInput = typeof KanbanBoardEnsureInput.Type;
 export type KanbanBoardUpdateInput = typeof KanbanBoardUpdateInput.Type;
@@ -510,6 +550,7 @@ export type KanbanCardMoveInput = typeof KanbanCardMoveInput.Type;
 export type KanbanCardIdInput = typeof KanbanCardIdInput.Type;
 export type KanbanCardCommentInput = typeof KanbanCardCommentInput.Type;
 export type KanbanCardThreadLinkInput = typeof KanbanCardThreadLinkInput.Type;
+export type KanbanCardSetProblemIgnoredInput = typeof KanbanCardSetProblemIgnoredInput.Type;
 
 /** `sequence` is the last delta this command published; ids name what it created or touched. */
 export const KanbanMutationResult = Schema.Struct({

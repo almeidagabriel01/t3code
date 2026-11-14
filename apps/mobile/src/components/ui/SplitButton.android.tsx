@@ -23,7 +23,7 @@ import { Pressable } from "react-native";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { SymbolView } from "./AppSymbol";
 import { Button } from "./Button";
-import { MenuPopupItems } from "./MenuPopup.android";
+import { MenuPopupItems, useMenuSurface } from "./MenuPopup.android";
 import { NativeThemeHost } from "./NativeThemeHost.android";
 import type { SplitButtonProps } from "./SplitButton.types";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
@@ -31,6 +31,7 @@ import { useControlTheme } from "./useControlTheme";
 
 export function SplitButton(props: SplitButtonProps) {
   const { colors } = useControlTheme();
+  const menuSurface = useMenuSurface();
   const typography = useScaledTextRole("footnote");
   const { scale, iconSize, mediumIconSize, menuWidth } = useAndroidControlSizing();
   const [expanded, setExpanded] = useState(false);
@@ -120,7 +121,7 @@ export function SplitButton(props: SplitButtonProps) {
             <DropdownMenu
               expanded={expanded && menuEnabled}
               onDismissRequest={() => setExpanded(false)}
-              color={colors["--color-card-alt"]}
+              {...menuSurface}
             >
               <DropdownMenu.Trigger>
                 <Icon

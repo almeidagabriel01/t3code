@@ -288,6 +288,7 @@ export const make = Effect.gen(function* () {
       notes: true,
       decisions: true,
       assistants: true,
+      integrations: true,
       keepAwake: true,
       telegramChannel: true,
       ...(hostPlatform === "darwin" ? { imessageChannel: true } : {}),

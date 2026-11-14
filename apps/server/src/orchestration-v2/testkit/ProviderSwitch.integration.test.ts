@@ -1931,6 +1931,10 @@ describe("orchestration v2 provider switching", () => {
           }),
         ]);
         const queuedThreadId = ThreadId.make("thread:queued-steer-provider-switch");
+        const PINNED_CODEX_SELECTION = {
+          ...CODEX_MODEL_SELECTION,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } satisfies ModelSelection;
         const projection = yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1972,7 +1976,8 @@ describe("orchestration v2 provider switching", () => {
           yield* dispatch("first", CODEX_MODEL_SELECTION, { type: "start_immediately" });
           yield* Deferred.await(started);
           yield* worker.drain();
-          yield* dispatch("codex-queued", CODEX_MODEL_SELECTION, { type: "queue_after_active" });
+          // A pick that differs from the thread pins the queued run; an echo would follow the steer.
+          yield* dispatch("codex-queued", PINNED_CODEX_SELECTION, { type: "queue_after_active" });
           yield* dispatch("claude-queued", CLAUDE_MODEL_SELECTION, { type: "queue_after_active" });
           const beforeSteer = yield* orchestrator.getThreadProjection(queuedThreadId);
           assert.deepEqual(
@@ -3284,6 +3289,186 @@ describe("orchestration v2 provider switching", () => {
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
                 { name: `pr-wake-${delivery}`, runtimePolicyOverride: { cwd } },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.live.each(["switched", "unchanged"] as const)(
+    "runs work waiting on a usage limit on the thread's current provider (%s)",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace(`limit-switch-${scenario}`);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CODEX_MODEL_SELECTION.instanceId,
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+              holdFirstTurn: started,
+              releaseFirstTurn: release,
+              failedRunOrdinals: new Set([1]),
+              failure: makeProviderFailure({
+                message: "You've hit your weekly limit",
+                class: "usage_limit",
+                code: "usage_limit",
+                resetAt: "2999-01-01T09:00:00.000Z",
+              }),
+            }),
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {},
+              capturedTurns,
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Limited thread",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("original"),
+              messageId: MessageId.make("original"),
+              threadId,
+              text: "Original work",
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* Deferred.await(started);
+            // Queued while busy: an agent message without a selection and a user message whose
+            // selection only echoes the thread's. Neither may pin the limited provider.
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("agent-queued"),
+              messageId: MessageId.make("agent-queued"),
+              threadId,
+              text: "Agent follow-up",
+              attachments: [],
+              createdBy: "agent",
+              creationSource: "mcp",
+              dispatchMode: { type: "queue_after_active" },
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("user-queued"),
+              messageId: MessageId.make("user-queued"),
+              threadId,
+              text: "User follow-up",
+              attachments: [],
+              modelSelection: CODEX_MODEL_SELECTION,
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "queue_after_active" },
+            });
+            const [limited, agentQueued, userQueued] = (yield* orchestrator.getThreadProjection(
+              threadId,
+            )).runs;
+            assert.isDefined(limited);
+            assert.isDefined(agentQueued);
+            assert.isDefined(userQueued);
+            assert.isUndefined(userQueued.modelSelectionPinned);
+            yield* Deferred.succeed(release, undefined);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.runId === limited.id &&
+                  event.payload.status === "failed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            const shellOf = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
+              snapshot.threads.find((thread) => thread.id === threadId),
+            );
+            assert.equal((yield* shellOf)?.lastErrorClass, "usage_limit");
+
+            if (scenario === "unchanged") {
+              const after = yield* orchestrator.getThreadProjection(threadId);
+              assert.lengthOf(yield* Ref.get(capturedTurns), 1);
+              assert.deepEqual(
+                after.runs.map((run) => run.status),
+                ["failed", "queued", "queued"],
+              );
+              assert.deepEqual(after.thread.modelSelection, CODEX_MODEL_SELECTION);
+              return;
+            }
+
+            yield* orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: CommandId.make("switch"),
+              threadId,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+            });
+            yield* worker.drain();
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.runId === userQueued.id &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            const turns = yield* Ref.get(capturedTurns);
+            assert.deepEqual(
+              turns.map((turn) => turn.driver),
+              [CODEX_DRIVER, CLAUDE_DRIVER, CLAUDE_DRIVER, CLAUDE_DRIVER],
+            );
+            assert.include(turns[1]!.text, "Continue where you left off.");
+            assert.include(turns[2]!.text, "Agent follow-up");
+            assert.include(turns[3]!.text, "User follow-up");
+            assert.deepEqual(after.thread.modelSelection, CLAUDE_MODEL_SELECTION);
+            assert.equal(after.thread.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            for (const run of after.runs.filter((candidate) => candidate.id !== limited.id)) {
+              assert.equal(run.status, "completed");
+              assert.equal(run.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+            }
+            // Context moves once, to the new provider; nothing hands back to the limited one.
+            assert.isTrue(
+              after.contextHandoffs.every(
+                (handoff) =>
+                  after.runs.find((run) => run.contextHandoffId === handoff.id)
+                    ?.providerInstanceId !== CODEX_MODEL_SELECTION.instanceId,
+              ),
+            );
+            const shell = yield* shellOf;
+            assert.isNull(shell?.lastErrorClass ?? null);
+            assert.isNull(shell?.usageLimitResetAt ?? null);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                { name: `limit-switch-${scenario}`, runtimePolicyOverride: { cwd } },
                 layerRegistry,
               ),
             ),

@@ -86,6 +86,11 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 - **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
   still applies, and you can still compact by hand.
 
+**Close idle Claude agents** in **Settings > Providers > Advanced** (10 minutes by default)
+closes a Claude process that has had no activity for that long, to free memory. Your next
+message resumes the same conversation. A process with a running turn, subagent, background
+task or pending request stays open.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

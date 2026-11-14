@@ -164,6 +164,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   decisions: Schema.optionalKey(Schema.Boolean),
   /** Hide Assistants when absent; older servers have no assistant methods. */
   assistants: Schema.optionalKey(Schema.Boolean),
+  /** Hide Integrations when absent; older servers have no integration methods. */
+  integrations: Schema.optionalKey(Schema.Boolean),
   /** Hide iMessage when absent; only Mac servers can run it. */
   imessageChannel: Schema.optionalKey(Schema.Boolean),
   /** Hide the keep-awake status when absent; older servers cannot hold the host awake. */

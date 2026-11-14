@@ -30,6 +30,9 @@ export interface DesktopSettings {
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
+  readonly openAtLogin: boolean;
+  // Set once the system confirms the login item, so a later removal in system settings reads as the user's choice.
+  readonly openAtLoginRegistered: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -40,6 +43,11 @@ export interface DesktopSettings {
   // Requires restart because the pool chooses its primary spec at layer initialization.
   readonly wslOnly: boolean;
 }
+
+export type DesktopOpenAtLoginSettings = Pick<
+  DesktopSettings,
+  "openAtLogin" | "openAtLoginRegistered"
+>;
 
 export interface DesktopSettingsChange {
   readonly settings: DesktopSettings;
@@ -71,6 +79,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
+  openAtLogin: true,
+  openAtLoginRegistered: false,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -93,6 +103,8 @@ const DesktopSettingsDocument = Schema.Struct({
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  openAtLogin: Schema.optionalKey(Schema.Boolean),
+  openAtLoginRegistered: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -152,6 +164,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setOpenAtLogin: (
+      next: DesktopOpenAtLoginSettings,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -222,6 +237,8 @@ function normalizeDesktopSettingsDocument(
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
+    openAtLogin: parsed.openAtLogin !== false,
+    openAtLoginRegistered: parsed.openAtLoginRegistered === true,
     serverExposureMode:
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
@@ -254,6 +271,12 @@ function toDesktopSettingsDocument(
   }
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
+  }
+  if (settings.openAtLogin !== defaults.openAtLogin) {
+    document.openAtLogin = settings.openAtLogin;
+  }
+  if (settings.openAtLoginRegistered !== defaults.openAtLoginRegistered) {
+    document.openAtLoginRegistered = settings.openAtLoginRegistered;
   }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
@@ -367,6 +390,16 @@ function setWslOnly(settings: DesktopSettings, enabled: boolean): DesktopSetting
         ...settings,
         wslOnly: enabled,
       };
+}
+
+function setOpenAtLogin(
+  settings: DesktopSettings,
+  next: DesktopOpenAtLoginSettings,
+): DesktopSettings {
+  return settings.openAtLogin === next.openAtLogin &&
+    settings.openAtLoginRegistered === next.openAtLoginRegistered
+    ? settings
+    : { ...settings, ...next };
 }
 
 function setLocalEnvironmentEnabled(settings: DesktopSettings, enabled: boolean): DesktopSettings {
@@ -531,6 +564,11 @@ export const make = Effect.gen(function* () {
         return yield* persist((settings) => setMainWindowBounds(settings, bounds, isMaximized));
       },
     ),
+    setOpenAtLogin: Effect.fn("desktop.settings.setOpenAtLogin")(function* (next) {
+      yield* Effect.annotateCurrentSpan(next);
+
+      return yield* persist((settings) => setOpenAtLogin(settings, next));
+    }),
     setServerExposureMode: Effect.fn("desktop.settings.setServerExposureMode")(function* (mode) {
       yield* Effect.annotateCurrentSpan({ mode });
 
@@ -604,6 +642,9 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
             return update((settings) => setMainWindowBounds(settings, bounds, isMaximized));
           },
         ),
+        setOpenAtLogin: Effect.fn("DesktopAppSettings.setOpenAtLogin")(function (next) {
+          return update((settings) => setOpenAtLogin(settings, next));
+        }),
         setServerExposureMode: Effect.fn("DesktopAppSettings.setServerExposureMode")(
           function (mode) {
             return update((settings) => setServerExposureMode(settings, mode));

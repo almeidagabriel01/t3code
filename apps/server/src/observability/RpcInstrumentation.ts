@@ -207,6 +207,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.kanbanCardComment]: "kanban",
   [WS_METHODS.kanbanCardLinkThread]: "kanban",
   [WS_METHODS.kanbanCardUnlinkThread]: "kanban",
+  [WS_METHODS.kanbanCardSetProblemIgnored]: "kanban",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.guestShareCreate]: "guest-share",
   [WS_METHODS.cloudGetRelayClientStatus]: "cloud",
@@ -343,6 +344,16 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
+  [WS_METHODS.integrationsSubscribe]: "integrations",
+  [WS_METHODS.integrationsBeginConnect]: "integrations",
+  [WS_METHODS.integrationsCompleteConnect]: "integrations",
+  [WS_METHODS.integrationsCancelConnect]: "integrations",
+  [WS_METHODS.integrationsDisconnect]: "integrations",
+  [WS_METHODS.integrationsSaveToken]: "integrations",
+  [WS_METHODS.integrationsSaveOwnApp]: "integrations",
+  [WS_METHODS.integrationsRemoveOwnApp]: "integrations",
+  [WS_METHODS.integrationsUpdate]: "integrations",
+  [WS_METHODS.integrationsMakeAvailable]: "integrations",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

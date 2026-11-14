@@ -55,6 +55,7 @@ import {
 } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
+  BlocksIcon,
   BrainIcon,
   BriefcaseIcon,
   UserRoundIcon,
@@ -97,6 +98,7 @@ import {
   CalendarClockIcon,
   Columns2Icon,
   PanelRightCloseIcon,
+  InfoIcon,
 } from "lucide-react";
 import { useAutonomyPause } from "./assistants/useAutonomyPause";
 import { useActivityOpen, useToggleActivity } from "./activity/useActivity";
@@ -108,8 +110,10 @@ import { useNotesPaletteItems } from "./notes/notesPaletteItems";
 import { projectPanelPaletteItems } from "./projectPanels/projectPanelPaletteItems";
 import { openAssistantDialog } from "./assistants/assistantDialogState";
 import { openAssistantWork } from "./assistants/assistantWorkState";
+import { openAssistantInfo } from "./assistants/assistantInfoState";
 import { openAssistantTeamDialog } from "./assistants/assistantTeamState";
 import { useAssistantEntries } from "../state/assistants";
+import { useIntegrationsEnvironmentIds } from "../state/integrations";
 import {
   useDeferredValue,
   useEffect,
@@ -235,6 +239,7 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
+  buildAssistantInfoActionItems,
   buildAssistantWorkActionItems,
   RECENT_THREAD_LIMIT,
   createCommandPaletteSearchState,
@@ -519,6 +524,7 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
+  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
@@ -1925,6 +1931,14 @@ function OpenCommandPaletteDialog(props: {
     });
   }
   actionItems.push(
+    ...buildAssistantInfoActionItems({
+      pathname,
+      activeThread: activeThread ?? null,
+      assistants: assistantEntries.active,
+      teams: assistantEntries.activeTeams,
+      icon: <InfoIcon className={ITEM_ICON_CLASS} />,
+      open: openAssistantInfo,
+    }),
     ...buildAssistantWorkActionItems({
       entries: assistantEntries.active,
       environmentLabel: (environmentId) =>
@@ -2021,6 +2035,20 @@ function OpenCommandPaletteDialog(props: {
           search: validateMemorySettingsSearch({ environmentId: memoryEnvironmentId ?? undefined }),
           hash: "",
         });
+      },
+    });
+  }
+
+  if (hasIntegrations) {
+    actionItems.push({
+      kind: "action",
+      value: "action:integrations",
+      searchTerms: ["integrations", "connect", "connectors", "mcp", "sign in", "token"],
+      title: "Integrations",
+      icon: <BlocksIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        setOpen(false);
+        await navigate({ to: "/settings/integrations", hash: "" });
       },
     });
   }
@@ -2153,8 +2181,9 @@ function OpenCommandPaletteDialog(props: {
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
+  // The Integrations action above already opens that page.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
-    availableSettingsSearchItems,
+    availableSettingsSearchItems.filter((item) => item.id !== "integrations"),
   ).map((item) => ({
     kind: "action",
     value: `setting:${item.id}`,

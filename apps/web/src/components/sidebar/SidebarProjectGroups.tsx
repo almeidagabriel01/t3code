@@ -6,7 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { MouseEvent, ReactNode } from "react";
+import { useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -67,6 +67,23 @@ function ProjectNotificationDot(props: { threads: readonly EnvironmentThreadShel
     return null;
   });
   return <SidebarNotificationDot dotClass={dotClass} />;
+}
+
+/**
+ * dnd-kit memoizes on the `items` array, so a new array with the same ids rebuilds the context and
+ * re-renders every sortable under it. This keeps one array while the ids stay the same.
+ */
+export function StableSortableContext(
+  props: Omit<ComponentProps<typeof SortableContext>, "items"> & {
+    readonly items: string[];
+  },
+) {
+  const [stable, setStable] = useState(props.items);
+  const same =
+    stable.length === props.items.length && stable.every((id, index) => id === props.items[index]);
+  if (!same) setStable(props.items);
+  const items = same ? stable : props.items;
+  return <SortableContext {...props} items={items} />;
 }
 
 export type SidebarProjectDrag = {
@@ -356,7 +373,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
           <SidebarProjectHoverCard project={project} portCount={portCount} />
         </span>
       </div>
-      <SortableContext
+      <StableSortableContext
         items={items.map(sidebarListItemId)}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
@@ -371,7 +388,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             </li>
           ) : null}
         </ul>
-      </SortableContext>
+      </StableSortableContext>
     </li>
   );
 }

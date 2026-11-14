@@ -1,55 +1,34 @@
-import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
-import { assistantSites, type AssistantWorkSite } from "@t3tools/client-runtime/assistantLiveWork";
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/models";
-import { hasProjectPanels } from "@t3tools/client-runtime/state/projects";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  assistantMetaLabel,
-  rankAssistants,
-  visibleAssistants,
-} from "@t3tools/client-runtime/assistantList";
-import {
-  assistantFace,
-  assistantGroupThreadsOf,
-  assistantPresence,
-} from "@t3tools/client-runtime/assistantRobot";
-import {
-  hasSidebarNotification,
-  resolveSidebarThreadStatus,
-} from "@t3tools/client-runtime/state/thread-attention";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { assistantGroupFoldKey, visibleAssistants } from "@t3tools/client-runtime/assistantList";
+import { assistantFace, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { assistantSectionThreadKeys } from "@t3tools/client-runtime/assistantTasks";
+import type { ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { cn } from "../../lib/cn";
-import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useNowMinuteMs } from "../../lib/clock";
-import { useProjects, useQuietThreadShells, useThreadShell } from "../../state/entities";
+import { useQuietThreadShells } from "../../state/entities";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
 import {
-  useAssistantEntries,
   useAssistantLiveWork,
   useAssistantTasksByAssistant,
   type AssistantEntry,
   type AssistantTeamEntry,
 } from "../../state/assistants";
-import { SubagentStatusDot } from "../threads/SubagentStatusDot";
 import { ThreadListV2SubagentRow } from "../threads/thread-list-v2-items";
 import type { ThreadListV2ThreadListItem } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { useThreadListActions } from "../home/useThreadListActions";
+import { useSidebarZones, type TeamsMember } from "../home/useSidebarZones";
 import { AssistantAvatar } from "./assistantPresentation";
 import {
   AssistantTaskRows,
@@ -57,21 +36,12 @@ import {
   assistantTaskSectionsOf,
   useAssistantSectionOpen,
 } from "./AssistantTaskRows";
-import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useOpenAssistantInfo } from "./openAssistantInfo";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
-
-const COLLAPSED_AVATAR_LIMIT = 5;
-const WORK_SITE_LIMIT = 2;
-
-type WorkSite = { readonly site: AssistantWorkSite; readonly project: EnvironmentProject };
-const STACKED_AVATAR_LIMIT = 4;
-
-const threadRefOf = ({ assistant, environmentId }: AssistantEntry) =>
-  assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
 
 const entryKey = ({ environmentId, assistant }: AssistantEntry) =>
   `${environmentId}:${assistant.id}`;
@@ -79,31 +49,33 @@ const shellKey = (shell: EnvironmentThreadShell) => `${shell.environmentId}:${sh
 const NO_SUBAGENTS: ReadonlyArray<EnvironmentThreadShell> = [];
 
 /**
- * What the section draws, from one place: the section renders it and ⌘1–9 numbers it, so the
- * numbers follow every fold, shelf and Show all the user sees.
+ * What the Teams zone draws, from one place: the zone renders it and ⌘1–9 numbers it, so the
+ * numbers follow every fold, shelf and Show all the user sees. Each assistant appears once.
  */
 function useAssistantSectionModel() {
-  const { active, activeTeams: teams } = useAssistantEntries();
+  const zones = useSidebarZones();
   const preferences = useHomeSectionPreferences();
   const shells = useQuietThreadShells();
   const work = useAssistantLiveWork();
   const tasksByAssistant = useAssistantTasksByAssistant();
   const { threadOrder } = useThreadListV2ShelfPreferences();
   const nowMs = useNowMinuteMs();
-  const { open, toggle } = useAssistantSectionOpen();
-  const ranked = rankAssistants(active, shells);
-  const rankedByKey = new Map(ranked.map((item) => [entryKey(item.entry), item]));
+  const { open } = useAssistantSectionOpen();
+  const { ungrouped } = zones.layout;
   const { shown: listed, hidden: hiddenInList } = visibleAssistants(
-    ranked,
+    ungrouped,
     preferences.assistantsShowAll,
   );
-  const groups = teams.map((team) => {
-    const key = `group:${team.environmentId}:${team.team.id}`;
-    const members = team.team.memberIds.flatMap((id) => {
-      const item = rankedByKey.get(`${team.environmentId}:${id}`);
-      return item === undefined ? [] : [item];
-    });
-    return { team, key, members, expanded: open.has(key) };
+  const expandedGroups = new Set(preferences.assistantsExpandedGroups);
+  const folders = zones.layout.folders.map(({ team, members }) => {
+    const foldKey = assistantGroupFoldKey(team.environmentId, team.team.id);
+    return {
+      team,
+      members,
+      foldKey,
+      expanded: members.length > 0 && expandedGroups.has(foldKey),
+      indicator: zones.indicators.folder.get(`${team.environmentId}:${team.team.id}`) ?? null,
+    };
   });
   const shellByKey = new Map(shells.map((shell) => [shellKey(shell), shell]));
   const rowOf = (entry: AssistantEntry) => {
@@ -123,24 +95,21 @@ function useAssistantSectionModel() {
       folded: preferences.assistantsFolded.has(key),
     };
   };
-  // Render order: open groups' members, then the list; a member can show in both.
+  // Render order: the ungrouped list, then each open folder's members.
   const drawn = preferences.assistantsCollapsed
     ? []
-    : [...groups.flatMap((group) => (group.expanded ? group.members : [])), ...listed].map(
+    : [...listed, ...folders.flatMap((folder) => (folder.expanded ? folder.members : []))].map(
         (item) => item.entry,
       );
   return {
-    active,
-    teams,
-    ranked,
-    groups,
+    zones,
     listed,
     hiddenInList,
+    ungrouped,
+    folders,
     preferences,
-    work,
     shellByKey,
     open,
-    toggle,
     rowOf,
     drawn,
   };
@@ -173,105 +142,115 @@ export function useAssistantSectionJumpThreads(
   return [...new Set(keys)].flatMap((key) => model.shellByKey.get(key) ?? []);
 }
 
-function useAssistantState(entry: AssistantEntry) {
-  const thread = useThreadShell(threadRefOf(entry));
-  const shells = useQuietThreadShells();
-  const presence = assistantPresence(
-    thread,
-    assistantGroupThreadsOf(shells, entry.environmentId, entry.assistant.id),
-  );
-  return {
-    presence,
-    working:
-      (thread !== null && resolveSidebarThreadStatus(thread) === "working") ||
-      presence.mood === "working",
-    needsYou:
-      presence.mood === "needs" ||
-      (thread !== null &&
-        hasSidebarNotification(
-          thread.lastVisitedAt === undefined ? { ...thread, latestRun: null } : thread,
-        )),
-  };
+const INDICATOR_DOT = {
+  needs: "bg-warning",
+  failed: "bg-adaptive-rose-600-400",
+  paused: "bg-foreground-muted",
+  running: "bg-adaptive-sky-600-400",
+} as const;
+
+function indicatorLabel(indicator: ZoneIndicator, assistant: boolean): string {
+  switch (indicator.kind) {
+    case "needs":
+      return indicator.count === 1 ? "Needs you" : `${indicator.count} need you`;
+    case "failed":
+      return "Failed";
+    case "paused":
+      return `${indicator.count} paused`;
+    case "running":
+      return assistant ? "Working" : `${indicator.count} running`;
+    case "unread":
+      return `${indicator.count} unread`;
+  }
 }
 
-function statusLabel(name: string, state: { working: boolean; needsYou: boolean }) {
-  return `${name}${state.working ? ", working" : state.needsYou ? ", needs attention" : ""}`;
-}
-
-/** Collapsed header: the avatar alone, with a dot when the assistant works or wants you. */
-function AssistantAvatarButton(props: { readonly entry: AssistantEntry }) {
-  const { assistant, environmentId } = props.entry;
-  const flows = useAssistantFlows(environmentId);
-  const state = useAssistantState(props.entry);
+/** One static status mark: a dot with a short word, or the unread count. Nothing animates. */
+function IndicatorBadge(props: {
+  readonly kind: ZoneIndicator["kind"];
+  readonly count: number;
+  readonly assistant: boolean;
+  readonly sidebar: boolean;
+}) {
+  const indicator = { kind: props.kind, count: props.count } as ZoneIndicator;
+  if (props.kind === "unread") {
+    return (
+      <View
+        testID="zone-indicator"
+        accessibilityLabel={indicatorLabel(indicator, props.assistant)}
+        className="min-w-5 items-center rounded-full bg-primary px-1.5 py-px"
+      >
+        <Text className="text-2xs font-t3-bold text-primary-foreground">
+          {props.count > 99 ? "99+" : props.count}
+        </Text>
+      </View>
+    );
+  }
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={statusLabel(assistant.name, state)}
-      disabled={assistant.threadId === null}
-      hitSlop={4}
-      onPress={() => flows.openConversation(assistant)}
-      className="active:opacity-70"
-    >
-      <AssistantAvatar
-        assistant={assistant}
-        environmentId={environmentId}
-        mood={assistantFace(state.presence)}
-        size={28}
-      />
-      {state.working || state.needsYou ? (
-        <View className="absolute -right-0.5 -top-0.5">
-          <SubagentStatusDot tone={state.working ? "working" : "completed"} placement="sheet" />
-        </View>
-      ) : null}
-    </Pressable>
+    <View testID="zone-indicator" className="shrink-0 flex-row items-center gap-1">
+      <View className={cn("size-2 rounded-full", INDICATOR_DOT[props.kind])} />
+      <Text
+        className={cn(
+          "text-xs",
+          props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
+        )}
+        numberOfLines={1}
+      >
+        {indicatorLabel(indicator, props.assistant)}
+      </Text>
+    </View>
   );
 }
 
-function AssistantRow(props: {
-  readonly entry: AssistantEntry;
+/** The row's role text gives way below this width (14rem), so the name stays whole. */
+const ROLE_MIN_ROW_WIDTH = 224;
+/** Below this the role would show as a couple of letters; the tooltip-less row drops it instead. */
+const META_MIN_WIDTH = 56;
+
+/**
+ * The assistant's own line. It reads no shared lists: every value arrives as a plain prop, so a
+ * busy thread elsewhere never redraws it.
+ */
+const AssistantRow = memo(function AssistantRow(props: {
+  // Not the entry: the assistant list wraps every assistant anew on each change, while the
+  // assistant itself keeps its identity until it changes.
+  readonly environmentId: AssistantEntry["environmentId"];
+  readonly assistant: AssistantEntry["assistant"];
+  readonly face: AssistantFace;
+  readonly indicatorKind: ZoneIndicator["kind"] | null;
+  readonly indicatorCount: number;
+  readonly working: boolean;
+  readonly foldable: boolean;
+  readonly expanded: boolean;
   readonly environmentLabel: string | null;
   readonly sidebar: boolean;
-  readonly nested?: boolean;
-  /** Shown as a pill when the assistant is project-scoped and has no status to show. */
-  readonly projectLabel?: string | null;
-  /** The projects it is working in now; each favicon opens the thread it works on there. */
-  readonly workSites?: ReadonlyArray<WorkSite>;
-  /** Its tasks and live delegated children (pinned first), folded or not. */
-  readonly row: AssistantRowModel;
-  readonly renderThread?: (item: ThreadListV2ThreadListItem) => ReactNode;
-  readonly onSetSubagentPinned: (thread: EnvironmentThreadShell, pinned: boolean) => void;
+  readonly nested: boolean;
+  readonly onToggleFold: (key: string) => void;
 }) {
-  const { assistant, environmentId } = props.entry;
+  const { assistant, environmentId } = props;
   const flows = useAssistantFlows(environmentId);
-  const workSites = props.workSites ?? [];
-  const shownSites = workSites.slice(0, WORK_SITE_LIMIT);
-  const { sections, subagents } = props.row;
-  const { toggleAssistantFolded } = useHomeSectionPreferences();
-  const { pinningEnvironmentIds } = useAtomValue(threadListEnvironmentsAtom);
-  const foldKey = entryKey(props.entry);
-  const expanded = !props.row.folded;
-  const foldable =
-    sections.pinned.length +
-      sections.open.length +
-      sections.snoozed.length +
-      sections.settled.length +
-      subagents.length >
-    0;
   const openEditor = useOpenAssistantEditor();
   const openWork = useOpenAssistantWork();
-  const state = useAssistantState(props.entry);
-  const { presence } = state;
-  const meta = assistantMetaLabel(presence);
+  const openInfo = useOpenAssistantInfo();
   const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
-  // Where the row is too narrow for the text, the dot and the row's label carry the status.
-  const dotCarriesStatus = (state.working || state.needsYou) && rowWidth < 304;
+  const [metaWidth, setMetaWidth] = useState(Number.POSITIVE_INFINITY);
+  const meta = [rowWidth >= ROLE_MIN_ROW_WIDTH ? assistant.role : "", props.environmentLabel ?? ""]
+    .filter((part) => part !== "")
+    .join(" · ");
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
+  const status =
+    props.indicatorKind === null
+      ? null
+      : indicatorLabel(
+          { kind: props.indicatorKind, count: props.indicatorCount } as ZoneIndicator,
+          true,
+        );
   const actions: MenuAction[] = [
+    { id: "info", title: "Assistant info", image: "info.circle" },
     {
       id: "reset",
       title: "Reset conversation",
       image: "arrow.clockwise",
-      attributes: { disabled: !flows.canAct || state.working },
+      attributes: { disabled: !flows.canAct || props.working },
     },
     { id: "work", title: `${assistant.name} work`, image: "briefcase" },
     { id: "settings", title: `${assistant.name} settings`, image: "gearshape" },
@@ -283,155 +262,143 @@ function AssistantRow(props: {
     },
   ];
   const onAction = (id: string) => {
-    if (id === "reset") flows.reset(assistant, { openAfter: true });
+    if (id === "info") openInfo.assistant(environmentId, assistant.id);
+    else if (id === "reset") flows.reset(assistant, { openAfter: true });
     else if (id === "work") openWork(environmentId, assistant.id);
     else if (id === "settings") openEditor(environmentId, assistant);
     else if (id === "archive") flows.archive(assistant);
   };
   return (
-    <View>
-      <View
-        className={cn(
-          "flex-row items-center",
-          props.nested && "ml-3.5 border-l border-border pl-1",
-        )}
-      >
-        {/* The menu ignores layout classes, so the row's flex sits on this view. */}
-        <View className="min-w-0 flex-1">
-          <Menu
-            actions={actions}
-            onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
-            shouldOpenOnLongPress
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={statusLabel(assistant.name, state)}
-              disabled={assistant.threadId === null}
-              onPress={() => flows.openConversation(assistant)}
-              onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
-              className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
-            >
-              <View>
-                <AssistantAvatar
-                  assistant={assistant}
-                  environmentId={environmentId}
-                  mood={assistantFace(presence)}
-                  size={24}
-                />
-                {state.working || state.needsYou ? (
-                  <View className="absolute -right-0.5 -top-0.5">
-                    <SubagentStatusDot
-                      tone={state.working ? "working" : "completed"}
-                      placement="sheet"
-                    />
-                  </View>
-                ) : null}
-              </View>
-              <Text
-                className={cn(
-                  "shrink text-base font-t3-medium",
-                  props.sidebar ? "text-drawer-foreground" : "text-foreground",
-                )}
-                numberOfLines={1}
-              >
-                {assistant.name}
-              </Text>
-              {assistant.role === "" ? null : (
-                <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
-                  <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                    {assistant.role}
-                  </Text>
-                </View>
-              )}
-              {props.environmentLabel ? (
-                <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
-              <View className="min-w-2 flex-1" />
-              {shownSites.map(({ site, project }) => (
-                <Pressable
-                  key={`${site.environmentId}:${site.projectId}`}
-                  testID="assistant-work-site"
-                  accessibilityRole="button"
-                  accessibilityLabel={`Working in ${project.title}`}
-                  hitSlop={8}
-                  onPress={() => flows.openConversation({ threadId: site.threadId })}
-                  // Keeps the long press for the row's menu.
-                  onLongPress={() => undefined}
-                  className="active:opacity-70"
-                >
-                  <ProjectFavicon
-                    environmentId={project.environmentId}
-                    faviconPath={project.faviconPath}
-                    projectIcon={project.projectIcon}
-                    size={16}
-                    projectTitle={project.title}
-                    workspaceRoot={project.workspaceRoot}
-                  />
-                </Pressable>
-              ))}
-              {workSites.length > shownSites.length ? (
-                <Text className={cn("text-2xs", muted)}>
-                  +{workSites.length - shownSites.length}
-                </Text>
-              ) : null}
-              {meta !== null ? (
-                dotCarriesStatus ? null : (
-                  <Text
-                    testID="assistant-status"
-                    className={cn(
-                      "max-w-[45%] shrink text-xs",
-                      moodTextClass(presence.mood, props.sidebar),
-                    )}
-                    numberOfLines={1}
-                  >
-                    {meta}
-                  </Text>
-                )
-              ) : props.projectLabel && workSites.length === 0 ? (
-                <View
-                  testID="assistant-project"
-                  className="max-w-24 rounded-md border border-border px-1.5 py-px"
-                >
-                  <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                    {props.projectLabel}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
-          </Menu>
-        </View>
-        {foldable ? (
+    <View
+      className={cn("flex-row items-center", props.nested && "ml-3.5 border-l border-border pl-1")}
+    >
+      {/* The menu ignores layout classes, so the row's flex sits on this view. */}
+      <View className="min-w-0 flex-1">
+        <Menu
+          actions={actions}
+          onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
+          shouldOpenOnLongPress
+        >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
-            accessibilityState={{ expanded }}
-            hitSlop={6}
-            onPress={() => toggleAssistantFolded(foldKey)}
-            className="size-9 items-center justify-center rounded-full active:opacity-70"
+            accessibilityLabel={[assistant.name, assistant.role || null, status]
+              .filter(Boolean)
+              .join(", ")}
+            disabled={assistant.threadId === null}
+            onPress={() => flows.openConversation(assistant)}
+            onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
+            className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
           >
-            <SymbolView
-              name={expanded ? "chevron.down" : "chevron.right"}
-              size={11}
-              tintColorClassName={
-                props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
-              }
-              type="monochrome"
+            <AssistantAvatar
+              assistant={assistant}
+              environmentId={environmentId}
+              mood={props.face}
+              size={24}
             />
+            <Text
+              className={cn(
+                "shrink text-base font-t3-medium",
+                props.sidebar ? "text-drawer-foreground" : "text-foreground",
+              )}
+              numberOfLines={1}
+            >
+              {assistant.name}
+            </Text>
+            {/* Grows into the space left, so it truncates before the name does; one string, so a
+                tight row cuts its end instead of leaving a fragment of each part. */}
+            <View
+              className="min-w-0 flex-1"
+              onLayout={(event) => setMetaWidth(event.nativeEvent.layout.width)}
+            >
+              {meta !== "" && metaWidth >= META_MIN_WIDTH ? (
+                <Text className={cn("text-sm", muted)} numberOfLines={1}>
+                  {meta}
+                </Text>
+              ) : null}
+            </View>
+            {props.indicatorKind === null ? null : (
+              <IndicatorBadge
+                kind={props.indicatorKind}
+                count={props.indicatorCount}
+                assistant
+                sidebar={props.sidebar}
+              />
+            )}
           </Pressable>
-        ) : null}
-        <RowMenuButton
-          label={`${assistant.name} actions`}
-          sidebar={props.sidebar}
-          actions={actions}
-          onAction={onAction}
-        />
+        </Menu>
       </View>
+      {props.foldable ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${props.expanded ? "Hide" : "Show"} ${assistant.name} tasks`}
+          accessibilityState={{ expanded: props.expanded }}
+          hitSlop={6}
+          onPress={() => props.onToggleFold(`${environmentId}:${assistant.id}`)}
+          className="size-9 items-center justify-center rounded-full active:opacity-70"
+        >
+          <SymbolView
+            name={props.expanded ? "chevron.down" : "chevron.right"}
+            size={11}
+            tintColorClassName={
+              props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
+            }
+            type="monochrome"
+          />
+        </Pressable>
+      ) : null}
+      <RowMenuButton
+        label={`${assistant.name} actions`}
+        sidebar={props.sidebar}
+        actions={actions}
+        onAction={onAction}
+      />
+    </View>
+  );
+});
+
+/** An assistant's row, then its tasks and live subagents while unfolded. */
+function AssistantBlock(props: {
+  readonly member: TeamsMember;
+  readonly row: AssistantRowModel;
+  readonly environmentLabel: string | null;
+  readonly sidebar: boolean;
+  readonly nested: boolean;
+  readonly onToggleFold: (key: string) => void;
+  readonly renderThread?: ((item: ThreadListV2ThreadListItem) => ReactNode) | undefined;
+  readonly onSetSubagentPinned: (thread: EnvironmentThreadShell, pinned: boolean) => void;
+  readonly pinningEnvironmentIds: ReadonlySet<string>;
+}) {
+  const { entry, presence, indicator } = props.member;
+  const flows = useAssistantFlows(entry.environmentId);
+  const { sections, subagents } = props.row;
+  const expanded = !props.row.folded;
+  const foldable =
+    sections.pinned.length +
+      sections.open.length +
+      sections.snoozed.length +
+      sections.settled.length +
+      subagents.length >
+    0;
+  return (
+    <View>
+      <AssistantRow
+        environmentId={entry.environmentId}
+        assistant={entry.assistant}
+        face={assistantFace(presence)}
+        indicatorKind={indicator?.kind ?? null}
+        indicatorCount={indicator !== null && "count" in indicator ? indicator.count : 0}
+        working={presence.mood === "working"}
+        foldable={foldable}
+        expanded={expanded}
+        environmentLabel={props.environmentLabel}
+        sidebar={props.sidebar}
+        nested={props.nested}
+        onToggleFold={props.onToggleFold}
+      />
       {expanded ? (
         <>
           <AssistantTaskRows
-            entry={props.entry}
+            entry={entry}
             sections={sections}
             sidebar={props.sidebar}
             {...(props.renderThread ? { renderThread: props.renderThread } : {})}
@@ -443,7 +410,7 @@ function AssistantRow(props: {
               thread={child}
               onSelectThread={(thread) => flows.openConversation({ threadId: thread.id })}
               menu={{
-                pinningSupported: pinningEnvironmentIds.has(child.environmentId),
+                pinningSupported: props.pinningEnvironmentIds.has(child.environmentId),
                 onSetPinned: props.onSetSubagentPinned,
               }}
             />
@@ -454,88 +421,38 @@ function AssistantRow(props: {
   );
 }
 
-/** One group on one line: the row opens its chat; the chevron shows or hides its members. */
-function GroupFoldRow(props: {
-  readonly entry: AssistantTeamEntry;
-  readonly members: ReadonlyArray<AssistantEntry>;
-  readonly running: number;
+/** A group folder: the chevron shows its members, the name opens its chat. No faces. */
+const FolderRow = memo(function FolderRow(props: {
+  readonly environmentId: AssistantTeamEntry["environmentId"];
+  readonly team: AssistantTeamEntry["team"];
+  readonly memberCount: number;
   readonly expanded: boolean;
+  readonly foldKey: string;
+  readonly indicatorKind: ZoneIndicator["kind"] | null;
+  readonly indicatorCount: number;
   readonly sidebar: boolean;
-  readonly onToggle: () => void;
+  readonly onToggle: (foldKey: string) => void;
 }) {
   const openTeam = useOpenAssistantTeam();
   const openEditor = useOpenAssistantEditor();
-  const flows = useAssistantTeamFlows(props.entry.environmentId);
-  const { environmentId, team } = props.entry;
-  const shown = props.members.slice(0, STACKED_AVATAR_LIMIT);
-  const more = props.members.length - shown.length;
+  const openInfo = useOpenAssistantInfo();
+  const flows = useAssistantTeamFlows(props.environmentId);
+  const { environmentId, team } = props;
   const unread = team.chat?.unreadCount ?? 0;
   const mutedIcon = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
+  const empty = props.memberCount === 0;
   return (
     <View className="flex-row items-center">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={team.name}
-        onPress={() => openTeam.chat(environmentId, team.id)}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
-      >
-        <SymbolView
-          name="bubble.left.and.bubble.right"
-          size={14}
-          tintColorClassName={mutedIcon}
-          type="monochrome"
-        />
-        <Text
-          className={cn(
-            "shrink text-base font-t3-medium",
-            props.sidebar ? "text-drawer-foreground" : "text-foreground",
-          )}
-          numberOfLines={1}
-        >
-          {team.name}
-        </Text>
-        {/* The narrow tablet bar drops the faces while the group runs, so its name stays whole. */}
-        {props.sidebar && props.running > 0 ? null : (
-          <View testID="group-avatars" className="flex-row items-center pl-0.5">
-            {shown.map(({ assistant }, index) => (
-              <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
-                <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
-              </View>
-            ))}
-            {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
-          </View>
-        )}
-        <View className="min-w-2 flex-1" />
-        {unread > 0 ? (
-          <View
-            testID="group-unread"
-            accessibilityLabel={`${unread} unread`}
-            className="min-w-5 items-center rounded-full bg-primary px-1.5 py-px"
-          >
-            <Text className="text-2xs font-t3-bold text-primary-foreground">
-              {unread > 99 ? "99+" : unread}
-            </Text>
-          </View>
-        ) : null}
-        {props.running > 0 ? (
-          <View testID="group-status" className="flex-row items-center gap-1">
-            <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-            <Text className={cn("text-xs", muted)}>{props.running} running</Text>
-          </View>
-        ) : props.members.length === 0 ? (
-          <Text testID="group-status" className={cn("text-xs", muted)}>
-            empty
-          </Text>
-        ) : null}
-      </Pressable>
-      {props.members.length === 0 ? null : (
+      {empty ? (
+        <View className="size-9" />
+      ) : (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`${props.expanded ? "Hide" : "Show"} ${team.name} members`}
           accessibilityState={{ expanded: props.expanded }}
           hitSlop={6}
-          onPress={props.onToggle}
+          onPress={() => props.onToggle(props.foldKey)}
           className="size-9 items-center justify-center rounded-full active:opacity-70"
         >
           <SymbolView
@@ -546,11 +463,40 @@ function GroupFoldRow(props: {
           />
         </Pressable>
       )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={team.name}
+        onPress={() => openTeam.chat(environmentId, team.id)}
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 pr-2 active:opacity-70"
+      >
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-base font-t3-medium",
+            props.sidebar ? "text-drawer-foreground" : "text-foreground",
+          )}
+          numberOfLines={1}
+        >
+          {team.name}
+        </Text>
+        {props.indicatorKind !== null ? (
+          <IndicatorBadge
+            kind={props.indicatorKind}
+            count={props.indicatorCount}
+            assistant={false}
+            sidebar={props.sidebar}
+          />
+        ) : empty ? (
+          <Text testID="group-status" className={cn("text-xs", muted)}>
+            empty
+          </Text>
+        ) : null}
+      </Pressable>
       <RowMenuButton
         label={`${team.name} actions`}
         sidebar={props.sidebar}
         actions={[
           { id: "chat", title: "Open chat", image: "bubble.left.and.bubble.right" },
+          { id: "info", title: "Group info", image: "info.circle" },
           unread > 0
             ? {
                 id: "read",
@@ -575,6 +521,7 @@ function GroupFoldRow(props: {
         ]}
         onAction={(id) => {
           if (id === "chat") openTeam.chat(environmentId, team.id);
+          else if (id === "info") openInfo.group(environmentId, team.id);
           else if (id === "read") void flows.markRead(team);
           else if (id === "unread") void flows.markUnread(team);
           else if (id === "edit") openTeam.edit(environmentId, team.id);
@@ -584,9 +531,9 @@ function GroupFoldRow(props: {
       />
     </View>
   );
-}
+});
 
-/** Pinned above the thread list: what needs the user, then groups, projects and the rest. */
+/** The Teams zone: ungrouped assistants first, then one folder per group. */
 export function HomeAssistantsSection(props: {
   readonly gutter: number;
   readonly sidebar?: boolean;
@@ -595,52 +542,52 @@ export function HomeAssistantsSection(props: {
   readonly renderThread?: (item: ThreadListV2ThreadListItem) => ReactNode;
 }) {
   const model = useAssistantSectionModel();
-  const { active, teams, ranked, listed, hiddenInList, work } = model;
+  const { listed, hiddenInList, ungrouped, folders } = model;
   const navigation = useNavigation();
   const openEditor = useOpenAssistantEditor();
   const openTeam = useOpenAssistantTeam();
   const { pinThread, unpinThread } = useThreadListActions();
-  const { assistantsCollapsed, toggleAssistants, assistantsShowAll, toggleAssistantsShowAll } =
-    model.preferences;
-  const projects = useProjects();
+  const { pinningEnvironmentIds } = useAtomValue(threadListEnvironmentsAtom);
+  const {
+    assistantsCollapsed,
+    toggleAssistants,
+    assistantsShowAll,
+    toggleAssistantsShowAll,
+    toggleAssistantFolded,
+    toggleAssistantsGroup,
+  } = model.preferences;
   const sidebar = props.sidebar === true;
-  if (active.length === 0 && teams.length === 0) return null;
-  const environmentId = active[0]?.environmentId ?? teams[0]!.environmentId;
+  const assistantCount =
+    ungrouped.length + folders.reduce((sum, folder) => sum + folder.members.length, 0);
+  if (assistantCount === 0 && folders.length === 0) return null;
+  const environmentId = ungrouped[0]?.entry.environmentId ?? folders[0]!.team.environmentId;
   const setSubagentPinned = (thread: EnvironmentThreadShell, pinned: boolean) =>
     void (pinned ? pinThread(thread) : unpinThread(thread));
   const foldable = assistantsShowAll || hiddenInList > 0;
-  const projectName = (envId: string, projectId: string) =>
-    projects.find((project) => project.environmentId === envId && project.id === projectId)
-      ?.title ?? "Project";
-  const environmentCount = new Set(active.map((entry) => entry.environmentId)).size;
-  const projectOf = (envId: string, projectId: string) =>
-    projects.find((project) => project.environmentId === envId && project.id === projectId);
-  const workSitesOf = ({ environmentId: envId, assistant }: AssistantEntry): WorkSite[] =>
-    assistantSites(work, envId, assistant.id, (projectId) => {
-      const project = projectOf(envId, projectId);
-      return project !== undefined && hasProjectPanels(project);
-    }).map((site) => ({ site, project: projectOf(envId, site.projectId)! }));
-  const row = (entry: AssistantEntry, nested = false) => (
-    <AssistantRow
-      key={`${entry.environmentId}:${entry.assistant.id}`}
-      entry={entry}
+  const environmentCount = new Set([
+    ...ungrouped.map((item) => item.entry.environmentId),
+    ...folders.flatMap((folder) => folder.members.map((item) => item.entry.environmentId)),
+  ]).size;
+  const block = (member: TeamsMember, nested: boolean) => (
+    <AssistantBlock
+      key={member.key}
+      member={member}
+      row={model.rowOf(member.entry)}
+      environmentLabel={
+        environmentCount > 1
+          ? (props.environmentLabelById.get(member.entry.environmentId) ?? null)
+          : null
+      }
       sidebar={sidebar}
       nested={nested}
-      environmentLabel={
-        environmentCount > 1 ? (props.environmentLabelById.get(entry.environmentId) ?? null) : null
-      }
-      projectLabel={assistantProjectsChip(entry.assistant, (projectId) =>
-        projectName(entry.environmentId, projectId),
-      )}
-      workSites={workSitesOf(entry)}
-      row={model.rowOf(entry)}
+      onToggleFold={toggleAssistantFolded}
+      renderThread={props.renderThread}
       onSetSubagentPinned={setSubagentPinned}
-      {...(props.renderThread ? { renderThread: props.renderThread } : {})}
+      pinningEnvironmentIds={pinningEnvironmentIds}
     />
   );
   const mutedIcon = sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
-  const shown = ranked.slice(0, COLLAPSED_AVATAR_LIMIT);
-  const hidden = ranked.length - shown.length;
+  const mutedText = sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary";
   const addActions: MenuAction[] = [
     { id: "assistant", title: "New assistant", image: "person.badge.plus" },
     { id: "group", title: "New group", image: "person.2" },
@@ -652,20 +599,20 @@ export function HomeAssistantsSection(props: {
       <View className="flex-row items-center">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Assistants"
+          accessibilityLabel="Teams"
           accessibilityState={{ expanded: !assistantsCollapsed }}
           hitSlop={8}
           onPress={toggleAssistants}
           className="min-h-9 flex-row items-center gap-1 active:opacity-70"
         >
-          <Text
-            className={cn(
-              "font-t3-bold text-2xs uppercase tracking-[1.1px]",
-              sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
-            )}
-          >
-            Assistants
+          <Text className={cn("font-t3-bold text-2xs uppercase tracking-[1.1px]", mutedText)}>
+            Teams
           </Text>
+          {assistantsCollapsed ? (
+            <Text testID="teams-count" className={cn("font-t3-bold text-2xs", mutedText)}>
+              {assistantCount}
+            </Text>
+          ) : null}
           <SymbolView
             name={assistantsCollapsed ? "chevron.right" : "chevron.down"}
             size={11}
@@ -673,36 +620,7 @@ export function HomeAssistantsSection(props: {
             type="monochrome"
           />
         </Pressable>
-        <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2 pr-1">
-          {assistantsCollapsed ? (
-            <>
-              {shown.map(({ entry }) => (
-                <AssistantAvatarButton
-                  key={`${entry.environmentId}:${entry.assistant.id}`}
-                  entry={entry}
-                />
-              ))}
-              {hidden > 0 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`${hidden} more assistants`}
-                  hitSlop={4}
-                  onPress={toggleAssistants}
-                  className="active:opacity-70"
-                >
-                  <Text
-                    className={cn(
-                      "text-xs font-t3-medium",
-                      sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
-                    )}
-                  >
-                    +{hidden}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </>
-          ) : null}
-        </View>
+        <View className="flex-1" />
         <Menu
           actions={addActions}
           onPressAction={({ nativeEvent }) => {
@@ -724,20 +642,7 @@ export function HomeAssistantsSection(props: {
       </View>
       {assistantsCollapsed ? null : (
         <>
-          {model.groups.map(({ team, key, members, expanded }) => (
-            <View key={key}>
-              <GroupFoldRow
-                entry={team}
-                members={members.map((item) => item.entry)}
-                running={members.filter((item) => item.presence.mood === "working").length}
-                expanded={expanded}
-                sidebar={sidebar}
-                onToggle={() => model.toggle(key)}
-              />
-              {expanded ? members.map((item) => row(item.entry, true)) : null}
-            </View>
-          ))}
-          {listed.map((item) => row(item.entry))}
+          {listed.map((member) => block(member, false))}
           {foldable ? (
             <Pressable
               accessibilityRole="button"
@@ -745,16 +650,31 @@ export function HomeAssistantsSection(props: {
               onPress={toggleAssistantsShowAll}
               className="min-h-10 justify-center px-2 active:opacity-70"
             >
-              <Text
-                className={cn(
-                  "text-xs font-t3-medium",
-                  sidebar ? "text-drawer-foreground-muted" : "text-foreground-secondary",
-                )}
-              >
-                {assistantsShowAll ? "Show less" : `Show all (${ranked.length})`}
+              <Text className={cn("text-xs font-t3-medium", mutedText)}>
+                {assistantsShowAll ? "Show less" : `Show all (${ungrouped.length})`}
               </Text>
             </Pressable>
           ) : null}
+          {folders.map((folder) => (
+            <View key={folder.foldKey}>
+              <FolderRow
+                environmentId={folder.team.environmentId}
+                team={folder.team.team}
+                memberCount={folder.members.length}
+                expanded={folder.expanded}
+                foldKey={folder.foldKey}
+                indicatorKind={folder.indicator?.kind ?? null}
+                indicatorCount={
+                  folder.indicator !== null && "count" in folder.indicator
+                    ? folder.indicator.count
+                    : 0
+                }
+                sidebar={sidebar}
+                onToggle={toggleAssistantsGroup}
+              />
+              {folder.expanded ? folder.members.map((member) => block(member, true)) : null}
+            </View>
+          ))}
         </>
       )}
     </View>

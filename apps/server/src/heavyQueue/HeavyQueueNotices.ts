@@ -31,7 +31,11 @@ const INTERVAL = "2 seconds";
 
 export class HeavyQueueNotices extends Context.Service<
   HeavyQueueNotices,
-  { readonly stream: Stream.Stream<HeavyNoticeBatch> }
+  {
+    readonly stream: Stream.Stream<HeavyNoticeBatch>;
+    /** Each record the queue file logged after the baseline, whatever the notice mode shows. */
+    readonly records: Stream.Stream<HeavyEventRecord>;
+  }
 >()("t3/heavyQueue/HeavyQueueNotices") {}
 
 /** Why the queue file cannot be read or written; null when it can (a missing file is an empty queue). */
@@ -57,6 +61,7 @@ export const queueFileError = (dir: string): string | null => {
 const make = Effect.fn("HeavyQueueNotices.make")(function* (dir: string) {
   const settings = yield* ServerSettingsService;
   const notices = yield* PubSub.sliding<HeavyNoticeBatch>(16);
+  const logged = yield* PubSub.sliding<HeavyEventRecord>(64);
 
   // Null until the first tick, which only takes the baseline: a restart replays nothing.
   let seen: ReadonlySet<string> | null = null;
@@ -114,6 +119,7 @@ const make = Effect.fn("HeavyQueueNotices.make")(function* (dir: string) {
       ),
     ]);
 
+    if (records.length > 0) yield* PubSub.publishAll(logged, records);
     const mode = (yield* settings.getSettings).heavyNotices;
     const grouped = groupNotices(
       raw.filter((notice) => shownIn(mode, notice)),
@@ -131,7 +137,10 @@ const make = Effect.fn("HeavyQueueNotices.make")(function* (dir: string) {
     Effect.forkScoped,
   );
 
-  return HeavyQueueNotices.of({ stream: Stream.fromPubSub(notices) });
+  return HeavyQueueNotices.of({
+    stream: Stream.fromPubSub(notices),
+    records: Stream.fromPubSub(logged),
+  });
 });
 
 export const layer = (dir: string = QueueFile.defaultQueueDir()) =>

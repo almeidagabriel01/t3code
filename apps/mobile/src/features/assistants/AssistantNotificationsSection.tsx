@@ -1,6 +1,8 @@
 import {
   AUTONOMY_CHANNEL_LABELS,
   AUTONOMY_RULE_OPTIONS,
+  PROBLEM_LEVEL_LEGEND,
+  PROBLEM_LEVEL_OPTIONS,
   toggleInList,
 } from "@t3tools/client-runtime/autonomy";
 import type {
@@ -9,6 +11,7 @@ import type {
   AutonomyMode,
   AutonomyRule,
   AutonomySettings,
+  ProblemLevel,
   ProjectId,
 } from "@t3tools/contracts";
 import { View } from "react-native";
@@ -25,6 +28,12 @@ const MODES: ReadonlyArray<{
   { mode: "reply-only", icon: "bubble.left", label: "Only reply when I message it" },
   { mode: "reply-and-notify", icon: "bell.badge", label: "Reply and notify me" },
 ];
+
+const PROBLEM_LEVEL_ICONS = {
+  tell: "text.bubble",
+  offer: "questionmark.bubble",
+  "fix-small": "wrench.and.screwdriver",
+} as const satisfies Record<ProblemLevel, string>;
 
 /** "Same as global" or a custom list: a list that is null inherits and any list overrides. */
 function ScopeField<T extends string>(props: {
@@ -157,6 +166,22 @@ export function AssistantNotificationsSection(props: {
           />
         </>
       ) : null}
+      <View className="gap-2">
+        <FieldHeader label={PROBLEM_LEVEL_LEGEND} />
+        <ListSection>
+          {PROBLEM_LEVEL_OPTIONS.map((option) => (
+            <ChoiceRow
+              key={option.level}
+              role="radio"
+              icon={PROBLEM_LEVEL_ICONS[option.level]}
+              label={option.label}
+              description={option.description}
+              selected={value.onProblem === option.level}
+              onPress={() => onChange({ ...value, onProblem: option.level })}
+            />
+          ))}
+        </ListSection>
+      </View>
     </>
   );
 }

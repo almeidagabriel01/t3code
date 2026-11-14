@@ -16,7 +16,7 @@ export type TelegramSendReport =
   | { readonly ok: false; readonly code: ChannelDeliveryErrorCode; readonly invalidToken: boolean };
 
 const deliveryCode = (error: TelegramApiError): ChannelDeliveryErrorCode =>
-  error.code === "chat_not_found"
+  error.code === "chat_not_found" || error.code === "bad_request"
     ? "chat_not_found"
     : error.code === "timeout"
       ? "timeout"
@@ -32,6 +32,8 @@ export function makeTelegramTransport(input: {
   /** The client for the running configuration; undefined while the channel is off. */
   readonly api: Effect.Effect<TelegramApi | undefined>;
   readonly sql: SqlClient.SqlClient;
+  /** Origin of the web links thread links become. */
+  readonly hostedAppUrl: string;
   readonly report: (result: TelegramSendReport) => Effect.Effect<void>;
 }): ChannelTransport {
   const { sql } = input;
@@ -50,7 +52,9 @@ export function makeTelegramTransport(input: {
         });
       }
       let lastId: string | undefined;
-      for (const [index, text] of formatTelegramMessages(message).entries()) {
+      for (const [index, text] of formatTelegramMessages(message, {
+        hostedAppUrl: input.hostedAppUrl,
+      }).entries()) {
         const claimed = yield* sql`
           INSERT OR IGNORE INTO telegram_sent (delivery_id, chunk_index, sent_at_ms)
           VALUES (${message.deliveryId}, ${index}, ${(yield* DateTime.now).epochMilliseconds})

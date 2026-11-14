@@ -9,32 +9,33 @@ export const HeaderName = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9-]{1,
 
 export type HeaderName = typeof HeaderName.Type;
 
-export const McpServerUrl = Schema.String.check(
-  Schema.makeFilter((value) => {
-    try {
-      const url = new URL(value);
-      const loopback =
-        url.hostname === "localhost" ||
-        url.hostname === "[::1]" ||
-        /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
-      return (
-        (url.protocol === "https:" || (url.protocol === "http:" && loopback)) &&
-        !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(
-          value
-            .trim()
-            .replace(/[\t\n\r]/g, "")
-            .replaceAll("\\", "/"),
-        ) &&
-        !url.username &&
-        !url.password &&
-        !value.includes("?") &&
-        !value.includes("#")
-      );
-    } catch {
-      return false;
-    }
-  }),
-);
+/** https, or http on loopback only; no userinfo, query or fragment. */
+export const isMcpServerUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    const loopback =
+      url.hostname === "localhost" ||
+      url.hostname === "[::1]" ||
+      /^127(?:\.\d{1,3}){3}$/.test(url.hostname);
+    return (
+      (url.protocol === "https:" || (url.protocol === "http:" && loopback)) &&
+      !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(
+        value
+          .trim()
+          .replace(/[\t\n\r]/g, "")
+          .replaceAll("\\", "/"),
+      ) &&
+      !url.username &&
+      !url.password &&
+      !value.includes("?") &&
+      !value.includes("#")
+    );
+  } catch {
+    return false;
+  }
+};
+
+export const McpServerUrl = Schema.String.check(Schema.makeFilter(isMcpServerUrl));
 
 const validName = Schema.is(McpServerName);
 const validEnvKey = Schema.is(EnvKey);
@@ -47,6 +48,13 @@ const secretHeaders = Schema.Record(Schema.String, Schema.String)
   .annotateKey({ settingsSecret: true });
 
 const enabled = Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true)));
+/** Marks an http server T3 signs in to (catalog integrations); its token never sits in `headers`. */
+export const T3McpServerIntegration = Schema.Struct({
+  catalogId: McpServerName,
+  auth: Schema.Literals(["oauth", "token"]),
+  availability: Schema.Literals(["assistants", "all"]),
+});
+export type T3McpServerIntegration = typeof T3McpServerIntegration.Type;
 export const T3McpServer = Schema.Union([
   Schema.Struct({
     enabled,
@@ -60,6 +68,7 @@ export const T3McpServer = Schema.Union([
     transport: Schema.Literal("http"),
     url: McpServerUrl,
     headers: secretHeaders,
+    integration: Schema.optionalKey(T3McpServerIntegration),
   }),
 ]);
 export type T3McpServer = typeof T3McpServer.Type;

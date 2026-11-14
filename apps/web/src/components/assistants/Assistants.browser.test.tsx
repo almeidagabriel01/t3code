@@ -89,7 +89,14 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   avatar: null,
   scope: "all",
   mcpServers: [],
-  autonomy: { mode: "reply-only", rules: null, projectIds: null, channels: null },
+  integrations: { mode: "all" },
+  autonomy: {
+    mode: "reply-only",
+    rules: null,
+    projectIds: null,
+    channels: null,
+    onProblem: "offer",
+  },
   archivedAt: null,
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
@@ -398,13 +405,20 @@ it("writes the whole autonomy object when a switch changes", async () => {
   await userEvent.click(
     page.getByRole("switch", { name: "Notify me when something is waiting for me" }),
   );
-  await eventually(() => expect(fakeSettings.patches).toHaveLength(4));
+  await expect
+    .element(
+      page.getByText("Assistants watch every project for failures and file one card per cause."),
+    )
+    .toBeVisible();
+  await userEvent.click(page.getByRole("switch", { name: "Detect problems" }));
+  await eventually(() => expect(fakeSettings.patches).toHaveLength(5));
   // Each patch carries every field, so a write never drops a sibling setting.
   expect(fakeSettings.patches).toEqual([
     { autonomy: { ...on, enabled: false } },
     { autonomy: { ...on, rules: { ...on.rules, stuck: false } } },
     { autonomy: { ...on, channels: ["t3"] } },
     { autonomy: { ...on, notifyWaiting: false } },
+    { detectProblems: false },
   ]);
 });
 
@@ -483,7 +497,15 @@ it("saves the assistant's notification choices, inherited or custom", async () =
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([
-      { autonomy: { mode: "reply-and-notify", rules: null, projectIds: null, channels: null } },
+      {
+        autonomy: {
+          mode: "reply-and-notify",
+          rules: null,
+          projectIds: null,
+          channels: null,
+          onProblem: "offer",
+        },
+      },
     ]),
   );
 
@@ -496,6 +518,14 @@ it("saves the assistant's notification choices, inherited or custom", async () =
   await userEvent.click(page.getByRole("radio", { name: "Only these projects" }));
   await userEvent.click(page.getByRole("radio", { name: "Only on these" }));
   await userEvent.click(page.getByRole("checkbox", { name: "Telegram" }));
+  await expect
+    .element(
+      page
+        .getByRole("radiogroup", { name: "When it finds a problem" })
+        .getByText("Starts small fixes on its own and tells you. Asks before anything bigger."),
+    )
+    .toBeVisible();
+  await userEvent.click(page.getByRole("radio", { name: "Fix small things" }));
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() =>
     expect(fakeAssistantEdits.updates).toMatchObject([
@@ -505,6 +535,7 @@ it("saves the assistant's notification choices, inherited or custom", async () =
           rules: ["runFailed", "waitingTooLong", "ciFailed", "reviewIncomplete"],
           projectIds: ["project-1"],
           channels: ["t3"],
+          onProblem: "fix-small",
         },
       },
     ]),
@@ -740,7 +771,7 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   fakeAssistantEdits.updates = [];
   await using _screen = await openEditDialog("Jarvis");
   await expect
-    .element(page.getByText("Connectors work with Claude", { exact: false }))
+    .element(page.getByText("Custom servers work with Claude", { exact: false }))
     .toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Add connector" }));
   await userEvent.fill(page.getByLabelText("Connector name"), "docs");
@@ -749,7 +780,9 @@ it("adds a connector with a header, then saves it without echoing secrets", asyn
   await userEvent.fill(page.getByLabelText("Header 1", { exact: true }), "Authorization");
   await userEvent.fill(page.getByLabelText("Header 1 value"), "Bearer abc");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
-  await expect.element(page.getByText('"docs" needs an http or https URL.')).toBeVisible();
+  await expect
+    .element(page.getByText('"docs" needs an https URL (http only on localhost), without ? or #.'))
+    .toBeVisible();
   await userEvent.fill(page.getByLabelText("URL"), "https://docs.example.test/mcp");
   await userEvent.click(page.getByRole("button", { name: "Add", exact: true }));
   await expect.element(page.getByText("docs", { exact: true })).toBeVisible();
@@ -853,7 +886,13 @@ it("a command connector takes arguments and variables", async () => {
 it("keeps an unchanged assistant's autonomy out of the update", async () => {
   publishAssistants([
     assistant("jarvis", "Jarvis", {
-      autonomy: { mode: "reply-and-notify", rules: [], projectIds: null, channels: null },
+      autonomy: {
+        mode: "reply-and-notify",
+        rules: [],
+        projectIds: null,
+        channels: null,
+        onProblem: "offer",
+      },
     }),
   ]);
   fakeAssistantEdits.updates = [];

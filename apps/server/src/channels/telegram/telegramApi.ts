@@ -4,11 +4,13 @@
  */
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+
+import type { TelegramText } from "./telegramText.ts";
 
 const API_ORIGIN = "https://api.telegram.org";
 /** The long poll waits this long for an update; the request is only given up on well after it. */
@@ -20,6 +22,8 @@ export const TelegramApiErrorCode = Schema.Literals([
   "conflict",
   "rate_limited",
   "chat_not_found",
+  /** 400: Telegram refused this request as written, for example HTML it could not parse. */
+  "bad_request",
   "unreachable",
   "timeout",
 ]);
@@ -83,7 +87,8 @@ const failureFor = (code: number, retryAfter?: number) => {
   if (code === 401 || code === 404) return fail("invalid_token");
   if (code === 409) return fail("conflict");
   if (code === 429) return fail("rate_limited");
-  if (code === 400 || code === 403) return fail("chat_not_found");
+  if (code === 400) return fail("bad_request");
+  if (code === 403) return fail("chat_not_found");
   return fail("unreachable", code >= 500 ? "unknown" : "not_sent");
 };
 
@@ -93,9 +98,10 @@ export interface TelegramApi {
     readonly offset: number;
     readonly timeoutSeconds: number;
   }) => Effect.Effect<ReadonlyArray<TelegramUpdate>, TelegramApiError>;
+  /** Sends the HTML; when Telegram refuses it (400), the plain copy goes instead. */
   readonly sendMessage: (input: {
     readonly chatId: string;
-    readonly text: string;
+    readonly text: TelegramText;
   }) => Effect.Effect<{ readonly messageId: string }, TelegramApiError>;
   /** Replaces the bot's "/" menu. */
   readonly setMyCommands: (
@@ -121,6 +127,8 @@ export const makeTelegramApi = (
           credentials: "omit",
           cache: "no-store",
         }),
+        // The client span records the full URL, which holds the token.
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
         Effect.flatMap((response) =>
           Effect.map(response.text, (text) => ({ status: response.status, text })),
         ),
@@ -176,16 +184,24 @@ export const makeTelegramApi = (
           }),
         ),
       ),
-    sendMessage: ({ chatId, text }) =>
-      call(
-        "sendMessage",
-        { chat_id: chatId, text, link_preview_options: { is_disabled: true } },
-        0,
-      ).pipe(
+    sendMessage: ({ chatId, text }) => {
+      const send = (body: { readonly text: string; readonly parse_mode?: "HTML" }) =>
+        call(
+          "sendMessage",
+          { chat_id: chatId, ...body, link_preview_options: { is_disabled: true } },
+          0,
+        );
+      // A 400 means nothing was sent; a chat that is really gone fails the plain send the same way.
+      return send({ text: text.html, parse_mode: "HTML" }).pipe(
+        Effect.catchIf(
+          (error) => error.code === "bad_request",
+          () => send({ text: text.plain }),
+        ),
         Effect.map((result) => {
           const sent = decodeSent(result);
           return { messageId: sent._tag === "Some" ? String(sent.value.message_id) : "" };
         }),
-      ),
+      );
+    },
   };
 };

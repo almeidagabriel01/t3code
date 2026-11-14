@@ -27,6 +27,7 @@ import {
   assistantGroupPauseReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
+  assistantGroupRunningTasks,
   insertAssistantGroupMention,
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
@@ -93,6 +94,24 @@ describe("group chat state", () => {
     state = applyAssistantGroupsEvent(state, { type: "task", task: task("k", 1) })!;
     assert.strictEqual(state.tasks.get("k" as never)!.status, "completed");
     assert.strictEqual(assistantGroupRunningCount(state), 0);
+  });
+
+  it("counts exactly the running tasks it lists, oldest first", () => {
+    const state = start(
+      snapshot(
+        [message(1)],
+        [
+          task("late", 3),
+          task("done", 1, { status: "completed" }),
+          task("early", 2),
+          task("queued", 4, { status: "queued" }),
+        ],
+        false,
+      ),
+    );
+    const running = assistantGroupRunningTasks(state).map((entry) => entry.id);
+    assert.deepStrictEqual(running, ["early", "late"]);
+    assert.strictEqual(assistantGroupRunningCount(state), running.length);
   });
 
   it("merges an older page without duplicating or overwriting, and tracks what is left", () => {
@@ -399,6 +418,9 @@ describe("read position", () => {
       unreadCount: 1,
       working,
       preview,
+      pausedTasks: 0,
+      failedTasks: 0,
+      threadIds: [],
     });
     const busy = { name: "Ops", chat: chatOf(true, null) };
     const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };

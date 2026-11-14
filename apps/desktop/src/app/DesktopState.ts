@@ -17,6 +17,8 @@ export class DesktopState extends Context.Service<
   {
     readonly backendReady: Ref.Ref<boolean>;
     readonly quitting: Ref.Ref<boolean>;
+    /** A launch at login keeps the first main window hidden until the user asks for it. */
+    readonly startHidden: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
   }
 >()("@t3tools/desktop/app/DesktopState") {}
@@ -24,6 +26,7 @@ export class DesktopState extends Context.Service<
 const make = Effect.all({
   backendReady: Ref.make(false),
   quitting: Ref.make(false),
+  startHidden: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
 });
 

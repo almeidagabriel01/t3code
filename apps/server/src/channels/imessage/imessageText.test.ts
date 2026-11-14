@@ -27,6 +27,22 @@ const plain: ReadonlyArray<readonly [string, string, string]> = [
     "before\n\nconst a = 1;\n\nafter",
   ],
   ["blank lines collapse", "a\n\n\n\nb", "a\n\nb"],
+  [
+    "thread link opens on the web",
+    "see [Fix login](t3-thread://v2/env-1/thread-1)",
+    "see Fix login (https://app.t3.codes/threads/env-1/thread-1)",
+  ],
+  ["v1 thread link is its title", "see [Fix login](t3-thread://v1/thread-1)", "see Fix login"],
+  [
+    "untitled thread link is its web link",
+    "see <t3-thread://v2/env-1/thread-1>",
+    "see https://app.t3.codes/threads/env-1/thread-1",
+  ],
+  [
+    "thread link in code stays",
+    "`[x](t3-thread://v2/env-1/thread-1)`",
+    "[x](t3-thread://v2/env-1/thread-1)",
+  ],
 ];
 
 describe("toPlainText", () => {

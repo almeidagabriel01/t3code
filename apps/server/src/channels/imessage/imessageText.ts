@@ -1,4 +1,5 @@
 import type { ChannelChoice } from "@t3tools/contracts";
+import { hostedThreadLink, replaceThreadLinks } from "@t3tools/shared/threadLinks";
 
 import { channelStrings, type ResolvedChannelLanguage } from "../channelStrings.ts";
 
@@ -12,7 +13,7 @@ export const IMESSAGE_MAX_MESSAGES = 6;
  * keeps its lines without the fences.
  */
 export function toPlainText(markdown: string): string {
-  return markdown
+  return withWebThreadLinks(markdown)
     .replace(/\r\n?/g, "\n")
     .replace(/^ {0,3}(?:`{3,}|~{3,})[^\n]*$/gm, "")
     .replace(/!?\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_m, label: string, url: string) =>
@@ -27,6 +28,18 @@ export function toPlainText(markdown: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
+/**
+ * Chat apps cannot open `t3-thread://`: a thread link with its environment becomes its web link,
+ * a v1 link (no environment) its title alone.
+ */
+const withWebThreadLinks = (markdown: string) =>
+  replaceThreadLinks(markdown, (link, label) => {
+    const title = label?.trim() || undefined;
+    if (link.environmentId === null) return title ?? channelStrings("en").threadLink;
+    const href = hostedThreadLink({ environmentId: link.environmentId, threadId: link.threadId });
+    return title === undefined ? href : `[${title}](${href})`;
+  });
 
 /** Splits at a newline or space when a single paragraph is longer than the limit. */
 function splitLong(paragraph: string, limit: number): Array<string> {
@@ -62,7 +75,7 @@ export function chunkParagraphs(text: string, limit = IMESSAGE_CHUNK_LIMIT): Arr
   return chunks;
 }
 
-const numberedChoices = (choices: ReadonlyArray<ChannelChoice>, hint: string) =>
+export const numberedChoices = (choices: ReadonlyArray<ChannelChoice>, hint: string) =>
   [...choices.map((choice, index) => `${index + 1}. ${choice.label}`), hint].join("\n");
 
 export interface ChannelTextLimits {
