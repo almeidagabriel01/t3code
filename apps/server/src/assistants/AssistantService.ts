@@ -25,6 +25,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ProjectId,
   ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import {
   type AssistantTaskStatus,
 } from "@t3tools/shared/assistantTaskStatus";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -67,6 +69,7 @@ import {
   allTeams,
   encodeMemberIds,
   encodeMemories,
+  decodeModelSelectionJson,
   encodeModelSelectionJson,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
@@ -274,6 +277,24 @@ const make = Effect.gen(function* () {
         model: DEFAULT_MODEL,
       } satisfies ModelSelection)
     );
+  });
+
+  /** A changed default must name an instance that exists and is enabled; an unchanged one stays. */
+  const checkDefaultModel = Effect.fn("AssistantService.checkDefaultModel")(function* (
+    next: ModelSelection | null | undefined,
+    stored: string | null | undefined,
+  ) {
+    if (next == null) return;
+    const before = decodeModelSelectionJson(stored);
+    if (before !== null && modelSelectionsEqual(before, next)) return;
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => assistantError("storage", "Could not read the server settings.")),
+    );
+    if (!resolveProjectProviderInstanceEnabled(settings, null, next.instanceId)) {
+      return yield* invalid(
+        `The provider instance ${next.instanceId} does not exist or is disabled.`,
+      );
+    }
   });
 
   /** Ids derive from (assistant, generation), so a repeat after a crash lands on the same thread. */
@@ -653,6 +674,7 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           let row = yield* findRow(input.assistantId);
+          yield* checkDefaultModel(input.defaultModelSelection, row.default_model_selection);
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
           }
@@ -916,6 +938,7 @@ const make = Effect.gen(function* () {
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const row = yield* findTeamRow(input.teamId);
+        yield* checkDefaultModel(input.defaultModelSelection, row.default_model_selection);
         const current = toAssistantTeam(row);
         const memberIds = input.memberIds ?? current.memberIds;
         // A lead that is dropped from the members goes with them, unless a new one is sent.

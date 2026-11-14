@@ -2082,6 +2082,8 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  // A project or assistant model named an instance that is missing or disabled for that project.
+  "use-unavailable-provider-instance",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -2113,6 +2115,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
         this.managedBy,
         this.providerLabel ?? this.providerInstanceId ?? "this",
       );
+    }
+    if (this.operation === "use-unavailable-provider-instance") {
+      return `The provider instance ${this.providerInstanceId ?? ""} does not exist or is disabled for this project.`;
     }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;

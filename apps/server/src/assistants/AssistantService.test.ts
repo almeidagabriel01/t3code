@@ -660,6 +660,49 @@ it.effect(
         (yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: null }))
           .defaultModelSelection,
       );
+
+      // A new default must name an instance that exists and is enabled.
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const off = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+      };
+      yield* settings.updateSettings({
+        providerInstances: { [ProviderInstanceId.make("off")]: off },
+      });
+      for (const selection of [
+        { instanceId: ProviderInstanceId.make("ghost"), model: "m" },
+        { instanceId: ProviderInstanceId.make("off"), model: "m" },
+      ]) {
+        const refusals = [
+          yield* assistants
+            .update({ assistantId: made.id, defaultModelSelection: selection })
+            .pipe(Effect.flip),
+          yield* assistants
+            .updateTeam({ teamId: team.id, defaultModelSelection: selection })
+            .pipe(Effect.flip),
+        ];
+        assert.deepEqual(
+          refusals.map((error) => error.reason),
+          ["invalid", "invalid"],
+        );
+      }
+      // A default whose instance was disabled later blocks no other edit, nor sending it back.
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: beyond });
+      yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: beyond });
+      yield* settings.updateSettings({
+        providerInstances: { [ProviderInstanceId.make("codex")]: off },
+      });
+      yield* assistants.update({
+        assistantId: made.id,
+        name: "Again",
+        defaultModelSelection: beyond,
+      });
+      yield* assistants.updateTeam({
+        teamId: team.id,
+        name: "Dev 3",
+        defaultModelSelection: beyond,
+      });
     }).pipe(Effect.provide(layer));
   },
 );
