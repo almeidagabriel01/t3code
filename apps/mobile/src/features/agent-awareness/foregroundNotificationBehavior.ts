@@ -1,6 +1,6 @@
 import type { Notification, NotificationBehavior } from "expo-notifications";
 
-import { extractAgentNotificationDeepLink } from "./notificationPayload";
+import { deepLinkShows, extractAgentNotificationDeepLink } from "./notificationPayload";
 
 const SHOW: NotificationBehavior = {
   shouldShowBanner: true,
@@ -20,9 +20,7 @@ export function foregroundNotificationBehavior(
   notification: Notification,
   deepLinkOnScreen: string | null,
 ): NotificationBehavior {
-  const target = extractAgentNotificationDeepLink({ notification });
-  if (target !== null && target === deepLinkOnScreen) {
-    return SUPPRESS;
-  }
-  return SHOW;
+  return deepLinkShows(deepLinkOnScreen, extractAgentNotificationDeepLink({ notification }))
+    ? SUPPRESS
+    : SHOW;
 }

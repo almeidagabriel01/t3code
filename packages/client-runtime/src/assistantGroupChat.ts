@@ -4,6 +4,7 @@ import {
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   assistantGroupCountsAsUnread,
+  assistantGroupFinishedScopes,
   assistantGroupTasksNeedUser,
   assistantGroupAddress,
   assistantGroupInstructionBody,
@@ -299,7 +300,7 @@ export function assistantGroupRequestProject(
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
 /** The tab of a project's requests; General for those with none. */
-export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
   return projectId === null ? "general" : `project:${projectId}`;
 }
 
@@ -1051,38 +1052,59 @@ type TeamChat = Pick<AssistantTeam, "name"> & {
   readonly archivedAt?: AssistantTeam["archivedAt"];
 };
 
+export interface AssistantGroupFinishedNotice {
+  readonly title: string;
+  readonly body: string;
+  /** The finished tab's project; null for General or an older server's unknown one. */
+  readonly projectId: ProjectId | null;
+  /** The tab that shows the work: All when an older server cannot say. */
+  readonly tab: AssistantGroupTabKey;
+}
+
 /**
- * A group whose tasks went from open to none: the work of a request is done. The body starts with
- * the preview's project in brackets, like chat-app notices; none for General or an unknown project.
+ * One notice per tab whose work just ended (`assistantGroupFinishedScopes`). The body is the
+ * group's latest line when it comes from that tab, else a plain "Work finished", led by the
+ * project in brackets like chat-app notices. An older server only says the whole group went
+ * idle: one notice on the preview's project.
  */
 export function assistantGroupFinished(
   previous: TeamChat | undefined,
   next: TeamChat,
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
-): { readonly title: string; readonly body: string; readonly projectId: ProjectId | null } | null {
+): ReadonlyArray<AssistantGroupFinishedNotice> {
   // Archiving a busy group pauses its tasks; that is not a request finishing.
-  if (next.archivedAt != null) return null;
-  if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
+  if (next.archivedAt != null || next.chat === undefined) return [];
+  const perTab = previous?.chat?.scopes?.some((scope) => (scope.openTasks ?? 0) > 0) ?? false;
+  const legacy = !perTab && previous?.chat?.working === true && !next.chat.working;
+  const finished = perTab
+    ? assistantGroupFinishedScopes(previous?.chat, next.chat)
+    : legacy
+      ? [next.chat.previewProjectId ?? null]
+      : [];
   const preview = next.chat.preview?.replace(/\s+/g, " ").trim() ?? "";
-  const body = preview.length > 140 ? `${preview.slice(0, 139)}…` : preview;
-  const project = projects.find((candidate) => candidate.id === next.chat?.previewProjectId);
-  return {
-    title: `${next.name} finished`,
-    body: project === undefined || body === "" ? body : projectNoticePrefix(project.title, body),
-    // The group's whole work ends at once; the preview's request names whose it was.
-    projectId: next.chat.previewProjectId ?? null,
-  };
+  const excerpt = preview.length > 140 ? `${preview.slice(0, 139)}…` : preview;
+  return finished.map((projectId) => {
+    const fromTab = legacy || (next.chat?.previewProjectId ?? null) === projectId;
+    const body = fromTab && excerpt !== "" ? excerpt : legacy ? "" : "Work finished";
+    const project = projects.find((candidate) => candidate.id === projectId);
+    return {
+      title: `${next.name} finished`,
+      body: project === undefined || body === "" ? body : projectNoticePrefix(project.title, body),
+      projectId,
+      tab: legacy && projectId === null ? "all" : assistantGroupTabKey(projectId),
+    };
+  });
 }
 
 /**
- * The user already sees a finished request in its open chat: on All (or with no tab row), or on
- * its project's tab. Any other tab hides it, so it still deserves a notice.
+ * The user already sees a finished tab's work in its open chat: on All (or with no tab row), or
+ * on that tab. Any other tab hides it, so it still deserves a notice.
  */
 export function assistantGroupFinishedInView(
   open: AssistantGroupTabKey | null,
-  projectId: ProjectId | null,
+  finished: AssistantGroupTabKey,
 ): boolean {
-  return open === null || open === "all" || open === assistantGroupTabKey(projectId);
+  return open === null || open === "all" || open === finished;
 }
 
 /** "N running" count for the header: tasks being worked right now. */

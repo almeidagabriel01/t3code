@@ -29,7 +29,6 @@ vi.mock("../state/assistants", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
     assistantTeamEntriesAtom: Atom.make<ReadonlyArray<unknown>>([]).pipe(Atom.keepAlive),
-    openGroupTabAtom: Atom.make<unknown>(null).pipe(Atom.keepAlive),
   };
 });
 vi.mock("../state/projects", async () => {
@@ -40,7 +39,8 @@ vi.mock("../state/projects", async () => {
 
 const { createGroupFinishedObserver, presentGroupFinished, startGroupNotifications } =
   await import("./GroupNotificationCoordinator");
-const { assistantTeamEntriesAtom, openGroupTabAtom } = await import("../state/assistants");
+const { assistantTeamEntriesAtom } = await import("../state/assistants");
+const { openGroupTabsAtom, showGroupTab } = await import("../state/openGroupTabs");
 // The mock above makes it writable, standing in for the server's group updates.
 const teamEntries = assistantTeamEntriesAtom as unknown as Atom.Writable<ReadonlyArray<unknown>>;
 
@@ -65,6 +65,7 @@ it("reports a group once when its work goes from open to none, and forgets remov
     title: "Ops finished",
     body: "All done.",
     projectId: null,
+    tab: "all",
   });
   // A group that left and came back starts fresh, so it cannot report a stale transition.
   observe([]);
@@ -77,30 +78,21 @@ it("shows a toast that opens the chat unless that chat is open and focused", () 
     state: { matches: [{ params: { environmentId: ENV, teamId: TEAM } }] },
     navigate: vi.fn(),
   };
-  const notice = { title: "Ops finished", body: "All done.", projectId: null };
+  const notice = { title: "Ops finished", body: "All done.", projectId: null, tab: "all" } as const;
+  const inP1 = { ...notice, projectId: "p1" as ProjectId, tab: "project:p1" } as const;
   using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   // The chat the user is looking at needs no notice: in All, or in the tab of the work's project.
   const open = (tab: string | null, teamId: string = TEAM) =>
     ({ environmentId: ENV, teamId, tab }) as never;
-  presentGroupFinished(router as never, ENV, TEAM, notice, null);
-  presentGroupFinished(router as never, ENV, TEAM, notice, open("all"));
-  presentGroupFinished(
-    router as never,
-    ENV,
-    TEAM,
-    { ...notice, projectId: "p1" as ProjectId },
-    open("project:p1"),
-  );
+  presentGroupFinished(router as never, ENV, TEAM, notice, []);
+  presentGroupFinished(router as never, ENV, TEAM, notice, [open("all")]);
+  presentGroupFinished(router as never, ENV, TEAM, inP1, [open("project:p1")]);
   // Another group's tab says nothing about this one: as if on All.
-  presentGroupFinished(router as never, ENV, TEAM, notice, open("project:p2", "other"));
+  presentGroupFinished(router as never, ENV, TEAM, notice, [open("project:p2", "other")]);
+  // A second mount of the chat (a side panel) on the work's tab shows it too.
+  presentGroupFinished(router as never, ENV, TEAM, inP1, [open("project:p2"), open("project:p1")]);
   expect(state.toast).not.toHaveBeenCalled();
-  presentGroupFinished(
-    router as never,
-    ENV,
-    TEAM,
-    { ...notice, projectId: "p1" as ProjectId },
-    open("project:p2"),
-  );
+  presentGroupFinished(router as never, ENV, TEAM, inP1, [open("project:p2")]);
   expect(state.toast).toHaveBeenCalledOnce();
   // Opening it switches the chat to the tab that shows the work.
   (state.toast.mock.calls[0]![0] as { actionProps: { onClick: () => void } }).actionProps.onClick();
@@ -109,7 +101,7 @@ it("shows a toast that opens the chat unless that chat is open and focused", () 
   );
   state.toast.mockClear();
   router.state.matches = [{ params: { environmentId: ENV, teamId: "other" } }] as never;
-  presentGroupFinished(router as never, ENV, TEAM, notice, null);
+  presentGroupFinished(router as never, ENV, TEAM, notice, []);
   expect(state.toast).toHaveBeenCalledOnce();
   const toast = state.toast.mock.calls[0]![0] as {
     title: string;
@@ -136,15 +128,16 @@ it("stays quiet in the background when notifications are off, and uses desktop o
   vi.stubGlobal("Notification", Object.assign(notifications, { permission: "granted" }));
   using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
   const router = { state: { matches: [] }, navigate: vi.fn() };
-  const notice = { title: "Ops finished", body: "All done.", projectId: null };
+  const notice = { title: "Ops finished", body: "All done.", projectId: null, tab: "all" } as const;
   state.mode = "off";
-  presentGroupFinished(router as never, ENV, TEAM, notice, null);
+  presentGroupFinished(router as never, ENV, TEAM, notice, []);
   expect(notifications).not.toHaveBeenCalled();
   state.mode = "notifications-and-sound";
-  presentGroupFinished(router as never, ENV, TEAM, notice, null);
+  presentGroupFinished(router as never, ENV, TEAM, notice, []);
+  // Tagged per tab, so another tab's notice never replaces this one.
   expect(notifications).toHaveBeenCalledWith(
     "Ops finished",
-    expect.objectContaining({ body: "All done." }),
+    expect.objectContaining({ body: "All done.", tag: `group:${ENV}:${TEAM}:all` }),
   );
   expect(state.sound).toHaveBeenCalledOnce();
   // Clicking the desktop notice opens the group's chat.
@@ -157,7 +150,7 @@ it("stays quiet in the background when notifications are off, and uses desktop o
   vi.unstubAllGlobals();
 });
 
-it("watches every group and tells the open chat's other tabs apart from the one on screen", () => {
+it("watches every group, gives each finished tab its notice, and tells the open tabs apart", () => {
   const registry = AtomRegistry.make();
   const router = {
     state: { matches: [{ params: { environmentId: ENV, teamId: TEAM } }] },
@@ -165,20 +158,45 @@ it("watches every group and tells the open chat's other tabs apart from the one 
   };
   using _focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   const stop = startGroupNotifications(registry, router as never);
-  const finish = (previewProjectId: string) => {
-    registry.set(teamEntries, [{ environmentId: ENV, team: teamWith(true) }]);
-    const idle = teamWith(false);
-    registry.set(teamEntries, [
-      { environmentId: ENV, team: { ...idle, chat: { ...idle.chat!, previewProjectId } } },
-    ]);
+  const tabbed = (open: ReadonlyArray<string>) => {
+    const team = teamWith(open.length > 0);
+    const scopes = open.map((projectId) => ({
+      projectId,
+      unreadCount: 0,
+      waiting: false,
+      readSeq: 0,
+      openTasks: 1,
+    }));
+    return { environmentId: ENV, team: { ...team, chat: { ...team.chat!, scopes } } };
   };
-  registry.set(openGroupTabAtom, { environmentId: ENV, teamId: TEAM, tab: "project:p-web" });
-  finish("p-web");
+  const shown = (tab: string) =>
+    showGroupTab(registry, "route", { environmentId: ENV, teamId: TEAM, tab } as never);
+  // On p-web's tab: the web work ending says nothing; p-other ending is a notice.
+  const hide = shown("project:p-web");
+  registry.set(teamEntries, [tabbed(["p-web", "p-other"])]);
+  registry.set(teamEntries, [tabbed(["p-other"])]);
   expect(state.toast).not.toHaveBeenCalled();
-  registry.set(openGroupTabAtom, { environmentId: ENV, teamId: TEAM, tab: "project:p-other" });
-  finish("p-web");
-  expect(state.toast).toHaveBeenCalledWith(
-    expect.objectContaining({ title: "Ops finished", description: "[web] All done." }),
-  );
+  registry.set(teamEntries, [tabbed([])]);
+  expect(state.toast).toHaveBeenCalledOnce();
+  // Two tabs ending at once give two notices.
+  hide();
+  shown("general");
+  state.toast.mockClear();
+  registry.set(teamEntries, [tabbed(["p-web", "p-other"])]);
+  registry.set(teamEntries, [tabbed([])]);
+  expect(
+    state.toast.mock.calls.map(([toast]) => (toast as { description: string }).description),
+  ).toEqual(["[web] Work finished", "Work finished"]);
   stop();
+});
+
+it("drops only its own mount's tab when a chat closes", () => {
+  const registry = AtomRegistry.make();
+  const tab = (value: string) => ({ environmentId: ENV, teamId: TEAM, tab: value }) as never;
+  const closeRoute = showGroupTab(registry, "route", tab("project:p1"));
+  const closePanel = showGroupTab(registry, "panel", tab("all"));
+  closeRoute();
+  expect([...registry.get(openGroupTabsAtom).values()]).toEqual([tab("all")]);
+  closePanel();
+  expect(registry.get(openGroupTabsAtom).size).toBe(0);
 });

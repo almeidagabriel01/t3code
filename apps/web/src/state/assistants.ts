@@ -44,12 +44,13 @@ import {
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "./query";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
+import { showGroupTab } from "./openGroupTabs";
 import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentsWithScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
@@ -397,29 +398,17 @@ export const assistantTeamEntriesAtom = Atom.make(
     get(assistantEntriesAtom(environmentIdsKey(get(assistantsEnvironmentIdsAtom)))).teams,
 ).pipe(Atom.withLabel("web-assistant-team-entries"));
 
-export interface OpenGroupTab {
-  readonly environmentId: EnvironmentId;
-  readonly teamId: AssistantTeamId;
-  /** null while the chat has no tab row or is still choosing one. */
-  readonly tab: AssistantGroupTabKey | null;
-}
-
-/** The group chat tab on screen, so a notice skips the work the user already sees. */
-export const openGroupTabAtom = Atom.make<OpenGroupTab | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("web-open-group-tab"),
-);
-
 export function useShowGroupTab(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
   tab: AssistantGroupTabKey | null,
 ) {
+  const mount = useId();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the notice coordinator runs outside React
-  useEffect(() => {
-    appAtomRegistry.set(openGroupTabAtom, { environmentId, teamId, tab });
-    return () => appAtomRegistry.set(openGroupTabAtom, null);
-  }, [environmentId, teamId, tab]);
+  useEffect(
+    () => showGroupTab(appAtomRegistry, mount, { environmentId, teamId, tab }),
+    [mount, environmentId, teamId, tab],
+  );
 }
 
 export type AssistantGroupPostReply =

@@ -106,6 +106,22 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   }
 
   @Test
+  fun aGroupChatOnScreenHidesOnlyTheTabsItShows() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    val group = "/assistant-groups/environment/team"
+    val alert = { id: String, path: String ->
+      AgentNotifications.receive(context, update(id, false) + ("alert_path" to path))
+    }
+    AgentNotifications.setThreadOnScreen(group)
+    alert("on-all", "$group?tab=project%3Ap1")
+    AgentNotifications.setThreadOnScreen("$group?tab=project%3Ap1")
+    alert("on-its-tab", "$group?tab=project%3Ap1")
+    assertTrue(manager.activeNotifications.isEmpty())
+    alert("on-another-tab", "$group?tab=general")
+    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
+  }
+
+  @Test
   fun foregroundSuppressesAlertsWhileOngoingActivityStillUpdatesAndClears() {
     lifecycle.currentState = Lifecycle.State.RESUMED
 

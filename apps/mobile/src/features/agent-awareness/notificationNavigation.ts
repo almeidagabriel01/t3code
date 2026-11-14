@@ -2,15 +2,48 @@ import * as Notifications from "expo-notifications";
 
 import { setAndroidThreadOnScreen } from "./androidNotifications";
 import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior";
-import { routeAgentNotificationResponseOnce, threadDeepLinkOnScreen } from "./notificationPayload";
+import {
+  assistantGroupDeepLink,
+  routeAgentNotificationResponseOnce,
+  threadDeepLinkOnScreen,
+} from "./notificationPayload";
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
+let pathnameLink: string | null = null;
 let deepLinkOnScreen: string | null = null;
+/** The tab each mounted group chat shows, by mount, keyed to its chat's link. */
+const groupTabs = new Map<string, { readonly path: string; readonly tab: string | null }>();
+
+function updateDeepLinkOnScreen(): void {
+  const shown = [...groupTabs.values()].findLast((entry) => entry.path === pathnameLink);
+  deepLinkOnScreen =
+    pathnameLink === null || shown === undefined
+      ? pathnameLink
+      : assistantGroupDeepLink(pathnameLink, shown.tab);
+  setAndroidThreadOnScreen(deepLinkOnScreen);
+}
 
 /** Called with the workspace pathname on every root navigation state change. */
 export function setAgentNotificationPathname(pathname: string): void {
-  deepLinkOnScreen = threadDeepLinkOnScreen(pathname);
-  setAndroidThreadOnScreen(deepLinkOnScreen);
+  pathnameLink = threadDeepLinkOnScreen(pathname);
+  updateDeepLinkOnScreen();
+}
+
+/**
+ * A group chat at `path` shows `tab` (null: no tab row) until the returned function drops this
+ * mount's entry, so a push for another tab of the open chat still shows.
+ */
+export function showAgentNotificationGroupTab(
+  mount: string,
+  path: string,
+  tab: string | null,
+): () => void {
+  groupTabs.set(mount, { path, tab });
+  updateDeepLinkOnScreen();
+  return () => {
+    groupTabs.delete(mount);
+    updateDeepLinkOnScreen();
+  };
 }
 
 /**

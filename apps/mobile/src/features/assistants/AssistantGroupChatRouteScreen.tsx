@@ -31,6 +31,7 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isLongMessage } from "@t3tools/client-runtime/messageFold";
+import { buildAssistantGroupDeepLink } from "@t3tools/shared/agentAwareness";
 import { teamModelLayer } from "@t3tools/shared/modelSelectionPrecedence";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
@@ -51,8 +52,17 @@ import {
   splitAssistantTransferText,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { type StaticScreenProps } from "@react-navigation/native";
-import { Fragment, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
+import {
+  Fragment,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { useReducedMotion, withTiming } from "react-native-reanimated";
@@ -125,6 +135,7 @@ import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useGroupTabPreference } from "./useGroupTabPreference";
+import { showAgentNotificationGroupTab } from "../agent-awareness/notificationNavigation";
 
 type LinkHost = Parameters<typeof useMarkdownLinks>[0];
 
@@ -1241,7 +1252,12 @@ function GroupFeed({
 
 export function AssistantGroupChatRouteScreen({
   route,
-}: StaticScreenProps<{ readonly environmentId: string; readonly teamId: string }>) {
+}: StaticScreenProps<{
+  readonly environmentId: string;
+  readonly teamId: string;
+  /** The tab a push opens, from its link. */
+  readonly tab?: string;
+}>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const teamId = AssistantTeamId.make(route.params.teamId);
   const goBack = useWorkspaceBackNavigation("threads");
@@ -1254,15 +1270,37 @@ export function AssistantGroupChatRouteScreen({
   const people = useGroupPeople(environmentId, teamId);
   const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
+  const navigation = useNavigation();
+  const pushedTab = route.params.tab;
+  const keepPushedTab = useEffectEvent((pushed: string) => {
+    savedTab.save(pushed);
+    navigation.setParams({ tab: undefined } as never);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a push's tab becomes the saved one (an optimistic write), then leaves the route so later picks stand
+  useEffect(() => {
+    if (pushedTab !== undefined) keepPushedTab(pushedTab);
+  }, [pushedTab]);
   // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
   const { pending, tabs, tab, scope } = assistantGroupTabView({
     team,
     members,
     projects: projects.filter((project) => project.environmentId === environmentId),
     assistants: people.byId,
-    saved: savedTab.saved,
-    loading: savedTab.loading,
+    saved: pushedTab ?? savedTab.saved,
+    loading: pushedTab === undefined && savedTab.loading,
   });
+  const mount = useId();
+  const tabKey = pending ? null : (tab?.key ?? null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- push presentation runs outside React and skips only the tab on screen
+  useEffect(
+    () =>
+      showAgentNotificationGroupTab(
+        mount,
+        buildAssistantGroupDeepLink({ environmentId, teamId }),
+        tabKey,
+      ),
+    [mount, environmentId, teamId, tabKey],
+  );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
   const [replyTo, setReplyTo] = useState<GroupReply | null>(null);

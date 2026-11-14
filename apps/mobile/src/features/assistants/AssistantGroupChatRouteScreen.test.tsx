@@ -71,6 +71,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     preferenceListeners: new Set<() => void>(),
     savePreferences: vi.fn(),
     navigate: vi.fn(),
+    setParams: vi.fn(),
+    /** The tab on screen, as the push presentation learns it. */
+    showTab: vi.fn(() => () => {}),
+    /** The tab a push's link put in the route. */
+    routeTab: undefined as string | undefined,
     writeSettings: vi.fn(),
     canWriteSettings: true,
     /** Members' own models in project p1, by assistant id. */
@@ -408,12 +413,16 @@ vi.mock("@react-navigation/native", () => ({
     goBack: mocks.goBack,
     dispatch: mocks.dispatch,
     navigate: mocks.navigate,
+    setParams: mocks.setParams,
   }),
   // The tablet sidebar opens the chat by id, outside any navigator screen.
   useRoute: () => {
     throw new Error("useRoute outside a navigator screen");
   },
   StackActions: { push: (name: string, params: unknown) => ({ name, params }) },
+}));
+vi.mock("../agent-awareness/notificationNavigation", () => ({
+  showAgentNotificationGroupTab: mocks.showTab,
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode; testID?: string }) => (
@@ -804,7 +813,11 @@ const render = () =>
           {
             key: "k",
             name: "AssistantGroupChat",
-            params: { environmentId: "hub", teamId: "g1" },
+            params: {
+              environmentId: "hub",
+              teamId: "g1",
+              ...(mocks.routeTab === undefined ? {} : { tab: mocks.routeTab }),
+            },
           } as never
         }
       />,
@@ -876,9 +889,12 @@ beforeEach(() => {
     mocks.subscribe,
     mocks.savePreferences,
     mocks.navigate,
+    mocks.setParams,
     mocks.writeSettings,
   ])
     fn.mockReset();
+  mocks.showTab.mockReset().mockReturnValue(() => {});
+  mocks.routeTab = undefined;
   mocks.preferences = {};
   mocks.preferenceListeners.clear();
   mocks.savePreferences.mockImplementation(
@@ -1772,6 +1788,19 @@ describe("requests", () => {
     });
     expect(selected(TAB.beta)).toBe("true");
     expect(mocks.subscribe.mock.calls.map((call) => call[2])).not.toContainEqual(undefined);
+  });
+
+  it("opens the tab a push names, saves it, and tells push presentation which tab is on screen", () => {
+    mocks.routeTab = "project:p2";
+    tabbed("project:p1");
+    expect(selected(TAB.beta)).toBe("true");
+    expect(mocks.preferences).toEqual({ assistantGroupTabs: { "hub:g1": "project:p2" } });
+    expect(mocks.setParams).toHaveBeenCalledWith({ tab: undefined });
+    expect(mocks.showTab).toHaveBeenLastCalledWith(
+      expect.any(String),
+      "/assistant-groups/hub/g1",
+      "project:p2",
+    );
   });
 
   it("switches tabs keeping the draft, sets the composer's project, and reopens on the saved tab", async () => {

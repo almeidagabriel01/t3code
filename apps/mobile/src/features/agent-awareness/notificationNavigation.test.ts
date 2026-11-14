@@ -3,11 +3,19 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { consumeLastAgentNotificationResponse } from "./notificationResponseConsumer";
 
+import { foregroundNotificationBehavior } from "./foregroundNotificationBehavior";
 import {
+  deepLinkShows,
   extractAgentNotificationDeepLink,
   routeAgentNotificationResponseOnce,
   threadDeepLinkOnScreen,
 } from "./notificationPayload";
+
+const android = vi.hoisted(() => ({ onScreen: vi.fn() }));
+vi.mock("expo-notifications", () => ({}));
+vi.mock("./androidNotifications", () => ({ setAndroidThreadOnScreen: android.onScreen }));
+const { setAgentNotificationPathname, showAgentNotificationGroupTab } =
+  await import("./notificationNavigation");
 
 function responseWithData(data: Record<string, unknown>, identifier = "notification-1") {
   return {
@@ -81,6 +89,18 @@ describe("extractAgentNotificationDeepLink", () => {
     ).toBeNull();
   });
 
+  it.each([
+    ["/assistant-groups/env/team?tab=project%3Ap1", "/assistant-groups/env/team?tab=project%3Ap1"],
+    ["/assistant-groups/env/team?tab=general", "/assistant-groups/env/team?tab=general"],
+    ["/assistant-groups/env/team?tab=all", "/assistant-groups/env/team"],
+    ["/assistant-groups/env/team?tab=", null],
+    ["/assistant-groups/env/team?tab=general&x=1", null],
+    ["/assistant-groups/env/team?view=general", null],
+    ["/threads/env/thread?tab=general", null],
+  ])("reads the tab a group's link names: %s", (deepLink, expected) => {
+    expect(extractAgentNotificationDeepLink(responseWithData({ deepLink }))).toBe(expected);
+  });
+
   it("falls back to the thread route from environment and thread ids", () => {
     expect(
       extractAgentNotificationDeepLink(
@@ -118,6 +138,43 @@ describe("extractAgentNotificationDeepLink", () => {
       extractAgentNotificationDeepLink(responseWithData({ deepLink: "/threads/env/thread?x=1" })),
     ).toBeNull();
     expect(extractAgentNotificationDeepLink({})).toBeNull();
+  });
+});
+
+describe("deepLinkShows", () => {
+  const group = "/assistant-groups/env/team";
+  it.each([
+    ["the same thread", "/threads/env/t", "/threads/env/t", true],
+    ["another thread", "/threads/env/t", "/threads/env/u", false],
+    ["a group on All, for a tab", group, `${group}?tab=project%3Ap1`, true],
+    ["a group on All, for an older push", group, group, true],
+    ["a group on its tab", `${group}?tab=project%3Ap1`, `${group}?tab=project%3Ap1`, true],
+    ["a group on another tab", `${group}?tab=general`, `${group}?tab=project%3Ap1`, false],
+    ["a group on a tab, for an older push", `${group}?tab=general`, group, false],
+    ["another group", group, "/assistant-groups/env/other?tab=general", false],
+    ["nothing on screen", null, group, false],
+  ] as const)("%s", (_name, onScreen, target, expected) => {
+    expect(deepLinkShows(onScreen, target)).toBe(expected);
+    const notification = { request: { content: { data: { deepLink: target } } } } as never;
+    expect(foregroundNotificationBehavior(notification, onScreen).shouldShowBanner).toBe(!expected);
+  });
+});
+
+describe("showAgentNotificationGroupTab", () => {
+  it("names the open chat's tab while it is on screen, and drops only its own mount", () => {
+    const group = "/assistant-groups/env/team";
+    setAgentNotificationPathname(`${group}`);
+    const closeRoute = showAgentNotificationGroupTab("route", group, "project:p1");
+    expect(android.onScreen).toHaveBeenLastCalledWith(`${group}?tab=project%3Ap1`);
+    const closeOther = showAgentNotificationGroupTab("other", "/assistant-groups/env/x", "general");
+    expect(android.onScreen).toHaveBeenLastCalledWith(`${group}?tab=project%3Ap1`);
+    closeOther();
+    setAgentNotificationPathname("/threads/env/thread");
+    expect(android.onScreen).toHaveBeenLastCalledWith("/threads/env/thread");
+    setAgentNotificationPathname(group);
+    expect(android.onScreen).toHaveBeenLastCalledWith(`${group}?tab=project%3Ap1`);
+    closeRoute();
+    expect(android.onScreen).toHaveBeenLastCalledWith(group);
   });
 });
 

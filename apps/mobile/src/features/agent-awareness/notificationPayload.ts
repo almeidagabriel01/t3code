@@ -48,17 +48,35 @@ function encodeThreadDeepLink(input: {
   }
 }
 
+/** A group chat's link, opened on `tab`; none or All is the bare chat, which shows every tab. */
+export function assistantGroupDeepLink(path: string, tab: string | null): string {
+  return tab === null || tab === "all" ? path : `${path}?tab=${encodeURIComponent(tab)}`;
+}
+
+/**
+ * The screen at `onScreen` already shows `target`: the same link, or one of its tabs when the
+ * screen names none (a thread, or a group chat on All). The Android module keeps the same rule.
+ */
+export function deepLinkShows(onScreen: string | null, target: string | null): boolean {
+  if (onScreen === null || target === null) return false;
+  return target === onScreen || (!onScreen.includes("?") && target.split("?")[0] === onScreen);
+}
+
 function normalizeDeepLink(value: string): string | null {
+  // A group chat's link may name its tab; nothing else carries a query.
+  const [path = "", query, ...rest] = value.split("?");
+  const tab = query?.startsWith("tab=") ? query.slice("tab=".length) : undefined;
   if (
     value.trim() !== value ||
     value.startsWith("//") ||
-    value.includes("?") ||
+    rest.length > 0 ||
+    (query !== undefined && (tab === undefined || tab === "" || tab.includes("&"))) ||
     value.includes("#")
   ) {
     return null;
   }
 
-  const parts = value.split("/");
+  const parts = path.split("/");
   if (
     parts.length !== 4 ||
     parts[0] !== "" ||
@@ -73,8 +91,12 @@ function normalizeDeepLink(value: string): string | null {
     if (parts[1] === "assistant-groups") {
       return environmentId.length === 0 || id.length === 0
         ? null
-        : `/assistant-groups/${encodeURIComponent(environmentId)}/${encodeURIComponent(id)}`;
+        : assistantGroupDeepLink(
+            `/assistant-groups/${encodeURIComponent(environmentId)}/${encodeURIComponent(id)}`,
+            tab === undefined ? null : decodeURIComponent(tab),
+          );
     }
+    if (tab !== undefined) return null;
     return encodeThreadDeepLink({ environmentId, threadId: id });
   } catch {
     return null;

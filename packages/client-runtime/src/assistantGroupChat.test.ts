@@ -864,7 +864,7 @@ describe("read position", () => {
     });
   });
 
-  it("announces a group once, when its work goes from open to none", () => {
+  it("announces an older server's group once, when its work goes from open to none", () => {
     const chatOf = (working: boolean, preview: string | null) => ({
       latestSeq: 3,
       readSeq: 0,
@@ -874,21 +874,20 @@ describe("read position", () => {
     });
     const busy = { name: "Ops", chat: chatOf(true, null) };
     const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };
-    assert.deepStrictEqual(assistantGroupFinished(busy, idle, []), {
-      title: "Ops finished",
-      body: "All done. Ship it.",
-      projectId: null,
-    });
-    assert.isNull(assistantGroupFinished(idle, idle, []));
-    assert.isNull(assistantGroupFinished(undefined, idle, []));
-    assert.isNull(assistantGroupFinished(busy, busy, []));
-    assert.isNull(assistantGroupFinished(busy, { name: "Ops" }, []));
-    assert.isNull(
+    assert.deepStrictEqual(assistantGroupFinished(busy, idle, []), [
+      { title: "Ops finished", body: "All done. Ship it.", projectId: null, tab: "all" },
+    ]);
+    assert.deepStrictEqual(assistantGroupFinished(idle, idle, []), []);
+    assert.deepStrictEqual(assistantGroupFinished(undefined, idle, []), []);
+    assert.deepStrictEqual(assistantGroupFinished(busy, busy, []), []);
+    assert.deepStrictEqual(assistantGroupFinished(busy, { name: "Ops" }, []), []);
+    assert.deepStrictEqual(
       assistantGroupFinished(busy, { ...idle, archivedAt: "2026-11-09T00:00:00.000Z" }, []),
+      [],
     );
     assert.strictEqual(
-      assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) }, [])?.body
-        .length,
+      assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) }, [])[0]
+        ?.body.length,
       140,
     );
     // The request's project leads the body; General and an unknown project add nothing.
@@ -897,31 +896,97 @@ describe("read position", () => {
       ...idle,
       chat: { ...idle.chat, previewProjectId },
     });
-    assert.deepStrictEqual(assistantGroupFinished(busy, scoped("p-web" as ProjectId), web), {
-      title: "Ops finished",
-      body: "[web] All done. Ship it.",
-      projectId: "p-web" as ProjectId,
-    });
-    assert.strictEqual(assistantGroupFinished(busy, scoped(null), web)?.body, "All done. Ship it.");
+    assert.deepStrictEqual(assistantGroupFinished(busy, scoped("p-web" as ProjectId), web), [
+      {
+        title: "Ops finished",
+        body: "[web] All done. Ship it.",
+        projectId: "p-web" as ProjectId,
+        tab: "project:p-web",
+      },
+    ]);
     assert.strictEqual(
-      assistantGroupFinished(busy, scoped("p-gone" as ProjectId), web)?.body,
+      assistantGroupFinished(busy, scoped(null), web)[0]?.body,
       "All done. Ship it.",
+    );
+    assert.strictEqual(
+      assistantGroupFinished(busy, scoped("p-gone" as ProjectId), web)[0]?.body,
+      "All done. Ship it.",
+    );
+  });
+
+  const tabbed = (
+    open: ReadonlyArray<readonly [string | null, number]>,
+    previewProjectId: string | null = "p1",
+  ) => ({
+    name: "Ops",
+    chat: {
+      latestSeq: 3,
+      readSeq: 0,
+      unreadCount: 0,
+      working: open.length > 0,
+      preview: "Fixed it.",
+      previewProjectId: previewProjectId as ProjectId | null,
+      scopes: open.map(([projectId, openTasks]) => ({
+        projectId: projectId as ProjectId | null,
+        unreadCount: 0,
+        waiting: false,
+        readSeq: 0,
+        openTasks,
+      })),
+    },
+  });
+  it.each([
+    [
+      "a project ends while another runs",
+      tabbed([
+        ["p1", 1],
+        ["p2", 1],
+      ]),
+      tabbed([["p2", 1]]),
+      [["project:p1", "[one] Fixed it."]],
+    ],
+    [
+      "two projects end together",
+      tabbed([
+        ["p1", 1],
+        ["p2", 2],
+      ]),
+      tabbed([]),
+      [
+        ["project:p1", "[one] Fixed it."],
+        ["project:p2", "Work finished"],
+      ],
+    ],
+    [
+      "the latest line is General's, after the work",
+      tabbed([["p1", 1]]),
+      tabbed([], null),
+      [["project:p1", "[one] Work finished"]],
+    ],
+    ["General ends", tabbed([[null, 1]], null), tabbed([], null), [["general", "Fixed it."]]],
+    ["a request that gets a project moves its work", tabbed([[null, 1]]), tabbed([["p1", 1]]), []],
+  ] as const)("announces per tab: %s", (_name, previous, next, expected) => {
+    const projects = [{ id: "p1" as ProjectId, title: "one" }];
+    assert.deepStrictEqual(
+      assistantGroupFinished(previous, next, projects).map((notice) => [notice.tab, notice.body]),
+      expected as unknown as string[][],
     );
   });
 });
 
 describe("assistantGroupFinishedInView", () => {
   it.each([
-    ["no tab row", null, "p1", true],
-    ["All", "all", "p1", true],
-    ["All, for General", "all", null, true],
-    ["its project's tab", "project:p1", "p1", true],
-    ["another project's tab", "project:p2", "p1", false],
-    ["a project's tab, for General", "project:p1", null, false],
-    ["General, for General", "general", null, true],
-    ["General, for a project", "general", "p1", false],
-  ] as const)("%s", (_name, open, projectId, expected) => {
-    assert.strictEqual(assistantGroupFinishedInView(open, projectId as ProjectId | null), expected);
+    ["no tab row", null, "project:p1", true],
+    ["All", "all", "project:p1", true],
+    ["All, for General", "all", "general", true],
+    ["its project's tab", "project:p1", "project:p1", true],
+    ["another project's tab", "project:p2", "project:p1", false],
+    ["a project's tab, for General", "project:p1", "general", false],
+    ["General, for General", "general", "general", true],
+    ["General, for a project", "general", "project:p1", false],
+    ["a project's tab, for an older server's All", "project:p1", "all", false],
+  ] as const)("%s", (_name, open, finished, expected) => {
+    assert.strictEqual(assistantGroupFinishedInView(open, finished), expected);
   });
 });
 
