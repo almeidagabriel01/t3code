@@ -15,7 +15,8 @@ import {
   projectModelLayer,
   resolveModelSelection,
 } from "@t3tools/shared/modelSelectionPrecedence";
-import { XIcon } from "lucide-react";
+import { RotateCcwIcon, XIcon } from "lucide-react";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../state/environments";
@@ -30,6 +31,7 @@ import {
 } from "../settings/useScopedSettings";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { ComposerControl } from "../chat/ComposerControl";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -43,6 +45,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
+import { PopoverClose } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const SOURCE_DETAIL = {
@@ -143,6 +146,15 @@ function ProjectModelPicker(props: {
           available: { settings, projectId: target?.projectId ?? null, providers },
         });
   const shown = layer === "global" ? (selection ?? fallback) : resolved;
+  const back = resolveModelSelection(defaults, isUsable);
+  const backEntry = entries.find((entry) => entry.instanceId === back.selection.instanceId);
+  const backModel = backEntry?.models.find((model) => model.slug === back.selection.model);
+  const backLabel =
+    back.layer === "global"
+      ? "Members' models"
+      : backModel
+        ? getTriggerDisplayModelName(backModel, backEntry?.driverKind)
+        : formatModelSlugName(back.selection.model);
   const detail =
     layer === "message"
       ? "This message only"
@@ -172,6 +184,24 @@ function ProjectModelPicker(props: {
       environmentId={representative?.environmentId ?? null}
       instanceEntries={entries}
       getModelDisabledReason={modelDisabledReason}
+      {...(message !== undefined && layer === "message"
+        ? {
+            footer: (
+              <PopoverClose
+                render={
+                  <button
+                    type="button"
+                    className="flex w-full cursor-pointer items-center gap-2 border-t border-foreground/12 px-3 py-2 text-left text-sm outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  />
+                }
+                onClick={() => message.onPick(null)}
+              >
+                <RotateCcwIcon className="size-4 text-muted-foreground" />
+                Back to {backLabel}
+              </PopoverClose>
+            ),
+          }
+        : {})}
       onChange={save}
     />
   );

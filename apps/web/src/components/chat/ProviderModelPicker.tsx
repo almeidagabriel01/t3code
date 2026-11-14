@@ -477,7 +477,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </div>
           </DockedPickerContext>
         ) : (
-          picker
+          <>
+            {picker}
+            {props.footer}
+          </>
         )}
         {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />

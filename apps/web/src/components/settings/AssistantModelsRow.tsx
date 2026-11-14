@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 import { PlusIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -34,6 +34,8 @@ export function SelectionPicker(
     readonly detail?: string;
     /** Names the trigger instead of the selection, which then only seeds the menu; hides effort. */
     readonly placeholder?: string;
+    /** Under the model list, such as a way back to the default. */
+    readonly footer?: ReactNode;
     readonly onChange: (selection: ModelSelection) => void;
   },
 ) {
@@ -51,6 +53,7 @@ export function SelectionPicker(
         {...modelPickerProps(props, props.settings, props.providers, selection)}
         {...(props.composer ? { size: "xs" as const, triggerClassName: "" } : {})}
         triggerAriaLabel={props.label}
+        footer={props.footer}
         {...(props.detail === undefined ? {} : { triggerDetail: props.detail })}
         // A provider that is gone or off cannot name its model; the slug still reads cleanly.
         {...(props.placeholder !== undefined

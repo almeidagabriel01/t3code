@@ -1434,6 +1434,12 @@ it("picks the composer's model for the next message only, never as the project's
   await userEvent.click(reset);
   await expect.element(chip()).toHaveTextContent("Members' models");
   await expect.element(reset).not.toBeInTheDocument();
+  // The chip's own menu goes back too.
+  await pick();
+  await userEvent.click(chip());
+  await userEvent.click(page.getByRole("button", { name: "Back to Members' models" }));
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  await expect.element(reset).not.toBeInTheDocument();
   // A pick lasts only in the tab it was made in.
   await pick();
   await userEvent.click(tab("All"));
