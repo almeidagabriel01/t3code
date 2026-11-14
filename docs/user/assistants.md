@@ -297,7 +297,8 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   answered in the meantime. It has its own switch, respects the pause switch and does not count
   toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
   with the project, provider, the time it resets and the task, once per provider and limit window.
-  Tasks waiting on a limit show **Limit until** and the reset time instead of failing.
+  With **Resume after usage limits** on in **Settings → Threads**, tasks waiting on a limit show
+  **Limit until** and the reset time instead of failing.
 - **Notifications per day**, 20 by default.
 - **Messages from assistants per day**, 20 by default: short messages an assistant sends you itself.
 
