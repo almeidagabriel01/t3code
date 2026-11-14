@@ -133,20 +133,22 @@ export function AssistantModelsRow(
           {rows.map((row) => (
             <li key={row.id} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <span className="min-w-24 flex-1 truncate text-sm text-foreground">{row.name}</span>
-              <SelectionPicker
-                {...props}
-                selection={row.selection}
-                label={`Model for ${row.name}`}
-                disabled={!props.canWrite}
-                onChange={(selection) => save(row.id, selection)}
-              />
-              <IconAction
-                label={`Remove ${row.name}`}
-                disabled={!props.canWrite}
-                onClick={() => save(row.id, null)}
-              >
-                <Trash2Icon />
-              </IconAction>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <SelectionPicker
+                  {...props}
+                  selection={row.selection}
+                  label={`Model for ${row.name}`}
+                  disabled={!props.canWrite}
+                  onChange={(selection) => save(row.id, selection)}
+                />
+                <IconAction
+                  label={`Remove ${row.name}`}
+                  disabled={!props.canWrite}
+                  onClick={() => save(row.id, null)}
+                >
+                  <Trash2Icon />
+                </IconAction>
+              </div>
             </li>
           ))}
         </ul>
