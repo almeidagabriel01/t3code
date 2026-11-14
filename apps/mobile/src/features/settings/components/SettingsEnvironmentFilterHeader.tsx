@@ -1,4 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import { Platform } from "react-native";
 
 import type { AppBarMenu } from "../../../components/ui/AppBar.types";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
@@ -21,8 +22,9 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
   } = useSettingsEnvironmentFilter();
   return {
     title: "Filter settings environments and projects",
+    // iOS rebuilds a header button whose icon changes, which closes its open menu after each pick.
     icon:
-      selectedIds === null && selectedProjectKeys === null
+      Platform.OS === "ios" || (selectedIds === null && selectedProjectKeys === null)
         ? "line.3.horizontal.decrease"
         : "line.3.horizontal.decrease.circle.fill",
     items: [
