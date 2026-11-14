@@ -116,6 +116,7 @@ vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
       ? { mood: "idle", detail: "Idle", since: null }
       : (mocks.presence[thread.id] ?? { mood: "idle", detail: "Idle", since: null }),
 }));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
