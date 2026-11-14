@@ -1460,7 +1460,7 @@ export function AssistantGroupChat(props: {
   });
   const tabKey = tab?.key ?? null;
   const live = useAssistantGroupChat(environmentId, teamId, scope);
-  useShowGroupTab(environmentId, teamId, tabKey);
+  useShowGroupTab(environmentId, teamId, pending ? undefined : tabKey);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(

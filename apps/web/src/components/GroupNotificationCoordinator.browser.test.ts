@@ -94,6 +94,11 @@ it("shows a toast that opens the chat unless that chat is open and focused", () 
   expect(state.toast).not.toHaveBeenCalled();
   presentGroupFinished(router as never, ENV, TEAM, inP1, [open("project:p2")]);
   expect(state.toast).toHaveBeenCalledOnce();
+  // A chat still choosing its tab shows none yet, so it is not All either.
+  presentGroupFinished(router as never, ENV, TEAM, notice, [
+    { environmentId: ENV, teamId: TEAM, tab: undefined } as never,
+  ]);
+  expect(state.toast).toHaveBeenCalledTimes(2);
   // Opening it switches the chat to the tab that shows the work.
   (state.toast.mock.calls[0]![0] as { actionProps: { onClick: () => void } }).actionProps.onClick();
   expect(localStorage.getItem(`t3code:group-tab:${ENV}:${TEAM}`)).toBe(

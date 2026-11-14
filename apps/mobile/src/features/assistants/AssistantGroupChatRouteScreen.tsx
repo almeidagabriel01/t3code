@@ -1294,7 +1294,7 @@ export function AssistantGroupChatRouteScreen({
     loading: pushedTab === undefined && savedTab.loading,
   });
   const mount = useId();
-  const tabKey = pending ? null : (tab?.key ?? null);
+  const tabKey = pending ? undefined : (tab?.key ?? null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- push presentation runs outside React and skips only the tab on screen
   useEffect(
     () =>

@@ -185,6 +185,10 @@ describe("showAgentNotificationGroupTab", () => {
     expect(android.onScreen).toHaveBeenLastCalledWith(`${group}?tab=project%3Ap1`);
     closeRoute();
     expect(android.onScreen).toHaveBeenLastCalledWith(group);
+    // Tabs still loading show none, so no tab's push is silenced, not even as All.
+    const closePending = showAgentNotificationGroupTab("route", group, undefined);
+    expect(android.onScreen).toHaveBeenLastCalledWith(null);
+    closePending();
   });
 });
 

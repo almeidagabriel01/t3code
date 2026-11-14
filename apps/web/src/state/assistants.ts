@@ -401,7 +401,7 @@ export const assistantTeamEntriesAtom = Atom.make(
 export function useShowGroupTab(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
-  tab: AssistantGroupTabKey | null,
+  tab: AssistantGroupTabKey | null | undefined,
 ) {
   const mount = useId();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the notice coordinator runs outside React

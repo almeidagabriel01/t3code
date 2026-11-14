@@ -5,8 +5,8 @@ import { Atom, type AtomRegistry } from "effect/reactivity";
 export interface OpenGroupTab {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
-  /** null while the chat has no tab row or is still choosing one. */
-  readonly tab: AssistantGroupTabKey | null;
+  /** null while the chat has no tab row; undefined while it is still choosing one, so none. */
+  readonly tab: AssistantGroupTabKey | null | undefined;
 }
 
 /**

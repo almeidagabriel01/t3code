@@ -26,6 +26,7 @@ import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { formatUpcomingTimestamp } from "~/timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { openGroupTabsAtom } from "~/state/openGroupTabs";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
 import { assistantDialogAtom } from "./assistantDialogState";
@@ -1198,8 +1199,12 @@ it("reads nothing, and shows no untabbed feed, while a member of a tabbed group 
   await expect.element(main().getByText("Ship the app")).not.toBeInTheDocument();
   // Nothing is read before the tab is known: not the whole chat, not a scope.
   expect(fakeGroupChat.subscriptions).toEqual([]);
+  // Nor does it count as showing All, which would hide every tab's finished notice.
+  const shownTabs = () => [...appAtomRegistry.get(openGroupTabsAtom).values()].map((e) => e.tab);
+  expect(shownTabs()).toEqual([undefined]);
   publishAssistants(loaded, [team({ chat: scopedChat() })]);
   await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  expect(shownTabs()).toEqual(["all"]);
   await expect.element(main().getByText("Ship the app")).toBeVisible();
   expect(fakeGroupChat.reads).toEqual([]);
 });

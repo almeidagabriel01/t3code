@@ -84,8 +84,8 @@ export function presentGroupFinished(
   const tabs = shown.flatMap((entry) =>
     entry.environmentId === environmentId && entry.teamId === teamId ? [entry.tab] : [],
   );
-  const inView = (tabs.length === 0 ? [null] : tabs).some((tab) =>
-    assistantGroupFinishedInView(tab, notice.tab),
+  const inView = (tabs.length === 0 ? [null] : tabs).some(
+    (tab) => tab !== undefined && assistantGroupFinishedInView(tab, notice.tab),
   );
   if (chatOpen && focused && inView) return;
   const open = () => {
