@@ -714,6 +714,8 @@ it.effect.each<{
   readSeq?: number;
   scopes: Record<string, [unread: number, waiting: boolean, readSeq: number]>;
   cursors: Record<string, number>;
+  /** Each tab's project title, when the case checks it; null for none. */
+  titles?: Record<string, string | null>;
 }>([
   {
     name: "a chat lists every tab with unread or waiting, and General with its request",
@@ -818,7 +820,21 @@ it.effect.each<{
     scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, false, 0] },
     cursors: {},
   },
-])("$name", ({ steps, readSeq, scopes, cursors }) => {
+  {
+    name: "a deleted project's tab keeps its last title, and a never-seen project has none",
+    steps: [
+      { sql: "UPDATE projection_projects SET deleted_at = 't' WHERE project_id = 'p2'" },
+      {
+        sql: `INSERT INTO assistant_group_messages (message_id, team_id, seq, author, kind, text,
+          request_id, project_id, request_project_id, created_at)
+          VALUES ('gm:8', '${TEAM}', 8, 'assistant', 'message', 'x', 'gm:8', 'p9', 'p9', 't')`,
+      },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], p9: [1, false, 0], "": [1, true, 0] },
+    cursors: {},
+    titles: { p1: PROJECT_TITLES.p1!, p2: PROJECT_TITLES.p2!, p9: null, "": null },
+  },
+])("$name", ({ steps, readSeq, scopes, cursors, titles }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
@@ -881,6 +897,14 @@ it.effect.each<{
       ),
       scopes,
     );
+    if (titles !== undefined) {
+      assert.deepEqual(
+        Object.fromEntries(
+          (chat.scopes ?? []).map((scope) => [scope.projectId ?? "", scope.title ?? null]),
+        ),
+        titles,
+      );
+    }
     assert.equal(
       chat.unreadCount,
       Object.values(scopes).reduce((sum, [unread]) => sum + unread, 0),

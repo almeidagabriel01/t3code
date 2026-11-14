@@ -309,6 +309,8 @@ export const AssistantTeamChatScope = Schema.Struct({
   waiting: Schema.Boolean,
   /** The tab's read position: its own, else the group's. */
   readSeq: Schema.Int,
+  /** The project's title, kept after it is deleted; absent for General and unknown projects. */
+  title: Schema.optionalKey(Schema.String),
 });
 export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
 

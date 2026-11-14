@@ -790,7 +790,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
-            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq))
+            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
+            'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
             SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
               (SELECT COUNT(*) FROM assistant_group_messages m

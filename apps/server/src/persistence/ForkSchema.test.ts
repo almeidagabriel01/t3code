@@ -214,6 +214,8 @@ it.effect("gives each existing group the projects all its members list, and no o
 it.effect("adds only the request grouping columns a database lacks, then fills them", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // Dropping a column re-checks the chat view, which reads the migrations' projects projection.
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, deleted_at TEXT)`;
     yield* ensureForkSchema();
     yield* sql`DROP INDEX assistant_requests_group_idx`;
     yield* sql`ALTER TABLE assistant_requests DROP COLUMN group_id`;
@@ -614,6 +616,8 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_read_cursors`, []);
       // The team's chat decodes; General is listed only when it holds the request.
+      // The migrations own the projects projection; the chat's tabs read their titles from it.
+      yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, deleted_at TEXT)`;
       yield* sql`INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
         VALUES ('g1', 'Core', '[]', 't', 't')`;
       const [team] = yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state`;
