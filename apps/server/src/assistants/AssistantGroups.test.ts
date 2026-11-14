@@ -1327,6 +1327,41 @@ it.effect("a member at a usage limit starts no other task until the limited one 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a usage limit holds only the tasks that would run on the limited provider", () => {
+  const h = harness({
+    projects: { ada: ["p1", "p2"] },
+    settings: {
+      projectSettingsOverrides: {
+        [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+        [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+    const [limitedRun] = h.runs.get(requestThreadId("ada", TEAM, one.message.id))!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // Ada's request in p2 runs on another provider; Beto's in p1 would hit the same limit.
+    yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@beto three", projectId: p1 }, h.user);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "ada:running:null",
+        "beto:queued:waiting for a usage limit",
+      ],
+    );
+    assert.deepEqual(
+      h.launched.map((input) => input.modelSelection.instanceId),
+      [codex, claude],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("Stop on a usage-limited task stops its thread so the reset does not resume it", () => {
   const h = harness();
   return Effect.gen(function* () {

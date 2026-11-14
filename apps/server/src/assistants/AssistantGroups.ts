@@ -1467,6 +1467,35 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The provider instance a task runs on: its request thread's, or the one that thread would be
+   * launched on. Undefined when neither can be told.
+   */
+  const taskInstance = Effect.fn("AssistantGroups.taskInstance")(function* (
+    team: AssistantTeam,
+    task: TaskRow,
+  ) {
+    const requestId = task.request_id ?? task.request_message_id;
+    const row = (yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads
+      WHERE request_id = ${requestId} AND assistant_id = ${task.owner_id}`)[0];
+    const thread = row === undefined ? undefined : yield* inspectThread(row.thread_id as ThreadId);
+    if (thread !== undefined && thread.deletedAt === null) {
+      return thread.modelSelection.instanceId as string;
+    }
+    const member = (yield* activeMembers(team)).find((row) => row.assistant_id === task.owner_id);
+    const request = yield* getMessage(requestId);
+    if (member === undefined || request === undefined) return undefined;
+    const resolved = yield* modelSelections
+      .resolveForNewThread({
+        projectId: (request.project_id ?? member.project_id) as ProjectId,
+        assistantId: member.assistant_id as AssistantId,
+        teamId: team.id,
+      })
+      .pipe(Effect.option);
+    return Option.isSome(resolved) ? (resolved.value.selection.instanceId as string) : undefined;
+  });
+
+  /**
    * Starts queued tasks, oldest first, while the group has free slots. A task waits while another
    * running or earlier-queued one holds an overlapping resource. Only running tasks hold: a parent
    * waiting on its children has ended its run and gives its resources up, so no wait is circular.
@@ -1486,19 +1515,23 @@ const make = Effect.gen(function* () {
     const hold = (task: TaskRow, who: string) => {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
     };
-    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot. Its
-    // owner waits too: its other requests run in their own threads but on the same provider limit.
-    const limitedOwners = new Set<string>();
+    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot. Work
+    // that would run on its provider instance waits too, whoever owns it.
+    const limited = new Set<string>();
     for (const task of live) {
       if (task.status !== "running" && task.status !== "usage_limited") continue;
       if (task.status === "running") running += 1;
-      else limitedOwners.add(task.owner_id);
+      else {
+        const instance = yield* taskInstance(team, task);
+        if (instance !== undefined) limited.add(instance);
+      }
       if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
     }
     for (const task of live) {
       if (task.status !== "queued") continue;
       const wanted = resourcesOf(task);
-      if (limitedOwners.has(task.owner_id)) {
+      const instance = limited.size === 0 ? undefined : yield* taskInstance(team, task);
+      if (instance !== undefined && limited.has(instance)) {
         if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
         yield* setWaitReason(task, "waiting for a usage limit");
         continue;
