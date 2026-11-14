@@ -249,6 +249,55 @@ describe("ServerSettings provider budgets", () => {
   });
 });
 
+describe("ServerSettings usage limit alerts", () => {
+  it.each([0, 100, -5, 15.5, "015", "", "15", true, {}])(
+    "rejects %j as a written threshold",
+    (bad) => {
+      expect(() =>
+        decodeServerSettingsPatch({ usageLimitAlerts: { a: { windows: { seven_day: bad } } } }),
+      ).toThrow();
+    },
+  );
+
+  it("accepts 1..99 and off, and null to return a window to its default", () => {
+    const patch = decodeServerSettingsPatch({
+      usageLimitAlerts: { a: { windows: { seven_day: 1, five_hour: 99, x: "off", y: null } } },
+    });
+    expect(Object.values(patch.usageLimitAlerts ?? {})[0]?.windows).toEqual({
+      seven_day: 1,
+      five_hour: 99,
+      x: "off",
+      y: null,
+    });
+  });
+
+  it("drops only the bad stored entries and keeps every other setting", () => {
+    const settings = decodeServerSettings({
+      hideTaggedThreads: true,
+      usageLimitAlerts: {
+        a: { windows: { seven_day: 0, five_hour: 20, x: "015", y: 15.5 }, timeZone: 3 },
+        b: "garbage",
+        c: { windows: "garbage", timeZone: "America/Sao_Paulo", extra: 1 },
+      },
+    });
+    expect(settings.hideTaggedThreads).toBe(true);
+    const alerts = settings.usageLimitAlerts as Record<string, unknown>;
+    expect(alerts["a"]).toEqual({
+      windows: { seven_day: undefined, five_hour: 20, x: undefined, y: undefined },
+      timeZone: undefined,
+    });
+    expect(alerts["b"]).toBeUndefined();
+    expect(alerts["c"]).toEqual({ windows: {}, timeZone: "America/Sao_Paulo" });
+    expect(() => encodeServerSettings(settings)).not.toThrow();
+  });
+
+  it("keeps the other settings when the whole key is unreadable", () => {
+    const settings = decodeServerSettings({ hideTaggedThreads: true, usageLimitAlerts: [1] });
+    expect(settings.hideTaggedThreads).toBe(true);
+    expect(settings.usageLimitAlerts).toEqual({});
+  });
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",

@@ -135,6 +135,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   providerWorkspaceSnapshotsOnDemand: Schema.optionalKey(Schema.Boolean),
   /** Hide the budget editor when absent; older servers drop the patch. */
   providerBudgets: Schema.optionalKey(Schema.Boolean),
+  /** Hide the limit alert editor when absent; older servers drop the patch. */
+  usageLimitAlerts: Schema.optionalKey(Schema.Boolean),
   folderProjects: Schema.optionalKey(Schema.Boolean),
   /** Honors `modelCatalogOnly`; older servers drop the field and probe every provider. */
   modelCatalogRefresh: Schema.optionalKey(Schema.Boolean),

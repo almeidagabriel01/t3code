@@ -1,5 +1,7 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -208,3 +210,52 @@ export const InstanceSpend = Schema.Struct({
 });
 export const InstanceSpendResult = Schema.Struct({ instances: Schema.Array(InstanceSpend) });
 export type InstanceSpendResult = typeof InstanceSpendResult.Type;
+
+/** Remaining percent of a usage window at or below which the user is told once; `"off"` silences a default. */
+export const UsageLimitAlertThreshold = Schema.Union([
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 99 })),
+  Schema.Literal("off"),
+]);
+export type UsageLimitAlertThreshold = typeof UsageLimitAlertThreshold.Type;
+
+export const USAGE_LIMIT_ALERT_CHOICES = [5, 10, 15, 20, 25, 30, 40, 50] as const;
+
+// A hand-edited bad entry drops alone: any decode failure in settings.json resets every setting.
+const dropInvalid = <S extends Schema.Codec<unknown, unknown>>(schema: S) => {
+  const decodeValue = Schema.decodeUnknownOption(schema);
+  return Schema.Unknown.pipe(
+    Schema.decodeTo(
+      Schema.UndefinedOr(Schema.toType(schema)),
+      SchemaTransformation.transform<S["Type"] | undefined, unknown>({
+        decode: (raw) => Option.getOrUndefined(decodeValue(raw)),
+        encode: (value) => value,
+      }),
+    ),
+  );
+};
+
+/** Stored per provider instance; windows are keyed by `ServerProviderUsageWindow.id`. */
+export const UsageLimitAlertConfig = Schema.Struct({
+  windows: Schema.Record(Schema.String, dropInvalid(UsageLimitAlertThreshold)).pipe(
+    Schema.catchDecoding(() => Effect.succeedSome({})),
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** IANA zone of the client that last saved it, for the reset time in the message. */
+  timeZone: Schema.optionalKey(dropInvalid(TrimmedNonEmptyString)),
+});
+export type UsageLimitAlertConfig = typeof UsageLimitAlertConfig.Type;
+
+export const UsageLimitAlerts = Schema.Record(
+  ProviderInstanceId,
+  dropInvalid(UsageLimitAlertConfig),
+).pipe(Schema.catchDecoding(() => Effect.succeedSome({})));
+export type UsageLimitAlerts = typeof UsageLimitAlerts.Type;
+
+/** Merges per window: a number sets it, `"off"` silences it, `null` returns it to the default. */
+export const UsageLimitAlertConfigPatch = Schema.Struct({
+  windows: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.NullOr(UsageLimitAlertThreshold)),
+  ),
+  timeZone: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type UsageLimitAlertConfigPatch = typeof UsageLimitAlertConfigPatch.Type;
