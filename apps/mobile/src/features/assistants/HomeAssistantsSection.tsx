@@ -261,12 +261,25 @@ function GroupFoldRow(props: {
         onPress={() => openTeam.chat(environmentId, team.id)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 px-2 active:opacity-70"
       >
-        <SymbolView
-          name="bubble.left.and.bubble.right"
-          size={14}
-          tintColorClassName={mutedIcon}
-          type="monochrome"
-        />
+        {/* The dot sits on the icon, as on an assistant's face, so it takes no width from the faces. */}
+        <View className="relative">
+          <SymbolView
+            name="bubble.left.and.bubble.right"
+            size={14}
+            tintColorClassName={mutedIcon}
+            type="monochrome"
+          />
+          {assistantGroupChatWaiting(team.chat) ? (
+            <View
+              testID="group-waiting-dot"
+              accessibilityLabel="Waiting on you"
+              className={cn(
+                "absolute -right-0.5 -top-0.5 size-2 rounded-full border bg-warning-foreground",
+                props.sidebar ? "border-drawer" : "border-screen",
+              )}
+            />
+          ) : null}
+        </View>
         <Text
           className={cn(
             "shrink text-base font-t3-medium",
@@ -293,13 +306,6 @@ function GroupFoldRow(props: {
             </View>
           )}
         </View>
-        {assistantGroupChatWaiting(team.chat) ? (
-          <View
-            testID="group-waiting-dot"
-            accessibilityLabel="Waiting on you"
-            className="size-1.5 rounded-full bg-warning-foreground"
-          />
-        ) : null}
         {unread > 0 ? (
           <View
             testID="group-unread"

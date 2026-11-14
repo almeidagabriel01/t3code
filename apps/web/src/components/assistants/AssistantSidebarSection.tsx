@@ -378,7 +378,17 @@ function GroupRow(props: {
           }
         }}
       >
-        <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
+        {/* The dot sits on the icon, as on an assistant's face, so it takes no width from the faces. */}
+        <span className="relative inline-flex shrink-0">
+          <HashIcon aria-hidden className="size-4 text-(--sidebar-icon-color)" />
+          {assistantGroupChatWaiting(team.chat) ? (
+            <span
+              role="img"
+              aria-label="Waiting on you"
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-warning ring-2 ring-sidebar"
+            />
+          ) : null}
+        </span>
         <span className="min-w-0 truncate">{team.name}</span>
         {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
         {/* The faces get only the width the name leaves: past it they wrap onto a clipped line. */}
@@ -423,13 +433,6 @@ function GroupRow(props: {
           >
             empty
           </span>
-        ) : null}
-        {assistantGroupChatWaiting(team.chat) ? (
-          <span
-            role="img"
-            aria-label="Waiting on you"
-            className="size-1.5 shrink-0 rounded-full bg-warning"
-          />
         ) : null}
         {unread > 0 ? (
           <Badge
