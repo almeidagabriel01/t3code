@@ -882,12 +882,23 @@ const chatOf = (overrides: Partial<NonNullable<AssistantTeam["chat"]>> = {}) => 
   preview: null,
   ...overrides,
 });
+// Only a request's lines count as unread; the user's "thanks" opens a second request.
 const unreadChat = () =>
   publishGroupChat([
-    message(1),
-    message(2, { author: "assistant", assistantId: "ada" as AssistantId, text: "first answer" }),
-    message(3, { text: "thanks" }),
-    message(4, { author: "assistant", assistantId: "bo" as AssistantId, text: "second answer" }),
+    message(1, inRequest(1)),
+    message(2, {
+      ...inRequest(1),
+      author: "assistant",
+      assistantId: "ada" as AssistantId,
+      text: "first answer",
+    }),
+    message(3, { ...inRequest(3), text: "thanks" }),
+    message(4, {
+      ...inRequest(3),
+      author: "assistant",
+      assistantId: "bo" as AssistantId,
+      text: "second answer",
+    }),
   ]);
 
 it("shows the unread count, a New line above the first unread message, and marks the chat read once seen", async () => {
