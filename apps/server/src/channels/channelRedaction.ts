@@ -20,8 +20,18 @@ const looksSecret = (value: string) => {
   return (quoted && inner.length >= 8) || (mixesLetters(inner) && !CODE_NAME.test(inner));
 };
 
+// Markdown shows `ghp\_abc` as `ghp_abc`. Between letters or digits these escapes change nothing
+// on screen (no `~`: GFM strikes through on one tilde), so a secret is matched without them.
+const INTRAWORD_ESCAPE = /(?<=[A-Za-z0-9])\\([_.+/=-])(?=[A-Za-z0-9])/g;
+
 /** Channel text with every credential it can recognize replaced by a fixed marker. */
 export function redactChannelText(text: string): string {
+  const unescaped = text.replace(INTRAWORD_ESCAPE, "$1");
+  const redacted = redactUnescaped(unescaped);
+  return redacted === unescaped ? text : redacted;
+}
+
+function redactUnescaped(text: string): string {
   return redactMemoryText({ text })
     .text.replace(ASSIGNMENT, (match, key: string, separator: string, value: string) =>
       looksSecret(value) ? `${key}${separator}${MARK}` : match,
