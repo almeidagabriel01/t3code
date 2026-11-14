@@ -1,7 +1,7 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
-import { isQuietAssistantReply, taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
+import { assistantReplyText, taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -2181,13 +2181,8 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (
-      timelineEntry.message.role === "assistant" &&
-      !timelineEntry.message.streaming &&
-      isQuietAssistantReply(timelineEntry.message.text)
-    ) {
-      continue;
-    }
+    const shownMessage = shownAssistantMessage(timelineEntry.message);
+    if (shownMessage === null) continue;
 
     const assistantResponseStillInProgress =
       timelineEntry.message.role === "assistant" &&
@@ -2202,7 +2197,7 @@ export function deriveMessagesTimelineRows(input: {
       kind: "message",
       id: timelineEntry.id,
       createdAt: timelineEntry.createdAt,
-      message: timelineEntry.message,
+      message: shownMessage,
       ...(timelineEntry.projectedItem === undefined
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
@@ -2574,6 +2569,20 @@ export function computeStableMessagesTimelineRows(
   });
 
   return anyChanged ? { byId: next, result } : previous;
+}
+
+const shownAssistantMessages = new WeakMap<ChatMessage, ChatMessage>();
+
+function shownAssistantMessage(message: ChatMessage): ChatMessage | null {
+  if (message.role !== "assistant") return message;
+  const text = assistantReplyText(message.text, Boolean(message.streaming));
+  if (text === null) return null;
+  if (text === message.text) return message;
+  const cached = shownAssistantMessages.get(message);
+  if (cached?.text === text) return cached;
+  const shown = { ...message, text };
+  shownAssistantMessages.set(message, shown);
+  return shown;
 }
 
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {

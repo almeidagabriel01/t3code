@@ -47,6 +47,7 @@ import {
   ThreadId,
   type DecisionId,
 } from "@t3tools/contracts";
+import { isQuietReply, withoutQuietToken } from "@t3tools/shared/assistantTaskEvents";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -81,7 +82,6 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
-import { assistantRunReply } from "./assistantRunReply.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { routeGroupMessage } from "./AssistantGroupRouting.ts";
 import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
@@ -2192,8 +2192,8 @@ const make = Effect.gen(function* () {
     } else {
       const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
       // A member woken by its subtasks may end quiet: a muted line, so the request never reads as waiting.
-      const quiet = said !== undefined && assistantRunReply(said, "group") === undefined;
-      const answer = quiet ? QUIET_NOTE : said || NO_ANSWER;
+      const quiet = said !== undefined && isQuietReply(said);
+      const answer = quiet ? QUIET_NOTE : (said && withoutQuietToken(said)) || NO_ANSWER;
       if (!quiet && (yield* isDelivery(task, answer))) {
         yield* sql`
           UPDATE assistant_group_tasks SET undelivered_hops = 0 WHERE task_id = ${task.root_id}`;

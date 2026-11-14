@@ -59,8 +59,25 @@ export function parseTaskEvent(message: {
 /** What an assistant answers to an event that has nothing new for the user. */
 export const QUIET_REPLY = "NO_REPLY";
 
-/** True when the reply's last line is the quiet token, bare, punctuated or wrapped in Markdown. */
+const unwrapToken = (line: string) => line.trim().replace(/^[`*_]+|[`*_.!]+$/g, "");
+
+/** True when the reply is only the quiet token, bare, punctuated or wrapped in Markdown. */
 export function isQuietReply(text: string): boolean {
-  const lastLine = text.trim().split("\n").at(-1) ?? "";
-  return lastLine.trim().replace(/^[`*_]+|[`*_.!]+$/g, "") === QUIET_REPLY;
+  return unwrapToken(text) === QUIET_REPLY;
+}
+
+/**
+ * The reply without a quiet token on its last line: text before the token still tells the user
+ * something, so it goes out and shows, and only the token is dropped.
+ */
+export function withoutQuietToken(text: string): string {
+  const lines = text.trimEnd().split("\n");
+  if (lines.length < 2 || unwrapToken(lines.at(-1) ?? "") !== QUIET_REPLY) return text;
+  return lines.slice(0, -1).join("\n").trimEnd();
+}
+
+/** A streamed last line that may still grow into the quiet token, such as `NO_`. */
+export function mayBecomeQuietToken(line: string): boolean {
+  const partial = unwrapToken(line);
+  return partial !== "" && QUIET_REPLY.startsWith(partial);
 }

@@ -2,8 +2,10 @@ import type { AssistantTask } from "@t3tools/contracts";
 
 import {
   isQuietReply,
+  mayBecomeQuietToken,
   parseTaskEvent,
   type TaskEventStatus,
+  withoutQuietToken,
 } from "@t3tools/shared/assistantTaskEvents";
 import {
   assistantTaskStatusOf,
@@ -131,8 +133,16 @@ export function taskEventActivity(
 }
 
 /**
- * A reply that is only the quiet token: it says nothing, so clients drop it. A reply with
- * text before the token stays visible in T3, since a hidden message could not be read at all.
+ * What an assistant reply shows: null while it is, or may still become, only the quiet token
+ * (`NO_REPLY`), otherwise its text without a trailing token, so the token never flashes by.
  */
-export const isQuietAssistantReply = (text: string): boolean =>
-  !text.trim().includes("\n") && isQuietReply(text);
+export function assistantReplyText(text: string, streaming: boolean): string | null {
+  if (text.trim() === "") return text;
+  if (isQuietReply(text)) return null;
+  const lines = text.trimEnd().split("\n");
+  const shown =
+    streaming && mayBecomeQuietToken(lines.at(-1) ?? "")
+      ? lines.slice(0, -1).join("\n").trimEnd()
+      : withoutQuietToken(text);
+  return shown.trim() === "" ? null : shown;
+}

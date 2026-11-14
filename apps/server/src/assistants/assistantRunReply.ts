@@ -1,4 +1,4 @@
-import { isQuietReply } from "@t3tools/shared/assistantTaskEvents";
+import { isQuietReply, withoutQuietToken } from "@t3tools/shared/assistantTaskEvents";
 
 import type { TurnOrigin } from "../mcp/turnOrigin.ts";
 
@@ -49,5 +49,5 @@ export function assistantRunReply(
 ): string | undefined {
   if (text === undefined || text.trim() === "") return undefined;
   if (asksForFullAnswer(origin)) return text;
-  return isQuietReply(text) ? undefined : briefReply(text);
+  return isQuietReply(text) ? undefined : briefReply(withoutQuietToken(text));
 }

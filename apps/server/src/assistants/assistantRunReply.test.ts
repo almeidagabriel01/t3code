@@ -17,7 +17,13 @@ const longReport = [
 describe("assistantRunReply", () => {
   it.each([
     { origin: "assistant", text: "NO_REPLY", expected: undefined },
-    { origin: "other", text: "Nothing new.\n\n`NO_REPLY`", expected: undefined },
+    { origin: "other", text: "`NO_REPLY`.", expected: undefined },
+    // Text before the token still tells the user something: only the token is dropped.
+    {
+      origin: "other",
+      text: "Tarefa X falhou no CI.\n\nNO_REPLY",
+      expected: "Tarefa X falhou no CI.",
+    },
     { origin: "group", text: "NO_REPLY", expected: undefined },
     { origin: "assistant", text: "  ", expected: undefined },
     { origin: "assistant", text: undefined, expected: undefined },

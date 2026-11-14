@@ -16,7 +16,7 @@ import {
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
-  isQuietAssistantReply,
+  assistantReplyText,
   taskEventActivity,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
@@ -119,14 +119,19 @@ describe("assistantTaskRows", () => {
   });
 });
 
-describe("isQuietAssistantReply", () => {
+describe("assistantReplyText", () => {
   it.each([
-    ["NO_REPLY", true],
-    ["`NO_REPLY`.", true],
-    ["Nothing new.\n\nNO_REPLY", false],
-    ["The build broke.", false],
-  ])("%j → %s", (text, quiet) => {
-    expect(isQuietAssistantReply(text)).toBe(quiet);
+    ["NO_REPLY", false, null],
+    ["`NO_REPLY`.", false, null],
+    ["Task X failed in CI.\n\nNO_REPLY", false, "Task X failed in CI."],
+    ["The build broke.", false, "The build broke."],
+    // While streaming, a reply that may still turn into the token is held back.
+    ["NO_", true, null],
+    ["Task X failed in CI.\n\nNO_REP", true, "Task X failed in CI."],
+    ["No problem", true, "No problem"],
+    ["", true, ""],
+  ])("%j (streaming %s) → %j", (text, streaming, shown) => {
+    expect(assistantReplyText(text, streaming)).toBe(shown);
   });
 });
 

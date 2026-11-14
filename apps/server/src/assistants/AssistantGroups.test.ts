@@ -1021,7 +1021,15 @@ it.effect("a task also carries its request's older messages it names by #seq or 
 const outcomeTable = [
   ["completed with an answer", "completed", "All done.", null, "completed", "All done."],
   ["completed with no words", "completed", undefined, null, "completed", "(no answer)"],
-  ["completed quiet", "completed", "Nothing to add.\n\nNO_REPLY", null, "completed", "Nothing new"],
+  ["completed quiet", "completed", "`NO_REPLY`", null, "completed", "Nothing new"],
+  [
+    "completed with words before the quiet token",
+    "completed",
+    "CI failed.\n\nNO_REPLY",
+    null,
+    "completed",
+    "CI failed.",
+  ],
   [
     "completed after result was called",
     "completed",

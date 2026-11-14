@@ -1548,12 +1548,23 @@ describe("deriveMessagesTimelineRows", () => {
         streaming: false,
       },
     });
+    const streamingEntry = (id: string, text: string): TimelineEntry => {
+      const base = entry(id, "assistant", text);
+      return base.kind === "message"
+        ? { ...base, message: { ...base.message, streaming: true } }
+        : base;
+    };
     const event = (runId: string) =>
       entry(`assistant-task:${runId}`, "user", `Task [Build](t3://thread/x) finished.`, {
         senderThreadId: ThreadId.make("thread-task"),
       });
     const rows = deriveMessagesTimelineRows({
-      timelineEntries: [event("run-1"), event("run-2"), entry("quiet", "assistant", "`NO_REPLY`")],
+      timelineEntries: [
+        event("run-1"),
+        event("run-2"),
+        entry("quiet", "assistant", "NO_REPLY"),
+        streamingEntry("partial", "NO_"),
+      ],
       latestRun: null,
       isWorking: false,
       expandedRunIds: new Set(),
@@ -1563,6 +1574,15 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.map((row) => row.id)).toEqual(["assistant-task:run-1", "assistant-task:run-2"]);
     expect(rows[0]).toMatchObject({ groupedWithNext: true });
     expect(rows[1]).not.toHaveProperty("groupedWithNext");
+    const [tail] = deriveMessagesTimelineRows({
+      timelineEntries: [entry("tail", "assistant", "Tarefa X falhou no CI.\n\nNO_REPLY")],
+      latestRun: null,
+      isWorking: false,
+      expandedRunIds: new Set(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(tail).toMatchObject({ message: { text: "Tarefa X falhou no CI." } });
   });
 
   it("stacks back-to-back steers as one burst with a single steer label", () => {
