@@ -216,7 +216,12 @@ function Description(props: {
           className="-mx-2 rounded-lg px-2 py-1 hover:bg-accent/30"
           onDoubleClick={props.disabled ? undefined : edit}
         >
-          <ChatMarkdown text={props.text} cwd={props.cwd} environmentId={props.environmentId} />
+          <ChatMarkdown
+            text={props.text}
+            cwd={props.cwd}
+            environmentId={props.environmentId}
+            lineBreaks
+          />
         </div>
       )}
     </section>

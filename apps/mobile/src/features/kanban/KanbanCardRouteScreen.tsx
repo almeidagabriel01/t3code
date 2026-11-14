@@ -548,6 +548,7 @@ function KanbanCardDetail(props: {
               textStyle={markdownStyles.nativeTextStyle}
               onLinkPress={(href) => void Linking.openURL(href)}
               renderImage={renderDescriptionImage}
+              preserveSoftBreaks
             />
             {disabled ? null : (
               <Button

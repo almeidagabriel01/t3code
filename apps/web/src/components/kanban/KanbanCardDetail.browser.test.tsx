@@ -228,6 +228,52 @@ describe("KanbanCardDetail attachments", () => {
   });
 });
 
+describe("KanbanCardDetail description", () => {
+  it.each([
+    {
+      name: "keeps single-newline lines apart",
+      description: "Command: pnpm install\nError: ERR_PNPM_FETCH_404\nWhere: Linux",
+      breaks: 2,
+      paragraphs: 1,
+      items: 0,
+    },
+    {
+      name: "renders the detector's evidence list one item per line",
+      description: "- **Source:** Runner\n- **Reason:** Linux sync failed\n- **Error:** rsync died",
+      breaks: 0,
+      paragraphs: 0,
+      items: 3,
+    },
+    {
+      name: "keeps blank-line paragraphs as paragraphs",
+      description: "First paragraph.\n\nSecond paragraph.",
+      breaks: 0,
+      paragraphs: 2,
+      items: 0,
+    },
+  ])("$name", async ({ description, breaks, paragraphs, items }) => {
+    setup();
+    await using _screen = await render(
+      <KanbanCardDetail
+        environmentId={EnvironmentId.make("env")}
+        board={board}
+        card={{ ...card, description }}
+        canEdit
+        onOpenCard={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const section = page.getByRole("region", { name: "Description" });
+    await expect.element(section.getByRole("button", { name: "Edit description" })).toBeVisible();
+    await vi.waitFor(() => {
+      const markdown = section.element().querySelector(".chat-markdown");
+      expect(markdown?.querySelectorAll("br")).toHaveLength(breaks);
+      expect(markdown?.querySelectorAll("p")).toHaveLength(paragraphs);
+      expect(markdown?.querySelectorAll("li")).toHaveLength(items);
+    });
+  });
+});
+
 describe("KanbanCardDetail problem block", () => {
   const previous = { ...card, id: "c0" as KanbanCardId, number: 7, title: "Old cause" };
   it.each([
