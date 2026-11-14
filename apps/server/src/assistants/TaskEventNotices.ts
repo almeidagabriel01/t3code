@@ -272,17 +272,19 @@ const make = Effect.gen(function* () {
   );
 
   const foldQueued: TaskEventNotices["Service"]["foldQueued"] = (threadId) =>
-    dropQueued(threadId, (queued) => {
-      const events = queued.filter(({ message }) => isTaskEvent(message));
-      return events
-        .filter(
-          ({ message }, index) =>
-            events.findLastIndex(
-              (other) => other.message.senderThreadId === message.senderThreadId,
-            ) !== index,
-        )
-        .map(({ runId }) => runId);
-    });
+    lock.withPermits(1)(
+      dropQueued(threadId, (queued) => {
+        const events = queued.filter(({ message }) => isTaskEvent(message));
+        return events
+          .filter(
+            ({ message }, index) =>
+              events.findLastIndex(
+                (other) => other.message.senderThreadId === message.senderThreadId,
+              ) !== index,
+          )
+          .map(({ runId }) => runId);
+      }),
+    );
 
   return { send, foldQueued } satisfies TaskEventNotices["Service"];
 });

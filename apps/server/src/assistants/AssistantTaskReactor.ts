@@ -132,8 +132,11 @@ const make = Effect.gen(function* () {
 
   const start: AssistantTaskReactor["Service"]["start"] = () =>
     forkParked(
-      foldBacklogs.pipe(
-        Effect.andThen(Stream.runForEach(engine.streamDomainEvents, handle)),
+      // Folding beside the stream, not before it, so no run that ends meanwhile is missed.
+      Effect.all([foldBacklogs, Stream.runForEach(engine.streamDomainEvents, handle)], {
+        concurrency: "unbounded",
+        discard: true,
+      }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("assistant task event stream failed", { cause }),
         ),
