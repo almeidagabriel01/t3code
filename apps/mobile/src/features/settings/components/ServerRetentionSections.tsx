@@ -1,9 +1,9 @@
 import {
-  DEFAULT_SERVER_SETTINGS,
   MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MAX_TOOL_OUTPUT_HISTORY_DAYS,
   MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MIN_TOOL_OUTPUT_HISTORY_DAYS,
+  SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS,
 } from "@t3tools/contracts";
 import { View } from "react-native";
 
@@ -11,8 +11,6 @@ import { AppText as Text } from "../../../components/ui/AppText";
 import { NumberField } from "../../../components/ui/NumberField";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
-
-const HISTORY_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.toolOutputHistoryDays ?? 30;
 
 function NumberRow(props: { readonly label: string; readonly children: React.ReactNode }) {
   return (
@@ -40,7 +38,7 @@ export function ToolOutputHistorySection(props: {
         label="Summarize old tool output"
         value={props.days !== null}
         disabled={props.disabled}
-        onValueChange={(value) => props.onChange(value ? HISTORY_DEFAULT_DAYS : null)}
+        onValueChange={(value) => props.onChange(value ? SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS : null)}
       />
       {props.days !== null ? (
         <NumberRow label="Days to keep">

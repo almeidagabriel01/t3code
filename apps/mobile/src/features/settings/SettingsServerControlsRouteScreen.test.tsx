@@ -264,6 +264,8 @@ function environment(environmentId: string, label: string) {
         ...DEFAULT_SERVER_SETTINGS,
         defaultAutoPull: false,
         sidebarAutoSettleOnMerge: false,
+        // Off by default; on, the days field renders.
+        toolOutputHistoryDays: 30,
       },
       environment: {
         capabilities: {

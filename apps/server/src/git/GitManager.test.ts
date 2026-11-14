@@ -1196,8 +1196,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       // One lookup plus the fresh read that confirms a merged result.
       expect(remoteReads()).toBe(2);
 
-      // Past every lookup TTL, an unchanged repository still runs no git.
-      yield* TestClock.adjust("20 minutes");
+      // Past the inner lookup TTLs, inside the settled recheck, an unchanged repository runs no git.
+      yield* TestClock.adjust("14 minutes");
       gitCommands.length = 0;
       expect((yield* lookup())?.number).toBe(3);
       expect(gitCommands).toEqual([]);
@@ -1217,7 +1217,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(lookedUp()).toBe(true);
 
       // Another key, such as a finished run in the cwd, reads again once inner caches expire.
-      yield* TestClock.adjust("20 minutes");
+      yield* TestClock.adjust("14 minutes");
       gitCommands.length = 0;
       yield* lookup();
       expect(gitCommands).toEqual([]);
@@ -1241,7 +1241,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   it.effect.each([
     { name: "an open PR", state: "open" as const, after: "61 seconds", looksAgain: true },
     { name: "no PR", state: null, after: "301 seconds", looksAgain: true },
-    { name: "a merged PR", state: "merged" as const, after: "20 minutes", looksAgain: false },
+    { name: "a merged PR", state: "merged" as const, after: "14 minutes", looksAgain: false },
+    { name: "a merged PR", state: "merged" as const, after: "16 minutes", looksAgain: true },
   ] as const)(
     "a reused branch PR lookup with $name looks again after $after: $looksAgain",
     ({ state, after, looksAgain }) =>
