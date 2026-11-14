@@ -157,7 +157,8 @@ group's own files go when the group is removed. Agent posts (`t3_assistant group
 
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
-tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;
+tasks run per group. A finished run posts the `result` tool text or the run's last assistant message,
+with the run's work time (`worked_ms`) because clients never load the hidden member thread to measure it;
 a task with unsettled children waits and runs again with their results. Hand-offs (assign, transfer)
 count on the root and the ninth pauses with `handoff_limit`; member replies are a separate limit of two
 per request. A subtask may declare `resources` (`folder:<path>` trees, or ids); `pump` holds them only
