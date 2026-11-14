@@ -1186,6 +1186,16 @@ it.effect("a task named only by environment runs on that project's model, within
         interactionMode: "default",
       });
 
+      // Options or a provider without a model have nothing there to apply to.
+      for (const partial of [{ options: { effort: "max" } }, { providerInstanceId: instanceId }]) {
+        const refused = yield* a.call("delegate_task", {
+          task: "Run the suite on the box.",
+          target: { environmentId: box.environmentId, ...partial },
+          clientRequestId: `partial-${Object.keys(partial)[0]}`,
+        });
+        expect(JSON.stringify(refused.content)).toContain("Pass target.model");
+      }
+
       // Asking for more than the link allows is still refused there.
       const broader = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",

@@ -269,7 +269,10 @@ const make = Effect.gen(function* () {
       // A named model without a provider keeps this thread's provider.
       const inherited = parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
-      if (target.providerInstanceId !== undefined && target.model === undefined) {
+      if (
+        (target.providerInstanceId !== undefined || target.options !== undefined) &&
+        target.model === undefined
+      ) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
           message: "Pass target.model from orchestrator_capabilities with this environmentId.",
