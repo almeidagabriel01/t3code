@@ -144,6 +144,12 @@ const usageLimitSubject = (notice: UsageLimitNotice, nowMs: number) =>
       : DateTime.formatIso(DateTime.makeUnsafe(notice.resetAt)).slice(0, 16)
   }`;
 
+/** A window's notice is withdrawn once it resets; one with no reset time waits for the user. */
+const usageLimitOpen = (subject: string, nowMs: number) => {
+  const reset = /:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/.exec(subject)?.[1];
+  return reset === undefined || Date.parse(`${reset}:00Z`) > nowMs ? [true] : [];
+};
+
 const usageLimitTime = (resetAt: string, language: string) =>
   DateTime.formatLocal(DateTime.makeUnsafe(resetAt), {
     locale: language,
@@ -1109,6 +1115,7 @@ const make = Effect.gen(function* () {
 
   /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
   const withdrawSettledNotices = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
     const told = yield* sql<{
       readonly subject_key: string;
       readonly decision_id: string;
@@ -1129,7 +1136,9 @@ const make = Effect.gen(function* () {
               SELECT 1 FROM assistant_group_tasks
               WHERE 'group-task:' || task_id || '@' || updated_at = ${row.subject_key}
                 AND status = 'paused'`
-          : [true];
+          : row.subject_key.startsWith("usage-limit:")
+            ? usageLimitOpen(row.subject_key, nowMs)
+            : [true];
       if (still.length > 0) continue;
       yield* decisions
         .withdraw({

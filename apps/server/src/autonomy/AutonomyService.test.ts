@@ -1321,7 +1321,7 @@ it.effect(
         h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
         h.runs.set(runId, { id: runId, threadId, providerInstanceId });
       };
-      const reset = "2026-01-01T05:00:00.000Z";
+      const reset = "1970-01-01T05:00:00.000Z";
       limited("t1", "r1");
       limited("t2", "r2");
       // Gate off: nothing is told.
@@ -1345,14 +1345,14 @@ it.effect(
 
       // Same provider and window from another task, or a replay: no second notice.
       limited("t3", "r3");
-      yield* service.handleEvent(armed("t3", "r3", "2026-01-01T05:00:40.000Z"));
+      yield* service.handleEvent(armed("t3", "r3", "1970-01-01T05:00:40.000Z"));
       yield* service.handleEvent(armed("t2", "r2", reset));
       yield* service.notifyWaiting;
       assert.lengthOf(yield* outboxRows, 1);
 
       // A new window, or another provider, is told again.
       limited("t4", "r4");
-      yield* service.handleEvent(armed("t4", "r4", "2026-01-01T10:00:00.000Z"));
+      yield* service.handleEvent(armed("t4", "r4", "1970-01-01T10:00:00.000Z"));
       limited("t5", "r5", "codex");
       yield* service.handleEvent(armed("t5", "r5", reset));
       assert.lengthOf(yield* outboxRows, 3);
@@ -1362,6 +1362,16 @@ it.effect(
       assert.lengthOf(yield* outboxRows, 3);
       // Telling never dispatches anything, so no thread changes provider.
       assert.lengthOf(h.dispatched, 0);
+      // Once a window resets, its notice is withdrawn; a later window's stays.
+      const decisions = yield* DecisionService.DecisionService;
+      const openNotices = Effect.map(
+        decisions.list({}),
+        (all) => all.filter((decision) => decision.status === "open").length,
+      );
+      assert.equal(yield* openNotices, 3);
+      yield* TestClock.adjust(6 * 60 * MIN);
+      yield* service.notifyWaiting;
+      assert.equal(yield* openNotices, 1);
     }).pipe(Effect.provide(h.layer));
   },
 );
