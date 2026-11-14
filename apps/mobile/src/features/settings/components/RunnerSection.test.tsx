@@ -1,4 +1,8 @@
 import {
+  RUNNER_SETTING_COPY,
+  RUNNER_WHERE_DESCRIPTION,
+} from "@t3tools/client-runtime/state/runnerModel";
+import {
   DEFAULT_SERVER_SETTINGS,
   RUNNER_DEFAULTS,
   type EnvironmentId,
@@ -108,17 +112,21 @@ vi.mock("./SettingsActionRow", () => ({
 vi.mock("./SettingsSwitchRow", () => ({
   SettingsSwitchRow: (props: {
     label: string;
+    subtitle?: string;
     value: boolean;
     disabled?: boolean;
     onValueChange: (value: boolean) => void;
   }) => (
-    <input
-      type="checkbox"
-      aria-label={props.label}
-      checked={props.value}
-      disabled={props.disabled}
-      onChange={(event) => props.onValueChange(event.target.checked)}
-    />
+    <>
+      <input
+        type="checkbox"
+        aria-label={props.label}
+        checked={props.value}
+        disabled={props.disabled}
+        onChange={(event) => props.onValueChange(event.target.checked)}
+      />
+      {props.subtitle === undefined ? null : <small>{props.subtitle}</small>}
+    </>
   ),
 }));
 
@@ -306,6 +314,24 @@ describe("RunnerSection", () => {
       await view.unmount();
     },
   );
+
+  it("with Everything on in Linux mode, says what it does once and hides the Linux list", async () => {
+    const EVERYTHING = RUNNER_SETTING_COPY.runnerLinuxEverything.description;
+    const on = await mount({ settings: { runnerWhere: "linux", runnerLinuxEverything: true } });
+    const text = on.host.textContent ?? "";
+    expect(text.split(EVERYTHING)).toHaveLength(2);
+    expect(text).not.toContain(RUNNER_WHERE_DESCRIPTION.linux);
+    expect(on.host.querySelector('[aria-label="Everything"]')).not.toBeNull();
+    expect(text).not.toContain("Can run on Linux");
+    await on.unmount();
+
+    const off = await mount({ settings: { runnerWhere: "linux", runnerLinuxEverything: false } });
+    const offText = off.host.textContent ?? "";
+    expect(offText).toContain(RUNNER_WHERE_DESCRIPTION.linux);
+    expect(offText).toContain(EVERYTHING);
+    expect(offText).toContain("Can run on Linux");
+    await off.unmount();
+  });
 
   it("shows which project fields inherit and resets an overridden one", async () => {
     const view = await mount({ projectSelected: true, overridden: ["runnerWhere"] });

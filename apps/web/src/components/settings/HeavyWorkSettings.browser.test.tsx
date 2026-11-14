@@ -42,6 +42,7 @@ vi.mock("../statusBar/useKillTarget", () => ({ useHeavyQueueActions: () => mocks
 vi.mock("./settingsLayout", () => ({
   SettingResetButton: () => null,
   useSettingsSearchTargetId: () => mocks.target,
+  useSettingsSearchRevealedId: () => mocks.target,
   SettingsSection: ({ title, children }: { title: string; children: ReactNode }) => (
     <section aria-label={title}>{children}</section>
   ),

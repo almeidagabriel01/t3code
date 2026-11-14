@@ -13,8 +13,17 @@ vi.mock("react-native", () => ({
   View: (props: { children?: ReactNode; style?: { minHeight?: number } }) => (
     <div data-min-height={props.style?.minHeight}>{props.children}</div>
   ),
-  Pressable: (props: { accessibilityLabel: string; onPress: () => void; children?: ReactNode }) => (
-    <button aria-label={props.accessibilityLabel} onClick={props.onPress}>
+  Pressable: (props: {
+    accessibilityLabel: string;
+    accessibilityState?: { selected?: boolean };
+    onPress: () => void;
+    children?: ReactNode;
+  }) => (
+    <button
+      aria-label={props.accessibilityLabel}
+      aria-selected={props.accessibilityState?.selected}
+      onClick={props.onPress}
+    >
       {props.children}
     </button>
   ),
@@ -76,6 +85,29 @@ describe("SegmentedControl", () => {
     act(() => view.host.querySelector<HTMLButtonElement>('[aria-label="Memory"]')!.click());
     expect(view.onSelect).toHaveBeenCalledWith("b");
     await view.unmount();
+  });
+
+  it("reports only the current option as selected after the choice changes", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const options = ["mac", "macFirst", "automatic", "linux"].map((value) => ({
+      value,
+      label: value,
+    }));
+    const selected = () =>
+      [...host.querySelectorAll('button[aria-selected="true"]')].map((b) =>
+        b.getAttribute("aria-label"),
+      );
+    for (const value of ["automatic", "linux", "mac"]) {
+      await act(async () =>
+        root.render(
+          <SegmentedControl variant="card" options={options} selected={value} onSelect={vi.fn()} />,
+        ),
+      );
+      expect(selected()).toEqual([value]);
+    }
+    await act(async () => root.unmount());
   });
 
   it("keeps the native iOS control for labels alone", async () => {

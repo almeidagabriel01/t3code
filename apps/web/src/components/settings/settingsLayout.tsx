@@ -11,7 +11,13 @@ import {
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useContext,
+  useState,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -48,6 +54,8 @@ declare module "@tanstack/react-router" {
 
 interface SettingsSearchTargetContextValue {
   readonly targetId: string | null;
+  /** The last target a search landed on; it outlives the hash, which clears once the row mounts. */
+  readonly revealedId: string | null;
   readonly highlightTarget: boolean;
   readonly onTargetHandled: () => void;
 }
@@ -55,22 +63,25 @@ interface SettingsSearchTargetContextValue {
 const noop = () => undefined;
 const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
   targetId: null,
+  revealedId: null,
   highlightTarget: true,
   onTargetHandled: noop,
 });
 
 function SettingsSearchTargetProvider({
   targetId,
+  revealedId,
   highlightTarget = true,
   onTargetHandled = noop,
   children,
 }: {
   targetId: string | null;
+  revealedId: string | null;
   highlightTarget?: boolean;
   onTargetHandled?: () => void;
   children: ReactNode;
 }) {
-  const value = { targetId, highlightTarget, onTargetHandled };
+  const value = { targetId, revealedId, highlightTarget, onTargetHandled };
   return <SettingsSearchTargetContext value={value}>{children}</SettingsSearchTargetContext>;
 }
 
@@ -155,6 +166,11 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
 
 export function useSettingsSearchTargetId(): string | null {
   return useContext(SettingsSearchTargetContext).targetId;
+}
+
+/** For a row hidden until a search lands on it: stays set after the target is handled. */
+export function useSettingsSearchRevealedId(): string | null {
+  return useContext(SettingsSearchTargetContext).revealedId;
 }
 
 export function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) {
@@ -602,7 +618,10 @@ export function SettingsPageContainer({
   const highlightTarget = useLocation({
     select: (location) => location.state.settingsTargetHighlight !== false,
   });
-  const targetId = hash.replace(/^#/, "") || null;
+  const hashTarget = hash.replace(/^#/, "") || null;
+  const targetId = hashTarget === null ? null : (searchTargetFallbacks?.[hashTarget] ?? hashTarget);
+  const [revealedId, setRevealedId] = useState(targetId);
+  if (targetId !== null && targetId !== revealedId) setRevealedId(targetId);
   const clearTargetHash = () => {
     void navigate({
       hash: "",
@@ -615,7 +634,8 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId === null ? null : (searchTargetFallbacks?.[targetId] ?? targetId)}
+      targetId={targetId}
+      revealedId={revealedId}
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >

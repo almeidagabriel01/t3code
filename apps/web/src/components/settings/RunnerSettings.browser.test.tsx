@@ -38,6 +38,7 @@ vi.mock("./settingsLayout", () => ({
     </section>
   ),
   useSettingsSearchTargetId: () => mocks.target,
+  useSettingsSearchRevealedId: () => mocks.target,
   SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" aria-label={`Reset ${label}`} onClick={onClick}>
       Reset
@@ -227,6 +228,26 @@ it("shows only the fields the current choices use", async () => {
   await using hybrid = await setup({ ...ON, runnerWhere: "automatic", runnerDropped: "ask" });
   await expect.element(hybrid.getByText("Can run on Linux")).toBeVisible();
   await expect.element(hybrid.getByText("Wait for an answer")).toBeVisible();
+
+  // Everything sends every command, so the list goes and the Where line says it once.
+  const EVERYTHING = "Every heavy command goes to Linux, except what has to stay on this Mac.";
+  await using everything = await setup({
+    ...ON,
+    runnerWhere: "linux",
+    runnerLinuxEverything: true,
+  });
+  await expect.element(everything.getByText(EVERYTHING)).toBeVisible();
+  expect(everything.container.textContent!.split(EVERYTHING)).toHaveLength(2);
+  expect(everything.container.textContent).not.toContain("Can run on Linux");
+  expect(everything.container.textContent).not.toContain("Listed commands always run on Linux");
+  await using listed = await setup({ ...ON, runnerWhere: "linux", runnerLinuxEverything: false });
+  await expect.element(listed.getByText("Can run on Linux")).toBeVisible();
+  await expect
+    .element(
+      listed.getByText("Listed commands always run on Linux. Everything else stays on this Mac."),
+    )
+    .toBeVisible();
+  await expect.element(listed.getByText(EVERYTHING)).toBeVisible();
 });
 
 it("shows a hidden field a search lands on, with why it does nothing now", async () => {
