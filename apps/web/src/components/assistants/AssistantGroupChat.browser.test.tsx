@@ -36,10 +36,12 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   fakeGroupChat,
+  fakeSettings,
   fakeTeamEdits,
   installFakeEnvironment,
   publishAssistants,
   publishGroupChat,
+  setFakeServerSettings,
   threadWithHistory,
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
@@ -1073,6 +1075,51 @@ it("picks a project for a new request and keeps a reply in its request's project
       replyToMessageId: "m2",
     }),
   );
+});
+
+it("shows the chosen project's model beside the project and saves a pick as its default", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings(null);
+  await using _screen = await openChat();
+  await expect.element(main().getByRole("combobox", { name: "Project" })).toBeVisible();
+  // The lead decides the project, so there is no project model to show.
+  await expect
+    .element(main().getByRole("button", { name: /^Model for render/ }))
+    .not.toBeInTheDocument();
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(
+    main().getByRole("button", { name: "Model for render, Environment default" }),
+  );
+  await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
+  await eventually(() =>
+    expect(fakeSettings.patches.at(-1)).toEqual({
+      projectSettingsOverrides: {
+        [PROJECT_ID]: { defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" } },
+      },
+    }),
+  );
+});
+
+it("says inline why the project's model was not saved and keeps the shown one", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = "projectSettingsOverrides";
+  setFakeServerSettings(null);
+  await using _screen = await openChat();
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(main().getByRole("button", { name: /^Model for render/ }));
+  await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
+  await eventually(() =>
+    expect(document.querySelector('[data-testid="group-composer-alert"]')?.textContent).toBe(
+      "The provider instance codex does not exist or is disabled for this project.",
+    ),
+  );
+  await expect
+    .element(main().getByRole("button", { name: /^Model for render/ }))
+    .toHaveTextContent("GPT-5.4");
+  fakeSettings.refuse = null;
 });
 
 it("inserts a mention from the Mention menu and dictates into the field", async () => {

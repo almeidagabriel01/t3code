@@ -108,8 +108,10 @@ export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
-  return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+  return (
+    patch: ScopedSettingsPatch,
+    options?: { readonly onFailed?: (message: string) => void },
+  ) => run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
 }
 
 /** Sets or clears one assistant's model in the scoped project, on the assistant's environment. */

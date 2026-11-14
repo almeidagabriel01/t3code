@@ -903,6 +903,7 @@ export function AssistantGroupChat(props: {
                 label: `Replying to ${name}`,
                 excerpt: assistantGroupMessageExcerpt(message.text),
                 to: name,
+                projectId,
                 projectLabel: projectId === null ? null : projectName(projectId),
               },
             });
@@ -1037,6 +1038,7 @@ export function AssistantGroupChat(props: {
                             label: `Replying to request: ${block.title}`,
                             excerpt: "",
                             to: null,
+                            projectId: block.projectId,
                             projectLabel:
                               block.projectId === null ? null : projectName(block.projectId),
                           },

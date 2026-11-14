@@ -18,24 +18,38 @@ import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow } from "./settingsLayout
 
 type Providers = Parameters<typeof modelPickerProps>[2];
 
-/** The model and effort pickers for one selection, as the project's own model row draws them. */
-function SelectionPicker(
+/**
+ * The model and effort pickers for one selection, as the project's own model row draws them.
+ * `composer` draws them as the composer's compact controls instead.
+ */
+export function SelectionPicker(
   props: PickerProps & {
     readonly settings: UnifiedSettings;
     readonly providers: Providers;
     readonly selection: ModelSelection;
     readonly label: string;
     readonly disabled: boolean;
+    readonly composer?: boolean;
+    /** Where the value comes from, for the tooltip and screen readers. */
+    readonly detail?: string;
     readonly onChange: (selection: ModelSelection) => void;
   },
 ) {
   const { selection } = props;
   const entry = props.instanceEntries.find((item) => item.instanceId === selection.instanceId);
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <div
+      className={
+        props.composer
+          ? "flex min-w-0 items-center gap-1"
+          : "flex min-w-0 flex-wrap items-center gap-1.5"
+      }
+    >
       <ProviderModelPicker
         {...modelPickerProps(props, props.settings, props.providers, selection)}
+        {...(props.composer ? { size: "xs" as const, compact: true, triggerClassName: "" } : {})}
         triggerAriaLabel={props.label}
+        {...(props.detail === undefined ? {} : { triggerDetail: props.detail })}
         // A provider that is gone or off cannot name its model; the slug still reads cleanly.
         {...(entry ? {} : { triggerLabel: formatModelSlugName(selection.model) })}
         disabled={props.disabled}
@@ -51,7 +65,9 @@ function SelectionPicker(
           modelOptions={selection.options ?? []}
           allowPromptInjectedEffort={false}
           disabled={props.disabled}
-          triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+          {...(props.composer
+            ? { size: "xs" as const }
+            : { triggerClassName: SETTINGS_PICKER_TRIGGER_CLASSNAME })}
           onModelOptionsChange={(options) =>
             props.onChange(createModelSelection(selection.instanceId, selection.model, options))
           }

@@ -12,14 +12,8 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   defaultModelSelectionsAreMixed,
   getCustomModelOptionsByInstance,
-  resolveEffectiveDefaultModelSelection,
 } from "../../modelSelection";
-import {
-  providerInstanceEntriesFor,
-  resolveDefaultProviderModelSelection,
-  resolveProjectDefaultProviderModelSelection,
-} from "../../providerInstances";
-import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { useEnvironmentProviders } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
@@ -43,7 +37,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useScopedDefaultModel } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -66,23 +60,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const updateAssistantModel = useUpdateProjectAssistantModel();
   const canWriteSettings = useScopedSettingsWriteAllowed();
   const navigate = useNavigate();
-  const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
-  const representative = target
-    ? environments.find((environment) => environment.environmentId === target.environmentId)
-    : undefined;
-  const providers =
-    (representative?.serverConfig
-      ? providersByEnvironment.get(representative.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const storedSelection =
-    settings.defaultModelSelection === null
-      ? resolveProjectDefaultProviderModelSelection(providers, settings, target?.projectId ?? null)
-      : resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
-  const selection = storedSelection
-    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
-    : null;
-  const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
+  const { representative, providers, selection, entries, modelDisabledReason } =
+    useScopedDefaultModel();
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -116,7 +96,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
     ? modelDisabledReason(selection.instanceId, selection.model)
     : null;
