@@ -229,9 +229,11 @@ nothing starts a new **request**; it does not run an agent by itself.
 
 - The chat shows each request as a block with its project, a short title and its status (Routing,
   Needs project, Working, Needs you, Done, Cancelled). Finished requests fold to one line; click it
-  to open the request, and its header to fold it again. With requests in more than one project,
-  **Show** (at the top on the web, in the group's menu on mobile) shows one project's requests
-  (**All projects** shows every one).
+  to open the request, and its header to fold it again. A group with more than one project shows a
+  tab per project above the chat, plus **All** (every request, one line each) and **General**
+  (requests with no project, when there are some). Each tab keeps its own unread count, a dot marks
+  one that needs you, and the box sends to the open tab's project. The app remembers the last tab
+  per device.
 - Each request runs in one project, chosen from the group's projects and its members'. Pick it in the
   box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
   or leave **Lead decides**: the lead picks it from the request, and when it could be more than one

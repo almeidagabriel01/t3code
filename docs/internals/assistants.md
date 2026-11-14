@@ -172,8 +172,13 @@ seeds Jarvis) and `reconcile` heals changes made while the server was down. A sc
 assistants in the layer graph.
 
 Read position is `assistant_teams.read_seq` (one per group, not per user: a server has one owner).
-The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`), so team reads
-select from the view, not the table; `ensureForkSchema` recreates it on every start. Counter changes
+A project tab keeps its own cursor in `assistant_group_read_cursors`, falling back to `read_seq`; an
+unscoped mark read (the All tab, older clients) deletes every cursor. Every row copies its request's
+project (`request_project_id`) so a tab is one indexed read, and a request only moves from no project
+to one, so a scoped stream adds it to its new tab and never removes rows from another.
+The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`, with per-tab
+`scopes`), so team reads select from the view, not the table; `ensureForkSchema` drops it before the
+migrations and recreates it after them on every start. Counter changes
 go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
 notices are client-side (working to idle on that stream), like thread notices.
