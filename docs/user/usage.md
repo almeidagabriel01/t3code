@@ -183,7 +183,7 @@ open **Settings → Limit alerts**. Each window takes its own share, or **Off**.
 
 - Alerts go through the same channels as your assistant's other messages and count toward its daily
   message limit. They arrive even while **Settings → Assistants → Autonomy** is off; turn off
-  **Alert while Autonomy is off** to hold them until Autonomy is back on.
+  **Limit alerts while paused** there to hold them until Autonomy is back on.
 - The server checks every 15 minutes or so while an alert is on, with no app open, and it also reads
   the limits your turns report. Accounts that are signed out or fail to report are checked less
   often until they recover.

@@ -105,18 +105,6 @@ vi.mock("./components/SettingsSection", () => ({
     <section aria-label={p.title}>{p.children}</section>
   ),
 }));
-vi.mock("./components/SettingsSwitchRow", () => ({
-  SettingsSwitchRow: (p: {
-    label: string;
-    subtitle: string;
-    value: boolean;
-    onValueChange: (value: boolean) => void;
-  }) => (
-    <button role="switch" aria-checked={p.value} onClick={() => p.onValueChange(!p.value)}>
-      {p.label}. {p.subtitle}
-    </button>
-  ),
-}));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
     selectedTargets: [
@@ -161,7 +149,8 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     expect(section.textContent).toContain("15%");
     expect(section.textContent).toContain("Session");
     expect(section.textContent).toContain("30%");
-    expect(section.textContent).toContain("Your assistant messages you once");
+    // The shared description shows once for the screen, not on every row.
+    expect(host.textContent?.split("Your assistant messages you once").length).toBe(2);
     expect(host.querySelector("[data-note]")).toBeNull();
     await unmount();
   });
@@ -191,21 +180,16 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     await unmount();
   });
 
-  it("alerts through the Autonomy pause by default and says so when that is off", async () => {
-    const paused = await mount({ windows: [weekly], autonomy: false });
-    const toggle = paused.host.querySelector("[role=switch]")!;
-    expect(toggle.textContent).toContain("Alert while Autonomy is off");
-    expect(toggle.getAttribute("aria-checked")).toBe("true");
-    expect(paused.host.querySelector("[data-note]")).toBeNull();
-    await click(toggle);
-    expect(mocks.update.mock.calls[0]![0].input.patch).toEqual({
-      usageLimitAlerts: { ignoreAutonomyPause: false },
-    });
-    await paused.unmount();
+  it("says alerts wait only while Autonomy is off and they may not get past it", async () => {
+    const through = await mount({ windows: [weekly], autonomy: false });
+    expect(through.host.querySelector("[data-note]")).toBeNull();
+    expect(through.host.querySelector("[role=switch]")).toBeNull();
+    await through.unmount();
 
     const waiting = await mount({ windows: [weekly], autonomy: false, ignorePause: false });
     const note = waiting.host.querySelector("[data-note]")!;
     expect(note.textContent).toContain("Alerts are paused");
+    expect(note.textContent).toContain("Change it in Assistants");
     await click(note);
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistants");
     await waiting.unmount();

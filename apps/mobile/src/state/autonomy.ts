@@ -37,6 +37,24 @@ export function useAutonomySettings(environmentId: EnvironmentId | null) {
   };
 }
 
+/** Whether usage limit alerts still reach the user while Autonomy is paused; null on servers without them. */
+export function useLimitAlertsWhilePaused(environmentId: EnvironmentId) {
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const supported = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.usageLimitAlerts === true,
+  );
+  const update = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "limit alerts while paused update",
+    reportFailure: true,
+  });
+  return {
+    value: supported ? (settings?.usageLimitAlerts.ignoreAutonomyPause ?? true) : null,
+    write: (ignoreAutonomyPause: boolean) =>
+      update({ environmentId, input: { patch: { usageLimitAlerts: { ignoreAutonomyPause } } } }),
+  };
+}
+
 /** Flips the pause switch from the settings as they are now, so a held-over closure cannot undo another edit. */
 export function toggleAutonomyPause(environmentId: EnvironmentId) {
   const autonomy =

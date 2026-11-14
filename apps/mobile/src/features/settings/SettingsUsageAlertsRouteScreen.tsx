@@ -14,7 +14,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   usageAlertMenuActions,
@@ -41,14 +40,17 @@ export function SettingsUsageAlertsRouteScreen() {
         {targets.length === 0 ? (
           <Text className="text-foreground-muted">Select a connected environment.</Text>
         ) : (
-          targets.map((environment) => (
-            <EnvironmentAlerts
-              key={environment.environmentId}
-              environment={environment}
-              showEnvironment={targets.length > 1}
-            />
-          ))
+          <Text textRole="footnote" className="px-2 text-foreground-muted">
+            Your assistant messages you once when this much is left.
+          </Text>
         )}
+        {targets.map((environment) => (
+          <EnvironmentAlerts
+            key={environment.environmentId}
+            environment={environment}
+            showEnvironment={targets.length > 1}
+          />
+        ))}
       </ScreenScrollView>
     </SettingsScreen>
   );
@@ -108,14 +110,9 @@ function EnvironmentAlerts(props: {
                     disabled={!allowed}
                     className="min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
                   >
-                    <View className="min-w-0 flex-1">
-                      <Text textRole="body" className="text-foreground">
-                        {row.label}
-                      </Text>
-                      <Text textRole="footnote" className="text-foreground-muted">
-                        Your assistant messages you once when this much is left.
-                      </Text>
-                    </View>
+                    <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+                      {row.label}
+                    </Text>
                     <Text textRole="footnote" className="tabular-nums text-foreground-muted">
                       {usageAlertValueLabel(row.threshold)}
                     </Text>
@@ -126,31 +123,15 @@ function EnvironmentAlerts(props: {
           </SettingsSection>
         ))
       )}
-      {sections.length > 0 ? (
-        <SettingsSection title={`Delivery${suffix}`}>
-          <SettingsSwitchRow
-            label="Alert while Autonomy is off"
-            subtitle="Limit alerts from every provider still reach you while assistant notifications are paused."
-            value={ignorePause}
-            disabled={!allowed}
-            onValueChange={(value) =>
-              void update({
-                environmentId,
-                input: { patch: { usageLimitAlerts: { ignoreAutonomyPause: value } } },
-              })
-            }
+      {sections.length > 0 && settings?.autonomy.enabled === false && !ignorePause ? (
+        <View className="overflow-hidden rounded-2xl">
+          <ListRow
+            icon="bell.badge"
+            label="Alerts are paused"
+            description="Assistant notifications are off, so these alerts wait. Change it in Assistants."
+            onPress={() => navigation.navigate("SettingsAssistants")}
           />
-          {settings?.autonomy.enabled === false && !ignorePause ? (
-            <View className="border-t border-border-subtle">
-              <ListRow
-                icon="bell.badge"
-                label="Alerts are paused"
-                description="Assistant notifications are off, so these alerts wait. Turn on the switch above, or Autonomy in Assistants settings."
-                onPress={() => navigation.navigate("SettingsAssistants")}
-              />
-            </View>
-          ) : null}
-        </SettingsSection>
+        </View>
       ) : null}
     </>
   );
