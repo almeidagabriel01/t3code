@@ -55,42 +55,66 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         ? () => navigation.navigate("SettingsAgentTools")
         : null;
   const note = primary?.kind === "connect" && primary.reason !== null ? primary.reason : row.note;
+  const run = (action: () => Promise<unknown> | void) => {
+    setBusy(true);
+    void Promise.resolve(action()).finally(() => setBusy(false));
+  };
+  const action =
+    primary === null || primary.kind === "open" ? null : primary.kind === "cancel" ? (
+      <Button
+        label={primary.label}
+        size="compact"
+        accessibilityLabel={`${primary.label} ${row.title}`}
+        disabled={!flows.canAct}
+        onPress={() => run(() => flows.runPrimary(primary))}
+      />
+    ) : (
+      <Button
+        label={primary.label}
+        size="compact"
+        accessibilityLabel={`${primary.label} ${row.title}`}
+        loading={busy}
+        disabled={!flows.canAct || (primary.kind === "connect" && primary.disabled)}
+        onPress={() => run(() => flows.connect(primary.catalogId))}
+      />
+    );
+  // The text keeps a 200dp floor; when the action does not fit beside it, the action wraps
+  // under the text instead of squeezing it. Rows with an action never have onPress.
   const body = (
     <View className="min-h-14 flex-row items-center gap-3 py-3 ps-4 pe-2">
       <IntegrationIcon icon={row.icon} />
-      <View className="min-w-0 flex-1 gap-1">
-        <Text textRole="body" className="text-foreground" numberOfLines={1}>
-          {row.title}
-        </Text>
-        {row.description === "" ? null : (
-          <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
-            {row.description}
+      <View className="min-w-0 flex-1 flex-row flex-wrap items-center justify-end gap-x-3 gap-y-2">
+        <View className="min-w-0 shrink grow basis-[200px] gap-1">
+          <Text textRole="body" className="text-foreground" numberOfLines={1}>
+            {row.title}
           </Text>
-        )}
-        <View className="flex-row flex-wrap gap-1">
-          {row.status !== null ? (
-            <IntegrationChip label={row.status.label} tone={row.status.tone} />
-          ) : (
-            row.origins.map((origin) => (
-              <IntegrationChip key={origin.detectedId} label={origin.label} tone="muted" />
-            ))
+          {row.description === "" ? null : (
+            <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
+              {row.description}
+            </Text>
+          )}
+          <View className="flex-row flex-wrap gap-1">
+            {row.status !== null ? (
+              <IntegrationChip label={row.status.label} tone={row.status.tone} />
+            ) : (
+              row.origins.map((origin) => (
+                <IntegrationChip key={origin.detectedId} label={origin.label} tone="muted" />
+              ))
+            )}
+          </View>
+          {note === null ? null : (
+            <Text textRole="footnote" className="text-foreground-muted">
+              {note}
+            </Text>
           )}
         </View>
-        {note === null ? null : (
-          <Text textRole="footnote" className="text-foreground-muted">
-            {note}
-          </Text>
-        )}
+        {action === null ? null : <View>{action}</View>}
       </View>
       {onPress === null ? null : (
         <SymbolView name="chevron.right" size={13} tintColorClassName="accent-chevron" />
       )}
     </View>
   );
-  const run = (action: () => Promise<unknown> | void) => {
-    setBusy(true);
-    void Promise.resolve(action()).finally(() => setBusy(false));
-  };
   const menu: MenuAction[] = row.menu.map((action, index) => ({
     id: String(index),
     title: action.label,
@@ -110,24 +134,6 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         >
           {body}
         </RowPressable>
-      )}
-      {primary === null || primary.kind === "open" ? null : primary.kind === "cancel" ? (
-        <Button
-          label={primary.label}
-          size="compact"
-          accessibilityLabel={`${primary.label} ${row.title}`}
-          disabled={!flows.canAct}
-          onPress={() => run(() => flows.runPrimary(primary))}
-        />
-      ) : (
-        <Button
-          label={primary.label}
-          size="compact"
-          accessibilityLabel={`${primary.label} ${row.title}`}
-          loading={busy}
-          disabled={!flows.canAct || (primary.kind === "connect" && primary.disabled)}
-          onPress={() => run(() => flows.connect(primary.catalogId))}
-        />
       )}
       {menu.length === 0 ? (
         // Same box as RowMenuButton, so every row's action button lines up.
