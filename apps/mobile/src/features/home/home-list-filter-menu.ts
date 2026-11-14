@@ -12,6 +12,8 @@ export interface HomeListFilterMenuProject {
   readonly label: string;
   /** A thread in the project needs the user; shown as a dot after the label. */
   readonly needsAttention?: boolean;
+  /** Named under a shared label, so same-named projects on different machines read apart. */
+  readonly environmentIds?: ReadonlyArray<EnvironmentId>;
 }
 
 export function buildHomeListFilterMenuItems(props: {
@@ -46,6 +48,22 @@ export function buildHomeListFilterMenuItems(props: {
     },
   ];
 
+  const seenLabels = new Set<string>();
+  const sharedLabels = new Set<string>();
+  for (const { label } of props.projects) {
+    if (seenLabels.has(label)) sharedLabels.add(label);
+    seenLabels.add(label);
+  }
+  const environmentNames = (project: HomeListFilterMenuProject) =>
+    [
+      ...new Set(
+        (project.environmentIds ?? []).flatMap(
+          (id) =>
+            props.environments.find((environment) => environment.environmentId === id)?.label ?? [],
+        ),
+      ),
+    ].join(", ") || undefined;
+
   if (props.projects.length > 0) {
     items.push({
       id: "project",
@@ -61,6 +79,7 @@ export function buildHomeListFilterMenuItems(props: {
         ...props.projects.map((project) => ({
           id: `project:${project.key}`,
           title: project.needsAttention ? `${project.label} •` : project.label,
+          subtitle: sharedLabels.has(project.label) ? environmentNames(project) : undefined,
           selected: props.selectedProjectKey === project.key,
           onPress: () => props.onProjectChange(project.key),
         })),

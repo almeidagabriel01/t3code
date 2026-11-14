@@ -197,6 +197,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const projectFilterOptions = pickableProjectGroups(projectScopes).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    environmentIds: scope.projectRefs.map((ref) => ref.environmentId),
   }));
   const projectTitleByProjectKey = useMemo(
     () =>
