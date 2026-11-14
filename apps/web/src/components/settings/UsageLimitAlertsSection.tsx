@@ -9,12 +9,14 @@ import {
   usageLimitAlertChoices,
   usageLimitAlertOverride,
   usageLimitAlertRows,
+  usageLimitAlertsPaused,
 } from "@t3tools/shared/usageLimitAlerts";
 import { Link } from "@tanstack/react-router";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -51,7 +53,6 @@ export function UsageLimitAlertsSection({
     config: settings?.usageLimitAlerts.instances[instanceId],
   });
   if (rows.length === 0) return null;
-  const ignorePause = settings?.usageLimitAlerts.ignoreAutonomyPause ?? true;
   const save = (windowId: string, threshold: UsageLimitAlertThreshold) =>
     updateSettings({
       usageLimitAlerts: {
@@ -107,23 +108,51 @@ export function UsageLimitAlertsSection({
           />
         );
       })}
-      {settings?.autonomy.enabled === false && !ignorePause ? (
-        <SettingsRow
-          title="Alerts are paused"
-          description={
-            <>
-              Assistant notifications are off, so these alerts wait. Change it in{" "}
-              <Link
-                to="/settings/assistants"
-                className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              >
-                Assistants
-              </Link>
-              .
-            </>
-          }
-        />
-      ) : null}
     </SettingsSection>
+  );
+}
+
+/** One note above the provider cards while paused Autonomy holds back an alert that is on. */
+export function UsageLimitAlertsPausedNotice({
+  environmentId,
+  providers,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}) {
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const supported = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.usageLimitAlerts === true,
+  );
+  if (
+    !supported ||
+    settings === null ||
+    !usageLimitAlertsPaused({
+      autonomyEnabled: settings.autonomy.enabled,
+      alerts: settings.usageLimitAlerts,
+      providers,
+    })
+  ) {
+    return null;
+  }
+  return (
+    <SettingsGroup divided={false} className="overflow-hidden">
+      <SettingsRow
+        title="Limit alerts are paused"
+        description={
+          <>
+            Assistant notifications are off, so limit alerts wait. Change it in{" "}
+            <Link
+              to="/settings/assistants"
+              className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              Assistants
+            </Link>
+            .
+          </>
+        }
+      />
+    </SettingsGroup>
   );
 }

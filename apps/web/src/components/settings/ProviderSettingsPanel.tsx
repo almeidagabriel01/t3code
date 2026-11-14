@@ -97,6 +97,7 @@ import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
+import { UsageLimitAlertsPausedNotice } from "./UsageLimitAlertsSection";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -1045,6 +1046,7 @@ export function EnvironmentProviderSettings({
             />
           </SettingsGroup>
         ) : null}
+        <UsageLimitAlertsPausedNotice environmentId={environmentId} providers={serverProviders} />
         <SettingsGroup
           divided={false}
           className={cn(

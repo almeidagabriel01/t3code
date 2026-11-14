@@ -1,5 +1,6 @@
 import {
   USAGE_LIMIT_ALERT_CHOICES,
+  type ServerProvider,
   type ServerProviderUsageWindow,
   type UsageLimitAlertConfig,
   type UsageLimitAlerts,
@@ -97,6 +98,26 @@ export function usageLimitAlertRows(input: {
       config: input.config,
     }),
   }));
+}
+
+/** True when paused Autonomy holds back an alert that is on, so one note above the providers says so. */
+export function usageLimitAlertsPaused(input: {
+  readonly autonomyEnabled: boolean;
+  readonly alerts: UsageLimitAlerts;
+  readonly providers: ReadonlyArray<
+    Pick<ServerProvider, "driver" | "instanceId" | "enabled" | "usageLimits">
+  >;
+}): boolean {
+  if (input.autonomyEnabled || input.alerts.ignoreAutonomyPause) return false;
+  return input.providers.some(
+    (provider) =>
+      provider.enabled &&
+      usageLimitAlertRows({
+        driver: provider.driver,
+        windows: provider.usageLimits?.windows,
+        config: input.alerts.instances[provider.instanceId],
+      }).some((row) => row.threshold !== null),
+  );
 }
 
 /** The fixed choices, plus a saved value outside them so the picker can still show it. */

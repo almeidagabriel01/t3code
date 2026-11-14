@@ -5,6 +5,7 @@ import {
   usageLimitAlertChoices,
   usageLimitAlertOverride,
   usageLimitAlertRows,
+  usageLimitAlertsPaused,
   usageLimitAlertThreshold,
 } from "./usageLimitAlerts.ts";
 
@@ -110,5 +111,26 @@ describe("usageLimitAlertRows", () => {
     expect(usageLimitAlertChoices(15)).toEqual([5, 10, 15, 20, 25, 30, 40, 50]);
     expect(usageLimitAlertChoices(12)).toEqual([5, 10, 12, 15, 20, 25, 30, 40, 50]);
     expect(usageLimitAlertChoices(null)).toEqual([5, 10, 15, 20, 25, 30, 40, 50]);
+  });
+});
+
+describe("usageLimitAlertsPaused", () => {
+  const claude = { driver: "claudeAgent", instanceId: "claudeAgent", enabled: true };
+  const off = { windows: { seven_day: "off" as const } };
+  it.each([
+    ["an alert on while Autonomy is paused", false, false, [claude], {}, true],
+    ["Autonomy on", true, false, [claude], {}, false],
+    ["alerts that ignore the pause", false, true, [claude], {}, false],
+    ["every alert off", false, false, [claude], { claudeAgent: off }, false],
+    ["a disabled instance", false, false, [{ ...claude, enabled: false }], {}, false],
+    ["no instance", false, false, [], {}, false],
+  ] as const)("%s", (_name, autonomyEnabled, ignoreAutonomyPause, providers, instances, paused) => {
+    expect(
+      usageLimitAlertsPaused({
+        autonomyEnabled,
+        alerts: { ignoreAutonomyPause, instances } as never,
+        providers: providers as never,
+      }),
+    ).toBe(paused);
   });
 });
