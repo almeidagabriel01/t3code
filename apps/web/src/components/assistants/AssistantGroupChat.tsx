@@ -1150,6 +1150,7 @@ export function AssistantGroupChat(props: {
           projectId={modelProject.id}
           projectLabel={modelProject.label}
           member={memberModel}
+          teamDefault={team?.defaultModelSelection ?? null}
           onClose={() => setMemberModel(null)}
         />
       )}

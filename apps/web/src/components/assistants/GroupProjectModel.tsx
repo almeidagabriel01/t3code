@@ -145,11 +145,15 @@ export function useMemberModelExceptions(
   );
 }
 
-function MemberModelFields(props: { readonly member: Assistant }) {
+function MemberModelFields(props: {
+  readonly member: Assistant;
+  readonly teamDefault: ModelSelection | null;
+}) {
   const { member } = props;
   const { target } = useSettingsScope();
   const { settings, representative, providers, selection, entries, modelDisabledReason } =
     useScopedDefaultModel();
+  const source = useScopedSettingSource(["defaultModelSelection"]);
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateProjectAssistantModel();
   const [error, setError] = useState<string | null>(null);
@@ -159,6 +163,15 @@ function MemberModelFields(props: { readonly member: Assistant }) {
       : representative?.serverConfig?.settings.projectSettingsOverrides[target.projectId]
           ?.assistantModelSelections?.[member.id];
   const shown = exception ?? selection;
+  // Without an exception the member runs on what comes next in line, not on the scope's default.
+  const inherited =
+    source !== "environment"
+      ? "Project's model"
+      : props.teamDefault !== null
+        ? "Group default"
+        : member.defaultModelSelection
+          ? "Member's default"
+          : "Default model";
   const save = (value: ModelSelection | null) => {
     const reason = value === null ? null : modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return setError(reason);
@@ -176,6 +189,7 @@ function MemberModelFields(props: { readonly member: Assistant }) {
               providers={providers}
               selection={shown}
               label={`Model for ${member.name}`}
+              {...(exception ? {} : { placeholder: inherited })}
               disabled={!canWrite}
               environmentId={representative?.environmentId ?? null}
               instanceEntries={entries}
@@ -215,6 +229,8 @@ export function MemberProjectModelDialog(props: {
   readonly projectId: ProjectId;
   readonly projectLabel: string;
   readonly member: Assistant;
+  /** The group's default, which the member runs on there when the project has none. */
+  readonly teamDefault: ModelSelection | null;
   readonly onClose: () => void;
 }) {
   const { member } = props;
@@ -231,7 +247,7 @@ export function MemberProjectModelDialog(props: {
           </DialogDescription>
         </DialogHeader>
         <GroupProjectScope environmentId={props.environmentId} projectId={props.projectId}>
-          <MemberModelFields member={member} />
+          <MemberModelFields member={member} teamDefault={props.teamDefault} />
         </GroupProjectScope>
       </DialogPopup>
     </Dialog>

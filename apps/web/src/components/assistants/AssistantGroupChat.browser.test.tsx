@@ -1122,6 +1122,13 @@ it("shows the group's default for a project without its own", async () => {
   await expect
     .element(main().getByRole("button", { name: "Model for render, Group default" }))
     .toHaveTextContent("GPT-5.5");
+  // A member without an exception runs on the group's default there too.
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
+  await expect
+    .element(page.getByRole("button", { name: "Model for Ada" }))
+    .toHaveTextContent("Group default");
 });
 
 it("says inline why the project's model was not saved and keeps the shown one", async () => {
@@ -1161,6 +1168,10 @@ it("sets a member's own model in the chosen project from the group menu, and rem
   await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
   await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
   await expect.element(page.getByText("No exception for Ada in this project.")).toBeVisible();
+  // Not the global default's name: without a project or group default, Ada runs on her own.
+  await expect
+    .element(page.getByRole("button", { name: "Model for Ada" }))
+    .toHaveTextContent("Default model");
   await expect
     .element(page.getByRole("button", { name: "Remove exception" }))
     .not.toBeInTheDocument();
