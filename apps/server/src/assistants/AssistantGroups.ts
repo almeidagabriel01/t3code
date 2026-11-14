@@ -43,6 +43,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type ProjectId,
+  type ServerSettings as ServerSettingsValue,
   type RunId,
   runtimeModeForToolAccess,
   ThreadId,
@@ -176,6 +177,23 @@ const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelle
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+/** Projects whose own default model or per-assistant models differ between two settings. */
+export const projectModelChanges = (
+  previous: Pick<ServerSettingsValue, "projectSettingsOverrides">,
+  next: Pick<ServerSettingsValue, "projectSettingsOverrides">,
+): ReadonlyArray<ProjectId> => {
+  const key = (settings: typeof previous, projectId: string) => {
+    const project = settings.projectSettingsOverrides[projectId as ProjectId];
+    return JSON.stringify([project?.defaultModelSelection, project?.assistantModelSelections]);
+  };
+  return [
+    ...new Set([
+      ...Object.keys(previous.projectSettingsOverrides),
+      ...Object.keys(next.projectSettingsOverrides),
+    ]),
+  ].filter((projectId) => key(previous, projectId) !== key(next, projectId)) as ProjectId[];
+};
 const LIVE_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"] as const;
 const ACTIVE_RUN_STATUSES = ["preparing", "starting", "running", "waiting"] as const;
 
@@ -503,6 +521,11 @@ export class AssistantGroups extends Context.Service<
     readonly handleAssistantEvent: (event: AssistantsEvent) => Effect.Effect<void>;
     /** Brings group state in line with the teams now stored, for changes made while down. */
     readonly reconcile: Effect.Effect<void>;
+    /**
+     * These projects' default or per-assistant model changed: their open requests' threads that
+     * still run on the model the project gave them move to the one it gives now.
+     */
+    readonly followProjectModels: (projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<void>;
     /** Watches the assistants stream for the changes above. */
     readonly start: Effect.Effect<void, never, Scope.Scope>;
     /** Resolves once every background routing call has finished. */
@@ -1080,6 +1103,21 @@ const make = Effect.gen(function* () {
     const pending = decodeModelSelectionJson(row?.pending_model_selection);
     if (row !== undefined && pending !== null) yield* followModel(row, pending);
   });
+
+  const followProjectModels: AssistantGroups["Service"]["followProjectModels"] = Effect.fn(
+    "AssistantGroups.followProjectModels",
+  )(function* (projectIds) {
+    if (projectIds.length === 0) return;
+    const open = yield* sql<{ readonly request_id: string; readonly project_id: string }>`
+        SELECT DISTINCT m.message_id AS request_id, m.project_id FROM assistant_group_messages m
+        JOIN assistant_group_tasks t ON t.request_id = m.message_id
+        WHERE m.project_id IN ${sql.in(projectIds)} AND t.status IN ${sql.in(OPEN)}`;
+    yield* lock.withPermits(1)(
+      Effect.forEach(open, (row) =>
+        followRequestProject(row.request_id, row.project_id as ProjectId),
+      ),
+    );
+  }, quietly("project model change"));
 
   /** Each of a request's threads follows the model resolved for its member in `projectId`. */
   const followRequestProject = Effect.fn("AssistantGroups.followRequestProject")(function* (
@@ -3309,6 +3347,15 @@ const make = Effect.gen(function* () {
 
   const start: AssistantGroups["Service"]["start"] = Effect.gen(function* () {
     const changes = yield* assistants.subscribeChanges;
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    let previousSettings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    yield* forkParked(
+      Stream.runForEach(settingsChanges, (next) => {
+        const changed = projectModelChanges(previousSettings, next);
+        previousSettings = next;
+        return followProjectModels(changed);
+      }).pipe(quietly("settings stream")),
+    );
     yield* forkParked(
       reconcile.pipe(
         Effect.andThen(Stream.runForEach(Stream.fromSubscription(changes), handleAssistantEvent)),
@@ -3464,6 +3511,7 @@ const make = Effect.gen(function* () {
     syncWaitingThread,
     handleAssistantEvent,
     reconcile,
+    followProjectModels,
     start,
     idle: FiberSet.awaitEmpty(routing),
   });

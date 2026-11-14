@@ -1004,6 +1004,54 @@ it.effect(
   },
 );
 
+it.effect(
+  "a project's new model reaches its open requests' threads that still follow the old one",
+  () => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const open = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+      const done = yield* groups.post({ teamId: TEAM, text: "@cy two" }, h.user);
+      const ada = requestThreadId("ada", TEAM, open.message.id);
+      const beto = requestThreadId("beto", TEAM, open.message.id);
+      const cy = requestThreadId("cy", TEAM, done.message.id);
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      // Ada's turn ended; Beto's still runs, so the request is open. Cy's request is done.
+      yield* h.finish(0, "completed", "done");
+      yield* h.finish(2, "completed", "done");
+
+      const before = yield* settings.getSettings;
+      const after = yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: {
+            defaultModelSelection: selection(claude, "p1-new"),
+            assistantModelSelections: { [AssistantId.make("cy")]: selection(claude, "cy-new") },
+          },
+          // Another setting of another project is no model change.
+          [p2]: { defaultThreadEnvMode: "worktree" },
+        },
+      });
+      assert.deepEqual(Groups.projectModelChanges(before, after), [p1]);
+      yield* groups.followProjectModels([p1]);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.model-selection.set")
+          .map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.deepEqual(h.fakeThreads.get(cy)!.modelSelection, selection(codex, "p1-model"));
+      assert.lengthOf(h.launched, 3);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("a task that cannot start fails with a reason the user can see", () => {
   const h = harness();
   return Effect.gen(function* () {
