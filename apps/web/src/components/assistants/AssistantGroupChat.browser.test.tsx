@@ -247,7 +247,7 @@ const expectComposer = (text: string) => eventually(() => expect(composerText())
 it("shows requests, each member's answer, routing notes and the tasks between", async () => {
   publishGroupChat(
     [
-      message(1, { text: "@Ada @Bo what does it cost?" }),
+      message(1, { text: "@Ada @Bo what does it cost?\nAnd the risk?" }),
       message(2, { kind: "routing", author: "assistant", text: "Ada and Bo each got a task" }),
       message(3, {
         author: "assistant",
@@ -270,6 +270,10 @@ it("shows requests, each member's answer, routing notes and the tasks between", 
   await expect.element(main().getByText("Ada and Bo each got a task")).toBeVisible();
   await expect.element(main().getByText("Three options compared.")).toBeVisible();
   await expect.element(main().getByText("Weekly review")).toBeVisible();
+  // A request keeps its line breaks, as the thread shows a user message.
+  expect(document.querySelector('[data-testid="group-request"][data-message-id="m1"] br')).not.toBe(
+    null,
+  );
   // An open task keeps its card; a finished one is the thread's one activity line.
   const cards = main().getByTestId("group-task-card");
   await expect.element(cards.first()).toHaveAttribute("data-status", "running");

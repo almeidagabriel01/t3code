@@ -454,7 +454,7 @@ function FeedRow(props: {
   const answeredProject = useProject(
     answeredShell === null ? null : scopeProjectRef(props.environmentId, answeredShell.projectId),
   );
-  const markdown = (text: string) => (
+  const markdown = (text: string, lineBreaks = shouldPreserveAssistantLineBreaks(text)) => (
     <ChatMarkdown
       text={assistantGroupMarkdownMentions(text, props.members, props.projects)}
       cwd={
@@ -474,7 +474,7 @@ function FeedRow(props: {
       }
       environmentId={props.environmentId}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
-      lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+      lineBreaks={lineBreaks}
       renderMention={(href, text) => (
         <GroupMentionChip
           kind={assistantGroupMentionHref(href)?.kind ?? "member"}
@@ -579,7 +579,8 @@ function FeedRow(props: {
             BUBBLE_CHIP_INK,
           )}
         >
-          {parts.body === "" ? null : markdown(parts.body)}
+          {/* A request keeps its line breaks, as the thread shows a user message. */}
+          {parts.body === "" ? null : markdown(parts.body, true)}
           {parts.files === null ? null : (
             <div data-testid="group-request-files" className="mt-1.5">
               <ChatMarkdown
