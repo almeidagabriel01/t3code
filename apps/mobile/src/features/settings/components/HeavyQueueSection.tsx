@@ -26,6 +26,7 @@ const IDLE_MINUTES = [0, 10, 20, 30, 60] as const;
 export interface RunnerMode {
   readonly enabled: boolean;
   readonly where: RunnerWhere;
+  readonly everything: boolean;
 }
 
 const LIMIT_ROWS = [
@@ -171,6 +172,7 @@ export function HeavyQueueSection(props: {
               queuePaused: state.paused,
               runnerEnabled: runner.enabled,
               where: runner.where,
+              everything: runner.everything,
             })}
           />
         )}

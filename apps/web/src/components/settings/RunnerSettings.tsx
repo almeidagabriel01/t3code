@@ -64,11 +64,13 @@ type PatternKey = "runnerLinuxCommands" | "runnerMacOnly";
 export function useHeavyModeLine(queue: Pick<HeavyQueueState, "enabled" | "paused">) {
   const runnerEnabled = useScopedSettings((settings) => settings.runnerEnabled);
   const where = useScopedSettings((settings) => settings.runnerWhere);
+  const everything = useScopedSettings((settings) => settings.runnerLinuxEverything);
   return heavyModeLine({
     queueEnabled: queue.enabled,
     queuePaused: queue.paused,
     runnerEnabled,
     where,
+    everything,
   });
 }
 

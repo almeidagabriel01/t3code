@@ -147,11 +147,12 @@ export interface HeavyModeInput {
   readonly queuePaused: boolean;
   readonly runnerEnabled: boolean;
   readonly where: RunnerWhere;
+  readonly everything: boolean;
 }
 
 /** One sentence for the current queue × Runner combination; both settings sections show it. */
 export function heavyModeLine(mode: HeavyModeInput): string {
-  const { queueEnabled, queuePaused, runnerEnabled, where } = mode;
+  const { queueEnabled, queuePaused, runnerEnabled, where, everything } = mode;
   if (!runnerEnabled) {
     if (!queueEnabled) return "Heavy jobs start right away, with nothing tracking them.";
     return queuePaused
@@ -164,7 +165,9 @@ export function heavyModeLine(mode: HeavyModeInput): string {
       case "mac":
         return "Heavy jobs wait their turn on this Mac; nothing goes to Linux.";
       case "linux":
-        return "Listed commands run on Linux; everything else waits its turn on this Mac.";
+        return everything
+          ? "Heavy commands run on Linux; what has to stay here waits its turn on this Mac."
+          : "Listed commands run on Linux; everything else waits its turn on this Mac.";
       case "automatic":
         return RUNNER_WHERE_DESCRIPTION.automatic;
       case "macFirst":
@@ -175,7 +178,9 @@ export function heavyModeLine(mode: HeavyModeInput): string {
     case "mac":
       return "No queue: heavy jobs start on this Mac right away.";
     case "linux":
-      return "No queue: listed commands wait for a Linux slot, the rest start here right away.";
+      return everything
+        ? "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away."
+        : "No queue: listed commands wait for a Linux slot, the rest start here right away.";
     case "automatic":
       return RUNNER_WHERE_DESCRIPTION.automatic;
     case "macFirst":

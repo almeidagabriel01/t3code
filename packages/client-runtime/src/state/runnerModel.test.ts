@@ -44,7 +44,8 @@ describe("the queue × Runner line", () => {
     queuePaused: boolean,
     runnerEnabled: boolean,
     where: "mac" | "linux" | "automatic" | "macFirst",
-  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
+    everything: boolean,
+  ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where, everything });
 
   it.each([
     [true, false, false, "mac", "Heavy jobs wait their turn on this Mac."],
@@ -95,9 +96,29 @@ describe("the queue × Runner line", () => {
       "macFirst",
       "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
     ],
-  ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
-    expect(line(queue, paused, runner, where)).toBe(text);
-  });
+    [
+      true,
+      false,
+      true,
+      "linux",
+      "Heavy commands run on Linux; what has to stay here waits its turn on this Mac.",
+      true,
+    ],
+    [
+      false,
+      false,
+      true,
+      "linux",
+      "No queue: heavy commands wait for a Linux slot; what has to stay here starts right away.",
+      true,
+    ],
+    [true, true, true, "linux", "Queue paused: nothing new starts on this Mac or Linux.", true],
+  ] as const)(
+    "queue %s paused %s Runner %s %s",
+    (queue, paused, runner, where, text, everything: boolean = false) => {
+      expect(line(queue, paused, runner, where, everything)).toBe(text);
+    },
+  );
 });
 
 describe("Linux status", () => {

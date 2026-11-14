@@ -609,6 +609,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           runner={{
                             enabled: target.settings.runnerEnabled,
                             where: target.settings.runnerWhere,
+                            everything: target.settings.runnerLinuxEverything,
                           }}
                           slowAgentJobs={{
                             value: target.settings.heavySlowAgentJobs,
