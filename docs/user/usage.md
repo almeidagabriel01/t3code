@@ -172,6 +172,24 @@ Until then it shows no limits. Readings are not kept across a server restart.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Get an alert before a limit runs out
+
+Your default assistant tells you once, in its chat and on Telegram, when a subscription window
+drops to a share you pick. Claude's weekly limit alerts at 15% left out of the box. Every other
+window, including the 5-hour session and per-model weekly limits, starts off.
+
+Change it in **Settings → Providers**, under **Limit alerts** on each provider's card. On mobile,
+open **Settings → Limit alerts**. Each window takes its own share, or **Off**.
+
+- Alerts arrive only while **Settings → Assistants → Autonomy** is on, through the same channels as
+  your assistant's other messages, and they count toward its daily message limit.
+- The server checks every 15 minutes or so while an alert is on, with no app open, and it also reads
+  the limits your turns report. Accounts that are signed out or fail to report are checked less
+  often until they recover.
+- Each window alerts once. It alerts again after it resets, or after the share left climbs five
+  points above your pick and drops back.
+- The reset time is shown in the time zone of the device that last saved the alert.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
