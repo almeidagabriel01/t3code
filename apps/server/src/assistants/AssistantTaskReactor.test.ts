@@ -5,6 +5,7 @@ import {
   type AssistantId,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -26,6 +27,8 @@ const runEvent = (threadId: ThreadId, status: string, type = "run.updated") =>
   }) as never as OrchestrationV2DomainEvent;
 
 const harness = (options: { readonly failSend?: boolean } = {}) => {
+  const folded: Array<string> = [];
+  const allFolded = Deferred.makeUnsafe<void>();
   const sends: Array<Record<string, unknown>> = [];
   const layer = Reactor.layer.pipe(
     Layer.provideMerge(Tasks.layer),
@@ -50,12 +53,16 @@ const harness = (options: { readonly failSend?: boolean } = {}) => {
                   sends.push(notice as never);
                   return "sent" as const;
                 }),
-          foldQueued: () => Effect.void,
+          foldQueued: (threadId) =>
+            Effect.suspend(() => {
+              folded.push(threadId);
+              return folded.length === 2 ? Deferred.succeed(allFolded, undefined) : Effect.void;
+            }),
         }),
       ),
     ),
   );
-  return { sends, layer };
+  return { sends, folded, allFolded, layer };
 };
 
 const setup = (archived = false) =>
@@ -130,6 +137,21 @@ it.effect("a wake that cannot be sent is logged and does not stop the reactor", 
   return Effect.gen(function* () {
     yield* setup();
     yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("starting folds the backlog of every active assistant thread", () => {
+  const { folded, allFolded, layer } = harness();
+  return Effect.gen(function* () {
+    yield* setup();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO assistants
+        (assistant_id, handle, name, project_id, tool_access, thread_id, archived_at, created_at, updated_at)
+      VALUES ('second', 'second', 'Second', 'assistants-home', 'full', 'assistant:second:1', NULL, '2026-01-01', '2026-01-01')`;
+    yield* (yield* Reactor.AssistantTaskReactor).start();
+    yield* Deferred.await(allFolded);
+    assert.sameMembers(folded, ["assistant:jarvis:1", "assistant:second:1"]);
   }).pipe(Effect.provide(layer));
 });
 

@@ -31,6 +31,9 @@ const harness = () => {
     checkpointScopes: 1,
     queued: [] as Array<QueuedEvent>,
     failSend: false,
+    dieSend: false,
+    failShell: false,
+    failRecords: false,
   };
   const sends: Array<{ readonly messageId: string; readonly text: string }> = [];
   const cancelled: Array<string> = [];
@@ -51,35 +54,41 @@ const harness = () => {
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: () =>
-            Effect.succeed({ projectId: ProjectId.make("p1"), worktreePath: "/repo" } as never),
+            state.failShell
+              ? Effect.fail(new Error("no shell") as never)
+              : Effect.succeed({ projectId: ProjectId.make("p1"), worktreePath: "/repo" } as never),
           getThreadRecords: (threadId, _fields, filter) =>
-            Effect.succeed({
-              checkpointScopes: Array.from({ length: state.checkpointScopes }, () => ({})),
-              checkpoints: [...state.files].map(([id, count]) => ({
-                id,
-                status: "ready",
-                files: Array.from({ length: count }, () => ({})),
-              })),
-              messages:
-                threadId === assistantThread
-                  ? state.queued.map((entry) => entry.message)
-                  : (filter?.messageIds ?? []).flatMap((id) => {
-                      const message = state.started.get(id);
-                      return message === undefined ? [] : [message];
-                    }),
-              runs: state.queued.map((entry) => ({
-                id: entry.runId,
-                ordinal: entry.ordinal,
-                userMessageId: entry.message.id,
-              })),
-            } as never),
+            state.failRecords
+              ? Effect.fail(new Error("no records") as never)
+              : Effect.succeed({
+                  checkpointScopes: Array.from({ length: state.checkpointScopes }, () => ({})),
+                  checkpoints: [...state.files].map(([id, count]) => ({
+                    id,
+                    status: "ready",
+                    files: Array.from({ length: count }, () => ({})),
+                  })),
+                  messages:
+                    threadId === assistantThread
+                      ? state.queued.map((entry) => entry.message)
+                      : (filter?.messageIds ?? []).flatMap((id) => {
+                          const message = state.started.get(id);
+                          return message === undefined ? [] : [message];
+                        }),
+                  runs: state.queued.map((entry) => ({
+                    id: entry.runId,
+                    ordinal: entry.ordinal,
+                    userMessageId: entry.message.id,
+                  })),
+                } as never),
           sendToThread: (input) =>
-            state.failSend
-              ? Effect.fail(new Error("send failed") as never)
-              : Effect.sync(() => {
-                  sends.push({ messageId: input.messageId, text: input.text });
-                  return {} as never;
-                }),
+            state.dieSend
+              ? Effect.die("send blew up")
+              : state.failSend
+                ? Effect.fail(new Error("send failed") as never)
+                : Effect.sync(() => {
+                    sends.push({ messageId: input.messageId, text: input.text });
+                    return {} as never;
+                  }),
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeedNone,
@@ -282,5 +291,29 @@ it.effect("a send that fails gives the mark back, so the event is told on the ne
     assert.strictEqual(yield* notices.send(notice(run("r2"))), "sent");
     // Judged against r1 again, not the failed attempt: r3 without changes stays quiet.
     assert.strictEqual(yield* notices.send(notice(run("r3"))), "unchanged");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("unreadable thread facts count as no facts, and a defect in the door says failed", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const notices = yield* TaskEventNotices;
+    // No head to compare: an unreadable repository, then an unreadable shell.
+    h.state.head = null;
+    assert.strictEqual(yield* launched(h), "sent");
+    assert.strictEqual(yield* notices.send(notice(run("r2"))), "unchanged");
+    h.state.failShell = true;
+    assert.strictEqual(yield* notices.send(notice(run("r3"))), "unchanged");
+    // Unreadable records: no diff, no asker, nothing to wait for, and queued events stay put.
+    h.state.failRecords = true;
+    assert.strictEqual(yield* notices.send(notice(run("r4"))), "unchanged");
+    assert.strictEqual(
+      yield* notices.send(notice(run("r5", { status: "failed", checkpointId: null }))),
+      "sent",
+    );
+    yield* notices.foldQueued(assistantThread);
+    assert.deepStrictEqual(h.cancelled, []);
+    h.state.dieSend = true;
+    assert.strictEqual(yield* notices.send(notice(run("r6", { status: "interrupted" }))), "failed");
   }).pipe(Effect.provide(h.layer));
 });

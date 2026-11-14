@@ -421,6 +421,16 @@ it.effect("a blocking budget, a failed send and a missing assistant wake nobody"
     h.sendFails.current = false;
     yield* service.handleEvent(run("failed", "r2"));
     assert.lengthOf(h.sent, 1);
+    // The same holds for a wake that is no run's end: a stuck run whose send failed is retried by the next sweep.
+    h.shells.set("t5", plain);
+    yield* service.handleEvent(run("running", "stuck", "t5"));
+    yield* TestClock.adjust(16 * MIN);
+    h.sendFails.current = true;
+    yield* service.sweep;
+    assert.lengthOf(h.sent, 1);
+    h.sendFails.current = false;
+    yield* service.sweep;
+    assert.lengthOf(h.sent, 2);
   }).pipe(Effect.provide(h.layer));
 });
 
