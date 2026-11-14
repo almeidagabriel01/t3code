@@ -21,6 +21,11 @@ export function usageLimitAlertThreshold(input: {
   return DEFAULT_THRESHOLDS[input.driver]?.[input.windowId] ?? null;
 }
 
+/** Window ids that alert by default for a driver, so they count before a first reading. */
+export function defaultUsageLimitAlertWindows(driver: string): ReadonlyArray<string> {
+  return Object.keys(DEFAULT_THRESHOLDS[driver] ?? {});
+}
+
 /** Per-window merge; an instance left with no override and no zone is dropped. */
 export function mergeUsageLimitAlerts(
   current: UsageLimitAlerts,
