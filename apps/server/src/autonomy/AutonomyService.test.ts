@@ -79,6 +79,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     selfHandles: [],
   });
   const dispatched: Array<Record<string, unknown>> = [];
+  const runs = new Map<string, { id: string; threadId: string; providerInstanceId: string }>();
   const layer = Autonomy.layer.pipe(
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
@@ -104,8 +105,13 @@ const harness = (language: "en" | "pt-BR" = "en") => {
                   });
                   return {} as never;
                 }),
-          getThreadRecords: (threadId) =>
+          getThreadRecords: (threadId, _fields, filter) =>
             Effect.succeed({
+              runs: [...runs.values()].filter(
+                (candidate) =>
+                  candidate.threadId === threadId &&
+                  filter?.runIds?.includes(candidate.id as never),
+              ),
               messages: [{ text: answers.get(threadId) ?? "" }],
               turnItems: [...contexts.values()].flatMap((context) =>
                 context.item === undefined ? [] : [context.item],
@@ -155,6 +161,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     contexts,
     imessage,
     dispatched,
+    runs,
   };
 };
 
@@ -1293,6 +1300,68 @@ it.effect(
       assert.equal((yield* say("k7", "Next day.")).status, "sent");
       yield* Ref.set(h.settings, { ...ON, enabled: false });
       assert.include(yield* refused(say("k8", "Paused.")), "paused");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+const armed = (threadId: string, runId: string, resetAt: string, autoResume = true) =>
+  ev("thread.metadata-updated", threadId, {
+    id: threadId,
+    limitRecovery: { runId, resetAt, autoResume, snooze: false },
+  });
+
+it.effect(
+  "a usage limit is told once per provider and window, retried after a failed send, gated",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      const limited = (threadId: string, runId: string, providerInstanceId = "claudeAgent") => {
+        h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
+        h.runs.set(runId, { id: runId, threadId, providerInstanceId });
+      };
+      const reset = "2026-01-01T05:00:00.000Z";
+      limited("t1", "r1");
+      limited("t2", "r2");
+      // Gate off: nothing is told.
+      yield* Ref.set(h.settings, { ...ON, notifyWaiting: false });
+      yield* service.handleEvent(armed("t1", "r1", reset));
+      assert.lengthOf(yield* outboxRows, 0);
+      yield* Ref.set(h.settings, ON);
+
+      // A failed send leaves no mark; the waiting sweep retries with the same key.
+      yield* sql`CREATE TRIGGER outbox_down BEFORE INSERT ON channel_outbox
+        BEGIN SELECT RAISE(ABORT, 'down'); END`;
+      yield* service.handleEvent(armed("t2", "r2", reset));
+      assert.lengthOf(yield* outboxRows, 0);
+      assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_needs_you`, 0);
+      yield* sql`DROP TRIGGER outbox_down`;
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.include(rows[0]!.message.text, "Usage limit reached");
+      assert.include(rows[0]!.message.text, "Task t2");
+
+      // Same provider and window from another task, or a replay: no second notice.
+      limited("t3", "r3");
+      yield* service.handleEvent(armed("t3", "r3", "2026-01-01T05:00:40.000Z"));
+      yield* service.handleEvent(armed("t2", "r2", reset));
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 1);
+
+      // A new window, or another provider, is told again.
+      limited("t4", "r4");
+      yield* service.handleEvent(armed("t4", "r4", "2026-01-01T10:00:00.000Z"));
+      limited("t5", "r5", "codex");
+      yield* service.handleEvent(armed("t5", "r5", reset));
+      assert.lengthOf(yield* outboxRows, 3);
+      // A Stop's hold arms nothing to wait for.
+      limited("t6", "r6", "cursor");
+      yield* service.handleEvent(armed("t6", "r6", reset, false));
+      assert.lengthOf(yield* outboxRows, 3);
+      // Telling never dispatches anything, so no thread changes provider.
+      assert.lengthOf(h.dispatched, 0);
     }).pipe(Effect.provide(h.layer));
   },
 );

@@ -20,6 +20,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ProjectId,
   PROVIDER_DISPLAY_NAMES,
+  type ProviderInstanceId,
   type ThreadId,
   isSideChatThread,
 } from "@t3tools/contracts";
@@ -125,6 +126,31 @@ const toWatch = (row: WatchRow): AutonomyWatch => ({
 
 const autonomyError = (reason: AutonomyError["reason"], message: string) =>
   new AutonomyError({ reason, message });
+
+interface UsageLimitNotice {
+  readonly threadId: ThreadId;
+  readonly runId: string;
+  readonly providerInstanceId: string;
+  readonly resetAt: string | null;
+}
+
+/** One window per provider: a reset parsed from a relative cooldown varies by seconds. */
+const usageLimitSubject = (notice: UsageLimitNotice, nowMs: number) =>
+  `usage-limit:${notice.providerInstanceId}:${
+    notice.resetAt === null
+      ? DateTime.formatIsoDate(
+          DateTime.setZone(DateTime.makeUnsafe(nowMs), DateTime.zoneMakeLocal()),
+        )
+      : DateTime.formatIso(DateTime.makeUnsafe(notice.resetAt)).slice(0, 16)
+  }`;
+
+const usageLimitTime = (resetAt: string, language: string) =>
+  DateTime.formatLocal(DateTime.makeUnsafe(resetAt), {
+    locale: language,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 export class AutonomyService extends Context.Service<
   AutonomyService,
@@ -641,6 +667,32 @@ const make = Effect.gen(function* () {
           });
           return;
         }
+        case "thread.metadata-updated": {
+          // The recovery worker armed a wait on a usage limit (a Stop's hold resumes nothing).
+          const recovery = event.payload.limitRecovery;
+          if (
+            !recovery ||
+            !(recovery.autoResume || recovery.snooze === true) ||
+            Date.parse(recovery.resetAt) <= nowMs
+          )
+            return;
+          // Every later metadata update of an armed thread still carries its recovery.
+          const seen = `${event.threadId}:${recovery.runId}:${recovery.resetAt}`;
+          if (usageLimitSeen.has(seen)) return;
+          const { runs } = yield* threads.getThreadRecords(event.threadId, ["runs"], {
+            runIds: [recovery.runId],
+          });
+          const limited = runs[0];
+          if (limited === undefined) return;
+          usageLimitSeen.add(seen);
+          yield* notifyUsageLimit({
+            threadId: event.threadId,
+            runId: limited.id,
+            providerInstanceId: limited.providerInstanceId,
+            resetAt: recovery.resetAt,
+          });
+          return;
+        }
         case "thread.pull-request-link-updated":
         case "thread.pull-request-synced": {
           const links =
@@ -906,6 +958,85 @@ const make = Effect.gen(function* () {
     yield* markTold(subject, decision.id, nowMs);
   });
 
+  const providerName = Effect.fn("AutonomyService.providerName")(function* (instanceId: string) {
+    const instance = yield* settingsService.getSettings.pipe(
+      Effect.map((current) => current.providerInstances?.[instanceId as ProviderInstanceId]),
+      Effect.orElseSucceed(() => undefined),
+    );
+    return (
+      instance?.displayName ??
+      PROVIDER_DISPLAY_NAMES[
+        (instance?.driver ?? instanceId) as keyof typeof PROVIDER_DISPLAY_NAMES
+      ] ??
+      instanceId
+    );
+  });
+
+  /** Failed usage-limit notices, retried by `notifyWaiting` until one goes out. */
+  const usageLimitRetries = new Map<string, UsageLimitNotice>();
+  /** Arms already seen, so later metadata updates of an armed thread read nothing. */
+  const usageLimitSeen = new Set<string>();
+
+  const tellUsageLimit = Effect.fn("AutonomyService.tellUsageLimit")(function* (
+    notice: UsageLimitNotice,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const subject = usageLimitSubject(notice, nowMs);
+    if (yield* alreadyTold(subject)) return;
+    const shell = yield* engine
+      .getThreadShell(notice.threadId)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (shell === null) return;
+    const provider = yield* providerName(notice.providerInstanceId);
+    const back = (language: ResolvedChannelLanguage) =>
+      channelStrings(language).usageLimitBack(
+        notice.resetAt === null ? null : usageLimitTime(notice.resetAt, language),
+      );
+    // Deterministic ids: a repeat lands on the same decision and the same delivery.
+    const decision = yield* decisions.request({
+      fromThreadId: notice.threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${subject}`,
+      title: `${provider}: ${DECISION_PHRASES.usageLimit}`.slice(0, 120),
+      context: back("en"),
+      options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+    });
+    yield* sendNeedsYou({
+      decision,
+      agent: provider,
+      threadId: notice.threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      answerable: false,
+      config,
+      context: back,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
+  const tryUsageLimit = (notice: UsageLimitNotice, config: AutonomySettings, nowMs: number) => {
+    const key = `${notice.threadId}:${notice.runId}`;
+    return tellUsageLimit(notice, config, nowMs).pipe(
+      Effect.andThen(Effect.sync(() => usageLimitRetries.delete(key))),
+      Effect.catchCause((cause) =>
+        Effect.sync(() => usageLimitRetries.set(key, notice)).pipe(
+          Effect.andThen(Effect.logWarning("autonomy: a usage limit could not be told", { cause })),
+        ),
+      ),
+    );
+  };
+
+  /** Once per provider and limit window; a failed send is retried by `notifyWaiting`. */
+  const notifyUsageLimit = Effect.fn("AutonomyService.notifyUsageLimit")(function* (
+    notice: UsageLimitNotice,
+  ) {
+    const config = yield* settings;
+    if (!config.enabled || !config.notifyWaiting) return;
+    yield* tryUsageLimit(notice, config, yield* Clock.currentTimeMillis);
+  });
+
   const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
     decision: Decision,
     config: AutonomySettings,
@@ -1074,6 +1205,14 @@ const make = Effect.gen(function* () {
           yield* notifyGroupTask(task, config, nowMs).pipe(
             isolate("autonomy: a paused group task could not be told"),
           );
+        }
+
+        for (const notice of usageLimitRetries.values()) {
+          if (notice.resetAt !== null && Date.parse(notice.resetAt) <= nowMs) {
+            usageLimitRetries.delete(`${notice.threadId}:${notice.runId}`);
+            continue;
+          }
+          yield* tryUsageLimit(notice, config, nowMs);
         }
 
         yield* withdrawSettledNotices;
