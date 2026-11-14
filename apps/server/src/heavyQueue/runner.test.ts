@@ -5,7 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import type { HeavyQueueEntry, RunnerProjectConfig } from "@t3tools/contracts";
+import { heavyHoldText, type HeavyQueueEntry, type RunnerProjectConfig } from "@t3tools/contracts";
 
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -786,29 +786,75 @@ describe("the Mac↔Linux link", () => {
     ).toBe(outcome);
   });
 
+  const expired = { reason: "unavailable" as const, deadlineAt: ago(1) };
+  const DOWN = "Linux is unavailable: running here";
+  // Strain only holds a start here: the policy itself applies, and a Mac job waits as any does.
   it.each([
-    ["unavailable, Run on this Mac", { linkFailures: 3 }, { runnerUnavailable: "mac" }, ONLINE],
-    ["Linux offline, Run on this Mac", {}, { runnerUnavailable: "mac" }, OFFLINE],
+    [
+      "unavailable, Run on this Mac",
+      { linkFailures: 3 },
+      { runnerUnavailable: "mac" },
+      ONLINE,
+      DOWN,
+    ],
+    ["Linux offline, Run on this Mac", {}, { runnerUnavailable: "mac" }, OFFLINE, DOWN],
     [
       "dropped, Run on this Mac",
       { dropped: true, linkFailures: 3 },
       { runnerDropped: "mac" },
       ONLINE,
+      "Linux dropped it mid-run: running here",
     ],
     [
-      "a question nobody answered",
-      { linkFailures: 3, ask: { reason: "unavailable" as const, deadlineAt: ago(1) } },
+      "a question nobody answered, Run on this Mac",
+      { linkFailures: 3, ask: expired },
       { runnerUnavailable: "ask", runnerDeadlineAction: "mac" },
       ONLINE,
+      "Linux is unavailable and nobody answered: running here",
     ],
-    ["Hybrid with Linux offline", {}, { runnerWhere: "automatic" }, OFFLINE],
-  ] as const)("%s: a strained Mac keeps the job for Linux", (_, failed, config, health) => {
-    const entry = { linuxFailedAt: NOW - 500, ...failed };
-    const over = { health: { ...health, okAt: NOW - 60_000 } };
-    expect(plannedWith(entry, config, { ...over, ...STRAINED })).toBe("linux-wait");
-    // A reading older than a heartbeat no longer speaks for this Mac.
-    const stale = { sample: { ...STRAINED.sample, at: NOW - 21_000 } };
-    expect(plannedWith(entry, config, { ...over, ...stale })).toMatch(/^mac-/);
+    [
+      "Hybrid with Linux offline",
+      {},
+      { runnerWhere: "automatic" },
+      OFFLINE,
+      "Hybrid: Linux is unavailable",
+    ],
+    ["Linux offline, Ask me", {}, { runnerUnavailable: "ask" }, OFFLINE, "ask"],
+    [
+      "a question nobody answered, Cancel",
+      { linkFailures: 3, ask: expired },
+      { runnerUnavailable: "ask", runnerDeadlineAction: "cancel" },
+      ONLINE,
+      "cancel",
+    ],
+    [
+      "dropped, Tell the agent",
+      { dropped: true, linkFailures: 3 },
+      { runnerDropped: "agent" },
+      ONLINE,
+      "cancel",
+    ],
+  ] as const)("%s, with this Mac strained", (_, failed, config, health, then) => {
+    const entry = job("a", "vp test run", { linuxFailedAt: NOW - 500, ...failed } as never);
+    const planned = (beside: ReadonlyArray<HeavyQueueEntry>) => {
+      const plan = planRoutes(
+        input(
+          [...beside, entry],
+          { runnerWhere: "linux", ...config },
+          { health: { ...health, okAt: NOW - 60_000 }, runnerOn: true, ...STRAINED },
+        ),
+      );
+      return { plan, outcome: plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a") };
+    };
+    const alone = planned([]);
+    const busy = planned([runningOn("m", "mac")]);
+    if (then === "ask" || then === "cancel") {
+      expect([alone.outcome, busy.outcome]).toEqual([then, then]);
+      return;
+    }
+    // The only Mac job always runs; beside another it waits for room, and says why.
+    expect([alone.outcome, busy.outcome]).toEqual(["mac-start", "mac-wait"]);
+    expect(busy.plan.reasons.a).toBe(`${then} · ${heavyHoldText("pressure", STRAINED.sample, 3)}`);
   });
 
   it("an environment failure keeps its policy, strained or not", () => {

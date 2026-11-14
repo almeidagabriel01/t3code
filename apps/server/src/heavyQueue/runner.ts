@@ -691,19 +691,6 @@ export const linkMachine = (machine: RunnerMachineConfig, sample: Sample | null)
   runnerSshTimeoutSeconds: machine.runnerSshTimeoutSeconds * strainOf(sample),
 });
 
-/**
- * This Mac is short of memory: work Linux couldn't take waits for it rather than run here. A
- * stale reading still counts within one heartbeat, since the sampler lags while it swaps.
- */
-const macStrained = (input: RoutePlanInput) => {
-  const { sample, now, machine } = input;
-  if (sample === null) return false;
-  if (now - sample.at > Math.max(SAMPLE_FRESH_MS, machine.runnerHeartbeatSeconds * 1000))
-    return false;
-  const hold = machineHold(sample, input);
-  return hold === "pressure" || hold === "swap-in" || hold === "memory-floor";
-};
-
 export interface WorkContext {
   readonly config: RunnerProjectConfig;
   /** Two jobs of one worktree never run on Linux together: `remoto` would serialize them. */
@@ -818,7 +805,6 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   // `plan` starts nothing beside a job that runs alone.
   const macExclusive = queueOn && macRunning.some((entry) => kindOf(entry) === "exclusive");
   const reading = health.load1 !== null || health.availableMemoryBytes !== null;
-  const strained = macStrained(input);
 
   const admits: Record<string, Admit> = {};
   const routes: Record<string, HeavyRunner> = {};
@@ -919,14 +905,9 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     }
     const retry = linkRetry(health, entry, machine, now);
     const up = (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, now);
-    // A lost link is Linux's: the job waits for it while it retries, or while this Mac is strained.
-    const holdForLinux =
-      !up &&
-      (retry === "wait" ||
-        (strained &&
-          (entry as QueuedEntry).failure === undefined &&
-          (health.online !== null || entry.linuxFailedAt !== undefined)));
-    if (holdForLinux && !paused) {
+    // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
+    // start here, which its own plan does.
+    if (!up && retry === "wait" && !paused) {
       toLinux(entry, "waiting for Linux to come back");
       continue;
     }
