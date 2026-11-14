@@ -63,6 +63,7 @@ import {
   seedRowsDraft,
 } from "./ProviderSettingsForm";
 import { ProviderBudgetSection } from "./ProviderBudgetSection";
+import { UsageLimitAlertsSection } from "./UsageLimitAlertsSection";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -1385,6 +1386,14 @@ export function ProviderInstanceCard({
         <ProviderBudgetSection
           environmentId={environmentId}
           instanceId={instanceId}
+          readOnly={readOnly || !canWriteSettings}
+        />
+      ) : null}
+      {environmentId !== undefined && mode === "editor" ? (
+        <UsageLimitAlertsSection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          provider={liveProvider}
           readOnly={readOnly || !canWriteSettings}
         />
       ) : null}

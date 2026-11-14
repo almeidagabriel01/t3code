@@ -1453,6 +1453,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "usage-limit-alerts",
+    title: "Limit alerts",
+    to: "/settings/providers",
+    searchTerms: [
+      "usage limit alert notify warn low remaining weekly session quota subscription telegram threshold percent",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
