@@ -751,7 +751,11 @@ export function AssistantGroupChatRouteScreen({
   const visible = filterAssistantGroupFeed(items, filter);
   const defaultProjectId = groupProjects.some((project) => project.id === filter) ? filter : null;
   const modelProjectId = groupComposerProjects(replyTo, projectPick, defaultProjectId).run;
-  const projectModel = useGroupProjectModel(environmentId, modelProjectId);
+  const projectModel = useGroupProjectModel(
+    environmentId,
+    modelProjectId,
+    team?.defaultModelSelection ?? null,
+  );
   const newestRequest = visible.findLast((item) => item.kind === "request");
   const feedEntries: FeedEntry[] = visible.flatMap((item): FeedEntry[] => {
     if (item.kind === "row") return [item];

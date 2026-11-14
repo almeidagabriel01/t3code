@@ -8,6 +8,7 @@ import {
   type AssistantTeam,
   type AssistantTeamId,
   type ProjectId,
+  type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -1089,8 +1090,11 @@ it("shows the chosen project's model beside the project and saves a pick as its 
     .not.toBeInTheDocument();
   await userEvent.click(main().getByRole("combobox", { name: "Project" }));
   await userEvent.click(page.getByRole("option", { name: "render" }));
+  // Without a project or group default, each member runs on its own model.
   await userEvent.click(
-    main().getByRole("button", { name: "Model for render, Environment default" }),
+    main().getByRole("button", {
+      name: "Model for render, Not set: each member uses its own model",
+    }),
   );
   await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
   await eventually(() =>
@@ -1100,6 +1104,20 @@ it("shows the chosen project's model beside the project and saves a pick as its 
       },
     }),
   );
+});
+
+it("shows the group's default for a project without its own", async () => {
+  setFakeServerSettings(null);
+  await using _screen = await openChat({
+    team: team({
+      defaultModelSelection: { instanceId: "codex" as ProviderInstanceId, model: "gpt-5.5" },
+    }),
+  });
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await expect
+    .element(main().getByRole("button", { name: "Model for render, Group default" }))
+    .toHaveTextContent("GPT-5.5");
 });
 
 it("says inline why the project's model was not saved and keeps the shown one", async () => {

@@ -1518,6 +1518,14 @@ describe("requests", () => {
     expect(byLabel("Model for Alpha: name:gpt-5.5")?.disabled).toBe(true);
   });
 
+  it("shows the group's default, else the members' own models, for a project without its own", async () => {
+    setup();
+    await click("Project:Beta");
+    expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
+    expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
+  });
+
   it("sets a member's own model in the picked project from the header menu, and removes it", async () => {
     mocks.exceptions = { ada: { instanceId: "codex", model: "gpt-5.4" } };
     setup();

@@ -16,6 +16,7 @@ import {
   type Assistant,
   type ChatAttachment,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
@@ -254,6 +255,7 @@ export function GroupComposer(props: {
   /** Null lets the lead decide. */
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
+  readonly teamDefault: ModelSelection | null;
   readonly replyingTo: GroupReplyQuote | null;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
@@ -683,6 +685,7 @@ export function GroupComposer(props: {
                         environmentId={props.environmentId}
                         projectId={modelProjectId}
                         projectLabel={modelProjectLabel}
+                        teamDefault={props.teamDefault}
                         disabled={props.disabled}
                         onError={setError}
                       />

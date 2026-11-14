@@ -1109,6 +1109,7 @@ export function AssistantGroupChat(props: {
           projects={groupProjects}
           projectId={groupComposerProject}
           onProjectChange={setComposerProject}
+          teamDefault={team.defaultModelSelection ?? null}
           replyingTo={replyTo?.quote ?? null}
           onJumpToReply={() => replyTo !== null && jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}

@@ -25,7 +25,12 @@ export type GroupProjectModel = NonNullable<ReturnType<typeof useGroupProjectMod
  * The project's model for new work, and each member's own model there, read from and saved to
  * the same project settings the Settings screens use. Null without a project or its environment.
  */
-export function useGroupProjectModel(environmentId: EnvironmentId, projectId: ProjectId | null) {
+export function useGroupProjectModel(
+  environmentId: EnvironmentId,
+  projectId: ProjectId | null,
+  /** The group's default, which the project's requests run on when it has none of its own. */
+  teamDefault: ModelSelection | null,
+) {
   const navigation = useNavigation();
   const { environments } = useEnvironments();
   const projects = useProjects();
@@ -52,8 +57,15 @@ export function useGroupProjectModel(environmentId: EnvironmentId, projectId: Pr
     modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
   const selection = target.settings.defaultModelSelection;
   const members = [{ environmentId, projectId }];
+  const inherited = target.sources.defaultModelSelection === "environment";
   return {
-    label: selection === null ? "Automatic" : nameOf(selection),
+    label: !inherited
+      ? selection === null
+        ? "Automatic"
+        : nameOf(selection)
+      : teamDefault === null
+        ? "Members' models"
+        : nameOf(teamDefault),
     canWrite: writable.has(environmentId),
     /** Members whose new work here runs on their own model, by assistant id. */
     exceptions: (target.environment.serverConfig.settings.projectSettingsOverrides[projectId]

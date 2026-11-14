@@ -29,7 +29,6 @@ const SOURCE_DETAIL = {
   project: "Set for this project",
   folder: "From a folder rule",
   "t3.json": "From the repository's t3.json",
-  environment: "Environment default",
   mixed: "Mixed",
 } as const;
 
@@ -69,6 +68,7 @@ function GroupProjectScope(props: {
 
 function ProjectModelPicker(props: {
   readonly projectLabel: string;
+  readonly teamDefault: ModelSelection | null;
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
 }) {
@@ -77,7 +77,15 @@ function ProjectModelPicker(props: {
   const source = useScopedSettingSource(["defaultModelSelection"]);
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateScopedSettings();
-  if (selection === null) return null;
+  // Without its own default the project's requests run on the group's, else each member's own.
+  const inherited = source === "environment";
+  const shown = inherited ? (props.teamDefault ?? selection) : selection;
+  if (shown === null) return null;
+  const detail = !inherited
+    ? SOURCE_DETAIL[source]
+    : props.teamDefault === null
+      ? "Not set: each member uses its own model"
+      : "Group default";
   const save = (value: ModelSelection) => {
     const reason = modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return props.onError(reason);
@@ -89,9 +97,9 @@ function ProjectModelPicker(props: {
       composer
       settings={settings}
       providers={providers}
-      selection={selection}
+      selection={shown}
       label={`Model for ${props.projectLabel}`}
-      detail={SOURCE_DETAIL[source]}
+      detail={detail}
       disabled={props.disabled || !canWrite}
       environmentId={representative?.environmentId ?? null}
       instanceEntries={entries}
@@ -106,6 +114,8 @@ export function GroupProjectModelPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly projectLabel: string;
+  /** The group's default, which the project's requests run on when it has none of its own. */
+  readonly teamDefault: ModelSelection | null;
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
 }) {
@@ -113,6 +123,7 @@ export function GroupProjectModelPicker(props: {
     <GroupProjectScope environmentId={props.environmentId} projectId={props.projectId}>
       <ProjectModelPicker
         projectLabel={props.projectLabel}
+        teamDefault={props.teamDefault}
         disabled={props.disabled}
         onError={props.onError}
       />
