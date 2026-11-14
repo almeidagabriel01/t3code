@@ -77,6 +77,7 @@ const reactTests = [
   "src/features/threads/useUnavailableThreadDraftRedirect.test.tsx",
   "src/features/threads/useOpenLinkedThread.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
+  "src/components/ui/AndroidScreenHeader.android.test.tsx",
   "src/components/ui/AppBar.android.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",

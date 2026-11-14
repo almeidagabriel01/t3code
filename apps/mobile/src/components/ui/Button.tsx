@@ -61,16 +61,19 @@ export function Button(props: ButtonProps) {
         />
       ) : null}
       <AppText
+        // Worst case, the 22pt app size with a 1.3x OS cap, shrinks "Group settings" to ~0.52x on a 360dp phone.
         {...(tile
           ? {
-              textRole: "footnote" as const,
+              textRole: "caption" as const,
               numberOfLines: 1,
               adjustsFontSizeToFit: true,
-              minimumFontScale: 0.7,
+              minimumFontScale: 0.5,
+              maxFontSizeMultiplier: 1.3,
             }
           : undefined)}
         className={cn(
           "min-w-0 shrink text-center font-t3-medium",
+          tile && "self-stretch",
           disabled ? "text-foreground-muted" : labelClassName,
         )}
       >
