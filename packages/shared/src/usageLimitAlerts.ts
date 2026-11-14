@@ -1,13 +1,17 @@
-import type {
-  UsageLimitAlertConfig,
-  UsageLimitAlertConfigPatch,
-  UsageLimitAlerts,
+import {
+  USAGE_LIMIT_ALERT_CHOICES,
+  type ServerProviderUsageWindow,
+  type UsageLimitAlertConfig,
+  type UsageLimitAlertConfigPatch,
+  type UsageLimitAlerts,
 } from "@t3tools/contracts";
 
 /** Factory defaults by driver and window id; every other window starts off. */
 const DEFAULT_THRESHOLDS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   claudeAgent: { seven_day: 15 },
 };
+/** Labels for default windows an instance has not reported yet. */
+const DEFAULT_WINDOW_LABELS: Readonly<Record<string, string>> = { seven_day: "Weekly" };
 
 /** Remaining percent that triggers the alert for a window, or null when it is off. */
 export function usageLimitAlertThreshold(input: {
@@ -31,7 +35,7 @@ export function mergeUsageLimitAlerts(
   current: UsageLimitAlerts,
   patch: Readonly<Record<string, UsageLimitAlertConfigPatch | null>>,
 ): UsageLimitAlerts {
-  const next: Record<string, UsageLimitAlertConfig | undefined> = { ...current };
+  const next: Record<string, UsageLimitAlertConfig> = { ...current };
   for (const [instanceId, entry] of Object.entries(patch)) {
     if (entry === null) {
       delete next[instanceId];
@@ -49,4 +53,42 @@ export function mergeUsageLimitAlerts(
     else next[instanceId] = { windows, ...(timeZone === undefined ? {} : { timeZone }) };
   }
   return next as UsageLimitAlerts;
+}
+
+export interface UsageLimitAlertRow {
+  readonly windowId: string;
+  readonly label: string;
+  /** Effective threshold, default included; null when off. */
+  readonly threshold: number | null;
+}
+
+/** One row per reported window, plus default windows not reported yet, in the provider's order. */
+export function usageLimitAlertRows(input: {
+  readonly driver: string;
+  readonly windows: ReadonlyArray<Pick<ServerProviderUsageWindow, "id" | "label">> | undefined;
+  readonly config: UsageLimitAlertConfig | undefined;
+}): ReadonlyArray<UsageLimitAlertRow> {
+  const windows = [...(input.windows ?? [])];
+  for (const windowId of defaultUsageLimitAlertWindows(input.driver)) {
+    if (!windows.some((window) => window.id === windowId)) {
+      windows.push({ id: windowId, label: DEFAULT_WINDOW_LABELS[windowId] ?? windowId });
+    }
+  }
+  return windows.map((window) => ({
+    windowId: window.id,
+    label: window.label,
+    threshold: usageLimitAlertThreshold({
+      driver: input.driver,
+      windowId: window.id,
+      config: input.config,
+    }),
+  }));
+}
+
+/** The fixed choices, plus a saved value outside them so the picker can still show it. */
+export function usageLimitAlertChoices(threshold: number | null): ReadonlyArray<number> {
+  const choices: ReadonlyArray<number> = USAGE_LIMIT_ALERT_CHOICES;
+  return threshold === null || choices.includes(threshold)
+    ? choices
+    : [...choices, threshold].sort((left, right) => left - right);
 }
