@@ -23,8 +23,13 @@ export const assistantTeamTargetAtom = Atom.make<AssistantTeamTarget | null>(nul
 
 export function setGroupDefaultModelDraft(defaultModelDraft: ModelSelection | null) {
   const target = appAtomRegistry.get(assistantTeamTargetAtom);
-  if (target !== null)
-    appAtomRegistry.set(assistantTeamTargetAtom, { ...target, defaultModelDraft });
+  if (target === null) return;
+  // Dropping the section keeps the row's layout shift from scrolling the form back to Routines.
+  appAtomRegistry.set(assistantTeamTargetAtom, {
+    environmentId: target.environmentId,
+    teamId: target.teamId,
+    defaultModelDraft,
+  });
 }
 
 /** Opens the team form or chat from Settings and Home. */
