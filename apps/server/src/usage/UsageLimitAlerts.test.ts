@@ -513,13 +513,14 @@ describe("UsageLimitAlerts", () => {
           yield* Ref.set(harness.notify, mode);
           yield* evaluate([provider("claudeAgent", [weekly(90)])]);
           yield* Ref.set(harness.notify, "ok");
-          // Restarts in a row never put it off: the first reading after a boot resends it.
+          // The registry holds the reading the boot probe publishes; no check interval passes.
+          yield* harness.setProviders([provider("claudeAgent", [weekly(90)])]);
+          assert.equal(yield* Ref.get(harness.attempts), 1);
           yield* restart;
-          const again = yield* restart;
-          yield* again([provider("claudeAgent", [weekly(90)])]);
           assert.equal(yield* Ref.get(harness.attempts), 2);
-          yield* again([provider("claudeAgent", [weekly(90)])], { retryPending: true });
-          yield* (yield* restart)([provider("claudeAgent", [weekly(90)])]);
+          // Confirmed now, so later boots stay quiet.
+          yield* restart;
+          yield* restart;
           assert.equal(yield* Ref.get(harness.attempts), 2);
           assert.equal((yield* Ref.get(harness.delivered)).length, 1);
         }),
