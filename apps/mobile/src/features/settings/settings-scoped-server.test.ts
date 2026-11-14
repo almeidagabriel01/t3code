@@ -1,4 +1,5 @@
 import {
+  type AssistantId,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type ProjectId,
@@ -9,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
   managedSettingReason,
+  planMobileProjectAssistantModel,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -19,6 +21,7 @@ const firstId = "first" as EnvironmentId;
 const secondId = "second" as EnvironmentId;
 const firstProject = "first-project" as ProjectId;
 const secondProject = "second-project" as ProjectId;
+const model = { instanceId: "codex" as never, model: "gpt-5.5" };
 
 describe("mobile usage-limit settings across environments", () => {
   it.each(["autoResumeLimitedThreads", "snoozeLimitedThreads"] as const)(
@@ -71,7 +74,14 @@ describe("mobile project settings scope", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       responseStreamingMode: "paragraph",
-      projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } },
+      // The assistant models stay out of the write: the server merges them per assistant, so a
+      // stale copy would bring back one another client removed.
+      projectSettingsOverrides: {
+        [firstProject]: {
+          defaultAutoPull: true,
+          assistantModelSelections: { ada: model } as Record<AssistantId, typeof model>,
+        },
+      },
     };
     const secondSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -105,6 +115,46 @@ describe("mobile project settings scope", () => {
     ]);
     expect(firstSettings.responseStreamingMode).toBe("paragraph");
     expect(secondSettings.responseStreamingMode).toBe("turn");
+  });
+
+  it("writes one assistant's model only on its environment, and only its key", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [firstProject]: {
+          defaultAutoPull: true,
+          assistantModelSelections: { ada: model, beto: model } as Record<
+            AssistantId,
+            typeof model
+          >,
+        },
+      },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings), environment(secondId, DEFAULT_SERVER_SETTINGS)],
+      [
+        { environmentId: firstId, id: firstProject },
+        { environmentId: secondId, id: secondProject },
+      ],
+    );
+    const next = { ...model, model: "gpt-5.4" };
+    expect(planMobileProjectAssistantModel(targets, firstId, "ada" as AssistantId, next)).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrides: {
+            [firstProject]: { defaultAutoPull: true, assistantModelSelections: { ada: next } },
+          },
+        },
+      },
+    ]);
+    expect(
+      planMobileProjectAssistantModel(targets, firstId, "beto" as AssistantId, null)[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [firstProject]: { defaultAutoPull: true, assistantModelSelections: { beto: null } },
+      },
+    });
   });
 
   it("shows a folder rule's model for a project inside that folder", () => {

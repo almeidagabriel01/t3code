@@ -55,6 +55,7 @@ import {
 import { WorktreeSnapshotsSection } from "./components/WorktreeSnapshotsSection";
 import { FallbackModelsSection } from "./components/FallbackModelsSection";
 import { FolderModelsSection } from "./components/FolderModelsSection";
+import { ProjectModelSections } from "./components/ProjectModelSections";
 import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
@@ -70,6 +71,7 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
   threads: [
+    "defaultModelSelection",
     "defaultThreadEnvMode",
     "defaultRuntimeMode",
     "responseStreamingMode",
@@ -325,6 +327,14 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             ) : null}
             {props.page === "threads" ? (
               <>
+                {projectSelected ? (
+                  <ProjectModelSections
+                    targets={displayTargets}
+                    disabled={disabled || managed("defaultModelSelection") !== undefined}
+                    showAssistants={selectedProjectGroups?.length === 1}
+                    onReset={() => clearProjectOverrides(["defaultModelSelection"])}
+                  />
+                ) : null}
                 <SettingsSection
                   title="Default workspace"
                   footer={managed("defaultThreadEnvMode")}

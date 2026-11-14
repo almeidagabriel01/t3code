@@ -152,6 +152,7 @@ import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRou
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
 import { FolderModelPickerRouteScreen } from "./features/settings/FolderModelPickerRouteScreen";
+import { ProjectModelPickerRouteScreen } from "./features/settings/ProjectModelPickerRouteScreen";
 import { FolderModelRouteScreen } from "./features/settings/FolderModelRouteScreen";
 import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
@@ -417,6 +418,10 @@ const SETTINGS_SCREENS = {
   }),
   SettingsFolderModelPicker: createNativeStackScreen({
     screen: FolderModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
+  SettingsProjectModel: createNativeStackScreen({
+    screen: ProjectModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
   SettingsClaudeChrome: createNativeStackScreen({

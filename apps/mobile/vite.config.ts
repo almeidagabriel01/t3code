@@ -87,6 +87,8 @@ const reactTests = [
   "src/features/settings/FolderModelRouteScreen.test.tsx",
   "src/features/settings/FallbackModelPickerRouteScreen.test.tsx",
   "src/features/settings/FolderModelPickerRouteScreen.test.tsx",
+  "src/features/settings/ProjectModelPickerRouteScreen.test.tsx",
+  "src/features/settings/components/ProjectModelSections.test.tsx",
   "src/features/settings/components/SettingsDragHandle.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",
   "src/components/ui/FilePreviewSession.test.tsx",
