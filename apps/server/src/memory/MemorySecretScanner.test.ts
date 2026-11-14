@@ -76,6 +76,11 @@ describe("memory redaction", () => {
     slack_app: "xapp-1-A0" + "J".repeat(10) + "-1234567890-" + "a".repeat(24),
     jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
     telegram_bot: "123456789:" + "AAH" + "k".repeat(32),
+    stripe_webhook: "whsec_" + "L".repeat(32),
+    sendgrid: "SG." + "m".repeat(22) + "." + "N".repeat(43),
+    twilio: "SK" + "0123456789abcdef".repeat(2),
+    slack_webhook: "hooks.slack.com/services/T0ABCDEFG/B0ABCDEFG/" + "p".repeat(24),
+    discord: "MTIzNDU2Nzg5MDEyMzQ1Njc4." + "GabCdE." + "q".repeat(38),
   };
   it.each(Object.entries(secrets))(
     "blocks %s, then replaces it in text and judgment, leaving a scan-clean value",
@@ -121,6 +126,11 @@ describe("memory redaction", () => {
       "run mysql -u root -p[redacted] shop",
     ],
     [
+      "Azure storage key",
+      `DefaultEndpointsProtocol=https;AccountName=acme;AccountKey=${"r".repeat(86)}==;EndpointSuffix=core.windows.net`,
+      "DefaultEndpointsProtocol=https;AccountName=acme;AccountKey=[redacted];EndpointSuffix=core.windows.net",
+    ],
+    [
       "Telegram token in a Bot API URL",
       `curl https://api.telegram.org/bot123456789:AAH${"k".repeat(32)}/getMe`,
       "curl https://api.telegram.org/bot[redacted]/getMe",
@@ -135,6 +145,8 @@ describe("memory redaction", () => {
     "Use JWT (eyJ...) for auth; npm_modules is not a token.",
     "The meeting is at 10:30 and the build id is 12345678:short.",
     "hf_hub and rk_ prefixes in prose",
+    "SKU 1234, SG.config and whsec_ are names, AccountKey=short.",
+    "Version v1.2.3.4 of Map.prototype.forEach is fine.",
   ])("leaves ordinary text alone: %s", (text) => {
     assert.strictEqual(redactMemoryText({ text }).text, text);
     assert.strictEqual(scanMemoryValue({ text }).kind, "allowed");

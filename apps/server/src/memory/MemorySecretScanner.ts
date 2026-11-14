@@ -16,10 +16,21 @@ const rules = [
   ["pem_private_key", new RegExp(`-----BEGIN ${PRIVATE_KEY_LABEL}-----`)],
   [
     "provider_token",
-    /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AIza[A-Za-z0-9_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,})(?![A-Za-z0-9_-])/,
+    /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,}|AIza[A-Za-z0-9_-]{35}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|hf_[A-Za-z0-9]{30,}|whsec_[A-Za-z0-9+/]{24,}={0,2}|SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}|SK[0-9a-f]{32})(?![A-Za-z0-9_-])/,
   ],
   ["aws_access_key", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/],
   ["slack_token", /\bx(?:ox[baprs]|app)-[A-Za-z0-9-]{20,}\b/],
+  [
+    "slack_webhook",
+    /\bhooks\.slack\.com\/services\/T[A-Za-z0-9]{8,}\/B[A-Za-z0-9]{8,}\/[A-Za-z0-9]{20,}/,
+  ],
+  // Azure Storage connection strings; the key name stays readable after redaction.
+  ["azure_storage_key", /(?<=\bAccountKey=)[A-Za-z0-9+/]{40,}={0,2}/],
+  // Base64 user id, timestamp, HMAC.
+  [
+    "discord_bot_token",
+    /(?<![A-Za-z0-9_-])[MNO][A-Za-z0-9_-]{23,27}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}(?![A-Za-z0-9_-])/,
+  ],
   // Three base64url parts, the first a JSON header ("{" encodes as "eyJ").
   ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/],
   // Bot API URLs glue the token to "bot" (…/bot<id>:<secret>/getMe).
