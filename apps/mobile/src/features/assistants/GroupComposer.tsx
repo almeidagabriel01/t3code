@@ -112,6 +112,8 @@ function ToolbarChip(props: {
   readonly chevron?: boolean;
   /** Only the icon, when the row is too full for the label. */
   readonly iconOnly?: boolean;
+  /** A longer label (a model and its provider) that takes the room a wide screen has. */
+  readonly wide?: boolean;
   readonly onPress?: () => void;
 }) {
   return (
@@ -120,7 +122,7 @@ function ToolbarChip(props: {
       accessibilityLabel={props.accessibilityLabel}
       disabled={props.disabled}
       onPress={props.onPress}
-      className="h-8 max-w-44 flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50"
+      className={`h-8 ${props.wide ? "max-w-72" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
       {props.iconOnly ? null : (
@@ -619,6 +621,7 @@ export function GroupComposer(props: {
                 <ToolbarChip
                   icon="cube"
                   label={projectModel.label}
+                  wide
                   accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
                   chevron={false}
                   disabled={props.disabled || !projectModel.canWrite}
