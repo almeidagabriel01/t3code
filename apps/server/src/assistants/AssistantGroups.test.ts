@@ -1068,6 +1068,49 @@ it.effect("a usage limit holds the task until its thread continues it", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a member at a usage limit starts no other task until the limited one continues", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    for (const text of ["@ada one", "@beto two", "@ada three"]) {
+      yield* groups.post({ teamId: TEAM, text }, h.user);
+    }
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // The limited task frees its slot, but its thread is not free for Ada's next task.
+    yield* h.finish(1, "completed", "two done");
+    assert.lengthOf(h.sent, 2);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "beto:completed:null",
+        "ada:queued:waiting for a usage limit",
+      ],
+    );
+
+    // The continuation still ends the limited task, and then the next one starts.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "completed",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    yield* groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    assert.deepEqual(statusesOf(yield* h.tasks), [
+      "ada:completed",
+      "beto:completed",
+      "ada:running",
+    ]);
+    assert.include(h.sent[2]!.text, "three");
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("Stop on a usage-limited task stops its thread so the reset does not resume it", () => {
   const h = harness();
   return Effect.gen(function* () {

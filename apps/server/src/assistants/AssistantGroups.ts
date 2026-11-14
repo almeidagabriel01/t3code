@@ -1118,15 +1118,23 @@ const make = Effect.gen(function* () {
     const hold = (task: TaskRow, who: string) => {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
     };
-    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot.
+    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot. Its
+    // owner's thread stays its own: another task there would take over the run it continues.
+    const limitedOwners = new Set<string>();
     for (const task of live) {
       if (task.status !== "running" && task.status !== "usage_limited") continue;
       if (task.status === "running") running += 1;
+      else limitedOwners.add(task.owner_id);
       if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
     }
     for (const task of live) {
       if (task.status !== "queued") continue;
       const wanted = resourcesOf(task);
+      if (limitedOwners.has(task.owner_id)) {
+        if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
+        yield* setWaitReason(task, "waiting for a usage limit");
+        continue;
+      }
       const clash = firstConflict(wanted, held);
       // A task that waits still claims its resources, so a later one cannot overtake it.
       if (wanted.length > 0 && (clash !== null || running >= ASSISTANT_GROUP_PARALLEL_LIMIT)) {
