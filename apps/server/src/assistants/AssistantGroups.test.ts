@@ -169,6 +169,8 @@ const harness = (options: Options = {}) => {
   /** What the projection answers for a runtime request, by id. */
   const runtimeRequests = new Map<string, { request: unknown; item: unknown }>();
   const refreshed: string[] = [];
+  /** The last chat counters (`scopes_json`) refreshTeamChat published, by team. */
+  const published = new Map<string, string | null>();
   const routeCalls: unknown[] = [];
   const summaryCalls: Array<{
     previousSummary: string | null;
@@ -317,9 +319,19 @@ const harness = (options: Options = {}) => {
       AssistantService,
       Effect.gen(function* () {
         live.changes = yield* PubSub.unbounded<AssistantsEvent>();
+        const sql = yield* SqlClient.SqlClient;
         return AssistantService.of({
           subscribeChanges: PubSub.subscribe(live.changes),
-          refreshTeamChat: (teamId: string) => Effect.sync(() => void refreshed.push(teamId)),
+          // Like the real one: publishes the team's chat counters as they are at this moment.
+          refreshTeamChat: (teamId: string) =>
+            sql<{ readonly scopes_json: string }>`
+              SELECT scopes_json FROM assistant_team_state WHERE team_id = ${teamId}`.pipe(
+              Effect.map((rows) => {
+                refreshed.push(teamId);
+                published.set(teamId, rows[0]?.scopes_json ?? null);
+              }),
+              Effect.orDie,
+            ),
           defaultModel: () => Effect.succeed(selection(codex, "default-model")),
         } as never);
       }),
@@ -547,6 +559,7 @@ const harness = (options: Options = {}) => {
     live,
     deletedTeams,
     refreshed,
+    published,
     cleaned,
     routeCalls,
     summaryCalls,
@@ -3619,6 +3632,41 @@ it.effect("a tab's stream carries only its lines, and a request that gets a proj
 });
 
 it.effect(
+  "a request that gets a project with nothing written after it republishes the tabs",
+  () => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p1", "p2"], beto: ["p1"] },
+      route: () => ({ assistantIds: [], question: "Core or the Mobile App?" }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+      yield* groups.idle;
+      // With no lead the answer only moves the request: no route, task or notice refreshes after it.
+      yield* sql`UPDATE assistant_teams SET lead_id = NULL WHERE team_id = ${TEAM}`;
+      yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "Mobile App",
+          replyToMessageId: posted.message.id,
+          projectId: ProjectId.make("p2"),
+        },
+        h.user,
+      );
+      yield* groups.idle;
+      const [current] = yield* sql<{ readonly scopes_json: string }>`
+      SELECT scopes_json FROM assistant_team_state WHERE team_id = ${TEAM}`;
+      const scopes = JSON.parse(current!.scopes_json);
+      assert.isTrue(scopes.some((scope: { projectId: string | null }) => scope.projectId === "p2"));
+      assert.deepEqual(JSON.parse(h.published.get(TEAM)!), scopes);
+    }).pipe(Effect.provide(h.layer), Effect.scoped);
+  },
+);
+
+it.effect(
   "the chat reads as snapshot then live changes for that group only, and pages back",
   () => {
     const h = harness();
@@ -4019,6 +4067,7 @@ it.effect("compact gives the lead a summary; a new conversation drops it and the
     assert.equal(none.reason, "invalid");
     // Only the lead reads the summary; a member's packet carries its own request alone.
     yield* groups.post({ teamId: TEAM, text: "who can help" }, h.user);
+    yield* groups.idle;
     assert.equal(route().summary, "Compact summary.");
     assert.notInclude(
       route()

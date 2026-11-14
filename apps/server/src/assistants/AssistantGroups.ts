@@ -1906,6 +1906,7 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks WHERE request_id = ${request.message_id} ORDER BY rowid`;
     for (const task of tasks) yield* publishTask(task);
+    yield* assistants.refreshTeamChat(request.team_id);
   });
 
   const route = Effect.fn("AssistantGroups.route")(function* (
