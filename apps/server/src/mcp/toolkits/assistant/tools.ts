@@ -3,6 +3,7 @@ import {
   AUTONOMY_MODES,
   AssistantWorkspace,
   OrchestratorMcpFailure,
+  PickedModelSlug,
   ProviderInstanceId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -82,7 +83,7 @@ export const AssistantParameters = Schema.Struct({
   paths: Schema.optional(Schema.Array(Text(1024)).check(Schema.isMaxLength(10))),
   /** group_post: the model this request's work runs on, only when the user names one for it. */
   model: Schema.optional(
-    Schema.Struct({ providerInstanceId: ProviderInstanceId, model: TrimmedNonEmptyString }),
+    Schema.Struct({ providerInstanceId: ProviderInstanceId, model: PickedModelSlug }),
   ),
 });
 export type AssistantParameters = typeof AssistantParameters.Type;

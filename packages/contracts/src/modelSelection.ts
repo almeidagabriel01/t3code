@@ -49,3 +49,27 @@ export const ModelSelection = ModelSelectionSource.pipe(
   ),
 );
 export type ModelSelection = typeof ModelSelection.Type;
+
+/** The longest model id or option a client or an agent may send with a pick. */
+export const PICKED_MODEL_MAX_CHARS = 256;
+/** A model id a client or an agent sends: `ModelSelection`'s, bounded. */
+export const PickedModelSlug = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PICKED_MODEL_MAX_CHARS),
+);
+
+/**
+ * A model a client or an agent picks for some work: `ModelSelection`'s wire form with its strings
+ * and options bounded. Stored settings keep `ModelSelection`, so values saved before still decode.
+ */
+export const PickedModelSelection = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: PickedModelSlug,
+  options: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: PickedModelSlug,
+        value: Schema.Union([PickedModelSlug, Schema.Boolean]),
+      }),
+    ).check(Schema.isMaxLength(32)),
+  ),
+});
