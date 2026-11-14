@@ -718,6 +718,7 @@ it.effect.each<{
   titles?: Record<string, string | null>;
 }>([
   {
+    // p1's task has stopped, so p1 stays listed even once read.
     name: "a chat lists every tab with unread or waiting, and General with its request",
     steps: [],
     scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
@@ -731,7 +732,7 @@ it.effect.each<{
       { read: { projectId: null } },
     ],
     readSeq: 7,
-    scopes: { p2: [0, true, 7], "": [0, true, 7] },
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
     cursors: {},
   },
   {
@@ -746,21 +747,21 @@ it.effect.each<{
     name: "reading the whole group drops every tab's own position",
     steps: [{ read: { projectId: "p1", readSeq: 2 } }, { read: {} }],
     readSeq: 7,
-    scopes: { p2: [0, true, 7], "": [0, true, 7] },
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
     cursors: {},
   },
   {
     name: "marking one tab unread moves only that tab",
     steps: [{ read: {} }, { read: { projectId: "p2", unread: true } }],
     readSeq: 3,
-    scopes: { p2: [1, true, 3], "": [0, true, 7] },
+    scopes: { p1: [0, false, 7], p2: [1, true, 3], "": [0, true, 7] },
     cursors: { p2: 3 },
   },
   {
     name: "marking the group unread drops every tab's own position",
     steps: [{ read: { projectId: "p1" } }, { read: { unread: true } }],
     readSeq: 5,
-    scopes: { p2: [0, true, 5], "": [1, true, 5] },
+    scopes: { p1: [0, false, 5], p2: [0, true, 5], "": [1, true, 5] },
     cursors: {},
   },
   {
@@ -789,7 +790,7 @@ it.effect.each<{
       { read: {} },
     ],
     readSeq: 7,
-    scopes: {},
+    scopes: { p1: [0, false, 7] },
     cursors: {},
   },
   {
@@ -946,6 +947,11 @@ it.effect("the team chat names the preview's project and counts every tab's runn
       ["p2", after!.open_tasks! - 1],
     ]);
     assert.isAbove(after!.open_tasks!, 1);
+    // A stopped task stays counted in its tab, so a client tells its end from a move.
+    const done = (toAssistantTeam(after!).chat?.scopes ?? []).flatMap((scope) =>
+      scope.doneTasks === undefined ? [] : [[String(scope.projectId ?? ""), scope.doneTasks]],
+    );
+    assert.deepEqual(done, [["p1", 1]]);
   }).pipe(Effect.provide(h.layer));
 });
 

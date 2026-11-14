@@ -316,6 +316,11 @@ export const AssistantTeamChatScope = Schema.Struct({
    * servers. Every working task counts in one tab, so their sum is the group's `working`.
    */
   openTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * The group's stopped tasks in this tab, so an end tells apart from work that only moved to
+   * another tab; absent when none, and from older servers.
+   */
+  doneTasks: Schema.optionalKey(Schema.Int),
 });
 export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
 
@@ -341,23 +346,27 @@ export const AssistantTeamChat = Schema.Struct({
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
 
 /**
- * The tabs (`null` = General) whose work just ended: open tasks before, none now. Only while the
- * group's open total falls, since a request that gets a project moves its tasks to another tab.
+ * The tabs (`null` = General) whose work just ended: open tasks before, none now, and more of
+ * them stopped. A server without stopped counts only ends work while the group's open total falls.
  */
 export function assistantGroupFinishedScopes(
   previous: Pick<AssistantTeamChat, "scopes"> | undefined,
   next: Pick<AssistantTeamChat, "scopes"> | undefined,
 ): ReadonlyArray<ProjectId | null> {
-  const open = (chat: typeof previous) =>
-    chat?.scopes?.filter((scope) => (scope.openTasks ?? 0) > 0) ?? [];
-  const total = (scopes: ReturnType<typeof open>) =>
+  const before = previous?.scopes ?? [];
+  const after = next?.scopes ?? [];
+  const now = (projectId: ProjectId | null) => after.find((scope) => scope.projectId === projectId);
+  const emptied = before.filter(
+    (scope) => (scope.openTasks ?? 0) > 0 && (now(scope.projectId)?.openTasks ?? 0) === 0,
+  );
+  if ([...before, ...after].some((scope) => scope.doneTasks !== undefined)) {
+    return emptied
+      .filter((scope) => (now(scope.projectId)?.doneTasks ?? 0) > (scope.doneTasks ?? 0))
+      .map((scope) => scope.projectId);
+  }
+  const total = (scopes: typeof before) =>
     scopes.reduce((sum, scope) => sum + (scope.openTasks ?? 0), 0);
-  const before = open(previous);
-  const after = open(next);
-  if (total(after) >= total(before)) return [];
-  return before
-    .filter((scope) => !after.some((still) => still.projectId === scope.projectId))
-    .map((scope) => scope.projectId);
+  return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
 }
 
 export const AssistantTeam = Schema.Struct({

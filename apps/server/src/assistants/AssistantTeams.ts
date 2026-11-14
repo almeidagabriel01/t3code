@@ -47,6 +47,7 @@ const decodeScopes = Schema.decodeOption(
         readSeq: Schema.Number,
         title: Schema.optionalKey(Schema.NullOr(Schema.String)),
         openTasks: Schema.optionalKey(Schema.Number),
+        doneTasks: Schema.optionalKey(Schema.Number),
       }),
     ),
   ),
@@ -96,6 +97,9 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
               ...(scope.openTasks === undefined || scope.openTasks === 0
                 ? {}
                 : { openTasks: scope.openTasks }),
+              ...(scope.doneTasks === undefined || scope.doneTasks === 0
+                ? {}
+                : { doneTasks: scope.doneTasks }),
             }),
           ),
         },

@@ -45,13 +45,15 @@ describe("assistantHandleFromName", () => {
 });
 
 describe("assistantGroupFinishedScopes", () => {
-  const chat = (open: ReadonlyArray<readonly [string | null, number]>) => ({
-    scopes: open.map(([projectId, openTasks]) => ({
+  // [project, open tasks, done tasks]; no done count anywhere is an older server.
+  const chat = (open: ReadonlyArray<readonly [string | null, number, number?]>) => ({
+    scopes: open.map(([projectId, openTasks, doneTasks]) => ({
       projectId: projectId as ProjectId | null,
       unreadCount: 0,
       waiting: false,
       readSeq: 0,
       ...(openTasks === 0 ? {} : { openTasks }),
+      ...(doneTasks === undefined ? {} : { doneTasks }),
     })),
   });
   it.each([
@@ -78,6 +80,41 @@ describe("assistantGroupFinishedScopes", () => {
     ["a request that gets a project moves its work", [[null, 2]], [["p", 2]], []],
     ["new work elsewhere while one ends", [["p", 1]], [["q", 1]], []],
     ["nothing was open", [], [], []],
+    [
+      "a tab ends as another opens",
+      [["p", 1]],
+      [
+        ["p", 0, 1],
+        ["q", 1],
+      ],
+      ["p"],
+    ],
+    [
+      "General's request moves to a project as another tab ends",
+      [
+        [null, 1],
+        ["q", 1],
+      ],
+      [
+        ["p", 1],
+        ["q", 0, 1],
+      ],
+      ["q"],
+    ],
+    [
+      "a reconnect brings an end, a new tab and a move together",
+      [
+        ["p", 1, 2],
+        [null, 1],
+      ],
+      [
+        ["p", 0, 3],
+        ["q", 1],
+        ["r", 1],
+      ],
+      ["p"],
+    ],
+    ["work that only leaves a tab", [[null, 1, 1]], [["p", 1]], []],
   ] as const)("%s", (_name, before, after, expected) => {
     expect(assistantGroupFinishedScopes(chat(before), chat(after))).toEqual(expected);
   });

@@ -181,10 +181,12 @@ The `assistant_team_state` view adds the counters clients show (`AssistantTeam.c
 migrations and recreates it after them on every start. Counter changes
 go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
-notices are client-side, like thread notices, and per tab: each scope carries its `openTasks`, every
-working task counts in exactly one tab (one with no request in General), and
-`assistantGroupFinishedScopes` reports a tab whose count went to none while the group's total fell,
-so a request that gets a project mid-work moves its count without a notice.
+notices are client-side, like thread notices, and per tab: each scope carries its `openTasks` and
+`doneTasks` (working and stopped tasks), every task counts in exactly one tab (one with no request
+in General), and `assistantGroupFinishedScopes` reports a tab whose open count went to none while
+its stopped count rose. A request that gets a project mid-work moves its counts without a notice,
+even when another tab ends or opens in the same snapshot, so a project tab stays listed while it
+has stopped tasks. Servers without `doneTasks` fall back to the group's open total falling.
 The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes each
 tab's finish as a completion of that tab's last speaker's hidden thread, titled with the group and
 deep-linked to `/assistant-groups/<env>/<team>?tab=<tab key>` (the relay takes any `/` path; apps
