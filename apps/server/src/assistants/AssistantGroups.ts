@@ -1523,6 +1523,7 @@ const make = Effect.gen(function* () {
    */
   const taskInstance = Effect.fn("AssistantGroups.taskInstance")(function* (
     team: AssistantTeam,
+    members: ReadonlyArray<AssistantRow>,
     task: TaskRow,
   ) {
     const requestId = task.request_id ?? task.request_message_id;
@@ -1533,7 +1534,7 @@ const make = Effect.gen(function* () {
     if (thread !== undefined && thread.deletedAt === null) {
       return thread.modelSelection.instanceId as string;
     }
-    const member = (yield* activeMembers(team)).find((row) => row.assistant_id === task.owner_id);
+    const member = members.find((row) => row.assistant_id === task.owner_id);
     const request = yield* getMessage(requestId);
     if (member === undefined || request === undefined) return undefined;
     const resolved = yield* modelSelections
@@ -1562,6 +1563,16 @@ const make = Effect.gen(function* () {
         OR (t.status = 'queued' AND r.status NOT IN ${sql.in(STOPPED_ROOT)}))
       ORDER BY t.updated_at ASC, t.rowid ASC`;
     let running = 0;
+    const members = yield* activeMembers(team);
+    // Tasks of one member in one request share a thread, so one instance; untraced: per task.
+    const instances = new Map<string, string | undefined>();
+    const instanceKey = (task: TaskRow) =>
+      `${task.request_id ?? task.request_message_id}\n${task.owner_id}`;
+    const instanceOf = Effect.fnUntraced(function* (task: TaskRow) {
+      const key = instanceKey(task);
+      if (!instances.has(key)) instances.set(key, yield* taskInstance(team, members, task));
+      return instances.get(key);
+    });
     const held = new Map<string, string>();
     const hold = (task: TaskRow, who: string) => {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
@@ -1573,7 +1584,7 @@ const make = Effect.gen(function* () {
       if (task.status !== "running" && task.status !== "usage_limited") continue;
       if (task.status === "running") running += 1;
       else {
-        const instance = yield* taskInstance(team, task);
+        const instance = yield* instanceOf(task);
         if (instance !== undefined) limited.add(instance);
       }
       if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
@@ -1581,7 +1592,7 @@ const make = Effect.gen(function* () {
     for (const task of live) {
       if (task.status !== "queued") continue;
       const wanted = resourcesOf(task);
-      const instance = limited.size === 0 ? undefined : yield* taskInstance(team, task);
+      const instance = limited.size === 0 ? undefined : yield* instanceOf(task);
       if (instance !== undefined && limited.has(instance)) {
         if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
         yield* setWaitReason(task, "waiting for a usage limit");
@@ -1602,6 +1613,8 @@ const make = Effect.gen(function* () {
       }
       if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
       if (yield* startTask(team, task)) running += 1;
+      // Starting may have launched the thread or moved it to another provider.
+      instances.delete(instanceKey(task));
     }
   });
 
