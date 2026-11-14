@@ -1162,6 +1162,8 @@ describe("patterns and eligibility", () => {
     ["vp test run -t staged", "linux", null],
     ["vp test run --reporter=changed", "linux", null],
     ["pnpm --filter web check:changed", "linux", null],
+    // A folder flag with no folder after it moves nothing.
+    ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
   });

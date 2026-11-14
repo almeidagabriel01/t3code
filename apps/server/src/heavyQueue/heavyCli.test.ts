@@ -363,24 +363,42 @@ describe("t3 heavy", () => {
     });
 
     it.each([
+      // A cd in the line, before or after a chained step, even with a pipe after the work.
+      [
+        (o: string, t: string) => `cd ${o} && ${t} && cd apps/server && vp test run x.test.ts`,
+        "vp|test|run|x.test.ts|",
+        "apps/server",
+      ],
+      [
+        (o: string, t: string) => `${t} && cd ${o}/apps/server && vp test run x.test.ts`,
+        "vp|test|run|x.test.ts|",
+        "apps/server",
+      ],
+      [
+        (o: string, t: string) =>
+          `cd ${o}/apps/server && ${t} && vp test run x.test.ts 2>&1 | grep -E 'vp|zz'`,
+        "vp|test|run|x.test.ts|",
+        "apps/server",
+      ],
       // A folder flag, or a `sh -c` text's leading `cd`, in another checkout (a worktree here).
       [
-        (o: string) => `pnpm -C ${o}/apps/server exec vp test run x.test.ts`,
+        (o: string, t: string) => `${t} && pnpm -C ${o}/apps/server exec vp test run x.test.ts`,
         "pnpm|-C|.|exec|vp|test|run|x.test.ts|",
         "apps/server",
       ],
       [
-        (o: string) => `pnpm --dir=${o} exec vp test run x.test.ts`,
+        (o: string, t: string) => `${t} && pnpm --dir=${o} exec vp test run x.test.ts`,
         "pnpm|--dir=.|exec|vp|test|run|x.test.ts|",
         "",
       ],
       [
-        (o: string) => `O=${o}; sh -c "cd $O/apps/server && vp test run x.test.ts"`,
+        (o: string, t: string) =>
+          `${t} && O=${o}; sh -c "cd $O/apps/server && vp test run x.test.ts"`,
         "bash|-c|vp test run x.test.ts|",
         "apps/server",
       ],
       [
-        () => "sh -c 'cd ~/other/apps/server && vp test run x.test.ts'",
+        (_: string, t: string) => `${t} && sh -c 'cd ~/other/apps/server && vp test run x.test.ts'`,
         "bash|-c|vp test run x.test.ts|",
         "apps/server",
       ],
@@ -403,7 +421,7 @@ describe("t3 heavy", () => {
           `gitdir: ${home}/main/.git/worktrees/other\n`,
         );
         // The step chained before it runs here first, in that folder.
-        const full = `touch ${NodePath.join(folder, "made")} && ${line(other)}`;
+        const full = line(other, `touch ${NodePath.join(folder, "made")}`);
         const run = heavyHere(dir, ["/bin/sh", "-c", full], { ...env, HOME: home });
         expect(await run.exited).toBe(0);
         expect(run.stdout()).toBe(`${argv} in ${NodeFS.realpathSync(folder)} after made\n`);

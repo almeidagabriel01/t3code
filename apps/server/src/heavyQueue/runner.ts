@@ -360,9 +360,10 @@ export const movedPart = (
       const flag = flags.find((each) => value === each || value.startsWith(`${each}=`));
       if (flag !== undefined) {
         const joined = value !== flag;
-        folder = joined ? value.slice(flag.length + 1) : values[at + 1];
+        const named = joined ? value.slice(flag.length + 1) : values[at + 1];
+        if (named === undefined) break;
+        folder = resolvePath(cwd, named);
         rest = joined ? values.with(at, `${flag}=.`) : values.with(at + 1, ".");
-        if (folder !== undefined) folder = resolvePath(cwd, folder);
         break;
       }
       if (!value.startsWith("-")) break;
