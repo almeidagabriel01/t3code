@@ -781,17 +781,21 @@ describe("serverSettings helpers", () => {
   it("merges usage limit alerts per window so two edits of one instance both land", () => {
     const instance = ProviderInstanceId.make("claude_work");
     const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      usageLimitAlerts: { [instance]: { windows: { seven_day: 20 }, timeZone: "UTC" } },
+      usageLimitAlerts: {
+        instances: { [instance]: { windows: { seven_day: 20 }, timeZone: "UTC" } },
+      },
     });
     const second = applyServerSettingsPatch(first, {
-      usageLimitAlerts: { [instance]: { windows: { five_hour: 10 } } },
+      usageLimitAlerts: { instances: { [instance]: { windows: { five_hour: 10 } } } },
     });
-    expect(second.usageLimitAlerts[instance]).toEqual({
+    expect(second.usageLimitAlerts.instances[instance]).toEqual({
       windows: { seven_day: 20, five_hour: 10 },
       timeZone: "UTC",
     });
-    const cleared = applyServerSettingsPatch(second, { usageLimitAlerts: { [instance]: null } });
-    expect(cleared.usageLimitAlerts).toEqual({});
+    const cleared = applyServerSettingsPatch(second, {
+      usageLimitAlerts: { instances: { [instance]: null } },
+    });
+    expect(cleared.usageLimitAlerts).toEqual({ ignoreAutonomyPause: true, instances: {} });
   });
 
   it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {

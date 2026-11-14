@@ -265,12 +265,17 @@ interface Harness {
 
 const autonomyOn = { ...DEFAULT_SERVER_SETTINGS.autonomy, enabled: true };
 // Every instance the tests use, saved from a UTC client, so the reset time reads the same anywhere.
-const utcAlerts: ServerSettings["usageLimitAlerts"] = Object.fromEntries(
-  ["claudeAgent", "claude_work", "codex"].map((id) => [
-    ProviderInstanceId.make(id),
-    { windows: {}, timeZone: "UTC" },
-  ]),
+const alerts = (
+  instances: Record<string, ServerSettings["usageLimitAlerts"]["instances"][ProviderInstanceId]>,
+  ignoreAutonomyPause = true,
+): ServerSettings["usageLimitAlerts"] => ({ ignoreAutonomyPause, instances });
+// Every instance the tests use, saved from a UTC client, so the reset time reads the same anywhere.
+const utcAlerts = alerts(
+  Object.fromEntries(
+    ["claudeAgent", "claude_work", "codex"].map((id) => [id, { windows: {}, timeZone: "UTC" }]),
+  ),
 );
+const pausedOff = { ...autonomyOn, enabled: false };
 
 const makeHarness = Effect.gen(function* () {
   const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
@@ -310,9 +315,9 @@ const makeHarness = Effect.gen(function* () {
     },
   } as unknown as Settings.ServerSettingsService["Service"];
 
-  // Mirrors notifyUser: the key is recorded once, and a repeat reports already_sent.
+  // Mirrors notifyUsageLimitAlert: the key is recorded once, and a repeat reports already_sent.
   const autonomy = {
-    notifyUser: (input: { readonly key: string; readonly text: string }) =>
+    notifyUsageLimitAlert: (input: { readonly key: string; readonly text: string }) =>
       Effect.gen(function* () {
         yield* Ref.update(attempts, (count) => count + 1);
         const mode = yield* Ref.get(notify);
@@ -430,7 +435,7 @@ describe("UsageLimitAlerts", () => {
   it.effect("formats the reset in the server's zone when no client saved one", () =>
     withService(({ harness, evaluate }) =>
       Effect.gen(function* () {
-        yield* harness.setSettings({ usageLimitAlerts: {} });
+        yield* harness.setSettings({ usageLimitAlerts: alerts({}) });
         const claude = provider("claudeAgent", [weekly(85)]);
         yield* evaluate([claude]);
         const message = yield* Queue.take(harness.sent);
@@ -502,10 +507,10 @@ describe("UsageLimitAlerts", () => {
           driver: ProviderDriverKind.make("codex"),
         });
         yield* harness.setSettings({
-          usageLimitAlerts: {
-            ...utcAlerts,
+          usageLimitAlerts: alerts({
+            ...utcAlerts.instances,
             [codex.instanceId]: { windows: { secondary: 15 }, timeZone: "UTC" },
-          },
+          }),
         });
         yield* evaluate([work, home, codex]);
         const texts = (yield* Queue.takeAll(harness.sent)).map((entry) => entry.text);
@@ -539,7 +544,7 @@ describe("UsageLimitAlerts", () => {
     withService(({ harness, evaluate }) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* harness.setSettings({ usageLimitAlerts: {} });
+        yield* harness.setSettings({ usageLimitAlerts: alerts({}) });
         yield* evaluate([provider("claude_b", [weekly(90)])]);
         yield* sql`UPDATE assistants SET archived_at = 't'`;
         // claude_a would send first; claude_b's climb back over the margin must still count.
@@ -547,6 +552,26 @@ describe("UsageLimitAlerts", () => {
         yield* sql`UPDATE assistants SET archived_at = NULL`;
         yield* evaluate([provider("claude_b", [weekly(90)])]);
         assert.equal((yield* Ref.get(harness.delivered)).length, 2);
+      }),
+    ),
+  );
+
+  it.effect("sends while Autonomy is paused only when the alert may ignore the pause", () =>
+    withService(({ harness, evaluate }) =>
+      Effect.gen(function* () {
+        yield* harness.setSettings({
+          autonomy: pausedOff,
+          usageLimitAlerts: alerts(utcAlerts.instances, false),
+        });
+        yield* evaluate([provider("claudeAgent", [weekly(90)])]);
+        assert.equal(yield* Ref.get(harness.attempts), 0);
+
+        // The reading kept its slot, so turning the setting on tells the user once.
+        yield* harness.setSettings({ usageLimitAlerts: utcAlerts });
+        yield* evaluate([provider("claudeAgent", [weekly(90)])]);
+        yield* evaluate([provider("claudeAgent", [weekly(91)])]);
+        yield* evaluate([provider("claudeAgent", [weekly(90)])], { retryPending: true });
+        assert.equal((yield* Ref.get(harness.delivered)).length, 1);
       }),
     ),
   );
@@ -560,12 +585,12 @@ describe("UsageLimitAlerts", () => {
           { ...weekly(95), id: "five_hour", kind: "session", label: "Session" },
         ]);
         yield* harness.setSettings({
-          usageLimitAlerts: { [claude.instanceId]: { windows: { seven_day: "off" } } },
+          usageLimitAlerts: alerts({ [claude.instanceId]: { windows: { seven_day: "off" } } }),
         });
         yield* evaluate([claude]);
         yield* harness.setSettings({
-          usageLimitAlerts: utcAlerts,
-          autonomy: { ...autonomyOn, enabled: false },
+          usageLimitAlerts: alerts(utcAlerts.instances, false),
+          autonomy: pausedOff,
         });
         yield* evaluate([claude]);
         yield* harness.setSettings({ autonomy: autonomyOn });
@@ -609,7 +634,7 @@ describe("UsageLimitAlerts", () => {
         Effect.gen(function* () {
           const claude = provider("claudeAgent", [weekly(10)]);
           yield* harness.setSettings({
-            usageLimitAlerts: { [claude.instanceId]: { windows: { seven_day: "off" } } },
+            usageLimitAlerts: alerts({ [claude.instanceId]: { windows: { seven_day: "off" } } }),
           });
           yield* harness.setProviders([claude]);
           yield* TestClock.adjust("1 day");
@@ -623,18 +648,22 @@ describe("UsageLimitAlerts", () => {
           yield* TestClock.adjust("1 second");
           assert.equal(yield* tick, 1);
           assert.equal(yield* tick, 2);
+          // Alerts that may ignore the pause keep checking with Autonomy off.
+          yield* harness.setSettings({ autonomy: pausedOff });
+          yield* TestClock.adjust("1 second");
+          assert.equal(yield* tick, 3);
 
           // A signed-out probe waits 30, then 60 minutes before the next try.
           yield* Ref.set(harness.refreshAuth, "unauthenticated");
           assert.deepStrictEqual(
             yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7], () => tick),
-            [3, 3, 4, 4, 4, 4, 5],
+            [4, 4, 5, 5, 5, 5, 6],
           );
 
-          yield* harness.setSettings({ autonomy: { ...autonomyOn, enabled: false } });
+          yield* harness.setSettings({ usageLimitAlerts: alerts(utcAlerts.instances, false) });
           yield* TestClock.adjust("1 second");
           yield* TestClock.adjust("1 day");
-          assert.equal(yield* Ref.get(harness.refreshes), 5);
+          assert.equal(yield* Ref.get(harness.refreshes), 6);
         }),
       ),
   );

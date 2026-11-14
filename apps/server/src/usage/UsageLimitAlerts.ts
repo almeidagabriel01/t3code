@@ -120,15 +120,19 @@ function accountIdentity(provider: ServerProvider): string | null {
 function alertWindowIds(provider: ServerProvider, settings: ServerSettings): ReadonlySet<string> {
   return new Set([
     ...(provider.usageLimits?.windows.map((window) => window.id) ?? []),
-    ...Object.keys(settings.usageLimitAlerts[provider.instanceId]?.windows ?? {}),
+    ...Object.keys(settings.usageLimitAlerts.instances[provider.instanceId]?.windows ?? {}),
     ...defaultUsageLimitAlertWindows(provider.driver),
   ]);
 }
 
+/** Mirrors `AutonomyService.notifyUsageLimitAlert`, so a refused send never consumes a slot. */
+const canDeliver = (settings: ServerSettings) =>
+  settings.autonomy.enabled || settings.usageLimitAlerts.ignoreAutonomyPause;
+
 /** True when the instance has at least one window that would alert. */
 function hasUsageLimitAlert(provider: ServerProvider, settings: ServerSettings): boolean {
   if (!provider.enabled) return false;
-  const config = settings.usageLimitAlerts[provider.instanceId];
+  const config = settings.usageLimitAlerts.instances[provider.instanceId];
   for (const windowId of alertWindowIds(provider, settings)) {
     if (usageLimitAlertThreshold({ driver: provider.driver, windowId, config }) !== null) {
       return true;
@@ -250,8 +254,7 @@ const make = Effect.gen(function* () {
     retryPending: boolean,
   ) {
     const settings = yield* settingsService.getSettings;
-    // Alerts follow the Autonomy pause, as every assistant message to the user does.
-    if (!settings.autonomy.enabled) return;
+    if (!canDeliver(settings)) return;
     const nowMs = yield* Clock.currentTimeMillis;
     let assistantId: string | null | undefined;
     let language: ResolvedChannelLanguage | undefined;
@@ -260,7 +263,7 @@ const make = Effect.gen(function* () {
       if (!hasUsageLimitAlert(provider, settings)) continue;
       if (provider.auth.status === "unauthenticated" || provider.usageLimits === undefined)
         continue;
-      const config = settings.usageLimitAlerts[provider.instanceId];
+      const config = settings.usageLimitAlerts.instances[provider.instanceId];
       const accountKey = yield* accountKeyFor(provider);
       const siblings = providers.filter(
         (other) => other.enabled && other.driver === provider.driver,
@@ -335,7 +338,7 @@ const make = Effect.gen(function* () {
 
         language ??= yield* channelLanguage.current;
         const sent = yield* autonomy
-          .notifyUser({
+          .notifyUsageLimitAlert({
             assistantId,
             key: next.firedKey,
             text: usageLimitAlertText({
@@ -412,15 +415,14 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // The periodic check runs only while some instance has an alert on and Autonomy can deliver it.
+  // The periodic check runs only while some instance has an alert on and it can be delivered.
   const loop = yield* FiberHandle.make<void, never>();
   const onChange = Effect.fn("UsageLimitAlerts.onChange")(function* (
     providers: ReadonlyArray<ServerProvider>,
   ) {
     const settings = yield* settingsService.getSettings;
     const active =
-      settings.autonomy.enabled &&
-      providers.some((provider) => hasUsageLimitAlert(provider, settings));
+      canDeliver(settings) && providers.some((provider) => hasUsageLimitAlert(provider, settings));
     if (active) yield* FiberHandle.run(loop, checkLoop, { onlyIfMissing: true });
     else yield* FiberHandle.clear(loop);
     yield* evaluate(providers);

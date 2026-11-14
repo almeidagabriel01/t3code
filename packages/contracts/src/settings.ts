@@ -55,7 +55,7 @@ import {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
-import { ProviderBudget, UsageLimitAlertConfigPatch, UsageLimitAlerts } from "./usage.ts";
+import { ProviderBudget, UsageLimitAlerts, UsageLimitAlertsPatch } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
@@ -2361,9 +2361,7 @@ const ServerSettingsPatchFields = Schema.Struct({
     Schema.Record(ProviderInstanceId, Schema.NullOr(ProviderBudget)),
   ),
   // Merged per window; null removes the instance's entry.
-  usageLimitAlerts: Schema.optionalKey(
-    Schema.Record(ProviderInstanceId, Schema.NullOr(UsageLimitAlertConfigPatch)),
-  ),
+  usageLimitAlerts: Schema.optionalKey(UsageLimitAlertsPatch),
   folderProjects: Schema.optionalKey(Schema.Record(ProjectId, Schema.NullOr(Schema.Literal(true)))),
 
   usagePriceOverrides: Schema.optionalKey(

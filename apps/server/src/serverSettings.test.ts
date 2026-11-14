@@ -2497,8 +2497,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         JSON.stringify({
           providerInstances: { claude_work: { driver: "claudeAgent", displayName: "Work" } },
           usageLimitAlerts: {
-            claude_work: { windows: { seven_day: 0, five_hour: 20 } },
-            broken: "x",
+            ignoreAutonomyPause: false,
+            instances: { claude_work: { windows: { seven_day: 0, five_hour: 20 } }, broken: "x" },
           },
         }),
       );
@@ -2509,13 +2509,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "Work",
       );
       assert.isTrue(settings.continueThreadsAfterServerUpdate);
-      assert.deepEqual(
-        settings.usageLimitAlerts[ProviderInstanceId.make("claude_work")]?.windows.five_hour,
-        20,
-      );
-      assert.isUndefined(
-        settings.usageLimitAlerts[ProviderInstanceId.make("claude_work")]?.windows.seven_day,
-      );
+      assert.deepStrictEqual(settings.usageLimitAlerts, {
+        ignoreAutonomyPause: false,
+        instances: { [ProviderInstanceId.make("claude_work")]: { windows: { five_hour: 20 } } },
+      });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
@@ -2564,20 +2561,27 @@ it("drops a removed instance's budget but keeps it when a default instance is re
       [builtin]: { driver: ProviderDriverKind.make("claudeAgent") },
     },
     providerBudgets: { [custom]: budget, [builtin]: budget },
-    usageLimitAlerts: { [custom]: { windows: { seven_day: 20 } }, [builtin]: { windows: {} } },
+    usageLimitAlerts: {
+      ignoreAutonomyPause: false,
+      instances: { [custom]: { windows: { seven_day: 20 } }, [builtin]: { windows: {} } },
+    },
   };
   const afterCustom = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: custom,
   });
   assert.deepStrictEqual(Object.keys(afterCustom.providerBudgets), [builtin]);
-  assert.deepStrictEqual(Object.keys(afterCustom.usageLimitAlerts), [builtin]);
+  assert.deepStrictEqual(Object.keys(afterCustom.usageLimitAlerts.instances), [builtin]);
+  assert.isFalse(afterCustom.usageLimitAlerts.ignoreAutonomyPause);
   const afterReset = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: builtin,
   });
   assert.deepStrictEqual(Object.keys(afterReset.providerBudgets).sort(), [builtin, custom].sort());
-  assert.deepStrictEqual(Object.keys(afterReset.usageLimitAlerts).sort(), [builtin, custom].sort());
+  assert.deepStrictEqual(
+    Object.keys(afterReset.usageLimitAlerts.instances).sort(),
+    [builtin, custom].sort(),
+  );
 });
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "server settings under a managed policy",

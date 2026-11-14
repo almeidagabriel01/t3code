@@ -25,30 +25,49 @@ describe("usageLimitAlertThreshold", () => {
 });
 
 describe("mergeUsageLimitAlerts", () => {
-  it("merges per window, keeps the zone, and drops an instance left with neither", () => {
-    const current = { a: { windows: { seven_day: 20 as const }, timeZone: "UTC" } };
-    const added = mergeUsageLimitAlerts(current, { a: { windows: { five_hour: "off" } } });
-    expect(added).toEqual({ a: { windows: { seven_day: 20, five_hour: "off" }, timeZone: "UTC" } });
+  const at = (instances: Record<string, unknown>, ignoreAutonomyPause = true) =>
+    ({ ignoreAutonomyPause, instances }) as never;
+  const edit = (instances: Record<string, unknown>) => ({ instances }) as never;
 
-    const rezoned = mergeUsageLimitAlerts(added, {
-      a: { windows: { seven_day: null }, timeZone: "America/Sao_Paulo" },
-    });
-    expect(rezoned).toEqual({
-      a: { windows: { five_hour: "off" }, timeZone: "America/Sao_Paulo" },
-    });
+  it("merges per window, keeps the zone, and drops an instance left with neither", () => {
+    const current = at({ a: { windows: { seven_day: 20 }, timeZone: "UTC" } });
+    const added = mergeUsageLimitAlerts(current, edit({ a: { windows: { five_hour: "off" } } }));
+    expect(added).toEqual(
+      at({ a: { windows: { seven_day: 20, five_hour: "off" }, timeZone: "UTC" } }),
+    );
+
+    const rezoned = mergeUsageLimitAlerts(
+      added,
+      edit({ a: { windows: { seven_day: null }, timeZone: "America/Sao_Paulo" } }),
+    );
+    expect(rezoned).toEqual(
+      at({ a: { windows: { five_hour: "off" }, timeZone: "America/Sao_Paulo" } }),
+    );
 
     // Back on defaults, the zone still names the reset time of the default alerts.
-    expect(mergeUsageLimitAlerts(rezoned, { a: { windows: { five_hour: null } } })).toEqual({
-      a: { windows: {}, timeZone: "America/Sao_Paulo" },
-    });
-    expect(mergeUsageLimitAlerts({}, { a: { timeZone: "UTC" } })).toEqual({
-      a: { windows: {}, timeZone: "UTC" },
-    });
-    const single = { a: { windows: { x: 5 as const } } };
-    expect(mergeUsageLimitAlerts(single, { a: { windows: { x: null } } })).toEqual({});
-    expect(mergeUsageLimitAlerts(current, { a: null, b: { windows: { x: 5 } } })).toEqual({
-      b: { windows: { x: 5 } },
-    });
+    expect(mergeUsageLimitAlerts(rezoned, edit({ a: { windows: { five_hour: null } } }))).toEqual(
+      at({ a: { windows: {}, timeZone: "America/Sao_Paulo" } }),
+    );
+    expect(mergeUsageLimitAlerts(at({}), edit({ a: { timeZone: "UTC" } }))).toEqual(
+      at({ a: { windows: {}, timeZone: "UTC" } }),
+    );
+    expect(
+      mergeUsageLimitAlerts(
+        at({ a: { windows: { x: 5 } } }),
+        edit({ a: { windows: { x: null } } }),
+      ),
+    ).toEqual(at({}));
+    expect(mergeUsageLimitAlerts(current, edit({ a: null, b: { windows: { x: 5 } } }))).toEqual(
+      at({ b: { windows: { x: 5 } } }),
+    );
+  });
+
+  it("sets the Autonomy pause choice without touching the instances", () => {
+    const current = at({ a: { windows: { x: 5 } } });
+    expect(mergeUsageLimitAlerts(current, { ignoreAutonomyPause: false })).toEqual(
+      at({ a: { windows: { x: 5 } } }, false),
+    );
+    expect(mergeUsageLimitAlerts(at({}, false), {})).toEqual(at({}, false));
   });
 });
 

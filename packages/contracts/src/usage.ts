@@ -270,7 +270,35 @@ export const UsageLimitAlertConfig = Schema.Struct({
 });
 export type UsageLimitAlertConfig = typeof UsageLimitAlertConfig.Type;
 
-export const UsageLimitAlerts = validEntries(ProviderInstanceId, UsageLimitAlertConfig);
+const isPlainObject = (raw: unknown): raw is Readonly<Record<string, unknown>> =>
+  typeof raw === "object" && raw !== null && !Array.isArray(raw);
+
+const UsageLimitAlertsFields = Schema.Struct({
+  /** Alerts still reach the user while Autonomy is paused or off; only this kind of message does. */
+  ignoreAutonomyPause: Schema.Unknown.pipe(
+    Schema.decodeTo(
+      Schema.Boolean,
+      SchemaTransformation.transform<boolean, unknown>({
+        decode: (raw) => (typeof raw === "boolean" ? raw : true),
+        encode: (value) => value,
+      }),
+    ),
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  instances: validEntries(ProviderInstanceId, UsageLimitAlertConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+
+export const UsageLimitAlerts = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    UsageLimitAlertsFields,
+    SchemaTransformation.transform<typeof UsageLimitAlertsFields.Encoded, unknown>({
+      decode: (raw) => (isPlainObject(raw) ? raw : {}) as typeof UsageLimitAlertsFields.Encoded,
+      encode: (value) => value,
+    }),
+  ),
+);
 export type UsageLimitAlerts = typeof UsageLimitAlerts.Type;
 
 /** Merges per window: a number sets it, `"off"` silences it, `null` returns it to the default. */
@@ -281,3 +309,11 @@ export const UsageLimitAlertConfigPatch = Schema.Struct({
   timeZone: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type UsageLimitAlertConfigPatch = typeof UsageLimitAlertConfigPatch.Type;
+
+export const UsageLimitAlertsPatch = Schema.Struct({
+  ignoreAutonomyPause: Schema.optionalKey(Schema.Boolean),
+  instances: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, Schema.NullOr(UsageLimitAlertConfigPatch)),
+  ),
+});
+export type UsageLimitAlertsPatch = typeof UsageLimitAlertsPatch.Type;

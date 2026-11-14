@@ -2,8 +2,8 @@ import {
   USAGE_LIMIT_ALERT_CHOICES,
   type ServerProviderUsageWindow,
   type UsageLimitAlertConfig,
-  type UsageLimitAlertConfigPatch,
   type UsageLimitAlerts,
+  type UsageLimitAlertsPatch,
   type UsageLimitAlertThreshold,
 } from "@t3tools/contracts";
 
@@ -44,26 +44,29 @@ export function usageLimitAlertOverride(input: {
 /** Per-window merge; an instance left with no override and no zone is dropped. */
 export function mergeUsageLimitAlerts(
   current: UsageLimitAlerts,
-  patch: Readonly<Record<string, UsageLimitAlertConfigPatch | null>>,
+  patch: UsageLimitAlertsPatch,
 ): UsageLimitAlerts {
-  const next: Record<string, UsageLimitAlertConfig> = { ...current };
-  for (const [instanceId, entry] of Object.entries(patch)) {
+  const instances: Record<string, UsageLimitAlertConfig> = { ...current.instances };
+  for (const [instanceId, entry] of Object.entries(patch.instances ?? {})) {
     if (entry === null) {
-      delete next[instanceId];
+      delete instances[instanceId];
       continue;
     }
     const windows: Record<string, UsageLimitAlertConfig["windows"][string]> = {
-      ...next[instanceId]?.windows,
+      ...instances[instanceId]?.windows,
     };
     for (const [windowId, threshold] of Object.entries(entry.windows ?? {})) {
       if (threshold === null) delete windows[windowId];
       else windows[windowId] = threshold;
     }
-    const timeZone = entry.timeZone ?? next[instanceId]?.timeZone;
-    if (Object.keys(windows).length === 0 && timeZone === undefined) delete next[instanceId];
-    else next[instanceId] = { windows, ...(timeZone === undefined ? {} : { timeZone }) };
+    const timeZone = entry.timeZone ?? instances[instanceId]?.timeZone;
+    if (Object.keys(windows).length === 0 && timeZone === undefined) delete instances[instanceId];
+    else instances[instanceId] = { windows, ...(timeZone === undefined ? {} : { timeZone }) };
   }
-  return next as UsageLimitAlerts;
+  return {
+    ignoreAutonomyPause: patch.ignoreAutonomyPause ?? current.ignoreAutonomyPause,
+    instances: instances as UsageLimitAlerts["instances"],
+  };
 }
 
 export interface UsageLimitAlertRow {

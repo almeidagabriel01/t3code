@@ -190,6 +190,22 @@ export class AutonomyService extends Context.Service<
       },
       AutonomyError
     >;
+    /**
+     * `notifyUser` for a usage limit alert, which also reaches the user while Autonomy is paused
+     * when `usageLimitAlerts.ignoreAutonomyPause` is on. No other message has this way through.
+     */
+    readonly notifyUsageLimitAlert: (input: {
+      readonly assistantId: string;
+      readonly key: string;
+      readonly text: string;
+    }) => Effect.Effect<
+      {
+        readonly status: "sent" | "already_sent";
+        readonly channels: ReadonlyArray<string>;
+        readonly remainingToday: number;
+      },
+      AutonomyError
+    >;
     readonly listWatches: Effect.Effect<ReadonlyArray<AutonomyWatch>, AutonomyError>;
     readonly upsertWatch: (
       input: AutonomyWatchUpsertInput,
@@ -1313,11 +1329,13 @@ const make = Effect.gen(function* () {
     )
     .pipe(isolate("autonomy: the waiting notice failed"));
 
-  const notifyUser: AutonomyService["Service"]["notifyUser"] = Effect.fn(
-    "AutonomyService.notifyUser",
-  )(function* (input) {
+  // Untraced: notifyUser and notifyUsageLimitAlert below are its traced boundaries.
+  const deliverToUser = Effect.fnUntraced(function* (
+    input: Parameters<AutonomyService["Service"]["notifyUser"]>[0],
+    whilePaused: boolean,
+  ) {
     const config = yield* settings;
-    if (!config.enabled) {
+    if (!config.enabled && !whilePaused) {
       return yield* autonomyError(
         "invalid",
         "Assistant notifications are paused in Settings → Assistants → Autonomy. Tell the user in your reply instead; do not retry.",
@@ -1424,6 +1442,22 @@ const make = Effect.gen(function* () {
     };
   }, storage);
 
+  const notifyUser: AutonomyService["Service"]["notifyUser"] = Effect.fn(
+    "AutonomyService.notifyUser",
+  )(function* (input) {
+    return yield* deliverToUser(input, false);
+  });
+
+  const notifyUsageLimitAlert: AutonomyService["Service"]["notifyUsageLimitAlert"] = Effect.fn(
+    "AutonomyService.notifyUsageLimitAlert",
+  )(function* (input) {
+    const whilePaused = yield* settingsService.getSettings.pipe(
+      Effect.map((current) => current.usageLimitAlerts.ignoreAutonomyPause),
+      Effect.orElseSucceed(() => false),
+    );
+    return yield* deliverToUser(input, whilePaused);
+  });
+
   const start: AutonomyService["Service"]["start"] = () =>
     Effect.all(
       [
@@ -1455,6 +1489,7 @@ const make = Effect.gen(function* () {
     sweep,
     notifyWaiting,
     notifyUser,
+    notifyUsageLimitAlert,
     listWatches,
     upsertWatch,
     setWatchEnabled,

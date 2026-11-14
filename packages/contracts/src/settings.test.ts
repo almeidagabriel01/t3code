@@ -254,16 +254,22 @@ describe("ServerSettings usage limit alerts", () => {
     "rejects %j as a written threshold",
     (bad) => {
       expect(() =>
-        decodeServerSettingsPatch({ usageLimitAlerts: { a: { windows: { seven_day: bad } } } }),
+        decodeServerSettingsPatch({
+          usageLimitAlerts: { instances: { a: { windows: { seven_day: bad } } } },
+        }),
       ).toThrow();
     },
   );
 
   it("accepts 1..99 and off, and null to return a window to its default", () => {
     const patch = decodeServerSettingsPatch({
-      usageLimitAlerts: { a: { windows: { seven_day: 1, five_hour: 99, x: "off", y: null } } },
+      usageLimitAlerts: {
+        ignoreAutonomyPause: false,
+        instances: { a: { windows: { seven_day: 1, five_hour: 99, x: "off", y: null } } },
+      },
     });
-    expect(Object.values(patch.usageLimitAlerts ?? {})[0]?.windows).toEqual({
+    expect(patch.usageLimitAlerts?.ignoreAutonomyPause).toBe(false);
+    expect(Object.values(patch.usageLimitAlerts?.instances ?? {})[0]?.windows).toEqual({
       seven_day: 1,
       five_hour: 99,
       x: "off",
@@ -275,25 +281,37 @@ describe("ServerSettings usage limit alerts", () => {
     const settings = decodeServerSettings({
       hideTaggedThreads: true,
       usageLimitAlerts: {
-        a: { windows: { seven_day: 0, five_hour: 20, x: "015", y: 15.5 }, timeZone: 3 },
-        b: "garbage",
-        c: { windows: "garbage", timeZone: "America/Sao_Paulo", extra: 1 },
+        ignoreAutonomyPause: "yes",
+        instances: {
+          a: { windows: { seven_day: 0, five_hour: 20, x: "015", y: 15.5 }, timeZone: 3 },
+          b: "garbage",
+          c: { windows: "garbage", timeZone: "America/Sao_Paulo", extra: 1 },
+        },
       },
     });
     expect(settings.hideTaggedThreads).toBe(true);
-    const alerts = settings.usageLimitAlerts as Record<string, unknown>;
-    expect(alerts).toEqual({
-      a: { windows: { five_hour: 20 } },
-      c: { windows: {}, timeZone: "America/Sao_Paulo" },
+    expect(settings.usageLimitAlerts).toEqual({
+      ignoreAutonomyPause: true,
+      instances: {
+        a: { windows: { five_hour: 20 } },
+        c: { windows: {}, timeZone: "America/Sao_Paulo" },
+      },
     });
     expect(() => encodeServerSettings(settings)).not.toThrow();
   });
 
-  it("keeps the other settings when the whole key is unreadable", () => {
-    const settings = decodeServerSettings({ hideTaggedThreads: true, usageLimitAlerts: [1] });
-    expect(settings.hideTaggedThreads).toBe(true);
-    expect(settings.usageLimitAlerts).toEqual({});
-  });
+  it.each([undefined, [1], "garbage", { ignoreAutonomyPause: false }])(
+    "keeps the other settings and the defaults when the key reads %j",
+    (raw) => {
+      const settings = decodeServerSettings({ hideTaggedThreads: true, usageLimitAlerts: raw });
+      expect(settings.hideTaggedThreads).toBe(true);
+      expect(settings.usageLimitAlerts).toEqual({
+        // A new install alerts even with Autonomy off; only an explicit false turns that off.
+        ignoreAutonomyPause: !(raw !== null && typeof raw === "object" && !Array.isArray(raw)),
+        instances: {},
+      });
+    },
+  );
 });
 
 describe("ServerSettings secret providers", () => {

@@ -69,6 +69,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
   const sendFails = { current: false };
+  const ignorePause = { current: true };
   const telegram = Ref.makeUnsafe({
     enabled: true,
     tokenConfigured: true,
@@ -130,7 +131,15 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           getEnvironmentId: Effect.succeed("env-1" as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
+          getSettings: Ref.get(settings).pipe(
+            Effect.map(
+              (autonomy) =>
+                ({
+                  autonomy,
+                  usageLimitAlerts: { ignoreAutonomyPause: ignorePause.current, instances: {} },
+                }) as never,
+            ),
+          ),
         }),
         Layer.mock(AssistantSpend)({
           budgetRefusal: () =>
@@ -153,6 +162,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     sent,
     refusal,
     sendFails,
+    ignorePause,
     telegram,
     answers,
     contexts,
@@ -1370,6 +1380,34 @@ it.effect("a message whose delivery could not be queued is not counted as sent",
     assert.lengthOf(yield* outboxRows, 1);
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "only a usage limit alert gets past the Autonomy pause, and only while its setting allows",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      const refused = <A>(effect: Effect.Effect<A, AutonomyError>) =>
+        Effect.flip(effect).pipe(Effect.map((error) => error.message));
+      const alert = (key: string) =>
+        service.notifyUsageLimitAlert({ assistantId: "jarvis", key, text: "Claude: 15% left." });
+
+      assert.equal((yield* alert("usage-limit:a")).status, "sent");
+      assert.equal((yield* alert("usage-limit:a")).status, "already_sent");
+      assert.lengthOf(yield* outboxRows, 1);
+      assert.include(
+        yield* refused(service.notifyUser({ assistantId: "jarvis", key: "k", text: "Hi." })),
+        "paused",
+      );
+
+      h.ignorePause.current = false;
+      assert.include(yield* refused(alert("usage-limit:b")), "paused");
+      assert.lengthOf(yield* outboxRows, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 const scheduledRun = (
   status: string,

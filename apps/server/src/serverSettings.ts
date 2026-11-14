@@ -255,18 +255,23 @@ export function applyProviderInstanceMutation(
 ): ServerSettings {
   const providerInstances = { ...settings.providerInstances };
   const providerBudgets = { ...settings.providerBudgets };
-  const usageLimitAlerts = { ...settings.usageLimitAlerts };
+  const alertInstances = { ...settings.usageLimitAlerts.instances };
   if (mutation.operation === "upsert" || mutation.operation === "create") {
     providerInstances[mutation.instanceId] = mutation.instance;
   } else {
     // Removing a default instance only resets it, so its budget and alerts stay.
     if (String(providerInstances[mutation.instanceId]?.driver) !== mutation.instanceId) {
       delete providerBudgets[mutation.instanceId];
-      delete usageLimitAlerts[mutation.instanceId];
+      delete alertInstances[mutation.instanceId];
     }
     delete providerInstances[mutation.instanceId];
   }
-  return { ...settings, providerInstances, providerBudgets, usageLimitAlerts };
+  return {
+    ...settings,
+    providerInstances,
+    providerBudgets,
+    usageLimitAlerts: { ...settings.usageLimitAlerts, instances: alertInstances },
+  };
 }
 
 const secretProviderConfigGuards = new Map(
