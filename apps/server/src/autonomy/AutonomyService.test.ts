@@ -986,6 +986,28 @@ it.effect("without Telegram the waiting request is only in Activity, answerable 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("what already waited before the first run is never told, what came after is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "old", threadId: "t1", createdAt: "1969-12-31T23:00:00.000Z" });
+    yield* pendingRequest(h, { id: "new", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => row.delivery_id.startsWith("needs-you:")),
+      [true],
+    );
+    const decisions = yield* DecisionService.DecisionService;
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["new"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
   const h = harness();
   return Effect.gen(function* () {
