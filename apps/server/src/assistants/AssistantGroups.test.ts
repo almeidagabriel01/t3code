@@ -421,6 +421,8 @@ const harness = (options: Options = {}) => {
     reply_to: string | null;
     task_id: string | null;
     worked_ms: number | null;
+    request_id: string | null;
+    request_project_id: string | null;
   }>("SELECT * FROM assistant_group_messages ORDER BY seq");
 
   /** Ends the live run of a task's current revision. */
@@ -4017,6 +4019,18 @@ it.effect.each([
     assert.equal(h.launched[0]!.projectId, via === "text" ? "p1" : "p2");
     // The task runs the request, not the answer.
     assert.include(h.sent[0]!.text, "Your task, from the user: fix the login");
+    // Every line of the request, and one said after, carries the project the request moved to.
+    yield* groups.post(
+      { teamId: TEAM, text: "thanks", replyToMessageId: posted.message.id },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    assert.isAbove(lines.length, 3);
+    assert.deepEqual(
+      [...new Set(lines.map((m) => m.request_project_id))],
+      [via === "text" ? "p1" : "p2"],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

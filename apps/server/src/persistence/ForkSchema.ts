@@ -632,22 +632,6 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["instructions", "TEXT NOT NULL DEFAULT ''"],
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
   ]);
-  // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
-  yield* sql`
-    CREATE VIEW assistant_team_state AS
-    SELECT t.*,
-      COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
-        AS latest_seq,
-      (SELECT COUNT(*) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
-          AND m.kind NOT IN ('routing', 'boundary', 'change')) AS unread_count,
-      (SELECT COUNT(*) FROM assistant_group_tasks k
-        WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
-      (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
-        ORDER BY m.seq DESC LIMIT 1) AS preview
-    FROM assistant_teams t
-  `;
   // A member's hidden thread for a group, and the last chat message that thread was shown.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_threads (
@@ -721,6 +705,44 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
+  // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
+  // pages its own lines. Every start fills only rows still without one whose head has a project.
+  yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
+  yield* sql`
+    UPDATE assistant_group_messages SET request_project_id = (
+      SELECT h.project_id FROM assistant_group_messages h
+      WHERE h.message_id = assistant_group_messages.request_id)
+    WHERE request_project_id IS NULL AND request_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM assistant_group_messages h
+      WHERE h.message_id = assistant_group_messages.request_id AND h.project_id IS NOT NULL)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_scope_idx ON assistant_group_messages(team_id, request_project_id, seq)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_open_wait_idx ON assistant_group_messages(team_id) WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
+  // How far the user has read one tab of a group: scope is the project id, or '' for General.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_read_cursors (
+      team_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      read_seq INTEGER NOT NULL,
+      PRIMARY KEY (team_id, scope)
+    )
+  `;
+  // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every
+  // start, after every column it reads.
+  yield* sql`
+    CREATE VIEW assistant_team_state AS
+    SELECT t.*,
+      COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
+        AS latest_seq,
+      (SELECT COUNT(*) FROM assistant_group_messages m
+        WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
+          AND m.kind NOT IN ('routing', 'boundary', 'change')) AS unread_count,
+      (SELECT COUNT(*) FROM assistant_group_tasks k
+        WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
+      (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
+        WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+        ORDER BY m.seq DESC LIMIT 1) AS preview
+    FROM assistant_teams t
+  `;
   // A member's hidden thread for one request, in the request's project. The per-group threads above
   // stay for history and for runs that started before requests had their own.
   yield* sql`

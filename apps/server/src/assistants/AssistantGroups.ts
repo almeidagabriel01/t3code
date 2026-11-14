@@ -764,7 +764,7 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
         task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
-        wait_thread_id, wait_decision_id, asks_project, worked_ms, created_at
+        wait_thread_id, wait_decision_id, asks_project, worked_ms, request_project_id, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
@@ -772,6 +772,8 @@ const make = Effect.gen(function* () {
         ${encodeAttachments(input.attachments ?? [])}, ${requestId}, ${input.projectId ?? null},
         ${input.title ?? null}, ${input.wait?.key ?? null}, ${input.wait?.threadId ?? null},
         ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${input.workedMs ?? null},
+        COALESCE((SELECT h.project_id FROM assistant_group_messages h WHERE h.message_id = ${requestId}),
+          ${input.requestId === "new" ? (input.projectId ?? null) : null}),
         ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
@@ -1537,11 +1539,14 @@ const make = Effect.gen(function* () {
     projectId: string,
     title: string | null,
   ) {
+    // One statement, so no line of the request is ever left on the old project.
     const rows = yield* sql<MessageRow>`
-      UPDATE assistant_group_messages
-      SET project_id = ${projectId}, title = COALESCE(${title}, title)
-      WHERE message_id = ${request.message_id} RETURNING *`;
-    if (rows[0] !== undefined) yield* publishMessage(rows[0]);
+      UPDATE assistant_group_messages SET request_project_id = ${projectId},
+        project_id = IIF(message_id = request_id, ${projectId}, project_id),
+        title = IIF(message_id = request_id, COALESCE(${title}, title), title)
+      WHERE request_id = ${request.message_id} RETURNING *`;
+    const head = rows.find((row) => row.message_id === request.message_id);
+    if (head !== undefined) yield* publishMessage(head);
   });
 
   const route = Effect.fn("AssistantGroups.route")(function* (

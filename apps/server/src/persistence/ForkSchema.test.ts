@@ -479,17 +479,19 @@ it.effect("gives an older group chat its requests: every message and task joins 
   }).pipe(Effect.provide(database)),
 );
 
-it.effect.each(["new", "old", "half-migrated"] as const)(
-  "fills request ids and groups in a %s database",
+it.effect.each(["new", "old", "half-migrated", "scope-half-migrated"] as const)(
+  "fills request ids, groups and request projects in a %s database",
   (shape) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // "half-migrated": an older build added the columns and stopped before filling them.
       const added =
-        shape === "half-migrated"
+        shape === "half-migrated" || shape === "scope-half-migrated"
           ? {
               requests: ", group_id TEXT, reply_text TEXT, delivered INTEGER NOT NULL DEFAULT 0",
-              messages: ", request_id TEXT, project_id TEXT, title TEXT",
+              messages: `, request_id TEXT, project_id TEXT, title TEXT${
+                shape === "scope-half-migrated" ? ", request_project_id TEXT" : ""
+              }`,
               tasks: ", request_id TEXT",
             }
           : { requests: "", messages: "", tasks: "" };
@@ -533,6 +535,11 @@ it.effect.each(["new", "old", "half-migrated"] as const)(
         yield* sql`UPDATE assistant_group_messages SET request_id = 'm1' WHERE message_id <> 'm3'`;
         yield* sql`UPDATE assistant_group_tasks SET request_id = 'm1'`;
       }
+      // Only the head held the project before every row carried it.
+      const project = shape === "old" ? null : "p1";
+      if (project !== null) {
+        yield* sql`UPDATE assistant_group_messages SET project_id = ${project} WHERE message_id = 'm1'`;
+      }
 
       yield* ensureForkSchema();
       yield* ensureForkSchema();
@@ -541,16 +548,35 @@ it.effect.each(["new", "old", "half-migrated"] as const)(
         { request_id: "q1", group_id: "q1" },
       ]);
       assert.deepStrictEqual(
-        yield* sql`SELECT message_id, request_id FROM assistant_group_messages ORDER BY seq`,
+        yield* sql`SELECT message_id, request_id, request_project_id FROM assistant_group_messages ORDER BY seq`,
         [
-          { message_id: "m1", request_id: "m1" },
-          { message_id: "m2", request_id: "m1" },
-          { message_id: "m3", request_id: null },
+          { message_id: "m1", request_id: "m1", request_project_id: project },
+          { message_id: "m2", request_id: "m1", request_project_id: project },
+          { message_id: "m3", request_id: null, request_project_id: null },
         ],
       );
       assert.deepStrictEqual(yield* sql`SELECT task_id, request_id FROM assistant_group_tasks`, [
         { task_id: "t1", request_id: "m1" },
       ]);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_read_cursors`, []);
+      assert.lengthOf(yield* sql`SELECT team_id FROM assistant_team_state`, 0);
+      // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.
+      for (const scope of ["p1", null]) {
+        const page = yield* sql<{ readonly detail: string }>`
+          EXPLAIN QUERY PLAN SELECT * FROM assistant_group_messages
+          WHERE team_id = 'g1' AND request_project_id IS ${scope} AND request_id IS NOT NULL
+            AND seq < 10 ORDER BY seq DESC LIMIT 51`;
+        assert.isTrue(
+          page.some((row) => row.detail.includes("assistant_group_messages_scope_idx")),
+        );
+        assert.isFalse(page.some((row) => row.detail.includes("TEMP B-TREE")));
+      }
+      const openWaits = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN SELECT 1 FROM assistant_group_messages
+        WHERE team_id = 'g1' AND wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
+      assert.isTrue(
+        openWaits.some((row) => row.detail.includes("assistant_group_messages_open_wait_idx")),
+      );
     }).pipe(Effect.provide(database)),
 );
 
