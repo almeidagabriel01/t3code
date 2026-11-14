@@ -99,9 +99,10 @@ const PC_CAUSES: ReadonlyArray<readonly [RegExp, FaultReason, string]> = [
     "network",
     "dns",
   ],
-  [/Network is unreachable|No route to host/i, "network", "unreachable"],
-  [/Connection refused/i, "network", "refused"],
 ];
+/** The PC is down or off the network: Linux is offline, which the heartbeat shows; no fault. */
+const PC_UNREACHABLE =
+  /PC indisponível|connect to host .*timed out|Connection timed out|Host is down|Connection refused|No route to host|Network is unreachable/i;
 const LINK_CAUSES: ReadonlyArray<readonly [RegExp, string]> = [
   [/timed? ?out/i, "timeout"],
   [/Connection (?:reset|closed)|closed by remote host|Broken pipe/i, "closed"],
@@ -134,6 +135,7 @@ export const faultOf = (
     const tool = (line === null ? null : MISSING_TOOL.exec(line)?.[1]) ?? seen.program;
     return fault("command-not-found", tool, `${tool}: command not found`);
   }
+  if (line !== null && PC_UNREACHABLE.test(line)) return null;
   const pc = line === null ? undefined : PC_CAUSES.find(([pattern]) => pattern.test(line));
   if (pc !== undefined) return fault(pc[1], `${seen.kind}-${pc[2]}`, "");
   if (seen.kind === "install") {
@@ -150,7 +152,7 @@ export const faultOf = (
   const via = line !== null && /rsync/i.test(line) ? `rsync-${link}` : link;
   if (seen.kind === "sync") return fault("linux-sync", via, "Linux sync failed");
   if (seen.kind === "lost") return fault("linux-lost", via, "Linux dropped the job");
-  return fault("network", via, "Linux is unavailable");
+  return null;
 };
 
 /** The record of a fault, beside the job's own `ended` or `linux-lost` record. */

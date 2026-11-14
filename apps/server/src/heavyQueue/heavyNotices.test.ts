@@ -261,13 +261,27 @@ describe("faults T3 records for the problem detector", () => {
       "network:unreachable-dns",
       "ssh: Could not resolve hostname pc: nodename nor servname provided",
     ],
-    [
-      "connect timed out",
-      { kind: "unreachable" },
+    // The PC being unreachable is Linux offline, not a fault, at whatever step it shows.
+    ...[
+      "[remoto] PC indisponível.",
       "ssh: connect to host pc port 22: Operation timed out",
-      "network:timeout",
-      "ssh: connect to host pc port 22: Operation timed out",
-    ],
+      "ssh: connect to host pc port 22: Connection timed out",
+      "ssh: connect to host pc port 22: Host is down",
+      "ssh: connect to host pc port 22: Connection refused",
+      "ssh: connect to host pc port 22: No route to host",
+      "ssh: connect to host pc port 22: Network is unreachable",
+    ].flatMap((line) =>
+      (["unreachable", "sync", "lost"] as const).map(
+        (kind): [string, FaultSeen, string | null, null, null] => [
+          `${kind}: ${line}`,
+          { kind },
+          line,
+          null,
+          null,
+        ],
+      ),
+    ),
+    ["unreachable with no line", { kind: "unreachable" }, null, null, null],
     [
       "key no longer accepted",
       { kind: "unreachable" },
