@@ -3251,9 +3251,10 @@ const make = Effect.gen(function* () {
 
   /** The group is gone: its work stops, its threads, chat and schedules go. */
   const removeGroup = Effect.fn("AssistantGroups.removeGroup")(function* (teamId: string) {
-    const running = yield* sql<TaskRow>`
-      SELECT * FROM assistant_group_tasks WHERE team_id = ${teamId} AND status = 'running'`;
-    for (const task of running) yield* stopRun(task);
+    const inFlight = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks
+      WHERE team_id = ${teamId} AND status IN ('running', 'usage_limited')`;
+    for (const task of inFlight) yield* haltTask(task);
     yield* deleteThreads(
       yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${teamId}`,
     );

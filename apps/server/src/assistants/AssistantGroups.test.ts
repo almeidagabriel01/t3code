@@ -2652,15 +2652,25 @@ it.effect("a deleted group takes its runs, threads, chat and schedules with it",
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const go = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const waits = yield* groups.post({ teamId: TEAM, text: "@beto waits" }, h.user);
     yield* groups.post({ teamId: OTHER_TEAM, text: "@ada elsewhere" }, h.user);
+    // Beto's task waits on a usage limit: its thread must not continue it after the group is gone.
+    const limited = waits.tasks[0]!.threadId;
+    const [limitedRun] = h.runs.get(limited)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(1, "failed");
+    const before = h.dispatched.length;
     yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM });
     assert.deepEqual(h.deletedTeams, [TEAM]);
     const thread = go.tasks[0]!.threadId;
     assert.deepEqual(
-      h.dispatched.map((command) => [command.type, command.threadId]),
+      h.dispatched.slice(before).map((command) => [command.type, command.threadId]),
       [
         ["run.interrupt", thread],
+        ["thread.stop", limited],
         ["thread.delete", thread],
+        ["thread.delete", limited],
       ],
     );
     const left = yield* h.sqlRows<{ team_id: string }>(
