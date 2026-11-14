@@ -25,7 +25,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
 import * as AssistantService from "../../assistants/AssistantService.ts";
+import { hostedAppUrlConfig } from "../../cloud/publicConfig.ts";
 import * as ChannelGateway from "../ChannelGateway.ts";
 import { ChannelLanguage } from "../ChannelLanguage.ts";
 import { channelStrings } from "../channelStrings.ts";
@@ -37,6 +40,7 @@ import {
   type TelegramApi,
   type TelegramApiError,
 } from "./telegramApi.ts";
+import { formatTelegramMessages } from "./telegramText.ts";
 import { makeTelegramTransport, type TelegramSendReport } from "./telegramTransport.ts";
 
 export const TELEGRAM_CONNECTION_ID = "telegram";
@@ -93,6 +97,13 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
   const registry = yield* ChannelTransport.ChannelTransportRegistry;
   const assistants = yield* AssistantService.AssistantService;
   const channelLanguage = yield* ChannelLanguage;
+  const hostedAppUrl = yield* hostedAppUrlConfig.pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("Telegram thread links open app.t3.codes", { cause }).pipe(
+        Effect.as(DEFAULT_HOSTED_APP_URL),
+      ),
+    ),
+  );
   const layerScope = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
   const config = yield* Ref.make<TelegramConfig | null>(null);
@@ -165,8 +176,13 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
     const known = yield* Ref.get(replied);
     if (known.has(sender.userId)) return;
     yield* Ref.set(replied, new Set([...known, sender.userId].slice(-MAX_REPLIED)));
-    const text = channelStrings(yield* channelLanguage.current).approvalNotice;
-    yield* client.sendMessage({ chatId: admission.chatId, text }).pipe(Effect.ignore);
+    const language = yield* channelLanguage.current;
+    for (const text of formatTelegramMessages({
+      text: channelStrings(language).approvalNotice,
+      language,
+    })) {
+      yield* client.sendMessage({ chatId: admission.chatId, text }).pipe(Effect.ignore);
+    }
   });
 
   const setPollError = (code: TelegramChannelErrorCode | undefined) =>
@@ -191,6 +207,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
       connectionId: TELEGRAM_CONNECTION_ID,
       api: Ref.get(api),
       sql,
+      hostedAppUrl,
       report,
     }),
   );
