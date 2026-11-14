@@ -773,8 +773,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   `;
   // A team with its chat counters, recreated on every start after every column it reads. A tab
   // reads from its own cursor, else the group's read_seq; it is listed while it has unread, a wait
-  // on the user, its own cursor or working tasks (a project tab also once they stop, so an end reads
-  // apart from a move), and General while it has a request.
+  // on the user, its own cursor, working or stopped tasks (so an end reads apart from a move), and
+  // General while it has a request, which `general` tells clients.
   yield* sql`
     CREATE VIEW assistant_team_state AS
     SELECT s.*,
@@ -808,7 +808,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             ORDER BY r.id) g) AS removed_project_ids_json,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
             'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
-            'openTasks', x.open_tasks, 'doneTasks', x.done_tasks,
+            'openTasks', x.open_tasks, 'doneTasks', x.done_tasks, 'general', x.general,
             'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
             SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
@@ -841,7 +841,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             ORDER BY c.scope
           ) x
           WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
-            OR (x.done_tasks > 0 AND x.scope <> ''))
+            OR x.done_tasks > 0)
           AS scopes_json
       FROM assistant_teams t
     ) s

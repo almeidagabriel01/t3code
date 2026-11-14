@@ -321,6 +321,11 @@ export const AssistantTeamChatScope = Schema.Struct({
    * another tab; absent when none, and from older servers.
    */
   doneTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * General only: it holds a request. Without one it is listed only for its counts, and shows no
+   * tab for them alone. Absent from older servers, which list General only with a request.
+   */
+  hasRequests: Schema.optionalKey(Schema.Boolean),
 });
 export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
 
@@ -338,8 +343,9 @@ export const AssistantTeamChat = Schema.Struct({
   /** The project of the request `preview` comes from; null for none. Absent from older servers. */
   previewProjectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
   /**
-   * Per project tab (`null` = General): tabs with unread or waiting messages or their own read
-   * position, plus General when it has a request. Absent from older servers, which have no tabs.
+   * Per project tab (`null` = General): tabs with unread or waiting messages, their own read
+   * position or tasks, plus General when it has a request. Absent from older servers, which have
+   * no tabs.
    */
   scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
   /**

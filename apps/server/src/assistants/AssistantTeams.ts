@@ -49,6 +49,7 @@ const decodeScopes = Schema.decodeOption(
         title: Schema.optionalKey(Schema.NullOr(Schema.String)),
         openTasks: Schema.optionalKey(Schema.Number),
         doneTasks: Schema.optionalKey(Schema.Number),
+        general: Schema.optionalKey(Schema.Number),
       }),
     ),
   ),
@@ -105,6 +106,9 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
               ...(scope.doneTasks === undefined || scope.doneTasks === 0
                 ? {}
                 : { doneTasks: scope.doneTasks }),
+              ...(scope.projectId === null && scope.general !== undefined
+                ? { hasRequests: scope.general !== 0 }
+                : {}),
             }),
           ),
         },

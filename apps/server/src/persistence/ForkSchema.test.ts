@@ -630,6 +630,7 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
           waiting: false,
           readSeq: 0,
           openTasks: 1,
+          ...(carried === null ? { hasRequests: true } : {}),
         },
       ]);
       // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.

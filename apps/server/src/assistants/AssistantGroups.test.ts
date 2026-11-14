@@ -958,6 +958,12 @@ it.effect("the team chat names the preview's project and counts every tab's runn
       scope.doneTasks === undefined ? [] : [[String(scope.projectId ?? ""), scope.doneTasks]],
     );
     assert.deepEqual(done, [["p1", 1]]);
+    // General's work with no request (from before requests, or one deleted) tells its end too.
+    yield* sql`UPDATE assistant_group_tasks SET status = 'completed' WHERE task_id = 'gt:old'`;
+    const [ended] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const general = toAssistantTeam(ended!).chat?.scopes?.find((scope) => scope.projectId === null);
+    assert.deepEqual([general?.doneTasks, general?.hasRequests], [1, false]);
   }).pipe(Effect.provide(h.layer));
 });
 

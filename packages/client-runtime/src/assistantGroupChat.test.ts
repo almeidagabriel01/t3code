@@ -5,6 +5,7 @@ import type {
   AssistantGroupTask,
   AssistantGroupsEvent,
   AssistantId,
+  AssistantTeamChatScope,
   AssistantTeamId,
   ModelSelection,
   ProjectId,
@@ -1019,12 +1020,11 @@ describe("assistant group tabs", () => {
     { id: P3, title: "Three" },
   ];
   const member = (projectId: ProjectId) => ({ projectId, projectIds: [] });
-  const scope = (projectId: ProjectId | null, unreadCount = 0, waiting = false) => ({
-    projectId,
-    unreadCount,
-    waiting,
-    readSeq: 3,
-  });
+  const scope = (
+    projectId: ProjectId | null,
+    unreadCount = 0,
+    waiting = false,
+  ): AssistantTeamChatScope => ({ projectId, unreadCount, waiting, readSeq: 3 });
   const tabs = (
     members: ProjectId[],
     scopes: ReturnType<typeof scope>[] | undefined,
@@ -1057,6 +1057,12 @@ describe("assistant group tabs", () => {
       [P1, P2],
       [scope(P1), scope(P2), scope(null)],
       ["all", "project:p1", "project:p2", "general"],
+    ],
+    [
+      "General listed only for its work's end has no tab",
+      [P1, P2],
+      [scope(P1), scope(P2), { ...scope(null), doneTasks: 1, hasRequests: false }],
+      ["all", "project:p1", "project:p2"],
     ],
     [
       "orphan with unread sits before General",

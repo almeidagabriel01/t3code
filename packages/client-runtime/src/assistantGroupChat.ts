@@ -480,6 +480,15 @@ export function assistantGroupTabs(input: {
       (id) => id !== null && input.active === `project:${id}`,
     ) ?? null;
   const keptGeneral = input.active === "general";
+  const general = scopes.find((scope) => scope.projectId === null);
+  // General listed only for the end of work with no request has nothing to read: no tab.
+  const showsGeneral =
+    keptGeneral ||
+    (general !== undefined &&
+      (general.hasRequests !== false ||
+        general.unreadCount > 0 ||
+        general.waiting ||
+        (general.openTasks ?? 0) > 0));
   if (effective.length < 2 && keptProject === null && !keptGeneral) return null;
   const tab = (projectId: ProjectId | null, label: string): AssistantGroupTab => {
     const found = scopes.find((scope) => scope.projectId === projectId);
@@ -520,9 +529,7 @@ export function assistantGroupTabs(input: {
         assistantGroupProjectLabel(id, input.projects, scopes, groupIds, chat.removedProjectIds),
       ),
     ),
-    ...(keptGeneral || scopes.some((scope) => scope.projectId === null)
-      ? [tab(null, "General")]
-      : []),
+    ...(showsGeneral ? [tab(null, "General")] : []),
   ];
 }
 

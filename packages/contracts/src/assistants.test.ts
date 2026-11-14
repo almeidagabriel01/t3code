@@ -115,6 +115,7 @@ describe("assistantGroupFinishedScopes", () => {
       ["p"],
     ],
     ["work that only leaves a tab", [[null, 1, 1]], [["p", 1]], []],
+    ["General's work with no request ends", [[null, 1, 0]], [[null, 0, 1]], [null]],
   ] as const)("%s", (_name, before, after, expected) => {
     expect(assistantGroupFinishedScopes(chat(before), chat(after))).toEqual(expected);
   });
