@@ -225,7 +225,8 @@ Three things follow the row, none of them a new mechanism:
 - An assistant ends an event turn with `NO_REPLY` (`QUIET_REPLY`) when nothing is new.
   `assistantRunReply` is the one exit for chat apps, group chat and autonomy delivery: a quiet event
   turn posts nothing and other event turns send `briefReply`, while user and routine turns go out
-  whole. Clients drop only a reply that is the bare token, so no text is ever unreadable in T3.
+  whole. A reply is quiet only when it is the bare token (`isQuietReply`); text before a trailing
+  token goes out and shows without it (`withoutQuietToken`), on the server and in every client.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
