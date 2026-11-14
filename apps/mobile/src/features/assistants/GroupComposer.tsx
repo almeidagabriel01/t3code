@@ -298,6 +298,8 @@ export function GroupComposer(props: {
   /** The project a new request gets; null lets the lead decide. A reply's project overrides it. */
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
+  /** Any project's name in this group, a reply's included. */
+  readonly projectName: (projectId: ProjectId) => string;
   /** The model of the project the next message runs in; null hides its chip. */
   readonly projectModel: GroupProjectModel | null;
   readonly disabled: boolean;
@@ -378,9 +380,7 @@ export function GroupComposer(props: {
   const runProject = lockedProject ?? chosenProject;
   const { projectModel } = props;
   const projectName = (id: ProjectId | null) =>
-    id === null
-      ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL
-      : (props.projects.find((project) => project.id === id)?.name ?? "Project");
+    id === null ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL : props.projectName(id);
 
   const attach = async (from: "files" | "media") => {
     const problem = await (from === "files" ? attached.pick() : attached.pickMedia()).catch(

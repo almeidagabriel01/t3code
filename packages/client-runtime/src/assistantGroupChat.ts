@@ -15,6 +15,7 @@ import {
   type Assistant,
   type AssistantTeam,
   type AssistantTeamChat,
+  type AssistantTeamChatScope,
   type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantGroupMessageId,
@@ -311,6 +312,53 @@ export interface AssistantGroupTab {
   readonly readSeq: number;
 }
 
+/**
+ * A project's name anywhere in a group chat: its title, else the one the chat last knew. A
+ * project known by neither reads "Removed project", numbered by scope order when several are.
+ */
+export function assistantGroupProjectLabel(
+  projectId: ProjectId,
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
+  scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "title">> | undefined,
+): string {
+  const known = (id: ProjectId | null) =>
+    projects.find((project) => project.id === id)?.title ??
+    scopes?.find((scope) => scope.projectId === id)?.title;
+  const title = known(projectId);
+  if (title !== undefined) return title;
+  const nameless = (scopes ?? []).filter(
+    (scope) => scope.projectId !== null && known(scope.projectId) === undefined,
+  );
+  const index = nameless.findIndex((scope) => scope.projectId === projectId);
+  return index < 1 ? "Removed project" : `Removed project ${index + 1}`;
+}
+
+/** The user's project pick in the composer, for the tab it was made in. */
+export interface AssistantGroupProjectPick {
+  readonly tab: AssistantGroupTabKey | null;
+  readonly projectId: ProjectId | null;
+}
+
+/**
+ * The project a new request gets: the pick made in the open tab, else that tab's project, but
+ * none while replying, since a reply keeps its request's. Only a group project counts; null
+ * lets the lead decide.
+ */
+export function assistantGroupComposerProject(input: {
+  readonly pick: AssistantGroupProjectPick | null;
+  readonly tab: Pick<AssistantGroupTab, "key" | "projectId"> | null;
+  readonly replying: boolean;
+  readonly groupProjects: ReadonlyArray<{ readonly id: ProjectId }>;
+}): ProjectId | null {
+  const chosen =
+    input.pick !== null && input.pick.tab === (input.tab?.key ?? null)
+      ? input.pick.projectId
+      : input.replying
+        ? null
+        : (input.tab?.projectId ?? null);
+  return input.groupProjects.some((project) => project.id === chosen) ? chosen : null;
+}
+
 /** Any tab waits on the user: the dot on All and on the group's row. */
 export function assistantGroupChatWaiting(chat: Pick<AssistantTeamChat, "scopes"> | undefined) {
   return chat?.scopes?.some((scope) => scope.waiting) ?? false;
@@ -364,10 +412,6 @@ export function assistantGroupTabs(input: {
   if (keptProject !== null && !effective.includes(keptProject) && !orphans.includes(keptProject)) {
     orphans.push(keptProject);
   }
-  const orphanLabel = (projectId: ProjectId) =>
-    title.get(projectId) ??
-    scopes.find((scope) => scope.projectId === projectId)?.title ??
-    "Removed project";
   return [
     {
       key: "all",
@@ -379,7 +423,7 @@ export function assistantGroupTabs(input: {
       readSeq: chat.readSeq,
     },
     ...effective.map((id) => tab(id, title.get(id)!)),
-    ...orphans.map((id) => tab(id, orphanLabel(id))),
+    ...orphans.map((id) => tab(id, assistantGroupProjectLabel(id, input.projects, scopes))),
     ...(keptGeneral || scopes.some((scope) => scope.projectId === null)
       ? [tab(null, "General")]
       : []),

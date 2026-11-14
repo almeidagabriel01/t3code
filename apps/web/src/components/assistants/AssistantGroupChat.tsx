@@ -16,6 +16,9 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProject,
+  assistantGroupProjectLabel,
+  type AssistantGroupProjectPick,
   assistantGroupTabView,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
   type AssistantGroupChatState,
@@ -1035,9 +1038,8 @@ function GroupFeed(props: {
       ? null
       : pages.reduce((state, page) => applyAssistantGroupHistory(state, page), props.live);
   const feed = chat === null ? [] : assistantGroupRequestFeed(chat);
-  const projectTitle = (id: ProjectId) =>
-    projects.find((project) => project.id === id)?.title ?? null;
-  const projectName = (id: ProjectId) => projectTitle(id) ?? "Unknown project";
+  const projectName = (id: ProjectId) =>
+    assistantGroupProjectLabel(id, projects, team.chat?.scopes);
   // A request that left this tab's project since it was sent no longer belongs here.
   const items = feed.filter(
     (item) => item.kind !== "request" || assistantGroupInScope(item.block, scope),
@@ -1347,7 +1349,7 @@ function GroupFeed(props: {
                           ? undefined
                           : block.projectId === null
                             ? null
-                            : (projectTitle(block.projectId) ?? "Removed project")
+                            : projectName(block.projectId)
                       }
                       expanded={expanded}
                       onToggle={() =>
@@ -1412,11 +1414,8 @@ export function AssistantGroupChat(props: {
   const flows = useAssistantTeamFlows(environmentId);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [memberModel, setMemberModel] = useState<Assistant | null>(null);
-  // The composer's own project pick, kept only while the tab it was made in stays open.
-  const [composerPick, setComposerPick] = useState<{
-    readonly tab: AssistantGroupTabKey | null;
-    readonly projectId: ProjectId | null;
-  } | null>(null);
+  // The composer's own project pick, until a send or another tab.
+  const [composerPick, setComposerPick] = useState<AssistantGroupProjectPick | null>(null);
   const feedHandle = useRef<GroupFeedHandle>(null);
   const [savedTab, setSavedTab] = useLocalStorage(
     `t3code:group-tab:${environmentId}:${teamId}`,
@@ -1444,7 +1443,7 @@ export function AssistantGroupChat(props: {
   const tabKey = tab?.key ?? null;
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const projectName = (id: ProjectId) =>
-    projects.find((project) => project.id === id)?.title ?? "Unknown project";
+    assistantGroupProjectLabel(id, projects, team?.chat?.scopes);
   const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(
     members,
     team?.projectIds ?? [],
@@ -1457,13 +1456,12 @@ export function AssistantGroupChat(props: {
           .sort((left, right) => left.seq - right.seq)
           .map((message) => ({ id: message.id, text: message.text }));
   // A project tab sends there; All, General and a removed project's tab leave it to the lead.
-  const pickedProject =
-    composerPick !== null && composerPick.tab === tabKey
-      ? composerPick.projectId
-      : (tab?.projectId ?? null);
-  const groupComposerProject = groupProjects.some((project) => project.id === pickedProject)
-    ? pickedProject
-    : null;
+  const groupComposerProject = assistantGroupComposerProject({
+    pick: composerPick,
+    tab,
+    replying: replyTo !== null,
+    groupProjects,
+  });
   // The project the next message runs in: a reply's request project, else the composer's.
   const modelProjectId = replyTo?.projectId ?? groupComposerProject;
   const modelProject =
@@ -1492,6 +1490,7 @@ export function AssistantGroupChat(props: {
       feedHandle.current?.followEnd();
       // A reply or tab the user opened while the post was on its way stays.
       setReplyTo((current) => (current === replyTo ? null : current));
+      setComposerPick((current) => (current === composerPick ? null : current));
       // A send that lands in another tab's project takes the user there, so it never vanishes.
       const landed = replyTo?.projectId ?? groupComposerProject;
       if (tabs !== null) {
@@ -1552,6 +1551,7 @@ export function AssistantGroupChat(props: {
               setSavedTab(key);
               // An open reply would answer a request out of view; the draft itself stays.
               setReplyTo(null);
+              setComposerPick(null);
             }}
           />
         )}

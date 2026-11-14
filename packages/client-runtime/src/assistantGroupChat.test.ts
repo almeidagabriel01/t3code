@@ -18,6 +18,7 @@ import {
   assistantGroupTabsPending,
   assistantGroupTabView,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProject,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
@@ -1145,6 +1146,38 @@ describe("assistant group tabs", () => {
       "Two",
       "Old three",
     ]);
+    // Two projects the chat never knew a title for still read apart.
+    const lost = (id: string) => scope(id as ProjectId, 1);
+    assert.deepStrictEqual(
+      labels([lost("x"), { ...titled, unreadCount: 1 }, lost("y")], "all", projects.slice(0, 2)),
+      ["All", "One", "Two", "Removed project", "Old three", "Removed project 2"],
+    );
+  });
+
+  it.each([
+    ["a pick in the open tab", { tab: "project:p1", projectId: P2 }, "project:p1", false, P2],
+    ["a pick for lead decides", { tab: "project:p1", projectId: null }, "project:p1", false, null],
+    ["a pick from another tab lapses", { tab: "all", projectId: P2 }, "project:p1", false, P1],
+    ["the open tab's project", null, "project:p2", false, P2],
+    ["All leaves it to the lead", null, "all", false, null],
+    ["a reply keeps its request's", null, "project:p2", true, null],
+    ["a pick still counts in a reply", { tab: "all", projectId: P1 }, "all", true, P1],
+    ["a project that left the group", { tab: "all", projectId: P3 }, "all", false, null],
+    ["a removed project's tab", null, "project:p3", false, null],
+    ["no tabs", { tab: null, projectId: P1 }, null, false, P1],
+  ] as const)("composer project: %s", (_name, pick, open, replying, expected) => {
+    const opened = tabs([P1, P2], [scope(P1), scope(P2), scope(P3, 1)])?.find(
+      (tab) => tab.key === open,
+    );
+    assert.strictEqual(
+      assistantGroupComposerProject({
+        pick,
+        tab: opened ?? null,
+        replying,
+        groupProjects: [{ id: P1 }, { id: P2 }],
+      }),
+      expected,
+    );
   });
 
   it.each([

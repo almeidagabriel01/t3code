@@ -1847,6 +1847,20 @@ describe("requests", () => {
     vi.useRealTimers();
   });
 
+  it("names a removed project by its last known title in its tab and a reply's project", async () => {
+    mocks.preferences = { assistantGroupTabs: { "hub:g1": "project:p9" } };
+    mocks.live = snapshot(
+      [message("r4", 7, { ...user, text: "old", requestId: "r4", projectId: "p9", title: "Old" })],
+      [],
+    );
+    const gone = { projectId: "p9", unreadCount: 1, waiting: false, readSeq: 6, title: "Site" };
+    mocks.teams = [team({ chat: { ...read, unreadCount: 3, scopes: [...SCOPES, gone] } })];
+    render();
+    expect(selected("Site, 1 unread")).toBe("true");
+    await click("Reply to request Old");
+    expect(byLabel("Project: Site")).not.toBeNull();
+  });
+
   it("follows a new request to the tab that holds it, and stays in All", async () => {
     tabbed("project:p1");
     expect(byLabel("Project: Alpha")).not.toBeNull();

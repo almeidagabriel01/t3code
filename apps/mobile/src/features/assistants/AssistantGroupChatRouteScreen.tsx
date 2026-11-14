@@ -15,6 +15,9 @@ import {
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProject,
+  assistantGroupProjectLabel,
+  type AssistantGroupProjectPick,
   assistantGroupTabView,
   type AssistantGroupChatState,
   type AssistantGroupTab,
@@ -869,8 +872,11 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
     return member === undefined || member.archivedAt !== null ? [] : [member];
   });
   const projectName = (id: ProjectId) =>
-    projects.find((project) => project.environmentId === environmentId && project.id === id)
-      ?.title ?? "Project";
+    assistantGroupProjectLabel(
+      id,
+      projects.filter((project) => project.environmentId === environmentId),
+      team?.chat?.scopes,
+    );
   const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(
     members,
     team?.projectIds ?? [],
@@ -1073,10 +1079,6 @@ function GroupFeed({
       )?.workspaceRoot ?? null
     );
   };
-  // An orphan's project is gone from the environment, unlike a known one outside the group.
-  const chipLabel = (projectId: ProjectId) =>
-    projects.find((project) => project.environmentId === environmentId && project.id === projectId)
-      ?.title ?? "Removed project";
 
   const pickProject = async (block: AssistantGroupRequestBlock, project: GroupComposerProject) => {
     const reply = await actions.post({
@@ -1157,7 +1159,7 @@ function GroupFeed({
               isAll ? (
                 <AllRequestLine
                   block={item.block}
-                  chip={item.block.projectId === null ? null : chipLabel(item.block.projectId)}
+                  chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
                   expanded={item.expanded}
                   onToggle={() => toggle(item.block, item.expanded)}
                 />
@@ -1264,18 +1266,18 @@ export function AssistantGroupChatRouteScreen({
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const feed = useRef<GroupFeedHandle>(null);
   const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
-  // undefined: the user picked nothing, so the tab's project applies; null: the lead decides.
-  const [projectPick, setProjectPick] = useState<ProjectId | null | undefined>(undefined);
+  // The composer's own project pick, until a send or another tab.
+  const [projectPick, setProjectPick] = useState<AssistantGroupProjectPick | null>(null);
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
   const [tabsHeight, setTabsHeight] = useState(0);
 
-  const tabProject =
-    tab !== null && groupProjects.some((project) => project.id === tab.projectId)
-      ? tab.projectId
-      : null;
-  const composerProject =
-    projectPick !== undefined ? projectPick : replyTo === null ? tabProject : null;
+  const composerProject = assistantGroupComposerProject({
+    pick: projectPick,
+    tab,
+    replying: replyTo !== null,
+    groupProjects,
+  });
   // The project the next message runs in: a reply's request project, else the composer's.
   const modelProjectId = replyTo?.projectId ?? composerProject;
   const projectModel = useGroupProjectModel(
@@ -1289,7 +1291,7 @@ export function AssistantGroupChatRouteScreen({
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
     savedTab.save(next.key);
-    setProjectPick(undefined);
+    setProjectPick(null);
     setReplyTo(null);
   };
 
@@ -1308,7 +1310,7 @@ export function AssistantGroupChatRouteScreen({
     if (reply.ok) {
       // What the user changed while the post was on its way stays: a new reply, pick or tab.
       setReplyTo((current) => (current === replyTo ? null : current));
-      setProjectPick((current) => (current === projectPick ? undefined : current));
+      setProjectPick((current) => (current === projectPick ? null : current));
       feed.current?.scrollToEnd();
       // A request that lands in another project's tab would vanish from this one: follow it.
       const landed = replyTo?.projectId ?? projectId ?? null;
@@ -1539,7 +1541,8 @@ export function AssistantGroupChatRouteScreen({
         leadId={team.leadId}
         projects={groupProjects}
         projectId={composerProject}
-        onProjectChange={setProjectPick}
+        onProjectChange={(projectId) => setProjectPick({ tab: tab?.key ?? null, projectId })}
+        projectName={projectName}
         projectModel={projectModel}
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}

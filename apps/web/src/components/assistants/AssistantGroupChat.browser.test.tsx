@@ -1218,7 +1218,13 @@ it("narrows the feed to a project tab, keeps the draft, sets the composer's proj
       scope: { projectId: SITE_PROJECT },
     }),
   );
-  // All and General leave the project to the lead.
+  // All and General leave the project to the lead; a pick lasts only in the tab it was made in.
+  await userEvent.click(tab("All"));
+  await expect.element(composerProject()).toHaveTextContent("Lead decides");
+  await userEvent.click(composerProject());
+  await userEvent.click(page.getByRole("option", { name: "site" }));
+  await userEvent.click(tab("render"));
+  await expect.element(composerProject()).toHaveTextContent("render");
   await userEvent.click(tab("All"));
   await expect.element(composerProject()).toHaveTextContent("Lead decides");
   await userEvent.click(tab("render"));
@@ -1318,6 +1324,8 @@ it("picks a project for a new request and keeps a reply in its request's project
       { teamId: "t1", text: "@ada new work", projectId: PROJECT_ID },
     ]),
   );
+  // The pick was for that request: the next one is the lead's to place again.
+  await expect.element(composerProject()).toHaveTextContent("Lead decides");
   await userEvent.click(
     blocks().first().getByRole("button", { name: "Open request Budget review" }),
   );
