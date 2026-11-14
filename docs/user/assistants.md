@@ -391,8 +391,8 @@ apart, give it its own project. See [Memory](./memory.md).
 
 ## Reset, restore, archive and delete
 
-- **Reset conversation** starts a fresh conversation with the same settings and model. The earlier
-  one is archived.
+- **Reset conversation** starts a fresh conversation with the same settings, on the model its
+  project sets for the assistant. The earlier one is archived.
 - **Restore** brings back one of an assistant's earlier conversations from **Archived threads**. The
   current one is archived in its place.
 - **Archive** hides an assistant and keeps its history. Its handle stays reserved, so an archived

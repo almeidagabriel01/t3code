@@ -251,7 +251,9 @@ type DelegateTaskInput = {
 
 Runtime and interaction modes inherit from the parent when omitted. Provider
 and model follow the project's model precedence, not the parent's model, and
-never switch to a usage-limit fallback; to keep the parent's model, name it.
+never switch to a usage-limit fallback; to keep the parent's model, name it. A
+task in a linked environment without a model follows its project's precedence
+there.
 A driver-only target prefers the project default's instance when it can run
 child tasks, and otherwise selects an available instance of that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
@@ -483,7 +485,9 @@ Without a signature, anyone with the webhook URL can trigger a run.
 Signature checks, filters, and dedupe can skip a webhook request.
 `bindToCurrentThread` defaults to `true` only when the caller has a thread in
 the task's project; otherwise it defaults to `false`. Bound runs post into
-that thread; unbound runs each launch a fresh thread in the task's project.
+that thread; unbound runs each launch a fresh thread in the task's project, on
+the model the project's precedence picks when the run starts. A later save that
+changes the task's model pins it.
 Explicit `bindToCurrentThread: true` without a caller thread in that project
 is rejected. Pausing uses `schedule_task` with `scheduledTaskId` and `enabled: false`;
 deletion is permanent.
