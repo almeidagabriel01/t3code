@@ -13,6 +13,7 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type ModelSelection,
@@ -1046,7 +1047,26 @@ it.effect(
           [p2]: { defaultThreadEnvMode: "worktree" },
         },
       });
-      assert.deepEqual(Groups.projectModelChanges(before, after), [p1]);
+      const candidates = [
+        { id: p1, workspaceRoot: "/work/p1" },
+        { id: p2, workspaceRoot: "/work/p2" },
+      ];
+      assert.deepEqual(Groups.projectModelChanges(before, after, candidates), [p1]);
+      // A folder rule or a provider switched off changes the effective default too.
+      const folder = {
+        ...after,
+        folderModelDefaults: [{ folder: "/work/p2", modelSelection: selection(claude, "folder") }],
+      };
+      assert.deepEqual(Groups.projectModelChanges(after, folder, candidates), [p2]);
+      const claudeOff = {
+        ...folder,
+        providerInstances: {
+          ...folder.providerInstances,
+          [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
+        },
+      };
+      assert.deepEqual(Groups.projectModelChanges(folder, claudeOff, candidates), [p1, p2]);
+      assert.deepEqual(Groups.projectModelChanges(claudeOff, claudeOff, candidates), []);
       yield* groups.followProjectModels([p1]);
       assert.deepEqual(
         h.dispatched

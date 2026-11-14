@@ -43,6 +43,8 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type ProjectId,
+  type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   type ServerSettings as ServerSettingsValue,
   type RunId,
   runtimeModeForToolAccess,
@@ -50,6 +52,7 @@ import {
   type DecisionId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -178,21 +181,42 @@ const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
-/** Projects whose own default model or per-assistant models differ between two settings. */
+/**
+ * Candidate projects whose effective model inputs differ between two settings: the project's
+ * resolved default (own, folder rule or global), its per-assistant models, and which provider
+ * instances it may use.
+ */
 export const projectModelChanges = (
-  previous: Pick<ServerSettingsValue, "projectSettingsOverrides">,
-  next: Pick<ServerSettingsValue, "projectSettingsOverrides">,
+  previous: ServerSettingsValue,
+  next: ServerSettingsValue,
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string | null }>,
 ): ReadonlyArray<ProjectId> => {
-  const key = (settings: typeof previous, projectId: string) => {
-    const project = settings.projectSettingsOverrides[projectId as ProjectId];
-    return JSON.stringify([project?.defaultModelSelection, project?.assistantModelSelections]);
+  const instanceIds = (projectId: ProjectId) =>
+    [previous, next].flatMap((settings) => [
+      ...Object.keys(settings.providerInstances),
+      ...Object.keys(settings.projectSettingsOverrides[projectId]?.providerInstances ?? {}),
+    ]) as ProviderInstanceId[];
+  const key = (
+    settings: ServerSettingsValue,
+    project: (typeof projects)[number],
+    instances: ReadonlyArray<ProviderInstanceId>,
+  ) => {
+    const resolved = resolveProjectSettings(settings, project.id, {
+      workspaceRoot: project.workspaceRoot ?? undefined,
+    });
+    return JSON.stringify([
+      resolved.settings.defaultModelSelection,
+      resolved.sources.defaultModelSelection,
+      settings.projectSettingsOverrides[project.id]?.assistantModelSelections,
+      instances.map((id) => resolveProjectProviderInstanceEnabled(settings, project.id, id)),
+    ]);
   };
-  return [
-    ...new Set([
-      ...Object.keys(previous.projectSettingsOverrides),
-      ...Object.keys(next.projectSettingsOverrides),
-    ]),
-  ].filter((projectId) => key(previous, projectId) !== key(next, projectId)) as ProjectId[];
+  return projects
+    .filter((project) => {
+      const instances = [...new Set(instanceIds(project.id))];
+      return key(previous, project, instances) !== key(next, project, instances);
+    })
+    .map((project) => project.id);
 };
 const LIVE_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"] as const;
 const ACTIVE_RUN_STATUSES = ["preparing", "starting", "running", "waiting"] as const;
@@ -1138,6 +1162,32 @@ const make = Effect.gen(function* () {
       }),
     );
   }, quietly("project model change"));
+
+  /** Only the projects open requests' threads work in are compared, so most changes cost one query. */
+  const followSettingsChange = Effect.fn("AssistantGroups.followSettingsChange")(function* (
+    previous: ServerSettingsValue,
+    next: ServerSettingsValue,
+  ) {
+    const projectIds = new Set<string>();
+    for (const row of yield* openRequestThreads) {
+      const thread = yield* inspectThread(row.thread_id as ThreadId);
+      if (thread !== undefined && thread.deletedAt === null) projectIds.add(thread.projectId);
+    }
+    if (projectIds.size === 0) return;
+    const projects = yield* sql<{ readonly project_id: string; readonly workspace_root: string }>`
+      SELECT project_id, workspace_root FROM projection_projects
+      WHERE project_id IN ${sql.in([...projectIds])}`;
+    yield* followProjectModels(
+      projectModelChanges(
+        previous,
+        next,
+        projects.map((row) => ({
+          id: row.project_id as ProjectId,
+          workspaceRoot: row.workspace_root,
+        })),
+      ),
+    );
+  }, quietly("settings change"));
 
   /**
    * A request that ended with every task delivered or cancelled settles its members' threads: they
@@ -3385,9 +3435,9 @@ const make = Effect.gen(function* () {
     let previousSettings = yield* serverSettings.getSettings.pipe(Effect.orDie);
     yield* forkParked(
       Stream.runForEach(settingsChanges, (next) => {
-        const changed = projectModelChanges(previousSettings, next);
+        const previous = previousSettings;
         previousSettings = next;
-        return followProjectModels(changed);
+        return followSettingsChange(previous, next);
       }).pipe(quietly("settings stream")),
     );
     yield* forkParked(
