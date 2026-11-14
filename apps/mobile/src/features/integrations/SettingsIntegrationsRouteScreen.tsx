@@ -130,7 +130,8 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         />
       )}
       {menu.length === 0 ? (
-        <View className="w-3" />
+        // Same box as RowMenuButton, so every row's action button lines up.
+        <View className="size-9" />
       ) : (
         <RowMenuButton
           label={`${row.title} actions`}
