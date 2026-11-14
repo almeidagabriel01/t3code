@@ -116,6 +116,14 @@ export const remoteCommand = (
   return [remote, ...args.map(arg)];
 };
 
+const physical = (path: string) => {
+  try {
+    return NodeFS.realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
 /**
  * Runs `command` with each `node_modules/.bin` from its folder up to the checkout first on PATH,
  * so Linux finds `vp` and `vitest` the way this Mac does: neither is global there, and
@@ -129,7 +137,10 @@ export const withProjectBins = (
   env: ReadonlyArray<string> = [],
   startMarker: string | null = null,
 ) => {
-  const depth = NodePath.relative(root, cwd).split(NodePath.sep).filter(Boolean).length;
+  // `remoto` starts in `pwd -P` there: a link inside the checkout changes how deep that is.
+  const depth = NodePath.relative(physical(root), physical(cwd))
+    .split(NodePath.sep)
+    .filter(Boolean).length;
   const folders = Array.from({ length: depth + 1 }, (_, up) =>
     up === 0 ? "$PWD" : `\${PWD%${"/*".repeat(up)}}`,
   );

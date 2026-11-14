@@ -45,17 +45,20 @@ import {
   scriptReader,
   setProgress,
   setQos,
-  startFolder,
   tryStart,
 } from "./queueFile.ts";
 import {
   DEFAULT_MACHINE_CONFIG,
   INSTALL_FAILED,
   linkAttempts,
+  bodyVerdict,
   linkMachine,
+  movedPart,
   NEEDS_GIT,
   needsGit,
   outsideTie,
+  shellTextOf,
+  startFolder,
 } from "./runner.ts";
 import {
   bringBack,
@@ -1032,23 +1035,42 @@ const jobNote = (text: string) => {
 
 const runLinuxPart = async (
   dir: string,
-  program: string | undefined,
-  args: ReadonlyArray<string>,
+  given: string | undefined,
+  givenArgs: ReadonlyArray<string>,
 ) => {
   const id = process.env[LINUX_JOB_ENV];
   const remoto = process.env.T3CODE_REMOTO;
-  if (program === undefined || id === undefined || remoto === undefined) {
+  if (given === undefined || id === undefined || remoto === undefined) {
     process.stderr.write("[t3 heavy] linux-part runs only inside a Linux job.\n");
     process.exit(2);
   }
   const doc = readDoc(dir);
-  const cwd = process.cwd();
-  const root = gitRootOf(cwd);
+  const home = NodeOS.homedir();
   // The shell has expanded the part by now: what only it knew (`$FILES`, `cd $d`) is plain.
-  if (root === null) {
+  // A folder it names in another checkout is where it runs: that checkout is the one synced.
+  // Its folder and root keep the spelling it used, so its other paths compare alike.
+  const moved = movedPart([given, ...givenArgs], process.cwd(), home, (folder) =>
+    NodeFS.existsSync(folder) ? gitRootOf(folder) : null,
+  );
+  const cwd = moved?.cwd ?? process.cwd();
+  const [program, ...args] = moved?.values ?? [given, ...givenArgs];
+  const root = gitRootOf(cwd);
+  if (root === null || program === undefined) {
     return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
   }
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
+  // A `sh -c` text goes whole: judged again expanded, so it never names a folder Linux lacks.
+  const text = shellTextOf([program, ...args]);
+  if (text !== undefined) {
+    const verdict = bodyVerdict(text, cwd, root, {
+      config: configFor(doc, cwd),
+      home,
+      rootOf: gitRootOf,
+    });
+    if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") {
+      return endLine(dir, id, { kind: "mac", reason: verdict.reason! });
+    }
+  }
   const env = args.includes("check:changed") ? changedInputs(args, cwd, root) : [];
   if (env === null) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   // A script outside the checkout goes as its text: its path does not exist in the Linux copy.

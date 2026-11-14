@@ -76,7 +76,7 @@ describe("running on Linux through remoto", () => {
     ["vp", ["test", "/tmp/out.json", "--x=/tmp/y"], ["vp", "test", "/tmp/out.json", "--x=/tmp/y"]],
     ["/w/repo/node_modules/.bin/vitest", ["run"], ["../../node_modules/.bin/vitest", "run"]],
     ["/w/repo/apps/web/run.sh", [], ["./run.sh"]],
-    ["./scripts/check.sh", [], ["./scripts/check.sh"]],
+    ["./scripts/check.sh", ["--all"], ["./scripts/check.sh", "--all"]],
   ] as const)("%s %j runs there as %j", (program, args, expected) => {
     expect(remoteCommand(program, args, "/w/repo/apps/web", "/w/repo")).toEqual(expected);
   });
@@ -150,6 +150,51 @@ describe("running on Linux through remoto", () => {
     expect(
       remoteCommand("/bin/sh", ["-ec", text], "/Users/me/wt/apps/web", "/Users/me/wt", "/Users/me"),
     ).toEqual(["bash", "-ec", expected]);
+  });
+
+  it.each([
+    ["/r/apps/web/a.ts /r", `"$T3_COPY"'/apps/web/a.ts' "$T3_COPY"`],
+    // Not a sibling such as `/r-2`, nor a longer path holding `/r`; a flag's value and quotes are.
+    [
+      "/r-2/a /r2/a /x/r/a --dir=/r/b '/r'",
+      `/r-2/a /r2/a /x/r/a '--dir='"$T3_COPY"'/b' "$T3_COPY"`,
+    ],
+  ])("sh -c %j from /r/apps runs there as %j", (text, expected) => {
+    expect(remoteCommand("/bin/sh", ["-c", text], "/r/apps", "/r", "/Users/me")).toEqual([
+      "bash",
+      "-c",
+      expected,
+    ]);
+  });
+
+  // `remoto` syncs the folder's git root as `pwd -P` sees it, and starts in the same folder there.
+  it.each([
+    ["the repo root", "", "", "/apps/web", `cd "$T3_COPY"'/apps/web' && vp test`],
+    ["a subfolder", "", "/apps/web", "'/apps'", `cd "$T3_COPY"'/apps' && vp test`],
+    ["a folder outside git", "plain", "", "/a.ts", `vp test "$T3_COPY"'/a.ts' /etc/x`],
+  ])("from %s, a Mac path inside the copy points at it", async (_where, kind, sub, path, sent) => {
+    const repo = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(dir, "t3-repo-")));
+    if (kind === "") NodeFS.mkdirSync(NodePath.join(repo, ".git"));
+    NodeFS.mkdirSync(NodePath.join(repo, "apps", "web"), { recursive: true });
+    const quoted = path.startsWith("'") ? `'${repo}${path.slice(1)}` : `${repo}${path}`;
+    const line = kind === "" ? `cd ${quoted} && vp test` : `vp test ${quoted} /etc/x`;
+    const stdout: Buffer[] = [];
+    const run = startLinuxRun({
+      // Past the PATH wrapper, to the command it runs.
+      remoto: fake('[ "$4" = t3 ] && shift 4; printf "%s\\n" "$@"'),
+      program: `${repo}/node_modules/.bin/zsh`,
+      args: ["-c", line],
+      cwd: `${repo}${sub}`,
+      root: repo,
+      environment: process.env,
+      machine: DEFAULT_MACHINE_CONFIG,
+      macOnly: [],
+      onProgress: () => {},
+      stdout: (chunk) => stdout.push(chunk),
+      stderr: () => {},
+    });
+    await run.done;
+    expect(Buffer.concat(stdout).toString("utf8")).toBe(`bash\n-c\n${sent}\n`);
   });
 
   it("an absolute cd into the checkout lands in its copy there", async () => {

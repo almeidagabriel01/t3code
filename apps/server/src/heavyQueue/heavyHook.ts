@@ -131,15 +131,28 @@ export const gitCommand = (values: ReadonlyArray<string>, at: number) => {
   return { sub, dirs };
 };
 
-/** Program and subcommand words with assignments, prefixes and flags removed. */
+/** Options that name the folder a program works in (`pnpm -C <dir>`), by program. */
+// ponytail: these tools only; add one when another's folder flag shows up.
+export const FOLDER_FLAGS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  pnpm: ["-C", "--dir"],
+  npm: ["-C", "--prefix"],
+  yarn: ["--cwd"],
+  bun: ["--cwd"],
+  make: ["-C", "--directory"],
+};
+
+/** Program and subcommand words with assignments, prefixes, flags and folder values removed. */
 const wordsAt = (values: ReadonlyArray<string>, from: number) => {
   const at = programAt(values, from);
   const program = values[at] === undefined ? "" : base(values[at]!);
   const rest = values.slice(program === "git" ? gitCommand(values, at).sub : at + 1);
+  const folderFlags = FOLDER_FLAGS[program] ?? [];
   return {
     at,
     program,
-    words: rest.filter((value) => !value.startsWith("-")),
+    words: rest.filter(
+      (value, index) => !value.startsWith("-") && !folderFlags.includes(rest[index - 1] ?? ""),
+    ),
     flags: rest.filter((value) => value.startsWith("-")),
   };
 };

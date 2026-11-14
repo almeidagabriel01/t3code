@@ -274,6 +274,12 @@ describe("an agent's own remoto call", () => {
       "vp test run src/a.test.ts",
     ],
     [`cd "/a b" && cd 'c' && remoto vp test`, ["/a b", "c"], true, "vp test"],
+    [
+      "cd /Users/me/repo/apps/web && remoto pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+      ["/Users/me/repo/apps/web"],
+      true,
+      "pnpm exec vp test run a.test.ts 2>&1 | grep -E x",
+    ],
     ["  remoto ./scripts/check.sh --all", [], true, "./scripts/check.sh --all"],
     ["cd /w && vp test run", ["/w"], false, "vp test run"],
     ["cd /w && cd $X && remoto vp test", ["/w"], true, "cd $X && vp test"],

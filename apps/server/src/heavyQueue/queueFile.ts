@@ -56,6 +56,7 @@ import {
   nextHealth,
   planRoutes,
   runnerConfigFor,
+  startFolder,
   UNKNOWN_HEALTH,
   type HealthCheck,
   type LinuxHealth,
@@ -1336,7 +1337,3 @@ export const settleCopyRemovals = (
     }),
     now,
   );
-
-/** Where a shell line's leading `cd` folders (from `lineParts`) land, starting at `cwd`. */
-export const startFolder = (dirs: ReadonlyArray<string>, cwd: string, home: string) =>
-  dirs.reduce((at, dir) => NodePath.resolve(at, dir.replace(/^~(?=$|\/)/, home)), cwd);
