@@ -255,7 +255,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
       for (const kind of input.channel === undefined
         ? (["telegram", "imessage"] as const)
         : [input.channel]) {
-        requeued[kind] = yield* outbox.resend(kind);
+        requeued[kind] = yield* outbox.resend(kind, { recentOnly: true });
       }
       return { requeued } satisfies Out;
     }

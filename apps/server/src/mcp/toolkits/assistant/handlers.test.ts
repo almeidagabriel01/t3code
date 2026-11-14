@@ -332,9 +332,9 @@ const harness = (
               }),
           }),
           Layer.mock(ChannelOutbox.ChannelOutbox)({
-            resend: (kind) =>
+            resend: (kind, options) =>
               Effect.sync(() => {
-                resent.push(kind);
+                resent.push(options?.recentOnly ? kind : `${kind} (all)`);
                 return kind === "telegram" ? 2 : 0;
               }),
           }),

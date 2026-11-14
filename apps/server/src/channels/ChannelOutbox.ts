@@ -42,6 +42,22 @@ interface OutboxRow {
   readonly last_error_code: string | null;
 }
 
+/**
+ * Forgets old records of sent pieces, but keeps those of a delivery still waiting or undelivered:
+ * they are what keeps a later retry or resend from repeating a piece that already arrived.
+ */
+export const forgetSentPieces = (
+  sql: SqlClient.SqlClient,
+  table: "telegram_sent" | "imessage_sent",
+  beforeMs: number,
+) =>
+  sql`
+    DELETE FROM ${sql(table)} WHERE sent_at_ms < ${beforeMs}
+      AND delivery_id NOT IN (SELECT delivery_id FROM channel_outbox WHERE state != 'sent')`.pipe(
+    Effect.asVoid,
+    Effect.orDie,
+  );
+
 /** Adds the channel's undelivered count to each status a settings service streams. */
 export const withUndeliveredCount = <S extends object>(
   outbox: ChannelOutbox["Service"],
@@ -76,8 +92,14 @@ export class ChannelOutbox extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     /** How many deliveries to this kind of channel ran out of tries; current value first. */
     readonly undeliveredCount: (kind: ChannelKind) => Stream.Stream<number>;
-    /** Puts every undelivered message of this kind back in line; returns how many. */
-    readonly resend: (kind: ChannelKind) => Effect.Effect<number>;
+    /**
+     * Puts the undelivered messages of this kind back in line; returns how many. `recentOnly`
+     * keeps to the last day, so an agent never revives a stale reply the user did not ask for.
+     */
+    readonly resend: (
+      kind: ChannelKind,
+      options?: { readonly recentOnly?: boolean },
+    ) => Effect.Effect<number>;
   }
 >()("t3/channels/ChannelOutbox") {}
 
@@ -246,11 +268,13 @@ const make = Effect.gen(function* () {
 
   const resend: ChannelOutbox["Service"]["resend"] = Effect.fn("ChannelOutbox.resend")(function* (
     kind,
+    options,
   ) {
     const now = yield* nowIso;
+    const since = options?.recentOnly ? yield* inSeconds(-REQUEUE_WINDOW_HOURS * 3600) : "";
     const requeued = yield* sql`
         UPDATE channel_outbox SET state = 'pending', attempts = 0, next_attempt_at = ${now}
-        WHERE state IN ('failed', 'ambiguous') AND ${kindOf} = ${kind}
+        WHERE state IN ('failed', 'ambiguous') AND ${kindOf} = ${kind} AND created_at >= ${since}
         RETURNING delivery_id`;
     yield* countUndelivered;
     yield* wake;

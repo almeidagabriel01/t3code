@@ -42,6 +42,7 @@ import type * as ServerConfig from "../../config.ts";
 import { matchesImageSignature } from "../../guest/guestAttachments.ts";
 import type * as DocumentText from "../../provider/DocumentText.ts";
 import * as ChannelGateway from "../ChannelGateway.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import { ChannelLanguage } from "../ChannelLanguage.ts";
 import { channelStrings } from "../channelStrings.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
@@ -411,9 +412,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
       yield* saveOffset(botId, acknowledged);
     }
     const now = (yield* DateTime.now).epochMilliseconds;
-    yield* sql`DELETE FROM telegram_sent WHERE sent_at_ms < ${now - SENT_RETENTION_MS}`.pipe(
-      Effect.orDie,
-    );
+    yield* ChannelOutbox.forgetSentPieces(sql, "telegram_sent", now - SENT_RETENTION_MS);
     return grew ? ALBUM_WAIT : Duration.zero;
   });
 

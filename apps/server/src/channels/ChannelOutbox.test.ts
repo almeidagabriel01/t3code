@@ -295,6 +295,52 @@ it.effect("resend puts every undelivered message of a channel back in line", () 
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("an agent's resend keeps to the last day; Settings resends everything", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { transport } = fakeTransport(() =>
+      Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" })),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("old"));
+    yield* outbox.drain;
+    yield* TestClock.adjust("25 hours");
+    yield* outbox.enqueue(message("new"));
+    yield* outbox.drain;
+    assert.equal(yield* outbox.resend("imessage", { recentOnly: true }), 1);
+    yield* outbox.drain;
+    assert.equal(yield* outbox.resend("imessage"), 2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("old records of sent pieces are kept while their delivery is still undelivered", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const sql = yield* SqlClient.SqlClient;
+    const { transport } = fakeTransport((m) =>
+      m.deliveryId === "stuck"
+        ? Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" }))
+        : Effect.succeed("ts"),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("stuck"));
+    yield* outbox.enqueue(message("done"));
+    yield* outbox.drain;
+    for (const id of ["stuck", "done", "gone"]) {
+      yield* sql`INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms)
+        VALUES (${id}, 0, 'chat', ${id}, 0)`;
+    }
+    yield* ChannelOutbox.forgetSentPieces(sql, "imessage_sent", 1_000);
+    const left = yield* sql<{ delivery_id: string }>`SELECT delivery_id FROM imessage_sent`;
+    assert.deepEqual(
+      left.map((row) => row.delivery_id),
+      ["stuck"],
+    );
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("without a transport the row stays pending and goes out once one registers", () =>
   Effect.gen(function* () {
     const outbox = yield* ChannelOutbox.ChannelOutbox;

@@ -27,6 +27,7 @@ import type * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ChannelGateway from "../ChannelGateway.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import {
   admitImessageRow,
@@ -273,9 +274,7 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
       yield* saveCursor(state);
     }
     const now = (yield* DateTime.now).epochMilliseconds;
-    yield* sql`DELETE FROM imessage_sent WHERE sent_at_ms < ${now - SENT_RETENTION_MS}`.pipe(
-      Effect.orDie,
-    );
+    yield* ChannelOutbox.forgetSentPieces(sql, "imessage_sent", now - SENT_RETENTION_MS);
   });
 
   const pollOnce: ImessageChannelRuntime["Service"]["pollOnce"] = Effect.gen(function* () {
