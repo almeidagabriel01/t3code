@@ -152,6 +152,7 @@ const tree = (actions: ReadonlyArray<MenuAction>): unknown[] =>
 
 describe("presenceMenuActions", () => {
   const senders = [sender("ada", 1), sender("bo", 3, { askBeforeActing: true }), sender("cy", 2)];
+  // Rows keep one line: "Asks before acting" stays on the message badge ("asks first").
   it.each([
     {
       name: "iOS: Needs you, Working, then Idle as titled sections",
@@ -160,7 +161,7 @@ describe("presenceMenuActions", () => {
       inline: true,
       expected: [
         { "Needs you": ["CY — Needs you · 2 messages here"] },
-        { Working: ["BO — Working · 3 messages here · Asks before acting"] },
+        { Working: ["BO — Working · 3 messages here"] },
         { Idle: ["ADA — Idle · 1 message here"] },
       ],
     },
@@ -173,7 +174,7 @@ describe("presenceMenuActions", () => {
         {
           Idle: [
             "ADA — Idle · 1 message here",
-            "BO — Idle · 3 messages here · Asks before acting",
+            "BO — Idle · 3 messages here",
             "CY — Idle · 2 messages here",
           ],
         },
@@ -185,7 +186,7 @@ describe("presenceMenuActions", () => {
       needs: ["bo"],
       inline: false,
       expected: [
-        "BO — Needs you · 3 messages here · Asks before acting",
+        "BO — Needs you · 3 messages here",
         "ADA — Working · 1 message here",
         "CY — Working · 2 messages here",
       ],

@@ -214,7 +214,8 @@ function senderActions(
   return {
     id: `assistant:${sender.assistantId}`,
     title: assistant?.name ?? "Assistant",
-    subtitle: assistantPresenceStatus(section, sender, assistant?.askBeforeActing === true),
+    // A native menu subtitle wraps past one line; the message badge already says "asks first".
+    subtitle: assistantPresenceStatus(section, sender, false),
     subactions: [
       ...(sender.count === 0
         ? []
