@@ -47,6 +47,7 @@ import {
   SettingResetButton,
   SettingsRow,
   SettingsSection,
+  useSettingsSearchRevealedId,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
@@ -576,7 +577,7 @@ export function RunnerSettingsSection() {
   const everythingMixed = useScopedSettingsMixed(["runnerLinuxEverything"]);
   const everythingSet = everythingMixed ? null : everythingValue;
   const everythingOn = runnerEverythingOn(choices.runnerWhere, everythingSet);
-  const target = useSettingsSearchTargetId();
+  const target = useSettingsSearchRevealedId();
   const { title } = searchableSetting("runner-enabled");
   /** A field shows when it applies, or when a search lands on it (then with why it is idle). */
   const field = (key: RunnerKey) => {

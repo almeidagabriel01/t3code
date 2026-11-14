@@ -17,7 +17,7 @@ import { HeavyNoticesRow } from "./HeavyNoticesRow";
 import { IdleNote, RunnerGroup, UnitStepper, useHeavyModeLine } from "./RunnerSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsRow, SettingsSection, useSettingsSearchTargetId } from "./settingsLayout";
+import { SettingsRow, SettingsSection, useSettingsSearchRevealedId } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 import {
   useScopedSettings,
@@ -58,7 +58,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   const actions = useHeavyQueueActions(environmentId);
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const modeLine = useHeavyModeLine(state);
-  const target = useSettingsSearchTargetId();
+  const target = useSettingsSearchRevealedId();
   const readOnly = !actions.canChange;
   /** Queue rows show while the queue is on, or when a search lands on one (then with why). */
   const queueRow = (searchId: SettingsSearchItemId) => ({

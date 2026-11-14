@@ -38,6 +38,7 @@ vi.mock("./settingsLayout", () => ({
     </section>
   ),
   useSettingsSearchTargetId: () => mocks.target,
+  useSettingsSearchRevealedId: () => mocks.target,
   SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" aria-label={`Reset ${label}`} onClick={onClick}>
       Reset
