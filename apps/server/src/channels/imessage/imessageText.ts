@@ -106,8 +106,10 @@ export function formatChannelMessages(
     input.choices !== undefined && input.choices.length > 0 ? input.choices : undefined;
   const room = maxMessages - (choices === undefined ? 0 : 1);
   const project = channelProjectTitle(input.project);
-  const tag = project === undefined ? "" : projectNoticePrefix(project, "");
-  const limit = Math.max(1, chunkLimit - tag.length);
+  const tagged = project === undefined ? "" : projectNoticePrefix(project, "");
+  // A title that would take most of every chunk is dropped rather than splitting the reply into slivers.
+  const tag = tagged.length <= chunkLimit / 2 ? tagged : "";
+  const limit = chunkLimit - tag.length;
   const body = chunkParagraphs(toPlainText(input.text), limit);
   const kept = body.length <= room ? body : [...body.slice(0, room - 1), strings.truncatedNote];
   if (choices !== undefined) {

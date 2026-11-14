@@ -566,6 +566,10 @@ export function formatTelegramMessages(
   }
 }
 
+/** A prefix that still leaves each part room for a summary or a fragment of the reply. */
+const fitsBeside = (prefix: string) =>
+  TELEGRAM_MESSAGE_LIMIT - prefix.length - PART_MARKER_ROOM >= MIN_SUMMARY_ROOM;
+
 function compose(
   input: TelegramMessageInput,
   units: ReadonlyArray<Unit>,
@@ -578,8 +582,10 @@ function compose(
       : undefined;
   const sender = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
   const project = channelProjectTitle(input.project);
-  const prefix =
+  const tagged =
     project === undefined ? sender : sender + escapeHtml(projectNoticePrefix(project, ""));
+  // A name or title that leaves no room for the reply is dropped, the title first.
+  const prefix = [tagged, sender, ""].find((candidate) => fitsBeside(candidate))!;
   const all = choices === undefined ? units : [...units, choices];
   if (all.length === 0) return [];
   const whole = all.map((unit) => unit.html).join("\n\n");

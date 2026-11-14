@@ -187,6 +187,21 @@ const paragraphs = (count: number, size: number) =>
   Array.from({ length: count }, (_, i) => `Paragraph ${i}. ${"word ".repeat(size)}`.trim());
 
 describe("formatTelegramMessages size", () => {
+  it.each([
+    ["a short reply", "Done."],
+    ["a long reply", paragraphs(6, 250).join("\n\n")],
+  ])("sends %s within the limit when the project's title alone fills it", (_name, text) => {
+    const pieces = formatTelegramMessages({
+      text,
+      markdown: true,
+      senderName: "Jarvis",
+      project: "x".repeat(TELEGRAM_MESSAGE_LIMIT),
+    });
+    expect(pieces.length).toBeGreaterThan(0);
+    expect(pieces.length).toBeLessThanOrEqual(TELEGRAM_MAX_PARTS);
+    expectSendable(pieces);
+  });
+
   it("splits a long reply into numbered parts at block boundaries", () => {
     const text = paragraphs(6, 250).join("\n\n");
     const pieces = formatTelegramMessages({

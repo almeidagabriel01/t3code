@@ -98,6 +98,13 @@ describe("formatImessageMessages", () => {
     }
   });
 
+  it("sends a reply whole when the project's title alone fills a message", () => {
+    const text = "y".repeat(IMESSAGE_CHUNK_LIMIT - 10);
+    const project = `My\n${"x".repeat(IMESSAGE_CHUNK_LIMIT)}`;
+    const messages = formatImessageMessages({ senderName: "Jarvis", text, project });
+    expect(messages).toEqual([`Jarvis: ${text}`]);
+  });
+
   it("keeps a short reply as one plain message", () => {
     expect(formatImessageMessages({ senderName: "Jarvis", text: "**Done**" })).toEqual([
       "Jarvis: Done",
