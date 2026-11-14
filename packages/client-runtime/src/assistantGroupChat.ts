@@ -624,9 +624,14 @@ const FAILURE_REASON_LABEL: Record<string, string> = {
   could_not_start: "Could not start the owner's turn",
 };
 
+/** A cancellation the server made; one a member made carries its own words, shown elsewhere. */
+const CANCEL_REASON_LABEL: Record<string, string> = {
+  outside_project: "Owner no longer works in this request's project",
+};
+
 /**
- * Why a paused or failed task stopped, in words: an unknown pause reads as "Paused", an unknown
- * failure as nothing (the status already says it failed).
+ * Why a paused, failed or cancelled task stopped, in words: an unknown pause reads as "Paused", an
+ * unknown failure or cancellation as nothing (the status already says it).
  */
 export function assistantGroupTaskReasonLabel(
   task: Pick<AssistantGroupTask, "status" | "reason">,
@@ -634,6 +639,7 @@ export function assistantGroupTaskReasonLabel(
   const known = task.reason === null ? undefined : task.reason;
   if (task.status === "paused") return (known && PAUSE_REASON_LABEL[known]) || "Paused";
   if (task.status === "failed") return (known && FAILURE_REASON_LABEL[known]) || null;
+  if (task.status === "cancelled") return (known && CANCEL_REASON_LABEL[known]) || null;
   return null;
 }
 
