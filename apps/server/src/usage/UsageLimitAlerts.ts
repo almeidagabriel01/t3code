@@ -52,7 +52,7 @@ export interface AlertSlot {
 }
 
 export interface AlertReading {
-  /** Unrounded remaining percent. */
+  /** Remaining percent as Limits shows it, so a "15%" reading sends the 15% alert. */
   readonly remaining: number;
   readonly resetsAtMs: number | null;
 }
@@ -69,7 +69,9 @@ export function decideUsageLimitAlert(
     (prev.resetsAtMs === null ||
       reading.resetsAtMs === null ||
       Math.abs(prev.resetsAtMs - reading.resetsAtMs) <= RESET_TOLERANCE_MS);
-  const armed = !sameWindow || prev.armed || reading.remaining >= threshold + REARM_MARGIN_POINTS;
+  // Capped so a threshold near 100 still rearms on a full window.
+  const rearmAt = Math.min(threshold + REARM_MARGIN_POINTS, 100);
+  const armed = !sameWindow || prev.armed || reading.remaining >= rearmAt;
   const resetsAtMs = reading.resetsAtMs ?? prev?.resetsAtMs ?? null;
   if (armed && reading.remaining <= threshold) {
     return {
@@ -96,6 +98,8 @@ export function decideUsageLimitAlert(
     },
   };
 }
+
+const serverZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
@@ -173,7 +177,12 @@ export function usageLimitAlertText(input: {
     label: window.label,
     scope: scope.length > 0 ? scope.join(" · ") : null,
     resets: Number.isFinite(resetsAtMs)
-      ? formatReset(resetsAtMs, input.nowMs, validZone(input.timeZone), input.language)
+      ? formatReset(
+          resetsAtMs,
+          input.nowMs,
+          validZone(input.timeZone, serverZone()),
+          input.language,
+        )
       : null,
   });
 }
@@ -222,6 +231,8 @@ const make = Effect.gen(function* () {
   const seen = new Map<string, string>();
   // Keeps a slot stable while a probe briefly reports no account identity.
   const lastAccount = new Map<string, string>();
+  // The stored account of an instance that reports none, read once; "" when there is none.
+  const storedAccount = new Map<string, string>();
 
   const accountKeyFor = Effect.fn("UsageLimitAlerts.accountKey")(function* (
     provider: ServerProvider,
@@ -237,12 +248,14 @@ const make = Effect.gen(function* () {
       }
       return identity;
     }
-    const known = lastAccount.get(provider.instanceId);
+    const known = lastAccount.get(provider.instanceId) ?? storedAccount.get(provider.instanceId);
     if (known !== undefined) return known;
     const rows = yield* sql<{ readonly account_key: string }>`
       SELECT account_key FROM usage_limit_alert_state WHERE instance_id = ${provider.instanceId}
       ORDER BY updated_at DESC LIMIT 1`;
-    return rows[0]?.account_key ?? "";
+    const stored = rows[0]?.account_key ?? "";
+    storedAccount.set(provider.instanceId, stored);
+    return stored;
   });
 
   const defaultAssistant = sql<{ readonly assistant_id: string }>`
@@ -270,7 +283,7 @@ const make = Effect.gen(function* () {
       const siblings = providers.filter(
         (other) => other.enabled && other.driver === provider.driver,
       ).length;
-      const account = siblings > 1 ? (provider.auth.email ?? provider.auth.label ?? null) : null;
+      const account = siblings > 1 ? (provider.auth.label ?? provider.auth.email ?? null) : null;
 
       for (const window of provider.usageLimits.windows) {
         const threshold = usageLimitAlertThreshold({
@@ -296,10 +309,13 @@ const make = Effect.gen(function* () {
         const prev = rows[0] === undefined ? undefined : toSlot(rows[0]);
         const decision = decideUsageLimitAlert(
           prev,
-          { remaining: 100 - Math.max(0, Math.min(100, window.usedPercent)), resetsAtMs },
+          { remaining: remainingPercent(window), resetsAtMs },
           threshold,
         );
-        const retry = !decision.fire && retryPending && decision.next.pending;
+        // A slot this process has not read yet may hold a send a restart cut off: resend it now,
+        // with its own key, so restarts in a row never put it off.
+        const retry =
+          !decision.fire && decision.next.pending && (retryPending || !seen.has(slotKey));
         if (decision.fire || retry) {
           assistantId ??= yield* defaultAssistant;
           // No one to send it: keep the slot armed so the next reading can tell the user.
@@ -348,7 +364,7 @@ const make = Effect.gen(function* () {
               account,
               window,
               nowMs,
-              timeZone: config?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+              timeZone: config?.timeZone ?? serverZone(),
               language,
             }),
           })

@@ -4,11 +4,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
-export const validZone = (timeZone: string): string => {
+export const validZone = (timeZone: string, fallback = "UTC"): string => {
   try {
     return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone;
   } catch {
-    return "UTC";
+    return fallback;
   }
 };
 

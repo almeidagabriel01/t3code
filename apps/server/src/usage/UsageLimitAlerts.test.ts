@@ -41,21 +41,22 @@ import {
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
-describe("decideUsageLimitAlert", () => {
-  const run = (
-    readings: ReadonlyArray<readonly [remaining: number, resetsAtMs: number | null]>,
-    threshold = 15,
-  ) => {
-    let slot: AlertSlot | undefined;
-    const fired: number[] = [];
-    readings.forEach(([remaining, resetsAtMs], index) => {
-      const decision = decideUsageLimitAlert(slot, { remaining, resetsAtMs }, threshold);
-      if (decision.fire) fired.push(index);
-      slot = decision.next;
-    });
-    return fired;
-  };
+/** Indexes of the readings that send. */
+const run = (
+  readings: ReadonlyArray<readonly [remaining: number, resetsAtMs: number | null]>,
+  threshold = 15,
+) => {
+  let slot: AlertSlot | undefined;
+  const fired: number[] = [];
+  readings.forEach(([remaining, resetsAtMs], index) => {
+    const decision = decideUsageLimitAlert(slot, { remaining, resetsAtMs }, threshold);
+    if (decision.fire) fired.push(index);
+    slot = decision.next;
+  });
+  return fired;
+};
 
+describe("decideUsageLimitAlert", () => {
   it.each([
     [
       "crossing the threshold sends once",
@@ -239,7 +240,6 @@ describe("usageLimitAlertText", () => {
 
   it("formats the reset in the saved time zone and speaks the channel language", () => {
     assert.include(text({ timeZone: "America/Sao_Paulo" }), "Resets Fri 12:30.");
-    assert.include(text({ timeZone: "Not/AZone" }), "Resets Fri 15:30.");
     assert.equal(
       text({ language: "pt-BR", timeZone: "America/Sao_Paulo" }),
       "Claude Max: restam 15% do limite semanal. Renova sex., 12:30.",
@@ -513,11 +513,14 @@ describe("UsageLimitAlerts", () => {
           yield* Ref.set(harness.notify, mode);
           yield* evaluate([provider("claudeAgent", [weekly(90)])]);
           yield* Ref.set(harness.notify, "ok");
+          // Restarts in a row never put it off: the first reading after a boot resends it.
+          yield* restart;
           const again = yield* restart;
-          // A plain reading never resends; only the periodic check retries.
           yield* again([provider("claudeAgent", [weekly(90)])]);
+          assert.equal(yield* Ref.get(harness.attempts), 2);
           yield* again([provider("claudeAgent", [weekly(90)])], { retryPending: true });
-          yield* again([provider("claudeAgent", [weekly(90)])], { retryPending: true });
+          yield* (yield* restart)([provider("claudeAgent", [weekly(90)])]);
+          assert.equal(yield* Ref.get(harness.attempts), 2);
           assert.equal((yield* Ref.get(harness.delivered)).length, 1);
         }),
       ),
@@ -526,9 +529,12 @@ describe("UsageLimitAlerts", () => {
   it.effect("keeps instances and accounts apart", () =>
     withService(({ harness, evaluate }) =>
       Effect.gen(function* () {
-        const work = provider("claude_work", [weekly(90)]);
+        const work = provider("claude_work", [weekly(90)], {
+          auth: { status: "authenticated", email: "claude_work@example.com", label: "Work" },
+        });
         const home = provider("claudeAgent", [weekly(90)]);
-        const codex = provider("codex", [{ ...weekly(90), id: "secondary" }], {
+        // 15.4% left reads "15%" on Limits, so the 15% alert sends.
+        const codex = provider("codex", [{ ...weekly(84.6), id: "secondary" }], {
           driver: ProviderDriverKind.make("codex"),
         });
         yield* harness.setSettings({
@@ -540,9 +546,9 @@ describe("UsageLimitAlerts", () => {
         yield* evaluate([work, home, codex]);
         const texts = (yield* Queue.takeAll(harness.sent)).map((entry) => entry.text);
         assert.deepStrictEqual(texts.toSorted(), [
+          "Claude (Work): 10% of the weekly limit left. Resets Mon 12:00.",
           "Claude (claudeAgent@example.com): 10% of the weekly limit left. Resets Mon 12:00.",
-          "Claude (claude_work@example.com): 10% of the weekly limit left. Resets Mon 12:00.",
-          "Codex: 10% of the weekly limit left. Resets Mon 12:00.",
+          "Codex: 15% of the weekly limit left. Resets Mon 12:00.",
         ]);
         // The same instance signed in to another account is a slot of its own.
         yield* evaluate([
@@ -701,4 +707,57 @@ describe("UsageLimitAlerts", () => {
         }),
       ),
   );
+
+  it.effect.each<{ readonly name: string; readonly run: Effect.Effect<void> }>([
+    {
+      name: "a saved zone that no longer exists falls back to the server's zone",
+      run: Effect.sync(() => {
+        const window = weekly(85, "1970-01-02T15:30:00.000Z");
+        const text = (timeZone: string) =>
+          usageLimitAlertText({
+            provider: provider("claudeAgent", [window]),
+            account: null,
+            window,
+            nowMs: 0,
+            timeZone,
+            language: "en",
+          });
+        assert.equal(text("Not/AZone"), text(Intl.DateTimeFormat().resolvedOptions().timeZone));
+      }),
+    },
+    {
+      name: "a threshold of 96 to 99 rearms once the window is back to 100%",
+      run: Effect.sync(() => {
+        for (const threshold of [96, 99]) {
+          const readings = [
+            [threshold, DAY],
+            [100, DAY],
+            [threshold, DAY],
+          ] as const;
+          assert.deepStrictEqual(run(readings, threshold), [0, 2], `threshold ${threshold}`);
+        }
+      }),
+    },
+    {
+      name: "an instance that reports no account looks its stored account up once",
+      run: withService(({ evaluate }) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const anonymous = (usedPercent: number) =>
+            provider("claudeAgent", [weekly(usedPercent)], { auth: { status: "authenticated" } });
+          yield* evaluate([anonymous(50)]);
+          // Written behind the service's back: a kept lookup, even "none found", never sees it.
+          yield* sql`
+            INSERT INTO usage_limit_alert_state
+              (instance_id, account_key, window_id, armed, episode, updated_at)
+            VALUES ('claudeAgent', 'someone', 'five_hour', 1, 0, '9999')`;
+          yield* evaluate([anonymous(90)]);
+          assert.deepStrictEqual(
+            yield* sql`SELECT account_key FROM usage_limit_alert_state WHERE window_id = 'seven_day'`,
+            [{ account_key: "" }],
+          );
+        }),
+      ).pipe(Effect.orDie),
+    },
+  ])("$name", ({ run }) => run);
 });
