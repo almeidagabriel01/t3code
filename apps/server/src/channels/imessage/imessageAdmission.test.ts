@@ -122,14 +122,26 @@ const cases: ReadonlyArray<Case> = [
   { name: "other account: two chats", row: friendRow({ chat_join_count: 2 }), expect: "chat" },
   { name: "other account: no chat guid", row: friendRow({ chat_guid: null }), expect: "chat" },
   {
-    name: "other account: attachment flag",
-    row: friendRow({ cache_has_attachments: 1 }),
-    expect: "attachment",
+    name: "other account: attachment flag is answered, never dropped",
+    row: friendRow({ cache_has_attachments: 1, text: null }),
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ text: "", attachment: true }),
   },
   {
-    name: "other account: attachment placeholder",
-    row: friendRow({ text: "￼" }),
-    expect: "attachment",
+    name: "other account: attachment placeholder keeps its caption",
+    row: friendRow({ text: "￼ look" }),
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ text: "look", attachment: true }),
+  },
+  {
+    name: "other account: an attachment in a group is still not read",
+    row: friendRow({ cache_has_attachments: 1, chat_join_count: 2 }),
+    expect: "chat",
+  },
+  {
+    name: "an attachment from someone not allowed is still not read",
+    row: friendRow({ cache_has_attachments: 1, sender_handle: "+15559999999" }),
+    expect: "sender",
   },
   {
     name: "other account: tapback",
@@ -290,7 +302,17 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "self chat: attachment",
     row: selfRow({ cache_has_attachments: 1 }),
-    expect: "attachment",
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ attachment: true }),
+  },
+  {
+    name: "your attachment to a friend is never answered",
+    row: selfRow({
+      cache_has_attachments: 1,
+      chat_guid: `iMessage;-;${FRIEND}`,
+      chat_identifier: FRIEND,
+    }),
+    expect: "other_chat",
   },
   {
     name: "self chat: tapback",
@@ -358,6 +380,15 @@ describe("toImessageInbound", () => {
       },
       text: "hello",
       receivedAt: appleDateToIso(DATE, 10),
+    });
+  });
+
+  it("marks an attachment it cannot pass on, so the bridge answers it", () => {
+    const admission = admitImessageRow(friendRow({ cache_has_attachments: 1 }), config, empty);
+    if (admission.type !== "message") throw new Error("expected a message");
+    expect(toImessageInbound(admission, "imessage")).toMatchObject({
+      text: "hello",
+      attachmentProblem: "unsupported",
     });
   });
 });

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ChatImageAttachment } from "./chatAttachment.ts";
 
 /**
  * Messages from chat apps (iMessage, Telegram) to assistants and back. A transport turns its events into a
@@ -56,6 +57,10 @@ export const ChannelInboundMessage = Schema.Struct({
   actor: ChannelActorRef,
   replyAddress: ChannelReplyAddress,
   text: Schema.String,
+  /** Images that came with the message, stored as pending uploads the thread claims. */
+  attachments: Schema.optional(Schema.Array(ChatImageAttachment)),
+  /** Something attached could not be passed on; the sender is told instead of left guessing. */
+  attachmentProblem: Schema.optional(Schema.Literals(["unsupported", "download_failed"])),
   receivedAt: IsoDateTime,
 });
 export type ChannelInboundMessage = typeof ChannelInboundMessage.Type;

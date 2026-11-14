@@ -6,9 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
 import * as AssistantService from "../assistants/AssistantService.ts";
+import * as ServerConfig from "../config.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ChannelBridge from "./ChannelBridge.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
@@ -27,6 +31,11 @@ const assistant = (id: string, name: string, extra: Record<string, unknown> = {}
   archivedAt: null,
   ...extra,
 });
+
+const attachmentLayer = DocumentText.layer.pipe(
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-channel-bridge-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const harness = (language: "en" | "pt-BR" = "en") => {
   const state = {
@@ -51,6 +60,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
+        attachmentLayer,
         Layer.mock(AssistantService.AssistantService)({
           list: Effect.suspend(() =>
             state.listFails ? Effect.fail({ reason: "storage" }) : Effect.succeed(state.assistants),
@@ -60,7 +70,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           sendToThread: (input) => {
             sends.push(input as never);
             return state.sendFailure === undefined
-              ? Effect.succeed({} as never)
+              ? Effect.succeed({ message: { attachments: input.attachments } } as never)
               : Effect.fail(state.sendFailure as never);
           },
         }),
@@ -576,3 +586,59 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+const image = {
+  type: "image",
+  id: "assistant-jarvis-1-00000000-0000-4000-8000-000000000001",
+  name: "photo.jpg",
+  mimeType: "image/jpeg",
+  sizeBytes: 3,
+} as const;
+
+it.effect("an image goes on with its caption, even with no caption or a bare number", () => {
+  const { layer, request, channelSends } = decisionHarness();
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    yield* sendCard((yield* request).id);
+    yield* gateway.ingest(inbound({ text: "what is this?", attachments: [image] }));
+    yield* gateway.ingest(inbound({ text: "", attachments: [image] }));
+    yield* gateway.ingest(inbound({ text: "1", attachments: [image] }));
+    assert.deepEqual(
+      channelSends().map((send) => [
+        send.text,
+        (send.attachments as ReadonlyArray<unknown>).length,
+      ]),
+      [
+        ["what is this?", 1],
+        ["", 1],
+        ["1", 1],
+      ],
+    );
+    // Neither "switched to" nor a card answer: only the card itself is in the outbox.
+    assert.lengthOf(yield* texts, 1);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("an attachment it could not pass on is answered in the chat, once", () => {
+  const { layer, channelSends } = harness("pt-BR");
+  return Effect.gen(function* () {
+    const gateway = yield* ChannelGateway;
+    const sticker = inbound({ text: "", attachmentProblem: "unsupported" });
+    yield* gateway.ingest(sticker);
+    yield* gateway.ingest(sticker);
+    yield* gateway.ingest(inbound({ text: "", attachmentProblem: "download_failed" }));
+    // The images that did arrive still go on, with the note about the rest.
+    yield* gateway.ingest(
+      inbound({ text: "trip", attachments: [image], attachmentProblem: "unsupported" }),
+    );
+    assert.deepEqual(
+      channelSends().map((send) => send.text),
+      ["trip"],
+    );
+    const sent = yield* texts;
+    assert.lengthOf(sent, 3);
+    assert.include(sent[0], "foto");
+    assert.include(sent[1], "baixar");
+    assert.equal(sent[2], sent[0]);
+  }).pipe(Effect.provide(layer));
+});

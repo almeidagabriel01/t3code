@@ -119,6 +119,8 @@ export type ImessageAdmission =
       readonly chatGuid: string;
       readonly senderHandle: string;
       readonly text: string;
+      /** It carried an attachment this channel cannot pass on; the sender is told so. */
+      readonly attachment?: true;
       readonly receivedAt: string;
       readonly via: "other_account" | "self_chat";
     } & Partial<SelfChatEffects>);
@@ -152,11 +154,11 @@ export function admitImessageRow(
     !config.selfHandles.has(sender);
   const fromSelf = fromMe || (sender !== undefined && config.selfHandles.has(sender));
   if (!row.guid || (!fromOther && !fromSelf)) return skip("sender");
-  if (row.cache_has_attachments) return skip("attachment");
   const raw = row.text ?? extractTypedstreamText(row.attributedBody);
-  if (raw?.includes("￼")) return skip("attachment");
-  const text = raw?.trim();
-  if (!text) return skip("text");
+  // Attachments are not read from chat.db; the message is still admitted so it gets an answer.
+  const attachment = Boolean(row.cache_has_attachments) || raw?.includes("￼") === true;
+  const text = raw?.replaceAll("￼", "").trim() ?? "";
+  if (!text && !attachment) return skip("text");
   if (row.chat_join_count === 0) return { type: "pending_join", rowId: row.rowid };
   if (row.chat_join_count !== 1 || row.style !== 45 || !row.chat_guid) return skip("chat");
   const base = {
@@ -165,6 +167,7 @@ export function admitImessageRow(
     guid: row.guid,
     chatGuid: row.chat_guid,
     text,
+    ...(attachment ? { attachment: true as const } : {}),
     receivedAt: appleDateToIso(row.date, row.rowid),
   };
   if (fromOther) {
@@ -226,6 +229,7 @@ export function toImessageInbound(
     actor: { externalActorId: input.senderHandle },
     replyAddress: { kind: "imessage", connectionId, chatGuid: input.chatGuid },
     text: input.text,
+    ...(input.attachment ? { attachmentProblem: "unsupported" as const } : {}),
     receivedAt: input.receivedAt,
   };
 }

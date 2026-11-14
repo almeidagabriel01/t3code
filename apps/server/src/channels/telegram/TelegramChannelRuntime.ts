@@ -5,19 +5,26 @@
  */
 import {
   assistantCommandNames,
+  ChatAttachmentId,
+  type ChatImageAttachment,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type TelegramChannelDeliveryError,
   type TelegramChannelErrorCode,
   type TelegramChannelStatusEvent,
   type TelegramPendingSender,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import type * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
@@ -27,18 +34,28 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
+import { storeAttachmentUpload } from "../../assets/AttachmentUpload.ts";
+import { createPendingAttachmentId } from "../../attachmentStore.ts";
 import * as AssistantService from "../../assistants/AssistantService.ts";
 import { hostedAppUrlConfig } from "../../cloud/publicConfig.ts";
+import type * as ServerConfig from "../../config.ts";
+import { matchesImageSignature } from "../../guest/guestAttachments.ts";
+import type * as DocumentText from "../../provider/DocumentText.ts";
 import * as ChannelGateway from "../ChannelGateway.ts";
 import { ChannelLanguage } from "../ChannelLanguage.ts";
 import { channelStrings } from "../channelStrings.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
-import { admitTelegramUpdate } from "./telegramAdmission.ts";
+import {
+  admitTelegramUpdate,
+  type TelegramAdmission,
+  type TelegramMedia,
+} from "./telegramAdmission.ts";
 import {
   LONG_POLL_SECONDS,
   makeTelegramApi,
   type TelegramApi,
   type TelegramApiError,
+  type TelegramUpdate,
 } from "./telegramApi.ts";
 import { formatTelegramMessages } from "./telegramText.ts";
 import { makeTelegramTransport, type TelegramSendReport } from "./telegramTransport.ts";
@@ -53,6 +70,45 @@ const STORAGE_RETRY_SECONDS = 5;
 const MAX_PENDING_SENDERS = 5;
 /** Bounds the memory of who was already answered; a forgotten sender is answered once more. */
 const MAX_REPLIED = 500;
+/**
+ * Telegram sends an album as one update per photo, often split across polls. A batch that ends
+ * inside an album is left unacknowledged and polled again after this pause; the album goes on as
+ * one message once a poll brings nothing new for it, or after `ALBUM_MAX_WAITS` pauses.
+ */
+export const ALBUM_WAIT = Duration.seconds(2);
+const ALBUM_MAX_WAITS = 5;
+
+interface Admitted {
+  readonly update: TelegramUpdate;
+  readonly admission: TelegramAdmission;
+}
+
+/** Updates that go on together: an album's photos, or one update alone. */
+interface Unit {
+  readonly albumKey: string | undefined;
+  readonly items: Array<Admitted>;
+}
+
+function unitsOf(admitted: ReadonlyArray<Admitted>): ReadonlyArray<Unit> {
+  const units: Array<Unit> = [];
+  const albums = new Map<string, Unit>();
+  for (const item of admitted) {
+    const { admission } = item;
+    const albumKey =
+      admission.type === "message" && admission.mediaGroupId !== undefined
+        ? `${admission.inbound.conversationKey}:${admission.mediaGroupId}`
+        : undefined;
+    const album = albumKey === undefined ? undefined : albums.get(albumKey);
+    if (album !== undefined) {
+      album.items.push(item);
+      continue;
+    }
+    const unit = { albumKey, items: [item] };
+    units.push(unit);
+    if (albumKey !== undefined) albums.set(albumKey, unit);
+  }
+  return units;
+}
 
 export interface TelegramConfig {
   readonly token: Redacted.Redacted<string>;
@@ -120,6 +176,17 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
   const syncedCommands = yield* Ref.make<string | undefined>(undefined);
   const syncLock = yield* Semaphore.make(1);
   const statusRef = yield* SubscriptionRef.make<TelegramRuntimeStatus>(DISABLED);
+  const waitingAlbum = yield* Ref.make<
+    { readonly key: string; readonly size: number; readonly waits: number } | undefined
+  >(undefined);
+  // Images are stored as pending uploads, as the app's own upload does, for the thread to claim.
+  const storeContext = yield* Effect.context<
+    | ServerConfig.ServerConfig
+    | FileSystem.FileSystem
+    | Path.Path
+    | SecureRandom.SecureRandom
+    | DocumentText.DocumentText
+  >();
 
   const publish = Effect.gen(function* () {
     if ((yield* Ref.get(config)) === null) return yield* SubscriptionRef.set(statusRef, DISABLED);
@@ -230,6 +297,69 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
     return Duration.seconds(Math.max(seconds, retryAfter ?? 0));
   };
 
+  /** Downloads one image and stores it as a pending upload; what went wrong, otherwise. */
+  const storeMedia = Effect.fn("TelegramChannelRuntime.storeMedia")(function* (
+    client: TelegramApi,
+    media: TelegramMedia,
+  ) {
+    const download = yield* Effect.result(
+      client.downloadFile({ fileId: media.fileId, maxBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES }),
+    );
+    if (download._tag === "Failure") {
+      if (download.failure.code === "too_large") return "unsupported" as const;
+      yield* Effect.logWarning("Telegram attachment was not downloaded", {
+        code: download.failure.code,
+      });
+      return "download_failed" as const;
+    }
+    const bytes = download.success;
+    // The bytes decide, never the name or type the sender's app gave.
+    const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find((type) =>
+      matchesImageSignature(type, bytes),
+    );
+    if (mimeType === undefined) return "unsupported" as const;
+    const attachment = {
+      type: "image",
+      id: ChatAttachmentId.make(createPendingAttachmentId()),
+      name: media.name,
+      mimeType,
+      sizeBytes: bytes.byteLength,
+    } satisfies ChatImageAttachment;
+    const stored = yield* storeAttachmentUpload(
+      { ...attachment, attachmentId: attachment.id },
+      bytes,
+    ).pipe(Effect.provide(storeContext));
+    return stored.ok ? attachment : ("download_failed" as const);
+  });
+
+  /** Passes one message, or one album as a single message, to the gateway. */
+  const deliver = Effect.fn("TelegramChannelRuntime.deliver")(function* (
+    client: TelegramApi,
+    unit: Unit,
+  ) {
+    const first = unit.items[0]!.admission;
+    if (first.type === "unknown_sender") return yield* meetStranger(client, first);
+    if (first.type !== "message") return;
+    const parts = unit.items.flatMap(({ admission }) =>
+      admission.type === "message" ? [admission] : [],
+    );
+    let problem = parts.find((part) => part.inbound.attachmentProblem)?.inbound.attachmentProblem;
+    const attachments: Array<ChatImageAttachment> = [];
+    for (const media of parts.flatMap((part) => part.media)) {
+      const stored = yield* storeMedia(client, media);
+      if (typeof stored === "string") problem ??= stored;
+      else attachments.push(stored);
+    }
+    const { attachmentProblem: _, ...inbound } = first.inbound;
+    yield* gateway.ingest({
+      ...inbound,
+      // An album's caption rides on one of its photos.
+      text: parts.find((part) => part.inbound.text !== "")?.inbound.text ?? "",
+      ...(attachments.length === 0 ? {} : { attachments }),
+      ...(problem === undefined ? {} : { attachmentProblem: problem }),
+    });
+  });
+
   /** Reads one batch of updates and passes the admitted messages on, in order. */
   const processBatch = Effect.fn("TelegramChannelRuntime.processBatch")(function* (
     current: TelegramConfig,
@@ -242,20 +372,49 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
       // First enable for this bot: start from now, never from the backlog Telegram still holds.
       const latest = yield* client.getUpdates({ offset: -1, timeoutSeconds: 0 });
       const newest = Math.max(-1, ...latest.map((update) => update.updateId));
-      return yield* saveOffset(botId, newest + 1);
+      yield* saveOffset(botId, newest + 1);
+      return Duration.zero;
     }
-    const updates = yield* client.getUpdates({ offset, timeoutSeconds: LONG_POLL_SECONDS });
-    for (const update of updates.toSorted((a, b) => a.updateId - b.updateId)) {
-      const admission = admitTelegramUpdate(update, allowed, TELEGRAM_CONNECTION_ID);
-      if (admission.type === "message") yield* gateway.ingest(admission.inbound);
-      if (admission.type === "unknown_sender") yield* meetStranger(client, admission);
+    const waiting = yield* Ref.get(waitingAlbum);
+    const updates = (yield* client.getUpdates({
+      offset,
+      // The album it waits for is already there, so this returns at once with any new parts.
+      timeoutSeconds: waiting === undefined ? LONG_POLL_SECONDS : 0,
+    })).toSorted((a, b) => a.updateId - b.updateId);
+    const units = unitsOf(
+      updates.map((update) => ({
+        update,
+        admission: admitTelegramUpdate(update, allowed, TELEGRAM_CONNECTION_ID),
+      })),
+    );
+    const last = units.at(-1);
+    const grew =
+      last?.albumKey !== undefined &&
+      (waiting?.key !== last.albumKey || waiting.size !== last.items.length) &&
+      (waiting?.key === last.albumKey ? waiting.waits : 0) < ALBUM_MAX_WAITS;
+    yield* Ref.set(
+      waitingAlbum,
+      grew
+        ? {
+            key: last.albumKey!,
+            size: last.items.length,
+            waits: (waiting?.key === last.albumKey ? waiting.waits : 0) + 1,
+          }
+        : undefined,
+    );
+    let acknowledged = offset;
+    for (const unit of units) {
+      if (grew && unit === last) break;
+      yield* deliver(client, unit);
       // Stored only once the gateway has the message, so a storage failure retries this update.
-      yield* saveOffset(botId, update.updateId + 1);
+      acknowledged = Math.max(acknowledged, ...unit.items.map(({ update }) => update.updateId + 1));
+      yield* saveOffset(botId, acknowledged);
     }
     const now = (yield* DateTime.now).epochMilliseconds;
     yield* sql`DELETE FROM telegram_sent WHERE sent_at_ms < ${now - SENT_RETENTION_MS}`.pipe(
       Effect.orDie,
     );
+    return grew ? ALBUM_WAIT : Duration.zero;
   });
 
   const pollOnce: TelegramChannelRuntime["Service"]["pollOnce"] = Effect.gen(function* () {
@@ -269,13 +428,13 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
           yield* Ref.set(botUsername, me.username ?? "");
           yield* syncCommands;
         }
-        yield* processBatch(current, client);
+        return yield* processBatch(current, client);
       }),
     );
     if (outcome._tag === "Success") {
       yield* Ref.set(failures, 0);
       yield* setPollError(undefined);
-      return Duration.zero;
+      return outcome.success;
     }
     const failed = yield* Ref.updateAndGet(failures, (count) => count + 1);
     if (outcome.failure._tag === "TelegramApiError") {
@@ -307,6 +466,7 @@ export const make = Effect.fn("TelegramChannelRuntime.make")(function* (
         if (previousWatcher !== undefined) yield* Fiber.interrupt(previousWatcher);
         yield* Ref.set(watcher, undefined);
         yield* Ref.set(syncedCommands, undefined);
+        yield* Ref.set(waitingAlbum, undefined);
         yield* Ref.set(config, next);
         if (next === null) {
           yield* Ref.set(pending, []);

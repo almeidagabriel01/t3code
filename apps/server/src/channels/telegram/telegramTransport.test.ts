@@ -27,6 +27,7 @@ const harness = (
     getMe: Effect.succeed({ username: "bot" }),
     getUpdates: () => Effect.succeed([]),
     setMyCommands: () => Effect.void,
+    downloadFile: () => Effect.die("not used"),
     sendMessage: ({ text }) =>
       Effect.suspend(() => {
         const failure = script(text.html, sent.length + 1);
