@@ -208,7 +208,17 @@ export function assistantGroupTaskActions(
   }
 }
 
-export const AssistantGroupsSubscribeInput = Schema.Struct({ teamId: AssistantTeamId });
+/**
+ * One project tab of a group's chat: the requests of that project, or of none (`null`, General).
+ * Absent means every request and the chat-wide lines; an older server ignores it and sends that.
+ */
+export const AssistantGroupScope = Schema.Struct({ projectId: Schema.NullOr(ProjectId) });
+export type AssistantGroupScope = typeof AssistantGroupScope.Type;
+
+export const AssistantGroupsSubscribeInput = Schema.Struct({
+  teamId: AssistantTeamId,
+  scope: Schema.optional(AssistantGroupScope),
+});
 export type AssistantGroupsSubscribeInput = typeof AssistantGroupsSubscribeInput.Type;
 
 /** The first event is the newest page with its tasks; then each change as it lands. */
@@ -230,6 +240,7 @@ export const AssistantGroupsHistoryInput = Schema.Struct({
   teamId: AssistantTeamId,
   /** Messages before this seq; the newest page when absent. */
   beforeSeq: Schema.optional(Schema.Int),
+  scope: Schema.optional(AssistantGroupScope),
 });
 export type AssistantGroupsHistoryInput = typeof AssistantGroupsHistoryInput.Type;
 
@@ -244,12 +255,14 @@ export type AssistantGroupsHistoryResult = typeof AssistantGroupsHistoryResult.T
 
 /**
  * Sets how far the user has read; lower than before marks the later messages unread again.
- * `unread` instead moves it to just before the newest message the user did not write.
+ * `unread` instead moves it to just before the newest message the user did not write. With a
+ * `scope`, only that tab's position moves; without one, the whole group's does and tabs follow it.
  */
 export const AssistantGroupsMarkReadInput = Schema.Struct({
   teamId: AssistantTeamId,
   readSeq: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   unread: Schema.optional(Schema.Boolean),
+  scope: Schema.optional(AssistantGroupScope),
 });
 export type AssistantGroupsMarkReadInput = typeof AssistantGroupsMarkReadInput.Type;
 

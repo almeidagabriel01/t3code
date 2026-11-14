@@ -18,6 +18,7 @@ import {
   type AssistantGroupsEvent,
   type AssistantGroupsConversationInput,
   type AssistantGroupsConversationResult,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryInput,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsMarkReadInput,
@@ -226,8 +227,14 @@ interface MessageRow {
   readonly wait_resolved_at: string | null;
   readonly asks_project: number;
   readonly worked_ms: number | null;
+  readonly request_project_id: string | null;
   readonly created_at: string;
 }
+
+/** A stream item's tab: a project id, `''` for General, `'*'` for All only. */
+const ALL_SCOPE = "*";
+const scopeKey = (scope: AssistantGroupScope | undefined) =>
+  scope === undefined ? ALL_SCOPE : (scope.projectId ?? "");
 
 interface TaskRow {
   readonly task_id: string;
@@ -383,6 +390,7 @@ export class AssistantGroups extends Context.Service<
     /** The newest page with its tasks, then every change to this group. */
     readonly subscribe: (
       teamId: AssistantTeamId,
+      scope?: AssistantGroupScope,
     ) => Stream.Stream<AssistantGroupsEvent, AssistantError>;
     readonly history: (
       input: AssistantGroupsHistoryInput,
@@ -519,6 +527,8 @@ const make = Effect.gen(function* () {
   const events = yield* PubSub.unbounded<{
     readonly teamId: string;
     readonly event: AssistantGroupsEvent;
+    /** The tabs that see it (`scopeKey`); absent for every tab. */
+    readonly scopes?: ReadonlyArray<string> | undefined;
   }>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
   const routing = yield* FiberSet.make<void, never>();
@@ -684,14 +694,22 @@ const make = Effect.gen(function* () {
     return owned[0];
   });
 
-  /** A page of the chat, oldest first, with the tasks it shows. */
+  /**
+   * A page of the chat, oldest first, with the tasks it shows. A scope reads only its requests'
+   * lines; General (null) never holds chat-wide ones.
+   */
   const readPage = Effect.fn("AssistantGroups.readPage")(function* (
     teamId: string,
     beforeSeq: number | undefined,
+    scope?: AssistantGroupScope,
   ) {
+    const inScope =
+      scope === undefined
+        ? sql.literal("")
+        : sql`AND request_project_id IS ${scope.projectId} AND request_id IS NOT NULL`;
     const rows = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
-      WHERE team_id = ${teamId} AND seq < ${beforeSeq ?? Number.MAX_SAFE_INTEGER}
+      WHERE team_id = ${teamId} ${inScope} AND seq < ${beforeSeq ?? Number.MAX_SAFE_INTEGER}
       ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`;
     const page = rows.slice(0, ASSISTANT_GROUP_PAGE_SIZE).toReversed();
     const shownTasks = page.flatMap((row) => (row.task_id === null ? [] : [row.task_id]));
@@ -699,7 +717,10 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${teamId} AND (
-        status IN ${sql.in(OPEN)}
+        (status IN ${sql.in(OPEN)} AND (${scope === undefined ? 1 : 0} = 1 OR request_id IN (
+          SELECT message_id FROM assistant_group_messages
+          WHERE team_id = ${teamId} AND request_project_id IS ${scope?.projectId ?? null}
+            AND message_id = request_id)))
         OR task_id IN ${sql.in(shownTasks.length === 0 ? [""] : shownTasks)}
         OR request_message_id IN ${sql.in(shownRequests.length === 0 ? [""] : shownRequests)}
       ) ORDER BY rowid ASC`;
@@ -722,17 +743,28 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const publishMessage = (row: MessageRow) =>
+  const publishMessage = (row: MessageRow, scopes?: ReadonlyArray<string>) =>
     PubSub.publish(events, {
       teamId: row.team_id,
       event: { type: "message", message: toMessage(row) },
+      scopes:
+        scopes ??
+        (row.request_id === null ? [ALL_SCOPE] : [row.request_project_id ?? "", ALL_SCOPE]),
     });
-  const publishTask = (row: TaskRow) =>
-    wireTasks([row]).pipe(
-      Effect.flatMap(([task]) =>
-        PubSub.publish(events, { teamId: row.team_id, event: { type: "task", task: task! } }),
-      ),
-    );
+  const publishTask = Effect.fn("AssistantGroups.publishTask")(function* (row: TaskRow) {
+    const [task] = yield* wireTasks([row]);
+    const head =
+      row.request_id === null
+        ? []
+        : yield* sql<{
+            readonly request_project_id: string | null;
+          }>`SELECT request_project_id FROM assistant_group_messages WHERE message_id = ${row.request_id}`;
+    yield* PubSub.publish(events, {
+      teamId: row.team_id,
+      event: { type: "task", task: task! },
+      scopes: head[0] === undefined ? [ALL_SCOPE] : [head[0].request_project_id ?? "", ALL_SCOPE],
+    });
+  });
 
   const insertMessage = Effect.fn("AssistantGroups.insertMessage")(function* (input: {
     readonly teamId: string;
@@ -1545,8 +1577,16 @@ const make = Effect.gen(function* () {
         project_id = IIF(message_id = request_id, ${projectId}, project_id),
         title = IIF(message_id = request_id, COALESCE(${title}, title), title)
       WHERE request_id = ${request.message_id} RETURNING *`;
-    const head = rows.find((row) => row.message_id === request.message_id);
-    if (head !== undefined) yield* publishMessage(head);
+    // The new tab gets the whole request; General gets only the head, and drops it by its project.
+    for (const row of rows.toSorted((a, b) => a.seq - b.seq)) {
+      yield* publishMessage(
+        row,
+        row.message_id === request.message_id ? [projectId, "", ALL_SCOPE] : [projectId],
+      );
+    }
+    const tasks = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks WHERE request_id = ${request.message_id} ORDER BY rowid`;
+    for (const task of tasks) yield* publishTask(task);
   });
 
   const route = Effect.fn("AssistantGroups.route")(function* (
@@ -3125,7 +3165,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const subscribe: AssistantGroups["Service"]["subscribe"] = (teamId) =>
+  const subscribe: AssistantGroups["Service"]["subscribe"] = (teamId, scope) =>
     Stream.unwrap(
       // Subscribe before the snapshot while holding the writers' lock, so no change falls between.
       lock
@@ -3133,11 +3173,16 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* teamRow(teamId);
             const subscription = yield* PubSub.subscribe(events);
-            const page = yield* readPage(teamId, undefined);
+            const page = yield* readPage(teamId, undefined, scope);
+            const key = scopeKey(scope);
             return Stream.concat(
               Stream.succeed<AssistantGroupsEvent>({ type: "snapshot", ...page }),
               Stream.fromSubscription(subscription).pipe(
-                Stream.filter((item) => item.teamId === teamId),
+                Stream.filter(
+                  (item) =>
+                    item.teamId === teamId &&
+                    (item.scopes === undefined || item.scopes.includes(key)),
+                ),
                 Stream.map((item) => item.event),
               ),
             );
@@ -3178,9 +3223,12 @@ const make = Effect.gen(function* () {
         return yield* invalid("The group is working. Stop its tasks first.");
       }
     });
-    const publishPage = Effect.gen(function* () {
+    // Undo only drops a chat-wide boundary, which only All shows; a cleared chat is empty in every tab.
+    const publishPage = Effect.fn("AssistantGroups.publishPage")(function* (
+      scopes: ReadonlyArray<string> | undefined,
+    ) {
       const page = yield* readPage(teamId, undefined);
-      yield* PubSub.publish(events, { teamId, event: { type: "snapshot", ...page } });
+      yield* PubSub.publish(events, { teamId, event: { type: "snapshot", ...page }, scopes });
       yield* assistants.refreshTeamChat(teamId);
     });
     yield* teamRow(teamId);
@@ -3235,14 +3283,14 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistant_teams SET read_seq = MIN(read_seq, ${latest.seq - 1})
               WHERE team_id = ${teamId}`;
-            return yield* publishPage;
+            return yield* publishPage([ALL_SCOPE]);
           }
           case "clear":
             yield* ensureIdle;
             yield* clearChat(teamId);
             yield* sql`UPDATE assistant_group_threads SET seen_seq = 0 WHERE team_id = ${teamId}`;
             yield* sql`UPDATE assistant_teams SET read_seq = 0 WHERE team_id = ${teamId}`;
-            return yield* publishPage;
+            return yield* publishPage(undefined);
         }
       }),
     );
@@ -3252,7 +3300,7 @@ const make = Effect.gen(function* () {
   const history: AssistantGroups["Service"]["history"] = Effect.fn("AssistantGroups.history")(
     function* (input) {
       yield* teamRow(input.teamId);
-      return yield* readPage(input.teamId, input.beforeSeq);
+      return yield* readPage(input.teamId, input.beforeSeq, input.scope);
     },
     storage,
   );

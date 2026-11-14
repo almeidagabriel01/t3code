@@ -2693,7 +2693,8 @@ export const layerWsRpc = (
         [WS_METHODS.assistantTeamsUpdate]: (input) => assistants.updateTeam(input),
         [WS_METHODS.assistantTeamsDelete]: (input) =>
           assistants.removeTeam(input.teamId).pipe(Effect.as({ teamId: input.teamId })),
-        [WS_METHODS.assistantGroupsSubscribe]: (input) => assistantGroups.subscribe(input.teamId),
+        [WS_METHODS.assistantGroupsSubscribe]: (input) =>
+          assistantGroups.subscribe(input.teamId, input.scope),
         [WS_METHODS.assistantGroupsHistory]: (input) => assistantGroups.history(input),
         [WS_METHODS.assistantGroupsPost]: (input) => assistantGroups.post(input, { kind: "user" }),
         [WS_METHODS.assistantGroupsTaskAction]: (input) => assistantGroups.taskAction(input),

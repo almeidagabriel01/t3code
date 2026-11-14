@@ -10,6 +10,8 @@ import {
   type AssistantsEvent,
   AssistantTeamId,
   type AssistantGroupMessageId,
+  AssistantGroupsHistoryInput,
+  type AssistantGroupsEvent,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   ProjectId,
@@ -2637,6 +2639,138 @@ it.effect("agents post from outside, by id or name, with files, and a repeat pos
       })).message,
       "Several groups have that name; use the group id.",
     );
+  }).pipe(Effect.provide(h.layer), Effect.scoped);
+});
+
+const decodeHistoryInput = Schema.decodeSync(AssistantGroupsHistoryInput);
+
+it.effect("a project tab pages only its requests, General only requests without one", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // Every line is its own request: 60 in p1, 30 in p2, 30 in General, then a chat-wide boundary.
+    const projectOf = (n: number) => (n % 4 === 0 ? null : n % 4 === 1 ? "p2" : "p1");
+    for (let n = 1; n <= 120; n++) {
+      yield* sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+          created_at)
+        VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', 'x', ${`gm:${n}`},
+          ${projectOf(n)}, ${projectOf(n)}, '2026-01-01')`;
+    }
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, created_at)
+      VALUES ('gm:wide', ${TEAM}, 121, 'user', 'boundary', 'new', '2026-01-01')`;
+    // An open task in an old p2 request rides along with p2's page only.
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        request_id, created_at, updated_at)
+      VALUES ('gt:p2', ${TEAM}, 'gt:p2', 'root', 'gm:1', 'ada', 'do', 'paused', 'gm:1', 't', 't')`;
+    const read = (projectId: string | null | undefined, beforeSeq?: number) =>
+      groups.history(
+        decodeHistoryInput({
+          teamId: TEAM,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(projectId === undefined ? {} : { scope: { projectId } }),
+        }),
+      );
+    const seqs = (page: { messages: ReadonlyArray<{ seq: number }> }) =>
+      page.messages.map((message) => message.seq);
+
+    const p1 = yield* read("p1");
+    assert.deepEqual([p1.messages.length, p1.hasMore, p1.tasks.length], [50, true, 0]);
+    assert.isTrue(seqs(p1).every((seq) => projectOf(seq) === "p1"));
+    const p1Older = yield* read("p1", p1.messages[0]!.seq);
+    assert.deepEqual([p1Older.messages.length, p1Older.hasMore], [10, false]);
+    assert.isTrue(seqs(p1Older).every((seq) => projectOf(seq) === "p1"));
+
+    const p2 = yield* read("p2");
+    assert.deepEqual(
+      [p2.messages.length, p2.hasMore, p2.tasks.map((task) => task.id)],
+      [30, false, ["gt:p2"]],
+    );
+
+    const general = yield* read(null);
+    assert.deepEqual([general.messages.length, general.hasMore], [30, false]);
+    assert.isTrue(seqs(general).every((seq) => projectOf(seq) === null));
+
+    // All, and an old input without a scope, read every line as before.
+    const all = yield* read(undefined);
+    assert.deepEqual(
+      [all.messages.at(-1)!.id, all.messages.length, all.tasks.length],
+      ["gm:wide", 50, 1],
+    );
+    // A project the group never had reads empty, never the whole chat.
+    const outside = yield* read("p9");
+    assert.deepEqual([outside.messages, outside.tasks, outside.hasMore], [[], [], false]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a tab's stream carries only its lines, and a request that gets a project moves", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: [], question: "Core or the Mobile App?" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const open = (projectId: string | null | undefined) =>
+      Stream.toPull(
+        groups.subscribe(
+          TEAM,
+          projectId === undefined ? undefined : { projectId: projectId as ProjectId | null },
+        ),
+      );
+    const tabs = {
+      all: yield* open(undefined),
+      p1: yield* open("p1"),
+      p2: yield* open("p2"),
+      general: yield* open(null),
+      outside: yield* open("p9"),
+    };
+    for (const pull of Object.values(tabs)) assert.equal((yield* pull)[0]!.type, "snapshot");
+    const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+    yield* groups.idle;
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Mobile App",
+        replyToMessageId: posted.message.id,
+        projectId: ProjectId.make("p2"),
+      },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    // Clearing empties every tab, so each one ends on an empty snapshot.
+    yield* groups.conversation({ teamId: TEAM, action: "clear" });
+    const untilCleared = Effect.fnUntraced(function* (pull: (typeof tabs)["all"]) {
+      const seen: AssistantGroupsEvent[] = [];
+      while (true) {
+        for (const event of yield* pull) {
+          if (event.type === "snapshot") return seen;
+          seen.push(event);
+        }
+      }
+    });
+    const messages = (events: ReadonlyArray<AssistantGroupsEvent>) =>
+      events.flatMap((event) => (event.type === "message" ? [event.message] : []));
+
+    assert.deepEqual(yield* untilCleared(tabs.p1), []);
+    assert.deepEqual(yield* untilCleared(tabs.outside), []);
+    // General saw the request until it moved, and last its head with the new project.
+    const general = messages(yield* untilCleared(tabs.general));
+    const lastHead = general.findLast((message) => message.id === posted.message.id);
+    assert.equal(lastHead?.projectId, "p2");
+    assert.isTrue(general.every((message) => message.requestId === posted.message.id));
+    // p2 got every line of the request, those from before the move included.
+    const p2 = messages(yield* untilCleared(tabs.p2));
+    assert.deepEqual(
+      [...new Set(p2.map((message) => message.id))].toSorted(),
+      lines.map((line) => line.message_id).toSorted(),
+    );
+    assert.isAbove(messages(yield* untilCleared(tabs.all)).length, 0);
   }).pipe(Effect.provide(h.layer), Effect.scoped);
 });
 
