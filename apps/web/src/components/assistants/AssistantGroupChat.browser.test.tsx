@@ -1091,6 +1091,10 @@ it("shows the chosen project's model beside the project and saves a pick as its 
   await userEvent.click(main().getByRole("combobox", { name: "Project" }));
   await userEvent.click(page.getByRole("option", { name: "render" }));
   // Without a project or group default, each member runs on its own model.
+  const trigger = main().getByRole("button", {
+    name: "Model for render, Not set: each member uses its own model",
+  });
+  await expect.element(trigger).toHaveTextContent("Members' models");
   await userEvent.click(
     main().getByRole("button", {
       name: "Model for render, Not set: each member uses its own model",
@@ -1136,7 +1140,7 @@ it("says inline why the project's model was not saved and keeps the shown one", 
   );
   await expect
     .element(main().getByRole("button", { name: /^Model for render/ }))
-    .toHaveTextContent("GPT-5.4");
+    .toHaveTextContent("Members' models");
   fakeSettings.refuse = null;
 });
 

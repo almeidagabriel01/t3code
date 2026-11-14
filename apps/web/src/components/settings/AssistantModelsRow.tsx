@@ -32,6 +32,8 @@ export function SelectionPicker(
     readonly composer?: boolean;
     /** Where the value comes from, for the tooltip and screen readers. */
     readonly detail?: string;
+    /** Names the trigger instead of the selection, which then only seeds the menu; hides effort. */
+    readonly placeholder?: string;
     readonly onChange: (selection: ModelSelection) => void;
   },
 ) {
@@ -51,13 +53,17 @@ export function SelectionPicker(
         triggerAriaLabel={props.label}
         {...(props.detail === undefined ? {} : { triggerDetail: props.detail })}
         // A provider that is gone or off cannot name its model; the slug still reads cleanly.
-        {...(entry ? {} : { triggerLabel: formatModelSlugName(selection.model) })}
+        {...(props.placeholder !== undefined
+          ? { triggerLabel: props.placeholder }
+          : entry
+            ? {}
+            : { triggerLabel: formatModelSlugName(selection.model) })}
         disabled={props.disabled}
         onInstanceModelChange={(instanceId, model) =>
           props.onChange(createModelSelection(instanceId, model))
         }
       />
-      {entry ? (
+      {entry && props.placeholder === undefined ? (
         <TraitsPicker
           provider={entry.driverKind}
           models={entry.models}

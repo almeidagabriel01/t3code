@@ -100,6 +100,7 @@ function ProjectModelPicker(props: {
       selection={shown}
       label={`Model for ${props.projectLabel}`}
       detail={detail}
+      {...(inherited && props.teamDefault === null ? { placeholder: "Members' models" } : {})}
       disabled={props.disabled || !canWrite}
       environmentId={representative?.environmentId ?? null}
       instanceEntries={entries}
