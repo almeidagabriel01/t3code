@@ -37,7 +37,9 @@ final class T3ScrollEdgeBleedView: ExpoView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    if window == nil { detach() } else { setNeedsLayout() }
+    guard let window else { return detach() }
+    setNeedsLayout()
+    NavigationBarScrollPocket.refreshIfStale(from: self, in: window)
   }
 
   override func didAddSubview(_ subview: UIView) {
@@ -164,6 +166,46 @@ final class T3ScrollEdgeBleedView: ExpoView {
         next.append(contentsOf: view.subviews)
       }
       level = next
+    }
+    return nil
+  }
+}
+
+/// UIKit (iOS 26) hands a navigation bar's elements to the scroll-edge effect only while the stack
+/// is in the window: a stack off screen when the window's interface style override changes (React
+/// Native's `Appearance.setColorScheme`, an in-app theme switch) keeps none, so its header stops
+/// blurring until relaunch. Hiding and showing the bar hands them over again.
+@MainActor
+private enum NavigationBarScrollPocket {
+  private static var style: UIUserInterfaceStyle?
+  /// Bumped on every style change; a stack refreshed at an older one may hold stale elements.
+  private static var generation = 0
+  private static let refreshed = NSMapTable<UINavigationController, NSNumber>.weakToStrongObjects()
+
+  static func refreshIfStale(from view: UIView, in window: UIWindow) {
+    guard #available(iOS 26.0, *) else { return }
+    let current = window.traitCollection.userInterfaceStyle
+    if let style, style != current { generation += 1 }
+    style = current
+    guard let stack = navigationController(of: view),
+      (refreshed.object(forKey: stack)?.intValue ?? 0) < generation
+    else { return }
+    refreshed.setObject(NSNumber(value: generation), forKey: stack)
+    // After the move that brought the stack on screen, so the bar is not toggled mid-transition.
+    Task { @MainActor [weak stack] in
+      guard let stack, stack.viewIfLoaded?.window != nil, !stack.isNavigationBarHidden else { return }
+      stack.setNavigationBarHidden(true, animated: false)
+      stack.setNavigationBarHidden(false, animated: false)
+    }
+  }
+
+  private static func navigationController(of view: UIView) -> UINavigationController? {
+    var responder: UIResponder? = view
+    while let next = responder {
+      if let controller = next as? UIViewController {
+        return controller as? UINavigationController ?? controller.navigationController
+      }
+      responder = next.next
     }
     return nil
   }
