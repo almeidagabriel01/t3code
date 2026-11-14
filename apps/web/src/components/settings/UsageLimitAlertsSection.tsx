@@ -139,7 +139,7 @@ export function UsageLimitAlertsPausedNotice({
   return (
     <SettingsGroup divided={false} className="overflow-hidden">
       <SettingsRow
-        title="Limit alerts are paused"
+        title="Alerts are paused"
         description={
           <>
             Assistant notifications are off, so limit alerts wait. Change it in{" "}
