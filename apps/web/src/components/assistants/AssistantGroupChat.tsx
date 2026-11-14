@@ -32,6 +32,7 @@ import type {
   AssistantTeamId,
   ChatAttachment,
   EnvironmentId,
+  ModelSelection,
   ProjectId,
 } from "@t3tools/contracts";
 import { assistantGroupProjectIds, splitAssistantTransferText } from "@t3tools/contracts";
@@ -66,8 +67,10 @@ import {
   useAssistantGroupChat,
 } from "../../state/assistants";
 import { useProjects } from "../../state/entities";
+import { useEnvironmentProviders } from "../../state/environments";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
+import { getDisplayModelName } from "../chat/providerIconUtils";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
@@ -127,6 +130,13 @@ function GroupHeader(props: {
   const { environmentId, team, modelProject } = props;
   const flows = useAssistantTeamFlows(environmentId);
   const exceptions = useMemberModelExceptions(environmentId, modelProject?.id ?? null);
+  const providers = useEnvironmentProviders().get(environmentId);
+  const modelName = (selection: ModelSelection) => {
+    const found = providers
+      ?.find((provider) => provider.instanceId === selection.instanceId)
+      ?.models.find((model) => model.slug === selection.model);
+    return found ? getDisplayModelName(found) : formatModelSlugName(selection.model);
+  };
   const archived = team.archivedAt !== null;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   return (
@@ -210,7 +220,7 @@ function GroupHeader(props: {
                       />
                       <span className="min-w-0 flex-1 truncate">{member.name}</span>
                       <span className="ms-3 shrink-0 text-xs text-muted-foreground">
-                        {exception ? formatModelSlugName(exception.model) : "No exception"}
+                        {exception ? modelName(exception) : "No exception"}
                       </span>
                     </MenuItem>
                   );
