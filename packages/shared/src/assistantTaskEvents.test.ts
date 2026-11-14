@@ -42,6 +42,7 @@ describe("isQuietReply", () => {
     ["NO_REPLY", true],
     ["  `NO_REPLY`\n", true],
     ["**NO_REPLY**", true],
+    ["NO_REPLY.", true],
     ["Nothing new since the last report.\n\nNO_REPLY", true],
     ["NO_REPLY is what I would say, but the build broke.", false],
     ["Task finished: 3 files changed.", false],

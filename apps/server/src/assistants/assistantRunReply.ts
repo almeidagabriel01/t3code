@@ -9,25 +9,34 @@ const BRIEF_MAX_CHARS = 600;
 const asksForFullAnswer = (origin: TurnOrigin) => origin === "user" || origin === "routine";
 
 /**
- * The head of a reply for a chat app: whole lines up to a size a phone shows at a glance,
- * stopping before a table or code block. The full text stays in the T3 thread.
+ * The head of a reply for a chat app: its prose lines up to a size a phone shows at a glance,
+ * leaving out tables and code blocks. The full text stays in the T3 thread.
  */
 export function briefReply(text: string): string {
-  const lines = text.trim().split("\n");
   const kept: Array<string> = [];
   let size = 0;
-  for (const line of lines) {
-    if (/^\s*(?:`{3}|~{3}|\|)/.test(line)) break;
-    if (kept.length === BRIEF_MAX_LINES || size + line.length > BRIEF_MAX_CHARS) break;
+  let inFence = false;
+  let omitted = false;
+  for (const line of text.trim().split("\n")) {
+    const fence = /^\s*(?:`{3}|~{3})/.test(line);
+    if (fence || inFence || /^\s*\|/.test(line)) {
+      if (fence) inFence = !inFence;
+      omitted = true;
+      continue;
+    }
+    if (kept.length === BRIEF_MAX_LINES || size + line.length > BRIEF_MAX_CHARS) {
+      omitted = true;
+      if (kept.some((keptLine) => keptLine.trim() !== "")) break;
+      // One line longer than the whole budget: cut it at a word.
+      const head = line.slice(0, BRIEF_MAX_CHARS);
+      return `${head.slice(0, Math.max(head.lastIndexOf(" "), 1)).trimEnd()}…`;
+    }
     kept.push(line);
     size += line.length + 1;
   }
-  if (kept.length === lines.length) return text.trim();
-  const head = kept.join("\n").trimEnd();
-  if (head !== "") return `${head}\n…`;
-  // One line longer than the whole budget: cut it at a word.
-  const first = lines[0]!.slice(0, BRIEF_MAX_CHARS);
-  return `${first.slice(0, Math.max(first.lastIndexOf(" "), 1)).trimEnd()}…`;
+  const head = kept.join("\n").trim();
+  if (!omitted) return head;
+  return head === "" ? "…" : `${head}\n…`;
 }
 
 /**

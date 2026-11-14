@@ -61,7 +61,12 @@ describe("briefReply", () => {
     expect(sent.endsWith("word…")).toBe(true);
   });
 
-  it("stops before a code block", () => {
-    expect(briefReply("Fixed it.\n```ts\nconst a = 1;\n```")).toBe("Fixed it.\n…");
+  it.each([
+    ["a trailing code block", "Fixed it.\n```ts\nconst a = 1;\n```", "Fixed it.\n…"],
+    ["a leading code block", "```ts\nconst a = 1;\n```\nFixed it.", "Fixed it.\n…"],
+    ["a leading table", "| Check | Result |\n| --- | --- |\nAll green.", "All green.\n…"],
+    ["nothing but a table", "| Check | Result |\n| --- | --- |", "…"],
+  ])("leaves out %s", (_name, text, expected) => {
+    expect(briefReply(text)).toBe(expected);
   });
 });

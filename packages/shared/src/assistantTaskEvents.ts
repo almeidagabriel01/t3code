@@ -57,8 +57,8 @@ export function parseTaskEvent(message: {
 /** What an assistant answers to an event that has nothing new for the user. */
 export const QUIET_REPLY = "NO_REPLY";
 
-/** True when the reply's last line is the quiet token, bare or wrapped in Markdown emphasis or code. */
+/** True when the reply's last line is the quiet token, bare, punctuated or wrapped in Markdown. */
 export function isQuietReply(text: string): boolean {
   const lastLine = text.trim().split("\n").at(-1) ?? "";
-  return lastLine.trim().replace(/^[`*_]+|[`*_]+$/g, "") === QUIET_REPLY;
+  return lastLine.trim().replace(/^[`*_]+|[`*_.!]+$/g, "") === QUIET_REPLY;
 }
