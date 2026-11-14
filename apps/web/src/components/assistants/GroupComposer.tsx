@@ -73,8 +73,6 @@ import { GroupMentionChip } from "./GroupMentionChip";
 import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
 import { useGroupAttachments } from "./useGroupAttachments";
 
-export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
-
 export type GroupSendResult =
   | { readonly ok: true }
   | { readonly ok: false; readonly message: string };

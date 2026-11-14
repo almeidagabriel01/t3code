@@ -456,11 +456,10 @@ it("jumps from a reply's quote to the original and flashes it once", async () =>
 it("keeps the draft and says what to do when the request names no one", async () => {
   publishGroupChat([message(1)]);
   await using _screen = await openChat();
-  fakeGroupChat.postRefusal = { reason: "mention_required", message: "no" };
+  // The server says why its lead cannot route; the client shows it as is.
+  fakeGroupChat.postRefusal = { reason: "mention_required", message: "Ada can't route." };
   await userEvent.type(composer(), "who does this?{Enter}");
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("Mention a member with @, or set a lead in Edit group.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Ada can't route.");
   await expectComposer("who does this?");
   fakeGroupChat.postRefusal = { reason: "archived", message: "no" };
   await userEvent.click(page.getByRole("button", { name: "Submit message" }));

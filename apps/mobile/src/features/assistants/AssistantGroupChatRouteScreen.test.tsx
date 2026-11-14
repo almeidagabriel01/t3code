@@ -1213,15 +1213,19 @@ describe("group composer", () => {
     expect(byLabel("Mention Jarvis")?.textContent).toContain("lead");
   });
 
-  it("keeps the draft and says to mention someone when the server asks for it", async () => {
-    mocks.post.mockResolvedValue({ ok: false, message: "raw", reason: "mention_required" });
+  it("keeps the draft and says why the lead cannot route, as the server words it", async () => {
+    mocks.post.mockResolvedValue({
+      ok: false,
+      message: "Ada can't route.",
+      reason: "mention_required",
+    });
     render();
     await type("no mention");
     await click("Send");
-    expect(text()).toContain("Mention a member with @, or set a lead in Edit group.");
+    expect(text()).toContain("Ada can't route.");
     expect(input().value).toBe("no mention");
     await type("no mention!");
-    expect(text()).not.toContain("Mention a member with @");
+    expect(text()).not.toContain("Ada can't route.");
   });
 
   it("explains an archived refusal and shows any other message as is", async () => {

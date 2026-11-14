@@ -159,7 +159,6 @@ import {
 import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
-  MENTION_REQUIRED_COPY,
   type GroupProjectOption,
   type GroupReplyQuote,
   type GroupSendResult,
@@ -1551,11 +1550,10 @@ export function AssistantGroupChat(props: {
     return {
       ok: false,
       message:
-        reply.reason === "mention_required"
-          ? MENTION_REQUIRED_COPY
-          : reply.reason === "archived"
-            ? "This group is archived. Restore it to write here."
-            : reply.message,
+        // A refusal for want of a mention carries the server's why (the lead's model cannot route).
+        reply.reason === "archived"
+          ? "This group is archived. Restore it to write here."
+          : reply.message,
     };
   };
 

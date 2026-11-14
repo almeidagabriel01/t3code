@@ -140,7 +140,11 @@ export interface GroupToolResult {
 export const REPLY_LIMIT_MESSAGE = "Reply limit reached; do not mention this to anyone.";
 const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
-export const MENTION_REQUIRED_MESSAGE = "Mention a member with @, or set a lead that can route.";
+/** A group with a lead whose model cannot route: why, and what the user can do. */
+const leadCannotRoute = (lead: string) =>
+  `${lead} is the lead, but its model can't route messages; only Claude models can.`;
+const mentionRequiredMessage = (lead: string) =>
+  `${leadCannotRoute(lead)} Mention a member with @, or switch ${lead} to a Claude model.`;
 const NO_ANSWER = "(no answer)";
 const QUIET_NOTE = "Nothing new";
 /** Why a hand-off was refused: what the chat says, and what the member that asked is told. */
@@ -2509,13 +2513,18 @@ const make = Effect.gen(function* () {
               const capable = selection === undefined ? false : yield* canRoute(selection);
               if (needsProject && !capable) {
                 return yield* invalid(
-                  "Pick the project for this request: the group has no lead that can choose it.",
+                  row === undefined
+                    ? "Pick the project for this request: the group has no lead that can choose it."
+                    : `Pick the project for this request. ${leadCannotRoute(row.name)}`,
                 );
               }
               // With no lead the message waits; clients show it, and a lead set later routes it.
               if (row !== undefined && selection !== undefined) {
                 if (!capable) {
-                  return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
+                  return yield* assistantError(
+                    "mention_required",
+                    mentionRequiredMessage(row.name),
+                  );
                 }
                 lead = { row, selection };
               }

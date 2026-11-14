@@ -56,8 +56,6 @@ import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
-export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
-
 const LEAD_DECIDES = "lead-decides";
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;

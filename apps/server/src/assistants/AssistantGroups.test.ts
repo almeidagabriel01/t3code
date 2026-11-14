@@ -1187,12 +1187,26 @@ it.effect("a group of one takes any message", () => {
 it.effect(
   "a message that names no one is refused before it is stored when the lead cannot route",
   () => {
-    const h = harness({ lead: "beto", routable: [codex] });
+    const h = harness({
+      lead: "beto",
+      routable: [codex],
+      projects: { ada: ["p1"], beto: ["p2"] },
+    });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      const error = yield* groups.post({ teamId: TEAM, text: "hello?" }, h.user).pipe(Effect.flip);
-      assert.equal(error.reason, "mention_required");
-      assert.equal(error.message, Groups.MENTION_REQUIRED_MESSAGE);
+      const post = (projectId?: ProjectId) =>
+        groups
+          .post({ teamId: TEAM, text: "hello?", ...(projectId ? { projectId } : {}) }, h.user)
+          .pipe(Effect.flip);
+      // The group has a lead, so the user is told why it cannot route, never to set one.
+      const unplaced = yield* post();
+      const error = yield* post(ProjectId.make("p1"));
+      assert.deepEqual([unplaced.reason, error.reason], ["invalid", "mention_required"]);
+      for (const refusal of [unplaced, error]) {
+        assert.include(refusal.message, "Beto");
+        assert.include(refusal.message, "can't route");
+        assert.notInclude(refusal.message, "no lead");
+      }
       assert.lengthOf(yield* h.messages, 0);
     }).pipe(Effect.provide(h.layer));
   },
