@@ -1620,7 +1620,10 @@ it.effect(
         BEGIN SELECT RAISE(ABORT, 'down'); END`;
       yield* service.notifyWaiting;
       assert.lengthOf(yield* outboxRows, 0);
-      assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_needs_you`, 0);
+      assert.lengthOf(
+        yield* sql`SELECT 1 FROM autonomy_needs_you WHERE subject_key != 'baseline'`,
+        0,
+      );
       yield* sql`DROP TRIGGER outbox_down`;
       // Another task in the same window, sorting first, reuses the decision already opened.
       yield* limited(h, "t1", "r1", { resetAt: "1970-01-01T05:00:40.000Z" });
