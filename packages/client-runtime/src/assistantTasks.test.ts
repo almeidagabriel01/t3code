@@ -75,9 +75,9 @@ describe("usageLimitLabel", () => {
   const now = Date.parse("2026-11-14T12:00:00.000Z");
   it.each([
     ["2026-11-14T15:30:00.000Z", "Limit until <2026-11-14T15:30:00.000Z>"],
-    ["2026-11-14T11:00:00.000Z", "Usage limit"],
-    [null, "Usage limit"],
-    ["not a date", "Usage limit"],
+    ["2026-11-14T11:00:00.000Z", null],
+    [null, null],
+    ["not a date", null],
   ])("reads %s as %s", (resetAt, label) => {
     expect(usageLimitLabel(resetAt, now, (iso) => `<${iso}>`)).toBe(label);
   });

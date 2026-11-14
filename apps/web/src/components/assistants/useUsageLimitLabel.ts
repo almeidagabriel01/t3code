@@ -4,7 +4,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 
-/** "Limit until 14:30", with the day when the reset is not today, in the app's time format. */
+/** "Limit until 14:30" (with the day when not today) in the app's time format; null without a reset ahead. */
 export function useUsageLimitLabel() {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const now = useNowMinuteMs();

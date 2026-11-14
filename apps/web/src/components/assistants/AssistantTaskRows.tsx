@@ -65,7 +65,7 @@ export const AssistantTaskRows = memo(function AssistantTaskRows(props: {
       {rows.map(({ task, shell, state }) => {
         const label =
           state === "usage_limited"
-            ? limitLabel(shell.runtime?.usageLimitResetAt)
+            ? (limitLabel(shell.runtime?.usageLimitResetAt) ?? ASSISTANT_TASK_STATE_LABEL[state])
             : ASSISTANT_TASK_STATE_LABEL[state];
         return (
           <li

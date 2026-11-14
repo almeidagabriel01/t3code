@@ -275,7 +275,7 @@ function AssistantStatusCard(props: {
             }
           >
             {limited
-              ? limitLabel(shell.runtime?.usageLimitResetAt)
+              ? (limitLabel(shell.runtime?.usageLimitResetAt) ?? "Its last run hit a usage limit.")
               : shell?.latestRun?.status === "failed"
                 ? "Its last run failed."
                 : "Its last run was stopped."}

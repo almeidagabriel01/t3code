@@ -18,15 +18,13 @@ export const ASSISTANT_TASK_STATE_LABEL: Record<AssistantTaskState, string> = {
   failed: "Failed",
 };
 
-/** "Limit until <time>" while the reset is ahead; `formatAt` is the platform's upcoming-time format. */
+/** "Limit until <time>" while the reset is ahead, else null; `formatAt` is the platform's upcoming-time format. */
 export function usageLimitLabel(
   resetAt: string | null | undefined,
   nowMs: number,
   formatAt: (iso: string) => string,
-): string {
-  return resetAt != null && Date.parse(resetAt) > nowMs
-    ? `Limit until ${formatAt(resetAt)}`
-    : "Usage limit";
+): string | null {
+  return resetAt != null && Date.parse(resetAt) > nowMs ? `Limit until ${formatAt(resetAt)}` : null;
 }
 
 type TaskShell = NonNullable<Parameters<typeof assistantPresence>[0]> & {
