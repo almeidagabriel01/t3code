@@ -10,6 +10,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -986,6 +987,89 @@ it.effect("without Telegram the waiting request is only in Activity, answerable 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("what already waited before the first run is never told, what came after is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "old", threadId: "t1", createdAt: "1969-12-31T23:00:00.000Z" });
+    yield* pendingRequest(h, { id: "new", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => row.delivery_id.startsWith("needs-you:")),
+      [true],
+    );
+    const decisions = yield* DecisionService.DecisionService;
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["new"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a baseline that could not be recorded at start never lets the old backlog through",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM autonomy_needs_you WHERE subject_key = 'baseline'`;
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "old", threadId: "t1" });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a card the chat app refused or may not have shown is told again later", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* pendingRequest(h, { id: "r2", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [first, second] = yield* outboxRows;
+    yield* sql`UPDATE channel_outbox SET state = 'failed' WHERE delivery_id = ${first!.delivery_id}`;
+    yield* sql`UPDATE channel_outbox SET state = 'ambiguous' WHERE delivery_id = ${second!.delivery_id}`;
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["failed", "ambiguous"],
+    );
+    yield* TestClock.adjust(31 * MIN);
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["pending", "pending"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: ["111"] }));
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "iMessage carries the card when Telegram is not set up and the user wrote from it",
   () => {
@@ -1039,6 +1123,62 @@ it.effect("secrets in a waiting command never reach the chat", () => {
     const [row] = yield* outboxRows;
     assert.include(row!.message.text, "GITHUB_TOKEN=[redacted] gh pr merge");
     assert.notInclude(row!.message.text, "ghp_");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a secret at the edge of the clipped context is redacted before the cut", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, {
+      id: "r1",
+      threadId: "t1",
+      item: {
+        type: "approval_request",
+        requestId: "r1",
+        prompt: `echo ${"a".repeat(1_180)} ghp_${"Z".repeat(32)}`,
+      },
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [row] = yield* outboxRows;
+    assert.notInclude(row!.message.text, "ghp_");
+    assert.notInclude(row!.message.text, "ZZZZ");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a command cut to fit the card cannot be approved from the chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    h.shells.set("t1", plain);
+    for (const [id, length] of [
+      ["card", 2_000],
+      ["decision", 5_000],
+    ] as const) {
+      yield* pendingRequest(h, {
+        id,
+        threadId: "t1",
+        item: { type: "approval_request", requestId: id, prompt: `echo ${"a".repeat(length)}` },
+      });
+    }
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 2);
+    for (const { message } of rows) {
+      assert.isUndefined(message.choices);
+      assert.include(message.text, "(cut short — open it in T3)");
+      assert.include(message.text, "https://app.t3.codes/threads/env-1/t1");
+    }
+    assert.lengthOf(yield* cards, 0);
+    // Cut at the decision's own limit, it is not an approval in Activity either.
+    const cut = (yield* decisions.list({})).find((decision) =>
+      decision.context.includes("a".repeat(4_000).slice(0, 3_900)),
+    );
+    assert.isUndefined(cut?.approvalRequestId);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1184,6 +1324,48 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a paused branch of a group request is told once, for its top task", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+    const task = (id: string, parent: string | null) => sql`
+      INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
+         status, reason, created_at, updated_at)
+      VALUES (${id}, 'team-1', 'root', ${parent}, ${parent === null ? "root" : "subtask"}, 'msg-1',
+        'ana', ${`Do ${id}`}, 'paused', 'handoff_limit', ${T0}, ${T0})`;
+    yield* task("root", null);
+    yield* task("child", "root");
+    yield* task("grandchild", "child");
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 1);
+    assert.include(rows[0]!.message.text, "Do root");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a message whose delivery could not be queued is not counted as sent", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    const say = service.notifyUser({ assistantId: "jarvis", key: "k1", text: "Deploy done." });
+    yield* sql`ALTER TABLE channel_outbox RENAME TO channel_outbox_away`;
+    const failed = yield* Effect.exit(say);
+    yield* sql`ALTER TABLE channel_outbox_away RENAME TO channel_outbox`;
+    assert.isTrue(Exit.isFailure(failed));
+    assert.equal((yield* say).status, "sent");
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
 
 const scheduledRun = (
   status: string,

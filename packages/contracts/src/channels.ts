@@ -73,6 +73,8 @@ export const ChannelOutboundMessage = Schema.Struct({
   text: Schema.String,
   /** Who is speaking; every message starts with it so replies read apart from yours in a self chat. */
   senderName: TrimmedNonEmptyString,
+  /** True when an assistant wrote `text`: rich transports render it as Markdown, never T3's own phrases. */
+  markdown: Schema.optional(Schema.Boolean),
   /** Transports without buttons list the choices as a numbered list in the text. */
   choices: Schema.optional(Schema.Array(ChannelChoice)),
   /** The language of T3's own phrases the transport adds, such as the numbered-choices hint. */

@@ -12,6 +12,7 @@ import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import { redactChannelText } from "./channelRedaction.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 const MAX_ATTEMPTS = 10;
@@ -67,7 +68,21 @@ const make = Effect.gen(function* () {
   const wake = Queue.offer(wakeups, undefined).pipe(Effect.asVoid);
 
   const enqueue: ChannelOutbox["Service"]["enqueue"] = Effect.fn("ChannelOutbox.enqueue")(
-    function* (message) {
+    function* (written) {
+      // The one way out to a chat app: whoever wrote it, nothing recognizable as a credential
+      // is stored here or reaches a third-party server.
+      const message = {
+        ...written,
+        text: redactChannelText(written.text),
+        ...(written.choices === undefined
+          ? {}
+          : {
+              choices: written.choices.map((choice) => ({
+                ...choice,
+                label: redactChannelText(choice.label),
+              })),
+            }),
+      };
       const now = yield* nowIso;
       yield* sql`
         INSERT OR IGNORE INTO channel_outbox (
