@@ -68,20 +68,23 @@ export function resolveFileLinkPath(
   if (isAbsolutePath(targetPath)) return targetPath;
   const relativePath = normalizeRelativePath(targetPath);
   if (relativePath !== null || !workspaceRoot) return relativePath;
-  return resolveHostPathOutsideRoot(workspaceRoot, targetPath);
+  return resolveClimbingLink(workspaceRoot, targetPath);
 }
 
-// A link such as `../other-repo/x.ts` names a host file, which the server reads in place.
-function resolveHostPathOutsideRoot(workspaceRoot: string, targetPath: string): string | null {
+// A link such as `../other-repo/x.ts` names a host file, which the server reads in place;
+// one that climbs back into the root is a workspace file.
+function resolveClimbingLink(workspaceRoot: string, targetPath: string): string | null {
   const joined = resolveWorkspaceFilePath(workspaceRoot, targetPath);
   const body = normalizeRelativePath(joined);
   if (body === null) return null;
   const hostPath = isWindowsPathStyle(workspaceRoot)
     ? `${joined.startsWith("\\\\") ? "\\\\" : ""}${body.replaceAll("/", "\\")}`
     : `/${body}`;
-  return isAbsolutePath(hostPath) && workspaceRelativeFilePath(hostPath, workspaceRoot) === null
-    ? hostPath
-    : null;
+  if (!isAbsolutePath(hostPath)) return null;
+  const relativePath = workspaceRelativeFilePath(hostPath, workspaceRoot);
+  // The root itself is no file, as with a `.` link.
+  if (relativePath === ".") return null;
+  return relativePath ?? hostPath;
 }
 
 export function resolveWorkspaceRelativeFilePath(

@@ -21,6 +21,9 @@ describe("resolveFileLinkPath", () => {
     ["/repo", "../other-repo/x.ts", "/other-repo/x.ts"],
     ["C:\\repo", "..\\other-repo\\x.ts", "C:\\other-repo\\x.ts"],
     ["/repo", "a/../b.ts", "b.ts"],
+    // Climbing out and back into the root is an ordinary workspace link.
+    ["/repo", "../repo/src/x.ts", "src/x.ts"],
+    ["/wt/feature", "../feature/src/a.ts", "src/a.ts"],
     ["/repo", "/repo/src/x.ts", "/repo/src/x.ts"],
     ["/repo", "/other-repo/x.ts", "/other-repo/x.ts"],
   ])("resolves a link from %s: %s", (cwd, path, expected) => {
@@ -32,6 +35,7 @@ describe("resolveFileLinkPath", () => {
     expect(resolveFileLinkPath(null, "~/notes.md")).toBeNull();
     expect(resolveFileLinkPath(null, "../notes.md")).toBeNull();
     expect(resolveFileLinkPath("/repo", ".")).toBeNull();
+    expect(resolveFileLinkPath("/repo", "../repo")).toBeNull();
   });
 });
 
