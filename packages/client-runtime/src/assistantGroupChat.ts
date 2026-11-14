@@ -5,12 +5,14 @@ import {
   assistantGroupAddress,
   assistantGroupInstructionBody,
   assistantGroupMentions,
+  assistantGroupProjectIds,
   assistantGroupProjectMentionRanges,
   assistantGroupProjectSlugs,
   foldAssistantGroupText,
   type Assistant,
   type AssistantTeam,
   type AssistantGroupMessage,
+  type AssistantGroupScope,
   type AssistantGroupMessageId,
   type AssistantGroupTask,
   type AssistantGroupTaskId,
@@ -180,8 +182,6 @@ export const ASSISTANT_GROUP_REQUEST_STATUS_LABEL: Record<AssistantGroupRequestS
 
 /** The composer's project choice when the user picks none. */
 export const ASSISTANT_GROUP_LEAD_DECIDES_LABEL = "Lead decides";
-/** The project filter's choice that shows every request. */
-export const ASSISTANT_GROUP_ALL_PROJECTS_LABEL = "All projects";
 
 export interface AssistantGroupRequestBlock {
   readonly requestId: AssistantGroupMessageId;
@@ -315,6 +315,92 @@ export function filterAssistantGroupFeed(
         (item.block.projectId === null &&
           (item.block.status === "routing" || item.block.status === "needs-project"))),
   );
+}
+
+export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
+
+export interface AssistantGroupTab {
+  readonly key: AssistantGroupTabKey;
+  /** undefined for All (unscoped reads); { projectId: null } for General. */
+  readonly scope: AssistantGroupScope | undefined;
+  /** Project title; "All", "General", or "Removed project" for an orphan scope. */
+  readonly label: string;
+  /** The project, for its favicon; null for All and General. */
+  readonly projectId: ProjectId | null;
+  readonly unreadCount: number;
+  readonly waiting: boolean;
+  /** Where the tab's "New" line and read marker start. All uses chat.readSeq. */
+  readonly readSeq: number;
+}
+
+/**
+ * null (no tab row) when the server sent no scopes or the group has fewer than 2 effective
+ * projects. Else All, the effective projects, orphan scopes that still have unread or waiting,
+ * then General when the chat lists it.
+ */
+export function assistantGroupTabs(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "chat">;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+}): ReadonlyArray<AssistantGroupTab> | null {
+  const chat = input.team.chat;
+  if (chat?.scopes === undefined) return null;
+  const title = new Map(input.projects.map((project) => [project.id, project.title]));
+  const effective = assistantGroupProjectIds(input.members, input.team.projectIds).filter((id) =>
+    title.has(id),
+  );
+  if (effective.length < 2) return null;
+  const scopes = chat.scopes;
+  const tab = (projectId: ProjectId | null, label: string): AssistantGroupTab => {
+    const found = scopes.find((scope) => scope.projectId === projectId);
+    return {
+      key: projectId === null ? "general" : `project:${projectId}`,
+      scope: { projectId },
+      label,
+      projectId,
+      unreadCount: found?.unreadCount ?? 0,
+      waiting: found?.waiting ?? false,
+      readSeq: found?.readSeq ?? 0,
+    };
+  };
+  const orphans = scopes.filter(
+    (scope) =>
+      scope.projectId !== null &&
+      !effective.includes(scope.projectId) &&
+      (scope.unreadCount > 0 || scope.waiting),
+  );
+  return [
+    {
+      key: "all",
+      scope: undefined,
+      label: "All",
+      projectId: null,
+      unreadCount: chat.unreadCount,
+      waiting: scopes.some((scope) => scope.waiting),
+      readSeq: chat.readSeq,
+    },
+    ...effective.map((id) => tab(id, title.get(id)!)),
+    ...orphans.map((scope) =>
+      tab(scope.projectId, title.get(scope.projectId!) ?? "Removed project"),
+    ),
+    ...(scopes.some((scope) => scope.projectId === null) ? [tab(null, "General")] : []),
+  ];
+}
+
+/** The saved key's tab, else All. */
+export function resolveAssistantGroupTab(
+  saved: string | null | undefined,
+  tabs: ReadonlyArray<AssistantGroupTab>,
+): AssistantGroupTab {
+  return tabs.find((tab) => tab.key === saved) ?? tabs[0]!;
+}
+
+/** False for a request whose project no longer matches the scope. */
+export function assistantGroupInScope(
+  block: Pick<AssistantGroupRequestBlock, "projectId">,
+  scope: AssistantGroupScope | undefined,
+): boolean {
+  return scope === undefined || block.projectId === scope.projectId;
 }
 
 /**

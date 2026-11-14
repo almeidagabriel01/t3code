@@ -7,6 +7,7 @@ import {
   XCircleIcon,
   type LucideIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 const STATUS_ICON: Record<TaskEventStatus, { icon: LucideIcon; className: string }> = {
@@ -24,6 +25,10 @@ export function TaskEventActivityRow(props: {
   onOpen: () => void;
   /** What the row opens, for screen readers. */
   action?: string;
+  /** A tag after the label, such as the project; never interactive, the row is a button. */
+  chip?: ReactNode;
+  /** The visible action at the row's end. */
+  actionLabel?: string;
 }) {
   const { icon: Icon, className } =
     props.status === null
@@ -40,7 +45,8 @@ export function TaskEventActivityRow(props: {
       <Icon className={cn("size-3.5 shrink-0", className)} aria-hidden />
       <span className="min-w-0 truncate font-medium text-foreground/90">{props.title}</span>
       <span className="shrink-0">· {props.label}</span>
-      <span className="ms-auto shrink-0 underline-offset-2">Open</span>
+      {props.chip}
+      <span className="ms-auto shrink-0 underline-offset-2">{props.actionLabel ?? "Open"}</span>
     </button>
   );
 }

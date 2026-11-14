@@ -6,6 +6,7 @@ import {
   type AssistantTask,
   type AssistantTeam,
   type AssistantSandboxStatus,
+  type AssistantGroupScope,
   type AssistantTeamId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -325,7 +326,10 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     /** One group's chat, live: the newest page first, then each change. */
     groupChat: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:assistants:group-chat",
-      subscribe: (input: { readonly teamId: AssistantTeamId }) =>
+      subscribe: (input: {
+        readonly teamId: AssistantTeamId;
+        readonly scope?: AssistantGroupScope;
+      }) =>
         subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
           Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
           Stream.filter((state): state is AssistantGroupChatState => state !== null),

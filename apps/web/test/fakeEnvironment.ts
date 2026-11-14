@@ -359,6 +359,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 
 let extraCapabilities: Record<string, boolean> = {};
 let hostOs: "linux" | "darwin" = "linux";
+let extraProjects: ReadonlyArray<OrchestrationProjectShell> = [];
 let reasoningEffort = false;
 const effortCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -461,7 +462,7 @@ const handlers: Record<string, (input: never) => unknown> = {
           snapshot: {
             schemaVersion: 1,
             snapshotSequence: sequence,
-            projects: [project],
+            projects: [project, ...extraProjects],
             threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
             archivedThreads: [],
           },
@@ -688,10 +689,12 @@ export const fakeGroupChat = {
   reads: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
+  subscriptions: [] as Array<Record<string, unknown>>,
 };
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
-handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
-  subscribe<AssistantGroupsEvent>(
+handlers[WS_METHODS.assistantGroupsSubscribe] = (input: Record<string, unknown>) => {
+  fakeGroupChat.subscriptions.push(input);
+  return subscribe<AssistantGroupsEvent>(
     [
       {
         type: "snapshot",
@@ -705,6 +708,7 @@ handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
       return () => groupChatSubscribers.delete(queue);
     },
   );
+};
 /** Replaces the chat, including for a subscription an earlier screen left open. */
 export function publishGroupChat(
   messages: AssistantGroupMessage[],
@@ -1177,9 +1181,16 @@ export function installFakeEnvironment(
     readonly reasoningEffort?: boolean;
     /** Accepted for upstream tests; the command handler below settles every command. */
     readonly acceptCommands?: boolean;
+    /** More projects beside `PROJECT_ID`, by id and title. */
+    readonly projects?: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   } = {},
 ): Disposable {
   threads = fixtures;
+  extraProjects = (options.projects ?? []).map((extra) => ({
+    ...project,
+    ...extra,
+    workspaceRoot: `/workspace/${extra.title}`,
+  }));
   dispatched = [];
   acceptCommands = options.acceptCommands === true;
   hostOs = options.mac ? "darwin" : "linux";

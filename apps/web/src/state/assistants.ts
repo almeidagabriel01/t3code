@@ -20,6 +20,7 @@ import {
   type Assistant,
   type AssistantTask,
   type AssistantGroupConversationAction,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
@@ -364,14 +365,20 @@ export function useAssistantTeamActions(environmentId: EnvironmentId) {
   };
 }
 
-/** The chat's live state, or null before the first snapshot. */
+/** The chat's live state, or null before the first snapshot; a scope narrows it to one tab. */
 export function useAssistantGroupChat(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
+  scope?: AssistantGroupScope,
 ): AssistantGroupChatState | null {
   return Option.getOrNull(
     AsyncResult.value(
-      useAtomValue(assistantsEnvironment.groupChat({ environmentId, input: { teamId } })),
+      useAtomValue(
+        assistantsEnvironment.groupChat({
+          environmentId,
+          input: { teamId, ...(scope === undefined ? {} : { scope }) },
+        }),
+      ),
     ),
   );
 }
@@ -423,8 +430,12 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     markRead: async (
       teamId: AssistantTeamId,
       position: { readonly readSeq: number } | { readonly unread: true },
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply> => {
-      const result = await markRead({ environmentId, input: { teamId, ...position } });
+      const result = await markRead({
+        environmentId,
+        input: { teamId, ...position, ...(scope === undefined ? {} : { scope }) },
+      });
       return result._tag === "Success"
         ? { ok: true, value: undefined }
         : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
@@ -451,11 +462,16 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     olderThan: async (
       teamId: AssistantTeamId,
       state: AssistantGroupChatState,
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply<AssistantGroupsHistoryResult>> => {
       const beforeSeq = oldestAssistantGroupSeq(state) ?? undefined;
       const result = await history({
         environmentId,
-        input: { teamId, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+        input: {
+          teamId,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(scope === undefined ? {} : { scope }),
+        },
       });
       return result._tag === "Success"
         ? { ok: true, value: result.value }

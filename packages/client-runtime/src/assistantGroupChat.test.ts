@@ -12,6 +12,9 @@ import type {
 
 import {
   assistantGroupActivity,
+  assistantGroupInScope,
+  assistantGroupTabs,
+  resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
   applyAssistantGroupHistory,
@@ -878,5 +881,121 @@ describe("assistantGroupMessageExcerpt", () => {
     ["> quoted\nplain  text", "quoted plain text"],
   ])("%j", (input, expected) => {
     assert.strictEqual(assistantGroupMessageExcerpt(input), expected);
+  });
+});
+
+describe("assistant group tabs", () => {
+  const P1 = "p1" as ProjectId;
+  const P2 = "p2" as ProjectId;
+  const P3 = "p3" as ProjectId;
+  const projects = [
+    { id: P1, title: "One" },
+    { id: P2, title: "Two" },
+    { id: P3, title: "Three" },
+  ];
+  const member = (projectId: ProjectId) => ({ projectId, projectIds: [] });
+  const scope = (projectId: ProjectId | null, unreadCount = 0, waiting = false) => ({
+    projectId,
+    unreadCount,
+    waiting,
+    readSeq: 3,
+  });
+  const tabs = (
+    members: ProjectId[],
+    scopes: ReturnType<typeof scope>[] | undefined,
+    teamProjects: ProjectId[] = [],
+  ) =>
+    assistantGroupTabs({
+      team: {
+        projectIds: teamProjects,
+        chat: { unreadCount: 5, readSeq: 1, ...(scopes ? { scopes } : {}) },
+      } as never,
+      members: members.map(member),
+      projects,
+    });
+  const keys = (result: ReturnType<typeof tabs>) => result?.map((tab) => tab.key) ?? null;
+
+  type Row = [
+    string,
+    ProjectId[],
+    ReturnType<typeof scope>[] | undefined,
+    string[] | null,
+    ProjectId[]?,
+  ];
+  const rows: Row[] = [
+    ["no projects", [], [scope(null)], null],
+    ["one project", [P1], [scope(P1)], null],
+    ["scopes absent", [P1, P2], undefined, null],
+    ["two projects", [P1, P2], [scope(P1), scope(P2)], ["all", "project:p1", "project:p2"]],
+    [
+      "General only when listed",
+      [P1, P2],
+      [scope(P1), scope(P2), scope(null)],
+      ["all", "project:p1", "project:p2", "general"],
+    ],
+    [
+      "orphan with unread sits before General",
+      [P1, P2],
+      [scope(null), scope(P3, 1), scope(P1)],
+      ["all", "project:p1", "project:p2", "project:p3", "general"],
+    ],
+    [
+      "orphan without unread has no tab",
+      [P1, P2],
+      [scope(P3), scope(P1)],
+      ["all", "project:p1", "project:p2"],
+    ],
+    [
+      "unknown orphan waiting",
+      [P1, P2],
+      [scope("gone" as ProjectId, 0, true)],
+      ["all", "project:p1", "project:p2", "project:gone"],
+    ],
+    ["team project ids count", [P1], [scope(P2)], ["all", "project:p2", "project:p1"], [P2]],
+  ];
+  it.each(rows)("%s", (_name, members, scopes, expected, teamProjects) => {
+    assert.deepStrictEqual(keys(tabs(members, scopes, teamProjects)), expected);
+  });
+
+  it("labels, counts and read positions", () => {
+    const result = tabs(
+      [P1, P2],
+      [scope(P1, 2), scope(P2, 0, true), scope("gone" as ProjectId, 1), scope(null)],
+    )!;
+    assert.deepStrictEqual(
+      result.map((tab) => [tab.label, tab.unreadCount, tab.waiting, tab.projectId, tab.readSeq]),
+      [
+        ["All", 5, true, null, 1],
+        ["One", 2, false, P1, 3],
+        ["Two", 0, true, P2, 3],
+        ["Removed project", 1, false, "gone", 3],
+        ["General", 0, false, null, 3],
+      ],
+    );
+    assert.strictEqual(result[0]!.scope, undefined);
+    assert.deepStrictEqual(result[4]!.scope, { projectId: null });
+    assert.deepStrictEqual(result[1]!.scope, { projectId: P1 });
+  });
+
+  it.each([
+    [null, "all"],
+    ["project:p2", "project:p2"],
+    ["project:gone", "all"],
+    ["general", "all"],
+  ])("resolves saved %j", (saved, expected) => {
+    const result = tabs([P1, P2], [scope(P1), scope(P2)])!;
+    assert.strictEqual(resolveAssistantGroupTab(saved, result).key, expected);
+  });
+
+  it.each([
+    [undefined, P1, true],
+    [undefined, null, true],
+    [{ projectId: null }, null, true],
+    [{ projectId: null }, P1, false],
+    [{ projectId: P1 }, P1, true],
+    [{ projectId: P1 }, P2, false],
+    [{ projectId: P1 }, null, false],
+  ] as const)("in scope %j for request in %j: %s", (tabScope, projectId, expected) => {
+    assert.strictEqual(assistantGroupInScope({ projectId }, tabScope && { ...tabScope }), expected);
   });
 });

@@ -121,7 +121,11 @@ vi.mock(import("~/state/entities"), async (original) => {
   };
 });
 
-installFakeEnvironment([threadWithHistory("thread-a", 2)], { assistants: true });
+const SITE_PROJECT = "project-site" as ProjectId;
+installFakeEnvironment([threadWithHistory("thread-a", 2)], {
+  assistants: true,
+  projects: [{ id: SITE_PROJECT, title: "site" }],
+});
 await page.viewport(1400, 900);
 __setClientSettingsForTests({
   ...DEFAULT_CLIENT_SETTINGS,
@@ -205,7 +209,15 @@ const people = () => [
 ];
 const eventually = (check: () => void) => vi.waitFor(check, { timeout: 10_000 });
 
-async function openChat(options: { team?: AssistantTeam } = {}) {
+const TAB_KEY = `t3code:group-tab:${ENVIRONMENT_ID}:t1`;
+
+async function openChat(
+  options: {
+    team?: AssistantTeam;
+    people?: Assistant[];
+  } = {},
+) {
+  localStorage.removeItem(TAB_KEY);
   clearGroupDrafts();
   waiting.clear();
   appAtomRegistry.set(assistantDialogAtom, null);
@@ -217,11 +229,12 @@ async function openChat(options: { team?: AssistantTeam } = {}) {
     reads: [],
     conversations: [],
     histories: [],
+    subscriptions: [],
     postRefusal: null,
     older: null,
   });
   fakeTeamEdits.updates = [];
-  publishAssistants(people(), [options.team ?? team()]);
+  publishAssistants(options.people ?? people(), [options.team ?? team()]);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/group/${ENVIRONMENT_ID}/t1`] }),
   );
@@ -991,7 +1004,7 @@ const twoProjectPeople = () => [
   assistant("jarvis", "Jarvis", { isDefault: true }),
 ];
 const inRequest = (root: number) => ({ requestId: `m${root}` as never });
-const twoRequests = () =>
+const twoRequests = (other: ProjectId = OTHER_PROJECT) =>
   publishGroupChat(
     [
       message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" }),
@@ -1002,7 +1015,7 @@ const twoRequests = () =>
         taskId: "t-1" as never,
         text: "Budget answered",
       }),
-      message(3, { ...inRequest(3), projectId: OTHER_PROJECT, title: "Ship the app" }),
+      message(3, { ...inRequest(3), projectId: other, title: "Ship the app" }),
     ],
     [
       task("t-1", 1, {
@@ -1105,33 +1118,121 @@ it("marks each request on the minimap and opens the one picked", async () => {
     .toBeInViewport();
 });
 
-it("narrows the feed to one project and sends new requests there", async () => {
-  twoRequests();
-  await using _screen = await openChat();
-  const filter = main().getByRole("combobox", { name: "Filter by project" });
-  await userEvent.click(filter);
-  await userEvent.click(page.getByRole("option", { name: "Unknown project" }));
+// Bo works in both known projects, so the group has two and its chat has a tab for each.
+const sitePeople = () => [
+  assistant("ada", "Ada", { role: "CFO" }),
+  assistant("bo", "Bo", { projectIds: [PROJECT_ID, SITE_PROJECT] }),
+  assistant("jarvis", "Jarvis", { isDefault: true }),
+];
+const scopedChat = () =>
+  chatOf({
+    latestSeq: 3,
+    unreadCount: 2,
+    // More than the one running task this tab loads: other tabs run work too.
+    runningCount: 3,
+    scopes: [
+      { projectId: PROJECT_ID, unreadCount: 2, waiting: false, readSeq: 1 },
+      { projectId: SITE_PROJECT, unreadCount: 0, waiting: true, readSeq: 3 },
+    ],
+  });
+const tabRow = () => main().getByRole("group", { name: "Project tabs" });
+// A tab's name also carries its count and waiting dot.
+const tab = (name: string) => tabRow().getByRole("button", { name: new RegExp(`^${name}\\b`) });
+const composerProject = () => main().getByRole("combobox", { name: "Project" });
+
+it("shows a tab per project with its unread count and waiting dot, only when the server sends them", async () => {
+  twoRequests(SITE_PROJECT);
+  await using _screen = await openChat({ people: sitePeople(), team: team({ chat: chatOf() }) });
+  await expect.element(main().getByText("Ship the app")).toBeVisible();
+  // An older server sends no scopes: today's view, unscoped.
+  await expect.element(tabRow()).not.toBeInTheDocument();
+  publishAssistants(sitePeople(), [team({ chat: scopedChat() })]);
+  await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  await expect.element(tab("render")).toMatchTextContent("render2");
+  await expect.element(tab("site").getByLabelText("Waiting on you")).toBeVisible();
+  await expect.element(tab("All").getByLabelText("Waiting on you")).toBeVisible();
+  await expect.element(tab("render").getByLabelText("Waiting on you")).not.toBeInTheDocument();
+  expect(tab("site").element().textContent).not.toMatch(/\d/);
+  // One project has nothing to switch between.
+  publishAssistants(people(), [team({ chat: scopedChat() })]);
+  await expect.element(tabRow()).not.toBeInTheDocument();
+  // Without tabs nothing reads a scope (the unscoped stream may still be cached from before).
+  expect(fakeGroupChat.subscriptions.filter((input) => "scope" in input)).toEqual([]);
+});
+
+it("narrows the feed to a project tab, keeps the draft, sets the composer's project and remembers the tab", async () => {
+  twoRequests(SITE_PROJECT);
+  await using screen = await openChat({ people: sitePeople(), team: team({ chat: scopedChat() }) });
+  await userEvent.type(composer(), "@bo draft");
+  await userEvent.click(tab("site"));
+  await expect.element(tab("site")).toHaveAttribute("aria-pressed", "true");
   await expect.element(main().getByText("Budget review")).not.toBeInTheDocument();
   await expect.element(blocks().first().getByText("Ship the app")).toBeVisible();
-  await userEvent.click(filter);
-  await userEvent.click(page.getByRole("option", { name: "All projects" }));
-  await expect.element(main().getByText("Budget review")).toBeVisible();
-  // A filtered project the group does not work in leaves the choice to the lead.
-  await userEvent.click(filter);
-  await userEvent.click(page.getByRole("option", { name: "Unknown project" }));
-  await userEvent.type(composer(), "@bo first{Enter}");
+  await expectComposer("@bo draft");
+  await expect.element(composerProject()).toHaveTextContent("site");
   await eventually(() =>
-    expect(fakeGroupChat.posts).toEqual([{ teamId: "t1", text: "@bo first" }]),
-  );
-  publishAssistants(twoProjectPeople(), [team()]);
-  await userEvent.type(composer(), "@bo next step{Enter}");
-  await eventually(() =>
-    expect(fakeGroupChat.posts.at(-1)).toEqual({
+    expect(fakeGroupChat.subscriptions).toContainEqual({
       teamId: "t1",
-      text: "@bo next step",
-      projectId: OTHER_PROJECT,
+      scope: { projectId: SITE_PROJECT },
     }),
   );
+  // All and General leave the project to the lead.
+  await userEvent.click(tab("All"));
+  await expect.element(composerProject()).toHaveTextContent("Lead decides");
+  await userEvent.click(tab("render"));
+  await expect.element(composerProject()).toHaveTextContent("render");
+  await eventually(() =>
+    expect(fakeGroupChat.reads).toEqual([
+      { teamId: "t1", readSeq: 3, scope: { projectId: PROJECT_ID } },
+    ]),
+  );
+  // The header counts the whole group's running tasks, not only this tab's.
+  await expect.element(main().getByTestId("group-running")).toHaveTextContent("3 running");
+  // A tab switch closes an open reply, which would answer a request out of view; the draft stays.
+  await userEvent.click(tab("site"));
+  await userEvent.click(main().getByRole("button", { name: "Reply to request Ship the app" }));
+  await expect.element(main().getByTestId("group-reply-chip")).toBeVisible();
+  await userEvent.click(tab("render"));
+  await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
+  await expectComposer("@bo draft");
+  // A send to another project follows it to its tab.
+  await userEvent.click(composerProject());
+  await userEvent.click(page.getByRole("option", { name: "site" }));
+  await userEvent.type(composer(), "{Enter}");
+  await eventually(() =>
+    expect(fakeGroupChat.posts).toEqual([
+      { teamId: "t1", text: "@bo draft", projectId: SITE_PROJECT },
+    ]),
+  );
+  await expect.element(tab("site")).toHaveAttribute("aria-pressed", "true");
+  await screen.router.navigate({ to: "/assistants" });
+  await expect.element(composer()).not.toBeInTheDocument();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+  });
+  await expect.element(tab("site")).toHaveAttribute("aria-pressed", "true");
+  await expect.element(main().getByText("Budget review")).not.toBeInTheDocument();
+});
+
+it("shows every request in All as one line with its project, opened in place, and marks nothing read", async () => {
+  twoRequests(SITE_PROJECT);
+  await using _screen = await openChat({
+    people: sitePeople(),
+    team: team({ chat: scopedChat() }),
+  });
+  const newest = blocks().nth(1).getByRole("button", { name: "Expand request Ship the app" });
+  await expect.element(newest).toMatchTextContent("· Workingsite");
+  const done = blocks().first().getByRole("button", { name: "Expand request Budget review" });
+  await expect.element(done).toMatchTextContent("· Finishedrender");
+  await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
+  await userEvent.click(done);
+  await expect.element(main().getByText("Budget answered")).toBeVisible();
+  await userEvent.click(
+    blocks().first().getByRole("button", { name: "Collapse request Budget review" }),
+  );
+  await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
+  expect(fakeGroupChat.reads).toEqual([]);
 });
 
 it("picks a project for a new request and keeps a reply in its request's project", async () => {
