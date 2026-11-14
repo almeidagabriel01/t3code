@@ -1,8 +1,10 @@
 import {
+  type AssistantId,
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
   globalIdleCompaction,
+  type ModelSelection,
   idleCompactionPatch,
   isNullableProjectSettingsOverride,
   readsIdleCompactionModes,
@@ -17,6 +19,7 @@ import {
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   clearProjectSettingsOverrides,
+  projectOverrideForWrite,
   matchFolderModelDefault,
   resolveProjectSettings,
   resolveWorktreeCleanup,
@@ -195,6 +198,8 @@ interface ScopedServerWrite {
   readonly previous: ServerSettings;
 }
 
+type ProjectOverridesPatch = NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>;
+
 function projectOverrideWrites(
   scope: Extract<ResolvedSettingsScope, { kind: "project" | "checkout" }>,
   environments: readonly ScopedSettingsEnvironment[],
@@ -202,7 +207,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
-  ) => ProjectSettingsOverrides | null,
+  ) => ProjectOverridesPatch[ProjectId],
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
@@ -212,7 +217,11 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const entry = update(
+      projectOverrideForWrite(settings.projectSettingsOverrides[member.id]),
+      settings,
+      member.id,
+    );
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -351,6 +360,40 @@ export function planScopedSettingsPatch(
             ? "Connect the selected checkouts, or update their environments, to save a project override."
             : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
+}
+
+/**
+ * Sets or clears (null) one assistant's model in the project. Assistants belong to one
+ * environment, so only that environment's members are written, and only that assistant's key.
+ */
+export function planProjectAssistantModel(
+  scope: ResolvedSettingsScope,
+  environments: readonly ScopedSettingsEnvironment[],
+  environmentId: EnvironmentId,
+  assistantId: AssistantId,
+  selection: ModelSelection | null,
+) {
+  const serverWrites =
+    scope.kind === "project" || scope.kind === "checkout"
+      ? projectOverrideWrites(
+          {
+            ...scope,
+            members: scope.members.filter((member) => member.environmentId === environmentId),
+          },
+          environments,
+          (current) => ({
+            ...current,
+            assistantModelSelections: { [assistantId]: selection },
+          }),
+        )
+      : [];
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    unavailableReason:
+      serverWrites.length > 0 ? null : "Connect this project's environment to save the model.",
+  };
 }
 
 export function planScopedSettingsClear(

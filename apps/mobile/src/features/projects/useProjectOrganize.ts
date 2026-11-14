@@ -9,8 +9,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { useNavigation } from "@react-navigation/native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { openSettings } from "../settings/settings-navigation";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
@@ -103,6 +105,33 @@ export function useProjectOrganize() {
 }
 
 /** Archives the selected project's checkouts, when this connection may; otherwise nothing to offer. */
+/**
+ * Opens Settings › Threads on the selected project. It passes one checkout's ids, so Settings
+ * finds the project in its own grouping and the link survives Settings resetting its scope.
+ */
+export function useOpenSelectedProjectSettings(scope: {
+  readonly environmentId: EnvironmentId | null;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
+  readonly selectedKey: string | null;
+}) {
+  const navigation = useNavigation();
+  const projects = useProjects();
+  const ref = pickableProjectGroups(
+    buildHomeProjectScopes({
+      projects,
+      environmentId: scope.environmentId,
+      projectGroupingMode: scope.projectGroupingMode,
+    }),
+  ).find((candidate) => candidate.key === scope.selectedKey)?.projectRefs[0];
+  return ref
+    ? () =>
+        openSettings(navigation, "SettingsThreads", {
+          environmentId: ref.environmentId,
+          projectId: ref.projectId,
+        })
+    : undefined;
+}
+
 export function useArchiveSelectedProject(scope: {
   readonly environmentId: EnvironmentId | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;

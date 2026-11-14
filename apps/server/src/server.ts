@@ -87,6 +87,7 @@ import { makeMemoryApplicationLayers } from "./memory/MemoryApplicationLayers.ts
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
+import * as ModelSelectionSeeds from "./assistants/ModelSelectionSeeds.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
@@ -850,6 +851,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderInstallation.layer,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  Layer.effectDiscard(ModelSelectionSeeds.start),
 ).pipe(
   Layer.provideMerge(layerChannels),
   Layer.provideMerge(layerOrchestrationApplication),

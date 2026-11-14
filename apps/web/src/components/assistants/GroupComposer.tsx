@@ -16,6 +16,7 @@ import {
   type Assistant,
   type ChatAttachment,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
@@ -69,6 +70,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { GroupAttachmentChips } from "./GroupAttachments";
 import { GroupMentionChip } from "./GroupMentionChip";
+import { GroupProjectModelPicker } from "./GroupProjectModel";
 import { useGroupAttachments } from "./useGroupAttachments";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
@@ -91,6 +93,7 @@ export interface GroupReplyQuote {
   /** The member the reply goes to, for the recipients line; null for a whole request. */
   readonly to: string | null;
   /** A reply's request runs in this project when it has one, so the picker is locked to it. */
+  readonly projectId: ProjectId | null;
   readonly projectLabel: string | null;
 }
 
@@ -252,6 +255,7 @@ export function GroupComposer(props: {
   /** Null lets the lead decide. */
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
+  readonly teamDefault: ModelSelection | null;
   readonly replyingTo: GroupReplyQuote | null;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
@@ -552,6 +556,13 @@ export function GroupComposer(props: {
       </Select>
     );
 
+  // The project the message runs in: a reply's request project, else the picker's.
+  const modelProjectId = props.replyingTo?.projectId ?? props.projectId;
+  const modelProjectLabel =
+    props.replyingTo?.projectLabel ??
+    props.projects.find((project) => project.id === modelProjectId)?.label ??
+    "this project";
+
   return (
     <div className="flex flex-col gap-1.5 px-3 pt-2 pb-3 @xl/group-chat:px-6">
       <ComposerSurface.Shell>
@@ -669,6 +680,16 @@ export function GroupComposer(props: {
                       disabled={props.disabled || attached.full}
                     />
                     {projectPicker}
+                    {modelProjectId === null ? null : (
+                      <GroupProjectModelPicker
+                        environmentId={props.environmentId}
+                        projectId={modelProjectId}
+                        projectLabel={modelProjectLabel}
+                        teamDefault={props.teamDefault}
+                        disabled={props.disabled}
+                        onError={setError}
+                      />
+                    )}
                     <Menu>
                       <MenuTrigger
                         disabled={props.disabled || props.members.length === 0}
@@ -734,7 +755,11 @@ export function GroupComposer(props: {
           {preview}
         </p>
       ) : (
-        <p role="alert" className="min-h-4 px-1 text-xs text-destructive-foreground">
+        <p
+          role="alert"
+          data-testid="group-composer-alert"
+          className="min-h-4 px-1 text-xs text-destructive-foreground"
+        >
           {error}
         </p>
       )}

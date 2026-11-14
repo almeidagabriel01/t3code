@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import type { AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
+import type { AssistantTeamId, EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -11,6 +11,8 @@ export interface AssistantTeamTarget {
   readonly teamId: AssistantTeamId | null;
   /** Group settings opens scrolled to this section. */
   readonly section?: "routines";
+  /** Group settings' unsaved default model, picked on its own route; null clears it. */
+  readonly defaultModelDraft?: ModelSelection | null;
 }
 
 /** Which team the edit screen shows; routes carry no params, like the assistant form. */
@@ -18,6 +20,17 @@ export const assistantTeamTargetAtom = Atom.make<AssistantTeamTarget | null>(nul
   Atom.keepAlive,
   Atom.withLabel("mobile-assistant-team-target"),
 );
+
+export function setGroupDefaultModelDraft(defaultModelDraft: ModelSelection | null) {
+  const target = appAtomRegistry.get(assistantTeamTargetAtom);
+  if (target === null) return;
+  // Dropping the section keeps the row's layout shift from scrolling the form back to Routines.
+  appAtomRegistry.set(assistantTeamTargetAtom, {
+    environmentId: target.environmentId,
+    teamId: target.teamId,
+    defaultModelDraft,
+  });
+}
 
 /** Opens the team form or chat from Settings and Home. */
 export function useOpenAssistantTeam() {

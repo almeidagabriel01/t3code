@@ -81,6 +81,7 @@ import {
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveModelSelection } from "@t3tools/shared/modelSelectionPrecedence";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -899,7 +900,14 @@ function dispatchModelSelection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
   run: Pick<OrchestrationV2Run, "modelSelection" | "modelSelectionPinned" | "userMessageId">,
 ): ModelSelection {
-  return pinnedModelSelection(projection, run) ?? projection.thread.modelSelection;
+  return resolveModelSelection(
+    {
+      message: pinnedModelSelection(projection, run),
+      thread: projection.thread.modelSelection,
+      global: projection.thread.modelSelection,
+    },
+    () => true,
+  ).selection;
 }
 
 /**

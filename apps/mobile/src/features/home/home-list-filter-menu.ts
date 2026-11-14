@@ -23,6 +23,7 @@ export function buildHomeListFilterMenuItems(props: {
   readonly onProjectChange: (projectKey: string | null) => void;
   /** Set when the selected project can be archived from here. */
   readonly onArchiveProject?: (() => void) | undefined;
+  readonly onOpenProjectSettings?: (() => void) | undefined;
 }): AppBarMenuItem[] {
   const items: AppBarMenuItem[] = [
     {
@@ -71,6 +72,15 @@ export function buildHomeListFilterMenuItems(props: {
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
+  if (props.onOpenProjectSettings && selectedProject) {
+    items.push({
+      id: "project:settings",
+      title: "Project settings",
+      subtitle: selectedProject.label,
+      icon: "gearshape",
+      onPress: props.onOpenProjectSettings,
+    });
+  }
   if (props.onArchiveProject && selectedProject) {
     items.push({
       id: "project:archive",

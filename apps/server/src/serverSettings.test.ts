@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AssistantId,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
@@ -278,6 +279,71 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         [projectId]: { defaultAutoPull: false, addedByNewerServer: 3 },
       });
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect(
+    "refuses a changed project model on a missing or disabled instance, only when it changed",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const projectId = ProjectId.make("project-a");
+        const pick = (instanceId: string) => ({
+          instanceId: ProviderInstanceId.make(instanceId),
+          model: "m",
+        });
+        const project = (override: ServerSettingsPatch["projectSettingsOverrides"] & {}) =>
+          service.updateSettings({ projectSettingsOverrides: override });
+        yield* service.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("on")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+            },
+            [ProviderInstanceId.make("off")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: false,
+            },
+          },
+        });
+        yield* project({ [projectId]: { defaultModelSelection: pick("on") } });
+
+        const refused = [
+          { defaultModelSelection: pick("off") },
+          { defaultModelSelection: pick("ghost") },
+          { assistantModelSelections: { [AssistantId.make("ana")]: pick("off") } },
+        ];
+        for (const override of refused) {
+          const error = yield* project({ [projectId]: override }).pipe(Effect.flip);
+          assert.equal(error.operation, "use-unavailable-provider-instance");
+          assert.include(error.message, "does not exist or is disabled for this project");
+        }
+
+        // Disabling the instance leaves the saved default, and unrelated edits still save.
+        yield* service.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("on")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: false,
+            },
+          },
+        });
+        const current = (yield* service.getSettings).projectSettingsOverrides[projectId];
+        yield* project({ [projectId]: { ...current, defaultAutoPull: true } });
+        // Enabling an instance and choosing it in one write is allowed.
+        yield* service.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("off")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+            },
+          },
+          projectSettingsOverrides: { [projectId]: { defaultModelSelection: pick("off") } },
+        });
+        assert.deepEqual(
+          (yield* service.getSettings).projectSettingsOverrides[projectId]?.defaultModelSelection,
+          pick("off"),
+        );
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("moves an idle compaction mode saved in the legacy switch to its own field", () =>

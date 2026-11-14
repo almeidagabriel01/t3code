@@ -7,6 +7,7 @@ import {
   type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import { sameProjects } from "@t3tools/client-runtime/assistantSections";
@@ -22,12 +23,20 @@ import { useState, type ReactNode } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  providerInstanceEntriesFor,
+  resolveDefaultProviderModelSelection,
+} from "../../providerInstances";
 import {
   useAssistantEntries,
   useAssistantGroupActions,
   useAssistantGroupChat,
   useAssistantTeamActions,
 } from "../../state/assistants";
+import { useEnvironmentProviders } from "../../state/environments";
+import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { SelectionPicker } from "../settings/AssistantModelsRow";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -104,6 +113,55 @@ function ConversationRow(props: {
   );
 }
 
+function GroupDefaultModelField(props: {
+  readonly environmentId: EnvironmentId;
+  readonly value: ModelSelection | null;
+  readonly disabled: boolean;
+  readonly onChange: (value: ModelSelection | null) => void;
+}) {
+  const settings = useEnvironmentSettings(props.environmentId);
+  const providers = useEnvironmentProviders().get(props.environmentId) ?? EMPTY_SERVER_PROVIDERS;
+  // With no group default the picker only seeds its menu from the user's default.
+  const shown =
+    props.value ?? resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
+  return (
+    <Field
+      htmlFor="group-default-model"
+      label="Default model"
+      description="Group requests start on this model in the group's projects when the project sets none."
+    >
+      <div id="group-default-model" className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {shown === null ? (
+          <span className="text-sm text-muted-foreground">No providers available</span>
+        ) : (
+          <SelectionPicker
+            settings={settings}
+            providers={providers}
+            selection={shown}
+            label="Group default model"
+            {...(props.value === null ? { placeholder: "Members' models" } : {})}
+            disabled={props.disabled}
+            environmentId={props.environmentId}
+            instanceEntries={providerInstanceEntriesFor(providers, settings, null)}
+            onChange={props.onChange}
+          />
+        )}
+        {props.value === null ? null : (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={props.disabled}
+            onClick={() => props.onChange(null)}
+          >
+            <Undo2Icon />
+            Use members' defaults
+          </Button>
+        )}
+      </div>
+    </Field>
+  );
+}
+
 function AssistantGroupSettingsDialog(props: {
   readonly target: AssistantGroupSettingsTarget;
   readonly onClose: () => void;
@@ -132,6 +190,8 @@ function SettingsForm(props: {
     (team.memories ?? []).map((text, key) => ({ key, text })),
   );
   const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>(team.projectIds);
+  // Undefined until touched, so a save leaves the group's default alone.
+  const [defaultModel, setDefaultModel] = useState<ModelSelection | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -147,7 +207,8 @@ function SettingsForm(props: {
   const changed =
     instructions.trim() !== (team.instructions ?? "") ||
     JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
-    !sameProjects(projectIds, team.projectIds);
+    !sameProjects(projectIds, team.projectIds) ||
+    defaultModel !== undefined;
 
   const save = async () => {
     setBusy(true);
@@ -157,6 +218,7 @@ function SettingsForm(props: {
       instructions: instructions.trim(),
       memories: kept,
       ...(sameProjects(projectIds, team.projectIds) ? {} : { projectIds }),
+      ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
     });
     setBusy(false);
     if (!reply.ok) return setError(reply.message);
@@ -265,6 +327,14 @@ function SettingsForm(props: {
               picked={projectIds}
               onChange={setProjectIds}
             />
+            {team.defaultModelSelection === undefined ? null : (
+              <GroupDefaultModelField
+                environmentId={environmentId}
+                value={defaultModel === undefined ? team.defaultModelSelection : defaultModel}
+                disabled={busy || !teamActions.canAct}
+                onChange={setDefaultModel}
+              />
+            )}
             <section className="flex flex-col gap-1">
               <h3 className="text-sm font-medium">Conversation</h3>
               <p className="text-xs text-muted-foreground">

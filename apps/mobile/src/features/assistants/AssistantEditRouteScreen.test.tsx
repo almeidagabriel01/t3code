@@ -218,6 +218,11 @@ vi.mock("./useAssistantEditor", async () => {
         () => appAtomRegistry.get(draft.assistantEditorAtom),
       );
       const project = { id: "p1", title: "Alpha" };
+      const stored = editor?.assistant?.defaultModelSelection;
+      const defaultModelSelection =
+        editor?.current.defaultModelSelection === undefined
+          ? (stored ?? null)
+          : editor.current.defaultModelSelection;
       return {
         editor,
         projects: [project, { id: "p2", title: "Beta" }],
@@ -230,6 +235,10 @@ vi.mock("./useAssistantEditor", async () => {
         effectiveProject: project,
         modelLabel: "GPT",
         modelSelection: null,
+        supportsDefaultModel: stored !== undefined,
+        defaultModelSelection,
+        defaultModelLabel: defaultModelSelection === null ? null : "Claude Opus 5.5",
+        userDefaultModelLabel: "GPT-5.5",
         globalAutonomy: DEFAULT_AUTONOMY_SETTINGS,
       };
     },
@@ -301,6 +310,28 @@ beforeEach(() => {
   mocks.upload.mockResolvedValue("att-1");
 });
 afterEach(() => act(() => root.unmount()));
+
+describe("assistant default model", () => {
+  it("clears the assistant's own default model back to the user's, and saves only then", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    render({ ...assistant(), defaultModelSelection: opus } as Assistant, { advanced: false });
+    expect(container.textContent).toContain("Default model");
+    expect(container.textContent).toContain("when the project names no model for this assistant");
+    pick("Use your default");
+    expect(container.textContent).toContain("Follows your default model, GPT-5.5.");
+    expect(container.textContent).not.toContain("Use your default");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toEqual({
+      assistantId: "a1",
+      defaultModelSelection: null,
+    });
+  });
+
+  it("is hidden on servers that do not know assistant default models", () => {
+    render(assistant(), { advanced: false });
+    expect(container.textContent).not.toContain("Default model");
+  });
+});
 
 describe("assistant workspace", () => {
   it("saves the sandbox when it is chosen, and host when switching back", async () => {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { AssistantSidebarSection } from "./AssistantSidebarSection";
 
 type Spec = { name: string; role?: string; scope?: "all" | "project"; projectId?: string };
@@ -19,7 +20,7 @@ const state = vi.hoisted(() => ({
   expanded: [] as string[],
   showAll: false,
   updated: {} as Record<string, string>,
-  moods: {} as Record<string, "working" | "needs" | "failed">,
+  moods: {} as Record<string, "working" | "needs" | "failed" | "limited">,
   queued: {} as Record<string, number>,
   teams: [] as Array<{
     environmentId: string;
@@ -41,6 +42,7 @@ const state = vi.hoisted(() => ({
   archiveTeam: vi.fn(),
 }));
 
+const LIMIT_RESET_AT = "2099-03-04T09:30:00.000Z";
 const threadOf = (name: string) => `assistant:${name.toLowerCase()}:1`;
 const shellFor = (threadId: string) => {
   const mood = state.moods[threadId];
@@ -60,7 +62,13 @@ const shellFor = (threadId: string) => {
     blockedOnThreadWait: false,
     latestRun: mood === "working" ? { startedAt: "2020-01-01T00:00:00.000Z" } : null,
     runtime:
-      mood === "working" ? { status: "running" } : mood === "failed" ? { status: "failed" } : null,
+      mood === "working"
+        ? { status: "running" }
+        : mood === "failed"
+          ? { status: "failed" }
+          : mood === "limited"
+            ? { status: "failed", lastErrorClass: "usage_limit", usageLimitResetAt: LIMIT_RESET_AT }
+            : null,
     source: { latestVisibleMessage: null },
   };
 };
@@ -126,6 +134,7 @@ vi.mock("../../hooks/useSettings", () => ({
       sidebarAssistantsCollapsed: state.collapsed,
       sidebarAssistantsExpandedGroups: state.expanded,
       sidebarAssistantsShowAll: state.showAll,
+      timestampFormat: "24-hour",
     }),
   updateClientSettings: state.update,
 }));
@@ -147,7 +156,7 @@ function setup(
     expanded?: string[];
     showAll?: boolean;
     updated?: Record<string, string>;
-    moods?: Record<string, "working" | "needs" | "failed">;
+    moods?: Record<string, "working" | "needs" | "failed" | "limited">;
     queued?: Record<string, number>;
   } = {},
 ) {
@@ -205,9 +214,10 @@ const pill = (container: HTMLElement, name: string) =>
 
 describe("AssistantSidebarSection", () => {
   it("lists an assistant's tasks under it with their state, and opens one on click", async () => {
-    setup(["Jarvis"], { moods: { "task-1": "working", "task-2": "failed" } });
+    setup(["Jarvis"], { moods: { "task-1": "working", "task-2": "failed", "task-5": "limited" } });
     state.tasks = [
       { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
+      { threadId: "task-5", title: "Port docs", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "task-2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
       { threadId: "task-3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
       {
@@ -224,10 +234,14 @@ describe("AssistantSidebarSection", () => {
       tasks.map((task) => [task.getAttribute("aria-label"), task.getAttribute("data-state")]),
     ).toEqual([
       ["Add retry, Running", "running"],
+      [
+        `Port docs, Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, "24-hour")}`,
+        "usage_limited",
+      ],
       ["Fix flaky test, Failed", "failed"],
       ["Old chore, Done", "done"],
     ]);
-    expect(tasks[2]?.getAttribute("aria-current")).toBe("page");
+    expect(tasks[3]?.getAttribute("aria-current")).toBe("page");
     // A running task offers no dismiss; a finished one does, and a dismissed one is gone.
     expect(screen.container.querySelector('[aria-label="Dismiss Add retry"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss Fix flaky test" }));
@@ -303,6 +317,7 @@ describe("AssistantSidebarSection", () => {
           [threadOf("Ada")]: "needs",
           [threadOf("Jarvis")]: "working",
           [threadOf("Aprovador")]: "failed",
+          [threadOf("Pesquisador")]: "limited",
         },
         updated: { [threadOf("Pedro")]: "2021-01-01T00:00:00.000Z" },
       },
@@ -322,12 +337,15 @@ describe("AssistantSidebarSection", () => {
     expect(status(screen.container, "ada")?.getAttribute("data-mood")).toBe("needs");
     expect(status(screen.container, "jarvis")?.textContent).toBe("Working");
     expect(status(screen.container, "aprovador")?.textContent).toBe("Last run failed");
+    expect(status(screen.container, "pesquisador")?.textContent).toBe(
+      `Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, "24-hour")}`,
+    );
+    expect(status(screen.container, "pesquisador")?.getAttribute("data-mood")).toBe("limited");
     // An active assistant shows its status instead of the project; an idle project one shows the pill.
     expect(pill(screen.container, "ada")).toBeNull();
     expect(pill(screen.container, "revisor")?.getAttribute("aria-label")).toBe("Project: ProOps");
     expect(pill(screen.container, "pedro")?.getAttribute("aria-label")).toBe("Project: Project");
     expect(pill(screen.container, "pesquisador")).toBeNull();
-    expect(status(screen.container, "pesquisador")).toBeNull();
     expect(screen.container.querySelectorAll('[data-testid="assistant-role"]')).toHaveLength(2);
     expect(screen.container.querySelectorAll('[data-testid="assistant-status-dot"]')).toHaveLength(
       2,

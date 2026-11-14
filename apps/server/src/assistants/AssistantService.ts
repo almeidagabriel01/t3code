@@ -21,12 +21,11 @@ import {
   CommandId,
   DEFAULT_ASSISTANT_ID,
   DEFAULT_MODEL,
-  isProviderAvailable,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   ProviderInstanceId,
-  type ServerProvider,
+  resolveProjectProviderInstanceEnabled,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -35,6 +34,7 @@ import {
   type AssistantTaskStatus,
 } from "@t3tools/shared/assistantTaskStatus";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -51,6 +51,10 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import {
+  firstUsableProviderModel,
+  ProjectModelSelectionService,
+} from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -71,6 +75,8 @@ import {
   allTeams,
   encodeMemberIds,
   encodeMemories,
+  decodeModelSelectionJson,
+  encodeModelSelectionJson,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import {
@@ -175,25 +181,6 @@ export class AssistantService extends Context.Service<
   }
 >()("t3/assistants/AssistantService") {}
 
-/** Like a new thread with no configured default: the first usable provider and its default model. */
-export function firstUsableProviderModel(
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null {
-  const provider = providers.find(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.auth.status !== "unauthenticated" &&
-      isProviderAvailable(entry),
-  );
-  if (provider === undefined) return null;
-  const model =
-    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
-    provider.models.find((entry) => !entry.isCustom) ??
-    provider.models[0];
-  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
-}
-
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const random = yield* SecureRandom.SecureRandom;
@@ -207,6 +194,7 @@ const make = Effect.gen(function* () {
   const tasks = yield* AssistantTasks;
   const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const projectModelSelection = yield* ProjectModelSelectionService;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
@@ -299,6 +287,24 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** A changed default must name an instance that exists and is enabled; an unchanged one stays. */
+  const checkDefaultModel = Effect.fn("AssistantService.checkDefaultModel")(function* (
+    next: ModelSelection | null | undefined,
+    stored: string | null | undefined,
+  ) {
+    if (next == null) return;
+    const before = decodeModelSelectionJson(stored);
+    if (before !== null && modelSelectionsEqual(before, next)) return;
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(() => assistantError("storage", "Could not read the server settings.")),
+    );
+    if (!resolveProjectProviderInstanceEnabled(settings, null, next.instanceId)) {
+      return yield* invalid(
+        `The provider instance ${next.instanceId} does not exist or is disabled.`,
+      );
+    }
+  });
+
   /** Ids derive from (assistant, generation), so a repeat after a crash lands on the same thread. */
   const launchGeneration = Effect.fn("AssistantService.launchGeneration")(function* (
     row: AssistantRow,
@@ -313,7 +319,16 @@ const make = Effect.gen(function* () {
         projectId,
         title: row.name,
         generateTitle: false,
-        modelSelection: modelSelection ?? (yield* defaultModelSelection(projectId)),
+        // A new conversation follows (assistant, project); in the home project, the assistant's default.
+        modelSelection:
+          modelSelection ??
+          (yield* projectModelSelection
+            .resolveForNewThread({ projectId, assistantId: row.assistant_id as AssistantId })
+            .pipe(
+              Effect.mapError(() =>
+                assistantError("storage", "Could not work out the conversation's model."),
+              ),
+            )).selection,
         runtimeMode: runtimeModeForToolAccess(toAssistant(row).toolAccess),
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
@@ -632,6 +647,7 @@ const make = Effect.gen(function* () {
             if (existing[0] !== undefined) return toAssistant(existing[0]);
           }
           yield* handleTaken(handle);
+          yield* checkDefaultModel(input.modelSelection, null);
           const saved =
             input.mcpServers === undefined
               ? undefined
@@ -641,14 +657,17 @@ const make = Effect.gen(function* () {
             INSERT INTO assistants (
               assistant_id, handle, name, project_id, instructions, tool_access, is_default,
               generation, budget_json, autonomy_json, role, ask_before_acting,
-              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json, created_at, updated_at
+              workspace, icon, avatar_json, scope, project_ids_json, mcp_servers_json,
+              default_model_selection, created_at, updated_at
             ) VALUES (
               ${id}, ${handle}, ${input.name}, ${home}, ${input.instructions},
               ${input.toolAccess}, 0, 1, ${input.budget ? encodeBudget(input.budget) : null},
               ${input.autonomy ? encodeAutonomy(input.autonomy) : null}, ${input.role?.trim() ?? ""},
               ${input.askBeforeActing === true ? 1 : 0}, ${input.workspace ?? "host"}, ${input.icon ?? null},
               ${input.avatar ? encodeAvatar(input.avatar) : null}, ${scope}, ${projectIdsJson},
-              ${saved === undefined ? null : encodeMcpServers(saved.servers)}, ${now}, ${now}
+              ${saved === undefined ? null : encodeMcpServers(saved.servers)},
+              ${input.modelSelection === undefined ? null : encodeModelSelectionJson(input.modelSelection)},
+              ${now}, ${now}
             )`;
           const row = yield* findRow(id);
           const threadId = yield* launchGeneration(row, 1, input.modelSelection).pipe(
@@ -676,6 +695,7 @@ const make = Effect.gen(function* () {
       return yield* lock.withPermits(1)(
         Effect.gen(function* () {
           let row = yield* findRow(input.assistantId);
+          yield* checkDefaultModel(input.defaultModelSelection, row.default_model_selection);
           if (input.handle !== undefined && input.handle !== row.handle) {
             yield* handleTaken(input.handle, row.assistant_id);
           }
@@ -744,6 +764,10 @@ const make = Effect.gen(function* () {
                   : encodeAvatar(input.avatar),
             scope: resolved?.scope ?? row.scope,
             projectIdsJson: resolved?.json ?? row.project_ids_json ?? null,
+            defaultModelSelectionJson:
+              input.defaultModelSelection === undefined
+                ? (row.default_model_selection ?? null)
+                : encodeModelSelectionJson(input.defaultModelSelection),
           };
           const saved =
             input.mcpServers === undefined
@@ -759,6 +783,12 @@ const make = Effect.gen(function* () {
           if (projectChanged) {
             // A thread can't change projects: the new project gets the next generation.
             const generation = row.generation + 1;
+            // The new conversation resolves its model from the stored default, so store it first.
+            if (input.defaultModelSelection !== undefined) {
+              yield* sql`
+                UPDATE assistants SET default_model_selection = ${next.defaultModelSelectionJson}
+                WHERE assistant_id = ${row.assistant_id}`;
+            }
             const threadId = yield* launchGeneration(
               {
                 ...row,
@@ -767,7 +797,7 @@ const make = Effect.gen(function* () {
                 project_id: next.projectId,
               },
               generation,
-              input.modelSelection ?? previous?.modelSelection,
+              input.modelSelection,
             );
             yield* sql`
               UPDATE assistants SET name = ${next.name}, handle = ${next.handle},
@@ -775,7 +805,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -787,7 +817,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -954,6 +984,7 @@ const make = Effect.gen(function* () {
     return yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const row = yield* findTeamRow(input.teamId);
+        yield* checkDefaultModel(input.defaultModelSelection, row.default_model_selection);
         const current = toAssistantTeam(row);
         const memberIds = input.memberIds ?? current.memberIds;
         // A lead that is dropped from the members goes with them, unless a new one is sent.
@@ -977,6 +1008,11 @@ const make = Effect.gen(function* () {
             archived_at = ${archivedAt},
             instructions = ${input.instructions?.trim() ?? current.instructions ?? ""},
             memories_json = ${encodeMemories(input.memories ?? current.memories ?? [])},
+            default_model_selection = ${
+              input.defaultModelSelection === undefined
+                ? (row.default_model_selection ?? null)
+                : encodeModelSelectionJson(input.defaultModelSelection)
+            },
             project_ids_json = ${encodeMemberIds(projectIds)},
             updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
@@ -1031,6 +1067,24 @@ const make = Effect.gen(function* () {
   const threadIdsOf = (assistantId: string, generation: number) =>
     Array.from({ length: generation }, (_, index) => assistantThreadIdFor(assistantId, index + 1));
 
+  /** Drops the assistant's per-project model exception in every project that has one. */
+  const forgetModelSelections = Effect.fn("AssistantService.forgetModelSelections")(function* (
+    assistantId: AssistantId,
+  ) {
+    const { projectSettingsOverrides } = yield* serverSettings.getSettings;
+    const patch = Object.fromEntries(
+      Object.entries(projectSettingsOverrides)
+        .filter(([, stored]) => stored.assistantModelSelections?.[assistantId] !== undefined)
+        // The patch replaces the project's whole override set, so the rest is sent back as is.
+        .map(([projectId, stored]) => [
+          projectId,
+          { ...stored, assistantModelSelections: { [assistantId]: null } },
+        ]),
+    );
+    if (Object.keys(patch).length === 0) return;
+    yield* serverSettings.updateSettings({ projectSettingsOverrides: patch });
+  });
+
   const remove: AssistantService["Service"]["remove"] = Effect.fn("AssistantService.remove")(
     function* (assistantId) {
       yield* lock.withPermits(1)(
@@ -1044,6 +1098,11 @@ const make = Effect.gen(function* () {
           yield* removeOwnerTransfers(config.sharedDir, assistantId);
           yield* sql`DELETE FROM assistant_requests WHERE sender_thread_id LIKE ${`assistant:${assistantId}:%`}`;
           yield* tasks.removeFor(assistantId);
+          yield* forgetModelSelections(assistantId).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("assistant model exceptions were not cleared", { cause }),
+            ),
+          );
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(
@@ -1125,10 +1184,8 @@ const make = Effect.gen(function* () {
             if (thread.archivedAt !== null) yield* archiveThread(restore, false);
             yield* retire(previousThreadId);
           } else {
-            const previous =
-              previousThreadId === null ? undefined : yield* inspectThread(previousThreadId);
             const generation = row.generation + 1;
-            const threadId = yield* launchGeneration(row, generation, previous?.modelSelection);
+            const threadId = yield* launchGeneration(row, generation, undefined);
             yield* sql`
               UPDATE assistants SET thread_id = ${threadId}, generation = ${generation}, updated_at = ${yield* nowIso}
               WHERE assistant_id = ${row.assistant_id}`;
@@ -1156,14 +1213,13 @@ const make = Effect.gen(function* () {
     function* () {
       const changed = yield* lock.withPermits(1)(forgetDeletedProjects(sql));
       yield* Effect.forEach(changed.assistantIds, publish, { discard: true });
+      // Every group, not just those whose list changed: one open to all projects may still hold
+      // work in the deleted one, and its reconcile cancels it.
+      const teams = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE archived_at IS NULL ORDER BY created_at, team_id`;
       yield* Effect.forEach(
-        changed.teamIds,
-        (teamId) =>
-          findTeamRow(teamId).pipe(
-            Effect.flatMap((row) =>
-              PubSub.publish(events, { type: "teamUpserted", team: toAssistantTeam(row) }),
-            ),
-          ),
+        teams,
+        (row) => PubSub.publish(events, { type: "teamUpserted", team: toAssistantTeam(row) }),
         { discard: true },
       );
     },

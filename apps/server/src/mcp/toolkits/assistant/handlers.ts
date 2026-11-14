@@ -60,6 +60,13 @@ const brief = (
     enabled,
   })),
   role: assistant.role,
+  defaultModel:
+    assistant.defaultModelSelection == null
+      ? null
+      : {
+          providerInstanceId: assistant.defaultModelSelection.instanceId,
+          model: assistant.defaultModelSelection.model,
+        },
   teams: teams
     .filter((team) => team.memberIds.includes(assistant.id))
     .map((team) => ({
@@ -188,6 +195,13 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
   });
   const avatar =
     input.avatarHue === undefined ? undefined : ({ kind: "robot", hue: input.avatarHue } as const);
+  const defaultModel =
+    input.defaultModel == null
+      ? input.defaultModel
+      : {
+          instanceId: input.defaultModel.providerInstanceId,
+          model: input.defaultModel.model,
+        };
 
   if (input.action === "group_create" || input.action === "group_update")
     yield* requireUserTurn(caller, "change a group");
@@ -355,6 +369,8 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
             ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
             ...(input.role === undefined ? {} : { role: input.role }),
             ...(avatar === undefined ? {} : { avatar }),
+            // Its first conversation starts on it, and it is stored as its default.
+            ...(defaultModel == null ? {} : { modelSelection: defaultModel }),
           },
           { id: `mcp-${sha(key).slice(0, 24)}` },
         )
@@ -394,6 +410,7 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           : { projectIds: input.projectIds as ReadonlyArray<ProjectId> }),
         ...(input.role === undefined ? {} : { role: input.role }),
         ...(avatar === undefined ? {} : { avatar }),
+        ...(defaultModel === undefined ? {} : { defaultModelSelection: defaultModel }),
         // Only the mode changes; its rules, projects and channels stay as the user set them.
         ...(input.notifications === undefined
           ? {}

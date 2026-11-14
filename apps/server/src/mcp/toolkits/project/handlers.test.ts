@@ -28,6 +28,8 @@ import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectModelSelection from "../../../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -68,7 +70,7 @@ const clientLaunchHarness = (input: {
   const projectDefaults: { model: ModelSelection | null } = {
     model: input.overrideModel === undefined ? modelSelection : null,
   };
-  const layerDependencies = Layer.mergeAll(
+  const layerSettings = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
     }),
@@ -86,6 +88,27 @@ const clientLaunchHarness = (input: {
             },
           }),
     }),
+  );
+  const layerDependencies = Layer.mergeAll(
+    layerSettings,
+    ProjectModelSelection.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerSettings,
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            get: (id) =>
+              Effect.succeed(
+                id === projectId
+                  ? Option.some({
+                      defaultModelSelection: projectDefaults.model,
+                    } as unknown as ProjectStore.ProjectRow)
+                  : Option.none(),
+              ),
+          }),
+          SqlitePersistence.layerMemory,
+        ),
+      ),
+    ),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
@@ -579,7 +602,7 @@ it.effect("a retried worktree launch replays after its base ref is gone", () =>
   }),
 );
 
-it.effect("a client launches with the fallback for an exhausted default", () =>
+it.effect("a client launch stays on the project's default at its usage limit", () =>
   Effect.gen(function* () {
     const launched: ThreadLaunch.ThreadLaunchInput[] = [];
     const fallbackModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
@@ -604,7 +627,7 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
           }
         : {}),
     }));
-    const { projectId, dependencies } = clientLaunchHarness({
+    const { projectId, modelSelection, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "full-access",
       launched,
       fallbackModel,
@@ -621,10 +644,8 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
         title: "Fallback",
       })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    expect(result.at(-1)?.result).toMatchObject({
-      modelSelection: fallbackModel,
-    });
-    expect(launched[0]?.modelSelection).toEqual(fallbackModel);
+    expect(result.at(-1)?.result).toMatchObject({ modelSelection });
+    expect(launched[0]?.modelSelection).toEqual(modelSelection);
   }),
 );
 
@@ -673,11 +694,11 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
 );
 
 it.effect(
-  "a thread an assistant launches becomes its task, once, and other callers link nothing",
+  "a thread an assistant launches becomes its task, once, follows the project, and other callers link nothing",
   () =>
     Effect.gen(function* () {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-      const { projectId, dependencies } = clientLaunchHarness({
+      const { projectId, modelSelection, dependencies } = clientLaunchHarness({
         runtimeModeCeiling: "auto",
         launched,
       });
@@ -715,19 +736,21 @@ it.effect(
             Effect.provideService(
               ThreadManagement.ThreadManagementService,
               ThreadManagement.ThreadManagementService.of({
-                getThreadShell: (threadId: ThreadId) =>
-                  Effect.succeed(
+                getThreadShell: (threadId: ThreadId) => {
+                  const launch = launched.find((candidate) => candidate.threadId === threadId);
+                  return Effect.succeed(
                     threadId === callerThreadId
                       ? liveThreadShell(threadId)
-                      : launched.some((launch) => launch.threadId === threadId)
-                        ? ({
+                      : launch === undefined
+                        ? null
+                        : ({
                             id: threadId,
                             projectId,
-                            modelSelection: liveThreadShell(threadId).modelSelection,
+                            modelSelection: launch.modelSelection,
                             deletedAt: null,
-                          } as unknown as OrchestrationV2ThreadShell)
-                        : null,
-                  ),
+                          } as unknown as OrchestrationV2ThreadShell),
+                  );
+                },
               } as never),
             ),
             Effect.provide(dependencies),
@@ -743,6 +766,10 @@ it.effect(
       ]);
       expect(linked[0]?.threadId).toBe(launched[0]?.threadId);
       expect(linked[0]?.projectId).toBe(projectId);
+      // The caller runs Codex; with no model given, the new thread takes the project's.
+      expect(launched.map((input) => input.modelSelection)).toEqual(
+        launched.map(() => modelSelection),
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(AssistantTasks.layer, AssistantDirectory.layer).pipe(

@@ -493,12 +493,19 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
   }));
 }
 
+/** "Claude Opus 5.5 · Beyond" when another instance shares the driver, as the composer badges it. */
+export function withInstanceName(label: string, option: ModelOption | undefined): string {
+  return option?.providerBadge?.showBadge
+    ? `${label} · ${option.providerBadge.displayName}`
+    : label;
+}
+
 /** "Haiku 5.5 · Medium": the model's name with its effort and other chosen options, if it has any. */
 export function modelWithEffortLabel(
   selection: ModelSelection,
   option: ModelOption | undefined,
 ): string {
-  const label = option?.label ?? selection.model;
+  const label = withInstanceName(option?.label ?? selection.model, option);
   if (!option?.capabilities || !isProviderDriverKind(option.providerDriver)) return label;
   const descriptors = getProviderOptionDescriptors({
     caps: option.capabilities,

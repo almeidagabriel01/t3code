@@ -482,30 +482,55 @@ it.effect("create without a toolAccess is refused so the agent asks the user", (
   }),
 );
 
-it.effect("create and update pass the list of projects, the first being the home", () =>
-  Effect.gen(function* () {
-    const { call, writes } = yield* harness("full-access");
-    yield* call({
-      action: "create",
-      name: "Many",
-      instructions: "",
-      toolAccess: "read-only",
-      projectIds: ["a", "b"],
-      clientRequestId: "many",
-    });
-    yield* call({
-      action: "update",
-      handle: "eng",
-      projectIds: ["b", "c"],
-      clientRequestId: "upd",
-    });
-    const listed = yield* call({ action: "read", handle: "eng" });
-    expect(writes).toEqual([
-      { create: expect.objectContaining({ projectId: "a", projectIds: ["a", "b"] }) },
-      { update: expect.objectContaining({ projectIds: ["b", "c"] }) },
-    ]);
-    expect(listed).toMatchObject({ projectIds: ["b", "c"] });
-  }),
+it.effect(
+  "create and update pass the projects, the first being the home, and the default model",
+  () =>
+    Effect.gen(function* () {
+      const { call, writes } = yield* harness("full-access");
+      const defaultModel = { providerInstanceId, model: "gpt-5" };
+      const selection = { instanceId: providerInstanceId, model: "gpt-5" };
+      yield* call({
+        action: "create",
+        name: "Many",
+        instructions: "",
+        toolAccess: "read-only",
+        projectIds: ["a", "b"],
+        defaultModel,
+        clientRequestId: "many",
+      });
+      yield* call({
+        action: "update",
+        handle: "eng",
+        projectIds: ["b", "c"],
+        defaultModel,
+        clientRequestId: "upd",
+      });
+      const listed = yield* call({ action: "read", handle: "eng" });
+      yield* call({
+        action: "update",
+        handle: "eng",
+        defaultModel: null,
+        clientRequestId: "clear",
+      });
+      expect(writes).toEqual([
+        {
+          create: expect.objectContaining({
+            projectId: "a",
+            projectIds: ["a", "b"],
+            modelSelection: selection,
+          }),
+        },
+        {
+          update: expect.objectContaining({
+            projectIds: ["b", "c"],
+            defaultModelSelection: selection,
+          }),
+        },
+        { update: expect.objectContaining({ defaultModelSelection: null }) },
+      ]);
+      expect(listed).toMatchObject({ projectIds: ["b", "c"], defaultModel });
+      expect(yield* call({ action: "read", handle: "eng" })).toMatchObject({ defaultModel: null });
+    }),
 );
 
 it.effect("create above the caller's level waits for approval, then is made once", () =>

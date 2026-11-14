@@ -41,12 +41,18 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type ProjectId,
+  type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
+  type ServerSettings as ServerSettingsValue,
   type RunId,
   runtimeModeForToolAccess,
   ThreadId,
   type DecisionId,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -71,14 +77,20 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
@@ -99,7 +111,12 @@ import {
   assistantWorksIn,
   projectScopeRefusal,
 } from "./AssistantSandboxPolicy.ts";
-import { type AssistantTeamRow, toAssistantTeam } from "./AssistantTeams.ts";
+import {
+  type AssistantTeamRow,
+  decodeModelSelectionJson,
+  encodeModelSelectionJson,
+  toAssistantTeam,
+} from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
 
 /** Who writes a group message: the user, an agent in another conversation, or a schedule. */
@@ -148,8 +165,13 @@ const CANCEL_REASON_CHARS = 300;
 const STOPPED_LISTED = 5;
 const STOPPED_INSTRUCTION_CHARS = 120;
 
-/** Waiting for a slot or a run, or running: work the owner is still on. */
-const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
+/** Waiting for a slot, a run or a provider limit, or running: work the owner is still on. */
+const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = [
+  "queued",
+  "running",
+  "waiting",
+  "usage_limited",
+];
 /** Everything the user can still act on. */
 const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
@@ -158,6 +180,44 @@ const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelle
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+/**
+ * Candidate projects whose effective model inputs differ between two settings: the project's
+ * resolved default (own, folder rule or global), its per-assistant models, and which provider
+ * instances it may use.
+ */
+export const projectModelChanges = (
+  previous: ServerSettingsValue,
+  next: ServerSettingsValue,
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string | null }>,
+): ReadonlyArray<ProjectId> => {
+  const instanceIds = (projectId: ProjectId) =>
+    [previous, next].flatMap((settings) => [
+      ...Object.keys(settings.providerInstances),
+      ...Object.keys(settings.projectSettingsOverrides[projectId]?.providerInstances ?? {}),
+    ]) as ProviderInstanceId[];
+  const key = (
+    settings: ServerSettingsValue,
+    project: (typeof projects)[number],
+    instances: ReadonlyArray<ProviderInstanceId>,
+  ) => {
+    const resolved = resolveProjectSettings(settings, project.id, {
+      workspaceRoot: project.workspaceRoot ?? undefined,
+    });
+    return JSON.stringify([
+      resolved.settings.defaultModelSelection,
+      resolved.sources.defaultModelSelection,
+      settings.projectSettingsOverrides[project.id]?.assistantModelSelections,
+      instances.map((id) => resolveProjectProviderInstanceEnabled(settings, project.id, id)),
+    ]);
+  };
+  return projects
+    .filter((project) => {
+      const instances = [...new Set(instanceIds(project.id))];
+      return key(previous, project, instances) !== key(next, project, instances);
+    })
+    .map((project) => project.id);
+};
 const LIVE_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"] as const;
 const ACTIVE_RUN_STATUSES = ["preparing", "starting", "running", "waiting"] as const;
 
@@ -190,6 +250,13 @@ const titleFromText = (text: string) => {
 
 export const taskMessageId = (taskId: string, revision: number) =>
   `group-task:${taskId}:${revision}`;
+
+/** A run that continues a usage-limited one: at the reset, or after a provider switch. */
+const isLimitContinuation = (
+  run: Pick<OrchestrationV2Run, "userMessageId" | "usageLimitContinuationOfRunId">,
+) =>
+  run.usageLimitContinuationOfRunId !== undefined ||
+  run.userMessageId.startsWith("limit-continuation:");
 
 const parseTaskMessageId = (messageId: string) => {
   if (!messageId.startsWith("group-task:")) return null;
@@ -256,6 +323,8 @@ interface ThreadRow {
   readonly seen_seq: number;
   /** Set for a request's thread; null for the member's older thread for the whole group. */
   readonly request_id: string | null;
+  readonly followed_model_selection?: string | null;
+  readonly pending_model_selection?: string | null;
 }
 
 const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
@@ -319,7 +388,10 @@ const toTask = (row: TaskRow, threadId: ThreadId): AssistantGroupTask => ({
   ownerId: row.owner_id as AssistantId,
   instruction: row.instruction,
   status: row.status as AssistantGroupTaskStatus,
-  reason: row.reason,
+  // A usage-limited task keeps its limit's reset time in `reason`.
+  ...(row.status === "usage_limited"
+    ? { reason: null, ...(row.reason === null ? {} : { resetAt: row.reason }) }
+    : { reason: row.reason }),
   threadId,
   ...(row.request_id === null ? {} : { requestId: row.request_id as AssistantGroupMessageId }),
   ...(row.expected_result === null ? {} : { expectedResult: row.expected_result }),
@@ -473,6 +545,11 @@ export class AssistantGroups extends Context.Service<
     readonly handleAssistantEvent: (event: AssistantsEvent) => Effect.Effect<void>;
     /** Brings group state in line with the teams now stored, for changes made while down. */
     readonly reconcile: Effect.Effect<void>;
+    /**
+     * These projects' default or per-assistant model changed: open requests' threads working in
+     * them that still run on the model the project gave them move to the one it gives now.
+     */
+    readonly followProjectModels: (projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<void>;
     /** Watches the assistants stream for the changes above. */
     readonly start: Effect.Effect<void, never, Scope.Scope>;
     /** Resolves once every background routing call has finished. */
@@ -487,6 +564,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const assistants = yield* AssistantService;
+  const modelSelections = yield* ProjectModelSelection.ProjectModelSelectionService;
   const directory = yield* AssistantDirectory;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -814,8 +892,9 @@ const make = Effect.gen(function* () {
     }
     const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
     const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
-    if (wasOpen && !isOpen) yield* closeRequestIfDone(task.request_id);
-    if (!wasOpen && isOpen) yield* reopenRequest(task.request_id);
+    const requestId = task.request_id ?? task.request_message_id;
+    if (wasOpen && !isOpen) yield* closeRequestIfDone(requestId);
+    if (!wasOpen && isOpen) yield* reopenRequest(requestId);
     return rows[0]!;
   });
 
@@ -873,13 +952,35 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Ends a task's live run, or disarms the continuation a usage-limited one waits for. */
+  const haltTask = Effect.fn("AssistantGroups.haltTask")(function* (task: TaskRow) {
+    if (task.status === "running") return yield* stopRun(task);
+    if (task.status !== "usage_limited") return;
+    const threadId = (yield* wireTasks([task]))[0]!.threadId;
+    yield* engine
+      .dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`group-stop:${task.task_id}:${task.revision}`),
+        threadId,
+        reason: "Stopped from the group",
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: could not stop a limited thread", {
+            taskId: task.task_id,
+            cause,
+          }),
+        ),
+      );
+  });
+
   /** Pauses a task that is in flight, ending its run first. */
   const pauseTask = Effect.fn("AssistantGroups.pauseTask")(function* (
     task: TaskRow,
     reason: string,
   ) {
     if (!ACTIVE.includes(task.status as AssistantGroupTaskStatus)) return task;
-    if (task.status === "running") yield* stopRun(task);
+    yield* haltTask(task);
     return yield* patchTask(task, { status: "paused", reason });
   });
 
@@ -909,11 +1010,19 @@ const make = Effect.gen(function* () {
     if (!assistantWorksIn(toAssistant(member), team, projectId)) {
       return yield* invalid(`${member.name} cannot work in this request's project.`);
     }
+    let followed: ModelSelection | null = null;
     if (thread === undefined) {
-      const current =
-        member.thread_id === null ? undefined : yield* inspectThread(member.thread_id as ThreadId);
-      const modelSelection: ModelSelection =
-        current?.modelSelection ?? (yield* assistants.defaultModel(projectId));
+      const { selection: modelSelection } = yield* modelSelections
+        .resolveForNewThread({
+          projectId,
+          assistantId: member.assistant_id as AssistantId,
+          teamId: team.id,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            assistantError("storage", "Could not work out the model for this request."),
+          ),
+        );
       yield* launches
         .launch({
           // A launch's receipt may outlive its thread (rows copied without their threads), so a
@@ -937,14 +1046,17 @@ const make = Effect.gen(function* () {
             assistantError("storage", "Could not start the member's thread for this request."),
           ),
         );
+      followed = modelSelection;
     }
     // A new thread has seen none of the request.
     yield* sql`
       INSERT INTO assistant_group_request_threads
-        (request_id, assistant_id, team_id, thread_id, seen_seq)
-      VALUES (${request.message_id}, ${member.assistant_id}, ${team.id}, ${threadId}, 0)
+        (request_id, assistant_id, team_id, thread_id, seen_seq, followed_model_selection)
+      VALUES (${request.message_id}, ${member.assistant_id}, ${team.id}, ${threadId}, 0,
+        ${encodeModelSelectionJson(followed)})
       ON CONFLICT (request_id, assistant_id) DO UPDATE
-      SET thread_id = excluded.thread_id, seen_seq = 0
+      SET thread_id = excluded.thread_id, seen_seq = 0,
+        followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
     // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
@@ -961,6 +1073,131 @@ const make = Effect.gen(function* () {
     sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
 
   /**
+   * Moves a request thread to `target` while it still runs on the model the project gave it; a
+   * change made in the thread wins. A thread mid-turn refuses another provider, so the move waits
+   * for the turn to end (`applyPendingModel`).
+   */
+  const followModel = Effect.fn("AssistantGroups.followModel")(function* (
+    row: ThreadRow,
+    target: ModelSelection,
+    /** A request that ended keeps its threads as they are: the move waits for work to come back. */
+    ended = false,
+  ) {
+    const followed = decodeModelSelectionJson(row.followed_model_selection);
+    const thread = yield* inspectThread(row.thread_id as ThreadId);
+    const follows =
+      followed !== null &&
+      thread !== undefined &&
+      thread.deletedAt === null &&
+      modelSelectionsEqual(thread.modelSelection, followed);
+    if (!follows || modelSelectionsEqual(target, followed)) {
+      yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
+        WHERE thread_id = ${row.thread_id}`;
+      return;
+    }
+    if (ended) {
+      yield* sql`UPDATE assistant_group_request_threads
+        SET pending_model_selection = ${encodeModelSelectionJson(target)}
+        WHERE thread_id = ${row.thread_id}`;
+      return;
+    }
+    const switched = yield* engine
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`assistant-group-model:${row.thread_id}:${yield* newId("m")}`),
+        threadId: row.thread_id as ThreadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    if (switched._tag === "Success") {
+      yield* sql`UPDATE assistant_group_request_threads
+        SET followed_model_selection = ${encodeModelSelectionJson(target)},
+          pending_model_selection = NULL
+        WHERE thread_id = ${row.thread_id}`;
+    } else if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") {
+      yield* sql`UPDATE assistant_group_request_threads
+        SET pending_model_selection = ${encodeModelSelectionJson(target)}
+        WHERE thread_id = ${row.thread_id}`;
+    } else {
+      yield* Effect.logWarning("assistant groups: request thread kept its model", {
+        threadId: row.thread_id,
+        cause: switched.failure,
+      });
+    }
+  });
+
+  /** A move `followModel` deferred while the thread was mid-turn or its request had ended. */
+  const applyPendingModel = Effect.fn("AssistantGroups.applyPendingModel")(function* (
+    threadId: string,
+  ) {
+    const row = (yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads r
+      WHERE thread_id = ${threadId} AND pending_model_selection IS NOT NULL
+        AND EXISTS (SELECT 1 FROM assistant_group_tasks t
+          WHERE t.request_id = r.request_id AND t.status IN ${sql.in(OPEN)})`)[0];
+    const pending = decodeModelSelectionJson(row?.pending_model_selection);
+    if (row !== undefined && pending !== null) yield* followModel(row, pending);
+  });
+
+  const openRequestThreads = sql<ThreadRow>`
+    SELECT * FROM assistant_group_request_threads WHERE request_id IN (
+      SELECT request_id FROM assistant_group_tasks WHERE status IN ${sql.in(OPEN)})`;
+
+  // A thread keeps the project it was launched in (or adopted), whatever the request's became.
+  // ponytail: reads every request thread ever made, only when a project's model changes; index
+  // the threads by project if that history grows large.
+  const followProjectModels: AssistantGroups["Service"]["followProjectModels"] = Effect.fn(
+    "AssistantGroups.followProjectModels",
+  )(function* (projectIds) {
+    if (projectIds.length === 0) return;
+    const wanted = new Set<string>(projectIds);
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const open = new Set((yield* openRequestThreads).map((row) => row.thread_id));
+        for (const row of yield* sql<ThreadRow>`SELECT * FROM assistant_group_request_threads`) {
+          const thread = yield* inspectThread(row.thread_id as ThreadId);
+          if (thread === undefined || !wanted.has(thread.projectId)) continue;
+          const resolved = yield* modelSelections
+            .resolveForNewThread({
+              projectId: thread.projectId as ProjectId,
+              assistantId: row.assistant_id as AssistantId,
+              teamId: row.team_id as AssistantTeamId,
+            })
+            .pipe(Effect.result);
+          if (resolved._tag === "Failure") {
+            yield* Effect.logWarning("assistant groups: no model for a request thread", {
+              threadId: row.thread_id,
+              cause: resolved.failure,
+            });
+            continue;
+          }
+          yield* followModel(row, resolved.success.selection, !open.has(row.thread_id));
+        }
+      }),
+    );
+  }, quietly("project model change"));
+
+  /** Every project is compared, as a request that ended takes its project's model when it reopens. */
+  const followSettingsChange = Effect.fn("AssistantGroups.followSettingsChange")(function* (
+    previous: ServerSettingsValue,
+    next: ServerSettingsValue,
+  ) {
+    if ((yield* sql`SELECT 1 FROM assistant_group_request_threads LIMIT 1`).length === 0) return;
+    const projects = yield* sql<{ readonly project_id: string; readonly workspace_root: string }>`
+      SELECT project_id, workspace_root FROM projection_projects WHERE deleted_at IS NULL`;
+    yield* followProjectModels(
+      projectModelChanges(
+        previous,
+        next,
+        projects.map((row) => ({
+          id: row.project_id as ProjectId,
+          workspaceRoot: row.workspace_root,
+        })),
+      ),
+    );
+  }, quietly("settings change"));
+
+  /**
    * A request that ended with every task delivered or cancelled settles its members' threads: they
    * stay in history, and settling closes idle terminals, ends watches and lets the project's
    * worktree rules run. Paused or failed work, or a request waiting on the user, stays active. A
@@ -970,8 +1207,10 @@ const make = Effect.gen(function* () {
     requestId: string | null,
   ) {
     if (requestId === null) return;
+    // A task from before requests had ids (request_id NULL) belongs to its request message's.
     const tasks = yield* sql<{ readonly status: string }>`
-      SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
+      SELECT status FROM assistant_group_tasks
+      WHERE request_id = ${requestId} OR (request_id IS NULL AND request_message_id = ${requestId})`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
     yield* settleThreads(yield* requestThreads(requestId));
   });
@@ -1085,6 +1324,24 @@ const make = Effect.gen(function* () {
         exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
       );
     }
+    // A queued turn starts on the thread's model when the live one ends, before any deferred move
+    // can land; the task waits for that end instead (`handleRunEvent` pumps on it). Its own earlier
+    // revision, still stopping, is the one turn it may queue behind.
+    const busy = yield* engine
+      .getThreadRecords(exec.success.threadId, ["runs"], { runStatuses: [...LIVE_RUN_STATUSES] })
+      .pipe(
+        Effect.map((records) =>
+          records.runs.some(
+            (run) => parseTaskMessageId(run.userMessageId ?? "")?.taskId !== task.task_id,
+          ),
+        ),
+        // Unread, it queues as before rather than holding the task.
+        Effect.orElseSucceed(() => false),
+      );
+    if (busy) {
+      yield* setWaitReason(task, "waiting for the conversation's current turn to end");
+      return false;
+    }
     const seen =
       (yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_request_threads
@@ -1171,16 +1428,14 @@ const make = Effect.gen(function* () {
       memories: team.memories ?? [],
     });
     const messageId = taskMessageId(task.task_id, task.revision);
-    // The member works on its own current model, so a change in its conversation reaches its groups.
-    const own =
-      owner.thread_id === null ? undefined : yield* inspectThread(owner.thread_id as ThreadId);
     const attachments = yield* copyForThread(
       exec.success.threadId,
       attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
     );
+    // A turn that was no task (the user writing in the thread) may have deferred a move.
+    yield* applyPendingModel(exec.success.threadId);
     const sent = yield* threads
       .sendToThread({
-        ...(own?.modelSelection === undefined ? {} : { modelSelection: own.modelSelection }),
         projectId: exec.success.projectId,
         commandId: CommandId.make(messageId),
         messageId: MessageId.make(messageId),
@@ -1288,6 +1543,36 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The provider instance a task runs on: its request thread's, or the one that thread would be
+   * launched on. Undefined when neither can be told.
+   */
+  const taskInstance = Effect.fn("AssistantGroups.taskInstance")(function* (
+    team: AssistantTeam,
+    members: ReadonlyArray<AssistantRow>,
+    task: TaskRow,
+  ) {
+    const requestId = task.request_id ?? task.request_message_id;
+    const row = (yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads
+      WHERE request_id = ${requestId} AND assistant_id = ${task.owner_id}`)[0];
+    const thread = row === undefined ? undefined : yield* inspectThread(row.thread_id as ThreadId);
+    if (thread !== undefined && thread.deletedAt === null) {
+      return thread.modelSelection.instanceId as string;
+    }
+    const member = members.find((row) => row.assistant_id === task.owner_id);
+    const request = yield* getMessage(requestId);
+    if (member === undefined || request === undefined) return undefined;
+    const resolved = yield* modelSelections
+      .resolveForNewThread({
+        projectId: (request.project_id ?? member.project_id) as ProjectId,
+        assistantId: member.assistant_id as AssistantId,
+        teamId: team.id,
+      })
+      .pipe(Effect.option);
+    return Option.isSome(resolved) ? (resolved.value.selection.instanceId as string) : undefined;
+  });
+
+  /**
    * Starts queued tasks, oldest first, while the group has free slots. A task waits while another
    * running or earlier-queued one holds an overlapping resource. Only running tasks hold: a parent
    * waiting on its children has ended its run and gives its resources up, so no wait is circular.
@@ -1295,26 +1580,51 @@ const make = Effect.gen(function* () {
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
+    // A reply in a request whose project was deleted queues work that must never start there.
+    yield* cancelOutsideProject(team);
     // Queued work of a request whose root is stopped waits until the user picks it up again.
     const live = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
       JOIN assistant_group_tasks r ON r.task_id = t.root_id
-      WHERE t.team_id = ${teamId} AND (t.status = 'running'
+      WHERE t.team_id = ${teamId} AND (t.status IN ('running', 'usage_limited')
         OR (t.status = 'queued' AND r.status NOT IN ${sql.in(STOPPED_ROOT)}))
       ORDER BY t.updated_at ASC, t.rowid ASC`;
     let running = 0;
+    const members = yield* activeMembers(team);
+    // Tasks of one member in one request share a thread, so one instance; untraced: per task.
+    const instances = new Map<string, string | undefined>();
+    const instanceKey = (task: TaskRow) =>
+      `${task.request_id ?? task.request_message_id}\n${task.owner_id}`;
+    const instanceOf = Effect.fnUntraced(function* (task: TaskRow) {
+      const key = instanceKey(task);
+      if (!instances.has(key)) instances.set(key, yield* taskInstance(team, members, task));
+      return instances.get(key);
+    });
     const held = new Map<string, string>();
     const hold = (task: TaskRow, who: string) => {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
     };
+    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot. Work
+    // that would run on its provider instance waits too, whoever owns it.
+    const limited = new Set<string>();
     for (const task of live) {
-      if (task.status !== "running") continue;
-      running += 1;
+      if (task.status !== "running" && task.status !== "usage_limited") continue;
+      if (task.status === "running") running += 1;
+      else {
+        const instance = yield* instanceOf(task);
+        if (instance !== undefined) limited.add(instance);
+      }
       if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
     }
     for (const task of live) {
       if (task.status !== "queued") continue;
       const wanted = resourcesOf(task);
+      const instance = limited.size === 0 ? undefined : yield* instanceOf(task);
+      if (instance !== undefined && limited.has(instance)) {
+        if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
+        yield* setWaitReason(task, "waiting for a usage limit");
+        continue;
+      }
       const clash = firstConflict(wanted, held);
       // A task that waits still claims its resources, so a later one cannot overtake it.
       if (wanted.length > 0 && (clash !== null || running >= ASSISTANT_GROUP_PARALLEL_LIMIT)) {
@@ -1330,6 +1640,8 @@ const make = Effect.gen(function* () {
       }
       if (wanted.length > 0) hold(task, yield* nameOf(task.owner_id));
       if (yield* startTask(team, task)) running += 1;
+      // Starting may have launched the thread or moved it to another provider.
+      instances.delete(instanceKey(task));
     }
   });
 
@@ -2162,18 +2474,80 @@ const make = Effect.gen(function* () {
     return repeated.length === 0;
   });
 
-  const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (
-    event: Extract<OrchestrationV2DomainEvent, { readonly type: "run.created" | "run.updated" }>,
-  ) {
-    const run = event.payload;
+  /**
+   * The task a run carries: its own, or for a usage-limit continuation (at the reset or on a
+   * provider switch) the task of the run it continues, which ran just before it.
+   */
+  const taskOfRun = Effect.fn("AssistantGroups.taskOfRun")(function* (run: OrchestrationV2Run) {
     const key = parseTaskMessageId(run.userMessageId);
-    if (key === null || !ENDED_RUN.has(run.status)) return;
-    const task = yield* getTask(key.taskId);
-    // A newer revision, or a task already stopped, moved on: this run's ending changes nothing.
-    if (task === undefined || task.revision !== key.revision || task.status !== "running") return;
+    if (key !== null) {
+      const task = yield* getTask(key.taskId);
+      return task?.revision === key.revision ? task : undefined;
+    }
+    if (!isLimitContinuation(run)) return undefined;
+    const { runs } = yield* engine
+      .getThreadRecords(run.threadId, ["runs"])
+      .pipe(Effect.orElseSucceed(() => ({ runs: [] as ReadonlyArray<OrchestrationV2Run> })));
+    let current = run;
+    for (let step = 0; step < runs.length; step += 1) {
+      const previous = latestExecutedRun(
+        runs.filter((candidate) => candidate.ordinal < current.ordinal),
+      );
+      if (previous === null) return undefined;
+      const previousKey = parseTaskMessageId(previous.userMessageId);
+      if (previousKey !== null) {
+        const task = yield* getTask(previousKey.taskId);
+        return task?.revision === previousKey.revision &&
+          (task.status === "usage_limited" || task.status === "running")
+          ? task
+          : undefined;
+      }
+      if (!isLimitContinuation(previous)) return undefined;
+      current = previous;
+    }
+    return undefined;
+  });
+
+  const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (run: OrchestrationV2Run) {
+    const task = yield* taskOfRun(run);
+    if (task === undefined) return;
+    if (!ENDED_RUN.has(run.status)) {
+      if (task.status === "usage_limited" && run.status !== "queued" && isLimitContinuation(run)) {
+        yield* patchTask(task, { status: "running", reason: null });
+      }
+      return;
+    }
+    // A task already stopped or moved on: this run's ending changes nothing. A continuation whose
+    // start was not seen still ends the task it continues.
+    if (task.status !== "running" && !(task.status === "usage_limited" && isLimitContinuation(run)))
+      return;
     const runner = (yield* threadRowOf(run.threadId))?.assistant_id;
+    const failure =
+      run.status === "failed"
+        ? latestRootProviderFailure(
+            run,
+            (yield* engine
+              .getThreadRecords(run.threadId, ["turnItems"], {
+                turnItemTypes: ["error"],
+                turnItemRunIds: [run.id],
+              })
+              .pipe(Effect.orElseSucceed(() => ({ turnItems: [] })))).turnItems,
+          )
+        : null;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (run.status === "interrupted") {
       yield* patchTask(task, { status: "paused", reason: "stopped" });
+    } else if (
+      failure?.class === "usage_limit" &&
+      continuesAtReset(
+        failure.resetAt,
+        run.completedAt ? DateTime.toEpochMillis(run.completedAt) : nowMs,
+        nowMs,
+        (yield* serverSettings.getSettings).autoResumeLimitedThreads,
+      )
+    ) {
+      // Not settled: the thread continues it at the reset or on a provider switch.
+      yield* patchTask(task, { status: "usage_limited", reason: failure.resetAt ?? null });
     } else if (run.status !== "completed") {
       yield* patchTask(task, { status: "failed", reason: run.status });
       yield* resumeParent({ ...task, status: "failed" });
@@ -2299,12 +2673,32 @@ const make = Effect.gen(function* () {
       if (event.type === "runtime-request.updated") return yield* syncWaitingThread(event.threadId);
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) return;
-      if (parseTaskMessageId(event.payload.userMessageId) === null) return;
+      if (
+        parseTaskMessageId(event.payload.userMessageId) === null &&
+        !isLimitContinuation(event.payload)
+      ) {
+        // The user's own turn in a request thread: a task may be waiting for it to end.
+        if (!ENDED_RUN.has(event.payload.status)) return;
+        return yield* lock.withPermits(1)(
+          Effect.gen(function* () {
+            const owner = yield* threadRowOf(event.payload.threadId);
+            if (owner?.request_id == null) return;
+            yield* applyPendingModel(owner.thread_id);
+            yield* pump(owner.team_id);
+          }),
+        );
+      }
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          yield* finishRun(event);
+          yield* finishRun(event.payload);
           const owner = yield* threadRowOf(event.payload.threadId);
           if (owner === undefined) return;
+          if (ENDED_RUN.has(event.payload.status)) {
+            const team = yield* loadTeam(owner.team_id).pipe(Effect.orElseSucceed(() => undefined));
+            if (team !== undefined) yield* cancelOutsideProject(team);
+          }
+          // An idle thread shows the new provider without waiting for its next task.
+          if (ENDED_RUN.has(event.payload.status)) yield* applyPendingModel(owner.thread_id);
           // A request that ended while this run was still stopping settles now that it has.
           if (ENDED_RUN.has(event.payload.status)) yield* closeRequestIfDone(owner.request_id);
           yield* pump(owner.team_id);
@@ -2366,7 +2760,7 @@ const make = Effect.gen(function* () {
               WHERE root_id = ${task.root_id} AND status IN ${sql.in(OPEN)}`;
               let cancelled = task;
               for (const row of open) {
-                if (row.status === "running") yield* stopRun(row);
+                yield* haltTask(row);
                 const done = yield* patchTask(row, { status: "cancelled", reason: null });
                 if (row.task_id === task.task_id) cancelled = done;
               }
@@ -2686,7 +3080,7 @@ const make = Effect.gen(function* () {
           );
           let cancelled = target;
           for (const row of open) {
-            if (row.status === "running") yield* stopRun(row);
+            yield* haltTask(row);
             const done = yield* patchTask(row, {
               status: "cancelled",
               reason: row === target && reason !== "" ? reason : null,
@@ -2849,6 +3243,53 @@ const make = Effect.gen(function* () {
     });
   }, storage);
 
+  /**
+   * Work in a project its member no longer reaches (taken from the group or from the member, or
+   * deleted): a running turn ends on its own, and nothing else starts there. Runs again as each
+   * run ends, as a turn that ran into a usage limit would continue in that project.
+   */
+  const cancelOutsideProject = Effect.fn("AssistantGroups.cancelOutsideProject")(function* (
+    team: AssistantTeam,
+  ) {
+    const waiting = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks
+      WHERE team_id = ${team.id} AND status IN ${sql.in(OPEN.filter((status) => status !== "running"))}`;
+    if (waiting.length === 0) return;
+    const members = yield* activeMembers(team);
+    const deleted = new Set(
+      (yield* sql<{ readonly project_id: string }>`
+        SELECT project_id FROM projection_projects WHERE deleted_at IS NOT NULL`).map(
+        (row) => row.project_id,
+      ),
+    );
+    let cancelled = false;
+    for (const task of waiting) {
+      const owner = members.find((member) => member.assistant_id === task.owner_id);
+      if (owner === undefined) continue;
+      const requestId = task.request_id ?? task.request_message_id;
+      const stored = (yield* sql<ThreadRow>`
+        SELECT * FROM assistant_group_request_threads
+        WHERE request_id = ${requestId} AND assistant_id = ${owner.assistant_id}`)[0];
+      const thread =
+        stored === undefined ? undefined : yield* inspectThread(stored.thread_id as ThreadId);
+      // Where the work runs, as `ensureRequestThread` decides it.
+      const projectId =
+        thread !== undefined && thread.deletedAt === null
+          ? thread.projectId
+          : ((yield* getMessage(requestId))?.project_id ?? owner.project_id);
+      if (worksIn(owner, team, projectId) && !deleted.has(projectId ?? "")) continue;
+      yield* haltTask(task);
+      yield* patchTask(task, { status: "cancelled", reason: "outside_project" });
+      cancelled = true;
+    }
+    if (cancelled) {
+      const requestIds = waiting.map((task) => task.request_id ?? task.request_message_id);
+      for (const requestId of new Set(requestIds)) {
+        yield* closeRequestIfDone(requestId);
+      }
+    }
+  });
+
   /** Members that left lose their open work and their thread; an archived group pauses everything. */
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
     const legacy = yield* sql<ThreadRow>`
@@ -2873,6 +3314,7 @@ const make = Effect.gen(function* () {
       for (const task of tasks) yield* pauseTask(task, "member_removed");
     }
     yield* archiveThreads(rows.filter((row) => gone.has(row.assistant_id)));
+    yield* cancelOutsideProject(team);
     if (team.archivedAt !== null) {
       const open = yield* sql<TaskRow>`
         SELECT * FROM assistant_group_tasks
@@ -2961,9 +3403,10 @@ const make = Effect.gen(function* () {
 
   /** The group is gone: its work stops, its threads, chat and schedules go. */
   const removeGroup = Effect.fn("AssistantGroups.removeGroup")(function* (teamId: string) {
-    const running = yield* sql<TaskRow>`
-      SELECT * FROM assistant_group_tasks WHERE team_id = ${teamId} AND status = 'running'`;
-    for (const task of running) yield* stopRun(task);
+    const inFlight = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks
+      WHERE team_id = ${teamId} AND status IN ('running', 'usage_limited')`;
+    for (const task of inFlight) yield* haltTask(task);
     yield* deleteThreads(
       yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${teamId}`,
     );
@@ -3090,6 +3533,15 @@ const make = Effect.gen(function* () {
 
   const start: AssistantGroups["Service"]["start"] = Effect.gen(function* () {
     const changes = yield* assistants.subscribeChanges;
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    let previousSettings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    yield* forkParked(
+      Stream.runForEach(settingsChanges, (next) => {
+        const previous = previousSettings;
+        previousSettings = next;
+        return followSettingsChange(previous, next);
+      }).pipe(quietly("settings stream")),
+    );
     yield* forkParked(
       reconcile.pipe(
         Effect.andThen(Stream.runForEach(Stream.fromSubscription(changes), handleAssistantEvent)),
@@ -3245,6 +3697,7 @@ const make = Effect.gen(function* () {
     syncWaitingThread,
     handleAssistantEvent,
     reconcile,
+    followProjectModels,
     start,
     idle: FiberSet.awaitEmpty(routing),
   });

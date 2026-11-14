@@ -270,6 +270,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     INSERT OR IGNORE INTO assistant_seeds (assistant_id, seeded_at)
     SELECT assistant_id, created_at FROM assistants WHERE is_default = 1
   `;
+  // One marker per seeded model default, so a default the user cleared never comes back.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS model_selection_seeds (
+      seed_id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `;
 
   // Chat-app bridge. The inbox is keyed by the transport's idempotency key so a redelivery is a
   // no-op; the outbox by delivery id so a replayed event never posts twice.
@@ -456,6 +463,23 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     yield* sql`ALTER TABLE assistants ADD COLUMN project_ids_json TEXT`;
   }
   yield* sql`UPDATE assistants SET project_ids_json = json_array(project_id) WHERE project_ids_json IS NULL`;
+  // Starts as the model of its current conversation, once: a default the user clears stays cleared.
+  if (!assistantColumns.some((column) => column.name === "default_model_selection")) {
+    const threadTables = yield* sql`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'`;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistants ADD COLUMN default_model_selection TEXT`;
+        if (threadTables.length === 0) return;
+        yield* sql`
+            UPDATE assistants SET default_model_selection = (
+              SELECT json_extract(t.payload_json, '$.modelSelection')
+              FROM orchestration_v2_projection_threads t WHERE t.thread_id = assistants.thread_id)
+            WHERE default_model_selection IS NULL AND thread_id IS NOT NULL`;
+      }),
+    );
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,
@@ -613,9 +637,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       UPDATE assistant_teams SET read_seq = COALESCE(
         (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0)`;
   }
+  // default_model_selection: the model a group request starts on, below the project's own default.
   yield* addColumns("assistant_teams", [
     ["instructions", "TEXT NOT NULL DEFAULT ''"],
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
+    ["default_model_selection", "TEXT"],
   ]);
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
   yield* sql`
@@ -717,6 +743,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_request_threads_team_idx ON assistant_group_request_threads(team_id, assistant_id)`;
+  // The model the project gave the thread, and one it moves to once its turn ends.
+  yield* addColumns("assistant_group_request_threads", [
+    ["followed_model_selection", "TEXT"],
+    ["pending_model_selection", "TEXT"],
+  ]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (
@@ -762,6 +793,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     !scheduledColumns.some((column) => column.name === "owner_assistant_id")
   ) {
     yield* sql.withTransaction(sql`ALTER TABLE scheduled_tasks ADD COLUMN owner_assistant_id TEXT`);
+  }
+  // Rows saved before it keep the model they were scheduled with.
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "model_follows_project")
+  ) {
+    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN model_follows_project INTEGER NOT NULL DEFAULT 0`;
   }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`

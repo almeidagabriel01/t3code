@@ -17,7 +17,10 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
   projects, but adding more projects does not. An assistant with real projects is a **project
   assistant**: it shows a project badge, is listed under each of its projects, and may only launch,
   delegate and message work inside them (see [Project assistants](#project-assistants)).
-- **Model**. Change it from the model picker in the conversation, or in the assistant's settings.
+- **Model**. Change it from the model picker in the conversation. **Default model** in the
+  assistant's settings is the model its new conversations start on when the project sets none;
+  **Use your default** clears it. A project can give the assistant its own model under **Model by
+  assistant** in the project's settings.
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
@@ -208,8 +211,9 @@ Home list your groups under the assistants.
 
 ### Group projects
 
-A group can have projects of its own, and every member may work in them on top of its own projects.
-Give a new project to a whole team in one step:
+A group can have projects of its own, and every member may work in them on top of its own projects,
+but only in that group's requests: a member's conversation for a request reaches its own projects
+and that group's, never another group's. Give a new project to a whole team in one step:
 
 - From the group: open its settings and tick the projects under **Projects**. The settings show how
   many members gain access.
@@ -218,7 +222,9 @@ Give a new project to a whole team in one step:
   choice.
 
 Someone who joins the group later gets its projects too. Taking a project away from the group keeps
-it for any member that has it on its own list. Archived projects stay in the list, marked as
+it for any member that has it on its own list. For the others, a turn already running there finishes,
+and their work in that project that has not started (queued or waiting for a usage limit) is
+cancelled. Deleting a project does the same for every group, whatever its list. Archived projects stay in the list, marked as
 archived. Each member's instructions list its groups' projects by name, so you do not have to write
 them in by hand.
 
@@ -246,6 +252,14 @@ nothing starts a new **request**; it does not run an agent by itself.
   developer) continues that conversation. When all of a request's tasks are done or cancelled, its
   conversations are settled (they stay under Settled); replying to it or resuming it makes them
   active again. Requests from before this change keep their old shared conversation for history.
+- Each member's conversation for a request starts on the request's project model (see [model
+  order](project-settings.md#defaults-and-inheritance)); the group's **Default model** (in **Group settings**) applies in the group's projects when the
+  project sets none. The model next to **Project** in the box shows and changes that project's model,
+  and **Model in <project>** in the group's menu gives one member its own model there. A change moves
+  the open requests' conversations that still follow the old value, after their current turn, and a
+  finished request's conversations when work on it comes back; one you switched by hand keeps its
+  model. While you write in a member's conversation, the group's next task for it waits for that turn
+  to end.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
   members. Names with spaces work (`@Ana Paula`); **Mention** in the box inserts one. The line under
@@ -351,7 +365,10 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   conversation waits on you: an approval, a question, an open decision or a paused group task. It
   goes out after **Notify after** (1 minute by default), only once, and never for something you
   answered in the meantime. It has its own switch, respects the pause switch and does not count
-  toward the daily limit.
+  toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
+  with the project, provider, the time it resets and the task, once per provider and limit window.
+  With **Resume after usage limits** on in **Settings → Threads**, tasks waiting on a limit show
+  **Limit until** and the reset time instead of failing.
 - **Notifications per day**, 20 by default.
 - **Messages from assistants per day**, 20 by default: short messages an assistant sends you itself.
 
@@ -459,8 +476,8 @@ projects.
 
 ## Reset, restore, archive and delete
 
-- **Reset conversation** starts a fresh conversation with the same settings and model. The earlier
-  one is archived.
+- **Reset conversation** starts a fresh conversation with the same settings, on the model its
+  project sets for the assistant. The earlier one is archived.
 - **Restore** brings back one of an assistant's earlier conversations from **Archived threads**. The
   current one is archived in its place.
 - **Archive** hides an assistant and keeps its history. Its handle stays reserved, so an archived

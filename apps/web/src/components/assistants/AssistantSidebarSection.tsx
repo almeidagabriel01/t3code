@@ -63,11 +63,13 @@ import {
 } from "./assistantTeamState";
 import { DescribeAssistantDialog } from "./DescribeAssistantDialog";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const MOOD_TEXT: Record<AssistantMood, string> = {
   idle: "text-muted-foreground",
   working: "text-info-foreground",
   needs: "text-warning-foreground",
+  limited: "text-warning-foreground",
   failed: "text-destructive-foreground",
 };
 
@@ -85,9 +87,11 @@ function useAssistantState(entry: AssistantEntry, onOpen: (threadRef: ScopedThre
     threadKey === null ? undefined : state.threadLastVisitedAtById[threadKey],
   );
   const shells = useQuietThreadShells();
+  const limitLabel = useUsageLimitLabel();
   const presence = assistantPresence(
     thread,
     assistantGroupThreadsOf(shells, environmentId, assistant.id),
+    limitLabel,
   );
   const dotClass =
     thread === null

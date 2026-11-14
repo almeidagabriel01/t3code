@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const mocks = vi.hoisted(() => ({
   update: vi.fn(),
   alert: vi.fn(),
+  openSettings: vi.fn(),
   scope: true,
   organization: true,
   operable: new Set<string>(["hub"]),
@@ -17,6 +18,8 @@ const project = (id: string, environmentId: string) => ({
   repositoryIdentity: null,
   archivedAt: null,
 });
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => "nav" }));
+vi.mock("../settings/settings-navigation", () => ({ openSettings: mocks.openSettings }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: mocks.alert }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [project("a", "hub"), project("b", "hub")],
@@ -34,7 +37,11 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upd
 
 import * as Cause from "effect/Cause";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
-import { useArchiveSelectedProject, useProjectOrganize } from "./useProjectOrganize";
+import {
+  useArchiveSelectedProject,
+  useOpenSelectedProjectSettings,
+  useProjectOrganize,
+} from "./useProjectOrganize";
 
 let api: ReturnType<typeof useProjectOrganize>;
 function Probe() {
@@ -50,6 +57,7 @@ beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.update.mockReset().mockResolvedValue({ _tag: "Success" });
   mocks.alert.mockReset();
+  mocks.openSettings.mockReset();
   mocks.scope = true;
   mocks.organization = true;
   mocks.operable = new Set(["hub"]);
@@ -138,5 +146,39 @@ describe("useArchiveSelectedProject", () => {
     mocks.operable = new Set(operable);
     await mountArchive(selected());
     expect(archive).toBeUndefined();
+  });
+});
+
+describe("useOpenSelectedProjectSettings", () => {
+  let open: ReturnType<typeof useOpenSelectedProjectSettings>;
+  function OpenProbe(props: { selectedKey: string | null }) {
+    open = useOpenSelectedProjectSettings({
+      environmentId: null,
+      projectGroupingMode: "separate",
+      selectedKey: props.selectedKey,
+    });
+    return null;
+  }
+  const mountOpen = (selectedKey: string | null) =>
+    act(() =>
+      createRoot(window.document.createElement("div")).render(
+        <OpenProbe selectedKey={selectedKey} />,
+      ),
+    );
+
+  it("opens Threads settings scoped to the selected project, by id", async () => {
+    const key = buildHomeProjectScopes({
+      projects: [project("a", "hub"), project("b", "hub")] as never,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    }).find((scope) => scope.projectRefs.some((ref) => ref.projectId === "b"))!.key;
+    await mountOpen(key);
+    open!();
+    expect(mocks.openSettings).toHaveBeenCalledWith("nav", "SettingsThreads", {
+      environmentId: "hub",
+      projectId: "b",
+    });
+    await mountOpen(null);
+    expect(open).toBeUndefined();
   });
 });

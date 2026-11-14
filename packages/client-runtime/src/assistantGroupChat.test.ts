@@ -286,6 +286,12 @@ describe("group requests", () => {
       status: "needs-you",
     },
     {
+      name: "a task held by a usage limit",
+      tasks: [task("a", 1, { status: "usage_limited" })],
+      extra: [],
+      status: "working",
+    },
+    {
       name: "a member waiting on the user while it works",
       tasks: [task("a", 1, { status: "running" })],
       extra: [
@@ -434,6 +440,8 @@ describe("group feed", () => {
     ["failed", "failed", null],
     ["failed", null, null],
     ["running", "stopped", null],
+    ["cancelled", "outside_project", "Owner no longer works in this request's project"],
+    ["cancelled", "a teammate's own words", null],
   ] as const)("labels a %s task's reason %s", (status, reason, expected) => {
     const label = assistantGroupTaskReasonLabel({ status, reason });
     if (expected instanceof RegExp) assert.match(label ?? "", expected);

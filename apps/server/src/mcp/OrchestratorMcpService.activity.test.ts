@@ -34,10 +34,11 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
-import { liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { layerProjectModelSelection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(layerProjectModelSelection),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 

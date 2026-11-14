@@ -4,6 +4,8 @@
 import {
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
+  ServerSettingsError,
+  type ServerSettings,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
@@ -235,6 +237,8 @@ export interface FakeThread {
   readonly title: string;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  /** Shell fields the runs do not derive, such as the last error's class. */
+  readonly shell?: Partial<OrchestrationV2ThreadShell>;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -299,6 +303,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     settledAt: thread.olderSettled ? AT : null,
     lastVisitedAt: AT,
     deletedAt: null,
+    ...thread.shell,
   };
 }
 
@@ -382,11 +387,17 @@ let autonomyOverride: AutonomySettings | null = null;
 export function setFakeAutonomy(autonomy: AutonomySettings | null): void {
   autonomyOverride = autonomy;
 }
+let settingsOverride: Partial<ServerSettings> | null = null;
+/** Starts the server with these settings on top; reset when the environment is disposed. */
+export function setFakeServerSettings(settings: Partial<ServerSettings> | null): void {
+  settingsOverride = settings;
+}
 const currentServerConfig = (): ServerConfig => {
   const config = serverConfig();
   return Object.keys(extraCapabilities).length === 0 &&
     hostOs === "linux" &&
     autonomyOverride === null &&
+    settingsOverride === null &&
     !reasoningEffort
     ? config
     : {
@@ -400,9 +411,11 @@ const currentServerConfig = (): ServerConfig => {
               })),
             }))
           : config.providers,
-        settings: autonomyOverride
-          ? { ...config.settings, autonomy: autonomyOverride }
-          : config.settings,
+        settings: {
+          ...config.settings,
+          ...settingsOverride,
+          ...(autonomyOverride ? { autonomy: autonomyOverride } : {}),
+        },
         environment: {
           ...config.environment,
           platform: { ...config.environment.platform, os: hostOs },
@@ -843,10 +856,18 @@ handlers[WS_METHODS.assistantsSetAvatarImage] = (input: { readonly assistantId: 
   return found ? Effect.succeed(found) : Effect.never;
 };
 
-/** Settings patches the fake server received. */
-export const fakeSettings = { patches: [] as unknown[] };
+/** Settings patches the fake server received; `refuse` names a path the next write fails on. */
+export const fakeSettings = { patches: [] as unknown[], refuse: null as string | null };
 handlers[WS_METHODS.serverUpdateSettings] = (input: { readonly patch: object }) => {
   fakeSettings.patches.push(input.patch);
+  if (fakeSettings.refuse !== null)
+    return Effect.fail(
+      new ServerSettingsError({
+        settingsPath: fakeSettings.refuse,
+        operation: "use-unavailable-provider-instance",
+        providerInstanceId: "codex",
+      }),
+    );
   return Effect.succeed({ ...baseServerConfig.settings, ...input.patch });
 };
 
@@ -1218,7 +1239,9 @@ export function installFakeEnvironment(
       fakeCommands.holdTypes.clear();
       fakeCommands.refuseHeld();
       autonomyOverride = null;
+      settingsOverride = null;
       fakeSettings.patches = [];
+      fakeSettings.refuse = null;
       fakeWatches.items = [];
       fakeWatches.calls = [];
       // The app caches the environment's config and capabilities here; the next test starts cold.

@@ -24,10 +24,18 @@ const { Children, mocks } = vi.hoisted(() => ({
     },
     updateSettings: vi.fn(),
     alert: vi.fn(),
+    selectAll: vi.fn(),
+    selectAllProjects: vi.fn(),
+    toggleProject: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
     readOnly: new Set<string>(),
     projectSelected: false,
     projectIds: ["project"],
+    projectModels: null as null | {
+      targets: unknown[];
+      showAssistants: boolean;
+      onReset: () => void;
+    },
   },
 }));
 
@@ -181,6 +189,12 @@ vi.mock("./components/RunnerSection", () => ({
   },
 }));
 vi.mock("./components/FolderModelsSection", () => ({ FolderModelsSection: () => null }));
+vi.mock("./components/ProjectModelSections", () => ({
+  ProjectModelSections: (props: NonNullable<typeof mocks.projectModels>) => {
+    mocks.projectModels = props;
+    return null;
+  },
+}));
 vi.mock("./components/BranchNamingSettings", () => ({
   BranchNamingSettings: (props: { onChange: (patch: ServerSettingsPatch) => void }) => {
     mocks.branchNaming.onChange = props.onChange;
@@ -189,6 +203,15 @@ vi.mock("./components/BranchNamingSettings", () => ({
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
+    projectGroups: [
+      {
+        key: "linked-group",
+        members: [{ project: { environmentId: "local", id: "linked" } }],
+      },
+    ],
+    selectAll: mocks.selectAll,
+    selectAllProjects: mocks.selectAllProjects,
+    toggleProject: mocks.toggleProject,
     selectedTargets: mocks.targets,
     selectedProjectGroups: mocks.projectSelected
       ? [
@@ -247,6 +270,8 @@ beforeEach(() => {
   mocks.targets = [environment("local", "Local")];
   mocks.projectSelected = false;
   mocks.projectIds = ["project"];
+  mocks.projectModels = null;
+  for (const fn of [mocks.selectAll, mocks.selectAllProjects, mocks.toggleProject]) fn.mockReset();
   mocks.readOnly = new Set();
   mocks.alert.mockReset();
   mocks.updateSettings.mockReset();
@@ -282,7 +307,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     mocks.projectSelected = true;
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);
-    act(() => root.render(<SettingsThreadsRouteScreen />));
+    act(() => root.render(<SettingsThreadsRouteScreen route={{ params: undefined } as never} />));
     const toggle = (label: string) =>
       [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
         (button) => button.textContent === label,
@@ -296,10 +321,44 @@ describe("SettingsServerControlsRouteScreen", () => {
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
   });
 
+  it("scopes Settings to the project a link names, once", () => {
+    const route = { params: { environmentId: "local", projectId: "linked" } } as never;
+    act(() => root.render(<SettingsThreadsRouteScreen route={route} />));
+    act(() => root.render(<SettingsThreadsRouteScreen route={route} />));
+    expect(mocks.selectAll).toHaveBeenCalledOnce();
+    expect(mocks.selectAllProjects).toHaveBeenCalledOnce();
+    expect(mocks.toggleProject).toHaveBeenCalledExactlyOnceWith("linked-group");
+  });
+
+  it("shows the project's models at project scope and resets its model override", async () => {
+    act(() => root.render(<SettingsThreadsRouteScreen route={{ params: undefined } as never} />));
+    expect(mocks.projectModels).toBeNull();
+    // The compiler memoizes the page, so the project scope needs a fresh mount.
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.projectSelected = true;
+    mocks.targets[0]!.serverConfig.settings = {
+      ...mocks.targets[0]!.serverConfig.settings,
+      projectSettingsOverrides: {
+        ["project" as ProjectId]: {
+          defaultAutoPull: true,
+          defaultModelSelection: { instanceId: "codex" as never, model: "gpt-5.5" },
+        },
+      },
+    };
+    act(() => root.render(<SettingsThreadsRouteScreen route={{ params: undefined } as never} />));
+    expect(mocks.projectModels).toMatchObject({ targets: [{}], showAssistants: true });
+    await act(async () => mocks.projectModels!.onReset());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      environmentId: "local",
+      input: { patch: { projectSettingsOverrides: { project: { defaultAutoPull: true } } } },
+    });
+  });
+
   it("writes a project override to every selected project", async () => {
     mocks.projectSelected = true;
     mocks.projectIds = ["a", "b"];
-    act(() => root.render(<SettingsThreadsRouteScreen />));
+    act(() => root.render(<SettingsThreadsRouteScreen route={{ params: undefined } as never} />));
     const toggle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
       (button) => button.textContent === "Agent browser access",
     )!;
@@ -451,7 +510,7 @@ describe("SettingsServerControlsRouteScreen", () => {
     remote.serverConfig.environment.capabilities.threadAutoSettlement = false;
     mocks.targets = [environment("local", "Local"), remote];
     mocks.readOnly = new Set(["remote"]);
-    act(() => root.render(<SettingsThreadsRouteScreen />));
+    act(() => root.render(<SettingsThreadsRouteScreen route={{ params: undefined } as never} />));
 
     const autoSettle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
       (button) => button.textContent === "Auto-settle merged threads",

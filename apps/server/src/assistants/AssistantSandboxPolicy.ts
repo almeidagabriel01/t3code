@@ -96,8 +96,11 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
       return Option.none<string>();
     }
     if (input.elsewhere === true) return Option.some(PROJECT_SCOPE_REFUSAL);
-    const { assistant } = found.value;
-    const projectIds = yield* effectiveProjectIdsOf(directory.value, assistant);
+    const projectIds = yield* effectiveProjectIdsOf(
+      directory.value,
+      found.value.assistant,
+      found.value.team,
+    );
     if (input.projectId !== undefined && input.delegate !== true) {
       return projectIds.includes(input.projectId)
         ? Option.none<string>()
@@ -117,21 +120,27 @@ export const projectScopeRefusal = Effect.fn("AssistantSandboxPolicy.projectScop
   },
 );
 
-/** The projects an assistant may work in, with its groups' projects; empty for scope "all". */
+/**
+ * The projects an assistant may work in; empty for scope "all". A member's group conversation
+ * (`team` set) reaches its own projects and that group's only; any other thread, all its groups'.
+ */
 export const effectiveProjectIdsOf = (
   directory: AssistantDirectoryShape,
   assistant: Assistant,
+  team?: AssistantTeam | null,
 ): Effect.Effect<ReadonlyArray<ProjectId>> =>
-  assistant.scope === "project"
-    ? directory.teamsOf(assistant).pipe(
-        Effect.map((memberships) =>
-          assistantEffectiveProjectIds(
-            assistant,
-            memberships.map((membership) => membership.team),
+  assistant.scope !== "project"
+    ? Effect.succeed([])
+    : team !== undefined
+      ? Effect.succeed(assistantEffectiveProjectIds(assistant, team === null ? [] : [team]))
+      : directory.teamsOf(assistant).pipe(
+          Effect.map((memberships) =>
+            assistantEffectiveProjectIds(
+              assistant,
+              memberships.map((membership) => membership.team),
+            ),
           ),
-        ),
-      )
-    : Effect.succeed([]);
+        );
 
 const PROJECT_SCOPE_REFUSAL =
   "You are a project assistant: you may only launch, delegate and message work inside the projects on your list. Pass one of them as projectId, or ask the user to do this from another conversation.";

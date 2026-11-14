@@ -20,6 +20,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ProjectId,
   PROVIDER_DISPLAY_NAMES,
+  type ProviderInstanceId,
   type ThreadId,
   isSideChatThread,
 } from "@t3tools/contracts";
@@ -127,6 +128,40 @@ const toWatch = (row: WatchRow): AutonomyWatch => ({
 
 const autonomyError = (reason: AutonomyError["reason"], message: string) =>
   new AutonomyError({ reason, message });
+
+interface UsageLimitNotice {
+  readonly threadId: ThreadId;
+  readonly providerInstanceId: string;
+  readonly resetAt: string | null;
+  readonly failedAt: string;
+}
+
+/**
+ * One window per provider: a reset parsed from a relative cooldown varies by seconds. With no
+ * reset the window is the local day the run failed, so a limit left standing is told once.
+ */
+const usageLimitSubject = (notice: UsageLimitNotice) =>
+  `usage-limit:${notice.providerInstanceId}:${
+    notice.resetAt === null
+      ? DateTime.formatIsoDate(
+          DateTime.setZone(DateTime.makeUnsafe(notice.failedAt), DateTime.zoneMakeLocal()),
+        )
+      : DateTime.formatIso(DateTime.makeUnsafe(notice.resetAt)).slice(0, 16)
+  }`;
+
+/** A window's notice is withdrawn once it resets; one with no reset time waits for the user. */
+const usageLimitOpen = (subject: string, nowMs: number) => {
+  const reset = /:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/.exec(subject)?.[1];
+  return reset === undefined || Date.parse(`${reset}:00Z`) > nowMs ? [true] : [];
+};
+
+const usageLimitTime = (resetAt: string, language: string) =>
+  DateTime.formatLocal(DateTime.makeUnsafe(resetAt), {
+    locale: language,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 export class AutonomyService extends Context.Service<
   AutonomyService,
@@ -977,6 +1012,63 @@ const make = Effect.gen(function* () {
       yield* markTold(subject, decision.id, nowMs);
   });
 
+  const providerName = Effect.fn("AutonomyService.providerName")(function* (instanceId: string) {
+    const instance = yield* settingsService.getSettings.pipe(
+      Effect.map((current) => current.providerInstances?.[instanceId as ProviderInstanceId]),
+      Effect.orElseSucceed(() => undefined),
+    );
+    return (
+      instance?.displayName ??
+      PROVIDER_DISPLAY_NAMES[
+        (instance?.driver ?? instanceId) as keyof typeof PROVIDER_DISPLAY_NAMES
+      ] ??
+      instanceId
+    );
+  });
+
+  /** Once per provider and limit window, on the first task found waiting in it. */
+  const notifyUsageLimit = Effect.fn("AutonomyService.notifyUsageLimit")(function* (
+    notice: UsageLimitNotice,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const subject = usageLimitSubject(notice);
+    if (yield* alreadyTold(subject)) return;
+    const clientRequestId = `${DecisionService.NOTICE_REQUEST_PREFIX}${subject}`;
+    // Decisions are idempotent per thread: a retry stays on the thread that opened one.
+    const [opened] = yield* sql<{ readonly from_thread_id: ThreadId }>`
+      SELECT from_thread_id FROM decisions WHERE client_request_id = ${clientRequestId} LIMIT 1`;
+    const threadId = opened?.from_thread_id ?? notice.threadId;
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (shell === null) return;
+    const provider = yield* providerName(notice.providerInstanceId);
+    const back = (language: ResolvedChannelLanguage) =>
+      channelStrings(language).usageLimitBack(
+        notice.resetAt === null ? null : usageLimitTime(notice.resetAt, language),
+      );
+    // Deterministic ids: a repeat lands on the same decision and the same delivery.
+    const decision = yield* decisions.request({
+      fromThreadId: threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      clientRequestId,
+      title: `${provider}: ${DECISION_PHRASES.usageLimit}`.slice(0, 120),
+      context: back("en"),
+      options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+    });
+    yield* sendNeedsYou({
+      decision,
+      agent: provider,
+      threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      answerable: false,
+      config,
+      context: back,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
   const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
     decision: Decision,
     config: AutonomySettings,
@@ -1057,6 +1149,7 @@ const make = Effect.gen(function* () {
 
   /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
   const withdrawSettledNotices = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
     const told = yield* sql<{
       readonly subject_key: string;
       readonly decision_id: string;
@@ -1077,7 +1170,9 @@ const make = Effect.gen(function* () {
               SELECT 1 FROM assistant_group_tasks
               WHERE 'group-task:' || task_id || '@' || updated_at = ${row.subject_key}
                 AND status = 'paused'`
-          : [true];
+          : row.subject_key.startsWith("usage-limit:")
+            ? usageLimitOpen(row.subject_key, nowMs)
+            : [true];
       if (still.length > 0) continue;
       yield* decisions
         .withdraw({
@@ -1163,6 +1258,53 @@ const make = Effect.gen(function* () {
           if (!due(task.updated_at)) continue;
           yield* notifyGroupTask(task, config, nowMs).pipe(
             isolate("autonomy: a paused group task could not be told"),
+          );
+        }
+
+        // Threads whose last run hit a usage limit whose window still lies ahead, armed or not.
+        const limited = yield* sql<UsageLimitNotice>`
+          SELECT t.thread_id AS "threadId",
+            COALESCE(r.provider_instance_id, r.provider) AS "providerInstanceId",
+            json_extract(item.payload_json, '$.failure.resetAt') AS "resetAt",
+            COALESCE(r.completed_at, r.requested_at) AS "failedAt"
+          FROM orchestration_v2_projection_threads t
+          JOIN orchestration_v2_projection_runs r
+            ON r.thread_id = t.thread_id AND r.status = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs later
+              WHERE later.thread_id = t.thread_id AND later.ordinal > r.ordinal
+                AND later.status <> 'queued'
+            )
+          JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
+            SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
+            WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
+              AND error.type = 'error' AND error.status = 'failed'
+              AND error.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+            ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+            LIMIT 1
+          )
+          WHERE t.deleted_at IS NULL
+            -- The sweep runs every few seconds: the partial index of failed errors keeps it to
+            -- threads that ever hit a limit, not every run of every thread.
+            AND t.thread_id IN (
+              SELECT failure.thread_id FROM orchestration_v2_projection_turn_items failure
+              WHERE failure.type = 'error' AND failure.status = 'failed'
+                AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+            )
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND (json_extract(item.payload_json, '$.failure.resetAt') IS NULL
+              OR julianday(json_extract(item.payload_json, '$.failure.resetAt'))
+                > julianday(${DateTime.formatIso(DateTime.makeUnsafe(nowMs))}))
+            -- A Stop disarms this run's wait: the user already knows.
+            AND NOT (json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
+              AND json_extract(t.payload_json, '$.limitRecovery.autoResume') IS NOT 1
+              AND json_extract(t.payload_json, '$.limitRecovery.snooze') IS NOT 1)
+          ORDER BY t.thread_id`;
+        for (const notice of limited) {
+          yield* notifyUsageLimit(notice, config, nowMs).pipe(
+            isolate("autonomy: a usage limit could not be told"),
           );
         }
 

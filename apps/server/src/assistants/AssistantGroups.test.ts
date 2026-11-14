@@ -13,12 +13,16 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
+import type { DeepPartial } from "@t3tools/shared/Struct";
 import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -37,6 +41,8 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -61,6 +67,8 @@ const TEAM = AssistantTeamId.make("team:1");
 const OTHER_TEAM = AssistantTeamId.make("team:2");
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
+const p1 = ProjectId.make("p1");
+const p2 = ProjectId.make("p2");
 const selection = (instanceId: ProviderInstanceId, model = "m"): ModelSelection => ({
   instanceId,
   model,
@@ -78,6 +86,9 @@ interface FakeRun {
   id: string;
   userMessageId: string;
   status: string;
+  ordinal?: number;
+  completedAt?: DateTime.Utc;
+  usageLimitContinuationOfRunId?: string;
 }
 
 interface Options {
@@ -92,6 +103,8 @@ interface Options {
   readonly summarize?: (call: number) => string | "fail" | "unsupported";
   /** Holds every summary call until it completes. */
   readonly summaryGate?: Deferred.Deferred<void>;
+  /** The server's auto-resume setting for usage-limited threads; on unless set. */
+  readonly autoResume?: boolean;
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
     readonly projects?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -108,6 +121,8 @@ interface Options {
       };
   /** Projects each member may work in (by assistant id); the rest work anywhere from p1. */
   readonly projects?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Server settings beside auto-resume, such as each project's default model. */
+  readonly settings?: DeepPartial<ServerSettingsValue>;
 }
 
 /** Titles of the projects tests use; each exists in the projection. */
@@ -121,6 +136,8 @@ const harness = (options: Options = {}) => {
   const fakeThreads = new Map<string, FakeThread>();
   const runs = new Map<string, FakeRun[]>();
   const answers = new Map<string, string>();
+  /** Runs that failed on a usage limit, with the limit's reset time. */
+  const limits = new Map<string, string>();
   const sent: Array<{
     projectId: string;
     commandId: string;
@@ -159,6 +176,8 @@ const harness = (options: Options = {}) => {
   const live = {} as {
     changes: PubSub.PubSub<AssistantsEvent>;
     deleted: Deferred.Deferred<void>;
+    /** The first request thread moved to another model, by id. */
+    modelSet: Deferred.Deferred<string>;
   };
 
   const addThread = (id: string, projectId: string, model: ModelSelection, title = id) =>
@@ -182,7 +201,20 @@ const harness = (options: Options = {}) => {
       getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const statuses = filter?.runStatuses as ReadonlyArray<string> | undefined;
         const runIds = filter?.messageRunIds as ReadonlyArray<string> | undefined;
+        const errorRunIds = filter?.turnItemRunIds as ReadonlyArray<string> | undefined;
         return Effect.succeed({
+          turnItems: (errorRunIds ?? []).flatMap((runId) =>
+            limits.has(runId)
+              ? [
+                  {
+                    type: "error",
+                    status: "failed",
+                    runId,
+                    failure: { class: "usage_limit", resetAt: limits.get(runId) },
+                  },
+                ]
+              : [],
+          ),
           runs: (runs.get(threadId) ?? []).filter(
             (run) => statuses === undefined || statuses.includes(run.status),
           ),
@@ -191,8 +223,31 @@ const harness = (options: Options = {}) => {
           ),
         });
       }) as never,
-      dispatch: ((command: { type: string; threadId: string; commandId: string; runId?: string }) =>
-        Effect.sync(() => {
+      dispatch: ((command: {
+        type: string;
+        threadId: string;
+        commandId: string;
+        runId?: string;
+        modelSelection?: ModelSelection;
+      }) => {
+        // Like the Orchestrator: another provider waits until the thread's turn has ended.
+        if (command.type === "thread.model-selection.set") {
+          const thread = fakeThreads.get(command.threadId)!;
+          const busy = (runs.get(command.threadId) ?? []).some((run) =>
+            ["running", "waiting"].includes(run.status),
+          );
+          if (busy && thread.modelSelection.instanceId !== command.modelSelection!.instanceId) {
+            return Effect.fail(
+              new Orchestrator.OrchestratorProviderSelectionBusyError({
+                commandId: command.commandId as never,
+                threadId: command.threadId as never,
+              }),
+            );
+          }
+          thread.modelSelection = command.modelSelection!;
+          Deferred.doneUnsafe(live.modelSet, Effect.succeed(command.threadId));
+        }
+        return Effect.sync(() => {
           dispatched.push(command);
           const thread = fakeThreads.get(command.threadId);
           if (thread !== undefined) {
@@ -204,7 +259,8 @@ const harness = (options: Options = {}) => {
               thread.title = (command as { title?: string }).title ?? thread.title;
           }
           return {} as never;
-        })) as never,
+        });
+      }) as never,
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getRuntimeResponseContext: ((_threadId: string, requestId: string) =>
@@ -318,7 +374,36 @@ const harness = (options: Options = {}) => {
       cleanupPreviews: () => Effect.void,
       cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
     }),
-    ServerSettings.layerTest(),
+    ProjectModelSelection.layer.pipe(
+      Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone })),
+    ),
+  ).pipe(
+    // The test settings never stream their changes; the group's settings reaction needs them.
+    Layer.provideMerge(
+      Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+          live.modelSet = yield* Deferred.make<string>();
+          return ServerSettings.ServerSettingsService.of({
+            ...settings,
+            subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+            updateSettings: (patch) =>
+              settings
+                .updateSettings(patch)
+                .pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+          });
+        }),
+      ).pipe(
+        Layer.provideMerge(
+          ServerSettings.layerTest({
+            ...options.settings,
+            autoResumeLimitedThreads: options.autoResume ?? true,
+          }),
+        ),
+      ),
+    ),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -440,6 +525,7 @@ const harness = (options: Options = {}) => {
     launched,
     fakeThreads,
     runs,
+    limits,
     answers,
     runtimeRequests,
     live,
@@ -790,6 +876,11 @@ it.effect(
       );
       assert.lengthOf(yield* h.messages, 1);
       assert.lengthOf(h.sent, 1);
+      assert.lengthOf(h.launched, 1);
+      assert.notInclude(
+        h.dispatched.map((command) => command.type),
+        "thread.model-selection.set",
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -821,18 +912,34 @@ it.effect("agents and schedules open tasks whose instruction names their sender"
 });
 
 it.effect(
-  "a member gets one thread per request, launched lazily in its project and reused within it",
+  "a member gets one thread per request, launched lazily in its project on that project's model",
   () => {
-    const h = harness();
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      const one = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
-      // Ada switched models in her own conversation: the next task in the group follows.
+      const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+      // Ada's own conversation is not the group's model: each request follows its project.
       h.fakeThreads.get("assistant:ada:1")!.modelSelection = selection(claude, "ada-new");
-      const two = yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+      const two = yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+      assert.deepEqual(
+        h.launched.map((input) => [input.projectId, input.modelSelection]),
+        [
+          ["p1", selection(codex, "p1-model")],
+          ["p2", selection(claude, "p2-model")],
+        ],
+      );
+      // Later tasks run on what the thread has, so a change made in it stays.
       assert.deepEqual(
         h.sent.map((input) => input.modelSelection),
-        [selection(codex, "ada-model"), selection(claude, "ada-new")],
+        [undefined, undefined],
       );
       const first = requestThreadId("ada", TEAM, one.message.id);
       const second = requestThreadId("ada", TEAM, two.message.id);
@@ -848,7 +955,6 @@ it.effect(
         title: "Ada · Team team:1 · one",
         // Ada is read-only, so the thread asks before acting.
         runtimeMode: "approval-required",
-        modelSelection: selection(codex, "ada-model"),
         generateTitle: false,
         createdBy: "system",
       });
@@ -874,6 +980,314 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect(
+  "a request thread follows the model of the project it works in, not the request's later one",
+  () => {
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const one = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto one", projectId: p1 },
+        h.user,
+      );
+      // As a request from before requests had projects: started with none, so its threads were
+      // launched in each member's own project (p1) and keep working in that checkout.
+      yield* sql`UPDATE assistant_group_messages SET project_id = NULL WHERE message_id = ${one.message.id}`;
+      const ada = requestThreadId("ada", TEAM, one.message.id);
+      const beto = requestThreadId("beto", TEAM, one.message.id);
+      // Beto picked another model in his thread: that choice stays.
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      const switches = () =>
+        h.dispatched.filter((command) => command.type === "thread.model-selection.set");
+
+      yield* groups.post(
+        { teamId: TEAM, text: "this is for p2", replyToMessageId: one.message.id, projectId: p2 },
+        h.user,
+      );
+      yield* groups.followProjectModels([p2]);
+      assert.lengthOf(switches(), 0);
+
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(claude, "p1-new") },
+        },
+      });
+      yield* groups.followProjectModels([p1]);
+      // Ada's turn is still running, so her provider changes when it ends.
+      assert.lengthOf(switches(), 0);
+      yield* h.finish(0, "completed", "done");
+      assert.deepEqual(
+        switches().map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.lengthOf(h.launched, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a project's new model reaches its open requests' threads that still follow the old one",
+  () => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const open = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+      const done = yield* groups.post({ teamId: TEAM, text: "@cy two" }, h.user);
+      const ada = requestThreadId("ada", TEAM, open.message.id);
+      const beto = requestThreadId("beto", TEAM, open.message.id);
+      const cy = requestThreadId("cy", TEAM, done.message.id);
+      h.fakeThreads.get(beto)!.modelSelection = selection(codex, "beto-pick");
+      // Ada's turn ended; Beto's still runs, so the request is open. Cy's request is done.
+      yield* h.finish(0, "completed", "done");
+      yield* h.finish(2, "completed", "done");
+
+      const before = yield* settings.getSettings;
+      const after = yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: {
+            defaultModelSelection: selection(claude, "p1-new"),
+            assistantModelSelections: { [AssistantId.make("cy")]: selection(claude, "cy-new") },
+          },
+          // Another setting of another project is no model change.
+          [p2]: { defaultThreadEnvMode: "worktree" },
+        },
+      });
+      const candidates = [
+        { id: p1, workspaceRoot: "/work/p1" },
+        { id: p2, workspaceRoot: "/work/p2" },
+      ];
+      assert.deepEqual(Groups.projectModelChanges(before, after, candidates), [p1]);
+      // A folder rule or a provider switched off changes the effective default too.
+      const folder = {
+        ...after,
+        folderModelDefaults: [{ folder: "/work/p2", modelSelection: selection(claude, "folder") }],
+      };
+      assert.deepEqual(Groups.projectModelChanges(after, folder, candidates), [p2]);
+      const claudeOff = {
+        ...folder,
+        providerInstances: {
+          ...folder.providerInstances,
+          [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
+        },
+      };
+      assert.deepEqual(Groups.projectModelChanges(folder, claudeOff, candidates), [p1, p2]);
+      assert.deepEqual(Groups.projectModelChanges(claudeOff, claudeOff, candidates), []);
+      yield* groups.followProjectModels([p1]);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.model-selection.set")
+          .map((command) => command.threadId),
+        [ada],
+      );
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+      assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
+      assert.deepEqual(h.fakeThreads.get(cy)!.modelSelection, selection(codex, "p1-model"));
+      assert.lengthOf(h.launched, 3);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a project's model changed in settings moves its open requests' threads", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    yield* groups.start;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    assert.equal(yield* Deferred.await(h.live.modelSet), ada);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a request that ended takes its project's new model only when work comes back", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    // Ada's request ends while a move waits for her turn; Beto's ended before the change.
+    const deferred = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    const closed = yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user);
+    const ada = requestThreadId("ada", TEAM, deferred.message.id);
+    const beto = requestThreadId("beto", TEAM, closed.message.id);
+    yield* h.finish(1, "completed", "done");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    yield* h.finish(0, "completed", "done");
+    // An ended request's threads are not touched.
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "p1-model"));
+
+    for (const [request, thread] of [
+      [deferred, ada],
+      [closed, beto],
+    ] as const) {
+      yield* groups.post(
+        { teamId: TEAM, text: "one more thing", replyToMessageId: request.message.id },
+        h.user,
+      );
+      // The send makes the thread busy, so the move has to land before it.
+      assert.equal(h.sent.at(-1)!.threadId, thread);
+      assert.deepEqual(h.fakeThreads.get(thread)!.modelSelection, selection(claude, "p1-new"));
+    }
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { name: "a model change, then a task", changeFirst: true },
+  { name: "a task, then a model change", changeFirst: false },
+])(
+  "$name, while the user's own turn runs: the task waits and starts on the new model",
+  ({ changeFirst }) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      yield* h.finish(0, "completed", "done");
+      // The user writes in Ada's thread: a turn that is no task, still running.
+      const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+      h.runs.get(ada)!.push(manual);
+      const change = Effect.gen(function* () {
+        yield* settings.updateSettings({
+          projectSettingsOverrides: {
+            [p1]: { defaultModelSelection: selection(claude, "p1-new") },
+          },
+        });
+        yield* groups.followProjectModels([p1]);
+      });
+      const ask = groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+        h.user,
+      );
+      if (changeFirst) yield* change;
+      yield* ask;
+      if (!changeFirst) yield* change;
+      // Queued in the thread, it would start on the thread's model the moment the turn ends.
+      assert.notEqual(h.sent.at(-1)!.threadId, ada);
+      assert.equal(
+        (yield* h.tasks).at(-1)!.reason,
+        "waiting for the conversation's current turn to end",
+      );
+
+      manual.status = "completed";
+      yield* groups.handleRunEvent({
+        type: "run.updated",
+        payload: {
+          id: manual.id,
+          threadId: ada,
+          userMessageId: manual.userMessageId,
+          status: "completed",
+        },
+      } as never as OrchestrationV2DomainEvent);
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a task held by the user's own turn starts on start if that turn ended while down",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      yield* h.finish(0, "completed", "done");
+      const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+      h.runs.get(ada)!.push(manual);
+      yield* groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+        h.user,
+      );
+      assert.lengthOf(h.sent, 1);
+      // The turn ended while the server was down, so no event says so.
+      manual.status = "completed";
+      yield* groups.reconcile;
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.lengthOf(h.sent, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada @beto one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    // The user writes in Ada's thread: a turn that is no task, still running.
+    const manual = { id: "run:manual", userMessageId: "manual", status: "running" };
+    h.runs.get(ada)!.push(manual);
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    manual.status = "completed";
+    yield* groups.handleRunEvent({
+      type: "run.updated",
+      payload: {
+        id: manual.id,
+        threadId: ada,
+        userMessageId: manual.userMessageId,
+        status: "completed",
+      },
+    } as never as OrchestrationV2DomainEvent);
+
+    // The send makes the thread busy, so the move has to land before it.
+    yield* groups.post(
+      { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id },
+      h.user,
+    );
+    assert.equal(h.sent.at(-1)!.threadId, ada);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect("a task that cannot start fails with a reason the user can see", () => {
   const h = harness();
@@ -1061,6 +1475,147 @@ it.effect.each(outcomeTable)("run outcome: %s", ([, runStatus, answer, result, s
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("a usage limit holds the task until its thread continues it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const adaThread = h.threadOf("ada");
+    const resetAt = "2026-01-01T12:00:00.000Z";
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, resetAt);
+    yield* h.finish(0, "failed");
+    const page = () =>
+      groups
+        .history({ teamId: TEAM })
+        .pipe(
+          Effect.map(({ tasks }) => tasks.map((task) => [task.status, task.resetAt, task.reason])),
+        );
+    assert.deepEqual(yield* page(), [["usage_limited", resetAt, null]]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.author === "assistant"),
+      0,
+    );
+
+    // The thread continues the limited run at the reset, on its own message.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "running",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    assert.deepEqual(yield* page(), [["running", undefined, null]]);
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a member at a usage limit starts no other task until the limited one continues", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const [one] = [
+      yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user),
+      yield* groups.post({ teamId: TEAM, text: "@beto two" }, h.user),
+      yield* groups.post({ teamId: TEAM, text: "@ada three" }, h.user),
+    ];
+    const adaThread = requestThreadId("ada", TEAM, one.message.id);
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // The limited task frees its slot, but its thread is not free for Ada's next task.
+    yield* h.finish(1, "completed", "two done");
+    assert.lengthOf(h.sent, 2);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "beto:completed:null",
+        "ada:queued:waiting for a usage limit",
+      ],
+    );
+
+    // The continuation still ends the limited task, and then the next one starts.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "completed",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    yield* groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    assert.deepEqual(statusesOf(yield* h.tasks), [
+      "ada:completed",
+      "beto:completed",
+      "ada:running",
+    ]);
+    assert.include(h.sent[2]!.text, "three");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a usage limit holds only the tasks that would run on the limited provider", () => {
+  const h = harness({
+    projects: { ada: ["p1", "p2"] },
+    settings: {
+      projectSettingsOverrides: {
+        [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+        [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+    const [limitedRun] = h.runs.get(requestThreadId("ada", TEAM, one.message.id))!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    // Ada's request in p2 runs on another provider; Beto's in p1 would hit the same limit.
+    yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@beto three", projectId: p1 }, h.user);
+    assert.deepEqual(
+      (yield* h.tasks).map((task) => `${task.owner_id}:${task.status}:${task.reason}`),
+      [
+        "ada:usage_limited:2026-01-01T12:00:00.000Z",
+        "ada:running:null",
+        "beto:queued:waiting for a usage limit",
+      ],
+    );
+    assert.deepEqual(
+      h.launched.map((input) => input.modelSelection.instanceId),
+      [codex, claude],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("Stop on a usage-limited task stops its thread so the reset does not resume it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const adaThread = h.threadOf("ada");
+    h.limits.set(h.runs.get(adaThread)![0]!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    const stopped = yield* groups.taskAction({ taskId: posted.tasks[0]!.id, action: "stop" });
+    assert.equal(stopped.status, "paused");
+    assert.deepEqual(
+      h.dispatched.filter((command) => command.type === "thread.stop").map((c) => c.threadId),
+      [adaThread],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("an old revision's run ending, or one for a stopped task, changes nothing", () => {
   const h = harness();
   return Effect.gen(function* () {
@@ -1189,8 +1744,12 @@ it.effect("a task waits for what it assigned, then runs again with the results",
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a failed child still lets the parent continue, and says it failed", () => {
-  const h = harness();
+// A usage limit nothing will continue on its own (auto-resume off) fails the task as before.
+it.effect.each([
+  { failure: "a plain failure", limit: false },
+  { failure: "a usage limit without auto-resume", limit: true },
+])("a failed child still lets the parent continue, and says it failed: $failure", ({ limit }) => {
+  const h = harness({ autoResume: false });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
@@ -1200,8 +1759,43 @@ it.effect("a failed child still lets the parent continue, and says it failed", (
       instruction: "Try",
     });
     yield* h.finish(0, "completed", "waiting");
+    const betoThread = h.threadOf("beto");
+    const [childRun] = h.runs.get(betoThread)!;
+    if (limit) {
+      Object.assign(childRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(childRun!.id, "2026-01-01T12:00:00.000Z");
+    }
     yield* h.finish(1, "failed");
     assert.include(h.sent[2]!.text, "- Beto (failed):");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
+    if (!limit) return;
+    // Beto's next task starts, its run held behind the limited one on his thread.
+    yield* groups.member.assign({
+      callerThreadId: h.threadOf("ada"),
+      member: "beto",
+      instruction: "Again",
+    });
+    Object.assign(h.runs.get(betoThread)![1]!, { ordinal: 2, status: "queued" });
+    // A later provider switch still continues the limited run; no task takes its answer.
+    const continuation = {
+      id: "run:continuation",
+      threadId: betoThread,
+      userMessageId: "limit-continuation:x",
+      ordinal: 3,
+      status: "running",
+    };
+    h.runs.get(betoThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed", "beto:running"]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.assistant_id === "beto"),
+      0,
+    );
+    assert.lengthOf(h.sent, 4);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1973,8 +2567,10 @@ it.effect.each(actionTable)(
         "completed",
         "cancelled",
       ]) {
-        // Seeded tasks that are queued or running would hold the group's two slots.
+        // Seeded tasks that are queued or running would hold the group's two slots, and their
+        // runs the member's thread.
         yield* sql`DELETE FROM assistant_group_tasks`;
+        h.runs.clear();
         const id = yield* seedTask(status);
         const result = yield* groups
           .taskAction({
@@ -2295,15 +2891,25 @@ it.effect("a deleted group takes its runs, threads, chat and schedules with it",
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const go = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const waits = yield* groups.post({ teamId: TEAM, text: "@beto waits" }, h.user);
     yield* groups.post({ teamId: OTHER_TEAM, text: "@ada elsewhere" }, h.user);
+    // Beto's task waits on a usage limit: its thread must not continue it after the group is gone.
+    const limited = waits.tasks[0]!.threadId;
+    const [limitedRun] = h.runs.get(limited)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(1, "failed");
+    const before = h.dispatched.length;
     yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM });
     assert.deepEqual(h.deletedTeams, [TEAM]);
     const thread = go.tasks[0]!.threadId;
     assert.deepEqual(
-      h.dispatched.map((command) => [command.type, command.threadId]),
+      h.dispatched.slice(before).map((command) => [command.type, command.threadId]),
       [
         ["run.interrupt", thread],
+        ["thread.stop", limited],
         ["thread.delete", thread],
+        ["thread.delete", limited],
       ],
     );
     const left = yield* h.sqlRows<{ team_id: string }>(
@@ -3290,11 +3896,12 @@ it.effect("tasks sharing a resource run one after another, oldest first", () => 
       "beto:queued:waiting for folder:/w/app (used by Beto)",
       "cy:running:null",
     ]);
-    // A finishes: B (older) takes the folder and C now waits on it.
+    // A finishes: B (older) takes the folder and C now waits on it. B also waits for D, which
+    // still runs in Cy's thread.
     yield* h.finish(1, "completed", "a done");
     assert.deepEqual(yield* view(), [
       "beto:completed:null",
-      "cy:running:null",
+      "cy:queued:waiting for the conversation's current turn to end",
       "beto:queued:waiting for folder:/w/app (used by Cy)",
       "cy:running:null",
     ]);
@@ -4122,6 +4729,12 @@ it.effect(
       assert.include(settled(), cyThread);
       assert.include(settled(), requestThreadId("ada", TEAM, failed.message.id));
       assert.notInclude(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      // A task from before requests had ids is found by its request message.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
+        WHERE task_id = ${paused.tasks[0]!.id}`;
+      yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
+      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -4256,6 +4869,70 @@ it.effect(
       // A thread that is no request's is left alone.
       yield* groups.syncWaitingThread(ThreadId.make("thread:outside"));
       assert.lengthOf(yield* notices(), 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  { way: "taken from the group", deleted: false },
+  // Members open to every project: only the deletion itself keeps work out of it.
+  { way: "deleted", deleted: true },
+])(
+  "a project $way lets running turns end and cancels the work still to start there",
+  ({ deleted }) => {
+    const h = deleted
+      ? harness()
+      : harness({ projects: { ada: ["p1"], beto: ["p1"], cy: ["p1"] } });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      if (!deleted) {
+        yield* sql`UPDATE assistant_teams SET project_ids_json = '["p2"]' WHERE team_id = ${TEAM}`;
+      }
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada @beto @cy fix the app", projectId: deleted ? p1 : p2 },
+        h.user,
+      );
+      const beto = requestThreadId("beto", TEAM, request.message.id);
+      const [limitedRun] = h.runs.get(beto)!;
+      Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(limitedRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(1, "failed");
+      const statuses = () =>
+        h.tasks.pipe(Effect.map((rows) => rows.map((row) => `${row.owner_id}:${row.status}`)));
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:usage_limited", "cy:queued"]);
+
+      yield* deleted
+        ? sql`UPDATE projection_projects SET deleted_at = '2026-02-01' WHERE project_id = 'p1'`
+        : sql`UPDATE assistant_teams SET project_ids_json = '[]' WHERE team_id = ${TEAM}`;
+      const team = {
+        id: TEAM,
+        name: `Team ${TEAM}`,
+        memberIds: ["ada", "beto", "cy"],
+        leadId: null,
+        archivedAt: null,
+        projectIds: [],
+      } as never;
+      yield* groups.handleAssistantEvent({ type: "teamUpserted", team });
+      // Ada's turn goes on; Beto's continuation is disarmed; Cy's never starts.
+      assert.deepEqual(yield* statuses(), ["ada:running", "beto:cancelled", "cy:cancelled"]);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(
+        h.dispatched
+          .filter((command) => command.type === "thread.stop" || command.type === "run.stop")
+          .map((command) => command.threadId),
+        [beto],
+      );
+      assert.isFalse(
+        h.dispatched.some((command) => command.threadId === ada && command.type.endsWith("stop")),
+      );
+      // Her turn then runs into a usage limit: it would continue there, so it is cancelled too.
+      const [adaRun] = h.runs.get(ada)!;
+      Object.assign(adaRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(adaRun!.id, "2026-01-01T12:00:00.000Z");
+      yield* h.finish(0, "failed");
+      assert.deepEqual(yield* statuses(), ["ada:cancelled", "beto:cancelled", "cy:cancelled"]);
+      assert.lengthOf(h.sent, 2);
     }).pipe(Effect.provide(h.layer));
   },
 );

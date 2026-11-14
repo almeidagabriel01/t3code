@@ -1,8 +1,10 @@
 import {
+  type AssistantId,
   isManagedSettingPath,
   isNullableProjectSettingsOverride,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type EnvironmentId,
+  type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
@@ -10,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   clearProjectSettingsOverrides,
+  projectOverrideForWrite,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 
@@ -87,9 +90,9 @@ export function planMobileScopedSettingsPatch(
   const writes = new Map<EnvironmentId, Record<string, unknown>>();
   for (const target of targets) {
     if (target.projectId === null) continue;
-    const current =
-      target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
-    const next: Record<string, unknown> = { ...current };
+    const next: Record<string, unknown> = projectOverrideForWrite(
+      target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId],
+    );
     for (const [key, value] of Object.entries(patch)) {
       if (
         value === null &&
@@ -108,6 +111,31 @@ export function planMobileScopedSettingsPatch(
     environmentId,
     patch: { projectSettingsOverrides } as ServerSettingsPatch,
   }));
+}
+
+/**
+ * Sets or clears (null) one assistant's model in the project. An assistant belongs to one
+ * environment, so only that environment's checkouts are written, and only that assistant's key.
+ */
+export function planMobileProjectAssistantModel(
+  targets: readonly ScopedMobileSettingsTarget[],
+  environmentId: EnvironmentId,
+  assistantId: AssistantId,
+  selection: ModelSelection | null,
+) {
+  const overrides: Record<string, unknown> = {};
+  for (const target of targets) {
+    if (target.projectId === null || target.environment.environmentId !== environmentId) continue;
+    overrides[target.projectId] = {
+      ...projectOverrideForWrite(
+        target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId],
+      ),
+      assistantModelSelections: { [assistantId]: selection },
+    };
+  }
+  return Object.keys(overrides).length === 0
+    ? []
+    : [{ environmentId, patch: { projectSettingsOverrides: overrides } as ServerSettingsPatch }];
 }
 
 export function uniformMobileSetting<K extends keyof ServerSettings>(

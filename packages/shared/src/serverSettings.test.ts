@@ -741,6 +741,43 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("merges a project's assistantModelSelections per assistant", () => {
+    const projectId = ProjectId.make("project-a");
+    const ada = { instanceId: "codex", model: "gpt-5.5" };
+    const beto = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    const patchWith = (entry: unknown) =>
+      decodeServerSettingsPatch({ projectSettingsOverrides: { [projectId]: entry } });
+    const first = applyServerSettingsPatch(
+      FOLDED_SERVER_SETTINGS,
+      patchWith({ assistantModelSelections: { ada } }),
+    );
+    const both = applyServerSettingsPatch(first, patchWith({ assistantModelSelections: { beto } }));
+    expect(both.projectSettingsOverrides[projectId]).toEqual({
+      assistantModelSelections: { ada, beto },
+    });
+
+    const olderClient = applyServerSettingsPatch(both, patchWith({ defaultAutoPull: true }));
+    expect(olderClient.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      assistantModelSelections: { ada, beto },
+    });
+
+    const withoutAda = applyServerSettingsPatch(
+      olderClient,
+      patchWith({ defaultAutoPull: true, assistantModelSelections: { ada: null } }),
+    );
+    expect(withoutAda.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      assistantModelSelections: { beto },
+    });
+
+    const empty = applyServerSettingsPatch(
+      withoutAda,
+      patchWith({ defaultAutoPull: true, assistantModelSelections: { beto: null } }),
+    );
+    expect(empty.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
+  });
+
   it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {
     const hubA = UsageLimitSourceId.make("cliproxy-a");
     const hubB = UsageLimitSourceId.make("cliproxy-b");

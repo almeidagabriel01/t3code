@@ -77,10 +77,13 @@ import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   MENTION_REQUIRED_COPY,
   GroupComposer,
+  groupComposerProjects,
   type GroupComposerProject,
+  type GroupProjectPick,
   type GroupReplyTarget,
   type GroupSendResult,
 } from "./GroupComposer";
+import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
@@ -701,6 +704,7 @@ export function AssistantGroupChatRouteScreen({
   } | null>(null);
   const highlightNonce = useRef(0);
   const [filterPick, setFilterPick] = useState<ProjectId | null>(null);
+  const [projectPick, setProjectPick] = useState<GroupProjectPick>(undefined);
   // The user's own fold or open of a request, over the default.
   const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(new Map());
   const list = useRef<LegendListRef>(null);
@@ -745,6 +749,13 @@ export function AssistantGroupChatRouteScreen({
   const feedProjects = assistantGroupFeedProjects(items);
   const filter = filterPick !== null && feedProjects.includes(filterPick) ? filterPick : null;
   const visible = filterAssistantGroupFeed(items, filter);
+  const defaultProjectId = groupProjects.some((project) => project.id === filter) ? filter : null;
+  const modelProjectId = groupComposerProjects(replyTo, projectPick, defaultProjectId).run;
+  const projectModel = useGroupProjectModel(
+    environmentId,
+    modelProjectId,
+    team?.defaultModelSelection ?? null,
+  );
   const newestRequest = visible.findLast((item) => item.kind === "request");
   const feedEntries: FeedEntry[] = visible.flatMap((item): FeedEntry[] => {
     if (item.kind === "row") return [item];
@@ -952,6 +963,48 @@ export function AssistantGroupChatRouteScreen({
                 icon: "calendar.badge.clock",
                 onPress: () => openTeam.settings(environmentId, team.id, "routines"),
               },
+              ...(projectModel === null || modelProjectId === null || members.length === 0
+                ? []
+                : [
+                    {
+                      id: "member-models",
+                      title: `Model in ${projectName(modelProjectId)}`,
+                      icon: "cube",
+                      items: members.map((member) => {
+                        const exception = projectModel.exceptions[member.id];
+                        const disabled = !projectModel.canWrite;
+                        return exception === undefined
+                          ? {
+                              id: `model:${member.id}`,
+                              title: member.name,
+                              subtitle: "No exception",
+                              disabled,
+                              onPress: () => projectModel.openMemberPicker(member.id),
+                            }
+                          : {
+                              id: `model:${member.id}`,
+                              title: `${member.name} · ${projectModel.nameOf(exception)}`,
+                              items: [
+                                {
+                                  id: `model:${member.id}:change`,
+                                  title: "Change model",
+                                  icon: "cube",
+                                  disabled,
+                                  onPress: () => projectModel.openMemberPicker(member.id),
+                                },
+                                {
+                                  id: `model:${member.id}:remove`,
+                                  title: "Remove exception",
+                                  icon: "trash",
+                                  destructive: true,
+                                  disabled,
+                                  onPress: () => projectModel.removeException(member.id),
+                                },
+                              ],
+                            };
+                      }),
+                    },
+                  ]),
               {
                 id: "new-conversation",
                 title: "New conversation",
@@ -1154,7 +1207,10 @@ export function AssistantGroupChatRouteScreen({
         members={members}
         leadId={team.leadId}
         projects={groupProjects}
-        defaultProjectId={groupProjects.some((project) => project.id === filter) ? filter : null}
+        defaultProjectId={defaultProjectId}
+        projectPick={projectPick}
+        onProjectPick={setProjectPick}
+        projectModel={projectModel}
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}

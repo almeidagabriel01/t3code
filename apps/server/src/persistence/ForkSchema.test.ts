@@ -364,6 +364,54 @@ it.effect("keeps a group's messages numbered once and a request id once per grou
   }).pipe(Effect.provide(database)),
 );
 
+it.effect("backfills each assistant's default model once from its conversation", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      CREATE TABLE assistants (
+        assistant_id TEXT PRIMARY KEY, handle TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+        project_id TEXT NOT NULL, instructions TEXT NOT NULL DEFAULT '', tool_access TEXT NOT NULL,
+        is_default INTEGER NOT NULL DEFAULT 0, thread_id TEXT UNIQUE,
+        generation INTEGER NOT NULL DEFAULT 1, archived_at TEXT, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`;
+    yield* sql`
+      CREATE TABLE orchestration_v2_projection_threads (
+        thread_id TEXT PRIMARY KEY, payload_json TEXT NOT NULL
+      )`;
+    const selection = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES
+      ('assistant:a:1', ${JSON.stringify({ id: "assistant:a:1", modelSelection: selection })})`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, thread_id, created_at, updated_at)
+      VALUES ('a', 'a', 'A', 'p', 'full', 'assistant:a:1', 't', 't'),
+             ('b', 'b', 'B', 'p', 'full', NULL, 't', 't')`;
+
+    yield* ensureForkSchema();
+    const defaults = sql<{
+      readonly assistant_id: string;
+      readonly default_model_selection: string | null;
+    }>`SELECT assistant_id, default_model_selection FROM assistants ORDER BY assistant_id`;
+    const first = yield* defaults;
+    assert.deepStrictEqual(JSON.parse(first[0]!.default_model_selection!), selection);
+    assert.strictEqual(first[1]!.default_model_selection, null);
+
+    // A default the user cleared stays cleared, and a second run changes nothing.
+    yield* sql`UPDATE assistants SET default_model_selection = NULL WHERE assistant_id = 'a'`;
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(
+      (yield* defaults).map((row) => row.default_model_selection),
+      [null, null],
+    );
+    assert.strictEqual(
+      (yield* columnsOf("assistants")).filter((name) => name === "default_model_selection").length,
+      1,
+    );
+    assert.isTrue((yield* columnsOf("assistant_teams")).includes("default_model_selection"));
+    assert.deepStrictEqual(yield* columnsOf("model_selection_seeds"), ["seed_id", "applied_at"]);
+  }).pipe(Effect.provide(database)),
+);
+
 it.effect("gives an older group chat its requests: every message and task joins one", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

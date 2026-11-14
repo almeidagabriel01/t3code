@@ -1,4 +1,5 @@
 import {
+  AssistantId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthorizationError,
   EnvironmentId,
@@ -14,6 +15,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   persistScopedSettingsPatch,
+  planProjectAssistantModel,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -345,9 +347,17 @@ describe("scoped settings writes", () => {
   });
 
   it("writes project overrides into each member's entry on its environment", () => {
+    const ada = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    // The assistant models stay out: the server merges them per key, so a stale copy would
+    // bring back one another client removed.
     const withExisting = environment("Server", {
       settings: {
-        projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } },
+        projectSettingsOverrides: {
+          [projectId]: {
+            enableAgentBrowserAccess: false,
+            assistantModelSelections: { ada } as Record<AssistantId, typeof ada>,
+          },
+        },
       },
     });
     const plan = planScopedSettingsPatch(project, [laptop, withExisting], {
@@ -377,6 +387,65 @@ describe("scoped settings writes", () => {
     ).toMatchObject({
       serverWrites: [{ environmentId: server.environmentId }],
     });
+  });
+
+  it("writes one assistant's model only on the environment that owns the assistant", () => {
+    const ada = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    const withExisting = environment("Server", {
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultAutoPull: true,
+            assistantModelSelections: { ada, beto: ada } as Record<AssistantId, typeof ada>,
+          },
+        },
+      },
+    });
+    const set = planProjectAssistantModel(
+      project,
+      [laptop, withExisting],
+      server.environmentId,
+      AssistantId.make("ada"),
+      { ...ada, model: "gpt-5.4" },
+    );
+    expect(set.unavailableReason).toBeNull();
+    expect(set.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        previous: expect.anything(),
+        patch: {
+          projectSettingsOverrides: {
+            [projectId]: {
+              defaultAutoPull: true,
+              assistantModelSelections: { ada: { ...ada, model: "gpt-5.4" } },
+            },
+          },
+        },
+      },
+    ]);
+    expect(
+      planProjectAssistantModel(
+        project,
+        [laptop, withExisting],
+        server.environmentId,
+        AssistantId.make("beto"),
+        null,
+      ).serverWrites[0]?.patch,
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, assistantModelSelections: { beto: null } },
+      },
+    });
+    expect(
+      planProjectAssistantModel(
+        all,
+        environments,
+        server.environmentId,
+        AssistantId.make("ada"),
+        null,
+      ).unavailableReason,
+    ).not.toBeNull();
   });
 
   it("keeps each project's other cleanup rules when changing one rule across machines", () => {

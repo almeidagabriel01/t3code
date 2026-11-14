@@ -1,4 +1,10 @@
-import type { AssistantId, AssistantTeam, AssistantTeamId, ProjectId } from "@t3tools/contracts";
+import {
+  type AssistantId,
+  type AssistantTeam,
+  type AssistantTeamId,
+  ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -12,6 +18,7 @@ export interface AssistantTeamRow {
   readonly archived_at?: string | null;
   readonly instructions?: string;
   readonly memories_json?: string;
+  readonly default_model_selection?: string | null;
   readonly project_ids_json?: string;
   /** Chat counters, present when the row comes from `assistant_team_state`. */
   readonly read_seq?: number;
@@ -28,6 +35,15 @@ const decodeMemberIds = Schema.decodeOption(MemberIdsJson);
 export const encodeMemories = Schema.encodeSync(MemberIdsJson);
 export const encodeMemberIds = Schema.encodeSync(MemberIdsJson);
 
+const ModelSelectionJson = Schema.fromJsonString(ModelSelection);
+const decodeModelSelectionOption = Schema.decodeOption(ModelSelectionJson);
+/** A stored default that no longer decodes reads as none, like a lost budget. */
+export const decodeModelSelectionJson = (json: string | null | undefined) =>
+  json == null ? null : Option.getOrNull(decodeModelSelectionOption(json));
+const encodeModelSelection = Schema.encodeSync(ModelSelectionJson);
+export const encodeModelSelectionJson = (selection: ModelSelection | null) =>
+  selection === null ? null : encodeModelSelection(selection);
+
 // A row that no longer decodes has no members rather than hiding every team.
 export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   id: row.team_id as AssistantTeamId,
@@ -37,6 +53,7 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   archivedAt: row.archived_at ?? null,
   instructions: row.instructions ?? "",
   memories: Option.getOrElse(decodeMemberIds(row.memories_json ?? "[]"), () => []),
+  defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
   projectIds: Option.getOrElse(
     decodeMemberIds(row.project_ids_json ?? "[]"),
     () => [],

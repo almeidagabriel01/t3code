@@ -559,6 +559,23 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
 });
 
 describe("ServerSettings project overrides across versions", () => {
+  it("keeps per-assistant model selections in a project override", () => {
+    const projectId = ProjectId.make("project-a");
+    const selection = { instanceId: "codex", model: "gpt-5.5" };
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { [projectId]: { assistantModelSelections: { ada: selection } } },
+    });
+
+    expect(settings.projectSettingsOverrides[projectId]?.assistantModelSelections).toEqual({
+      ada: selection,
+    });
+    expect(() =>
+      decodeServerSettings({
+        projectSettingsOverrides: { [projectId]: { assistantModelSelections: { ada: "codex" } } },
+      }),
+    ).toThrow();
+  });
+
   it("sends back an override key from a newer server when an older client edits the entry", () => {
     const projectId = ProjectId.make("project-a");
     // As an older client reads a newer server's settings, with one key it does not know.

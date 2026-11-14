@@ -46,6 +46,7 @@ import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -63,9 +64,11 @@ function AssistantCard(props: {
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
   );
   const shells = useQuietThreadShells();
+  const limitLabel = useUsageLimitLabel();
   const presence = assistantPresence(
     thread,
     assistantGroupThreadsOf(shells, environmentId, assistant.id),
+    limitLabel,
   );
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;

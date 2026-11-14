@@ -65,6 +65,8 @@ const SETTINGS_SEARCH_TERMS = {
     "new threads",
     "default workspace",
     "default permissions",
+    "project model",
+    "model by assistant",
     "access",
     "response streaming",
     "preview browser",
