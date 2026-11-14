@@ -68,9 +68,30 @@ describe("briefReply", () => {
   });
 
   it.each([
+    ["bold", `Done: **${"very ".repeat(150)}important**`],
+    ["a link", `Done, see [${"the ".repeat(150)}report](t3-thread://v1/task-1)`],
+  ])("cuts an overlong block as plain text, never leaving %s open", (_name, text) => {
+    const sent = briefReply(text);
+    expect(sent.length).toBeLessThanOrEqual(601);
+    expect(sent).not.toMatch(/\*\*|\[|\]\(/);
+  });
+
+  it("drops whole list items that do not fit", () => {
+    const items = Array.from({ length: 12 }, (_, index) => `- item ${index}`).join("\n");
+    expect(briefReply(`Done:\n\n${items}`)).toBe(
+      `Done:\n\n${items.split("\n").slice(0, 6).join("\n")}\n…`,
+    );
+  });
+
+  it.each([
     ["a trailing code block", "Fixed it.\n```ts\nconst a = 1;\n```", "Fixed it.\n…"],
     ["a leading code block", "```ts\nconst a = 1;\n```\nFixed it.", "Fixed it.\n…"],
-    ["a leading table", "| Check | Result |\n| --- | --- |\nAll green.", "All green.\n…"],
+    ["a leading table", "| Check | Result |\n| --- | --- |\n\nAll green.", "All green.\n…"],
+    [
+      "a table without outer pipes",
+      "All green.\n\nCheck | Result\n--|--\ntests | 12",
+      "All green.\n…",
+    ],
     ["nothing but a table", "| Check | Result |\n| --- | --- |", "…"],
   ])("leaves out %s", (_name, text, expected) => {
     expect(briefReply(text)).toBe(expected);
