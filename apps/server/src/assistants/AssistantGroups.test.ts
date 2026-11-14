@@ -1052,6 +1052,32 @@ it.effect(
   },
 );
 
+it.effect("a model change deferred until a turn ends leaves a request that ended with it", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    yield* h.finish(0, "completed", "done");
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+    assert.deepEqual(
+      (yield* h.sqlRows<{ pending_model_selection: string | null }>(
+        "SELECT pending_model_selection FROM assistant_group_request_threads",
+      )).map((row) => row.pending_model_selection),
+      [null],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("a model change deferred by a manual turn reaches the member's next task", () => {
   const h = harness({
     settings: {

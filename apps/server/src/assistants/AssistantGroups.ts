@@ -1156,6 +1156,9 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<{ readonly status: string }>`
       SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
+    // Like the moves `followProjectModels` makes, a deferred one is for open requests only.
+    yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
+      WHERE request_id = ${requestId}`;
     yield* settleThreads(yield* requestThreads(requestId));
   });
 
