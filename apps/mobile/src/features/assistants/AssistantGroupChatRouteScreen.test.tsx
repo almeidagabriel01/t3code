@@ -1468,6 +1468,21 @@ describe("requests", () => {
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
   });
 
+  it("shows all projects to jump to a loose message the filter hides, and never jumps later", async () => {
+    mocks.live = snapshot([...REQUESTS, message("loose", 7, { text: "Loose note" })], TASKS);
+    mocks.teams = [team({ chat: { ...read, latestSeq: 7, readSeq: 7 } })];
+    render();
+    await click("Reply to Ada");
+    await click("header:Beta");
+    expect(all("group-request-line")).toHaveLength(0);
+    await click("Show the message from Ada");
+    expect(all("group-request-line")).toHaveLength(1);
+    expect(mocks.scrollToIndex).toHaveBeenCalledOnce();
+    await click("header:Beta");
+    await click("header:All projects");
+    expect(mocks.scrollToIndex).toHaveBeenCalledOnce();
+  });
+
   it("links member and project mentions for the markdown view to draw as their chips", () => {
     mocks.live = snapshot([message("m1", 1, { ...user, text: "@ada ship #alpha" })]);
     render();

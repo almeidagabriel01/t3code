@@ -957,15 +957,18 @@ export function AssistantGroupChatRouteScreen({
 
   /** Brings a quoted message into view and tints it once, opening its request if folded. */
   const jump = (id: AssistantGroupMessage["id"]) => {
-    const holder = items.find(
-      (item) =>
-        item.kind === "request" &&
-        (item.block.requestId === id || item.block.rows.some((row) => row.message.id === id)),
+    const holder = items.find((item) =>
+      item.kind === "request"
+        ? item.block.rows.some((row) => row.message.id === id)
+        : item.row.message.id === id,
     );
-    if (holder?.kind === "request") {
+    // A pending jump to a row that never shows would scroll there whenever it later did.
+    pendingJump.current = null;
+    if (holder === undefined) return;
+    if (holder.kind === "request") {
       setToggles((current) => new Map(current).set(holder.block.requestId, true));
-      if (!visible.includes(holder)) setFilterPick(null);
     }
+    if (!visible.includes(holder)) setFilterPick(null);
     pendingJump.current = id;
     highlightNonce.current += 1;
     const nonce = highlightNonce.current;
