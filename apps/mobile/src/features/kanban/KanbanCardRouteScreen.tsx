@@ -700,7 +700,7 @@ function KanbanCardDetail(props: {
             {disabled ? null : (
               <Button
                 label={problemIgnoreLabel(card.problem.ignored)}
-                icon={card.problem.ignored ? "bell.badge" : "eye.slash"}
+                icon={card.problem.ignored ? "bell.badge" : "bell.slash"}
                 tone="secondary"
                 onPress={() =>
                   void actions.setCardProblemIgnored({

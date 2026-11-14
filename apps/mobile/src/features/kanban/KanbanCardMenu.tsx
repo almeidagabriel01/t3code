@@ -55,7 +55,7 @@ export function kanbanCardMenuActions(
           {
             id: "problem",
             title: problemIgnoreLabel(card.problem.ignored),
-            image: card.problem.ignored ? "bell.badge" : "eye.slash",
+            image: card.problem.ignored ? "bell.badge" : "bell.slash",
           },
         ]
       : []),
