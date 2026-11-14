@@ -22,6 +22,7 @@ import { AppRoot } from "~/AppRoot";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { clearGroupDrafts } from "./GroupComposer";
@@ -1232,4 +1233,71 @@ it("calls out a member waiting on the user, with a way to answer until it is res
   await expect.element(callout.getByText("Ada asked")).toBeVisible();
   await expect.element(callout.getByText("Ada is waiting on you")).not.toBeInTheDocument();
   await expect.element(callout.getByRole("button")).not.toBeInTheDocument();
+});
+
+it("opens an answer's file links against the request project's root and the answered task's thread", async () => {
+  publishGroupChat(
+    [
+      message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" }),
+      message(2, {
+        ...inRequest(1),
+        author: "assistant",
+        assistantId: "ada" as AssistantId,
+        taskId: "t-1" as never,
+        text: "See [the plan](/workspace/render/src/plan.ts:7)",
+      }),
+    ],
+    [task("t-1", 1, { status: "running", requestId: "m1" as never })],
+  );
+  await using _screen = await openChat();
+  using openFile = vi.spyOn(useRightPanelStore.getState(), "openFile").mockImplementation(() => {});
+  const link = main()
+    .getByTestId("group-answer")
+    .getByRole("link", { name: /plan\.ts/ });
+  await expect.element(link).toHaveAttribute("href", "/workspace/render/src/plan.ts:7");
+  await userEvent.click(link);
+  await eventually(() =>
+    expect(openFile).toHaveBeenCalledExactlyOnceWith(
+      { environmentId: ENVIRONMENT_ID, threadId: `assistant:ada:g-${"0".repeat(16)}` },
+      "src/plan.ts",
+      7,
+    ),
+  );
+});
+
+it("shows a cancelled task as one activity line and no card", async () => {
+  publishGroupChat(
+    [message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" })],
+    [task("t-1", 1, { status: "cancelled", requestId: "m1" as never })],
+  );
+  await using _screen = await openChat();
+  await expect
+    .element(main().getByRole("button", { name: "Open task instruction of t-1" }))
+    .toHaveAttribute("data-task-event-activity", "cancelled");
+  await expect.element(main().getByText("Cancelled")).toBeVisible();
+  await expect.element(main().getByTestId("group-task-card")).not.toBeInTheDocument();
+});
+
+it("scrolls the feed when the wheel turns over the minimap", async () => {
+  publishGroupChat(
+    [
+      message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" }),
+      message(2, { ...inRequest(2), projectId: PROJECT_ID, title: "Ship the app" }),
+      message(3, {
+        ...inRequest(2),
+        text: Array.from({ length: 60 }, (_, index) => `line ${index}`).join("\n\n"),
+      }),
+    ],
+    [task("t-2", 2, { requestId: "m2" as never })],
+  );
+  await using _screen = await openChat();
+  const scroller = document
+    .querySelector<HTMLElement>('[data-testid="group-request-block"]')!
+    .closest<HTMLElement>(".overflow-y-auto")!;
+  const before = scroller.scrollTop;
+  const minimap = document.querySelector<HTMLElement>('[data-testid="timeline-minimap"]')!;
+  minimap.dispatchEvent(
+    new WheelEvent("wheel", { cancelable: true, deltaY: -40, wheelDeltaY: 40 }),
+  );
+  await eventually(() => expect(scroller.scrollTop).toBeLessThan(before));
 });
