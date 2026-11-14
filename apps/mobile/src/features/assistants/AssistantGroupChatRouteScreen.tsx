@@ -19,6 +19,7 @@ import {
   type AssistantGroupRequestStatus,
   assistantGroupMessageExcerpt,
   assistantGroupActivity,
+  assistantGroupAnswerRoot,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isLongMessage } from "@t3tools/client-runtime/messageFold";
@@ -437,6 +438,10 @@ function FeedRow(
   const [workedOpen, setWorkedOpen] = useState(false);
   const author =
     message.assistantId === null ? undefined : props.assistants.get(message.assistantId);
+  const answered = message.taskId === null ? undefined : props.chat.tasks.get(message.taskId);
+  const answeredShell = useQuietThreadShell(
+    answered === undefined ? null : scopeThreadRef(props.environmentId, answered.threadId),
+  );
   const cards = (
     <TaskCards {...props} tasks={props.row.tasks} showOwner={props.row.role !== "answer"} />
   );
@@ -548,7 +553,6 @@ function FeedRow(
   }
   const name = author?.name ?? "Assistant";
   const reply = () => props.onReply(message, name);
-  const answered = message.taskId === null ? undefined : props.chat.tasks.get(message.taskId);
   return (
     <View testID="group-answer" className="flex-row items-start gap-2.5 px-4 py-2">
       <View className="size-7">
@@ -621,7 +625,10 @@ function FeedRow(
                 linkHost={props.linkHost}
                 context={{
                   threadId: answered?.threadId ?? null,
-                  workspaceRoot: props.workspaceRoot,
+                  workspaceRoot: assistantGroupAnswerRoot({
+                    threadWorktreePath: answeredShell?.worktreePath,
+                    projectRoot: props.workspaceRoot,
+                  }),
                 }}
                 preserveSoftBreaks={shouldPreserveAssistantLineBreaks(message.text)}
               />
@@ -801,6 +808,34 @@ type FeedEntry =
 const entryKey = (entry: FeedEntry) =>
   entry.kind === "row" ? entry.row.message.id : `${entry.kind}:${entry.block.requestId}`;
 
+/**
+ * The group's team, people and projects. A hook so the compiler caches them: the screen passes them
+ * on to plain functions after its own hooks, which keeps it from caching them there.
+ */
+function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
+  const entries = useAssistantEntries();
+  const projects = useProjects();
+  const team = entries.teams.find(
+    (entry) => entry.environmentId === environmentId && entry.team.id === teamId,
+  )?.team;
+  const everyone = [...entries.active, ...entries.archived]
+    .filter((entry) => entry.environmentId === environmentId)
+    .map((entry) => entry.assistant);
+  const byId = new Map<string, Assistant>(everyone.map((assistant) => [assistant.id, assistant]));
+  const members = (team?.memberIds ?? []).flatMap((id) => {
+    const member = byId.get(id);
+    return member === undefined || member.archivedAt !== null ? [] : [member];
+  });
+  const projectName = (id: ProjectId) =>
+    projects.find((project) => project.environmentId === environmentId && project.id === id)
+      ?.title ?? "Project";
+  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(
+    members,
+    team?.projectIds ?? [],
+  ).map((id) => ({ id, name: projectName(id) }));
+  return { team, everyone, byId, members, groupProjects, projectName };
+}
+
 export function AssistantGroupChatRouteScreen({
   route,
 }: StaticScreenProps<{ readonly environmentId: string; readonly teamId: string }>) {
@@ -814,6 +849,8 @@ export function AssistantGroupChatRouteScreen({
     scope: [teamId],
     markdownStyles: markdownStyles.assistant,
   });
+  // Rows get only the link builders, which stay the same while a preview opens and closes.
+  const linkHost: LinkHost = { linksFor: links.linksFor, imageSources: links.imageSources };
   const entries = useAssistantEntries();
   const live = useAssistantGroupChat(environmentId, teamId);
   const actions = useAssistantGroupActions(environmentId);
@@ -844,17 +881,10 @@ export function AssistantGroupChatRouteScreen({
   // The read position at open, so requests do not fold away as the chat is marked read.
   const [openReadSeq, setOpenReadSeq] = useState(0);
 
-  const team = entries.teams.find(
-    (entry) => entry.environmentId === environmentId && entry.team.id === teamId,
-  )?.team;
-  const everyone = [...entries.active, ...entries.archived]
-    .filter((entry) => entry.environmentId === environmentId)
-    .map((entry) => entry.assistant);
-  const byId = new Map<string, Assistant>(everyone.map((assistant) => [assistant.id, assistant]));
-  const members = (team?.memberIds ?? []).flatMap((id) => {
-    const member = byId.get(id);
-    return member === undefined || member.archivedAt !== null ? [] : [member];
-  });
+  const { team, everyone, byId, members, groupProjects, projectName } = useGroupPeople(
+    environmentId,
+    teamId,
+  );
   const chat =
     live === null
       ? null
@@ -867,13 +897,6 @@ export function AssistantGroupChatRouteScreen({
     setOpenReadSeq(team.chat?.readSeq ?? 0);
   }
 
-  const projectName = (id: ProjectId) =>
-    projects.find((project) => project.environmentId === environmentId && project.id === id)
-      ?.title ?? "Project";
-  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(
-    members,
-    team?.projectIds ?? [],
-  ).map((id) => ({ id, name: projectName(id) }));
   const items = chat === null ? [] : assistantGroupRequestFeed(chat);
   const feedProjects = assistantGroupFeedProjects(items);
   const filter = filterPick !== null && feedProjects.includes(filterPick) ? filterPick : null;
@@ -1268,7 +1291,7 @@ export function AssistantGroupChatRouteScreen({
                       }
                       onJump={jump}
                       onPreview={links.onPressPreview}
-                      linkHost={links}
+                      linkHost={linkHost}
                       workspaceRoot={requestRoot(item.row.message.requestId)}
                       onTaskAction={(task, action, ownerId) =>
                         void taskAction(task, action, ownerId)

@@ -57,7 +57,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     decisions: [] as unknown[],
     /** Member thread titles the store knows. */
     shells: new Map<string, string>(),
+    /** Member threads that run in their own worktree. */
+    worktrees: new Map<string, string>(),
     openedLink: vi.fn(),
+    /** Each render of a message's markdown, with the link handlers it got. */
+    markdownRender: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
@@ -215,6 +219,7 @@ vi.mock("../threads/AssistantMarkdownContent", () => ({
     };
   }) => (
     <span>
+      {mocks.markdownRender(props.markdown, props.linkHandlers)}
       {props.markdown}
       <button
         aria-label={`link in ${props.markdown}`}
@@ -226,30 +231,33 @@ vi.mock("../threads/AssistantMarkdownContent", () => ({
     </span>
   ),
 }));
-// One host per screen; each message's links carry the context they were built with.
+// One host per screen; each message's links carry the context they were built with. Like the real
+// host, its builders stay the same while a preview opens and closes.
 vi.mock("../threads/useThreadMarkdownLinks", async () => {
-  const { useState } = await import("react");
+  const { useMemo, useState } = await import("react");
+  const linksFor = (context: unknown) => ({
+    linkHandlers: {
+      onLinkPress: (href: string) => mocks.openedLink(href, context),
+      fileContextMenu: () => undefined,
+      onFileContextMenuAction: () => {},
+    },
+    renderImage: () => null,
+  });
+  const imageSources = () => null;
   return {
-    useMarkdownLinks: (host: { linksFor: (context: unknown) => unknown }, context: unknown) =>
-      host.linksFor(context),
+    useMarkdownLinks: (host: { linksFor: typeof linksFor }, context: unknown) =>
+      useMemo(() => host.linksFor(context), [host.linksFor, context]),
     useMarkdownLinkHost: () => {
       const [file, setFile] = useState<unknown>(null);
       return {
-        linksFor: (context: unknown) => ({
-          linkHandlers: {
-            onLinkPress: (href: string) => mocks.openedLink(href, context),
-            fileContextMenu: () => undefined,
-            onFileContextMenuAction: () => {},
-          },
-          renderImage: () => null,
-        }),
+        linksFor,
         onPressPreview: setFile,
         expandedFile: file,
         expandedVideo: null,
         closeFilePreview: () => setFile(null),
         closeVideoPreview: () => {},
         fileShareSourceIdentifier: "share",
-        imageSources: () => null,
+        imageSources,
       };
     },
   };
@@ -268,9 +276,10 @@ vi.mock("../../lib/useUniwindTheme", () => ({
   useUniwindTheme: () => ({ "--color-icon-subtle": "#888888" }),
 }));
 vi.mock("../threads/thread-work-log", () => ({ ThreadDisclosureChevron: () => null }));
-vi.mock("../threads/ThreadFeed", () => ({
-  useMarkdownStyles: () => ({ user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } }),
-}));
+vi.mock("../threads/ThreadFeed", () => {
+  const styles = { user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } };
+  return { useMarkdownStyles: () => styles };
+});
 vi.mock("../settings/appearance/useScaledTextRole", () => ({
   useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));
@@ -297,7 +306,10 @@ vi.mock("../../components/ui/FilePreviewModal", () => ({
     <div data-testid="preview">{props.source && `${props.source.kind}:${props.source.name}`}</div>
   ),
 }));
-vi.mock("../../native/ChipIconImages", () => ({ useAssistantFaceImages: () => new Map() }));
+vi.mock("../../native/ChipIconImages", () => {
+  const faces = new Map();
+  return { useAssistantFaceImages: () => faces };
+});
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: Children }));
 vi.mock("react-native-keyboard-controller", () => ({ KeyboardAvoidingView: Children }));
 vi.mock("@legendapp/list/react-native", () => ({
@@ -477,16 +489,20 @@ vi.mock("../../native/SelectableMarkdownText", () => ({
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
+const PROJECTS = vi.hoisted(() => [
+  { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/repo/alpha" },
+  { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/repo/beta" },
+  { environmentId: "other", id: "p3", title: "Elsewhere" },
+]);
 vi.mock("../../state/entities", () => ({
-  useQuietThreadShell: (ref: { threadId: string }) => {
-    const title = mocks.shells.get(ref.threadId);
-    return title === undefined ? null : { title };
+  useQuietThreadShell: (ref: { threadId: string } | null) => {
+    const title = ref === null ? undefined : mocks.shells.get(ref.threadId);
+    const worktreePath = ref === null ? undefined : mocks.worktrees.get(ref.threadId);
+    return title === undefined && worktreePath === undefined
+      ? null
+      : { title: title ?? "", worktreePath: worktreePath ?? null };
   },
-  useProjects: () => [
-    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/repo/alpha" },
-    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/repo/beta" },
-    { environmentId: "other", id: "p3", title: "Elsewhere" },
-  ],
+  useProjects: () => PROJECTS,
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || !mocks.waiting.has(ref.threadId)
       ? null
@@ -502,13 +518,20 @@ vi.mock("../../state/entities", () => ({
           source: { latestVisibleMessage: null },
         },
 }));
+// The store hands out the same entries until they change.
+let entries: { teams: unknown; environmentIds: unknown; active: unknown; archived: [] } | undefined;
 vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => ({
-    teams: mocks.teams,
-    environmentIds: mocks.environmentIds,
-    active: members.map((assistant) => ({ environmentId: "hub", assistant })),
-    archived: [],
-  }),
+  useAssistantEntries: () => {
+    if (entries?.teams !== mocks.teams || entries.environmentIds !== mocks.environmentIds) {
+      entries = {
+        teams: mocks.teams,
+        environmentIds: mocks.environmentIds,
+        active: members.map((assistant) => ({ environmentId: "hub", assistant })),
+        archived: [],
+      };
+    }
+    return entries;
+  },
   useAssistantGroupChat: () => mocks.live,
   useAssistantGroupActions: () => ({
     canPost: mocks.canPost,
@@ -660,6 +683,7 @@ beforeEach(() => {
     decisions: [],
     voicePhase: "idle",
     shells: new Map(),
+    worktrees: new Map(),
     live: snapshot(FEED, [
       task("t1", "paused", "ada", { reason: "stopped" }),
       task("t22", "running", "beto"),
@@ -690,6 +714,7 @@ beforeEach(() => {
     mocks.clear,
     mocks.voiceStart,
     mocks.openedLink,
+    mocks.markdownRender,
   ])
     fn.mockReset();
   mocks.drafts.clear();
@@ -1783,8 +1808,30 @@ describe("the thread's pieces in the feed", () => {
     expect(byLabel("do t2, Completed. Open task")).not.toBeNull();
   });
 
-  it("opens each answer's links with its own task thread and project root, under one preview host", async () => {
+  it("draws no message's markdown again when a preview opens or the list scrolls", async () => {
+    const shot = {
+      type: "image",
+      id: "g-1",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    mocks.live = snapshot(
+      [{ ...ANSWERS[0]!, attachments: [shot] } as never, ...ANSWERS.slice(1)],
+      tasks("running", "running"),
+    );
+    render();
+    const drawn = mocks.markdownRender.mock.calls.length;
+    expect(drawn).toBeGreaterThan(0);
+    await click("Open shot.png");
+    expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe("image:shot.png");
+    await click("scroll up");
+    expect(mocks.markdownRender).toHaveBeenCalledTimes(drawn);
+  });
+
+  it("opens each answer's links with its own task thread and its worktree or project root, under one preview host", async () => {
     mocks.live = snapshot(ANSWERS, tasks("running", "running"));
+    mocks.worktrees = new Map([["assistant:beto:g-0123456789abcdef", "/worktrees/beto"]]);
     render();
     await click("link in Done in [app](src/app.ts)");
     await click("link in Also done");
@@ -1796,7 +1843,7 @@ describe("the thread's pieces in the feed", () => {
       ],
       [
         "src/app.ts",
-        { threadId: "assistant:beto:g-0123456789abcdef", workspaceRoot: "/repo/beta" },
+        { threadId: "assistant:beto:g-0123456789abcdef", workspaceRoot: "/worktrees/beto" },
       ],
     ]);
     await click("link in [@ada](t3-mention:mention/ada) go");
