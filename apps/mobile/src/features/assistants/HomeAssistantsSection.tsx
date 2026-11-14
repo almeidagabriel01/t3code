@@ -175,7 +175,7 @@ function AssistantRow(props: {
           </Text>
           {/* Gets only the width the name leaves. The always-present first item keeps
               line one non-empty, so a project chip that does not fit wraps and is clipped. */}
-          <View className="h-5 min-w-2 flex-1 flex-row flex-wrap items-center justify-between gap-x-2 overflow-hidden">
+          <View className="h-5 min-w-2 flex-1 flex-row flex-wrap items-center justify-between gap-x-2 gap-y-4 overflow-hidden">
             <View className="h-5 min-w-0 shrink flex-row items-center gap-2">
               {assistant.role === "" ? null : (
                 <View className="min-w-0 max-w-20 shrink rounded-md border border-border px-1.5 py-px">
@@ -274,7 +274,7 @@ function GroupFoldRow(props: {
         </Text>
         {/* The narrow tablet bar drops the faces while the group runs, so its name stays whole. */}
         {/* Same clip as the assistant row: faces that do not fit beside the name wrap away. */}
-        <View className="h-4 min-w-2 flex-1 flex-row flex-wrap overflow-hidden">
+        <View className="h-4 min-w-2 flex-1 flex-row flex-wrap gap-y-4 overflow-hidden">
           <View className="h-4 w-0" />
           {props.sidebar && props.running > 0 ? null : (
             <View testID="group-avatars" className="h-4 flex-row items-center pl-0.5">
