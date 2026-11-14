@@ -1875,6 +1875,44 @@ it.effect("a message's model the request's project turns off falls back to the p
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect.each([
+  ["a message without a model", false],
+  ["another message's model, then one without", true],
+] as const)(
+  "a model the user picks in the thread during a message's work outlives it: %s",
+  ([, another]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      yield* h.finish(0, "completed", "done");
+      h.fakeThreads.get(ada)!.modelSelection = selection(codex, "ada-pick");
+      const ask = (more: Partial<AssistantGroupsPostInput>) =>
+        groups.post(
+          { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+          h.user,
+        );
+      yield* ask({ modelSelection: selection(claude, "opus") });
+      // The user switches the thread while the message's work runs.
+      const mine = selection(claude, "mine");
+      h.fakeThreads.get(ada)!.modelSelection = mine;
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      if (another) {
+        yield* ask({ modelSelection: selection(claude, "sonnet") });
+        assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "sonnet"));
+        yield* h.finish(h.sent.length - 1, "completed", "done");
+      }
+      yield* ask({});
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, mine);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("a message's model leaves a model picked in the thread for the next task", () => {
   const h = harness({
     settings: {

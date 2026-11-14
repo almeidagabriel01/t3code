@@ -866,6 +866,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   ]);
   // A model picked in the thread that a message's own model set aside until its task is done.
   yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
+  // The message's model that switch applied: a thread off it was changed by the user since.
+  yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (

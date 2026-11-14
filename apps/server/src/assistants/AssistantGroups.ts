@@ -340,6 +340,7 @@ interface ThreadRow {
   readonly followed_model_selection?: string | null;
   readonly pending_model_selection?: string | null;
   readonly restore_model_selection?: string | null;
+  readonly aimed_model_selection?: string | null;
 }
 
 const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
@@ -1120,7 +1121,7 @@ const make = Effect.gen(function* () {
       ON CONFLICT (request_id, assistant_id) DO UPDATE
       SET thread_id = excluded.thread_id, seen_seq = 0,
         followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL,
-        restore_model_selection = NULL
+        restore_model_selection = NULL, aimed_model_selection = NULL
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
     // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
@@ -1182,16 +1183,31 @@ const make = Effect.gen(function* () {
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
+    const aimed = decodeModelSelectionJson(row.aimed_model_selection);
+    // Off the model a message's switch applied, the user changed the thread: their model stays.
+    const changedByUser = aimed !== null && !modelSelectionsEqual(thread.modelSelection, aimed);
+    if (force && changedByUser && modelSelectionsEqual(target, aimed)) {
+      yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL,
+          restore_model_selection = NULL, aimed_model_selection = NULL
+        WHERE thread_id = ${row.thread_id}`;
+      return;
+    }
     // Off a model picked in the thread, the thread is not followed: the next task brings that
-    // pick back (`aimModel`), and a project's new model leaves it.
+    // pick back (`aimModel`), and a project's new model leaves it. Over another message's model
+    // the pick to bring back stays the one from before it.
+    const restore =
+      aimed !== null && !changedByUser
+        ? row.restore_model_selection
+        : encodeModelSelectionJson(thread.modelSelection);
     const settle = following
       ? sql`UPDATE assistant_group_request_threads
           SET followed_model_selection = ${encodeModelSelectionJson(target)},
-            pending_model_selection = NULL
+            pending_model_selection = NULL,
+            aimed_model_selection = ${force ? encodeModelSelectionJson(target) : null}
           WHERE thread_id = ${row.thread_id}`
       : sql`UPDATE assistant_group_request_threads
-          SET pending_model_selection = NULL, restore_model_selection =
-            COALESCE(restore_model_selection, ${encodeModelSelectionJson(thread.modelSelection)})
+          SET pending_model_selection = NULL, restore_model_selection = ${restore ?? null},
+            aimed_model_selection = ${encodeModelSelectionJson(target)}
           WHERE thread_id = ${row.thread_id}`;
     if (modelSelectionsEqual(target, thread.modelSelection)) {
       yield* settle;
@@ -1247,12 +1263,17 @@ const make = Effect.gen(function* () {
     const restore = decodeModelSelectionJson(row.restore_model_selection);
     if (restore !== null && resolved.success.layer !== "message") {
       const thread = yield* inspectThread(exec.threadId);
+      const aimed = decodeModelSelectionJson(row.aimed_model_selection);
+      // Changed by the user during the message's work: that model stays, not the one before.
       const outcome =
-        thread === undefined || modelSelectionsEqual(thread.modelSelection, restore)
+        thread === undefined ||
+        modelSelectionsEqual(thread.modelSelection, restore) ||
+        (aimed !== null && !modelSelectionsEqual(thread.modelSelection, aimed))
           ? "switched"
           : yield* switchModel(exec.threadId, restore);
       if (outcome === "busy") return true;
-      yield* sql`UPDATE assistant_group_request_threads SET restore_model_selection = NULL
+      yield* sql`UPDATE assistant_group_request_threads
+        SET restore_model_selection = NULL, aimed_model_selection = NULL
         WHERE thread_id = ${exec.threadId}`;
       return false;
     }
