@@ -282,12 +282,10 @@ describe("ServerSettings usage limit alerts", () => {
     });
     expect(settings.hideTaggedThreads).toBe(true);
     const alerts = settings.usageLimitAlerts as Record<string, unknown>;
-    expect(alerts["a"]).toEqual({
-      windows: { seven_day: undefined, five_hour: 20, x: undefined, y: undefined },
-      timeZone: undefined,
+    expect(alerts).toEqual({
+      a: { windows: { five_hour: 20 } },
+      c: { windows: {}, timeZone: "America/Sao_Paulo" },
     });
-    expect(alerts["b"]).toBeUndefined();
-    expect(alerts["c"]).toEqual({ windows: {}, timeZone: "America/Sao_Paulo" });
     expect(() => encodeServerSettings(settings)).not.toThrow();
   });
 

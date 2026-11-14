@@ -221,34 +221,56 @@ export type UsageLimitAlertThreshold = typeof UsageLimitAlertThreshold.Type;
 export const USAGE_LIMIT_ALERT_CHOICES = [5, 10, 15, 20, 25, 30, 40, 50] as const;
 
 // A hand-edited bad entry drops alone: any decode failure in settings.json resets every setting.
-const dropInvalid = <S extends Schema.Codec<unknown, unknown>>(schema: S) => {
-  const decodeValue = Schema.decodeUnknownOption(schema);
+const validEntries = <K extends Schema.Codec<string, string>, V extends Schema.Top>(
+  key: K,
+  value: V,
+): Schema.Codec<Record<K["Type"], V["Type"]>, unknown> => {
+  const decodeKey = Schema.decodeUnknownOption(key);
+  const decodeValue = Schema.decodeUnknownOption(value as never);
   return Schema.Unknown.pipe(
     Schema.decodeTo(
-      Schema.UndefinedOr(Schema.toType(schema)),
-      SchemaTransformation.transform<S["Type"] | undefined, unknown>({
-        decode: (raw) => Option.getOrUndefined(decodeValue(raw)),
-        encode: (value) => value,
-      }),
+      Schema.Record(Schema.String, Schema.toType(value)),
+      SchemaTransformation.transform<{ readonly [key: string]: V["Type"] }, unknown>({
+        decode: (raw) =>
+          Object.fromEntries(
+            typeof raw !== "object" || raw === null || Array.isArray(raw)
+              ? []
+              : Object.entries(raw).flatMap(([rawKey, rawValue]) => {
+                  const decodedKey = decodeKey(rawKey);
+                  const decodedValue = decodeValue(rawValue);
+                  return Option.isSome(decodedKey) && Option.isSome(decodedValue)
+                    ? [[decodedKey.value, decodedValue.value]]
+                    : [];
+                }),
+          ),
+        encode: (entries) => entries,
+        // The generic value type cannot be resolved here; the return type pins the result.
+      }) as never,
     ),
-  );
+  ) as unknown as Schema.Codec<Record<K["Type"], V["Type"]>, unknown>;
 };
+
+const validTimeZone = Schema.optionalKey(Schema.Unknown).pipe(
+  Schema.decodeTo(
+    Schema.optionalKey(TrimmedNonEmptyString),
+    SchemaTransformation.transformOptional<string, unknown>({
+      decode: (raw) => raw.pipe(Option.flatMap(Schema.decodeUnknownOption(TrimmedNonEmptyString))),
+      encode: (zone) => zone,
+    }),
+  ),
+);
 
 /** Stored per provider instance; windows are keyed by `ServerProviderUsageWindow.id`. */
 export const UsageLimitAlertConfig = Schema.Struct({
-  windows: Schema.Record(Schema.String, dropInvalid(UsageLimitAlertThreshold)).pipe(
-    Schema.catchDecoding(() => Effect.succeedSome({})),
+  windows: validEntries(Schema.String, UsageLimitAlertThreshold).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   /** IANA zone of the client that last saved it, for the reset time in the message. */
-  timeZone: Schema.optionalKey(dropInvalid(TrimmedNonEmptyString)),
+  timeZone: validTimeZone,
 });
 export type UsageLimitAlertConfig = typeof UsageLimitAlertConfig.Type;
 
-export const UsageLimitAlerts = Schema.Record(
-  ProviderInstanceId,
-  dropInvalid(UsageLimitAlertConfig),
-).pipe(Schema.catchDecoding(() => Effect.succeedSome({})));
+export const UsageLimitAlerts = validEntries(ProviderInstanceId, UsageLimitAlertConfig);
 export type UsageLimitAlerts = typeof UsageLimitAlerts.Type;
 
 /** Merges per window: a number sets it, `"off"` silences it, `null` returns it to the default. */
