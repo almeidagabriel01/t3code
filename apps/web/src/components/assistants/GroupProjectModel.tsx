@@ -1,15 +1,29 @@
-import type { EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import type { Assistant, EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contracts";
+import { useState, type ReactNode } from "react";
 
+import { useEnvironments } from "../../state/environments";
 import { SelectionPicker } from "../settings/AssistantModelsRow";
-import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
+import { SettingsScopeProvider, useSettingsScope } from "../settings/SettingsScopeContext";
 import { useScopedDefaultModel } from "../settings/useScopedModelAvailability";
 import {
   useScopedSettingSource,
   useScopedSettingsWriteAllowed,
+  useUpdateProjectAssistantModel,
   useUpdateScopedSettings,
 } from "../settings/useScopedSettings";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Label } from "../ui/label";
 
 const SOURCE_DETAIL = {
   project: "Set for this project",
@@ -103,5 +117,109 @@ export function GroupProjectModelPicker(props: {
         onError={props.onError}
       />
     </GroupProjectScope>
+  );
+}
+
+/** The members whose new work in the project runs on their own model, by assistant id. */
+export function useMemberModelExceptions(
+  environmentId: EnvironmentId,
+  projectId: ProjectId | null,
+): Readonly<Record<string, ModelSelection>> {
+  const { environments } = useEnvironments();
+  if (projectId === null) return {};
+  return (
+    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig
+      ?.settings.projectSettingsOverrides[projectId]?.assistantModelSelections ?? {}
+  );
+}
+
+function MemberModelFields(props: { readonly member: Assistant }) {
+  const { member } = props;
+  const { target } = useSettingsScope();
+  const { settings, representative, providers, selection, entries, modelDisabledReason } =
+    useScopedDefaultModel();
+  const canWrite = useScopedSettingsWriteAllowed();
+  const update = useUpdateProjectAssistantModel();
+  const [error, setError] = useState<string | null>(null);
+  const exception =
+    target?.projectId == null
+      ? undefined
+      : representative?.serverConfig?.settings.projectSettingsOverrides[target.projectId]
+          ?.assistantModelSelections?.[member.id];
+  const shown = exception ?? selection;
+  const save = (value: ModelSelection | null) => {
+    const reason = value === null ? null : modelDisabledReason(value.instanceId, value.model);
+    if (reason !== null) return setError(reason);
+    setError(null);
+    if (representative) update(representative.environmentId, member.id, value, setError);
+  };
+  return (
+    <>
+      <DialogPanel>
+        <div className="flex flex-col items-start gap-1.5">
+          <Label>Model</Label>
+          {shown ? (
+            <SelectionPicker
+              settings={settings}
+              providers={providers}
+              selection={shown}
+              label={`Model for ${member.name}`}
+              disabled={!canWrite}
+              environmentId={representative?.environmentId ?? null}
+              instanceEntries={entries}
+              getModelDisabledReason={modelDisabledReason}
+              onChange={save}
+            />
+          ) : (
+            <span className="text-sm text-muted-foreground">No providers available</span>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {exception ? `Set for ${member.name} in this project.` : "Follows the project's model."}
+          </p>
+          {error === null ? null : (
+            <p role="alert" className="text-xs text-destructive-foreground">
+              {error}
+            </p>
+          )}
+        </div>
+      </DialogPanel>
+      <DialogFooter variant="bare">
+        {exception ? (
+          <Button variant="destructive-outline" disabled={!canWrite} onClick={() => save(null)}>
+            Remove exception
+          </Button>
+        ) : null}
+        <DialogClose render={<Button variant="outline" />}>Done</DialogClose>
+      </DialogFooter>
+    </>
+  );
+}
+
+/** One member's own model for new work in the project, ahead of the project's model. */
+export function MemberProjectModelDialog(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly projectLabel: string;
+  readonly member: Assistant;
+  readonly onClose: () => void;
+}) {
+  const { member } = props;
+  return (
+    <Dialog open onOpenChange={(open) => !open && props.onClose()}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {member.name}'s model in {props.projectLabel}
+          </DialogTitle>
+          <DialogDescription>
+            New work for {member.name} in {props.projectLabel} starts on this model instead of the
+            project's.
+          </DialogDescription>
+        </DialogHeader>
+        <GroupProjectScope environmentId={props.environmentId} projectId={props.projectId}>
+          <MemberModelFields member={member} />
+        </GroupProjectScope>
+      </DialogPopup>
+    </Dialog>
   );
 }

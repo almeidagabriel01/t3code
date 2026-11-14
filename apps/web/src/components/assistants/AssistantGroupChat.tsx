@@ -35,10 +35,12 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { assistantGroupProjectIds, splitAssistantTransferText } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BoxIcon,
   CalendarClockIcon,
   ChevronRightIcon,
   CircleCheckIcon,
@@ -71,7 +73,16 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
@@ -92,6 +103,7 @@ import {
   type GroupSendResult,
 } from "./GroupComposer";
 import { GroupMentionChip, type GroupMentionProject } from "./GroupMentionChip";
+import { MemberProjectModelDialog, useMemberModelExceptions } from "./GroupProjectModel";
 import { GroupTaskCard } from "./GroupTaskCard";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
@@ -108,9 +120,13 @@ function GroupHeader(props: {
   readonly members: ReadonlyArray<Assistant>;
   readonly allAssistants: ReadonlyArray<Assistant>;
   readonly running: number;
+  /** The project new messages run in, for each member's own model there. */
+  readonly modelProject: GroupProjectOption | null;
+  readonly onMemberModel: (member: Assistant) => void;
 }) {
-  const { environmentId, team } = props;
+  const { environmentId, team, modelProject } = props;
   const flows = useAssistantTeamFlows(environmentId);
+  const exceptions = useMemberModelExceptions(environmentId, modelProject?.id ?? null);
   const archived = team.archivedAt !== null;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   return (
@@ -176,6 +192,32 @@ function GroupHeader(props: {
             <CalendarClockIcon />
             Group routines
           </MenuItem>
+          {modelProject === null || props.members.length === 0 ? null : (
+            <MenuSub>
+              <MenuSubTrigger>
+                <BoxIcon />
+                <span className="max-w-56 truncate">Model in {modelProject.label}</span>
+              </MenuSubTrigger>
+              <MenuSubPopup>
+                {props.members.map((member) => {
+                  const exception = exceptions[member.id];
+                  return (
+                    <MenuItem key={member.id} onClick={() => props.onMemberModel(member)}>
+                      <AssistantAvatar
+                        assistant={member}
+                        environmentId={environmentId}
+                        className="size-4"
+                      />
+                      <span className="min-w-0 flex-1 truncate">{member.name}</span>
+                      <span className="ms-3 shrink-0 text-xs text-muted-foreground">
+                        {exception ? formatModelSlugName(exception.model) : "Project's model"}
+                      </span>
+                    </MenuItem>
+                  );
+                })}
+              </MenuSubPopup>
+            </MenuSub>
+          )}
           {(team.chat?.unreadCount ?? 0) > 0 ? (
             <MenuItem disabled={!flows.canMarkRead} onClick={() => void flows.markRead(team)}>
               <MailOpenIcon />
@@ -660,6 +702,7 @@ export function AssistantGroupChat(props: {
   } | null>(null);
   const [projectFilter, setProjectFilter] = useState<ProjectId | null>(null);
   const [composerProject, setComposerProject] = useState<ProjectId | null>(null);
+  const [memberModel, setMemberModel] = useState<Assistant | null>(null);
   // The user's own open or closed choice per request; the rest follow assistantGroupRequestExpanded.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const projects = useProjects();
@@ -718,6 +761,10 @@ export function AssistantGroupChat(props: {
   const groupComposerProject = groupProjects.some((project) => project.id === composerProject)
     ? composerProject
     : null;
+  // The project the next message runs in: a reply's request project, else the composer's.
+  const modelProjectId = replyTo?.projectId ?? groupComposerProject;
+  const modelProject =
+    modelProjectId === null ? null : { id: modelProjectId, label: projectName(modelProjectId) };
   const archived = team?.archivedAt != null;
   // Read position when the chat opened: blocks with unread messages stay open while they are read.
   const [readAtOpen, setReadAtOpen] = useState<number | null>(null);
@@ -1091,9 +1138,20 @@ export function AssistantGroupChat(props: {
           members={members}
           allAssistants={everyone}
           running={chat === null ? 0 : assistantGroupRunningCount(chat)}
+          modelProject={modelProject}
+          onMemberModel={setMemberModel}
         />
       )}
       {body()}
+      {memberModel === null || modelProject === null ? null : (
+        <MemberProjectModelDialog
+          environmentId={environmentId}
+          projectId={modelProject.id}
+          projectLabel={modelProject.label}
+          member={memberModel}
+          onClose={() => setMemberModel(null)}
+        />
+      )}
     </SidebarInset>
   );
 }

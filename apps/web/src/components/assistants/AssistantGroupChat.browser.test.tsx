@@ -1122,6 +1122,69 @@ it("says inline why the project's model was not saved and keeps the shown one", 
   fakeSettings.refuse = null;
 });
 
+it("sets a member's own model in the chosen project from the group menu, and removes it", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings(null);
+  await using _screen = await openChat();
+  const menu = () => main().getByRole("button", { name: "Leadership actions" });
+  // Without a project there is nothing to set a member's model for.
+  await userEvent.click(menu());
+  await expect.element(page.getByRole("menuitem", { name: "Edit group" })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: /^Model in/ })).not.toBeInTheDocument();
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(menu());
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
+  await expect.element(page.getByText("Follows the project's model.")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Remove exception" }))
+    .not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "Model for Ada" }));
+  await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
+  await eventually(() =>
+    expect(fakeSettings.patches.at(-1)).toEqual({
+      projectSettingsOverrides: {
+        [PROJECT_ID]: {
+          assistantModelSelections: { ada: { instanceId: "codex", model: "gpt-5.5" } },
+        },
+      },
+    }),
+  );
+});
+
+it("shows a member's exception in the group menu and removes it from its dialog", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings({
+    projectSettingsOverrides: {
+      [PROJECT_ID]: {
+        assistantModelSelections: { ada: { instanceId: "codex", model: "gpt-5.5" } },
+      },
+    },
+  } as never);
+  // The config is read once per connection; start a fresh one so it carries the exception.
+  appAtomRegistry.reset();
+  await using _screen = await openChat();
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await expect.element(page.getByRole("menuitem", { name: /^Ada.*GPT-5\.5/ })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: /^Bo.*Project's model/ })).toBeVisible();
+  await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
+  await expect.element(page.getByText("Set for Ada in this project.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Remove exception" }));
+  await eventually(() =>
+    expect(fakeSettings.patches.at(-1)).toEqual({
+      projectSettingsOverrides: { [PROJECT_ID]: { assistantModelSelections: { ada: null } } },
+    }),
+  );
+  setFakeServerSettings(null);
+});
+
 it("inserts a mention from the Mention menu and dictates into the field", async () => {
   publishGroupChat([message(1)]);
   await using _screen = await openChat();
