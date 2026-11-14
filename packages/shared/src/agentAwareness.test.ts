@@ -9,13 +9,29 @@ import type {
 import { ProviderInstanceId, RuntimeRequestId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
+import { buildAssistantGroupDeepLink, projectThreadAwarenessV2 } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
 const project = {
   title: "t3code",
 } satisfies Pick<Project, "title">;
+
+describe("buildAssistantGroupDeepLink", () => {
+  it.each([
+    ["the chat", undefined, "/assistant-groups/env%201/team"],
+    ["a project's tab", "p:1", "/assistant-groups/env%201/team?tab=project%3Ap%3A1"],
+    ["General", null, "/assistant-groups/env%201/team?tab=general"],
+  ] as const)("opens %s", (_name, projectId, expected) => {
+    expect(
+      buildAssistantGroupDeepLink({
+        environmentId: "env 1" as never,
+        teamId: "team",
+        ...(projectId === undefined ? {} : { projectId }),
+      }),
+    ).toBe(expected);
+  });
+});
 
 describe("projectThreadAwarenessV2", () => {
   const updatedAt = DateTime.makeUnsafe(NOW);
