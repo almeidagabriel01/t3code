@@ -37,6 +37,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProjectModelSelectionService from "./ProjectModelSelectionService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -477,6 +478,7 @@ export const layerProduction = Layer.mergeAll(
   ).pipe(Layer.provide(layerAssistantConnectorsProvided)),
   layerAssistantServiceProvided,
   layerAssistantGroupsProvided,
+  ProjectModelSelectionService.layer.pipe(Layer.provide(ProjectStore.layer)),
   // Fills the gate a group's scheduled tasks post through.
   AssistantGroups.installLayer.pipe(
     Layer.provide(Layer.merge(layerAssistantGroupsProvided, AssistantGroupGate.gateLayer)),

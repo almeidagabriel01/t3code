@@ -22,6 +22,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { firstUsableProviderModel } from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -755,7 +756,7 @@ it.each([
     "claude:built-in",
   ],
 ] as const)("firstUsableProviderModel: %s", (_name, providers, expected) => {
-  const selection = Assistants.firstUsableProviderModel(providers);
+  const selection = firstUsableProviderModel(providers);
   assert.strictEqual(
     selection === null ? null : `${selection.instanceId}:${selection.model}`,
     expected,

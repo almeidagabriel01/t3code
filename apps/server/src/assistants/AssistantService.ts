@@ -21,12 +21,10 @@ import {
   CommandId,
   DEFAULT_ASSISTANT_ID,
   DEFAULT_MODEL,
-  isProviderAvailable,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ProjectId,
   ProviderInstanceId,
-  type ServerProvider,
   runtimeModeForToolAccess,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -51,6 +49,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { firstUsableProviderModel } from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -172,25 +171,6 @@ export class AssistantService extends Context.Service<
     readonly defaultModel: (projectId: ProjectId) => Effect.Effect<ModelSelection, AssistantError>;
   }
 >()("t3/assistants/AssistantService") {}
-
-/** Like a new thread with no configured default: the first usable provider and its default model. */
-export function firstUsableProviderModel(
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null {
-  const provider = providers.find(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.auth.status !== "unauthenticated" &&
-      isProviderAvailable(entry),
-  );
-  if (provider === undefined) return null;
-  const model =
-    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
-    provider.models.find((entry) => !entry.isCustom) ??
-    provider.models[0];
-  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
-}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
