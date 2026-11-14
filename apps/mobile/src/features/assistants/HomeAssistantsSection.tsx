@@ -1,3 +1,4 @@
+import { assistantGroupChatWaiting } from "@t3tools/client-runtime/assistantGroupChat";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -292,6 +293,13 @@ function GroupFoldRow(props: {
             </View>
           )}
         </View>
+        {assistantGroupChatWaiting(team.chat) ? (
+          <View
+            testID="group-waiting-dot"
+            accessibilityLabel="Waiting on you"
+            className="size-1.5 rounded-full bg-warning-foreground"
+          />
+        ) : null}
         {unread > 0 ? (
           <View
             testID="group-unread"

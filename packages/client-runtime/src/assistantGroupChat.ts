@@ -311,6 +311,11 @@ export interface AssistantGroupTab {
   readonly readSeq: number;
 }
 
+/** Any tab waits on the user: the dot on All and on the group's row. */
+export function assistantGroupChatWaiting(chat: Pick<AssistantTeamChat, "scopes"> | undefined) {
+  return chat?.scopes?.some((scope) => scope.waiting) ?? false;
+}
+
 /**
  * null (no tab row) when the server sent no scopes or the group has fewer than 2 effective
  * projects. Else All, the effective projects, orphan scopes that still have unread or waiting,
@@ -354,7 +359,7 @@ export function assistantGroupTabs(input: {
       label: "All",
       projectId: null,
       unreadCount: chat.unreadCount,
-      waiting: scopes.some((scope) => scope.waiting),
+      waiting: assistantGroupChatWaiting(chat),
       readSeq: chat.readSeq,
     },
     ...effective.map((id) => tab(id, title.get(id)!)),

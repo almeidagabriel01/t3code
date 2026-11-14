@@ -1,3 +1,4 @@
+import { assistantGroupChatWaiting } from "@t3tools/client-runtime/assistantGroupChat";
 import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -422,6 +423,13 @@ function GroupRow(props: {
           >
             empty
           </span>
+        ) : null}
+        {assistantGroupChatWaiting(team.chat) ? (
+          <span
+            role="img"
+            aria-label="Waiting on you"
+            className="size-1.5 shrink-0 rounded-full bg-warning"
+          />
         ) : null}
         {unread > 0 ? (
           <Badge

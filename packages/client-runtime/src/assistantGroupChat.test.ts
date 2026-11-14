@@ -13,6 +13,7 @@ import type {
 import {
   assistantGroupActivity,
   assistantGroupInScope,
+  assistantGroupChatWaiting,
   assistantGroupTabs,
   assistantGroupTabsPending,
   resolveAssistantGroupTab,
@@ -1038,6 +1039,16 @@ describe("assistant group tabs", () => {
     // A tab the server does not list has nothing unread: it reads from the group's position.
     assert.strictEqual(tabs([P1, P2], [scope(P1)])![2]!.readSeq, 1);
     assert.deepStrictEqual(result[1]!.scope, { projectId: P1 });
+  });
+
+  it.each([
+    ["older server", undefined, false],
+    ["no scopes", { scopes: [] }, false],
+    ["none waiting", { scopes: [scope(P1, 2), scope(null)] }, false],
+    ["General waits", { scopes: [scope(P1), scope(null, 0, true)] }, true],
+    ["a removed project waits", { scopes: [scope("gone" as ProjectId, 0, true)] }, true],
+  ] as const)("chat waiting: %s", (_name, chat, expected) => {
+    assert.strictEqual(assistantGroupChatWaiting(chat), expected);
   });
 
   it.each([
