@@ -178,9 +178,10 @@ describe("routing matrix", () => {
     const linuxStart: Outcome = linuxRoom ? "linux-start" : "linux-wait";
     // Both over their limits: it holds, with the queue on or off.
     if (mac === "over" && linux === "overloaded") return "linux-wait";
-    // Mac first, sending to Linux from 2 jobs: 1 runs here except when the Mac is full.
+    // Mac first, sending to Linux from 2 jobs: 1 runs here except when the Mac is full, and past
+    // its count still runs here while Linux is over its limits (RUN-13).
     if (where === "macFirst") {
-      if (mac !== "over" && mac !== "full") return onMac;
+      if (mac !== "over" && (mac !== "full" || linux === "overloaded")) return onMac;
       return queue === "paused" ? "linux-wait" : linuxStart;
     }
     // Hybrid: the smaller backlog per slot (3 here, 2 there), the Mac on a tie.
@@ -494,6 +495,15 @@ describe("Mac first, Hybrid and Everything", () => {
         over: MAC_OVER,
         route: "linux",
         admit: "linux",
+      },
+      {
+        enabled,
+        name: "Mac first, past its count with Linux over its limits",
+        config: { runnerWhere: "macFirst" as const, runnerMacFirstAfter: 1 },
+        entries: [runningOn("m0", "mac")],
+        over: { health: OVERLOADED },
+        route: "mac",
+        reason: /^Mac first: this Mac has room/,
       },
       {
         enabled,
@@ -954,25 +964,38 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     expect(outcomeOf(plan, "a")).toBe(outcome);
   });
 
-  // Hybrid and Mac first never wait for Linux: the job runs here instead of failing there again.
-  it.each(["automatic", "macFirst"] as const)(
-    "%s keeps an environment failure under Wait on this Mac",
-    (where) => {
-      const entry = job("a", "vp test run", {
-        dropped: true,
-        failure: "sh: 1: tsgo: not found",
-        linuxFailedAt: NOW - 5000,
-      } as never);
-      const plan = planRoutes(
-        input(
-          [entry],
-          { runnerWhere: where, runnerDropped: "wait" },
-          { health: { ...READ, okAt: NOW - 100 } },
-        ),
-      );
-      expect(outcomeOf(plan, "a")).toBe("mac-start");
-    },
-  );
+  // An environment failure follows "If a Linux run fails" in every mode, with Linux still online.
+  it.each(
+    (["linux", "automatic", "macFirst"] as const).flatMap((where) =>
+      (
+        [
+          ["mac", "mac-start", "running here"],
+          ["wait", "linux-wait", "waiting for it"],
+          ["ask", "ask", "asking you"],
+          ["agent", "cancel", null],
+        ] as const
+      ).map(([policy, outcome, reason]) => [where, policy, outcome, reason] as const),
+    ),
+  )("%s, environment failure under %s → %s", (where, policy, outcome, reason) => {
+    const entry = job("a", "vp test run", {
+      dropped: true,
+      failure: "sh: 1: tsgo: not found",
+      linuxFailedAt: NOW - 5000,
+    } as never);
+    const plan = planRoutes(
+      input(
+        [entry],
+        { runnerWhere: where, runnerDropped: policy },
+        { health: { ...READ, okAt: NOW - 100 }, runnerOn: true },
+      ),
+    );
+    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+    // The row names the Linux failure, never "Linux is unavailable" while Linux is online.
+    if (reason === null)
+      expect(plan.cancels.a).toBe("Linux couldn't run this: sh: 1: tsgo: not found");
+    else expect(plan.reasons.a).toBe(`Linux couldn't run this: sh: 1: tsgo: not found: ${reason}`);
+  });
 
   it("an open question holds the job until its deadline", () => {
     const plan = offline(job("a", "vp test run", { ask: asked(60_000) }), {});

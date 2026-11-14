@@ -42,7 +42,7 @@ describe("the queue × Runner line", () => {
     queueEnabled: boolean,
     queuePaused: boolean,
     runnerEnabled: boolean,
-    where: "mac" | "linux" | "automatic",
+    where: "mac" | "linux" | "automatic" | "macFirst",
   ) => heavyModeLine({ queueEnabled, queuePaused, runnerEnabled, where });
 
   it.each([
@@ -79,6 +79,20 @@ describe("the queue × Runner line", () => {
       true,
       "automatic",
       "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
+    ],
+    [
+      true,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
+    ],
+    [
+      false,
+      false,
+      true,
+      "macFirst",
+      "Jobs run on this Mac until it has this many running or waiting, then on Linux.",
     ],
   ] as const)("queue %s paused %s Runner %s %s", (queue, paused, runner, where, text) => {
     expect(line(queue, paused, runner, where)).toBe(text);
@@ -252,13 +266,15 @@ describe("Runner fields that do nothing under the current choices", () => {
 });
 
 describe("heavyLimitIdle", () => {
-  const QUEUE_OFF = "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+  const QUEUE_OFF =
+    "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.";
   const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
   it.each([
     ["macCpuCeilingPercent", true, false, "mac", null],
     ["macCpuCeilingPercent", false, true, "automatic", null],
     ["macCpuCeilingPercent", false, true, null, null],
     ["macCpuCeilingPercent", false, null, "automatic", null],
+    ["macCpuCeilingPercent", false, true, "macFirst", null],
     ["macCpuCeilingPercent", false, true, "linux", QUEUE_OFF],
     ["macMemoryFloorPercent", false, true, "mac", QUEUE_OFF],
     ["macMemoryFloorPercent", false, false, "automatic", QUEUE_OFF],
