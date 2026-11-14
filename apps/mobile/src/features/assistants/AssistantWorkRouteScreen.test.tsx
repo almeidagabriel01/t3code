@@ -58,6 +58,10 @@ vi.mock("../settings/components/SettingsScreen", () => ({
     <section aria-label={props.title}>{props.children}</section>
   ),
 }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("./AssistantSchedulesSection", () => ({
   AssistantSchedulesSection: (props: { modelSelection: { model: string } | null }) => (
     <p>{`schedules ${props.modelSelection?.model ?? "no model"}`}</p>
@@ -234,6 +238,18 @@ describe("AssistantWorkRouteScreen", () => {
       }),
     });
     expect(mocks.startTurn.mock.lastCall![0].input).not.toHaveProperty("manualContinuationOfRunId");
+  });
+
+  it.each([
+    ["2099-01-01T09:30Z", "Limit until <2099-01-01T09:30Z>"],
+    [null, "Its last run hit a usage limit."],
+  ])("says until when a usage limit holds the run it retries (%s)", (resetAt, said) => {
+    mocks.shell = {
+      ...shell({ runId: "run-1", status: "failed" }),
+      runtime: { lastErrorClass: "usage_limit", usageLimitResetAt: resetAt },
+    };
+    render();
+    expect(container.textContent).toContain(said);
   });
 
   it("continues a stopped run where it stopped", async () => {

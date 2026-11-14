@@ -54,6 +54,7 @@ import { useVoiceInputController } from "../voice-input/useVoiceInputController"
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
+import type { GroupProjectModel } from "./useGroupProjectModel";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
 
@@ -92,6 +93,10 @@ function ToolbarChip(props: {
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly chevron?: boolean;
+  /** Only the icon, when the row is too full for the label. */
+  readonly iconOnly?: boolean;
+  /** A longer label (a model and its provider) that takes the room a wide screen has. */
+  readonly wide?: boolean;
   readonly onPress?: () => void;
 }) {
   return (
@@ -100,22 +105,24 @@ function ToolbarChip(props: {
       accessibilityLabel={props.accessibilityLabel}
       disabled={props.disabled}
       onPress={props.onPress}
-      className="h-8 max-w-44 flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50"
+      className={`h-8 ${props.wide ? "max-w-72" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
-      <Text className="shrink text-xs font-t3-medium text-foreground" numberOfLines={1}>
-        {props.label}
-      </Text>
-      {props.chevron === false ? null : (
+      {props.iconOnly ? null : (
+        <Text className="shrink text-xs font-t3-medium text-foreground" numberOfLines={1}>
+          {props.label}
+        </Text>
+      )}
+      {props.chevron === false || props.iconOnly ? null : (
         <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-subtle" />
       )}
     </Pressable>
   );
 }
 
-function MenuSlot(props: { readonly children: ReactNode }) {
+function MenuSlot(props: { readonly children: ReactNode; readonly keep?: boolean }) {
   // The Menu ignores layout classes on itself, so the wrapper carries them.
-  return <View className="shrink">{props.children}</View>;
+  return <View className={props.keep ? "shrink-0" : "shrink"}>{props.children}</View>;
 }
 
 function SuggestionRow(props: {
@@ -291,6 +298,8 @@ export function GroupComposer(props: {
   /** The project a new request gets; null lets the lead decide. A reply's project overrides it. */
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
+  /** The model of the project the next message runs in; null hides its chip. */
+  readonly projectModel: GroupProjectModel | null;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
@@ -366,6 +375,8 @@ export function GroupComposer(props: {
 
   const lockedProject = props.replyingTo?.projectId ?? null;
   const chosenProject = props.projectId;
+  const runProject = lockedProject ?? chosenProject;
+  const { projectModel } = props;
   const projectName = (id: ProjectId | null) =>
     id === null
       ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL
@@ -553,7 +564,8 @@ export function GroupComposer(props: {
                 disabled
               />
             ) : (
-              <MenuSlot>
+              // The project reads in full; the model beside it is the one cut short.
+              <MenuSlot keep>
                 <Menu
                   accessibilityLabel="Project"
                   actions={[
@@ -583,6 +595,19 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
+            {projectModel === null || runProject === null ? null : (
+              <MenuSlot>
+                <ToolbarChip
+                  icon="cube"
+                  label={projectModel.label}
+                  wide
+                  accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
+                  chevron={false}
+                  disabled={props.disabled || !projectModel.canWrite}
+                  onPress={projectModel.openProjectPicker}
+                />
+              </MenuSlot>
+            )}
             {props.members.length === 0 ? null : (
               <MenuSlot>
                 <Menu
@@ -602,6 +627,7 @@ export function GroupComposer(props: {
                     label="Mention"
                     accessibilityLabel="Mention a member"
                     chevron={false}
+                    iconOnly={projectModel !== null && runProject !== null}
                     disabled={props.disabled}
                   />
                 </Menu>

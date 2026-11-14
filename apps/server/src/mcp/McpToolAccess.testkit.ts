@@ -11,7 +11,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 
 const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
@@ -103,3 +109,25 @@ export const idleThreadProjection = (
 
 /** No permission profiles exist in this server; suites that name this layer get an empty one. */
 export const layerPermissionProfilesOff = Layer.empty;
+
+/** The real precedence resolver, reading the projects `ProjectService` serves (none when unmocked). */
+export const layerProjectModelSelection = ProjectModelSelection.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const projects = yield* ProjectService.ProjectService;
+          return Layer.mock(ProjectStore.ProjectStoreV2)({
+            get: (projectId) =>
+              projects.getById(projectId).pipe(
+                Effect.map(Option.map((project) => project as unknown as ProjectStore.ProjectRow)),
+                Effect.catchCause(() => Effect.succeedNone),
+              ),
+          });
+        }),
+      ),
+      SqlitePersistence.layerMemory,
+    ),
+  ),
+  Layer.provide(NodeServices.layer),
+);

@@ -57,6 +57,7 @@ import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService
 import * as CheckpointDiffQuery from "../../checkpointing/CheckpointDiffQuery.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { layerProjectModelSelection } from "../McpToolAccess.testkit.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
@@ -70,6 +71,7 @@ import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(layerProjectModelSelection),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 

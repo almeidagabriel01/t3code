@@ -74,7 +74,11 @@ import {
 } from "../assistants/AssistantRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
-import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
+import {
+  idleThreadProjection,
+  layerProjectModelSelection,
+  liveThreadShell,
+} from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
@@ -84,6 +88,7 @@ const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(layerProjectModelSelection),
   Layer.provide(
     Layer.mock(GitVcsDriver.GitVcsDriver)({
       resolvePrimaryRemoteName: () => Effect.fail(new Error("no remote") as never),
@@ -2377,7 +2382,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect(
-    "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
+    "prefers the project's default instance for driver-only targets and otherwise selects a healthy peer",
     () =>
       Effect.gen(function* () {
         const codexAltInstanceId = ProviderInstanceId.make("codex-alt");
@@ -2510,7 +2515,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({ defaultModelSelection: parentModelSelection }),
             providerRegistryLayer([
               providerSnapshot({
                 instanceId: codexInstanceId,
@@ -2724,17 +2729,50 @@ describe("OrchestratorMcpService provider resolution", () => {
         },
         expected: overrideModel,
       },
-      { name: "no rule at all, which is refused", settings: {}, expected: null },
-    ])("schedules a task with the model from $name", ({ settings, expected }) =>
+      {
+        name: "no rule at all: the global default",
+        settings: { defaultModelSelection: folderModel },
+        expected: folderModel,
+      },
+      {
+        name: "the project, not a calling thread starting a new one",
+        settings: {
+          projectSettingsOverrides: { [projectId]: { defaultModelSelection: overrideModel } },
+        },
+        expected: overrideModel,
+        fromThread: true,
+      },
+    ])("schedules a task with the model from $name", ({ settings, expected, fromThread }) =>
       Effect.gen(function* () {
         const upserts: Array<ScheduledTaskUpsertInput> = [];
+        const follows: Array<boolean | undefined> = [];
+        const callerThreadId = ThreadId.make("thread:scheduling-caller");
+        // The caller runs codex gpt-5, which the new thread must not take.
+        const callerShell = { ...liveThreadShell(callerThreadId), projectId };
         const result = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.flatMap((mcp) =>
-            mcp.scheduleTask(supervisedClient, {
-              projectId,
-              prompt: "check in later",
-              schedule: { type: "interval", everyMs: 3_600_000 },
-            }),
+            mcp.scheduleTask(
+              fromThread === true
+                ? {
+                    environmentId: EnvironmentId.make("environment:scheduled"),
+                    requestNamespace: "provider:scheduling-caller",
+                    thread: {
+                      threadId: callerThreadId,
+                      providerSessionId: "provider:scheduling-caller",
+                      providerInstanceId: callerShell.providerInstanceId,
+                    },
+                    client: undefined,
+                    capabilities: new Set(["orchestration"]),
+                    issuedAt: 1,
+                  }
+                : supervisedClient,
+              {
+                projectId,
+                prompt: "check in later",
+                schedule: { type: "interval", everyMs: 3_600_000 },
+                ...(fromThread === true ? { bindToCurrentThread: false } : {}),
+              },
+            ),
           ),
           Effect.provide(
             layerOrchestratorService.pipe(
@@ -2742,7 +2780,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Layer.mergeAll(
                   NodeServices.layer,
                   NodeCrypto.layer,
-                  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    getThreadShell: () => Effect.succeed(callerShell),
+                    getThreadRecords: () => Effect.succeed(idleThreadProjection(callerShell)),
+                  }),
                   ServerSettings.layerTest(settings),
                   Layer.mock(ProviderRegistry.ProviderRegistry)({
                     getProviders: Effect.succeed([]),
@@ -2761,9 +2802,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-                    upsert: (input) =>
+                    upsert: (input, captured) =>
                       Effect.sync(() => {
                         upserts.push(input);
+                        follows.push(captured?.modelFollowsProject);
                         return { task: task({}) };
                       }),
                   }),
@@ -2773,16 +2815,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           ),
           Effect.result,
         );
-        if (expected === null) {
-          assert.isTrue(
-            result._tag === "Failure" &&
-              "code" in result.failure &&
-              result.failure.code === "invalid_request",
-          );
-          assert.lengthOf(upserts, 0);
-        } else {
-          assert.deepEqual(upserts[0]?.modelSelection, expected);
-        }
+        assert.equal(result._tag, "Success");
+        assert.deepEqual(upserts[0]?.modelSelection, expected);
+        // A new thread resolves its model again when it runs.
+        assert.deepEqual(follows, [true]);
       }),
     );
 
@@ -3002,9 +3038,11 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
+      follows?: Ref.Ref<ReadonlyArray<boolean | undefined>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        Layer.provide(layerProjectModelSelection),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
         Layer.provide(
           Layer.mergeAll(
@@ -3030,12 +3068,17 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks: [task] }),
-              upsert: (input) =>
+              upsert: (input, captured) =>
                 Ref.update(saved, (strategies) => [...strategies, input.workspaceStrategy]).pipe(
                   Effect.andThen(
                     modes === undefined
                       ? Effect.void
                       : Ref.update(modes, (all) => [...all, input.threadMode]),
+                  ),
+                  Effect.andThen(
+                    follows === undefined
+                      ? Effect.void
+                      : Ref.update(follows, (all) => [...all, captured?.modelFollowsProject]),
                   ),
                   Effect.as({ task }),
                 ),
@@ -3120,16 +3163,23 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
     );
 
-    it.effect("follows the default branch when a task is unbound from its thread", () =>
+    it.effect("follows the default branch and the project's model when a task is unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const follows = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
           Effect.provide(
-            service(masterRepository, saved, {
-              ...existing,
-              threadId: ThreadId.make("thread:scheduled-base"),
-              threadMode: "continue",
-            }),
+            service(
+              masterRepository,
+              saved,
+              {
+                ...existing,
+                threadId: ThreadId.make("thread:scheduled-base"),
+                threadMode: "continue",
+              },
+              undefined,
+              follows,
+            ),
           ),
         );
         yield* mcp.updateScheduledTask(client, {
@@ -3139,20 +3189,24 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
         ]);
+        // Its new threads take the project's model when they run, not the old thread's.
+        assert.deepEqual(yield* Ref.get(follows), [true]);
       }),
     );
 
-    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+    it.effect("keeps the saved workspace and model choice when an unbound task stays unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const follows = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(masterRepository, saved, existing, undefined, follows)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
         assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
+        assert.deepEqual(yield* Ref.get(follows), [undefined]);
       }),
     );
 
@@ -3344,11 +3398,12 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect(
-    "inherits delegated options, merges overrides, and resets on explicit clearing or a new target",
+    "starts from the project's default, not the parent's model, merges overrides, resets on clearing or a new target, and never falls back at a usage limit",
     () =>
       Effect.gen(function* () {
         const peerId = ProviderInstanceId.make("codex-subscription-2");
         const driver = ProviderDriverKind.make("codex");
+        const parentModel = { instanceId: peerId, model: "parent-model" } as const;
         const inherited = {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
@@ -3418,7 +3473,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    ? parentProjection(commands.length > 0 ? [task] : [], parentModel)
                     : childProjection,
                 ),
               dispatch: (command) =>
@@ -3430,7 +3485,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({
+              defaultModelSelection: inherited,
+              fallbackModelSelection: { instanceId: peerId, model: inherited.model },
+            }),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -3438,6 +3496,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver,
                   model: inherited.model,
                 }),
+                usageLimits: {
+                  checkedAt: "2026-01-01T00:00:00Z",
+                  windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+                },
                 models: [
                   ...[inherited.model, "other-model"].map((model) => ({
                     slug: model,
@@ -3494,7 +3556,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("accepts the inherited options it reports back as a delegate target", () =>
+  it.effect("accepts the default options it reports back as a delegate target", () =>
     Effect.gen(function* () {
       // t3_thread_launch keeps a model selection as given, so a thread can hold an option its model lacks.
       const inherited = {
@@ -3537,7 +3599,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never;
             }),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ defaultModelSelection: inherited }),
         providerRegistryLayer([
           {
             ...providerSnapshot({

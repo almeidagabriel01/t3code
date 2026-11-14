@@ -53,6 +53,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
@@ -247,6 +249,11 @@ interface ScheduledTaskRow {
 /** Server-captured authority; never decoded from a public task mutation. */
 export interface CapturedTaskMemoryGrant {
   readonly memoryGrantCeiling: MemoryTaskGrantCeiling;
+  /**
+   * The stored model is only a preview: a new thread takes the project's model when it runs.
+   * Omitted keeps the stored choice unless the save changes the model, which pins it.
+   */
+  readonly modelFollowsProject?: boolean;
   /** Recorded on the first save only; later edits keep it. */
   readonly ownerAssistantId?: string | null;
 }
@@ -503,6 +510,9 @@ export const layer = Layer.effect(
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
     const groupGate = yield* Effect.serviceOption(AssistantGroupGate);
+    const projectModelSelection = yield* Effect.serviceOption(
+      ProjectModelSelection.ProjectModelSelectionService,
+    );
     const directory = yield* AssistantDirectory.AssistantDirectory;
     /** Why the task's owner may no longer start work in its project, or null. */
     const ownerRefusal = Effect.fn("ScheduledTaskService.ownerRefusal")(function* (
@@ -675,6 +685,26 @@ export const layer = Layer.effect(
       return task;
     });
 
+    const followsProject = (taskId: ScheduledTaskId) =>
+      sql<{ readonly model_follows_project: number }>`
+        SELECT model_follows_project FROM scheduled_tasks WHERE task_id = ${taskId}`.pipe(
+        Effect.map((rows) => rows[0]?.model_follows_project === 1),
+        Effect.mapError((cause) => taskError("Could not read schedule task.", { taskId, cause })),
+      );
+
+    /** A task the server scheduled without a model takes the project's when its thread is made. */
+    const newThreadModel = Effect.fn("ScheduledTaskService.newThreadModel")(
+      function* (task: ScheduledTask) {
+        if (Option.isNone(projectModelSelection) || !(yield* followsProject(task.id)))
+          return task.modelSelection;
+        return (yield* projectModelSelection.value.resolveForNewThread({
+          projectId: task.projectId,
+        })).selection;
+      },
+      // An unreadable precedence still runs the task, on the model it was saved with.
+      (effect, task) => effect.pipe(Effect.orElseSucceed(() => task.modelSelection)),
+    );
+
     // Run transitions own run-state columns; settings saves must not overwrite them.
     // Check existence in the write so edits cannot undo concurrent deletion.
     const saveTask = (
@@ -687,6 +717,7 @@ export const layer = Layer.effect(
         readonly secret: string | null;
         readonly secretChanged: boolean;
       },
+      modelFollowsProject: boolean,
     ) =>
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
@@ -716,6 +747,7 @@ export const layer = Layer.effect(
           missed_run_policy,
           max_runs,
           memory_grant_ceiling,
+          model_follows_project,
           webhook_token,
           webhook_secret
         )
@@ -746,6 +778,7 @@ export const layer = Layer.effect(
           ${task.missedRunPolicy ?? "skip"},
           ${task.maxRuns ?? null},
           ${task.memoryGrantCeiling ?? "none"},
+          ${modelFollowsProject ? 1 : 0},
           ${webhook.token},
           ${webhook.secret}
         WHERE ${requireExisting ? 0 : 1} = 1
@@ -771,6 +804,7 @@ export const layer = Layer.effect(
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           memory_grant_ceiling = excluded.memory_grant_ceiling,
+          model_follows_project = excluded.model_follows_project,
           missed_run_policy = excluded.missed_run_policy,
           max_runs = excluded.max_runs,
           creation_source = excluded.creation_source,
@@ -1097,34 +1131,30 @@ export const layer = Layer.effect(
                         ? Effect.void
                         : Effect.fail(taskError(refusal, { taskId: active.id })),
                     ),
-                    Effect.andThen(
-                      threadLaunch
-                        .launch({
-                          commandId,
-                          projectId: active.projectId,
-                          title: active.title,
-                          modelSelection: active.modelSelection,
-                          runtimeMode: active.runtimeMode,
-                          interactionMode: active.interactionMode,
-                          workspaceStrategy: active.workspaceStrategy,
-                          initialMessage: {
-                            messageId,
-                            scheduledTaskId: active.id,
-                            memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
-                            text: prompt,
-                            attachments: [],
-                          },
-                          createdBy: active.createdBy,
-                          creationSource: active.creationSource,
-                        })
-                        .pipe(
-                          Effect.map((launched) => launched.threadId),
-                          Effect.tap((threadId) =>
-                            threadMode === "new_thread"
-                              ? Effect.void
-                              : bindThread(active, threadId),
-                          ),
-                        ),
+                    Effect.andThen(newThreadModel(active)),
+                    Effect.flatMap((modelSelection) =>
+                      threadLaunch.launch({
+                        commandId,
+                        projectId: active.projectId,
+                        title: active.title,
+                        modelSelection,
+                        runtimeMode: active.runtimeMode,
+                        interactionMode: active.interactionMode,
+                        workspaceStrategy: active.workspaceStrategy,
+                        initialMessage: {
+                          messageId,
+                          scheduledTaskId: active.id,
+                          memoryGrantCeiling: active.memoryGrantCeiling ?? "none",
+                          text: prompt,
+                          attachments: [],
+                        },
+                        createdBy: active.createdBy,
+                        creationSource: active.creationSource,
+                      }),
+                    ),
+                    Effect.map((launched) => launched.threadId),
+                    Effect.tap((threadId) =>
+                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
                     ),
                   ),
                 )
@@ -1640,6 +1670,10 @@ export const layer = Layer.effect(
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
+        captured?.modelFollowsProject ??
+          (existingTask !== null &&
+            modelSelectionsEqual(existingTask.modelSelection, task.modelSelection) &&
+            (yield* followsProject(id))),
       );
       yield* notifyChanged;
       // Saving a routine with its switch flipped is a pause or resume too: the editor and the

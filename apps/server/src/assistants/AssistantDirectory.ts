@@ -8,6 +8,7 @@ import {
   type AssistantWorkspace,
   type EnvironmentId,
   assistantIdFromThreadId,
+  isAssistantGroupThreadId,
   isAssistantThreadId,
   AssistantAutonomy,
   DEFAULT_ASSISTANT_AUTONOMY,
@@ -22,7 +23,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { allTeams } from "./AssistantTeams.ts";
+import { allTeams, decodeModelSelectionJson } from "./AssistantTeams.ts";
 
 export interface AssistantRow {
   readonly assistant_id: string;
@@ -47,6 +48,7 @@ export interface AssistantRow {
   readonly mcp_servers_json: string | null;
   /** JSON array of the project ids a project assistant may work in; null reads as just `project_id`. */
   readonly project_ids_json?: string | null;
+  readonly default_model_selection?: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -121,6 +123,7 @@ export const toAssistant = (row: AssistantRow): Assistant => ({
     row.autonomy_json === null
       ? DEFAULT_ASSISTANT_AUTONOMY
       : Option.getOrElse(decodeAutonomyOption(row.autonomy_json), () => DEFAULT_ASSISTANT_AUTONOMY),
+  defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -137,9 +140,14 @@ export interface AssistantDirectoryShape {
   /** The linked environment of the sandbox container; none until it has been linked. */
   readonly sandboxEnvironmentId: Effect.Effect<Option.Option<EnvironmentId>>;
   /** None without a query unless `threadId` is an assistant thread id. */
-  readonly forThread: (
-    threadId: ThreadId,
-  ) => Effect.Effect<Option.Option<{ readonly assistant: Assistant; readonly current: boolean }>>;
+  readonly forThread: (threadId: ThreadId) => Effect.Effect<
+    Option.Option<{
+      readonly assistant: Assistant;
+      readonly current: boolean;
+      /** For a member's group conversation: its group, or null once no active group holds it. */
+      readonly team?: AssistantTeam | null;
+    }>
+  >;
   /** The assistant that launched this thread as a task. Task threads are ordinary threads. */
   readonly taskOwner: (threadId: ThreadId) => Effect.Effect<Option.Option<Assistant>>;
   /** Whether a group still owns this hidden thread; absent means it does. */
@@ -207,9 +215,17 @@ const make = Effect.gen(function* () {
       const id = assistantIdFromThreadId(threadId);
       if (id === null) return Option.none();
       const owner = yield* sql<AssistantRow>`SELECT * FROM assistants WHERE assistant_id = ${id}`;
-      return owner[0] === undefined
-        ? Option.none()
-        : Option.some({ assistant: toAssistant(owner[0]), current: false });
+      if (owner[0] === undefined) return Option.none();
+      const assistant = toAssistant(owner[0]);
+      if (!isAssistantGroupThreadId(threadId)) return Option.some({ assistant, current: false });
+      const held = yield* sql<{ readonly team_id: string }>`
+        SELECT team_id FROM assistant_group_threads WHERE thread_id = ${threadId}
+        UNION ALL SELECT team_id FROM assistant_group_request_threads WHERE thread_id = ${threadId}
+        LIMIT 1`;
+      const team = (yield* allTeams(sql)).find(
+        (candidate) => candidate.id === held[0]?.team_id && candidate.archivedAt === null,
+      );
+      return Option.some({ assistant, current: false, team: team ?? null });
       // A failed read must not look like "not an assistant": that would drop its read-only limit.
     }, Effect.orDie),
     inGroup: Effect.fn("AssistantDirectory.inGroup")(

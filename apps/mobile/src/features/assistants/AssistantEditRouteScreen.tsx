@@ -92,6 +92,10 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
     effectiveProject,
     modelLabel,
     modelSelection,
+    supportsDefaultModel,
+    defaultModelSelection,
+    defaultModelLabel,
+    userDefaultModelLabel,
     globalAutonomy,
   } = useAssistantEditor();
   const navigation = useNavigation();
@@ -294,6 +298,36 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
             />
           </ListSection>
         </View>
+        {assistant !== null && supportsDefaultModel ? (
+          <View className="gap-2">
+            <View className="gap-0.5 px-2">
+              <Text textRole="footnote" className="font-t3-medium text-foreground">
+                Default model
+              </Text>
+              <Text textRole="footnote" className="text-foreground-muted">
+                {defaultModelSelection !== null
+                  ? "New conversations and tasks start on it when the project names no model for this assistant."
+                  : userDefaultModelLabel === null
+                    ? "Follows your default model."
+                    : `Follows your default model, ${userDefaultModelLabel}.`}
+              </Text>
+            </View>
+            <ListSection>
+              <ListRow
+                icon="cube"
+                label={defaultModelLabel ?? userDefaultModelLabel ?? "Your default model"}
+                onPress={() => navigation.navigate("SettingsAssistantModel", { default: true })}
+              />
+              {defaultModelSelection === null ? null : (
+                <ListActionRow
+                  icon="arrow.uturn.backward"
+                  label="Use your default"
+                  onPress={() => updateAssistantDraft({ defaultModelSelection: null })}
+                />
+              )}
+            </ListSection>
+          </View>
+        ) : null}
         <TextField
           label="What should it do?"
           description="Its role and rules, in your words."

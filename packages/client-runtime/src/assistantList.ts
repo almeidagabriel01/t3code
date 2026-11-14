@@ -80,6 +80,7 @@ export function assistantMetaLabel(presence: AssistantPresence): string | null {
       return "Needs you";
     case "working":
       return presence.detail.startsWith("Working in ") ? presence.detail : "Working";
+    case "limited":
     case "failed":
       return presence.detail;
     case "idle":

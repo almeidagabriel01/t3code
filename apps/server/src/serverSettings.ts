@@ -1,4 +1,5 @@
 import {
+  AssistantId,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -11,6 +12,7 @@ import {
   isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ResponseStreamingMode,
   ServerSettings,
@@ -58,6 +60,7 @@ import {
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
@@ -316,6 +319,33 @@ function ensureProviderInstanceMutationAllowed(
     );
   }
   return Effect.void;
+}
+
+/** An instance a write newly points a project or per-assistant model at but cannot run there. */
+function unavailableProjectModelInstance(
+  current: ServerSettings,
+  next: ServerSettings,
+): ProviderInstanceId | null {
+  for (const [key, override] of Object.entries(next.projectSettingsOverrides)) {
+    const projectId = ProjectId.make(key);
+    const previous = current.projectSettingsOverrides[projectId];
+    const pairs = [
+      [override.defaultModelSelection, previous?.defaultModelSelection],
+      ...Object.entries(override.assistantModelSelections ?? {}).map(
+        ([assistantId, selection]) =>
+          [selection, previous?.assistantModelSelections?.[AssistantId.make(assistantId)]] as const,
+      ),
+    ] as const;
+    for (const [selection, before] of pairs) {
+      // An unchanged value stays, so a default whose instance was disabled later blocks no edit.
+      if (selection == null || (before != null && modelSelectionsEqual(selection, before)))
+        continue;
+      if (!resolveProjectProviderInstanceEnabled(next, projectId, selection.instanceId)) {
+        return selection.instanceId;
+      }
+    }
+  }
+  return null;
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -1435,6 +1465,17 @@ const make = Effect.gen(function* () {
           providerInstanceId: vettedProviders.instanceId,
           providerLabel: vettedProviders.label,
           managedBy: managedPolicy?.organization,
+        });
+      }
+      const unavailableInstance = unavailableProjectModelInstance(
+        current,
+        vettedProviders.settings,
+      );
+      if (unavailableInstance !== null) {
+        return yield* new ServerSettingsError({
+          settingsPath,
+          operation: "use-unavailable-provider-instance",
+          providerInstanceId: unavailableInstance,
         });
       }
       // After vetting, which can keep stored variables a policy hides from clients.

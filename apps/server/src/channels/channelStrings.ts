@@ -44,6 +44,8 @@ export interface ChannelStrings {
   /** After a number answered one card while another is still open in the chat. */
   readonly stillWaiting: (title: string) => string;
   readonly groupTaskReason: (reason: string | null) => string;
+  /** When a provider's usage limit resets; `time` is null when the provider did not say. */
+  readonly usageLimitBack: (time: string | null) => string;
   readonly decision: {
     readonly approve: string;
     readonly deny: string;
@@ -66,6 +68,7 @@ export interface ChannelStrings {
     readonly watch: string;
     readonly routine: string;
     readonly taskPaused: string;
+    readonly usageLimit: string;
   };
 }
 
@@ -111,6 +114,7 @@ const en: ChannelStrings = {
         : reason === "routing_failed"
           ? "No member could be picked for it. Reassign or cancel it."
           : `Paused${reason === null ? "" : ` (${reason})`}. Resume, reassign or cancel it.`,
+  usageLimitBack: (time) => (time === null ? "Back when the limit resets." : `Back at ${time}.`),
   decision: {
     approve: "Approve",
     deny: "Deny",
@@ -131,6 +135,7 @@ const en: ChannelStrings = {
     watch: "Watch:",
     routine: "Routine:",
     taskPaused: "Group task paused",
+    usageLimit: "Usage limit reached",
   },
 };
 
@@ -176,6 +181,7 @@ const ptBR: ChannelStrings = {
         : reason === "routing_failed"
           ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
           : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
+  usageLimitBack: (time) => (time === null ? "Volta quando o limite renovar." : `Volta: ${time}.`),
   decision: {
     approve: "Aprovar",
     deny: "Negar",
@@ -196,6 +202,7 @@ const ptBR: ChannelStrings = {
     watch: "Vigia:",
     routine: "Rotina:",
     taskPaused: "Tarefa de grupo pausada",
+    usageLimit: "Limite de uso atingido",
   },
 };
 
@@ -238,6 +245,7 @@ const AFTER_COLON: ReadonlyArray<DecisionKey> = [
   "ciFailed",
   "reviewIncomplete",
   "taskPaused",
+  "usageLimit",
   "watch",
 ];
 const LABELS: ReadonlyArray<DecisionKey> = ["approve", "deny", "gotIt"];

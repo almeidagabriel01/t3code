@@ -1,5 +1,5 @@
 import { applyAssistantGroupsEvent } from "@t3tools/client-runtime/assistantGroupChat";
-import { ASSISTANT_GROUP_MESSAGE_MAX_CHARS } from "@t3tools/contracts";
+import { ASSISTANT_GROUP_MESSAGE_MAX_CHARS, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { act, useImperativeHandle, type ReactNode, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -69,6 +69,11 @@ const { mocks, Children } = vi.hoisted(() => ({
     preferences: {} as { assistantGroupTabs?: Record<string, string> },
     preferenceListeners: new Set<() => void>(),
     savePreferences: vi.fn(),
+    navigate: vi.fn(),
+    writeSettings: vi.fn(),
+    canWriteSettings: true,
+    /** Members' own models in project p1, by assistant id. */
+    exceptions: {} as Record<string, unknown>,
   },
 }));
 vi.mock("react-native", () => ({
@@ -396,7 +401,11 @@ vi.mock("@legendapp/list/react-native", () => ({
   },
 }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: mocks.goBack, dispatch: mocks.dispatch }),
+  useNavigation: () => ({
+    goBack: mocks.goBack,
+    dispatch: mocks.dispatch,
+    navigate: mocks.navigate,
+  }),
   // The tablet sidebar opens the chat by id, outside any navigator screen.
   useRoute: () => {
     throw new Error("useRoute outside a navigator screen");
@@ -409,8 +418,12 @@ vi.mock("../../components/ui/AppText", () => ({
   ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
-type MockMenuRow = { title: string; subtitle?: string; disabled?: boolean; onPress: () => void };
-type MockMenuItem = MockMenuRow | { title: string; items: Array<MockMenuRow> };
+type MockMenuItem =
+  | { title: string; subtitle?: string; disabled?: boolean; onPress: () => void }
+  | { title: string; items: Array<MockMenuItem> };
+type MockMenuAction = Extract<MockMenuItem, { onPress: () => void }>;
+const flattenMenu = (items: Array<MockMenuItem>): Array<MockMenuAction> =>
+  items.flatMap((item) => ("items" in item ? flattenMenu(item.items) : [item]));
 vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
@@ -427,17 +440,34 @@ vi.mock("../../components/ui/AppBar", () => ({
       <button aria-label="header:back to list" onClick={props.onBackToList} />
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
-      {props.menus?.[0]?.items
-        .flatMap((item) => ("items" in item ? item.items : [item]))
-        .map((item) => (
-          <button
-            key={item.title}
-            aria-label={`header:${item.title}`}
-            data-subtitle={item.subtitle}
-            disabled={item.disabled}
-            onClick={item.onPress}
-          />
-        ))}
+      {/* Submenu titles, so a test can see what a nested entry is called. */}
+      {props.menus?.[0]?.items.flatMap((item) =>
+        "items" in item
+          ? [
+              <span key={item.title} data-testid="header-submenu">
+                {item.title}
+              </span>,
+              ...item.items.flatMap((child) =>
+                "items" in child
+                  ? [
+                      <span key={child.title} data-testid="header-submenu">
+                        {child.title}
+                      </span>,
+                    ]
+                  : [],
+              ),
+            ]
+          : [],
+      )}
+      {flattenMenu(props.menus?.[0]?.items ?? []).map((item) => (
+        <button
+          key={item.title}
+          aria-label={`header:${item.title}`}
+          data-subtitle={item.subtitle}
+          disabled={item.disabled}
+          onClick={item.onPress}
+        />
+      ))}
     </header>
   ),
 }));
@@ -531,6 +561,39 @@ const PROJECTS = vi.hoisted(() => [
   { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/repo/beta" },
   { environmentId: "other", id: "p3", title: "Elsewhere" },
 ]);
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({
+    environments: [
+      {
+        environmentId: "hub",
+        label: "Hub",
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: {
+              p1: {
+                defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" },
+                assistantModelSelections: mocks.exceptions,
+              },
+            },
+          },
+        },
+      },
+    ],
+  }),
+}));
+vi.mock("../../state/session", () => ({
+  useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>
+    new Set(mocks.canWriteSettings ? environments.map((entry) => entry.environmentId) : []),
+}));
+vi.mock("../settings/settings-environment-filter", () => ({
+  connectedSettingsTargets: (environments: unknown[]) => environments,
+}));
+vi.mock("../settings/useSettingsWriter", () => ({ useSettingsWriter: () => mocks.writeSettings }));
+vi.mock("../settings/components/SettingsModelPicker", () => ({
+  modelDisplayName: (_options: unknown, selection: { model: string }) => `name:${selection.model}`,
+}));
+vi.mock("../../lib/modelOptions", () => ({ buildModelOptions: () => [] }));
 vi.mock("../../state/entities", () => ({
   useQuietThreadShell: (ref: { threadId: string } | null) => {
     const title = ref === null ? undefined : mocks.shells.get(ref.threadId);
@@ -545,6 +608,7 @@ vi.mock("../../state/entities", () => ({
       (project) => project.environmentId === ref?.environmentId && project.id === ref.projectId,
     ) ?? null,
   useProjects: () => PROJECTS,
+  useEnvironmentServerConfig: () => null,
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || !mocks.waiting.has(ref.threadId)
       ? null
@@ -628,6 +692,10 @@ vi.mock("./assistantPresentation", () => ({
   ),
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantTeamFlows: () => ({
@@ -798,6 +866,8 @@ beforeEach(() => {
     mocks.markdownRender,
     mocks.subscribe,
     mocks.savePreferences,
+    mocks.navigate,
+    mocks.writeSettings,
   ])
     fn.mockReset();
   mocks.preferences = {};
@@ -808,6 +878,8 @@ beforeEach(() => {
       for (const listener of mocks.preferenceListeners) listener();
     },
   );
+  mocks.canWriteSettings = true;
+  mocks.exceptions = {};
   mocks.drafts.clear();
   mocks.draftListeners.clear();
   mocks.release.mockResolvedValue(undefined);
@@ -896,6 +968,8 @@ describe("group chat feed", () => {
           resources: ["folder:/w/app", "browser"],
         }),
         task("t22", "running", "bo"),
+        task("t333", "usage_limited", "beto", { resetAt: "2099-01-01T09:30Z" }),
+        task("t4444", "usage_limited", "jarvis"),
       ],
     );
     render();
@@ -906,10 +980,12 @@ describe("group chat feed", () => {
     expect(container.querySelector('[data-testid="group-task-resources"]')?.textContent).toBe(
       "folder:/w/appbrowser",
     );
-    expect(container.querySelectorAll('[data-testid="group-task-waiting"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="group-task-waiting"]')?.textContent).toBe(
-      "waiting for browser (used by Bo)",
-    );
+    // A usage limit says until when; without a reset ahead its badge says it alone.
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="group-task-waiting"]'), (node) => [
+        node.textContent,
+      ]),
+    ).toEqual([["waiting for browser (used by Bo)"], ["Limit until <2099-01-01T09:30Z>"]]);
   });
 
   it("says on a running card when its member waits for the user's approval", () => {
@@ -1785,6 +1861,61 @@ describe("requests", () => {
     });
     // The pick is for one message.
     expect(byLabel("Project: Lead decides")).not.toBeNull();
+  });
+
+  it("shows the picked project's model beside it and opens that project's picker", async () => {
+    setup();
+    // The lead decides the project, so there is no project model to show.
+    expect(container.querySelector('[aria-label^="Model for"]')).toBeNull();
+    expect(text()).not.toContain("Model in");
+    await click("Project:Alpha");
+    await click("Model for Alpha: name:gpt-5.5");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+    });
+    mocks.canWriteSettings = false;
+    render();
+    expect(byLabel("Model for Alpha: name:gpt-5.5")?.disabled).toBe(true);
+  });
+
+  it("shows the group's default, else the members' own models, for a project without its own", async () => {
+    setup();
+    await click("Project:Beta");
+    expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
+    expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
+  });
+
+  it("sets a member's own model in the picked project from the header menu, and removes it", async () => {
+    mocks.exceptions = { ada: { instanceId: "codex", model: "gpt-5.4" } };
+    setup();
+    await click("Project:Alpha");
+    const submenus = () =>
+      [...container.querySelectorAll('[data-testid="header-submenu"]')].map(
+        (node) => node.textContent,
+      );
+    expect(submenus()).toEqual(["Model in Alpha", "Ada · name:gpt-5.4"]);
+    await click("header:Beto");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+      assistantId: "beto",
+    });
+    await click("header:Change model");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+      assistantId: "ada",
+    });
+    await click("header:Remove exception");
+    expect(mocks.writeSettings).toHaveBeenCalledWith(expect.any(Array), [
+      {
+        environmentId: "hub",
+        patch: {
+          projectSettingsOverrides: {
+            p1: expect.objectContaining({ assistantModelSelections: { ada: null } }),
+          },
+        },
+      },
+    ]);
   });
 
   it("replies to a request in its project, locked, and lets one without a project pick", async () => {

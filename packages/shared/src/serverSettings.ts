@@ -306,10 +306,24 @@ function pickOverrideKeys(entry: ProjectSettingsOverrides | undefined, known: bo
   );
 }
 
-// Older clients omit providerInstances during whole-entry replacement; preserve it to avoid wiping overrides.
+type ProjectSettingsOverridesPatch = NonNullable<ServerSettingsPatch["projectSettingsOverrides"]>;
+
+function mergeAssistantModelSelections(
+  stored: ProjectSettingsOverrides["assistantModelSelections"],
+  patch: Readonly<Record<string, ModelSelection | null>> | undefined,
+) {
+  const merged = Object.fromEntries(
+    Object.entries({ ...stored, ...patch }).filter(
+      (entry): entry is [string, ModelSelection] => entry[1] !== null,
+    ),
+  );
+  return Object.keys(merged).length > 0 ? { assistantModelSelections: merged } : {};
+}
+
+// Older clients omit providerInstances and assistantModelSelections during whole-entry replacement; preserve them to avoid wiping overrides.
 function mergeProjectSettingsOverridesPatch(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
-  patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
+  patch: ProjectSettingsOverridesPatch,
 ): Record<string, ProjectSettingsOverrides> {
   const next = new Map(Object.entries(current));
   for (const [projectId, entry] of Object.entries(patch)) {
@@ -318,13 +332,16 @@ function mergeProjectSettingsOverridesPatch(
       continue;
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
+    const { assistantModelSelections: storedAssistants, ...stored } = current[projectId] ?? {};
+    const { assistantModelSelections: patchedAssistants, ...written } = entry;
     next.set(projectId, {
       // Preserve downgraded storage, but reject new unknown writes so clients can detect unsupported settings.
-      ...pickOverrideKeys(current[projectId], false),
-      ...pickOverrideKeys(entry, true),
+      ...pickOverrideKeys(stored, false),
+      ...pickOverrideKeys(written, true),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
+      ...mergeAssistantModelSelections(storedAssistants, patchedAssistants),
     });
   }
   return Object.fromEntries(next);
@@ -372,7 +389,7 @@ function translateLegacyProjectOverridePatch(
   }
   const currentEntries: Readonly<Record<string, ProjectSettingsOverrides>> =
     current.projectSettingsOverrides;
-  const entries = new Map<string, ProjectSettingsOverrides | null>(
+  const entries = new Map<string, ProjectSettingsOverridesPatch[ProjectId]>(
     Object.entries(rest.projectSettingsOverrides ?? {}),
   );
   // Canonical entries outrank legacy maps, including deliberately omitted keys.
@@ -384,7 +401,7 @@ function translateLegacyProjectOverridePatch(
     if (map === undefined) return;
     for (const [projectId, value] of Object.entries(map)) {
       if (canonicalProjectIds.has(projectId)) continue;
-      const entry: ProjectSettingsOverrides = {
+      const entry: NonNullable<ProjectSettingsOverridesPatch[ProjectId]> = {
         ...(entries.get(projectId) ?? currentEntries[projectId]),
       };
       if (value === null || value === undefined) {

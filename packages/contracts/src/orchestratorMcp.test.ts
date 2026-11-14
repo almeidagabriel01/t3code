@@ -65,5 +65,12 @@ describe("orchestrator MCP contracts", () => {
         pendingApproval: { ...pendingApproval, kind: "user_input" },
       }),
     ).toThrow();
+    expect(
+      decodeDelegateTaskResult({
+        ...result,
+        status: "usage_limited",
+        resetAt: "2026-11-13T18:00:00.000Z",
+      }),
+    ).toMatchObject({ status: "usage_limited", resetAt: "2026-11-13T18:00:00.000Z" });
   });
 });

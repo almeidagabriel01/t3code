@@ -21,11 +21,13 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { AssistantAvatar } from "./assistantPresentation";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const STATUS_TONE = {
   queued: "text-muted-foreground",
   running: "text-info-foreground",
   waiting: "text-warning-foreground",
+  usage_limited: "text-warning-foreground",
   completed: "text-success-foreground",
   paused: "text-warning-foreground",
   cancelled: "text-muted-foreground",
@@ -58,7 +60,9 @@ export function GroupTaskCard(props: {
   );
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
-  const waiting = assistantGroupWaitingReason(task);
+  const limitLabel = useUsageLimitLabel();
+  const waiting =
+    task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
   return (
     <div

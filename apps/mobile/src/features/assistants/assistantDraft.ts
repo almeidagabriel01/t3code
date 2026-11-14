@@ -61,6 +61,8 @@ export interface AssistantDraft {
   readonly projectIds: ReadonlyArray<string> | null;
   /** Null until picked; the form then shows the conversation's current or default model. */
   readonly modelSelection: ModelSelection | null;
+  /** The assistant's own default model: undefined until touched, null to follow the user's. */
+  readonly defaultModelSelection: ModelSelection | null | undefined;
   readonly instructions: string;
   readonly toolAccess: AssistantToolAccess;
   readonly askBeforeActing: boolean;
@@ -178,6 +180,7 @@ export function assistantDraftFor(
         ? [preset.projectId]
         : null,
     modelSelection: null,
+    defaultModelSelection: undefined,
     instructions: assistant?.instructions ?? "",
     toolAccess: assistant?.toolAccess ?? "workspace-write",
     askBeforeActing: assistant?.askBeforeActing ?? true,
@@ -376,6 +379,9 @@ export function assistantUpdateInput(
       ? {}
       : assistantProjectFields(picked as ReadonlyArray<ProjectId>, home)),
     ...(current.modelSelection ? { modelSelection: current.modelSelection } : {}),
+    ...(current.defaultModelSelection === undefined
+      ? {}
+      : { defaultModelSelection: current.defaultModelSelection }),
     ...(current.instructions !== assistant.instructions
       ? { instructions: current.instructions }
       : {}),

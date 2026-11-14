@@ -16,6 +16,7 @@ import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { formatUpcomingTimestamp } from "~/timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { getRouter } from "~/router";
 import { assistantDialogAtom } from "./assistantDialogState";
@@ -50,11 +51,18 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 
 const conversation = threadWithHistory("assistant:jarvis:1", 1);
+const limitedConversation = threadWithHistory("assistant:scout:1", 1);
+const LIMIT_RESET_AT = "2099-03-04T09:30:00.000Z";
 installFakeEnvironment(
   [
     {
       ...conversation,
       runs: conversation.runs.map((run) => ({ ...run, status: "failed" as const })),
+    },
+    {
+      ...limitedConversation,
+      runs: limitedConversation.runs.map((run) => ({ ...run, status: "failed" as const })),
+      shell: { lastErrorClass: "usage_limit", usageLimitResetAt: LIMIT_RESET_AT },
     },
   ],
   { assistants: true },
@@ -149,6 +157,19 @@ it("opens from the card, says it can work, and retries a failed run", async () =
       }),
     ),
   );
+});
+
+it("says until when a run that hit a usage limit waits", async () => {
+  await using _screen = await openWork([assistant("scout", "Scout")]);
+  const dialog = page.getByRole("dialog", { name: "Scout work" });
+  await expect
+    .element(
+      dialog.getByText(
+        `Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, DEFAULT_CLIENT_SETTINGS.timestampFormat)}`,
+      ),
+    )
+    .toBeVisible();
+  await expect.element(dialog.getByText("Its last run failed.")).not.toBeInTheDocument();
 });
 
 it("says why it cannot work and sends the fix to where it is made", async () => {

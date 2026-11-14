@@ -1,6 +1,9 @@
 import { Pressable, ScrollView } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { archiveProjectMenuActions, runArchiveProjectAction } from "../projects/archiveProjectMenu";
+import {
+  runSelectedProjectAction,
+  selectedProjectMenuActions,
+} from "../projects/archiveProjectMenu";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type {
@@ -16,6 +19,7 @@ export function ThreadListFilters(props: {
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onArchiveProject?: (() => void) | undefined;
+  readonly onOpenProjectSettings?: (() => void) | undefined;
   /** List padding the scroller bleeds through so pills start where row content does. */
   readonly gutter: number;
 }) {
@@ -25,6 +29,10 @@ export function ThreadListFilters(props: {
   const selectedProject = props.projects.find(
     (project) => project.key === props.selectedProjectKey,
   );
+  const projectActions = {
+    openSettings: props.onOpenProjectSettings,
+    archive: props.onArchiveProject,
+  };
   return (
     <ScrollView
       horizontal
@@ -76,10 +84,10 @@ export function ThreadListFilters(props: {
             title: project.needsAttention ? `${project.label} •` : project.label,
             state: project.key === props.selectedProjectKey ? ("on" as const) : ("off" as const),
           })),
-          ...archiveProjectMenuActions(selectedProject, props.onArchiveProject),
+          ...selectedProjectMenuActions(selectedProject, projectActions),
         ]}
         onSelect={(id) => {
-          if (runArchiveProjectAction(id, props.onArchiveProject)) return;
+          if (runSelectedProjectAction(id, projectActions)) return;
           if (id === "all") props.onProjectChange(null);
           else {
             const project = props.projects.find(

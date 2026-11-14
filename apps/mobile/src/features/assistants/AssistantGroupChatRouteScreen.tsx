@@ -112,6 +112,7 @@ import {
   type GroupSendResult,
 } from "./GroupComposer";
 import { GroupProjectTabs } from "./GroupProjectTabs";
+import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
@@ -1241,7 +1242,7 @@ export function AssistantGroupChatRouteScreen({
   const openEditor = useOpenAssistantEditor();
   const projects = useProjects();
   const people = useGroupPeople(environmentId, teamId);
-  const { team, everyone, members, groupProjects } = people;
+  const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
   const tabs =
     team === undefined
@@ -1267,6 +1268,13 @@ export function AssistantGroupChatRouteScreen({
       : null;
   const composerProject =
     projectPick !== undefined ? projectPick : replyTo === null ? tabProject : null;
+  // The project the next message runs in: a reply's request project, else the composer's.
+  const modelProjectId = replyTo?.projectId ?? composerProject;
+  const projectModel = useGroupProjectModel(
+    environmentId,
+    modelProjectId,
+    team?.defaultModelSelection ?? null,
+  );
 
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
@@ -1375,6 +1383,48 @@ export function AssistantGroupChatRouteScreen({
                 icon: "calendar.badge.clock",
                 onPress: () => openTeam.settings(environmentId, team.id, "routines"),
               },
+              ...(projectModel === null || modelProjectId === null || members.length === 0
+                ? []
+                : [
+                    {
+                      id: "member-models",
+                      title: `Model in ${projectName(modelProjectId)}`,
+                      icon: "cube",
+                      items: members.map((member) => {
+                        const exception = projectModel.exceptions[member.id];
+                        const disabled = !projectModel.canWrite;
+                        return exception === undefined
+                          ? {
+                              id: `model:${member.id}`,
+                              title: member.name,
+                              subtitle: "No exception",
+                              disabled,
+                              onPress: () => projectModel.openMemberPicker(member.id),
+                            }
+                          : {
+                              id: `model:${member.id}`,
+                              title: `${member.name} · ${projectModel.nameOf(exception)}`,
+                              items: [
+                                {
+                                  id: `model:${member.id}:change`,
+                                  title: "Change model",
+                                  icon: "cube",
+                                  disabled,
+                                  onPress: () => projectModel.openMemberPicker(member.id),
+                                },
+                                {
+                                  id: `model:${member.id}:remove`,
+                                  title: "Remove exception",
+                                  icon: "trash",
+                                  destructive: true,
+                                  disabled,
+                                  onPress: () => projectModel.removeException(member.id),
+                                },
+                              ],
+                            };
+                      }),
+                    },
+                  ]),
               {
                 id: "new-conversation",
                 title: "New conversation",
@@ -1478,6 +1528,7 @@ export function AssistantGroupChatRouteScreen({
         projects={groupProjects}
         projectId={composerProject}
         onProjectChange={setProjectPick}
+        projectModel={projectModel}
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}

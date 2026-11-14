@@ -120,6 +120,7 @@ interface HomeScreenProps {
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onArchiveProject?: (() => void) | undefined;
+  readonly onOpenProjectSettings?: (() => void) | undefined;
   readonly onAddConnection: () => void;
   readonly onOpenSettings: () => void;
   readonly onStartNewTask: () => void;
@@ -773,6 +774,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onEnvironmentChange={props.onEnvironmentChange}
           onProjectChange={props.onProjectChange}
           onArchiveProject={props.onArchiveProject}
+          onOpenProjectSettings={props.onOpenProjectSettings}
         />
       ) : null}
       {hasSearchQuery ? null : (

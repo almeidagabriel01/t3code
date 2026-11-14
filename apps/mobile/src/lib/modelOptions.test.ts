@@ -897,6 +897,18 @@ describe("modelWithEffortLabel", () => {
     ],
     ["the default effort", option({}), selection(), "Haiku 5.5 · Medium"],
     ["no options", option({ capabilities: null }), selection(), "Haiku 5.5"],
+    [
+      "another instance of the same driver",
+      option({ providerBadge: { displayName: "Beyond", showBadge: true } }),
+      selection([{ id: "effort", value: "high" }]),
+      "Haiku 5.5 · Beyond · High",
+    ],
+    [
+      "the only instance of its driver",
+      option({ capabilities: null, providerBadge: { displayName: "Claude", showBadge: false } }),
+      selection(),
+      "Haiku 5.5",
+    ],
     ["an unknown model", undefined, selection(), "claude-haiku-5-5"],
   ])("labels %s", (_case, modelOption, modelSelection, expected) => {
     expect(modelWithEffortLabel(modelSelection, modelOption)).toBe(expected);

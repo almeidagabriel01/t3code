@@ -15,6 +15,7 @@ import { useAssistantTask, useTaskAssistant } from "../../state/assistants";
 import { useThreadShell } from "../../state/entities";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useAssistantFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 /** The face of the assistant that launched this thread, in the mood of the work; tap opens it, and its menu dismisses or restores the task. */
 export function AssistantTaskChip(props: {
@@ -26,9 +27,13 @@ export function AssistantTaskChip(props: {
   const shell = useThreadShell(owner === null ? null : scopeThreadRef(environmentId, threadId));
   const task = useAssistantTask(environmentId, threadId);
   const flows = useAssistantFlows(environmentId);
+  const limitLabel = useUsageLimitLabel();
   if (owner === null) return null;
   const state = shell === null ? "running" : assistantTaskState(shell);
-  const label = `Task of ${owner.assistant.name}, ${ASSISTANT_TASK_STATE_LABEL[state].toLowerCase()}`;
+  const stateLabel =
+    (state === "usage_limited" ? limitLabel(shell?.runtime?.usageLimitResetAt) : null) ??
+    ASSISTANT_TASK_STATE_LABEL[state];
+  const label = `Task of ${owner.assistant.name}, ${stateLabel.toLowerCase()}`;
   const dismissed = task?.dismissedAt != null;
   const actions: MenuAction[] = [
     {

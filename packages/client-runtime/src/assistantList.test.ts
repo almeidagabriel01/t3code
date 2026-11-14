@@ -92,6 +92,7 @@ describe("assistantMetaLabel", () => {
     ["working", "Reading the repo", "Working"],
     ["working", "Working in Leadership", "Working in Leadership"],
     ["failed", "Last run failed", "Last run failed"],
+    ["limited", "Limit until 15:30", "Limit until 15:30"],
     ["idle", "Idle", null],
   ] as const)("%s / %s", (mood, detail, expected) => {
     expect(assistantMetaLabel({ mood, detail, since: null, reading: false, queued: 0 })).toBe(

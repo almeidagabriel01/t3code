@@ -33,6 +33,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import { layerProjectModelSelection } from "../mcp/McpToolAccess.testkit.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
@@ -152,6 +153,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+    Layer.provide(layerProjectModelSelection),
     Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
