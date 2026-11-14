@@ -372,9 +372,8 @@ vi.mock("../../components/ui/AppText", () => ({
   ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
-type MockMenuItem =
-  | { title: string; disabled?: boolean; onPress: () => void }
-  | { title: string; items: Array<{ title: string; disabled?: boolean; onPress: () => void }> };
+type MockMenuRow = { title: string; subtitle?: string; disabled?: boolean; onPress: () => void };
+type MockMenuItem = MockMenuRow | { title: string; items: Array<MockMenuRow> };
 vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
@@ -397,6 +396,7 @@ vi.mock("../../components/ui/AppBar", () => ({
           <button
             key={item.title}
             aria-label={`header:${item.title}`}
+            data-subtitle={item.subtitle}
             disabled={item.disabled}
             onClick={item.onPress}
           />
@@ -1721,8 +1721,15 @@ describe("conversation actions in the header", () => {
       team({ chat: { latestSeq: 4, readSeq: 4, unreadCount: 0, working: true, preview: null } }),
     ];
     render();
-    for (const title of ["New conversation", "Compact context", "Clear history"])
+    for (const title of ["New conversation", "Compact context", "Clear history"]) {
       expect(byLabel(`header:${title}`)?.disabled).toBe(true);
+      expect(byLabel(`header:${title}`)?.dataset.subtitle).toBe("Stop its tasks first");
+    }
+  });
+
+  it("say nothing extra while the group is idle", () => {
+    render();
+    expect(byLabel("header:New conversation")?.dataset.subtitle).toBeUndefined();
   });
 });
 

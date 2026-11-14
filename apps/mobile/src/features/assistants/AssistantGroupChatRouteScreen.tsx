@@ -1059,6 +1059,8 @@ export function AssistantGroupChatRouteScreen({
   const running = chat === null ? 0 : assistantGroupRunningCount(chat);
   // As in Group settings: the conversation does not change under running work.
   const converseDisabled = !flows.canConverse || team.chat?.working === true;
+  // The server refuses these while tasks run; the menu says why instead of only greying them out.
+  const converseHint = team.chat?.working === true ? { subtitle: "Stop its tasks first" } : {};
   return (
     <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
       <AppBar
@@ -1121,6 +1123,7 @@ export function AssistantGroupChatRouteScreen({
                 title: "New conversation",
                 icon: "plus.bubble",
                 disabled: converseDisabled,
+                ...converseHint,
                 onPress: () => void flows.converse(team, "new"),
               },
               {
@@ -1128,6 +1131,7 @@ export function AssistantGroupChatRouteScreen({
                 title: "Compact context",
                 icon: "arrow.down.right.and.arrow.up.left",
                 disabled: converseDisabled,
+                ...converseHint,
                 onPress: () => void flows.converse(team, "compact"),
               },
               {
@@ -1136,6 +1140,7 @@ export function AssistantGroupChatRouteScreen({
                 icon: "trash",
                 destructive: true,
                 disabled: converseDisabled,
+                ...converseHint,
                 onPress: () => {
                   // An alert over an open keyboard leaves a stale keyboard height behind.
                   Keyboard.dismiss();
