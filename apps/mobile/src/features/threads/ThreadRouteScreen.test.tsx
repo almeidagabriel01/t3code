@@ -178,7 +178,7 @@ vi.mock("./ThreadHeader", () => ({ ThreadHeader: Nothing }));
 vi.mock("./resume-thread", () => ({ resumeThread: noop }));
 vi.mock("./thread-inspector-preview", () => ({
   InspectorContentScope: Nothing,
-  ThreadInspectorHeader: Nothing,
+  ThreadInspectorHeader: (props: { title: string }) => <h2>{props.title}</h2>,
   ThreadInspectorPreview: Nothing,
 }));
 vi.mock("./useStartSideChat", () => ({ useStartSideChatWithPrompt: () => noop }));
@@ -242,10 +242,19 @@ it("shows a starting side chat's message, then why it failed, then the thread it
   expect(host.textContent).not.toContain("thread: Side chat thread");
 
   harness.detailMessages = [{ id: "m" }];
+  // In the inspector, the shown thread's title replaces the placeholder's.
   await act(async () =>
-    setStartingSideChat(sideChatId, { prompt: "why does this fail?", error: null, started: true }),
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <ThreadRouteScreen
+          route={{ params: { environmentId: "env", threadId: "side" } }}
+          inspectorPresentation={{ onClose: noop }}
+        />
+      </RegistryContext.Provider>,
+    ),
   );
   expect(host.textContent).toContain("thread: Side chat thread");
+  expect(host.querySelector("h2")?.textContent).toBe("Side chat thread");
   harness.detailMessages = null;
 
   await act(async () => root.unmount());

@@ -302,11 +302,21 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   }
   const startingSideChat = threadIdRaw === null ? undefined : startingSideChats[threadIdRaw];
   const threadReady = selectedThread !== null && selectedThreadKey === routeThreadKey;
+  // An empty shell or detail arriving first must not replace the message.
+  // A failed start whose thread exists after all shows the thread, not the stale error.
+  const sideChatDetailShown =
+    startingSideChat?.started === true &&
+    (Option.exists(selectedThreadDetailState.data, (detail) => detail.messages.length > 0) ||
+      Option.isSome(detailError) ||
+      selectedThreadDetailState.status === "deleted");
+  const showsStartingSideChat =
+    startingSideChat !== undefined &&
+    !(threadReady && (startingSideChat.error !== null || sideChatDetailShown));
   const withInspectorHeader = (content: ReactNode) =>
     props.inspectorPresentation ? (
       <InspectorHeaderShownContext value>
         <ThreadInspectorHeader
-          title={startingSideChat ? "Side chat" : (selectedThread?.title ?? "Thread")}
+          title={showsStartingSideChat ? "Side chat" : (selectedThread?.title ?? "Thread")}
           {...props.inspectorPresentation}
         />
         {content}
@@ -319,17 +329,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  // Before the thread branch: an empty shell or detail arriving first must not replace the message.
-  // A failed start whose thread exists after all shows the thread, not the stale error.
-  const sideChatDetailShown =
-    startingSideChat?.started === true &&
-    (Option.exists(selectedThreadDetailState.data, (detail) => detail.messages.length > 0) ||
-      Option.isSome(detailError) ||
-      selectedThreadDetailState.status === "deleted");
-  if (
-    startingSideChat &&
-    !(threadReady && (startingSideChat.error !== null || sideChatDetailShown))
-  ) {
+  if (startingSideChat && showsStartingSideChat) {
     return withInspectorHeader(<StartingSideChatScreen {...startingSideChat} />);
   }
 
