@@ -455,7 +455,23 @@ it.effect("remove deletes the row first, then every conversation and its schedul
     const made = yield* assistants.create(create());
     yield* assistants.reset({ assistantId: made.id });
     pointers.length = 0;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const other = AssistantId.make("other");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [repo]: {
+          defaultModelSelection: model("repo"),
+          assistantModelSelections: { [made.id]: model("mine") },
+        },
+        [scratch]: { assistantModelSelections: { [made.id]: model("mine"), [other]: model("x") } },
+      },
+    });
     yield* assistants.remove(made.id);
+    // Its per-project exceptions go with it in every project; the rest stays.
+    assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides, {
+      [repo]: { defaultModelSelection: model("repo") },
+      [scratch]: { assistantModelSelections: { [other]: model("x") } },
+    });
     assert.deepEqual(
       pointers.map((entry) => [entry.type, entry.threadId, entry.rows]),
       [

@@ -1042,6 +1042,24 @@ const make = Effect.gen(function* () {
   const threadIdsOf = (assistantId: string, generation: number) =>
     Array.from({ length: generation }, (_, index) => assistantThreadIdFor(assistantId, index + 1));
 
+  /** Drops the assistant's per-project model exception in every project that has one. */
+  const forgetModelSelections = Effect.fn("AssistantService.forgetModelSelections")(function* (
+    assistantId: AssistantId,
+  ) {
+    const { projectSettingsOverrides } = yield* serverSettings.getSettings;
+    const patch = Object.fromEntries(
+      Object.entries(projectSettingsOverrides)
+        .filter(([, stored]) => stored.assistantModelSelections?.[assistantId] !== undefined)
+        // The patch replaces the project's whole override set, so the rest is sent back as is.
+        .map(([projectId, stored]) => [
+          projectId,
+          { ...stored, assistantModelSelections: { [assistantId]: null } },
+        ]),
+    );
+    if (Object.keys(patch).length === 0) return;
+    yield* serverSettings.updateSettings({ projectSettingsOverrides: patch });
+  });
+
   const remove: AssistantService["Service"]["remove"] = Effect.fn("AssistantService.remove")(
     function* (assistantId) {
       yield* lock.withPermits(1)(
@@ -1055,6 +1073,11 @@ const make = Effect.gen(function* () {
           yield* removeOwnerTransfers(config.sharedDir, assistantId);
           yield* sql`DELETE FROM assistant_requests WHERE sender_thread_id LIKE ${`assistant:${assistantId}:%`}`;
           yield* tasks.removeFor(assistantId);
+          yield* forgetModelSelections(assistantId).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("assistant model exceptions were not cleared", { cause }),
+            ),
+          );
           yield* connectors
             .purge(assistantId, decodeMcpServers(row.mcp_servers_json))
             .pipe(
