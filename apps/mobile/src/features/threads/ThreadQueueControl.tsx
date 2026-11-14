@@ -5,7 +5,6 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -38,6 +37,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
+  queuedRowTitle,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
@@ -244,11 +244,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isGuestMessage: context?.guest !== undefined,
           text,
         });
-        const taskEvent = message ? taskEventActivity(message) : null;
-        const title =
-          (taskEvent && `${taskEvent.title} · ${taskEvent.label}`) ||
-          controls.displayText ||
-          (attachments.length > 0 ? "Attachments" : "Queued message");
+        const title = queuedRowTitle({
+          message,
+          displayText: controls.displayText,
+          hasAttachments: attachments.length > 0,
+        });
         return (
           <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
             <QueueRowSwipeable
