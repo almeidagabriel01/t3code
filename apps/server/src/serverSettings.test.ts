@@ -315,6 +315,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         for (const override of refused) {
           const error = yield* project({ [projectId]: override }).pipe(Effect.flip);
           assert.equal(error.operation, "use-unavailable-provider-instance");
+          assert.include(error.message, "does not exist or is disabled for this project");
         }
 
         // Disabling the instance leaves the saved default, and unrelated edits still save.

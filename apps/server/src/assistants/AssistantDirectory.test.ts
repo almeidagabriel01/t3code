@@ -261,6 +261,10 @@ it.effect("a member's group conversation reaches its own projects and that group
     yield* sql`UPDATE assistant_teams SET archived_at = 'now' WHERE team_id = 'site'`;
     assert.deepEqual(yield* reach(siteRequest), ["p1"]);
     yield* sql`UPDATE assistant_teams SET archived_at = NULL WHERE team_id = 'site'`;
+    // A member taken out of the group loses its projects even while the thread row lingers.
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '[]' WHERE team_id = 'site'`;
+    assert.deepEqual(yield* reach(siteRequest), ["p1"]);
+    yield* sql`UPDATE assistant_teams SET member_ids_json = '["ann"]' WHERE team_id = 'site'`;
     // The note and memory read the same list the refusal checks.
     const note = yield* assistantNote(Option.some(directory), siteRequest, "hello");
     assert.include(note, "You work in: p1, web.");
