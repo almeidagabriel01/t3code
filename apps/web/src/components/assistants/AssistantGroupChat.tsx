@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   applyAssistantGroupHistory,
   assistantGroupActivity,
+  assistantGroupAnswerRoot,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
   assistantGroupMarkdownMentions,
@@ -442,10 +443,18 @@ function FeedRow(props: {
   const author =
     message.assistantId === null ? undefined : props.assistants.get(message.assistantId);
   const answered = message.taskId === null ? undefined : props.chat.tasks.get(message.taskId);
+  const answeredShell = useQuietThreadShell(
+    answered === undefined ? null : scopeThreadRef(props.environmentId, answered.threadId),
+  );
   const markdown = (text: string) => (
     <ChatMarkdown
       text={assistantGroupMarkdownMentions(text, props.members, props.projects)}
-      cwd={props.cwd}
+      cwd={
+        assistantGroupAnswerRoot({
+          threadWorktreePath: answeredShell?.worktreePath,
+          projectRoot: props.cwd,
+        }) ?? undefined
+      }
       threadRef={
         answered === undefined ? undefined : scopeThreadRef(props.environmentId, answered.threadId)
       }

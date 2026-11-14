@@ -99,10 +99,19 @@ vi.mock("~/speech/useTextFieldSpeech", () => ({
 }));
 // A member's group thread that waits on the user: a real shell with its id and approval replaced.
 const waiting = vi.hoisted(() => new Set<string>());
+// Member threads that run in their own worktree: thread id to worktree path.
+const worktrees = vi.hoisted(() => new Map<string, string>());
 vi.mock(import("~/state/entities"), async (original) => {
   const actual = await original();
   return {
     ...actual,
+    useQuietThreadShell: (ref) => {
+      const real = actual.useQuietThreadShell(ref);
+      const base = actual.useQuietThreadShells()[0]!;
+      const worktreePath = ref === null ? undefined : worktrees.get(ref.threadId);
+      if (ref === null || worktreePath === undefined) return real;
+      return { ...(real ?? base), id: ref.threadId, worktreePath } as typeof base;
+    },
     useThreadShell: (ref) => {
       const real = actual.useThreadShell(ref);
       const base = actual.useQuietThreadShells()[0]!;
@@ -1240,7 +1249,10 @@ it("calls out a member waiting on the user, with a way to answer until it is res
   await expect.element(callout.getByRole("button")).not.toBeInTheDocument();
 });
 
-it("opens an answer's file links against the request project's root and the answered task's thread", async () => {
+it("opens an answer's file links against its task thread's worktree, else the request project's root", async () => {
+  const boThread = `assistant:bo:g-${"0".repeat(16)}`;
+  worktrees.set(boThread, "/worktrees/bo-plan");
+  using _worktrees = { [Symbol.dispose]: () => worktrees.clear() };
   publishGroupChat(
     [
       message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" }),
@@ -1251,8 +1263,23 @@ it("opens an answer's file links against the request project's root and the answ
         taskId: "t-1" as never,
         text: "See [the plan](/workspace/render/src/plan.ts:7)",
       }),
+      message(3, {
+        ...inRequest(1),
+        author: "assistant",
+        assistantId: "bo" as AssistantId,
+        taskId: "t-2" as never,
+        text: "See [the notes](/worktrees/bo-plan/docs/notes.md)",
+      }),
     ],
-    [task("t-1", 1, { status: "running", requestId: "m1" as never })],
+    [
+      task("t-1", 1, { status: "running", requestId: "m1" as never }),
+      task("t-2", 1, {
+        status: "running",
+        requestId: "m1" as never,
+        ownerId: "bo" as AssistantId,
+        threadId: boThread as never,
+      }),
+    ],
   );
   await using _screen = await openChat();
   using openFile = vi.spyOn(useRightPanelStore.getState(), "openFile").mockImplementation(() => {});
@@ -1266,6 +1293,14 @@ it("opens an answer's file links against the request project's root and the answ
       { environmentId: ENVIRONMENT_ID, threadId: `assistant:ada:g-${"0".repeat(16)}` },
       "src/plan.ts",
       7,
+    ),
+  );
+  await userEvent.click(main().getByRole("link", { name: /notes\.md/ }));
+  await eventually(() =>
+    expect(openFile).toHaveBeenLastCalledWith(
+      { environmentId: ENVIRONMENT_ID, threadId: boThread },
+      "docs/notes.md",
+      undefined,
     ),
   );
 });

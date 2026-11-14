@@ -12,6 +12,7 @@ import type {
 
 import {
   assistantGroupActivity,
+  assistantGroupAnswerRoot,
   applyAssistantGroupHistory,
   applyAssistantGroupsEvent,
   assistantGroupAuthorName,
@@ -501,6 +502,16 @@ it.each([
   [{ instruction: "Plain ask" }, "Plain ask"],
 ] as const)("assistantGroupActivity title %j", (source, title) => {
   assert.strictEqual(assistantGroupActivity("completed", source).title, title);
+});
+
+it.each([
+  [{ threadWorktreePath: "/wt/feature", projectRoot: "/repo" }, "/wt/feature"],
+  [{ threadWorktreePath: null, projectRoot: "/repo" }, "/repo"],
+  [{ threadWorktreePath: undefined, projectRoot: "/repo" }, "/repo"],
+  [{ threadWorktreePath: "/wt/feature", projectRoot: null }, "/wt/feature"],
+  [{ threadWorktreePath: null, projectRoot: undefined }, null],
+] as const)("assistantGroupAnswerRoot(%j)", (input, root) => {
+  assert.strictEqual(assistantGroupAnswerRoot(input), root);
 });
 
 describe("assistantGroupAwaitingRoute", () => {

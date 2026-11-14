@@ -636,6 +636,14 @@ export function assistantGroupActivity(
   };
 }
 
+/** Where an answer's relative file links resolve: its task thread's worktree, else the request project. */
+export function assistantGroupAnswerRoot(input: {
+  readonly threadWorktreePath: string | null | undefined;
+  readonly projectRoot: string | null | undefined;
+}): string | null {
+  return input.threadWorktreePath ?? input.projectRoot ?? null;
+}
+
 const PAUSE_REASON_LABEL: Record<string, string> = {
   stopped: "Stopped",
   no_delivery: `${ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY} hand-offs without a delivery`,
