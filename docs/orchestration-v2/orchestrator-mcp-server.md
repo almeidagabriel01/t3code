@@ -208,7 +208,8 @@ registered by the project toolkit in
 
 Returns:
 
-- the inherited provider instance and model;
+- the provider instance and model an omitted target gets (the project's
+  default, still named `inherited*`);
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
 - whether each provider can run a child task; and
@@ -248,10 +249,11 @@ type DelegateTaskInput = {
 };
 ```
 
-Provider, model, runtime mode, and interaction mode inherit from the parent
-when omitted. A driver-only target inherits the parent's provider instance
-when it can run child tasks, and otherwise selects an available instance of
-that driver; an explicit `providerInstanceId` is honored exactly and fails
+Runtime and interaction modes inherit from the parent when omitted. Provider
+and model follow the project's model precedence, not the parent's model, and
+never switch to a usage-limit fallback; to keep the parent's model, name it.
+A driver-only target prefers the project default's instance when it can run
+child tasks, and otherwise selects an available instance of that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
@@ -370,8 +372,8 @@ project root (`root`, also the default). The thread is bound to that workspace
 before the agent starts. Creating a worktree in the task prompt does not update
 this binding.
 
-Pass the task in `message`. Project, model, and modes inherit when omitted;
-workspace does not. `scratch: true` launches without a project, in a folder of
+Pass the task in `message`. Project and modes inherit when omitted; the model
+follows the project's precedence, not the caller's; workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the
