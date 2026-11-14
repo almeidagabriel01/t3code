@@ -98,7 +98,7 @@ export function assistantTaskRows<S extends TaskShell>(
     );
 }
 
-const TASK_EVENT_STATUS_LABEL: Record<TaskEventStatus, string> = {
+export const TASK_EVENT_STATUS_LABEL: Record<TaskEventStatus, string> = {
   completed: "Finished",
   failed: "Failed",
   cancelled: "Cancelled",

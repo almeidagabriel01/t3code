@@ -461,14 +461,14 @@ it.each([
 });
 
 it.each([
-  ["completed", "completed", "Completed"],
+  ["completed", "completed", "Finished"],
   ["failed", "failed", "Failed"],
   ["cancelled", "cancelled", "Cancelled"],
   ["paused", "interrupted", "Paused"],
   ["queued", null, "Queued"],
   ["running", null, "Running"],
   ["waiting", null, "Waiting"],
-  ["done", "completed", "Done"],
+  ["done", "completed", "Finished"],
   ["needs-you", "interrupted", "Needs you"],
   ["working", null, "Working"],
   ["routing", null, "Routing"],

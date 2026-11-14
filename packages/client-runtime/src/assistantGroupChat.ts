@@ -20,6 +20,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
   readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage>;
@@ -627,12 +628,17 @@ export function assistantGroupActivity(
   status: AssistantGroupTaskStatus | AssistantGroupRequestStatus,
   source: { readonly threadTitle?: string | null | undefined; readonly instruction?: string } = {},
 ): { readonly title: string; readonly status: TaskEventStatus | null; readonly label: string } {
+  const eventStatus = ACTIVITY_STATUS[status] ?? null;
   return {
     title:
       source.threadTitle?.trim() ||
       assistantGroupMessageExcerpt(assistantGroupInstructionBody(source.instruction ?? "")),
-    status: ACTIVITY_STATUS[status] ?? null,
-    label: ACTIVITY_LABEL[status],
+    status: eventStatus,
+    // The thread's word for an ending; the thread has none for paused or waiting on the user.
+    label:
+      eventStatus === null || eventStatus === "interrupted"
+        ? ACTIVITY_LABEL[status]
+        : TASK_EVENT_STATUS_LABEL[eventStatus],
   };
 }
 

@@ -1469,7 +1469,7 @@ describe("requests", () => {
     );
   });
 
-  const FOLDED_FIX = "Fix build, Done · Alpha. Open task";
+  const FOLDED_FIX = "Fix build, Finished · Alpha. Open task";
 
   it("draws each request with its title, project and status, the latest one last", () => {
     setup();
@@ -1800,7 +1800,7 @@ describe("the thread's pieces in the feed", () => {
     render();
     expect(cards()).toBe(0);
     // The member thread's title when the store has it, else the instruction's gist.
-    expect(byLabel("Build the app thread, Completed. Open task")).not.toBeNull();
+    expect(byLabel("Build the app thread, Finished. Open task")).not.toBeNull();
     expect(byLabel("do t2, Cancelled. Open task")).not.toBeNull();
     await click("do t2, Cancelled. Open task");
     expect(mocks.selectDetail).toHaveBeenCalledWith({
@@ -1812,7 +1812,7 @@ describe("the thread's pieces in the feed", () => {
     mocks.live = snapshot(ANSWERS, tasks("running", "completed"));
     render();
     expect(cards()).toBe(1);
-    expect(byLabel("do t2, Completed. Open task")).not.toBeNull();
+    expect(byLabel("do t2, Finished. Open task")).not.toBeNull();
   });
 
   it("draws no message's markdown again when a preview opens or the list scrolls", async () => {

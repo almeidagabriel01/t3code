@@ -1014,7 +1014,7 @@ it("folds a finished request to one activity line and shows each answer as the t
   // A finished request folds away to one line; the newest one stays open.
   const line = done.getByRole("button", { name: "Open task Budget review" });
   await expect.element(line).toHaveAttribute("data-task-event-activity", "completed");
-  await expect.element(line).toMatchTextContent("· Done · render");
+  await expect.element(line).toMatchTextContent("· Finished · render");
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
   const open = blocks().nth(1);
   await expect.element(open.getByTestId("group-request-title")).toHaveTextContent("Ship the app");
