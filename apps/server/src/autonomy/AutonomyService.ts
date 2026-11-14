@@ -1158,24 +1158,6 @@ const make = Effect.gen(function* () {
     const assistant = toAssistant(rows[0]);
     const wakeKey = `notify:${input.key}`;
     const nowMs = yield* Clock.currentTimeMillis;
-    const sentToday = yield* sql<{ readonly n: number }>`
-      SELECT COUNT(*) AS n FROM autonomy_wakes
-      WHERE assistant_id = ${assistant.id} AND source = 'notify'
-        AND created_at > ${iso(nowMs - DAY_MS)}`;
-    const count = sentToday[0]?.n ?? 0;
-    if ((yield* sql`SELECT 1 FROM autonomy_wakes WHERE wake_key = ${wakeKey}`).length > 0) {
-      return {
-        status: "already_sent" as const,
-        channels: [],
-        remainingToday: Math.max(0, config.maxUserMessagesPerDay - count),
-      };
-    }
-    if (count >= config.maxUserMessagesPerDay) {
-      return yield* autonomyError(
-        "invalid",
-        `You already sent the user ${config.maxUserMessagesPerDay} messages today, the most allowed. Tell them in your reply instead; do not retry.`,
-      );
-    }
     const shell =
       input.threadId === undefined
         ? null
@@ -1183,47 +1165,74 @@ const make = Effect.gen(function* () {
     if (input.threadId !== undefined && shell === null) {
       return yield* autonomyError("invalid", "That thread does not exist.");
     }
-    yield* sql`
-      INSERT INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
-      VALUES (${wakeKey}, ${assistant.id}, ${input.threadId ?? assistant.threadId}, 'notify',
-        'message', ${iso(nowMs)})`;
-    const link = input.threadId === undefined ? null : yield* linkTo(input.threadId);
-    const withLink = (language: ResolvedChannelLanguage) =>
-      link === null ? text : `${text}\n\n${channelStrings(language).openInT3} ${link}`;
-    yield* decisions
-      .request({
-        fromThreadId: assistant.threadId as ThreadId,
-        projectId: assistant.projectId,
-        threadTitle: shell?.title ?? assistant.name,
-        clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${wakeKey}`,
-        title: assistant.name.slice(0, 120),
-        context: withLink("en").slice(0, 4_000),
-        options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
-      })
-      .pipe(
-        Effect.catchTags({
-          DecisionError: (error) =>
-            sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(
-              Effect.andThen(Effect.fail(autonomyError("storage", error.message))),
-            ),
-        }),
+    const since = iso(nowMs - DAY_MS);
+    // One statement, so two concurrent calls can neither both pass the limit nor both record.
+    const recorded = yield* sql`
+      INSERT OR IGNORE INTO autonomy_wakes (wake_key, assistant_id, watched_thread_id, source, label, created_at)
+      SELECT ${wakeKey}, ${assistant.id}, ${input.threadId ?? assistant.threadId}, 'notify',
+        'message', ${iso(nowMs)}
+      WHERE (SELECT COUNT(*) FROM autonomy_wakes WHERE assistant_id = ${assistant.id}
+        AND source = 'notify' AND created_at > ${since}) < ${config.maxUserMessagesPerDay}
+      RETURNING wake_key`;
+    const sentToday = yield* sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM autonomy_wakes
+      WHERE assistant_id = ${assistant.id} AND source = 'notify' AND created_at > ${since}`;
+    const count = sentToday[0]?.n ?? 0;
+    if (recorded.length === 0) {
+      if ((yield* sql`SELECT 1 FROM autonomy_wakes WHERE wake_key = ${wakeKey}`).length > 0) {
+        return {
+          status: "already_sent" as const,
+          channels: [],
+          remainingToday: Math.max(0, config.maxUserMessagesPerDay - count),
+        };
+      }
+      return yield* autonomyError(
+        "invalid",
+        `You already sent the user ${config.maxUserMessagesPerDay} messages today, the most allowed. Tell them in your reply instead; do not retry.`,
       );
-    const chat = yield* ownerChat(resolveChannels(assistant.autonomy, config));
-    if (chat !== undefined) {
-      const language = yield* channelLanguage.current;
-      yield* outbox.enqueue({
-        deliveryId: `autonomy-notify:${input.key}`,
-        destination: chat,
-        senderName: assistant.name,
-        text: withLink(language),
-        markdown: true,
-        language,
-      });
     }
+    const chat = yield* Effect.gen(function* () {
+      const link = input.threadId === undefined ? null : yield* linkTo(input.threadId);
+      const withLink = (language: ResolvedChannelLanguage) =>
+        link === null ? text : `${text}\n\n${channelStrings(language).openInT3} ${link}`;
+      yield* decisions
+        .request({
+          fromThreadId: assistant.threadId as ThreadId,
+          projectId: assistant.projectId,
+          threadTitle: shell?.title ?? assistant.name,
+          clientRequestId: `${DecisionService.NOTICE_REQUEST_PREFIX}${wakeKey}`,
+          title: assistant.name.slice(0, 120),
+          context: withLink("en").slice(0, 4_000),
+          options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+        })
+        .pipe(
+          Effect.catchTags({
+            DecisionError: (error) => Effect.fail(autonomyError("storage", error.message)),
+          }),
+        );
+      const chat = yield* ownerChat(resolveChannels(assistant.autonomy, config));
+      if (chat !== undefined) {
+        const language = yield* channelLanguage.current;
+        yield* outbox.enqueue({
+          deliveryId: `autonomy-notify:${input.key}`,
+          destination: chat,
+          senderName: assistant.name,
+          text: withLink(language),
+          markdown: true,
+          language,
+        });
+      }
+      return chat;
+    }).pipe(
+      // A message that never reached the queue must not count as sent, or a retry says already_sent.
+      Effect.onError(() =>
+        sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(Effect.ignore),
+      ),
+    );
     return {
       status: "sent" as const,
       channels: ["activity", ...(chat === undefined ? [] : [chat.kind])],
-      remainingToday: config.maxUserMessagesPerDay - count - 1,
+      remainingToday: Math.max(0, config.maxUserMessagesPerDay - count),
     };
   }, storage);
 

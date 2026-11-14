@@ -10,6 +10,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -1303,6 +1304,22 @@ it.effect("a paused branch of a group request is told once, for its top task", (
     const rows = yield* outboxRows;
     assert.lengthOf(rows, 1);
     assert.include(rows[0]!.message.text, "Do root");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a message whose delivery could not be queued is not counted as sent", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    const say = service.notifyUser({ assistantId: "jarvis", key: "k1", text: "Deploy done." });
+    yield* sql`ALTER TABLE channel_outbox RENAME TO channel_outbox_away`;
+    const failed = yield* Effect.exit(say);
+    yield* sql`ALTER TABLE channel_outbox_away RENAME TO channel_outbox`;
+    assert.isTrue(Exit.isFailure(failed));
+    assert.equal((yield* say).status, "sent");
+    assert.lengthOf(yield* outboxRows, 1);
   }).pipe(Effect.provide(h.layer));
 });
 
