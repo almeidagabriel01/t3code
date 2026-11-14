@@ -246,6 +246,15 @@ export interface RouteAction {
   readonly force: boolean;
 }
 
+/** Routing's own rule: Linux takes a job only with the Runner on and the job not tied to this Mac. */
+function mayRunOn(
+  entry: HeavyQueueEntry,
+  runner: HeavyRunner,
+  state: Pick<HeavyQueueState, "linux" | "macOnly">,
+): boolean {
+  return runner === "mac" || (state.linux !== null && !state.macOnly.includes(entry.id));
+}
+
 /** "Run on this Mac" / "Run on Linux" for a row, with the confirmation a running job needs. */
 export function routeActions(
   entry: HeavyQueueEntry,
@@ -256,10 +265,9 @@ export function routeActions(
   const current: HeavyRunner = running
     ? (entry.runner ?? "mac")
     : (state.routes[entry.id] ?? "mac");
-  const canLinux = !state.macOnly.includes(entry.id);
   const actions: RouteAction[] = [];
   for (const runner of ["mac", "linux"] as const) {
-    if (runner === "linux" && !canLinux) continue;
+    if (!mayRunOn(entry, runner, state)) continue;
     // A waiter can always pin where it already heads; a running job only moves elsewhere.
     if (running && runner === current) continue;
     if (!running && runner === current && entry.route === runner) continue;
@@ -280,26 +288,27 @@ export interface MoveAllAction {
 }
 
 /**
- * "Move all to this Mac" / "Move all to Linux": offered while some waiting job would move. Mirrors
- * the server's rule: running jobs, unconfirmed runs and, for Linux, Mac-only or Mac-pinned work stay.
+ * "Move all to this Mac" / "Move all to Linux": offered only while some waiting job would move.
+ * Mirrors the server's rule: Linux must be online; running jobs, unconfirmed runs and, for Linux,
+ * work tied to this Mac or asked for it stay.
  */
 export function moveAllActions(
   state: Pick<HeavyQueueState, "entries" | "linux" | "routes" | "macOnly">,
 ): ReadonlyArray<MoveAllAction> {
   const moves = (runner: HeavyRunner) =>
+    (runner === "mac" || state.linux?.online === true) &&
     state.entries.some(
       (entry) =>
         entry.startedAt === null &&
         entry.server !== true &&
         entry.unconfirmed !== true &&
         (state.routes[entry.id] ?? "mac") !== runner &&
-        !(runner === "linux" && (entry.where === "mac" || state.macOnly.includes(entry.id))),
+        mayRunOn(entry, runner, state) &&
+        !(runner === "linux" && entry.where === "mac"),
     );
   const actions: MoveAllAction[] = [];
   if (moves("mac")) actions.push({ runner: "mac", label: "Move all to this Mac" });
-  if (state.linux !== null && moves("linux")) {
-    actions.push({ runner: "linux", label: "Move all to Linux" });
-  }
+  if (moves("linux")) actions.push({ runner: "linux", label: "Move all to Linux" });
   return actions;
 }
 

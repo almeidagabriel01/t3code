@@ -157,6 +157,9 @@ describe("a row's runner", () => {
     ]);
     expect(routeActions(entry({ server: true }), state)).toEqual([]);
     expect(routeActions(entry(), { ...state, linux: null })).toEqual([]);
+    // Run on Linux while it is offline is the "Wait for Linux" answer, so it stays.
+    const offline = { ...state, linux: { ...linux, online: false } };
+    expect(routeActions(entry(), offline).map((a) => a.runner)).toEqual(["mac", "linux"]);
   });
 
   it("an unconfirmed drop reruns only with a warning and force", () => {
@@ -192,6 +195,23 @@ describe("Move all", () => {
     ["running jobs stay", { ...base, entries: [entry({ startedAt: "x" })] }, []],
     ["an unconfirmed run stays", { ...base, entries: [entry({ unconfirmed: true })] }, []],
     ["a server slot stays", { ...base, entries: [entry({ server: true })] }, []],
+    [
+      "every job tied to this Mac (Mac-only, or its project's Runner off) moves nothing",
+      { ...base, entries: [entry(), entry({ id: "b" })], macOnly: ["a", "b"] },
+      [],
+    ],
+    [
+      "one job that can go is enough",
+      { ...base, entries: [entry(), entry({ id: "b" })], macOnly: ["a"] },
+      ["Move all to Linux"],
+    ],
+    ["Linux offline takes nothing", { ...base, linux: { ...linux, online: false } }, []],
+    ["Linux still being checked takes nothing", { ...base, linux: { ...linux, online: null } }, []],
+    [
+      "Linux offline still brings Linux waiters back",
+      { ...base, linux: { ...linux, online: false }, routes: { a: "linux" } },
+      ["Move all to this Mac"],
+    ],
     ["no Runner, no Linux target", { ...base, linux: null }, []],
     [
       "no Runner still brings Linux waiters back",
