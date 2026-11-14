@@ -28,6 +28,7 @@ const ana = AssistantId.make("ana");
 const bob = AssistantId.make("bob");
 const dev = AssistantTeamId.make("dev");
 const offTeam = AssistantTeamId.make("off-team");
+const listed = AssistantTeamId.make("listed");
 
 const enabled = (instanceId: string) => [instanceId, { driver: "codex", enabled: true }] as const;
 
@@ -70,9 +71,10 @@ const seed = Effect.gen(function* () {
     VALUES (${ana}, 'ana', 'Ana', 'p', 'full', ${json("assistant")}, 't', 't'),
            (${bob}, 'bob', 'Bob', 'p', 'full', NULL, 't', 't')`;
   yield* sql`
-    INSERT INTO assistant_teams (team_id, name, member_ids_json, default_model_selection, created_at, updated_at)
-    VALUES (${dev}, 'Dev', '[]', ${json("team")}, 't', 't'),
-           (${offTeam}, 'Off', '[]', ${json("off")}, 't', 't')`;
+    INSERT INTO assistant_teams (team_id, name, member_ids_json, default_model_selection, project_ids_json, created_at, updated_at)
+    VALUES (${dev}, 'Dev', '[]', ${json("team")}, '[]', 't', 't'),
+           (${offTeam}, 'Off', '[]', ${json("off")}, '[]', 't', 't'),
+           (${listed}, 'Listed', '[]', ${json("team")}, ${JSON.stringify([bare, withDefault])}, 't', 't')`;
 });
 
 it.effect("each layer wins over the ones below it, and a disabled instance skips its layer", () =>
@@ -85,6 +87,10 @@ it.effect("each layer wins over the ones below it, and a disabled instance skips
       // The global default is set, so a project without its own must not read it as "project".
       [{ projectId: bare, assistantId: ana, teamId: dev }, "team", "team"],
       [{ projectId: bare, assistantId: ana }, "assistant", "assistant"],
+      // A team that lists its projects is a default only there.
+      [{ projectId: bare, assistantId: ana, teamId: listed }, "team", "team"],
+      [{ projectId: disabled, assistantId: ana, teamId: listed }, "assistant", "assistant"],
+      [{ projectId: withDefault, assistantId: bob, teamId: listed }, "project", "project"],
       [{ projectId: bare, assistantId: bob }, "global", "global"],
       [{ projectId: disabled, assistantId: ana, teamId: offTeam }, "assistant", "assistant"],
       [{ projectId: withDefault, assistantId: ana, explicit: pick("team") }, "message", "team"],

@@ -21,7 +21,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { decodeModelSelectionJson } from "../assistants/AssistantTeams.ts";
+import {
+  type AssistantTeamRow,
+  decodeModelSelectionJson,
+  toAssistantTeam,
+} from "../assistants/AssistantTeams.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -93,13 +97,17 @@ const make = Effect.gen(function* () {
         const resolved = resolveProjectSettings(settings, projectId, Option.getOrNull(project));
         const isUsable = (selection: ModelSelection) =>
           resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId);
-        const team =
+        const teamRow =
           teamId === undefined
             ? undefined
-            : storedDefault(
-                yield* sql<{ readonly default_model_selection: string | null }>`
-                  SELECT default_model_selection FROM assistant_teams WHERE team_id = ${teamId}`,
-              );
+            : (yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`)[0];
+        const teamValue = teamRow === undefined ? undefined : toAssistantTeam(teamRow);
+        // A team that lists projects is a default only there; one that lists none, everywhere.
+        const team =
+          teamValue === undefined ||
+          (teamValue.projectIds.length > 0 && !teamValue.projectIds.includes(projectId))
+            ? undefined
+            : (teamValue.defaultModelSelection ?? undefined);
         const assistant =
           assistantId === undefined
             ? undefined
