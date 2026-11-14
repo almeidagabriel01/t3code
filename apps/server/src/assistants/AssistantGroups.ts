@@ -3238,7 +3238,6 @@ const make = Effect.gen(function* () {
     });
   }, storage);
 
-  /** Members that left lose their open work and their thread; an archived group pauses everything. */
   /**
    * Work in a project its member no longer reaches (taken from the group or from the member): a
    * running turn ends on its own, and nothing else starts there. Runs again as each run ends, as a
@@ -3279,6 +3278,7 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** Members that left lose their open work and their thread; an archived group pauses everything. */
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
     const legacy = yield* sql<ThreadRow>`
       SELECT team_id, assistant_id, thread_id, seen_seq, NULL AS request_id
