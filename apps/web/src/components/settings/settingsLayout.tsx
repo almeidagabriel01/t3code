@@ -206,6 +206,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
 
 export function SettingsSection({
   title,
+  description,
   hideTitle = false,
   icon,
   titleAction,
@@ -216,6 +217,8 @@ export function SettingsSection({
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
+  /** One line under the title for what every row in the section shares. */
+  description?: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
   titleAction?: ReactNode;
@@ -249,6 +252,11 @@ export function SettingsSection({
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
       )}
+      {description && !hideTitle ? (
+        <p className="max-w-2xl px-3 text-pretty text-xs leading-normal text-muted-foreground sm:px-4">
+          {description}
+        </p>
+      ) : null}
       <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
         {children}
       </SettingsGroup>

@@ -15,7 +15,6 @@ import { Link } from "@tanstack/react-router";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -71,6 +70,7 @@ export function UsageLimitAlertsSection({
   return (
     <SettingsSection
       {...searchableSetting("usage-limit-alerts")}
+      description="Your assistant messages you once when this much is left."
       inert={readOnly}
       aria-disabled={readOnly || undefined}
       className={readOnly ? "opacity-50 select-none" : undefined}
@@ -81,7 +81,6 @@ export function UsageLimitAlertsSection({
           <SettingsRow
             key={row.windowId}
             title={row.label}
-            description="Your assistant messages you once when this much is left."
             control={
               <Select
                 value={value}
@@ -108,30 +107,17 @@ export function UsageLimitAlertsSection({
           />
         );
       })}
-      <SettingsRow
-        title="Alert while Autonomy is off"
-        description="Limit alerts from every provider still reach you while assistant notifications are paused."
-        control={
-          <Switch
-            checked={ignorePause}
-            onCheckedChange={(checked) =>
-              updateSettings({ usageLimitAlerts: { ignoreAutonomyPause: Boolean(checked) } })
-            }
-            aria-label="Alert while Autonomy is off"
-          />
-        }
-      />
       {settings?.autonomy.enabled === false && !ignorePause ? (
         <SettingsRow
           title="Alerts are paused"
           description={
             <>
-              Assistant notifications are off, so these alerts wait. Turn on the switch above, or{" "}
+              Assistant notifications are off, so these alerts wait. Change it in{" "}
               <Link
                 to="/settings/assistants"
                 className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               >
-                turn on Autonomy
+                Assistants
               </Link>
               .
             </>

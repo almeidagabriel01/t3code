@@ -14,11 +14,15 @@ import { Link } from "@tanstack/react-router";
 import { BellRingIcon } from "lucide-react";
 import { useState } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { serverEnvironment } from "../../state/server";
 import { useTelegramEnvironmentIds, useTelegramSettings } from "../../state/telegramChannel";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const ICON = "size-4 text-muted-foreground";
 
@@ -96,6 +100,15 @@ export function AutonomySection(props: {
   const telegramIds = useTelegramEnvironmentIds();
   const write = (next: AutonomySettings) => update({ autonomy: next });
   const paused = !autonomy.enabled;
+  const limitAlertsWhilePaused = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.usageLimitAlerts.ignoreAutonomyPause,
+  );
+  // Older servers have no limit alerts and drop the patch.
+  const hasLimitAlerts = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.usageLimitAlerts === true,
+  );
 
   return (
     <SettingsSection title={`Autonomy${props.suffix}`} icon={<BellRingIcon className={ICON} />}>
@@ -110,6 +123,22 @@ export function AutonomySection(props: {
           />
         }
       />
+      {hasLimitAlerts ? (
+        <SettingsRow
+          {...searchableSetting("usage-limit-alerts-while-paused")}
+          title="Limit alerts while paused"
+          description="Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels on each provider in Providers."
+          control={
+            <Switch
+              checked={limitAlertsWhilePaused}
+              aria-label="Limit alerts while paused"
+              onCheckedChange={(checked) =>
+                update({ usageLimitAlerts: { ignoreAutonomyPause: Boolean(checked) } })
+              }
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         title="Notify me when something is waiting for me"
         description="Approvals, questions, open decisions and paused group tasks reach you directly, with no model and no daily limit. Works for every assistant and thread."
