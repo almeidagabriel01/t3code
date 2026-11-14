@@ -1,5 +1,6 @@
 import {
   type AssistantId,
+  assistantGroupProjectIds,
   type AssistantTeamId,
   DEFAULT_MODEL,
   isProviderAvailable,
@@ -21,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import {
   type AssistantTeamRow,
   decodeModelSelectionJson,
@@ -102,10 +104,19 @@ const make = Effect.gen(function* () {
             ? undefined
             : (yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`)[0];
         const teamValue = teamRow === undefined ? undefined : toAssistantTeam(teamRow);
-        // A team that lists projects is a default only there; one that lists none, everywhere.
+        const teamProjects =
+          teamValue === undefined || teamValue.memberIds.length === 0
+            ? (teamValue?.projectIds ?? [])
+            : assistantGroupProjectIds(
+                (yield* sql<AssistantRow>`
+                  SELECT * FROM assistants WHERE assistant_id IN ${sql.in(teamValue.memberIds)}`).map(
+                  toAssistant,
+                ),
+                teamValue.projectIds,
+              );
+        // The team's default holds only in its effective projects: its own plus its members'.
         const team =
-          teamValue === undefined ||
-          (teamValue.projectIds.length > 0 && !teamValue.projectIds.includes(projectId))
+          teamValue === undefined || (teamProjects.length > 0 && !teamProjects.includes(projectId))
             ? undefined
             : (teamValue.defaultModelSelection ?? undefined);
         const assistant =

@@ -74,7 +74,7 @@ const seed = Effect.gen(function* () {
     INSERT INTO assistant_teams (team_id, name, member_ids_json, default_model_selection, project_ids_json, created_at, updated_at)
     VALUES (${dev}, 'Dev', '[]', ${json("team")}, '[]', 't', 't'),
            (${offTeam}, 'Off', '[]', ${json("off")}, '[]', 't', 't'),
-           (${listed}, 'Listed', '[]', ${json("team")}, ${JSON.stringify([bare, withDefault])}, 't', 't')`;
+           (${listed}, 'Listed', ${JSON.stringify([bob])}, ${json("team")}, ${JSON.stringify([bare, withDefault])}, 't', 't')`;
 });
 
 it.effect("each layer wins over the ones below it, and a disabled instance skips its layer", () =>
@@ -91,6 +91,8 @@ it.effect("each layer wins over the ones below it, and a disabled instance skips
       [{ projectId: bare, assistantId: ana, teamId: listed }, "team", "team"],
       [{ projectId: disabled, assistantId: ana, teamId: listed }, "assistant", "assistant"],
       [{ projectId: withDefault, assistantId: bob, teamId: listed }, "project", "project"],
+      // Its members' projects count too: the team's effective list.
+      [{ projectId: ProjectId.make("p"), assistantId: ana, teamId: listed }, "team", "team"],
       [{ projectId: bare, assistantId: bob }, "global", "global"],
       [{ projectId: disabled, assistantId: ana, teamId: offTeam }, "assistant", "assistant"],
       [{ projectId: withDefault, assistantId: ana, explicit: pick("team") }, "message", "team"],
