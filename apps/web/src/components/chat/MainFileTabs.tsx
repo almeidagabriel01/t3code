@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { useTheme } from "~/hooks/useTheme";
 
 import type { ThreadFileSurface } from "../../threadTabsStore";
+import { panelTabKeyAction } from "../tabKeyAction";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -30,10 +31,24 @@ function preventMiddleButtonDefault(event: MouseEvent) {
   if (event.button === 1) event.preventDefault();
 }
 
-function activateOnKey(event: KeyboardEvent, activate: () => void) {
+/** Enter or Space on the tab itself; on its × they press the button instead. */
+export function activateOnKey(event: KeyboardEvent, activate: () => void) {
+  if (event.target !== event.currentTarget) return;
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   activate();
+}
+
+/** On a tablist: the arrows, Home and End move focus between its tabs; a tab activates itself. */
+export function moveTabFocus(event: KeyboardEvent<HTMLElement>) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+  const index = tabs.findIndex((tab) => tab === event.target);
+  const action = index < 0 ? null : panelTabKeyAction(event.key, index, tabs.length);
+  if (action?.type !== "focus") return;
+  event.preventDefault();
+  tabs[action.index]?.focus();
+  tabs[action.index]?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 /** Muted at rest; shows on the active tab, on hover and on focus. */
@@ -134,7 +149,7 @@ export function MainFileTabs(props: {
   const chatActive = props.activeFileId === null;
   const title = props.title.trim() || "Thread";
   return (
-    <div role="tablist" aria-label="Open tabs" className={STRIP_CLASS}>
+    <div role="tablist" aria-label="Open tabs" className={STRIP_CLASS} onKeyDown={moveTabFocus}>
       <div
         role="tab"
         aria-label={title}

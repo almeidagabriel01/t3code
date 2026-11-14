@@ -218,6 +218,44 @@ describe("thread tabs", () => {
     expect(useClosedViewStore.getState().entries[0]).toMatchObject({ kind: "panel-tab" });
   });
 
+  it("moves focus across thread and file tabs with the arrows, Home and End", async () => {
+    await setup({
+      ...sideBySide(),
+      groups: [{ id: "main", tabs: ["env:a", "env:b"], active: "env:a" }],
+      layout: leaf("main"),
+    });
+    panels().openFile(ref("b"), "b.ts");
+    panels().openFile(ref("a"), "src/x.ts");
+    await using screen = await render(<Harness route="a" />, { router: "/env/a" });
+    const focused = () => document.activeElement?.getAttribute("aria-label");
+    await expect
+      .element(screen.getByRole("tab", { name: "x.ts" }))
+      .toHaveAttribute("tabindex", "0");
+    screen.getByRole("tab", { name: "x.ts" }).element().focus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("Thread b");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("b.ts");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("Thread a");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focused()).toBe("b.ts");
+    await userEvent.keyboard("{Home}");
+    expect(focused()).toBe("Thread a");
+    await userEvent.keyboard("{End}");
+    expect(focused()).toBe("b.ts");
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/b"));
+    expect(panels().byThreadKey["env:b"]?.activeMainId).toBe("file:b.ts");
+
+    // Enter on a tab's x closes it rather than opening the tab.
+    screen.getByRole("button", { name: "Close Thread a" }).element().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(workspace()?.groups[0]?.tabs).toEqual(["env:b"]);
+  });
+
   it("closes a split group's shown file with Cmd+W before its thread", async () => {
     await setup(sideBySide());
     panels().openFile(ref("c"), "c.ts");

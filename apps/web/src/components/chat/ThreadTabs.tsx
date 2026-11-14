@@ -58,7 +58,14 @@ import { SidebarPointerSensor } from "../Sidebar.pointer";
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
-import { FileTab, TAB_CLASS, TabCloseButton, tabStateClass } from "./MainFileTabs";
+import {
+  activateOnKey,
+  FileTab,
+  moveTabFocus,
+  TAB_CLASS,
+  TabCloseButton,
+  tabStateClass,
+} from "./MainFileTabs";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -351,6 +358,7 @@ function ThreadTabStrip(props: {
       role="tablist"
       aria-label="Open tabs"
       {...threadTabStripProps(props.group.id)}
+      onKeyDown={moveTabFocus}
       className="flex h-8 shrink-0 items-stretch gap-1 overflow-x-auto border-b border-foreground/10 px-1 [scrollbar-width:none]"
     >
       {props.group.tabs.map((tabKey) => (
@@ -461,12 +469,7 @@ function ThreadTab(props: {
         event.preventDefault();
         close();
       }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          open();
-        }
-      }}
+      onKeyDown={(event) => activateOnKey(event, open)}
       onPointerDown={(event) => {
         if (ref) startThreadTabDrag(event.nativeEvent, ref, title, props.projectKey);
       }}
