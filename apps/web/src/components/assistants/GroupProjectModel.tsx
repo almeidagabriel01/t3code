@@ -119,6 +119,7 @@ function ProjectModelPicker(props: {
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
   readonly message?: GroupMessageModel | undefined;
+  readonly field?: boolean | undefined;
 }) {
   const { message } = props;
   const { settings, representative, providers, selection, entries, modelDisabledReason } =
@@ -173,6 +174,7 @@ function ProjectModelPicker(props: {
   const picker = (
     <SelectionPicker
       composer={message !== undefined}
+      field={props.field === true}
       settings={settings}
       providers={providers}
       selection={shown}
@@ -249,6 +251,8 @@ export function GroupProjectModelPicker(props: {
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
   readonly message?: GroupMessageModel;
+  /** As a dialog's form field. */
+  readonly field?: boolean;
 }) {
   return (
     <GroupProjectScope environmentId={props.environmentId} projectId={props.projectId}>
@@ -258,6 +262,7 @@ export function GroupProjectModelPicker(props: {
         disabled={props.disabled}
         onError={props.onError}
         message={props.message}
+        field={props.field}
       />
     </GroupProjectScope>
   );
@@ -292,6 +297,7 @@ export function ProjectModelDialog(props: {
               teamDefault={props.teamDefault}
               disabled={false}
               onError={setError}
+              field
             />
             {error === null ? null : (
               <p role="alert" className="text-xs text-destructive-foreground">
@@ -372,6 +378,7 @@ function MemberModelFields(props: {
               providers={providers}
               selection={shown}
               label={`Model for ${member.name}`}
+              field
               {...(exception ? {} : { placeholder: inherited })}
               disabled={!canWrite}
               environmentId={representative?.environmentId ?? null}
