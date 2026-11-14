@@ -24,6 +24,7 @@ const SECTIONS = [
     rows: [
       { id: "SettingsProviderAccounts", label: "Provider accounts" },
       { id: "SettingsEnvironmentSourceControl", label: "Source control" },
+      { id: "SettingsEnvironmentMaintenance", label: "Maintenance" },
     ],
   },
 ];
@@ -52,13 +53,23 @@ describe("filterSettingsSections", () => {
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
     {
       query: "server settings",
-      expected: [["Server settings", ["Provider accounts", "Source control"]]],
+      expected: [["Server settings", ["Provider accounts", "Source control", "Maintenance"]]],
     },
     {
       query: "accounts",
       expected: [["Server settings", ["Provider accounts"]]],
     },
     { query: "usage", expected: [[null, ["Usage"]]] },
+    ...[
+      "CPU limit",
+      "Keep memory free",
+      "Jobs at once on Linux",
+      "Over the limit for",
+      "linux pc",
+      "linux cpu limit",
+      "mac memory",
+      "cpu limit this mac",
+    ].map((query) => ({ query, expected: [["Server settings", ["Maintenance"]]] })),
     { query: "zzzz", expected: [] },
   ])("$query", ({ query, expected }) => {
     expect(visible(query)).toEqual(expected);

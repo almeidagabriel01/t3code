@@ -85,6 +85,7 @@ vi.mock("./SettingsSection", () => ({
     <section aria-label={props.title}>{props.children}</section>
   ),
 }));
+vi.mock("../../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../../components/ui/ListRowLayout", () => ({
   ListRowLayout: (props: {
     label: string;

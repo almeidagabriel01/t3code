@@ -1,15 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
-import { heavyLimitIdle, heavyModeLine } from "@t3tools/client-runtime/state/runnerModel";
+import {
+  HEAVY_OVER_LIMIT_DESCRIPTION,
+  heavyLimitIdle,
+  heavyModeLine,
+} from "@t3tools/client-runtime/state/runnerModel";
 import {
   type EnvironmentId,
   HEAVY_QUEUE_LIMITS,
   type HeavyQueueLimitKey,
   type RunnerWhere,
 } from "@t3tools/contracts";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 
-import type { AppSymbolName } from "../../../components/ui/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../../components/ui/AppSymbol";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../../components/ui/ListRowLayout";
@@ -46,8 +50,7 @@ const LIMIT_ROWS = [
     key: "heavyOverLimitSeconds",
     icon: "clock",
     label: "Over the limit for",
-    description:
-      "A machine counts as over its limits, or back under them, only once its readings stay there this long.",
+    description: HEAVY_OVER_LIMIT_DESCRIPTION,
   },
 ] as const satisfies ReadonlyArray<{
   key: HeavyQueueLimitKey;
@@ -165,16 +168,25 @@ export function HeavyQueueSection(props: {
           onValueChange={(enabled) => void setEnabled({ environmentId, input: { enabled } })}
         />
         {runner === undefined ? null : (
-          <ListRowLayout
-            icon="arrow.left.arrow.right"
-            label={heavyModeLine({
-              queueEnabled: state.enabled,
-              queuePaused: state.paused,
-              runnerEnabled: runner.enabled,
-              where: runner.where,
-              everything: runner.everything,
-            })}
-          />
+          // A summary, not a setting: set like the switch's subtitle above it, with no title.
+          <View className="flex-row items-center gap-3 px-4 py-3">
+            <View className="size-6 items-center justify-center">
+              <SymbolView
+                name="arrow.left.arrow.right"
+                size={Platform.OS === "android" ? 24 : 22}
+                tintColorClassName="accent-icon"
+              />
+            </View>
+            <Text textRole="footnote" className="min-w-0 flex-1 text-foreground-muted">
+              {heavyModeLine({
+                queueEnabled: state.enabled,
+                queuePaused: state.paused,
+                runnerEnabled: runner.enabled,
+                where: runner.where,
+                everything: runner.everything,
+              })}
+            </Text>
+          </View>
         )}
         {/* Pause and rules act only on the queue; the limits follow heavyLimitIdle. */}
         {state.enabled ? (
