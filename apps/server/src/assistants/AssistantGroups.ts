@@ -2,6 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   ASSISTANT_GROUP_PAGE_SIZE,
@@ -171,15 +173,12 @@ const STOPPED_LISTED = 5;
 const STOPPED_INSTRUCTION_CHARS = 120;
 
 /** Waiting for a slot, a run or a provider limit, or running: work the owner is still on. */
-const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = [
-  "queued",
-  "running",
-  "waiting",
-  "usage_limited",
-];
+const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ASSISTANT_GROUP_WORKING_TASK_STATUSES;
 /** Everything the user can still act on. */
-const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
-const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
+const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [
+  ...ACTIVE,
+  ...ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
 /** A request whose tasks all ended this way is done; a failed one still waits on the user. */
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
@@ -941,9 +940,8 @@ const make = Effect.gen(function* () {
         followup = ${next.followup}, updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
-    if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
-      yield* assistants.refreshTeamChat(task.team_id);
-    }
+    // Working, running and waiting-on-the-user counters all follow the status.
+    if (task.status !== next.status) yield* assistants.refreshTeamChat(task.team_id);
     const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
     const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
     const requestId = task.request_id ?? task.request_message_id;

@@ -157,6 +157,53 @@ export const AssistantGroupTaskStatus = Schema.Literals([
 ]);
 export type AssistantGroupTaskStatus = typeof AssistantGroupTaskStatus.Type;
 
+/** A task its owner is still on: waiting for a slot, a run or a usage limit's reset, or running. */
+export const ASSISTANT_GROUP_WORKING_TASK_STATUSES = [
+  "queued",
+  "running",
+  "waiting",
+  "usage_limited",
+] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
+
+/** A stopped task: its request waits on the user once none of its tasks is still working. */
+export const ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES = [
+  "paused",
+  "failed",
+] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
+
+const isOneOf = (list: ReadonlyArray<string>, value: string) => list.includes(value);
+
+/** A request's tasks are the user's to act on. The server's chat counters mirror this rule. */
+export function assistantGroupTasksNeedUser(
+  statuses: ReadonlyArray<AssistantGroupTaskStatus>,
+): boolean {
+  return (
+    !statuses.some((status) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, status)) &&
+    statuses.some((status) => isOneOf(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES, status))
+  );
+}
+
+/** Lines never unread: the lead naming who answers, conversation boundaries, group changes. */
+export const ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS = [
+  "routing",
+  "boundary",
+  "change",
+] as const satisfies ReadonlyArray<AssistantGroupMessageKind>;
+
+/** The user's own lines are never unread. */
+export const ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR = "user" satisfies AssistantGroupAuthor;
+
+/** A line the user did not write and that is worth reading. The server's counters mirror this. */
+export function assistantGroupCountsAsUnread(message: {
+  readonly author: AssistantGroupAuthor;
+  readonly kind: AssistantGroupMessageKind;
+}): boolean {
+  return (
+    message.author !== ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR &&
+    !isOneOf(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS, message.kind)
+  );
+}
+
 /** `child` is an assignment from another member; `reply` is one short answer to a member. */
 export const AssistantGroupTaskKind = Schema.Literals(["root", "child", "reply"]);
 export type AssistantGroupTaskKind = typeof AssistantGroupTaskKind.Type;

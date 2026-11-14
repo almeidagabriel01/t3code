@@ -7,6 +7,7 @@ import { assistantGroupProjectIds, type ProjectId } from "@t3tools/contracts";
 
 import { type AssistantRow, savedProjectIdsOf, toAssistant } from "./AssistantDirectory.ts";
 import { encodeMemberIds } from "./AssistantTeams.ts";
+import { countsAsUnreadSql } from "./groupChatSql.ts";
 
 const decodeIds = Schema.decodeOption(Schema.fromJsonString(Schema.Array(Schema.String)));
 
@@ -122,8 +123,7 @@ export const pruneLeftTabCursors = Effect.fn("AssistantTeams.pruneLeftTabCursors
           JOIN assistant_teams t ON t.team_id = r.team_id
           WHERE m.team_id = r.team_id AND m.request_project_id = r.scope
             AND m.seq > MIN(r.read_seq, t.read_seq) AND m.seq <= MAX(r.read_seq, t.read_seq)
-            AND m.request_id IS NOT NULL AND m.author <> 'user'
-            AND m.kind NOT IN ('routing', 'boundary', 'change'))
+            AND ${sql.literal(countsAsUnreadSql("m"))})
       RETURNING scope`;
     if (dropped.length > 0) changed.push(team.team_id);
   }

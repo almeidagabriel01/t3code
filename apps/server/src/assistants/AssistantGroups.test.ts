@@ -700,6 +700,12 @@ type ReadStep =
   | { readonly removeGroup: true }
   | { readonly sql: string };
 
+/** A second root task, for the request whose first message is `request`. */
+const rootTask = (request: string, status: string) =>
+  `INSERT INTO assistant_group_tasks (task_id, team_id, root_id, kind, request_message_id,
+    owner_id, instruction, status, request_id, created_at, updated_at)
+  VALUES ('gt:2', '${TEAM}', 'gt:2', 'root', '${request}', 'ada', 'do', '${status}', '${request}', 't', 't')`;
+
 /** Unread, waiting and read position per tab after each step, and the stored tab positions. */
 it.effect.each<{
   name: string;
@@ -771,13 +777,41 @@ it.effect.each<{
     scopes: {},
     cursors: {},
   },
+  {
+    name: "a stopped task waits on the user in its tab, read or not",
+    steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'paused'" }, { read: {} }],
+    readSeq: 7,
+    scopes: { p1: [0, true, 7], p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
+    name: "a failed task waits on the user too",
+    steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'failed'" }],
+    scopes: { p1: [1, true, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+  },
+  {
+    name: "a stopped task beside one still working does not wait",
+    steps: [
+      { sql: "UPDATE assistant_group_tasks SET status = 'paused'" },
+      { sql: rootTask("gm:1", "running") },
+    ],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+  },
+  {
+    name: "a request asking its project waits only until work starts on it",
+    steps: [{ sql: rootTask("gm:5", "running") }],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, false, 0] },
+    cursors: {},
+  },
 ])("$name", ({ steps, readSeq, scopes, cursors }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     const sql = yield* SqlClient.SqlClient;
     // p1: a request and its answer; p2: a request waiting on the user; General: a request the
-    // lead asked the project of; then a chat-wide boundary. A paused p1 task never lights a tab.
+    // lead asked the project of; then a chat-wide boundary. p1's task is done.
     const line = (
       seq: number,
       author: string,
@@ -801,7 +835,7 @@ it.effect.each<{
     yield* sql`INSERT INTO assistant_group_tasks
       (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
         request_id, created_at, updated_at)
-      VALUES ('gt:1', ${TEAM}, 'gt:1', 'root', 'gm:1', 'ada', 'do', 'paused', 'gm:1', 't', 't')`;
+      VALUES ('gt:1', ${TEAM}, 'gt:1', 'root', 'gm:1', 'ada', 'do', 'completed', 'gm:1', 't', 't')`;
     let lastRead: number | undefined;
     for (const step of steps) {
       if ("read" in step) {

@@ -2,6 +2,9 @@ import {
   ASSISTANT_GROUP_EVERYONE,
   ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
+  assistantGroupCountsAsUnread,
+  assistantGroupTasksNeedUser,
   assistantGroupAddress,
   assistantGroupInstructionBody,
   assistantGroupMentions,
@@ -215,12 +218,9 @@ function titleOf(message: AssistantGroupMessage | null): string {
 }
 
 // A usage-limited task continues at its reset, so its request is still being worked.
-const OPEN_STATUSES = new Set<AssistantGroupTaskStatus>([
-  "queued",
-  "running",
-  "waiting",
-  "usage_limited",
-]);
+const OPEN_STATUSES: ReadonlySet<AssistantGroupTaskStatus> = new Set(
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
+);
 
 function requestStatus(
   state: AssistantGroupChatState,
@@ -231,9 +231,7 @@ function requestStatus(
   // A member's conversation waiting on the user outranks the work around it.
   if (rows.some((row) => row.message.waiting?.resolved === false)) return "needs-you";
   if (tasks.some((task) => OPEN_STATUSES.has(task.status))) return "working";
-  if (tasks.some((task) => task.status === "paused" || task.status === "failed")) {
-    return "needs-you";
-  }
+  if (assistantGroupTasksNeedUser(tasks.map((task) => task.status))) return "needs-you";
   if (tasks.length > 0) {
     return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
   }
@@ -413,7 +411,9 @@ export function assistantGroupRequestExpanded(
   newest: boolean,
 ): boolean {
   if (newest || (block.status !== "done" && block.status !== "cancelled")) return true;
-  return block.rows.some((row) => row.message.seq > readSeq && countsAsUnread(row.message));
+  return block.rows.some(
+    (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message),
+  );
 }
 
 type Recipient = Pick<Assistant, "id" | "name" | "handle">;
@@ -844,16 +844,6 @@ export function assistantGroupAuthorName(
   }
 }
 
-/** A message the user did not write and that is worth reading (routing notes are chatter). */
-function countsAsUnread(message: Pick<AssistantGroupMessage, "author" | "kind">): boolean {
-  return (
-    message.author !== "user" &&
-    message.kind !== "routing" &&
-    message.kind !== "boundary" &&
-    message.kind !== "change"
-  );
-}
-
 /** The newest loaded message number, 0 for an empty chat. */
 export function assistantGroupLatestSeq(state: AssistantGroupChatState): number {
   let latest = 0;
@@ -874,7 +864,7 @@ export function assistantGroupNewSeq(
     const position = typeof readSeq === "number" ? readSeq : readSeq(message);
     if (
       message.seq > position &&
-      countsAsUnread(message) &&
+      assistantGroupCountsAsUnread(message) &&
       (first === null || message.seq < first)
     )
       first = message.seq;

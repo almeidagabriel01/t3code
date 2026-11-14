@@ -4,6 +4,11 @@ import {
   backfillTeamProjects,
   forgetDeletedProjects,
 } from "../assistants/AssistantTeamProjects.ts";
+import {
+  countsAsUnreadSql,
+  needsUserTaskScopesSql,
+  scopeNeedsUserSql,
+} from "../assistants/groupChatSql.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -789,16 +794,9 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
               (SELECT COUNT(*) FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULLIF(c.scope, '')
-                  AND m.seq > COALESCE(r.read_seq, t.read_seq) AND m.request_id IS NOT NULL
-                  AND m.author <> 'user' AND m.kind NOT IN ('routing', 'boundary', 'change'))
+                  AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
-              (EXISTS (SELECT 1 FROM assistant_group_messages m
-                  WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
-                    AND m.wait_resolved_at IS NULL
-                    AND COALESCE(m.request_project_id, '') = c.scope)
-                OR (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
-                  WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
-                    AND m.asks_project = 1))) AS waiting,
+              ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
                   AND m.request_id IS NOT NULL)) AS general
@@ -809,6 +807,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
               UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
                   AND m.wait_resolved_at IS NULL
+              UNION ${sql.literal(needsUserTaskScopesSql("t.team_id"))}
               UNION SELECT ''
             ) c
             LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
