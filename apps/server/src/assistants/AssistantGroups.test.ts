@@ -3804,6 +3804,38 @@ it.effect("hand-off limits count per request: a loop pauses its own request only
 });
 
 it.effect(
+  "a request from before projects offers the lead every member, whatever its project",
+  () => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p2"], beto: ["p1"] },
+      route: () => ({ assistantIds: ["beto"] }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada @cy fix the app", projectId: ProjectId.make("p2") },
+        h.user,
+      );
+      // Two members work it, so a follow-up goes through the lead.
+      yield* sql`UPDATE assistant_group_messages SET project_id = NULL`;
+      yield* groups.post(
+        { teamId: TEAM, text: "now the docs", replyToMessageId: posted.message.id },
+        h.user,
+      );
+      yield* groups.idle;
+      const call = h.routeCalls.at(-1) as { members: ReadonlyArray<{ id: string }> };
+      assert.deepEqual(
+        call.members.map((member) => member.id),
+        ["ada", "beto", "cy"],
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
   "the lead picks the project of a new request, titles it, and its members work there",
   () => {
     const h = harness({

@@ -1556,7 +1556,9 @@ const make = Effect.gen(function* () {
         // A request that already ran without one (from before requests had projects) keeps going.
         const needsProject = !started && request.project_id === null && projects.length > 1;
         // With the project known the lead only sees who can work there; otherwise it is checked after.
-        const knownProject = needsProject ? null : (request.project_id ?? projects[0]?.id ?? null);
+        // A request that started without one runs in each member's home, so nobody is left out.
+        const knownProject =
+          request.project_id ?? (started || needsProject ? null : (projects[0]?.id ?? null));
         const candidates = members.filter((member) => worksIn(member, knownProject));
         const names = new Map(members.map((member) => [member.assistant_id, member.name]));
         const recent = yield* sql<MessageRow>`
