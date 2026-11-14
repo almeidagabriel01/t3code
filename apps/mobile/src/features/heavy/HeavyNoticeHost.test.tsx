@@ -8,7 +8,15 @@ import { describe, expect, it, vi } from "vite-plus/test";
 const { mocks } = vi.hoisted(() => ({ mocks: { notices: null as unknown } }));
 
 vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
+  StyleSheet: { absoluteFill: {} },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("react-native-gesture-handler", () => ({
+  GestureHandlerRootView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("react-native-screens", () => ({
+  FullWindowOverlay: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),

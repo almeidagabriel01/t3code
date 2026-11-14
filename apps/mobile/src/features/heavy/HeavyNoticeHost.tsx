@@ -3,7 +3,9 @@ import { unseenHeavyNotices } from "@t3tools/client-runtime/state/heavyQueue";
 import type { EnvironmentId, HeavyNotice, HeavyNoticeBatch } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { FullWindowOverlay } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Toast } from "../../components/ui/Toast";
@@ -39,6 +41,30 @@ export function HeavyNoticeHost(props: { readonly navigate: (href: string) => vo
     return () => clearTimeout(timer);
   }, [current]);
 
+  const toast =
+    current === null ? null : (
+      <View
+        key={`${current.notice.id}:${current.notice.title}`}
+        className="absolute inset-x-3 z-[100]"
+        style={{ top: insets.top + 8 }}
+        pointerEvents="box-none"
+      >
+        <Toast
+          message={current.notice.title}
+          description={current.notice.description}
+          tone={current.notice.tone === "error" ? "danger" : current.notice.tone}
+          action={{
+            label: current.notice.threadId === null ? "Heavy work" : "Open thread",
+            onPress: () => {
+              setCurrent(null);
+              props.navigate(heavyNoticeHref(current));
+            },
+          }}
+          dismissMode="swipe"
+          onDismiss={() => setCurrent(null)}
+        />
+      </View>
+    );
   return (
     <>
       {environments.map(({ environmentId }) => (
@@ -48,28 +74,15 @@ export function HeavyNoticeHost(props: { readonly navigate: (href: string) => vo
           onNotice={(notice) => setCurrent({ notice, environmentId })}
         />
       ))}
-      {current === null ? null : (
-        <View
-          key={`${current.notice.id}:${current.notice.title}`}
-          className="absolute inset-x-3 z-[100]"
-          style={{ top: insets.top + 8 }}
-          pointerEvents="box-none"
-        >
-          <Toast
-            message={current.notice.title}
-            description={current.notice.description}
-            tone={current.notice.tone === "error" ? "danger" : current.notice.tone}
-            action={{
-              label: current.notice.threadId === null ? "Heavy work" : "Open thread",
-              onPress: () => {
-                setCurrent(null);
-                props.navigate(heavyNoticeHref(current));
-              },
-            }}
-            dismissMode="swipe"
-            onDismiss={() => setCurrent(null)}
-          />
-        </View>
+      {toast === null ? null : Platform.OS === "ios" ? (
+        // Native sheets present above the app's root view; only this window layer sits over them.
+        <FullWindowOverlay>
+          <GestureHandlerRootView style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            {toast}
+          </GestureHandlerRootView>
+        </FullWindowOverlay>
+      ) : (
+        toast
       )}
     </>
   );
