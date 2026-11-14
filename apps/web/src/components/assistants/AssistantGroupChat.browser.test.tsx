@@ -1138,7 +1138,7 @@ it("sets a member's own model in the chosen project from the group menu, and rem
   await userEvent.click(menu());
   await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
   await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
-  await expect.element(page.getByText("Follows the project's model.")).toBeVisible();
+  await expect.element(page.getByText("No exception for Ada in this project.")).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Remove exception" }))
     .not.toBeInTheDocument();
@@ -1173,7 +1173,7 @@ it("shows a member's exception in the group menu and removes it from its dialog"
   await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
   await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
   await expect.element(page.getByRole("menuitem", { name: /^Ada.*GPT-5\.5/ })).toBeVisible();
-  await expect.element(page.getByRole("menuitem", { name: /^Bo.*Project's model/ })).toBeVisible();
+  await expect.element(page.getByRole("menuitem", { name: /^Bo.*No exception/ })).toBeVisible();
   await userEvent.click(page.getByRole("menuitem", { name: /^Ada/ }));
   await expect.element(page.getByText("Set for Ada in this project.")).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Remove exception" }));

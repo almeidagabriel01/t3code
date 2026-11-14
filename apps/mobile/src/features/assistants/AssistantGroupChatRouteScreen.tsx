@@ -973,7 +973,7 @@ export function AssistantGroupChatRouteScreen({
                           ? {
                               id: `model:${member.id}`,
                               title: member.name,
-                              subtitle: "Project's model",
+                              subtitle: "No exception",
                               disabled,
                               onPress: () => projectModel.openMemberPicker(member.id),
                             }

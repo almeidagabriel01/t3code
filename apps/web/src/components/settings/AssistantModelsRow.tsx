@@ -47,7 +47,7 @@ export function SelectionPicker(
     >
       <ProviderModelPicker
         {...modelPickerProps(props, props.settings, props.providers, selection)}
-        {...(props.composer ? { size: "xs" as const, compact: true, triggerClassName: "" } : {})}
+        {...(props.composer ? { size: "xs" as const, triggerClassName: "" } : {})}
         triggerAriaLabel={props.label}
         {...(props.detail === undefined ? {} : { triggerDetail: props.detail })}
         // A provider that is gone or off cannot name its model; the slug still reads cleanly.

@@ -174,7 +174,9 @@ function MemberModelFields(props: { readonly member: Assistant }) {
             <span className="text-sm text-muted-foreground">No providers available</span>
           )}
           <p className="text-xs text-muted-foreground">
-            {exception ? `Set for ${member.name} in this project.` : "Follows the project's model."}
+            {exception
+              ? `Set for ${member.name} in this project.`
+              : `No exception for ${member.name} in this project.`}
           </p>
           {error === null ? null : (
             <p role="alert" className="text-xs text-destructive-foreground">

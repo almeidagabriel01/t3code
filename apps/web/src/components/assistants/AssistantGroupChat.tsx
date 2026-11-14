@@ -210,7 +210,7 @@ function GroupHeader(props: {
                       />
                       <span className="min-w-0 flex-1 truncate">{member.name}</span>
                       <span className="ms-3 shrink-0 text-xs text-muted-foreground">
-                        {exception ? formatModelSlugName(exception.model) : "Project's model"}
+                        {exception ? formatModelSlugName(exception.model) : "No exception"}
                       </span>
                     </MenuItem>
                   );
