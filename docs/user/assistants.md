@@ -249,6 +249,12 @@ nothing starts a new **request**; it does not run an agent by itself.
   developer) continues that conversation. When all of a request's tasks are done or cancelled, its
   conversations are settled (they stay under Settled); replying to it or resuming it makes them
   active again. Requests from before this change keep their old shared conversation for history.
+- Each member's conversation for a request starts on the request's project model (see [model
+  order](project-settings.md#defaults-and-inheritance)); the group's **Default model** applies in the group's projects when the
+  project sets none. The model next to **Project** in the box shows and changes that project's model,
+  and **Model in <project>** in the group's menu gives one member its own model there. A change moves
+  the open requests' conversations that still follow the old value, after their current turn; one you
+  switched by hand keeps its model.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
   members. Names with spaces work (`@Ana Paula`); **Mention** in the box inserts one. The line under

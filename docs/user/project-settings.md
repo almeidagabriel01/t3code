@@ -194,8 +194,8 @@ folder.
 
 **Model by assistant**, below a project's **Model**, gives one assistant a different model in that
 project. New work for a project starts on one model, chosen in this order: a model named in the
-request itself, the assistant's model for the project, the project's model, the assistant's
-**Default model**, then your default model. That covers new threads, delegated tasks, threads an
+request itself, the assistant's model for the project, the project's model, for a group request
+the group's **Default model**, then the assistant's **Default model**, then your default model. That covers new threads, delegated tasks, threads an
 agent launches and scheduled tasks; they no longer copy the model of the thread that started them.
 A thread keeps the model it started on until you change it there. A provider that reaches its usage
 limit is never swapped for another one on its own: the work waits for the limit to reset, or for you
