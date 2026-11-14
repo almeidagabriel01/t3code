@@ -318,21 +318,27 @@ export interface AssistantGroupTab {
 }
 
 /**
- * A project's name anywhere in a group chat: its title, else the one the chat last knew. A
- * project known by neither reads "Removed project", numbered by scope order when several are.
+ * A project's name anywhere in a group chat: its title, else the one the chat last knew. One
+ * still in the group (`groupProjectIds`) whose title has not loaded reads "Unknown project"; one
+ * that left, known by neither, reads "Removed project", numbered by scope order when several are.
  */
 export function assistantGroupProjectLabel(
   projectId: ProjectId,
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
   scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "title">> | undefined,
+  groupProjectIds: ReadonlyArray<ProjectId>,
 ): string {
   const known = (id: ProjectId | null) =>
     projects.find((project) => project.id === id)?.title ??
     scopes?.find((scope) => scope.projectId === id)?.title;
   const title = known(projectId);
   if (title !== undefined) return title;
+  if (groupProjectIds.includes(projectId)) return "Unknown project";
   const nameless = (scopes ?? []).filter(
-    (scope) => scope.projectId !== null && known(scope.projectId) === undefined,
+    (scope) =>
+      scope.projectId !== null &&
+      !groupProjectIds.includes(scope.projectId) &&
+      known(scope.projectId) === undefined,
   );
   const index = nameless.findIndex((scope) => scope.projectId === projectId);
   return index < 1 ? "Removed project" : `Removed project ${index + 1}`;
@@ -384,9 +390,8 @@ export function assistantGroupTabs(input: {
   const chat = input.team.chat;
   if (chat?.scopes === undefined) return null;
   const title = new Map(input.projects.map((project) => [project.id, project.title]));
-  const effective = assistantGroupProjectIds(input.members, input.team.projectIds).filter((id) =>
-    title.has(id),
-  );
+  const groupIds = assistantGroupProjectIds(input.members, input.team.projectIds);
+  const effective = groupIds.filter((id) => title.has(id));
   const scopes = chat.scopes;
   // A project neither loaded nor listed is a stale key, not a tab being read.
   const keptProject =
@@ -428,7 +433,9 @@ export function assistantGroupTabs(input: {
       readSeq: chat.readSeq,
     },
     ...effective.map((id) => tab(id, title.get(id)!)),
-    ...orphans.map((id) => tab(id, assistantGroupProjectLabel(id, input.projects, scopes))),
+    ...orphans.map((id) =>
+      tab(id, assistantGroupProjectLabel(id, input.projects, scopes, groupIds)),
+    ),
     ...(keptGeneral || scopes.some((scope) => scope.projectId === null)
       ? [tab(null, "General")]
       : []),

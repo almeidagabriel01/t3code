@@ -871,16 +871,18 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
     const member = byId.get(id);
     return member === undefined || member.archivedAt !== null ? [] : [member];
   });
+  const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(
       id,
       projects.filter((project) => project.environmentId === environmentId),
       team?.chat?.scopes,
+      groupProjectIds,
     );
-  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(
-    members,
-    team?.projectIds ?? [],
-  ).map((id) => ({ id, name: projectName(id) }));
+  const groupProjects: ReadonlyArray<GroupComposerProject> = groupProjectIds.map((id) => ({
+    id,
+    name: projectName(id),
+  }));
   return { team, everyone, byId, members, groupProjects, projectName };
 }
 

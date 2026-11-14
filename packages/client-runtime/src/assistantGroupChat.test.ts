@@ -17,6 +17,7 @@ import {
   assistantGroupTabs,
   assistantGroupTabsPending,
   assistantGroupTabView,
+  assistantGroupProjectLabel,
   assistantGroupTabAfterSend,
   assistantGroupComposerProject,
   resolveAssistantGroupTab,
@@ -1201,6 +1202,19 @@ describe("assistant group tabs", () => {
     assert.deepStrictEqual(
       labels([lost("x"), { ...titled, unreadCount: 1 }, lost("y")], "all", projects.slice(0, 2)),
       ["All", "One", "Two", "Removed project", "Old three", "Removed project 2"],
+    );
+  });
+
+  it.each([
+    ["a group project whose title has not loaded", P3, [P3], "Unknown project"],
+    ["a project that left the group, unnamed", P3, [], "Removed project"],
+    ["the second unnamed one that left", P2, [P3], "Removed project"],
+    ["a title known from the chat", P1, [P1], "One"],
+  ])("project label: %s", (_name, id, group, expected) => {
+    const scopes = [P3, P2].map((projectId) => ({ projectId }));
+    assert.strictEqual(
+      assistantGroupProjectLabel(id, [{ id: P1, title: "One" }], scopes, group),
+      expected,
     );
   });
 
