@@ -142,21 +142,34 @@ it.effect("does nothing and marks nothing while the Beyond instance is missing o
   }).pipe(Effect.provide(layer({}))),
 );
 
-class SeedPasses extends Context.Service<SeedPasses, Queue.Queue<void>>()(
-  "t3/assistants/ModelSelectionSeeds.test/SeedPasses",
-) {}
+class SeedPasses extends Context.Service<
+  SeedPasses,
+  {
+    readonly applies: Queue.Queue<void>;
+    readonly projects: Queue.Queue<void>;
+    readonly resolves: { count: number };
+  }
+>()("t3/assistants/ModelSelectionSeeds.test/SeedPasses") {}
 
-// Each finished seed pass ends an apply span, so the test awaits passes instead of polling.
+// Each finished seed pass ends a span, so the test awaits passes instead of polling.
 const layerSeedPasses = Layer.effectContext(
   Effect.gen(function* () {
-    const passes = yield* Queue.unbounded<void>();
+    const passes = {
+      applies: yield* Queue.unbounded<void>(),
+      projects: yield* Queue.unbounded<void>(),
+      resolves: { count: 0 },
+    };
     const tracer = Tracer.make({
       span: (options) => {
         const span = new Tracer.NativeSpan(options);
         const end = span.end.bind(span);
         span.end = (...args) => {
           end(...args);
-          if (span.name === "ModelSelectionSeeds.apply") Queue.offerUnsafe(passes, undefined);
+          if (span.name === "ModelSelectionSeeds.apply")
+            Queue.offerUnsafe(passes.applies, undefined);
+          if (span.name === "ModelSelectionSeeds.seedProject")
+            Queue.offerUnsafe(passes.projects, undefined);
+          if (span.name === "test.resolve") passes.resolves.count += 1;
         };
         return span;
       },
@@ -181,7 +194,8 @@ const layerProjects = RuntimeLayer.layerProjectService.pipe(
           Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),
       }),
       Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-        resolve: (workspaceRoot) => Effect.succeed(repositoryOf(workspaceRoot)),
+        resolve: (workspaceRoot) =>
+          Effect.succeed(repositoryOf(workspaceRoot)).pipe(Effect.withSpan("test.resolve")),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
         invalidate: () => Effect.void,
@@ -206,7 +220,7 @@ it.effect("seeds a t3code project created after start, without a restart", () =>
     const passes = yield* SeedPasses;
     const service = yield* ProjectService.ProjectService;
     yield* start;
-    yield* Queue.take(passes);
+    yield* Queue.take(passes.applies);
 
     for (const [projectId, workspaceRoot] of [
       [t3code, "/work/t3code"],
@@ -219,7 +233,7 @@ it.effect("seeds a t3code project created after start, without a restart", () =>
         title: projectId,
         workspaceRoot,
       });
-      yield* Queue.take(passes);
+      yield* Queue.take(passes.projects);
     }
 
     const after = yield* state;
@@ -228,5 +242,15 @@ it.effect("seeds a t3code project created after start, without a restart", () =>
       "project-default:t3code-main",
       "project-default:t3code-preset",
     ]);
+
+    // A seeded project's later meta updates skip resolving its repository (git).
+    const resolvesBefore = passes.resolves.count;
+    yield* service.update({
+      commandId: CommandId.make("rename:t3code"),
+      projectId: t3code,
+      title: "renamed",
+    });
+    yield* Queue.take(passes.projects);
+    assert.equal(passes.resolves.count, resolvesBefore);
   }).pipe(Effect.scoped, Effect.provide(layerProjects)),
 );

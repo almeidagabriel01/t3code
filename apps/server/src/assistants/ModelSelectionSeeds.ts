@@ -26,6 +26,8 @@ export const BEYOND_INSTANCE_ID = ProviderInstanceId.make("claudeAgent_claude_be
 const SEEDED_REPOSITORY = "t3code";
 const SEEDED_TEAM = "Beyond · Dev";
 
+const projectSeedId = (projectId: ProjectId) => `project-default:${projectId}`;
+
 type SeedProject = Pick<Project, "id" | "repositoryIdentity"> &
   Partial<Pick<Project, "defaultModelSelection" | "workspaceRoot">>;
 
@@ -68,7 +70,7 @@ export const applyModelSelectionSeeds = Effect.fn("ModelSelectionSeeds.apply")(f
     );
 
   for (const project of projects) {
-    const seedId = `project-default:${project.id}`;
+    const seedId = projectSeedId(project.id);
     if (project.repositoryIdentity?.name !== SEEDED_REPOSITORY || applied.has(seedId)) continue;
     const current = yield* serverSettings.getSettings;
     if (!resolveProjectProviderInstanceEnabled(current, project.id, BEYOND_INSTANCE_ID)) continue;
@@ -118,6 +120,10 @@ const listProjects = Effect.gen(function* () {
 });
 
 const seedProject = Effect.fn("ModelSelectionSeeds.seedProject")(function* (projectId: ProjectId) {
+  const sql = yield* SqlClient.SqlClient;
+  const marked = yield* sql`
+    SELECT 1 FROM model_selection_seeds WHERE seed_id = ${projectSeedId(projectId)}`;
+  if (marked.length > 0) return;
   const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
   if (Option.isNone(project)) return;
   // The resolver, not the enrichment cache: a finished clone refreshes it before its meta update.
