@@ -23,12 +23,10 @@ import {
   assistantGroupAwaitingRoute,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
-  assistantGroupFeedProjects,
   assistantGroupFinished,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
-  filterAssistantGroupFeed,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
   assistantGroupReadStep,
@@ -226,27 +224,6 @@ describe("group requests", () => {
         ["m1", "Fix login", "done", 2],
         [5, "boundary"],
       ],
-    );
-    assert.deepStrictEqual(assistantGroupFeedProjects(feed), [site, core]);
-    assert.deepStrictEqual(
-      filterAssistantGroupFeed(feed, core).map(
-        (item) => item.kind === "request" && (item.block.requestId as string),
-      ),
-      ["m1"],
-    );
-    assert.strictEqual(filterAssistantGroupFeed(feed, null), feed);
-    // A request the lead has not placed yet shows under any filter.
-    const waiting = start({
-      type: "snapshot",
-      messages: [inRequest(1, 1), inRequest(2, 2, { projectId: site })],
-      tasks: [],
-      hasMore: false,
-    });
-    assert.deepStrictEqual(
-      filterAssistantGroupFeed(assistantGroupRequestFeed(waiting), core).map(
-        (item) => item.kind === "request" && (item.block.requestId as string),
-      ),
-      ["m1"],
     );
   });
 

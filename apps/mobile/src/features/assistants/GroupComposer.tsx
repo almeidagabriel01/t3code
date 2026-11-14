@@ -288,8 +288,9 @@ export function GroupComposer(props: {
   readonly leadId: Assistant["id"] | null;
   /** The group's projects, named. */
   readonly projects: ReadonlyArray<GroupComposerProject>;
-  /** The project a new request gets unless the user picks another (the chat's filter). */
-  readonly defaultProjectId: ProjectId | null;
+  /** The project a new request gets; null lets the lead decide. A reply's project overrides it. */
+  readonly projectId: ProjectId | null;
+  readonly onProjectChange: (projectId: ProjectId | null) => void;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
@@ -310,8 +311,6 @@ export function GroupComposer(props: {
   const [contentHeight, setContentHeight] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // undefined: the user picked nothing, so the default applies; null: the lead decides.
-  const [picked, setPicked] = useState<ProjectId | null | undefined>(undefined);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once.
   const inFlight = useRef(false);
@@ -366,8 +365,7 @@ export function GroupComposer(props: {
     !voice.blocksSubmission;
 
   const lockedProject = props.replyingTo?.projectId ?? null;
-  const chosenProject =
-    picked !== undefined ? picked : props.replyingTo === null ? props.defaultProjectId : null;
+  const chosenProject = props.projectId;
   const projectName = (id: ProjectId | null) =>
     id === null
       ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL
@@ -430,7 +428,6 @@ export function GroupComposer(props: {
     if (result.ok) {
       clearComposerDraftContent(draftKey);
       setSelection({ start: 0, end: 0 });
-      setPicked(undefined);
       attached.clear();
     } else setError(result.message);
   };
@@ -572,7 +569,7 @@ export function GroupComposer(props: {
                     })),
                   ]}
                   onPressAction={({ nativeEvent }) =>
-                    setPicked(
+                    props.onProjectChange(
                       nativeEvent.event === LEAD_DECIDES ? null : (nativeEvent.event as ProjectId),
                     )
                   }

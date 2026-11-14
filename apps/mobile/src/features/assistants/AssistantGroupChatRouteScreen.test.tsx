@@ -64,12 +64,35 @@ const { mocks, Children } = vi.hoisted(() => ({
     openedLink: vi.fn(),
     /** Each render of a message's markdown, with the link handlers it got. */
     markdownRender: vi.fn(),
+    subscribe: vi.fn(),
+    /** Mobile preferences as the atom holds them; saving replaces them and re-renders. */
+    preferences: {} as { assistantGroupTabs?: Record<string, string> },
+    preferenceListeners: new Set<() => void>(),
+    savePreferences: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
   Keyboard: { dismiss: () => mocks.dismissKeyboard() },
-  View: (props: { children?: ReactNode; testID?: string }) => (
-    <div data-testid={props.testID}>{props.children}</div>
+  // Measured once mounted, like a laid-out view.
+  View: (props: {
+    children?: ReactNode;
+    testID?: string;
+    role?: string;
+    accessibilityLabel?: string;
+    onLayout?: (event: { nativeEvent: { layout: object } }) => void;
+  }) => (
+    <div
+      data-testid={props.testID}
+      data-role={props.role}
+      data-label={props.accessibilityLabel}
+      ref={
+        props.onLayout &&
+        (() =>
+          props.onLayout?.({ nativeEvent: { layout: { x: 24, y: 0, width: 80, height: 44 } } }))
+      }
+    >
+      {props.children}
+    </div>
   ),
   ScrollView: Children,
   StyleSheet: { hairlineWidth: 1 },
@@ -83,11 +106,17 @@ vi.mock("react-native", () => ({
   },
   Pressable: (props: {
     accessibilityLabel?: string;
+    accessibilityState?: { selected?: boolean };
     disabled?: boolean;
     onPress?: () => void;
     children?: ReactNode;
   }) => (
-    <button aria-label={props.accessibilityLabel} disabled={props.disabled} onClick={props.onPress}>
+    <button
+      aria-label={props.accessibilityLabel}
+      aria-selected={props.accessibilityState?.selected}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
       {props.children}
     </button>
   ),
@@ -332,6 +361,7 @@ vi.mock("@legendapp/list/react-native", () => ({
     }) => void;
     ListHeaderComponent: ReactNode;
     ListEmptyComponent: ReactNode;
+    contentInset?: { top: number };
   }) => {
     useImperativeHandle(props.ref, () => ({
       scrollToEnd: mocks.scrollToEnd,
@@ -350,6 +380,7 @@ vi.mock("@legendapp/list/react-native", () => ({
         data-testid="list"
         data-initial-index={props.initialScrollIndex}
         data-at-end={String(props.initialScrollAtEnd)}
+        data-inset-top={props.contentInset?.top}
       >
         {props.ListHeaderComponent}
         <button aria-label="start reached" onClick={props.onStartReached} />
@@ -366,6 +397,10 @@ vi.mock("@legendapp/list/react-native", () => ({
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ goBack: mocks.goBack, dispatch: mocks.dispatch }),
+  // The tablet sidebar opens the chat by id, outside any navigator screen.
+  useRoute: () => {
+    throw new Error("useRoute outside a navigator screen");
+  },
   StackActions: { push: (name: string, params: unknown) => ({ name, params }) },
 }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -539,7 +574,10 @@ vi.mock("../../state/assistants", () => ({
     }
     return entries;
   },
-  useAssistantGroupChat: () => mocks.live,
+  useAssistantGroupChat: (...args: unknown[]) => {
+    mocks.subscribe(...args);
+    return mocks.live;
+  },
   useAssistantGroupActions: () => ({
     canPost: mocks.canPost,
     canAct: mocks.canAct,
@@ -550,6 +588,40 @@ vi.mock("../../state/assistants", () => ({
     olderThan: mocks.olderThan,
   }),
 }));
+vi.mock("../../components/ui/useBarInset", () => ({ useBarInset: () => 100 }));
+vi.mock("../../components/ui/GlassSurface", async () => ({
+  GlassSurface: (await import("react-native")).View,
+}));
+vi.mock("expo-glass-effect", () => ({
+  GlassView: Children,
+  isGlassEffectAPIAvailable: () => false,
+}));
+vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+vi.mock("@effect/atom-react", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const { AsyncResult } = await import("effect/reactivity");
+  let held: unknown;
+  let result: unknown;
+  const subscribe = (listener: () => void) => {
+    mocks.preferenceListeners.add(listener);
+    return () => mocks.preferenceListeners.delete(listener);
+  };
+  return {
+    useAtomValue: () =>
+      useSyncExternalStore(subscribe, () => {
+        if (held !== mocks.preferences) {
+          held = mocks.preferences;
+          result = AsyncResult.success(mocks.preferences);
+        }
+        return result;
+      }),
+    useAtomSet: () => mocks.savePreferences,
+  };
+});
 vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { assistant: { name: string } }) => (
     <i>{`av:${props.assistant.name}`}</i>
@@ -597,6 +669,7 @@ const team = (extra: object = {}) => ({
     memberIds: ["ada", "beto", "jarvis"],
     leadId: "jarvis",
     archivedAt: null,
+    projectIds: [],
     ...extra,
   },
 });
@@ -723,8 +796,18 @@ beforeEach(() => {
     mocks.voiceStart,
     mocks.openedLink,
     mocks.markdownRender,
+    mocks.subscribe,
+    mocks.savePreferences,
   ])
     fn.mockReset();
+  mocks.preferences = {};
+  mocks.preferenceListeners.clear();
+  mocks.savePreferences.mockImplementation(
+    (update: { transform: (current: typeof mocks.preferences) => object }) => {
+      mocks.preferences = { ...mocks.preferences, ...update.transform(mocks.preferences) };
+      for (const listener of mocks.preferenceListeners) listener();
+    },
+  );
   mocks.drafts.clear();
   mocks.draftListeners.clear();
   mocks.release.mockResolvedValue(undefined);
@@ -1468,21 +1551,6 @@ describe("requests", () => {
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
   });
 
-  it("shows all projects to jump to a loose message the filter hides, and never jumps later", async () => {
-    mocks.live = snapshot([...REQUESTS, message("loose", 7, { text: "Loose note" })], TASKS);
-    mocks.teams = [team({ chat: { ...read, latestSeq: 7, readSeq: 7 } })];
-    render();
-    await click("Reply to Ada");
-    await click("header:Beta");
-    expect(all("group-request-line")).toHaveLength(0);
-    await click("Show the message from Ada");
-    expect(all("group-request-line")).toHaveLength(1);
-    expect(mocks.scrollToIndex).toHaveBeenCalledOnce();
-    await click("header:Beta");
-    await click("header:All projects");
-    expect(mocks.scrollToIndex).toHaveBeenCalledOnce();
-  });
-
   it("links member and project mentions for the markdown view to draw as their chips", () => {
     mocks.live = snapshot([message("m1", 1, { ...user, text: "@ada ship #alpha" })]);
     render();
@@ -1522,26 +1590,183 @@ describe("requests", () => {
     expect(text()).toContain("Fixed");
   });
 
-  it("filters by project, keeps requests waiting for one, and makes it the composer's default", async () => {
+  const SCOPES = [
+    { projectId: "p1", unreadCount: 0, waiting: false, readSeq: 6 },
+    { projectId: "p2", unreadCount: 2, waiting: true, readSeq: 4 },
+    { projectId: null, unreadCount: 1, waiting: false, readSeq: 5 },
+  ];
+  const TAB = {
+    all: "All, 3 unread, Waiting on you",
+    alpha: "Alpha",
+    beta: "Beta, 2 unread, Waiting on you",
+    general: "General, 1 unread",
+  };
+  const tabbed = (saved?: string, live = snapshot(REQUESTS, TASKS)) => {
+    if (saved !== undefined) mocks.preferences = { assistantGroupTabs: { "hub:g1": saved } };
+    mocks.live = live;
+    mocks.teams = [team({ chat: { ...read, unreadCount: 3, scopes: SCOPES } })];
+    render();
+  };
+  const selected = (label: string) => byLabel(label)?.getAttribute("aria-selected");
+  const subscribed = () => mocks.subscribe.mock.lastCall;
+  const remount = () => {
+    act(() => root.unmount());
+    root = createRoot(container);
+  };
+
+  it("shows no tab row and no project filter from a server without scopes", () => {
     setup();
-    expect(byLabel("header:All projects")).not.toBeNull();
-    await click("header:Beta");
-    expect(all("group-request-title")).toEqual(["ship it", "Review"]);
-    expect(container.querySelector("header p")?.textContent).toContain("Beta");
-    expect(byLabel("Project: Beta")).not.toBeNull();
-    await type("@beto again");
-    await click("Send");
-    expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@beto again", projectId: "p2" });
-    await click("header:All projects");
-    expect(all("group-request-title")).toHaveLength(2);
-    expect(all("group-request-line")).toHaveLength(1);
-    expect(byLabel("Project: Lead decides")).not.toBeNull();
+    expect(container.querySelector('[data-testid="group-tabs"]')).toBeNull();
+    expect(byLabel("header:All projects")).toBeNull();
+    expect(byLabel("header:Beta")).toBeNull();
+    expect(subscribed()).toEqual(["hub", "g1", undefined]);
   });
 
-  it("hides the filter with fewer than two projects", () => {
-    mocks.live = snapshot(REQUESTS.slice(0, 3), TASKS.slice(0, 1));
-    render();
+  it("names each tab with its unread count and a waiting dot, and opens on All without a saved tab", () => {
+    tabbed("project:gone");
+    const row = container.querySelector('[data-testid="group-tabs"]')!;
+    // Announced like web's row: a group of toggle buttons, the open one selected.
+    expect([row.getAttribute("data-role"), row.getAttribute("data-label")]).toEqual([
+      "group",
+      "Project tabs",
+    ]);
+    expect(
+      [...row.querySelectorAll("button")].map((tab) => tab.getAttribute("aria-label")),
+    ).toEqual(Object.values(TAB));
+    expect(row.querySelectorAll('[data-testid="chip-attention"]')).toHaveLength(2);
+    expect(selected(TAB.all)).toBe("true");
     expect(byLabel("header:All projects")).toBeNull();
+  });
+
+  // The build inlines Platform.OS; run with T3_MOBILE_TEST_PLATFORM=android for the in-flow row.
+  it("pins the row under the iOS bar and grows the list's inset by its height; Android keeps it in flow", () => {
+    const android = process.env.T3_MOBILE_TEST_PLATFORM === "android";
+    tabbed();
+    const list = container.querySelector('[data-testid="list"]')!;
+    expect(list.getAttribute("data-inset-top")).toBe(android ? null : "44");
+    expect(container.querySelector('[data-testid="group-tabs-glass"]') === null).toBe(android);
+    // In flow on Android it sits above the list; pinned on iOS it draws over it, after it.
+    const row = container.querySelector('[data-testid="group-tabs"]')!;
+    expect(Boolean(row.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
+      android,
+    );
+  });
+
+  it("switches tabs keeping the draft, sets the composer's project, and reopens on the saved tab", async () => {
+    tabbed();
+    await type("@beto again");
+    await click(TAB.beta);
+    expect(input().value).toBe("@beto again");
+    expect(byLabel("Project: Beta")).not.toBeNull();
+    expect(mocks.preferences).toEqual({ assistantGroupTabs: { "hub:g1": "project:p2" } });
+    expect(subscribed()).toEqual(["hub", "g1", { projectId: "p2" }]);
+    await click(TAB.general);
+    expect(byLabel("Project: Lead decides")).not.toBeNull();
+    // The open tab stays put: nothing is saved again.
+    await click(TAB.general);
+    expect(mocks.savePreferences).toHaveBeenCalledTimes(2);
+    remount();
+    render();
+    expect(selected(TAB.general)).toBe("true");
+    expect(subscribed()).toEqual(["hub", "g1", { projectId: null }]);
+  });
+
+  it("keeps the draft when a tab switch closes an open reply", async () => {
+    tabbed("project:p2");
+    await type("still here");
+    await click("Reply to request Review");
+    expect(text()).toContain("Replying to Review");
+    await click(TAB.alpha);
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    expect(input().value).toBe("still here");
+  });
+
+  it("says how many tasks run in the whole group, even in a tab whose stream holds none", () => {
+    mocks.preferences = { assistantGroupTabs: { "hub:g1": "project:p1" } };
+    mocks.live = snapshot(REQUESTS.slice(0, 3), TASKS.slice(0, 1));
+    mocks.teams = [team({ chat: { ...read, unreadCount: 3, scopes: SCOPES, runningCount: 2 } })];
+    render();
+    expect(container.querySelector("header p")?.textContent).toContain("2 running");
+  });
+
+  it("in a project tab shows only its requests, and pages and marks read in its scope", async () => {
+    vi.useFakeTimers();
+    mocks.olderThan.mockResolvedValue({
+      ok: true,
+      value: { messages: [], tasks: [], hasMore: false },
+    });
+    tabbed("project:p2", snapshot(REQUESTS, TASKS, true));
+    expect(all("group-request-title")).toEqual(["Review"]);
+    expect(text()).not.toContain("ship it");
+    await click("start reached");
+    expect(mocks.olderThan).toHaveBeenCalledWith("g1", expect.anything(), { projectId: "p2" });
+    await click("scroll down");
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).toHaveBeenCalledWith("g1", { readSeq: 6, scope: { projectId: "p2" } });
+    vi.useRealTimers();
+  });
+
+  it("in All folds every request to one line with its project, opens one in place, and marks nothing read", async () => {
+    vi.useFakeTimers();
+    tabbed(
+      undefined,
+      snapshot(
+        [
+          ...REQUESTS,
+          message("r4", 7, {
+            ...user,
+            text: "old work",
+            requestId: "r4",
+            projectId: "p9",
+            title: "Old",
+          }),
+        ],
+        TASKS,
+      ),
+    );
+    expect(all("group-request-title")).toEqual([]);
+    const lines = () =>
+      [...container.querySelectorAll('[data-testid="group-request-line"] button')].map((line) =>
+        line.getAttribute("aria-label"),
+      );
+    expect(lines()).toEqual([
+      "Fix build, Finished, Alpha. Expand request",
+      "ship it, Needs project. Expand request",
+      "Review, Working, Beta. Expand request",
+      "Old, Routing, Removed project. Expand request",
+    ]);
+    await click("Review, Working, Beta. Expand request");
+    expect(text()).toContain("[@beto](t3-mention:mention/beto) review");
+    await click("Review, Working, Beta. Collapse request");
+    expect(text()).not.toContain("(t3-mention:mention/beto) review");
+    await click("scroll down");
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    expect(subscribed()).toEqual(["hub", "g1", undefined]);
+    vi.useRealTimers();
+  });
+
+  it("follows a new request to the tab that holds it, and stays in All", async () => {
+    tabbed("project:p1");
+    expect(byLabel("Project: Alpha")).not.toBeNull();
+    await click("Project:Beta");
+    await type("@beto ship");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({
+      teamId: "g1",
+      text: "@beto ship",
+      projectId: "p2",
+    });
+    expect(selected(TAB.beta)).toBe("true");
+    await click("Project:Lead decides");
+    await type("anyone");
+    await click("Send");
+    expect(selected(TAB.general)).toBe("true");
+    await click(TAB.all);
+    await click("Project:Alpha");
+    await type("@ada go");
+    await click("Send");
+    expect(selected(TAB.all)).toBe("true");
   });
 
   it("sends the picked project on a new request and lets the lead decide by default", async () => {

@@ -20,6 +20,7 @@ import {
   type Assistant,
   type AssistantTask,
   type AssistantGroupConversationAction,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsPostInput,
   type AssistantGroupsPostResult,
@@ -333,14 +334,20 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
   };
 }
 
-/** One group's chat, live: null before its first snapshot. */
+/** One group's chat, live: null before its first snapshot. Without a scope, every request. */
 export function useAssistantGroupChat(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
+  scope?: AssistantGroupScope,
 ): AssistantGroupChatState | null {
   return Option.getOrNull(
     AsyncResult.value(
-      useAtomValue(assistantsEnvironment.groupChat({ environmentId, input: { teamId } })),
+      useAtomValue(
+        assistantsEnvironment.groupChat({
+          environmentId,
+          input: { teamId, ...(scope === undefined ? {} : { scope }) },
+        }),
+      ),
     ),
   );
 }
@@ -382,10 +389,15 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
         ? { ok: true, value: undefined }
         : { ok: false, message: assistantErrorMessage(squashAtomCommandFailure(result)) };
     },
-    /** Moves the read position; `readSeq` is a message number, `unread` marks the newest unread. */
+    /**
+     * Moves the read position; `readSeq` is a message number, `unread` marks the newest unread.
+     * With a scope, only that tab's position moves.
+     */
     markRead: async (
       teamId: AssistantTeamId,
-      position: { readonly readSeq: number } | { readonly unread: true },
+      position: ({ readonly readSeq: number } | { readonly unread: true }) & {
+        readonly scope?: AssistantGroupScope;
+      },
     ): Promise<AssistantReply> => {
       const result = await markRead({ environmentId, input: { teamId, ...position } });
       return result._tag === "Success"
@@ -414,11 +426,16 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     olderThan: async (
       teamId: AssistantTeamId,
       state: AssistantGroupChatState,
+      scope?: AssistantGroupScope,
     ): Promise<AssistantReply<AssistantGroupsHistoryResult>> => {
       const beforeSeq = oldestAssistantGroupSeq(state) ?? undefined;
       const result = await history({
         environmentId,
-        input: { teamId, ...(beforeSeq === undefined ? {} : { beforeSeq }) },
+        input: {
+          teamId,
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          ...(scope === undefined ? {} : { scope }),
+        },
       });
       return result._tag === "Success"
         ? { ok: true, value: result.value }

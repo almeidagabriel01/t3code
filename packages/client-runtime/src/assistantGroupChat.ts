@@ -289,34 +289,6 @@ export function assistantGroupRequestProject(
   return (state.messages.get(requestId) ?? state.requests.get(requestId))?.projectId ?? null;
 }
 
-/** The projects the loaded requests run in, in first-seen order, for the filter. */
-export function assistantGroupFeedProjects(
-  items: ReadonlyArray<AssistantGroupFeedItem>,
-): ReadonlyArray<ProjectId> {
-  const seen = new Set<ProjectId>();
-  for (const item of items)
-    if (item.kind === "request" && item.block.projectId !== null) seen.add(item.block.projectId);
-  return [...seen];
-}
-
-/**
- * The feed narrowed to one project's requests; null keeps everything. A request still waiting
- * for its project shows under every filter, so a new one never vanishes as it is sent.
- */
-export function filterAssistantGroupFeed(
-  items: ReadonlyArray<AssistantGroupFeedItem>,
-  projectId: ProjectId | null,
-): ReadonlyArray<AssistantGroupFeedItem> {
-  if (projectId === null) return items;
-  return items.filter(
-    (item) =>
-      item.kind === "request" &&
-      (item.block.projectId === projectId ||
-        (item.block.projectId === null &&
-          (item.block.status === "routing" || item.block.status === "needs-project"))),
-  );
-}
-
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
 export interface AssistantGroupTab {

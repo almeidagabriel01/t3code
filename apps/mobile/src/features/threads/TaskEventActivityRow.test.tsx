@@ -42,8 +42,25 @@ describe("TaskEventActivityRow", () => {
     expect(view.textContent).toContain("Fix build");
     expect(view.textContent).toContain("· Failed");
     expect(view.textContent).toContain("xmark.circle.fill");
+    expect(view.textContent).toContain("Open");
     await act(async () => view.querySelector("button")!.click());
     expect(onOpen).toHaveBeenCalledOnce();
+    const chipped = await mount(
+      <TaskEventActivityRow
+        title="Review"
+        label="Working"
+        status={null}
+        chip={{ label: "Beta" }}
+        actionLabel="Hide"
+        action="Hide request"
+        onOpen={onOpen}
+      />,
+    );
+    expect(chipped.textContent).toContain("Beta");
+    expect(chipped.textContent).toContain("Hide");
+    expect(chipped.querySelector("button")!.getAttribute("aria-label")).toBe(
+      "Review, Working, Beta. Hide request",
+    );
   });
 });
 

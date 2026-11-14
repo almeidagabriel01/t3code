@@ -1,4 +1,4 @@
-import { Pressable } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -19,12 +19,15 @@ export function TaskEventActivityRow(props: {
   readonly onOpen: () => void;
   /** What the row opens, for screen readers. */
   readonly action?: string;
+  /** Where the task belongs, such as its project, as a small pill after the status. */
+  readonly chip?: { readonly label: string };
+  readonly actionLabel?: string;
 }) {
   const symbol = STATUS_SYMBOL[props.status ?? "none"];
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${props.title}, ${props.label}. ${props.action ?? "Open task"}`}
+      accessibilityLabel={`${props.title}, ${props.label}${props.chip === undefined ? "" : `, ${props.chip.label}`}. ${props.action ?? "Open task"}`}
       onPress={props.onOpen}
       className="flex-row items-center gap-1.5 rounded-md px-1 py-1 active:bg-foreground/8"
     >
@@ -41,8 +44,15 @@ export function TaskEventActivityRow(props: {
       <Text numberOfLines={1} className="shrink-0 text-xs text-foreground-muted">
         {`· ${props.label}`}
       </Text>
+      {props.chip === undefined ? null : (
+        <View className="max-w-28 shrink-0 rounded-full bg-foreground/8 px-1.5 py-px">
+          <Text numberOfLines={1} className="text-2xs text-foreground-secondary">
+            {props.chip.label}
+          </Text>
+        </View>
+      )}
       <Text className="ml-auto shrink-0 pl-2 font-t3-medium text-xs text-foreground-secondary">
-        Open
+        {props.actionLabel ?? "Open"}
       </Text>
     </Pressable>
   );

@@ -1,10 +1,9 @@
 import {
-  ASSISTANT_GROUP_ALL_PROJECTS_LABEL,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
   applyAssistantGroupHistory,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
-  assistantGroupFeedProjects,
+  assistantGroupInScope,
   assistantGroupMarkdownMentions,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
@@ -14,8 +13,10 @@ import {
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
   assistantGroupRunningCount,
-  filterAssistantGroupFeed,
+  assistantGroupTabs,
+  resolveAssistantGroupTab,
   type AssistantGroupChatState,
+  type AssistantGroupTab,
   type AssistantGroupFeedRow,
   type AssistantGroupRequestBlock,
   type AssistantGroupRequestStatus,
@@ -33,6 +34,7 @@ import {
   EnvironmentId,
   ThreadId,
   type Assistant,
+  type AssistantTeam,
   type AssistantGroupMessage,
   type AssistantGroupsHistoryResult,
   type AssistantGroupTask,
@@ -45,7 +47,7 @@ import {
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { type StaticScreenProps } from "@react-navigation/native";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { useReducedMotion, withTiming } from "react-native-reanimated";
@@ -109,12 +111,14 @@ import {
   type GroupReplyTarget,
   type GroupSendResult,
 } from "./GroupComposer";
+import { GroupProjectTabs } from "./GroupProjectTabs";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
 import { AssistantAvatar } from "./assistantPresentation";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 import { useGroupReadMarker } from "./useGroupReadMarker";
+import { useGroupTabPreference } from "./useGroupTabPreference";
 
 type LinkHost = Parameters<typeof useMarkdownLinks>[0];
 
@@ -745,6 +749,29 @@ function RequestHeader(props: {
   );
 }
 
+/** In All, every request as one line naming its project; tapping opens it in place. */
+function AllRequestLine(props: {
+  readonly block: AssistantGroupRequestBlock;
+  readonly chip: string | null;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  const activity = assistantGroupActivity(props.block.status);
+  return (
+    <View testID="group-request-line" className="mx-3 mt-4">
+      <TaskEventActivityRow
+        title={props.block.title}
+        status={activity.status}
+        label={activity.label}
+        {...(props.chip === null ? {} : { chip: { label: props.chip } })}
+        actionLabel={props.expanded ? "Collapse" : "Expand"}
+        action={props.expanded ? "Collapse request" : "Expand request"}
+        onOpen={props.onToggle}
+      />
+    </View>
+  );
+}
+
 function FooterAction(props: {
   readonly icon: "arrowshape.turn.up.left" | "folder";
   readonly label: string;
@@ -848,12 +875,37 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
   return { team, everyone, byId, members, groupProjects, projectName };
 }
 
-export function AssistantGroupChatRouteScreen({
-  route,
-}: StaticScreenProps<{ readonly environmentId: string; readonly teamId: string }>) {
-  const environmentId = EnvironmentId.make(route.params.environmentId);
-  const teamId = AssistantTeamId.make(route.params.teamId);
-  const goBack = useWorkspaceBackNavigation("threads");
+/** What the screen asks of its feed, which remounts per tab. */
+type GroupFeedHandle = {
+  readonly jump: (id: AssistantGroupMessage["id"]) => void;
+  readonly scrollToEnd: () => void;
+};
+
+type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessage["id"] };
+
+/**
+ * One tab's messages: its own pages, folds, New line and read marker. The screen keys it by tab,
+ * so none of that leaks between tabs; the composer stays outside so a draft survives a switch.
+ */
+function GroupFeed({
+  ref,
+  ...props
+}: {
+  readonly ref: Ref<GroupFeedHandle>;
+  readonly environmentId: EnvironmentId;
+  readonly team: AssistantTeam;
+  readonly people: ReturnType<typeof useGroupPeople>;
+  readonly actions: ReturnType<typeof useAssistantGroupActions>;
+  /** null when the group has no tabs: every request, as before tabs. */
+  readonly tab: AssistantGroupTab | null;
+  readonly live: AssistantGroupChatState | null;
+  /** The pinned tab row's height on iOS, added under the bar's own inset. */
+  readonly topInset: number | undefined;
+  readonly onReply: (target: GroupReply) => void;
+}) {
+  const { environmentId, team, tab, live, topInset } = props;
+  const teamId = team.id;
+  const { byId, members, groupProjects, projectName } = props.people;
   const selectDetail = useSelectWorkspaceDetail();
   const markdownStyles = useMarkdownStyles();
   const links = useMarkdownLinkHost({
@@ -863,18 +915,10 @@ export function AssistantGroupChatRouteScreen({
   });
   // Rows get only the link builders, which stay the same while a preview opens and closes.
   const linkHost: LinkHost = { linksFor: links.linksFor, imageSources: links.imageSources };
-  const entries = useAssistantEntries();
-  const live = useAssistantGroupChat(environmentId, teamId);
-  const actions = useAssistantGroupActions(environmentId);
-  const flows = useAssistantTeamFlows(environmentId);
-  const openTeam = useOpenAssistantTeam();
-  const openEditor = useOpenAssistantEditor();
+  const { actions } = props;
+  const projects = useProjects();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const projects = useProjects();
-  const [replyTo, setReplyTo] = useState<
-    (GroupReplyTarget & { readonly id: AssistantGroupMessage["id"] }) | null
-  >(null);
   // A message to bring into view once the list holds it (its request may still be folded).
   const pendingJump = useRef<AssistantGroupMessage["id"] | null>(null);
   const [highlight, setHighlight] = useState<{
@@ -882,7 +926,6 @@ export function AssistantGroupChatRouteScreen({
     readonly nonce: number;
   } | null>(null);
   const highlightNonce = useRef(0);
-  const [filterPick, setFilterPick] = useState<ProjectId | null>(null);
   // The user's own fold or open of a request, over the default.
   const [toggles, setToggles] = useState<ReadonlyMap<string, boolean>>(new Map());
   const list = useRef<LegendListRef>(null);
@@ -893,33 +936,33 @@ export function AssistantGroupChatRouteScreen({
   // The read position at open, so requests do not fold away as the chat is marked read.
   const [openReadSeq, setOpenReadSeq] = useState(0);
 
-  const { team, everyone, byId, members, groupProjects, projectName } = useGroupPeople(
-    environmentId,
-    teamId,
-  );
   const chat =
     live === null
       ? null
       : pages.reduce((state, page) => applyAssistantGroupHistory(state, page), live);
-  const archived = team?.archivedAt != null;
-  const lead = members.find((member) => member.id === team?.leadId);
-  if (newSeq === undefined && chat !== null && team !== undefined) {
+  const archived = team.archivedAt != null;
+  const lead = members.find((member) => member.id === team.leadId);
+  const scope = tab?.scope;
+  // All shows every request folded to a line and moves no read position.
+  const isAll = tab?.key === "all";
+  const readSeq = tab?.readSeq ?? team.chat?.readSeq ?? 0;
+  if (newSeq === undefined && chat !== null) {
     // A server without counters sends none: there is no position to draw a line from.
-    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, team.chat.readSeq));
-    setOpenReadSeq(team.chat?.readSeq ?? 0);
+    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, readSeq));
+    setOpenReadSeq(readSeq);
   }
 
-  const items = chat === null ? [] : assistantGroupRequestFeed(chat);
-  const feedProjects = assistantGroupFeedProjects(items);
-  const filter = filterPick !== null && feedProjects.includes(filterPick) ? filterPick : null;
-  const visible = filterAssistantGroupFeed(items, filter);
-  const newestRequest = visible.findLast((item) => item.kind === "request");
-  const feedEntries: FeedEntry[] = visible.flatMap((item): FeedEntry[] => {
+  // A request that left this tab's project (it got one) drops out of it.
+  const items = (chat === null ? [] : assistantGroupRequestFeed(chat)).filter(
+    (item) => item.kind !== "request" || assistantGroupInScope(item.block, scope),
+  );
+  const newestRequest = items.findLast((item) => item.kind === "request");
+  const feedEntries: FeedEntry[] = items.flatMap((item): FeedEntry[] => {
     if (item.kind === "row") return [item];
     const { block } = item;
     const expanded =
       toggles.get(block.requestId) ??
-      assistantGroupRequestExpanded(block, openReadSeq, item === newestRequest);
+      (!isAll && assistantGroupRequestExpanded(block, openReadSeq, item === newestRequest));
     if (!expanded) return [{ kind: "header", block, expanded }];
     return [
       { kind: "header", block, expanded },
@@ -936,11 +979,15 @@ export function AssistantGroupChatRouteScreen({
     newIndex >= 0 && feedEntries.length - newIndex > NEW_JUMP_MIN_ROWS ? newIndex : null;
   useGroupReadMarker({
     latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
-    readSeq: team?.chat?.readSeq ?? 0,
+    readSeq,
     // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
     atBottom: scrolled ? atBottom : jumpTo === null,
-    enabled: team?.chat !== undefined && actions.canMarkRead,
-    markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
+    enabled: team.chat !== undefined && actions.canMarkRead && !isAll,
+    markRead: (next) =>
+      void actions.markRead(
+        teamId,
+        scope === undefined ? { readSeq: next } : { readSeq: next, scope },
+      ),
   });
 
   const entryIndexOf = (id: AssistantGroupMessage["id"]) =>
@@ -968,7 +1015,6 @@ export function AssistantGroupChatRouteScreen({
     if (holder.kind === "request") {
       setToggles((current) => new Map(current).set(holder.block.requestId, true));
     }
-    if (!visible.includes(holder)) setFilterPick(null);
     pendingJump.current = id;
     highlightNonce.current += 1;
     const nonce = highlightNonce.current;
@@ -978,42 +1024,18 @@ export function AssistantGroupChatRouteScreen({
       HIGHLIGHT_MS,
     );
   };
+  useImperativeHandle(ref, () => ({
+    jump,
+    scrollToEnd: () => list.current?.scrollToEnd({ animated: true }),
+  }));
 
   const loadOlder = async () => {
     if (chat === null || !chat.hasMore || loadingOlder) return;
     setLoadingOlder(true);
-    const reply = await actions.olderThan(teamId, chat);
+    const reply = await actions.olderThan(teamId, chat, scope);
     setLoadingOlder(false);
     if (!reply.ok) return Dialog.alert("Could not load earlier messages", reply.message);
     setPages((current) => [...current, reply.value]);
-  };
-
-  const send = async (
-    text: string,
-    attachments: ReadonlyArray<ChatAttachment>,
-    projectId: ProjectId | undefined,
-  ): Promise<GroupSendResult> => {
-    const reply = await actions.post({
-      teamId,
-      text,
-      ...(attachments.length === 0 ? {} : { attachments }),
-      ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
-      ...(projectId === undefined ? {} : { projectId }),
-    });
-    if (reply.ok) {
-      setReplyTo(null);
-      list.current?.scrollToEnd({ animated: true });
-      return { ok: true };
-    }
-    return {
-      ok: false,
-      message:
-        reply.reason === "mention_required"
-          ? MENTION_REQUIRED_COPY
-          : reply.reason === "archived"
-            ? "This group is archived. Restore it to write here."
-            : reply.message,
-    };
   };
 
   const taskAction = async (
@@ -1044,6 +1066,10 @@ export function AssistantGroupChatRouteScreen({
       )?.workspaceRoot ?? null
     );
   };
+  // An orphan's project is gone from the environment, unlike a known one outside the group.
+  const chipLabel = (projectId: ProjectId) =>
+    projects.find((project) => project.environmentId === environmentId && project.id === projectId)
+      ?.title ?? "Removed project";
 
   const pickProject = async (block: AssistantGroupRequestBlock, project: GroupComposerProject) => {
     const reply = await actions.post({
@@ -1058,6 +1084,232 @@ export function AssistantGroupChatRouteScreen({
   const toggle = (block: AssistantGroupRequestBlock, expanded: boolean) =>
     setToggles((current) => new Map(current).set(block.requestId, !expanded));
 
+  return (
+    <PresentationSource identifier={links.fileShareSourceIdentifier} style={{ flex: 1 }}>
+      <View className="flex-1">
+        <LegendList
+          // The initial position is read at mount, so the list restarts once the chat has loaded.
+          key={chat === null ? "loading" : "ready"}
+          ref={list}
+          renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+          className="flex-1"
+          // Added to the bar's automatic inset, so the pinned tab row covers nothing.
+          contentInset={topInset === undefined ? undefined : { top: topInset }}
+          scrollIndicatorInsets={topInset === undefined ? undefined : { top: topInset }}
+          data={feedEntries}
+          // A reconnect brings a new image resolver to the rows.
+          extraData={{ chat, highlight, imageSources: links.imageSources }}
+          estimatedItemSize={72}
+          keyExtractor={entryKey}
+          alignItemsAtEnd
+          initialScrollAtEnd={jumpTo === null}
+          initialScrollIndex={jumpTo ?? undefined}
+          maintainScrollAtEnd
+          maintainVisibleContentPosition
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          onStartReached={() => void loadOlder()}
+          onScroll={({ nativeEvent }) => {
+            setScrolled(true);
+            setAtBottom(
+              nativeEvent.contentSize.height -
+                nativeEvent.contentOffset.y -
+                nativeEvent.layoutMeasurement.height <
+                48,
+            );
+          }}
+          scrollEventThrottle={100}
+          ListHeaderComponent={
+            chat?.hasMore ? (
+              <View className="items-center py-2">
+                <Button
+                  label="Load earlier messages"
+                  size="compact"
+                  tone="text"
+                  disabled={loadingOlder}
+                  onPress={() => void loadOlder()}
+                />
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            chat === null ? null : (
+              <EmptyState
+                variant="plain"
+                title="No messages yet"
+                detail={
+                  members.length === 0
+                    ? "Add assistants to this group in Edit group, then write here."
+                    : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`
+                }
+              />
+            )
+          }
+          renderItem={({ item }) =>
+            item.kind === "header" ? (
+              isAll ? (
+                <AllRequestLine
+                  block={item.block}
+                  chip={item.block.projectId === null ? null : chipLabel(item.block.projectId)}
+                  expanded={item.expanded}
+                  onToggle={() => toggle(item.block, item.expanded)}
+                />
+              ) : (
+                <RequestHeader
+                  block={item.block}
+                  projectName={
+                    item.block.projectId === null ? null : projectName(item.block.projectId)
+                  }
+                  expanded={item.expanded}
+                  onToggle={() => toggle(item.block, item.expanded)}
+                />
+              )
+            ) : item.kind === "footer" ? (
+              <RequestFooter
+                block={item.block}
+                projects={groupProjects}
+                disabled={archived || !actions.canPost}
+                onPickProject={(project) => void pickProject(item.block, project)}
+                onReply={() =>
+                  props.onReply({
+                    id: item.block.requestId,
+                    name: item.block.title,
+                    to: null,
+                    projectId: item.block.projectId,
+                    excerpt: groupMessageExcerpt(
+                      chat?.messages.get(item.block.requestId)?.text ?? item.block.title,
+                    ),
+                  })
+                }
+              />
+            ) : (
+              <Fragment>
+                {item.row.message.seq === newSeq ? <NewDivider /> : null}
+                <View>
+                  <FeedRow
+                    environmentId={environmentId}
+                    row={item.row}
+                    chat={chat!}
+                    assistants={byId}
+                    members={members}
+                    projects={groupProjects}
+                    lead={lead}
+                    canAct={actions.canAct}
+                    archived={archived}
+                    onReply={(message, name) =>
+                      props.onReply({
+                        id: message.id,
+                        name,
+                        to: name,
+                        projectId: requestProject(message.requestId),
+                        excerpt: groupMessageExcerpt(message.text),
+                      })
+                    }
+                    onJump={jump}
+                    onPreview={links.onPressPreview}
+                    linkHost={linkHost}
+                    workspaceRoot={requestRoot(item.row.message.requestId)}
+                    onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
+                    onOpenConversation={(task) => openThread(task.threadId)}
+                    onOpenThread={openThread}
+                  />
+                  {highlight?.id === item.row.message.id ? (
+                    <JumpHighlight key={highlight.nonce} />
+                  ) : null}
+                </View>
+              </Fragment>
+            )
+          }
+        />
+        <VideoPreviewModal source={links.expandedVideo} onRequestClose={links.closeVideoPreview} />
+        <FilePreviewModal source={links.expandedFile} onRequestClose={links.closeFilePreview} />
+      </View>
+    </PresentationSource>
+  );
+}
+
+export function AssistantGroupChatRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly environmentId: string; readonly teamId: string }>) {
+  const environmentId = EnvironmentId.make(route.params.environmentId);
+  const teamId = AssistantTeamId.make(route.params.teamId);
+  const goBack = useWorkspaceBackNavigation("threads");
+  const entries = useAssistantEntries();
+  const actions = useAssistantGroupActions(environmentId);
+  const flows = useAssistantTeamFlows(environmentId);
+  const openTeam = useOpenAssistantTeam();
+  const openEditor = useOpenAssistantEditor();
+  const projects = useProjects();
+  const people = useGroupPeople(environmentId, teamId);
+  const { team, everyone, members, groupProjects } = people;
+  const savedTab = useGroupTabPreference(environmentId, teamId);
+  const tabs =
+    team === undefined
+      ? null
+      : assistantGroupTabs({
+          team,
+          members,
+          projects: projects.filter((project) => project.environmentId === environmentId),
+        });
+  const tab = tabs === null ? null : resolveAssistantGroupTab(savedTab.saved, tabs);
+  const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
+  const feed = useRef<GroupFeedHandle>(null);
+  const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
+  // undefined: the user picked nothing, so the tab's project applies; null: the lead decides.
+  const [projectPick, setProjectPick] = useState<ProjectId | null | undefined>(undefined);
+  // Bumped by Clear history, so the feed drops the pages it loaded before.
+  const [clears, setClears] = useState(0);
+  const [tabsHeight, setTabsHeight] = useState(0);
+
+  const tabProject =
+    tab !== null && groupProjects.some((project) => project.id === tab.projectId)
+      ? tab.projectId
+      : null;
+  const composerProject =
+    projectPick !== undefined ? projectPick : replyTo === null ? tabProject : null;
+
+  const selectTab = (next: AssistantGroupTab) => {
+    if (next.key === tab?.key) return;
+    savedTab.save(next.key);
+    setProjectPick(undefined);
+    setReplyTo(null);
+  };
+
+  const send = async (
+    text: string,
+    attachments: ReadonlyArray<ChatAttachment>,
+    projectId: ProjectId | undefined,
+  ): Promise<GroupSendResult> => {
+    const reply = await actions.post({
+      teamId,
+      text,
+      ...(attachments.length === 0 ? {} : { attachments }),
+      ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
+      ...(projectId === undefined ? {} : { projectId }),
+    });
+    if (reply.ok) {
+      setReplyTo(null);
+      setProjectPick(undefined);
+      feed.current?.scrollToEnd();
+      // A request that lands in another project's tab would vanish from this one: follow it.
+      const landed = replyTo?.projectId ?? projectId ?? null;
+      const landedKey = landed === null ? "general" : `project:${landed}`;
+      if (tabs !== null && tab !== null && tab.key !== "all" && tab.key !== landedKey) {
+        selectTab(tabs.find((candidate) => candidate.key === landedKey) ?? tabs[0]!);
+      }
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      message:
+        reply.reason === "mention_required"
+          ? MENTION_REQUIRED_COPY
+          : reply.reason === "archived"
+            ? "This group is archived. Restore it to write here."
+            : reply.message,
+    };
+  };
+
   if (team === undefined) {
     return (
       <View className="flex-1 bg-screen">
@@ -1069,20 +1321,27 @@ export function AssistantGroupChatRouteScreen({
     );
   }
 
-  const running = chat === null ? 0 : assistantGroupRunningCount(chat);
+  const archived = team.archivedAt != null;
+  // The whole group's count: a scoped tab's stream holds only that tab's tasks.
+  const running = team.chat?.runningCount ?? (live === null ? 0 : assistantGroupRunningCount(live));
   // As in Group settings: the conversation does not change under running work.
   const converseDisabled = !flows.canConverse || team.chat?.working === true;
   // The server refuses these while tasks run; the menu says why instead of only greying them out.
   const converseHint = team.chat?.working === true ? { subtitle: "Stop its tasks first" } : {};
+  const tabRow =
+    tabs === null || tab === null ? null : (
+      <GroupProjectTabs
+        tabs={tabs}
+        activeKey={tab.key}
+        onSelect={selectTab}
+        onHeight={setTabsHeight}
+      />
+    );
   return (
     <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
       <AppBar
         title={team.name}
-        subtitle={[
-          teamSummary(team, everyone),
-          running > 0 ? `${running} running` : null,
-          filter === null ? null : projectName(filter),
-        ]
+        subtitle={[teamSummary(team, everyone), running > 0 ? `${running} running` : null]
           .filter((part) => part !== null)
           .join(" · ")}
         onBackToList={goBack}
@@ -1092,21 +1351,6 @@ export function AssistantGroupChatRouteScreen({
             title: `${team.name} actions`,
             icon: "ellipsis",
             items: [
-              ...(feedProjects.length < 2
-                ? []
-                : [
-                    {
-                      id: "filter",
-                      title: "Show",
-                      inline: true,
-                      items: [null, ...feedProjects].map((id) => ({
-                        id: id ?? "all",
-                        title: id === null ? ASSISTANT_GROUP_ALL_PROJECTS_LABEL : projectName(id),
-                        selected: id === filter,
-                        onPress: () => setFilterPick(id),
-                      })),
-                    },
-                  ]),
               {
                 id: "edit",
                 title: "Edit group",
@@ -1159,8 +1403,7 @@ export function AssistantGroupChatRouteScreen({
                   Keyboard.dismiss();
                   flows.clear(team, () => {
                     // Pages loaded before the clear would come back under the new messages.
-                    setPages([]);
-                    setToggles(new Map());
+                    setClears((count) => count + 1);
                     setReplyTo(null);
                   });
                 },
@@ -1199,139 +1442,20 @@ export function AssistantGroupChatRouteScreen({
           },
         ]}
       />
-      <PresentationSource identifier={links.fileShareSourceIdentifier} style={{ flex: 1 }}>
-        <View className="flex-1">
-          <LegendList
-            // The initial position is read at mount, so the list restarts once the chat has loaded.
-            key={chat === null ? "loading" : "ready"}
-            ref={list}
-            renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-            className="flex-1"
-            data={feedEntries}
-            // A reconnect brings a new image resolver to the rows.
-            extraData={{ chat, highlight, imageSources: links.imageSources }}
-            estimatedItemSize={72}
-            keyExtractor={entryKey}
-            alignItemsAtEnd
-            initialScrollAtEnd={jumpTo === null}
-            initialScrollIndex={jumpTo ?? undefined}
-            maintainScrollAtEnd
-            maintainVisibleContentPosition
-            keyboardDismissMode="on-drag"
-            keyboardShouldPersistTaps="handled"
-            onStartReached={() => void loadOlder()}
-            onScroll={({ nativeEvent }) => {
-              setScrolled(true);
-              setAtBottom(
-                nativeEvent.contentSize.height -
-                  nativeEvent.contentOffset.y -
-                  nativeEvent.layoutMeasurement.height <
-                  48,
-              );
-            }}
-            scrollEventThrottle={100}
-            ListHeaderComponent={
-              chat?.hasMore ? (
-                <View className="items-center py-2">
-                  <Button
-                    label="Load earlier messages"
-                    size="compact"
-                    tone="text"
-                    disabled={loadingOlder}
-                    onPress={() => void loadOlder()}
-                  />
-                </View>
-              ) : null
-            }
-            ListEmptyComponent={
-              chat === null ? null : (
-                <EmptyState
-                  variant="plain"
-                  title="No messages yet"
-                  detail={
-                    members.length === 0
-                      ? "Add assistants to this group in Edit group, then write here."
-                      : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`
-                  }
-                />
-              )
-            }
-            renderItem={({ item }) =>
-              item.kind === "header" ? (
-                <RequestHeader
-                  block={item.block}
-                  projectName={
-                    item.block.projectId === null ? null : projectName(item.block.projectId)
-                  }
-                  expanded={item.expanded}
-                  onToggle={() => toggle(item.block, item.expanded)}
-                />
-              ) : item.kind === "footer" ? (
-                <RequestFooter
-                  block={item.block}
-                  projects={groupProjects}
-                  disabled={archived || !actions.canPost}
-                  onPickProject={(project) => void pickProject(item.block, project)}
-                  onReply={() =>
-                    setReplyTo({
-                      id: item.block.requestId,
-                      name: item.block.title,
-                      to: null,
-                      projectId: item.block.projectId,
-                      excerpt: groupMessageExcerpt(
-                        chat?.messages.get(item.block.requestId)?.text ?? item.block.title,
-                      ),
-                    })
-                  }
-                />
-              ) : (
-                <Fragment>
-                  {item.row.message.seq === newSeq ? <NewDivider /> : null}
-                  <View>
-                    <FeedRow
-                      environmentId={environmentId}
-                      row={item.row}
-                      chat={chat!}
-                      assistants={byId}
-                      members={members}
-                      projects={groupProjects}
-                      lead={lead}
-                      canAct={actions.canAct}
-                      archived={archived}
-                      onReply={(message, name) =>
-                        setReplyTo({
-                          id: message.id,
-                          name,
-                          to: name,
-                          projectId: requestProject(message.requestId),
-                          excerpt: groupMessageExcerpt(message.text),
-                        })
-                      }
-                      onJump={jump}
-                      onPreview={links.onPressPreview}
-                      linkHost={linkHost}
-                      workspaceRoot={requestRoot(item.row.message.requestId)}
-                      onTaskAction={(task, action, ownerId) =>
-                        void taskAction(task, action, ownerId)
-                      }
-                      onOpenConversation={(task) => openThread(task.threadId)}
-                      onOpenThread={openThread}
-                    />
-                    {highlight?.id === item.row.message.id ? (
-                      <JumpHighlight key={highlight.nonce} />
-                    ) : null}
-                  </View>
-                </Fragment>
-              )
-            }
-          />
-          <VideoPreviewModal
-            source={links.expandedVideo}
-            onRequestClose={links.closeVideoPreview}
-          />
-          <FilePreviewModal source={links.expandedFile} onRequestClose={links.closeFilePreview} />
-        </View>
-      </PresentationSource>
+      {Platform.OS === "ios" ? null : tabRow}
+      <GroupFeed
+        key={`${tab?.key ?? "chat"}:${clears}`}
+        ref={feed}
+        environmentId={environmentId}
+        team={team}
+        people={people}
+        actions={actions}
+        tab={tab}
+        live={live}
+        topInset={tabRow !== null && Platform.OS === "ios" ? tabsHeight : undefined}
+        onReply={setReplyTo}
+      />
+      {Platform.OS === "ios" ? tabRow : null}
       {archived ? (
         <View
           accessibilityRole="alert"
@@ -1352,14 +1476,15 @@ export function AssistantGroupChatRouteScreen({
         members={members}
         leadId={team.leadId}
         projects={groupProjects}
-        defaultProjectId={groupProjects.some((project) => project.id === filter) ? filter : null}
+        projectId={composerProject}
+        onProjectChange={setProjectPick}
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}
         onJumpToReply={
-          replyTo === null || chat?.messages.get(replyTo.id) === undefined
+          replyTo === null || live?.messages.get(replyTo.id) === undefined
             ? null
-            : () => jump(replyTo.id)
+            : () => feed.current?.jump(replyTo.id)
         }
         onClearReply={() => setReplyTo(null)}
         onSend={send}
