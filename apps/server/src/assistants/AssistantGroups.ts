@@ -3272,7 +3272,8 @@ const make = Effect.gen(function* () {
       cancelled = true;
     }
     if (cancelled) {
-      for (const requestId of new Set(waiting.map((task) => task.request_id))) {
+      const requestIds = waiting.map((task) => task.request_id ?? task.request_message_id);
+      for (const requestId of new Set(requestIds)) {
         yield* closeRequestIfDone(requestId);
       }
     }
