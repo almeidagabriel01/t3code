@@ -1310,6 +1310,22 @@ describe("group header and archive", () => {
 });
 
 describe("read position", () => {
+  // Only a request's lines count as unread, so every line here belongs to one, as the server's do.
+  const inRequests = (messages: ReturnType<typeof message>[]) =>
+    snapshot(
+      messages.map((row) => ({ ...row, requestId: row.author === "user" ? row.id : "m1" })),
+      [task("t1", "paused", "ada", { reason: "stopped" }), task("t22", "running", "beto")],
+    );
+  const lateUserLines = () =>
+    inRequests([
+      message("m1", 1),
+      ...[2, 3, 4, 5, 6].map((seq) =>
+        message(`x${seq}`, seq, { author: "user", assistantId: null }),
+      ),
+    ]);
+  beforeEach(() => {
+    mocks.live = inRequests(FEED);
+  });
   const chat = (readSeq: number, unreadCount: number) => ({
     latestSeq: 4,
     readSeq,
@@ -1351,15 +1367,11 @@ describe("read position", () => {
       [null, "true"],
     );
     remount();
-    mocks.live = snapshot([
-      message("m1", 1),
-      ...[2, 3, 4, 5, 6].map((seq) =>
-        message(`x${seq}`, seq, { author: "user", assistantId: null }),
-      ),
-    ]);
+    mocks.live = lateUserLines();
     render();
+    // Index 1: the first unread line, under its request's header.
     expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
-      ["0", "false"],
+      ["1", "false"],
     );
   });
 
@@ -1392,12 +1404,7 @@ describe("read position", () => {
     }
     expect(mocks.markRead).not.toHaveBeenCalled();
     // Opened at the New line, far from the end: nothing is read until the user scrolls down.
-    mocks.live = snapshot([
-      message("m1", 1),
-      ...[2, 3, 4, 5, 6].map((seq) =>
-        message(`x${seq}`, seq, { author: "user", assistantId: null }),
-      ),
-    ]);
+    mocks.live = lateUserLines();
     mocks.teams = [team({ chat: chat(0, 1) })];
     mocks.canMarkRead = true;
     mocks.appState = "active";
