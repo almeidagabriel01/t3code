@@ -1,9 +1,12 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { ProjectId } from "./baseSchemas.ts";
+
 import {
   Assistant,
   assistantCommandNames,
+  assistantGroupFinishedScopes,
   AssistantHandle,
   assistantMcpServersProblem,
   assistantTeamProblem,
@@ -38,6 +41,48 @@ describe("assistantHandleFromName", () => {
     const result = assistantHandleFromName(name);
     expect(result).toBe(handle);
     if (result !== null) expect(isAssistantHandle(result)).toBe(true);
+  });
+});
+
+describe("assistantGroupFinishedScopes", () => {
+  const chat = (open: ReadonlyArray<readonly [string | null, number]>) => ({
+    scopes: open.map(([projectId, openTasks]) => ({
+      projectId: projectId as ProjectId | null,
+      unreadCount: 0,
+      waiting: false,
+      readSeq: 0,
+      ...(openTasks === 0 ? {} : { openTasks }),
+    })),
+  });
+  it.each([
+    [
+      "one tab ends while another runs",
+      [
+        ["p", 1],
+        ["q", 2],
+      ],
+      [["q", 2]],
+      ["p"],
+    ],
+    [
+      "two tabs end together",
+      [
+        ["p", 1],
+        [null, 1],
+      ],
+      [],
+      ["p", null],
+    ],
+    ["a tab ends and keeps its line", [["p", 2]], [["p", 0]], ["p"]],
+    ["a tab still has work", [["p", 2]], [["p", 1]], []],
+    ["a request that gets a project moves its work", [[null, 2]], [["p", 2]], []],
+    ["new work elsewhere while one ends", [["p", 1]], [["q", 1]], []],
+    ["nothing was open", [], [], []],
+  ] as const)("%s", (_name, before, after, expected) => {
+    expect(assistantGroupFinishedScopes(chat(before), chat(after))).toEqual(expected);
+  });
+  it("finds nothing without scopes, as from an older server", () => {
+    expect(assistantGroupFinishedScopes(undefined, { scopes: [] })).toEqual([]);
   });
 });
 

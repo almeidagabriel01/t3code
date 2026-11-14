@@ -615,16 +615,16 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
         { task_id: "t1", request_id: "m1" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_read_cursors`, []);
-      // The team's chat decodes; General is listed only when it holds the request.
+      // The team's chat decodes; General is listed only when it holds the request, and the tab
+      // of the request counts its running task.
       // The migrations own the projects projection; the chat's tabs read their titles from it.
       yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, deleted_at TEXT)`;
       yield* sql`INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
         VALUES ('g1', 'Core', '[]', 't', 't')`;
       const [team] = yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state`;
-      assert.deepEqual(
-        toAssistantTeam(team!).chat?.scopes,
-        carried === null ? [{ projectId: null, unreadCount: 0, waiting: false, readSeq: 0 }] : [],
-      );
+      assert.deepEqual(toAssistantTeam(team!).chat?.scopes, [
+        { projectId: carried, unreadCount: 0, waiting: false, readSeq: 0, openTasks: 1 },
+      ]);
       // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.
       for (const scope of ["p1", null]) {
         const page = yield* sql<{ readonly detail: string }>`

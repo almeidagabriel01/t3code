@@ -46,6 +46,7 @@ const decodeScopes = Schema.decodeOption(
         waiting: Schema.Number,
         readSeq: Schema.Number,
         title: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        openTasks: Schema.optionalKey(Schema.Number),
       }),
     ),
   ),
@@ -92,6 +93,9 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
               waiting: scope.waiting !== 0,
               readSeq: scope.readSeq,
               ...(typeof scope.title === "string" ? { title: scope.title } : {}),
+              ...(scope.openTasks === undefined || scope.openTasks === 0
+                ? {}
+                : { openTasks: scope.openTasks }),
             }),
           ),
         },

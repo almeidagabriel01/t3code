@@ -1,5 +1,6 @@
 import type { AgentAwarenessThread } from "../orchestration-v2/ProjectionStore.ts";
 import {
+  assistantGroupFinishedScopes,
   assistantIdFromThreadId,
   isListedThreadLineage,
   type EnvironmentId,
@@ -7,6 +8,7 @@ import {
   type OrchestrationV2TurnItem,
   type AssistantTeam,
   type Project,
+  type ProjectId,
   type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -1011,22 +1013,23 @@ export const make = Effect.gen(function* () {
 
   const publishGroupFinish = Effect.fn("AgentAwarenessRelay.publishGroupFinish")(function* (
     team: AssistantTeam,
+    projectId: ProjectId | null,
   ) {
-    const rows = yield* sql<{ readonly thread_id: string | null }>`
-      SELECT COALESCE(r.thread_id, g.thread_id) AS thread_id FROM assistant_group_messages m
+    // The tab's last answer: its speaker's hidden thread carries the push, its text the preview.
+    const rows = yield* sql<{ readonly thread_id: string | null; readonly text: string }>`
+      SELECT COALESCE(r.thread_id, g.thread_id) AS thread_id, substr(m.text, 1, 400) AS text
+      FROM assistant_group_messages m
       LEFT JOIN assistant_group_request_threads r
         ON r.request_id = m.request_id AND r.assistant_id = m.assistant_id
       LEFT JOIN assistant_group_threads g
         ON g.team_id = m.team_id AND g.assistant_id = m.assistant_id
       WHERE m.team_id = ${team.id} AND m.author = 'assistant' AND m.kind = 'message'
+        AND m.request_project_id IS ${projectId}
       ORDER BY m.seq DESC LIMIT 1`;
     if (rows[0]?.thread_id == null) return;
     const threadId = ThreadId.make(rows[0].thread_id);
-    const preview = (team.chat?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
-    const projectTitle = yield* channelProjectTitleOf(
-      { projects, folders },
-      team.chat?.previewProjectId,
-    );
+    const preview = rows[0].text.replace(/\s+/g, " ").trim().slice(0, 120);
+    const projectTitle = yield* channelProjectTitleOf({ projects, folders }, projectId);
     groupFinishes.set(threadId, {
       title: team.name,
       preview:
@@ -1038,6 +1041,7 @@ export const make = Effect.gen(function* () {
       deepLink: buildAssistantGroupDeepLink({
         environmentId: yield* serverEnvironment.getEnvironmentId,
         teamId: team.id,
+        projectId,
       }),
     });
     yield* enqueueThreadPublish(threadId);
@@ -1081,26 +1085,29 @@ export const make = Effect.gen(function* () {
             : Effect.void,
         ).pipe(Effect.ignore),
       );
-      // One push per working to idle, never for an archived group; the first event is a snapshot.
+      // One push per tab whose work ends, never for an archived group; the first event is a snapshot.
       yield* forkParked(
         Effect.suspend(() => {
-          const working = new Map<string, boolean>();
+          const chats = new Map<string, AssistantTeam["chat"]>();
           return Stream.runForEach(assistants.subscribe, (event) => {
             if (event.type === "snapshot") {
-              working.clear();
-              for (const team of event.teams) working.set(team.id, team.chat?.working ?? false);
+              chats.clear();
+              for (const team of event.teams) chats.set(team.id, team.chat);
               return Effect.void;
             }
             if (event.type === "teamRemoved") {
-              working.delete(event.teamId);
+              chats.delete(event.teamId);
               return Effect.void;
             }
             if (event.type !== "teamUpserted") return Effect.void;
             const { team } = event;
-            const was = working.get(team.id) === true;
-            const now = team.chat?.working ?? false;
-            working.set(team.id, now);
-            return was && !now && team.archivedAt === null ? publishGroupFinish(team) : Effect.void;
+            const finished = assistantGroupFinishedScopes(chats.get(team.id), team.chat);
+            chats.set(team.id, team.chat);
+            return team.archivedAt === null
+              ? Effect.forEach(finished, (projectId) => publishGroupFinish(team, projectId), {
+                  discard: true,
+                })
+              : Effect.void;
           });
         }).pipe(Effect.ignore),
       );

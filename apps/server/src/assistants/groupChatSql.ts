@@ -42,6 +42,18 @@ export const scopeNeedsUserSql = (team: string, scope: string) =>
       WHERE a.team_id = ${team} AND a.request_project_id IS NULL AND a.asks_project = 1
         AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks z WHERE z.request_id = a.request_id))))`;
 
+/** A task counts toward the group's `working`: queued, running or waiting. */
+export const workingTaskStatusesSql = list(ASSISTANT_GROUP_WORKING_TASK_STATUSES);
+
+/**
+ * The tab ('' for General) of each working task of `team`: its request's project. A task with no
+ * request, or whose request is gone, is General's, so every working task lands in one tab.
+ */
+export const workingTaskScopesSql = (team: string) =>
+  `SELECT COALESCE(h.request_project_id, '') AS scope FROM assistant_group_tasks k
+    LEFT JOIN assistant_group_messages h ON h.message_id = k.request_id
+    WHERE k.team_id = ${team} AND k.status IN (${workingTaskStatusesSql})`;
+
 /** The tabs ('' for General) of `team` that have a task needing the user, for the tab list. */
 export const needsUserTaskScopesSql = (team: string) =>
   `SELECT COALESCE(h.request_project_id, '') FROM assistant_group_tasks k

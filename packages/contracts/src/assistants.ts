@@ -311,6 +311,11 @@ export const AssistantTeamChatScope = Schema.Struct({
   readSeq: Schema.Int,
   /** The project's title, kept after it is deleted; absent for General and unknown projects. */
   title: Schema.optionalKey(Schema.String),
+  /**
+   * The group's queued, running or waiting tasks in this tab; absent when none, and from older
+   * servers. Every working task counts in one tab, so their sum is the group's `working`.
+   */
+  openTasks: Schema.optionalKey(Schema.Int),
 });
 export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
 
@@ -334,6 +339,26 @@ export const AssistantTeamChat = Schema.Struct({
   scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
+
+/**
+ * The tabs (`null` = General) whose work just ended: open tasks before, none now. Only while the
+ * group's open total falls, since a request that gets a project moves its tasks to another tab.
+ */
+export function assistantGroupFinishedScopes(
+  previous: Pick<AssistantTeamChat, "scopes"> | undefined,
+  next: Pick<AssistantTeamChat, "scopes"> | undefined,
+): ReadonlyArray<ProjectId | null> {
+  const open = (chat: typeof previous) =>
+    chat?.scopes?.filter((scope) => (scope.openTasks ?? 0) > 0) ?? [];
+  const total = (scopes: ReturnType<typeof open>) =>
+    scopes.reduce((sum, scope) => sum + (scope.openTasks ?? 0), 0);
+  const before = open(previous);
+  const after = open(next);
+  if (total(after) >= total(before)) return [];
+  return before
+    .filter((scope) => !after.some((still) => still.projectId === scope.projectId))
+    .map((scope) => scope.projectId);
+}
 
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,

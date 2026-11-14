@@ -8,6 +8,8 @@ import {
   countsAsUnreadSql,
   needsUserTaskScopesSql,
   scopeNeedsUserSql,
+  workingTaskScopesSql,
+  workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
@@ -768,8 +770,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   `;
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every
   // start, after every column it reads. A tab reads from its own cursor, else the group's
-  // read_seq; it is listed while it has unread, a wait on the user or its own cursor, and General
-  // while it has a request. Each count walks scope_idx from the tab's position.
+  // read_seq; it is listed while it has unread, a wait on the user, its own cursor or working tasks,
+  // and General while it has a request. Each count walks scope_idx from the tab's position.
   yield* sql`
     CREATE VIEW assistant_team_state AS
     SELECT s.*,
@@ -780,7 +782,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
           AS latest_seq,
         (SELECT COUNT(*) FROM assistant_group_tasks k
-          WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
+          WHERE k.team_id = t.team_id AND k.status IN (${sql.literal(workingTaskStatusesSql)}))
+          AS open_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           WHERE k.team_id = t.team_id AND k.status = 'running') AS running_tasks,
         (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
@@ -791,6 +794,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
             'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
+            'openTasks', x.open_tasks,
             'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
             SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
@@ -799,6 +803,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                   AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
               ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
+              (SELECT COUNT(*) FROM (${sql.literal(workingTaskScopesSql("t.team_id"))}) w
+                WHERE w.scope = c.scope) AS open_tasks,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
                   AND m.request_id IS NOT NULL)) AS general
@@ -810,11 +816,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                 WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
                   AND m.wait_resolved_at IS NULL
               UNION ${sql.literal(needsUserTaskScopesSql("t.team_id"))}
+              UNION ${sql.literal(workingTaskScopesSql("t.team_id"))}
               UNION SELECT ''
             ) c
             LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
           ) x
-          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general) AS scopes_json
+          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0)
+          AS scopes_json
       FROM assistant_teams t
     ) s
   `;

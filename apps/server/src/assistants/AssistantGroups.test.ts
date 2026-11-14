@@ -930,6 +930,22 @@ it.effect("the team chat names the preview's project and counts every tab's runn
     const running = (yield* h.tasks).filter((task) => task.status === "running").length;
     assert.isAbove(running, 0);
     assert.equal(chat.runningCount, running);
+    // Each tab counts its own open work: p1's is done, p2's still runs, and a task with no
+    // request is General's, so the tabs always add up to the group's.
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        created_at, updated_at)
+      VALUES ('gt:old', ${TEAM}, 'gt:old', 'root', 'gm:old', 'ada', 'do', 'queued', 't', 't')`;
+    const [after] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const open = (toAssistantTeam(after!).chat?.scopes ?? []).flatMap((scope) =>
+      scope.openTasks === undefined ? [] : [[String(scope.projectId ?? ""), scope.openTasks]],
+    );
+    assert.deepEqual(open, [
+      ["", 1],
+      ["p2", after!.open_tasks! - 1],
+    ]);
+    assert.isAbove(after!.open_tasks!, 1);
   }).pipe(Effect.provide(h.layer));
 });
 
