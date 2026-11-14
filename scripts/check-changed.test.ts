@@ -247,7 +247,12 @@ const fixtureConfig = {
   "user.email": "fixture@example.invalid",
 };
 const env = {
-  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  // A check:changed run on Linux hands its own CHECK_CHANGED_* inputs to these tests' environment.
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !name.startsWith("GIT_") && !name.startsWith("CHECK_CHANGED_"),
+    ),
+  ),
   GIT_CONFIG_GLOBAL: emptyConfig,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
