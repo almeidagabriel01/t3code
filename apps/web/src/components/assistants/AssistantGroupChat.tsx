@@ -68,6 +68,7 @@ import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "rea
 
 import { isElectron } from "../../env";
 import { useClientSettings } from "../../hooks/useSettings";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import {
@@ -907,8 +908,11 @@ export function AssistantGroupChat(props: {
     markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
   });
 
-  /** Marks the requests on screen and where the reader is, as the thread's minimap does. */
-  const refreshMinimap = (element: HTMLDivElement) => {
+  /**
+   * Marks the requests on screen and where the reader is, as the thread's minimap does. Runs on
+   * scroll and resize only: it measures every block.
+   */
+  const refreshMinimap = useStableCallback((element: HTMLDivElement) => {
     if (minimapItems.length < TIMELINE_MINIMAP_MIN_ITEMS) return;
     const top = element.getBoundingClientRect().top - element.scrollTop;
     // The blocks render in the same order as the minimap's items.
@@ -941,9 +945,11 @@ export function AssistantGroupChat(props: {
         ? current
         : { ...current, currentIndex, atEnd },
     );
-  };
+  });
 
-  const observeGutter = (element: HTMLDivElement | null) => {
+  // Stable, so React attaches it once instead of re-observing on every render.
+  const bindScroller = useStableCallback((element: HTMLDivElement | null) => {
+    scroller.current = element;
     if (element === null) return;
     // The lane changes width with the chat-width setting too, not only with the window.
     const lane = element.querySelector("[data-timeline-root]");
@@ -960,8 +966,10 @@ export function AssistantGroupChat(props: {
           ? current
           : { ...current, persistentGutter, hitStripWidth },
       );
+      // Content growing or folding resizes the lane, which moves the blocks.
+      refreshMinimap(element);
     });
-  };
+  });
 
   // The feed follows new messages only while the user is at its end, and holds still while
   // an older page is added above, so what they were reading does not jump.
@@ -993,7 +1001,6 @@ export function AssistantGroupChat(props: {
         );
       }
     }
-    refreshMinimap(element);
     // Open on the first unread message when it is above the fold, else stay at the end.
     const divider = element.querySelector("[data-testid=group-new-divider]");
     if (divider !== null && !scrolledToNew.current) {
@@ -1207,10 +1214,7 @@ export function AssistantGroupChat(props: {
         )}
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div
-            ref={(element) => {
-              scroller.current = element;
-              return observeGutter(element);
-            }}
+            ref={bindScroller}
             data-testid="group-feed"
             className="min-h-0 flex-1 overflow-y-auto overscroll-y-none px-3 @xl/group-chat:px-6"
             onScroll={(event) => {

@@ -1092,6 +1092,10 @@ it("marks each request on the minimap and opens the one picked", async () => {
   await using _screen = await openChat();
   await expect.element(main().getByTestId("timeline-minimap")).toBeInTheDocument();
   await eventually(() => expect(document.querySelectorAll("[data-minimap-strip]")).toHaveLength(2));
+  // Marked as in view without a scroll: both requests fit on screen.
+  await eventually(() =>
+    expect(document.querySelectorAll('[data-minimap-strip][data-in-view="true"]')).toHaveLength(2),
+  );
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
   const rail = main().getByRole("button", { name: /^Jump to message/ });
   (rail.element() as HTMLElement).focus();
