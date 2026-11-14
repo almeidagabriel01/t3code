@@ -680,6 +680,16 @@ it.effect(
         groups.markRead({ teamId: AssistantTeamId.make("nope"), readSeq: 1 }),
       );
       assert.equal(missing.reason, "not_found");
+      // A tab is one of the group's projects, empty or not, or a scope that holds its lines.
+      const outside = yield* refusalError(
+        groups.markRead({ teamId: TEAM, scope: { projectId: ProjectId.make("p9") } }),
+      );
+      assert.equal(outside.reason, "invalid");
+      assert.equal(
+        (yield* groups.markRead({ teamId: OTHER_TEAM, scope: { projectId: ProjectId.make("p1") } }))
+          .readSeq,
+        0,
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );

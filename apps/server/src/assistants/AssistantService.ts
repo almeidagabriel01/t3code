@@ -68,7 +68,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
-import { forgetDeletedProjects } from "./AssistantTeamProjects.ts";
+import { forgetDeletedProjects, pruneLeftTabCursors } from "./AssistantTeamProjects.ts";
 import { RESUBSCRIBE } from "./resubscribe.ts";
 import {
   type AssistantTeamRow,
@@ -233,8 +233,24 @@ const make = Effect.gen(function* () {
     return rows[0] ?? (yield* assistantError("not_found", "Assistant not found."));
   });
 
+  const refreshTeamChat: AssistantService["Service"]["refreshTeamChat"] = (teamId) =>
+    sql<AssistantTeamRow>`SELECT * FROM assistant_team_state WHERE team_id = ${teamId}`.pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.void
+          : PubSub.publish(chatEvents, { type: "teamUpserted", team: toAssistantTeam(rows[0]) }),
+      ),
+      Effect.ignore,
+    );
+
+  /** A group that lost a project drops that tab's position, unless the tab still has unread. */
+  const pruneTabs = pruneLeftTabCursors(sql).pipe(
+    Effect.flatMap((teamIds) => Effect.forEach(teamIds, refreshTeamChat, { discard: true })),
+  );
+
   const publish = (assistantId: string) =>
-    findRow(assistantId).pipe(
+    pruneTabs.pipe(
+      Effect.andThen(findRow(assistantId)),
       Effect.flatMap((row) =>
         PubSub.publish(events, { type: "upserted", assistant: toAssistant(row) }),
       ),
@@ -1016,6 +1032,7 @@ const make = Effect.gen(function* () {
             project_ids_json = ${encodeMemberIds(projectIds)},
             updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
+        yield* pruneTabs;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));
         yield* PubSub.publish(events, { type: "teamUpserted", team });
         return team;
@@ -1035,16 +1052,6 @@ const make = Effect.gen(function* () {
     );
   }, storage);
 
-  const refreshTeamChat: AssistantService["Service"]["refreshTeamChat"] = (teamId) =>
-    sql<AssistantTeamRow>`SELECT * FROM assistant_team_state WHERE team_id = ${teamId}`.pipe(
-      Effect.flatMap((rows) =>
-        rows[0] === undefined
-          ? Effect.void
-          : PubSub.publish(chatEvents, { type: "teamUpserted", team: toAssistantTeam(rows[0]) }),
-      ),
-      Effect.ignore,
-    );
-
   const teams: AssistantService["Service"]["teams"] = allTeams(sql).pipe(storage);
 
   /** A deleted assistant leaves its teams; a group may be left empty or with one member. */
@@ -1062,6 +1069,7 @@ const make = Effect.gen(function* () {
         team: toAssistantTeam(yield* findTeamRow(team.id)),
       });
     }
+    yield* pruneTabs;
   });
 
   const threadIdsOf = (assistantId: string, generation: number) =>
@@ -1211,7 +1219,9 @@ const make = Effect.gen(function* () {
   /** Takes deleted projects off every list and tells subscribers which rows changed. */
   const forgetDeletedProjectsInLists = Effect.fn("AssistantService.forgetDeletedProjects")(
     function* () {
-      const changed = yield* lock.withPermits(1)(forgetDeletedProjects(sql));
+      const changed = yield* lock.withPermits(1)(
+        forgetDeletedProjects(sql).pipe(Effect.tap(() => pruneLeftTabCursors(sql))),
+      );
       yield* Effect.forEach(changed.assistantIds, publish, { discard: true });
       // Every group, not just those whose list changed: one open to all projects may still hold
       // work in the deleted one, and its reconcile cancels it.

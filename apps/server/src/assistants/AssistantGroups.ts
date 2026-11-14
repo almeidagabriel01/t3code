@@ -3656,9 +3656,24 @@ const make = Effect.gen(function* () {
 
   const markRead: AssistantGroups["Service"]["markRead"] = Effect.fn("AssistantGroups.markRead")(
     function* (input) {
-      yield* teamRow(input.teamId);
+      const team = toAssistantTeam(yield* teamRow(input.teamId));
       // A tab's own position; without a scope the group's, which every tab then follows.
       const scope = input.scope;
+      // A tab is General, one of the group's projects, or a project that left but holds lines.
+      if (
+        scope !== undefined &&
+        scope.projectId !== null &&
+        !assistantGroupProjectIds(
+          (yield* assistantRows(team.memberIds)).map(toAssistant),
+          team.projectIds,
+        ).includes(scope.projectId) &&
+        (yield* sql`
+          SELECT 1 FROM assistant_group_messages
+          WHERE team_id = ${input.teamId} AND request_project_id = ${scope.projectId} LIMIT 1`)
+          .length === 0
+      ) {
+        return yield* invalid("That project is not one of the group's tabs.");
+      }
       const inScope =
         scope === undefined
           ? sql.literal("")
