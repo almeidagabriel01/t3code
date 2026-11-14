@@ -319,12 +319,14 @@ export function assistantGroupChatWaiting(chat: Pick<AssistantTeamChat, "scopes"
 /**
  * null (no tab row) when the server sent no scopes or the group has fewer than 2 effective
  * projects. Else All, the effective projects, orphan scopes that still have unread or waiting,
- * then General when the chat lists it.
+ * then General when the chat lists it. The `active` tab stays listed even once its project left
+ * the group, so the one being read never vanishes.
  */
 export function assistantGroupTabs(input: {
   readonly team: Pick<AssistantTeam, "projectIds" | "chat">;
   readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  readonly active?: string | null | undefined;
 }): ReadonlyArray<AssistantGroupTab> | null {
   const chat = input.team.chat;
   if (chat?.scopes === undefined) return null;
@@ -332,8 +334,14 @@ export function assistantGroupTabs(input: {
   const effective = assistantGroupProjectIds(input.members, input.team.projectIds).filter((id) =>
     title.has(id),
   );
-  if (effective.length < 2) return null;
   const scopes = chat.scopes;
+  // A project neither loaded nor listed is a stale key, not a tab being read.
+  const keptProject =
+    [...title.keys(), ...scopes.map((scope) => scope.projectId)].find(
+      (id) => id !== null && input.active === `project:${id}`,
+    ) ?? null;
+  const keptGeneral = input.active === "general";
+  if (effective.length < 2 && keptProject === null && !keptGeneral) return null;
   const tab = (projectId: ProjectId | null, label: string): AssistantGroupTab => {
     const found = scopes.find((scope) => scope.projectId === projectId);
     return {
@@ -346,12 +354,20 @@ export function assistantGroupTabs(input: {
       readSeq: found?.readSeq ?? chat.readSeq,
     };
   };
-  const orphans = scopes.filter(
-    (scope) =>
-      scope.projectId !== null &&
-      !effective.includes(scope.projectId) &&
-      (scope.unreadCount > 0 || scope.waiting),
+  const orphans = scopes.flatMap((scope) =>
+    scope.projectId !== null &&
+    !effective.includes(scope.projectId) &&
+    (scope.unreadCount > 0 || scope.waiting || scope.projectId === keptProject)
+      ? [scope.projectId]
+      : [],
   );
+  if (keptProject !== null && !effective.includes(keptProject) && !orphans.includes(keptProject)) {
+    orphans.push(keptProject);
+  }
+  const orphanLabel = (projectId: ProjectId) =>
+    title.get(projectId) ??
+    scopes.find((scope) => scope.projectId === projectId)?.title ??
+    "Removed project";
   return [
     {
       key: "all",
@@ -363,10 +379,10 @@ export function assistantGroupTabs(input: {
       readSeq: chat.readSeq,
     },
     ...effective.map((id) => tab(id, title.get(id)!)),
-    ...orphans.map((scope) =>
-      tab(scope.projectId, title.get(scope.projectId!) ?? "Removed project"),
-    ),
-    ...(scopes.some((scope) => scope.projectId === null) ? [tab(null, "General")] : []),
+    ...orphans.map((id) => tab(id, orphanLabel(id))),
+    ...(keptGeneral || scopes.some((scope) => scope.projectId === null)
+      ? [tab(null, "General")]
+      : []),
   ];
 }
 
@@ -388,6 +404,26 @@ export function assistantGroupTabsPending(input: {
     input.projects.length === 0 &&
     assistantGroupProjectIds(input.members, input.team.projectIds).length >= 2
   );
+}
+
+/** The tabs to show and the open one; while members or projects load, pending and none. */
+export function assistantGroupTabView(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat">;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  readonly assistants: { readonly has: (id: string) => boolean };
+  readonly saved: string | null | undefined;
+}) {
+  // Decided before keeping the saved tab: a project still loading would otherwise show as removed.
+  if (assistantGroupTabs(input) === null && assistantGroupTabsPending(input)) {
+    return { pending: true, tabs: null, tab: null };
+  }
+  const tabs = assistantGroupTabs({ ...input, active: input.saved });
+  return {
+    pending: false,
+    tabs,
+    tab: tabs === null ? null : resolveAssistantGroupTab(input.saved, tabs),
+  };
 }
 
 /** The saved key's tab, else All. */

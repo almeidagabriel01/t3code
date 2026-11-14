@@ -16,6 +16,7 @@ import {
   assistantGroupChatWaiting,
   assistantGroupTabs,
   assistantGroupTabsPending,
+  assistantGroupTabView,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
@@ -1039,6 +1040,110 @@ describe("assistant group tabs", () => {
     // A tab the server does not list has nothing unread: it reads from the group's position.
     assert.strictEqual(tabs([P1, P2], [scope(P1)])![2]!.readSeq, 1);
     assert.deepStrictEqual(result[1]!.scope, { projectId: P1 });
+  });
+
+  const view = (
+    members: ProjectId[],
+    scopes: ReturnType<typeof scope>[] | undefined,
+    saved: string | null,
+    loadedProjects = projects,
+  ) =>
+    assistantGroupTabView({
+      team: {
+        projectIds: [],
+        memberIds: members.map((_, index) => `m${index}`),
+        chat: { unreadCount: 5, readSeq: 1, ...(scopes ? { scopes } : {}) },
+      } as never,
+      members: members.map(member),
+      projects: loadedProjects,
+      assistants: { has: () => true },
+      saved,
+    });
+  const viewKeys = (result: ReturnType<typeof view>) => ({
+    pending: result.pending,
+    tabs: result.tabs?.map((tab): string => tab.key) ?? null,
+    tab: (result.tab?.key as string | undefined) ?? null,
+  });
+
+  it.each([
+    [
+      "an open orphan with nothing unread",
+      view([P1, P2], [scope(P1), scope(P3)], "project:p3"),
+      {
+        pending: false,
+        tabs: ["all", "project:p1", "project:p2", "project:p3"],
+        tab: "project:p3",
+      },
+    ],
+    [
+      "a group shrunk to one project",
+      view([P1], [scope(P1), scope(P2)], "project:p2"),
+      { pending: false, tabs: ["all", "project:p1", "project:p2"], tab: "project:p2" },
+    ],
+    [
+      "a scope the server no longer lists",
+      view([P1, P2], [scope(P1)], "project:p3"),
+      {
+        pending: false,
+        tabs: ["all", "project:p1", "project:p2", "project:p3"],
+        tab: "project:p3",
+      },
+    ],
+    [
+      "a stale key neither loaded nor listed",
+      view([P1, P2], [scope(P1)], "project:gone"),
+      { pending: false, tabs: ["all", "project:p1", "project:p2"], tab: "all" },
+    ],
+    [
+      "General the server does not list",
+      view([P1, P2], [scope(P1)], "general"),
+      { pending: false, tabs: ["all", "project:p1", "project:p2", "general"], tab: "general" },
+    ],
+    [
+      "an open live tab is not repeated",
+      view([P1, P2], [scope(P1), scope(P2)], "project:p2"),
+      { pending: false, tabs: ["all", "project:p1", "project:p2"], tab: "project:p2" },
+    ],
+    [
+      "All keeps nothing",
+      view([P1], [scope(P1), scope(P2)], "all"),
+      { pending: false, tabs: null, tab: null },
+    ],
+    [
+      "no saved tab keeps nothing",
+      view([P1], [scope(P1)], null),
+      { pending: false, tabs: null, tab: null },
+    ],
+    [
+      "older server",
+      view([P1, P2], undefined, "project:p1"),
+      { pending: false, tabs: null, tab: null },
+    ],
+    [
+      "projects still loading",
+      view([P1, P2], [scope(P1), scope(P2)], "project:p1", []),
+      { pending: true, tabs: null, tab: null },
+    ],
+  ])("view: %s", (_name, result, expected) => {
+    assert.deepStrictEqual(viewKeys(result), expected);
+  });
+
+  it("labels a kept tab by the project's live title, else its last known one", () => {
+    const titled = { ...scope(P3), title: "Old three" };
+    const labels = (scopes: ReturnType<typeof scope>[], saved: string, loaded = projects) =>
+      view([P1, P2], scopes, saved, loaded).tabs?.map((tab) => tab.label);
+    assert.deepStrictEqual(labels([scope(P1), titled], "project:p3"), [
+      "All",
+      "One",
+      "Two",
+      "Three",
+    ]);
+    assert.deepStrictEqual(labels([scope(P1), titled], "project:p3", projects.slice(0, 2)), [
+      "All",
+      "One",
+      "Two",
+      "Old three",
+    ]);
   });
 
   it.each([

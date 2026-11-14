@@ -14,9 +14,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
-  assistantGroupTabs,
-  assistantGroupTabsPending,
-  resolveAssistantGroupTab,
+  assistantGroupTabView,
   type AssistantGroupChatState,
   type AssistantGroupTab,
   type AssistantGroupFeedRow,
@@ -1251,25 +1249,17 @@ export function AssistantGroupChatRouteScreen({
   const people = useGroupPeople(environmentId, teamId);
   const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
-  const tabs =
+  // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
+  const { pending, tabs, tab } =
     team === undefined
-      ? null
-      : assistantGroupTabs({
+      ? { pending: false, tabs: null, tab: null }
+      : assistantGroupTabView({
           team,
           members,
           projects: projects.filter((project) => project.environmentId === environmentId),
+          assistants: people.byId,
+          saved: savedTab.saved,
         });
-  const tab = tabs === null ? null : resolveAssistantGroupTab(savedTab.saved, tabs);
-  // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
-  const pending =
-    team !== undefined &&
-    tabs === null &&
-    assistantGroupTabsPending({
-      team,
-      members,
-      projects: projects.filter((project) => project.environmentId === environmentId),
-      assistants: people.byId,
-    });
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const feed = useRef<GroupFeedHandle>(null);
   const [replyTo, setReplyTo] = useState<GroupReply | null>(null);

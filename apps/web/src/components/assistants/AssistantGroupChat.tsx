@@ -15,10 +15,8 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupRunningCount,
-  assistantGroupTabs,
-  assistantGroupTabsPending,
+  assistantGroupTabView,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
-  resolveAssistantGroupTab,
   type AssistantGroupChatState,
   type AssistantGroupFeedRow,
   type AssistantGroupRequestBlock,
@@ -1437,13 +1435,11 @@ export function AssistantGroupChat(props: {
     const member = byId.get(id);
     return member === undefined || member.archivedAt !== null ? [] : [member];
   });
-  const tabs = team === undefined ? null : assistantGroupTabs({ team, members, projects });
-  const tab = tabs === null ? null : resolveAssistantGroupTab(savedTab, tabs);
   // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
-  const pending =
-    team !== undefined &&
-    tabs === null &&
-    assistantGroupTabsPending({ team, members, projects, assistants: byId });
+  const { pending, tabs, tab } =
+    team === undefined
+      ? { pending: false, tabs: null, tab: null }
+      : assistantGroupTabView({ team, members, projects, assistants: byId, saved: savedTab });
   const tabKey = tab?.key ?? null;
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const projectName = (id: ProjectId) =>
