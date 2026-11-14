@@ -22,7 +22,11 @@ const rules = [
   ["slack_token", /\bx(?:ox[baprs]|app)-[A-Za-z0-9-]{20,}\b/],
   // Three base64url parts, the first a JSON header ("{" encodes as "eyJ").
   ["jwt", /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/],
-  ["telegram_bot_token", /(?<![A-Za-z0-9_-])\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/],
+  // Bot API URLs glue the token to "bot" (…/bot<id>:<secret>/getMe).
+  [
+    "telegram_bot_token",
+    /(?:(?<=\bbot)|(?<![A-Za-z0-9_-]))\d{8,10}:[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/,
+  ],
 ] as const;
 // Authority/provenance IDs are validated by strict codecs, not scanned as prose.
 const contentFields = new Set([

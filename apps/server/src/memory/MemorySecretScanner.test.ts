@@ -108,6 +108,11 @@ describe("memory redaction", () => {
       "run mysql -u root -phunter2 shop",
       "run mysql -u root -p[redacted] shop",
     ],
+    [
+      "Telegram token in a Bot API URL",
+      `curl https://api.telegram.org/bot123456789:AAH${"k".repeat(32)}/getMe`,
+      "curl https://api.telegram.org/bot[redacted]/getMe",
+    ],
   ])("redacts a %s, keeping its name", (_label, text, expected) => {
     assert.strictEqual(redactMemoryText({ text }).text, expected);
   });
