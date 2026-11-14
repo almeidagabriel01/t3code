@@ -211,8 +211,9 @@ Home list your groups under the assistants.
 
 ### Group projects
 
-A group can have projects of its own, and every member may work in them on top of its own projects.
-Give a new project to a whole team in one step:
+A group can have projects of its own, and every member may work in them on top of its own projects,
+but only in that group's requests: a member's conversation for a request reaches its own projects
+and that group's, never another group's. Give a new project to a whole team in one step:
 
 - From the group: open its settings and tick the projects under **Projects**. The settings show how
   many members gain access.
@@ -221,7 +222,9 @@ Give a new project to a whole team in one step:
   choice.
 
 Someone who joins the group later gets its projects too. Taking a project away from the group keeps
-it for any member that has it on its own list. Archived projects stay in the list, marked as
+it for any member that has it on its own list. For the others, a turn already running there finishes,
+and their work in that project that has not started (queued or waiting for a usage limit) is
+cancelled. Archived projects stay in the list, marked as
 archived. Each member's instructions list its groups' projects by name, so you do not have to write
 them in by hand.
 
@@ -253,8 +256,10 @@ nothing starts a new **request**; it does not run an agent by itself.
   order](project-settings.md#defaults-and-inheritance)); the group's **Default model** (in **Group settings**) applies in the group's projects when the
   project sets none. The model next to **Project** in the box shows and changes that project's model,
   and **Model in <project>** in the group's menu gives one member its own model there. A change moves
-  the open requests' conversations that still follow the old value, after their current turn; one you
-  switched by hand keeps its model.
+  the open requests' conversations that still follow the old value, after their current turn, and a
+  finished request's conversations when work on it comes back; one you switched by hand keeps its
+  model. While you write in a member's conversation, the group's next task for it waits for that turn
+  to end.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
   members. Names with spaces work (`@Ana Paula`); **Mention** in the box inserts one. The line under
