@@ -7,6 +7,7 @@ import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runt
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import JSZip from "jszip";
 
+import { offerProjectAssistantAccess } from "~/components/assistants/ProjectAssistantAccessDialog";
 import { toastManager } from "~/components/ui/toast";
 import { useThreadTerminalActions } from "~/components/terminal/useThreadTerminalActions";
 import { downloadMedia, readMediaBlob } from "~/components/media/mediaContent";
@@ -144,10 +145,11 @@ export function useFileExplorerHostActions(input: {
           });
           return;
         }
+        const projectId = newProjectId();
         const result = await createProject({
           environmentId: input.environmentId,
           input: {
-            projectId: newProjectId(),
+            projectId,
             title: inferProjectTitleFromPath(absolutePath),
             workspaceRoot: absolutePath,
             createWorkspaceRootIfMissing: false,
@@ -158,7 +160,9 @@ export function useFileExplorerHostActions(input: {
           fail("Could not add the project", squashAtomCommandFailure(result));
           return;
         }
-        toastManager.add({ type: "success", title: "Project added", description: absolutePath });
+        if (!offerProjectAssistantAccess(input.environmentId, projectId)) {
+          toastManager.add({ type: "success", title: "Project added", description: absolutePath });
+        }
       })();
     },
     download: (relativePath, kind) => {

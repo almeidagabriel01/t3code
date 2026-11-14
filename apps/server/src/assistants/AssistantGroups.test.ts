@@ -3620,14 +3620,42 @@ it.effect("only a member that may work in the request's project gets its work", 
       })
       .pipe(Effect.flip);
     assert.include(outside.message, "You are a project assistant");
-    // With no project named, its work stays in its home project instead of going to the lead.
+    // With several projects and none named it must say which one.
     yield* sql`UPDATE assistants SET project_ids_json = '["p1","p3"]' WHERE assistant_id = 'beto'`;
+    const unnamed = yield* groups
+      .agentPost({
+        callerThreadId: ThreadId.make("assistant:beto:1"),
+        group: TEAM,
+        text: "@ada check the core",
+      })
+      .pipe(Effect.flip);
+    assert.include(unnamed.message, "You work in several projects");
+    // With one, its work stays in that home project instead of going to the lead.
+    yield* sql`UPDATE assistants SET project_ids_json = '["p1"]' WHERE assistant_id = 'beto'`;
     const home = yield* groups.agentPost({
       callerThreadId: ThreadId.make("assistant:beto:1"),
       group: TEAM,
       text: "@ada check the core",
     });
     assert.equal(home.message.projectId, "p1");
+    // A project the group lists is one its members may work in, in this group's requests only.
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["p3"]' WHERE team_id = ${TEAM}`;
+    const site = yield* groups.post(
+      { teamId: TEAM, text: "@beto fix the site", projectId: ProjectId.make("p3") },
+      h.user,
+    );
+    assert.deepEqual(
+      site.tasks.map((task) => task.ownerId),
+      ["beto"],
+    );
+    assert.deepEqual(h.launched.at(-1)!.projectId, "p3");
+    const elsewhere = yield* groups
+      .post(
+        { teamId: OTHER_TEAM, text: "@ada fix the site", projectId: ProjectId.make("p3") },
+        h.user,
+      )
+      .pipe(Effect.flip);
+    assert.include(elsewhere.message, "not one of the group's projects");
   }).pipe(Effect.provide(h.layer));
 });
 

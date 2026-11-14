@@ -4,6 +4,9 @@ import { assert, it } from "@effect/vitest";
 import {
   AssistantId,
   type AssistantError,
+  type AssistantsEvent,
+  CommandId,
+  EventId,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
   type ModelSelection,
@@ -24,6 +27,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -192,9 +196,12 @@ const harness = () => {
   );
   const layer = Assistants.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(mocks, connectorsLayer, AssistantTaskLinks.layer).pipe(
-        Layer.provideMerge(base),
-      ),
+      Layer.mergeAll(
+        mocks,
+        connectorsLayer,
+        AssistantTaskLinks.layer,
+        OrchestrationEventStore.layer,
+      ).pipe(Layer.provideMerge(base)),
     ),
   );
   return {
@@ -1070,6 +1077,48 @@ it.effect(
 );
 
 it.effect(
+  "a group keeps its own projects, replaced or changed by delta, and only real ones",
+  () => {
+    const { layer } = harness();
+    const docs = ProjectId.make("docs");
+    const web = ProjectId.make("web");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const refused = <A>(effect: Effect.Effect<A, AssistantError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+      const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo] }));
+      const team = yield* assistants.createTeam({ name: "Dev", memberIds: [ana.id] });
+      assert.deepEqual(team.projectIds, []);
+      const set = yield* assistants.updateTeam({ teamId: team.id, projectIds: [docs, repo, docs] });
+      assert.deepEqual(set.projectIds, [docs, repo]);
+      // Removals apply last, so an id in both lists ends up out.
+      const changed = yield* assistants.updateTeam({
+        teamId: team.id,
+        addProjectIds: [web, repo],
+        removeProjectIds: [repo, web],
+      });
+      assert.deepEqual(changed.projectIds, [docs]);
+      for (const bad of [missingProject, scratch]) {
+        assert.include(
+          yield* refused(assistants.updateTeam({ teamId: team.id, addProjectIds: [web, bad] })),
+          "does not exist",
+        );
+      }
+      assert.deepEqual((yield* assistants.teams)[0]?.projectIds, [docs]);
+      // Other fields leave the list alone, and a member's own list never changes with it.
+      const renamed = yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" });
+      assert.deepEqual(renamed.projectIds, [docs]);
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === ana.id)?.projectIds, [
+        repo,
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
   "a project assistant keeps a list of projects, and only a new home starts a conversation",
   () => {
     const { layer } = harness();
@@ -1245,6 +1294,47 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       [1, "Done"],
     );
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a deleted project leaves assistant and group lists, and subscribers see it", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const gone = ProjectId.make("gone");
+    const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo, gone] }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["gone","repo"]' WHERE team_id = ${team.id}`;
+    const changes = yield* assistants.subscribeChanges;
+    const now = "2026-01-03T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES (${gone}, 'Gone', '/work/gone', '[]', ${now}, ${now}, ${now})`;
+    const deleted = yield* store.appendProjectEvent({
+      type: "project.deleted",
+      eventId: EventId.make("event:gone:deleted"),
+      aggregateKind: "project",
+      aggregateId: gone,
+      occurredAt: now,
+      commandId: CommandId.make("command:gone:delete"),
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { projectId: gone, deletedAt: now },
+    });
+    yield* store.publishCommitted([deleted]);
+
+    const seen = new Map<string, ReadonlyArray<string>>();
+    while (seen.size < 2) {
+      const event: AssistantsEvent = yield* PubSub.take(changes);
+      if (event.type === "upserted" && event.assistant.id === ana.id)
+        seen.set("assistant", event.assistant.projectIds);
+      if (event.type === "teamUpserted" && event.team.id === team.id)
+        seen.set("team", event.team.projectIds);
+    }
+    assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo] });
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

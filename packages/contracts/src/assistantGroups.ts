@@ -282,18 +282,20 @@ export type AssistantGroupsTaskActionInput = typeof AssistantGroupsTaskActionInp
 export const ASSISTANT_GROUP_EVERYONE = "everyone";
 
 /**
- * The projects a group's requests may run in, in member order: each member's listed projects, or
- * its home project when it may work anywhere.
+ * The projects a group's requests may run in: the group's own, then in member order each member's
+ * listed projects, or its home project when it may work anywhere.
  */
 export function assistantGroupProjectIds(
   members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>,
+  groupProjectIds: ReadonlyArray<ProjectId>,
 ): ReadonlyArray<ProjectId> {
   return [
-    ...new Set(
-      members.flatMap((member) =>
+    ...new Set([
+      ...groupProjectIds,
+      ...members.flatMap((member) =>
         member.projectIds.length > 0 ? member.projectIds : [member.projectId],
       ),
-    ),
+    ]),
   ];
 }
 

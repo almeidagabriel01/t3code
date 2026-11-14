@@ -1,5 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  backfillTeamProjects,
+  forgetDeletedProjects,
+} from "../assistants/AssistantTeamProjects.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -533,6 +537,17 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!teamColumns.some((column) => column.name === "archived_at")) {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;
   }
+  // Projects a group gives its members, on top of their own.
+  // The column is the "backfilled" marker, so it must not outlive a failed backfill.
+  if (!teamColumns.some((column) => column.name === "project_ids_json")) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistant_teams ADD COLUMN project_ids_json TEXT NOT NULL DEFAULT '[]'`;
+        yield* backfillTeamProjects(sql);
+      }),
+    );
+  }
+  yield* forgetDeletedProjects(sql);
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_messages (
       message_id TEXT PRIMARY KEY,
@@ -740,6 +755,12 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       ["missed_run_policy", "TEXT NOT NULL DEFAULT 'skip'"],
       ["max_runs", "INTEGER"],
     ]);
+  }
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "owner_assistant_id")
+  ) {
+    yield* sql.withTransaction(sql`ALTER TABLE scheduled_tasks ADD COLUMN owner_assistant_id TEXT`);
   }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`

@@ -344,8 +344,8 @@ const joinNames = (names: ReadonlyArray<string>, conjunction = "and") =>
     : `${names.slice(0, -1).join(", ")} ${conjunction} ${names[names.length - 1]}`;
 
 /** A request without a project (from before requests had one) runs in the member's home. */
-const worksIn = (member: AssistantRow, projectId: string | null) =>
-  projectId === null || assistantWorksIn(toAssistant(member), projectId as ProjectId);
+const worksIn = (member: AssistantRow, team: AssistantTeam, projectId: string | null) =>
+  projectId === null || assistantWorksIn(toAssistant(member), team, projectId as ProjectId);
 
 /** The notice when members a message named or the lead picked cannot work in its project. */
 const outsideProjectText = (
@@ -906,7 +906,7 @@ const make = Effect.gen(function* () {
       thread = yield* inspectThread(threadId);
     }
     const projectId = (thread?.projectId ?? request.project_id ?? member.project_id) as ProjectId;
-    if (!assistantWorksIn(toAssistant(member), projectId)) {
+    if (!assistantWorksIn(toAssistant(member), team, projectId)) {
       return yield* invalid(`${member.name} cannot work in this request's project.`);
     }
     if (thread === undefined) {
@@ -1496,9 +1496,10 @@ const make = Effect.gen(function* () {
 
   /** The group's projects with their titles, in member order, a deleted one left out: what every offer and inference reads. */
   const groupProjects = Effect.fn("AssistantGroups.groupProjects")(function* (
+    team: AssistantTeam,
     members: ReadonlyArray<AssistantRow>,
   ) {
-    const ids = assistantGroupProjectIds(members.map(toAssistant));
+    const ids = assistantGroupProjectIds(members.map(toAssistant), team.projectIds);
     if (ids.length === 0) return [];
     const rows = yield* sql<{ readonly project_id: string; readonly title: string }>`
       SELECT project_id, title FROM projection_projects
@@ -1552,14 +1553,14 @@ const make = Effect.gen(function* () {
             SELECT COUNT(*) AS n FROM assistant_group_tasks
             WHERE request_id = ${request.message_id}`)[0]!.n > 0;
         const message = started ? trigger : request;
-        const projects = yield* groupProjects(members);
+        const projects = yield* groupProjects(team, members);
         // A request that already ran without one (from before requests had projects) keeps going.
         const needsProject = !started && request.project_id === null && projects.length > 1;
         // With the project known the lead only sees who can work there; otherwise it is checked after.
         // A request that started without one runs in each member's home, so nobody is left out.
         const knownProject =
           request.project_id ?? (started || needsProject ? null : (projects[0]?.id ?? null));
-        const candidates = members.filter((member) => worksIn(member, knownProject));
+        const candidates = members.filter((member) => worksIn(member, team, knownProject));
         const names = new Map(members.map((member) => [member.assistant_id, member.name]));
         const recent = yield* sql<MessageRow>`
           SELECT * FROM assistant_group_messages
@@ -1753,7 +1754,7 @@ const make = Effect.gen(function* () {
             prepared.members.filter((member) => member.assistant_id === id),
           );
           const projectId = current.project_id ?? decided?.id ?? null;
-          const recipients = named.filter((member) => worksIn(member, projectId));
+          const recipients = named.filter((member) => worksIn(member, team, projectId));
           if (recipients.length < named.length) {
             yield* insertMessage({
               teamId,
@@ -1930,7 +1931,7 @@ const make = Effect.gen(function* () {
               if (repeat[0] !== undefined) return { message: repeat[0], lead: undefined };
             }
             const members = yield* activeMembers(team);
-            const projectList = yield* groupProjects(members);
+            const projectList = yield* groupProjects(team, members);
             const projects = projectList.map((project) => project.id as ProjectId);
             if (input.projectId !== undefined && !projects.includes(input.projectId)) {
               return yield* invalid("That project is not one of the group's projects.");
@@ -2085,7 +2086,7 @@ const make = Effect.gen(function* () {
                 requestId: message.request_id,
               });
             } else if (recipients !== undefined) {
-              const allowed = recipients.filter((row) => worksIn(row, projectId));
+              const allowed = recipients.filter((row) => worksIn(row, team, projectId));
               if (allowed.length < recipients.length) {
                 yield* insertMessage({
                   teamId: team.id,
@@ -2353,7 +2354,7 @@ const make = Effect.gen(function* () {
                     : "Its member is no longer in the group; reassign it.",
                 );
               }
-              yield* refuseOutsideProject(owner, task.request_id ?? task.request_message_id);
+              yield* refuseOutsideProject(team, owner, task.request_id ?? task.request_message_id);
               const next = yield* requeue(task, ownerId);
               yield* pump(team.id);
               return (yield* wireTasks([(yield* getTask(next.task_id)) ?? next]))[0]!;
@@ -2449,12 +2450,13 @@ const make = Effect.gen(function* () {
 
   /** Work in a request goes only to a member that may work in its project. */
   const refuseOutsideProject = Effect.fn("AssistantGroups.refuseOutsideProject")(function* (
+    team: AssistantTeam,
     member: AssistantRow,
     requestId: string | null,
   ) {
     const projectId =
       requestId === null ? null : ((yield* getMessage(requestId))?.project_id ?? null);
-    if (!worksIn(member, projectId)) {
+    if (!worksIn(member, team, projectId)) {
       return yield* invalid(
         `${member.name} cannot work in this request's project; give it to a member who does.`,
       );
@@ -2500,7 +2502,7 @@ const make = Effect.gen(function* () {
           if (target.assistant_id === task.owner_id) {
             return yield* invalid("Do not assign a task to yourself.");
           }
-          yield* refuseOutsideProject(target, task.request_id);
+          yield* refuseOutsideProject(team, target, task.request_id);
           // A repeat of the same assignment lands on the same task.
           const repeat = yield* sql<TaskRow>`
               SELECT * FROM assistant_group_tasks
@@ -2551,7 +2553,7 @@ const make = Effect.gen(function* () {
             status: row.status as AssistantGroupTaskStatus,
           });
           if (target.assistant_id === task.owner_id) return settled(task);
-          yield* refuseOutsideProject(target, task.request_id);
+          yield* refuseOutsideProject(team, target, task.request_id);
           yield* chargeHandoff(team, task);
           const from = yield* nameOf(task.owner_id);
           // The new owner takes over when the caller's run ends.
@@ -2597,7 +2599,7 @@ const make = Effect.gen(function* () {
           if (asked === undefined) {
             return yield* invalid("That member is no longer in the group.");
           }
-          yield* refuseOutsideProject(asked, task.request_id);
+          yield* refuseOutsideProject(team, asked, task.request_id);
           const root = yield* rootOf(task);
           const accepted = (taskId: string): GroupToolResult => ({
             accepted: true,
@@ -2720,7 +2722,8 @@ const make = Effect.gen(function* () {
       const team = byId ?? matches[0];
       if (team === undefined) return yield* assistantError("not_found", "Group not found.");
       const wantedProject = input.project?.trim() ?? "";
-      const projects = yield* groupProjects(yield* activeMembers(toAssistantTeam(team)));
+      const group = toAssistantTeam(team);
+      const projects = yield* groupProjects(group, yield* activeMembers(group));
       let projectId: ProjectId | undefined;
       if (wantedProject !== "") {
         const found = projects.filter(
@@ -2747,7 +2750,7 @@ const make = Effect.gen(function* () {
         const home = Option.isSome(poster) ? poster.value.assistant : undefined;
         if (
           home !== undefined &&
-          assistantProjects(home) !== "all" &&
+          assistantProjects(home, group) !== "all" &&
           projects.some((project) => project.id === home.projectId)
         ) {
           projectId = home.projectId;

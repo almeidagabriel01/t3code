@@ -146,6 +146,7 @@ const reactTests = [
   "src/features/assistants/SettingsAssistantsRouteScreen.test.tsx",
   "src/features/assistants/AssistantGroupChatRouteScreen.test.tsx",
   "src/features/assistants/AssistantGroupSettingsRouteScreen.test.tsx",
+  "src/features/assistants/ProjectAccess.test.tsx",
   "src/features/assistants/assistantGroupFlows.test.tsx",
   "src/features/assistants/AutonomySettingsSection.test.tsx",
   "src/features/assistants/AssistantWatchesSection.test.tsx",

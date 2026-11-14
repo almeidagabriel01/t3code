@@ -343,6 +343,10 @@
       "types": "./src/assistantSections.ts",
       "default": "./src/assistantSections.ts"
     },
+    "./assistantProjectAccess": {
+      "types": "./src/assistantProjectAccess.ts",
+      "default": "./src/assistantProjectAccess.ts"
+    },
     "./assistantPresence": {
       "types": "./src/assistantPresence.ts",
       "default": "./src/assistantPresence.ts"

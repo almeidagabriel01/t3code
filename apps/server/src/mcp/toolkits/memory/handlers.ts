@@ -1,11 +1,16 @@
 import * as M from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as NodeUtil from "node:util";
+import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
+import { effectiveProjectIdsOf, projectLabel } from "../../../assistants/AssistantSandboxPolicy.ts";
 import * as MemoryAccess from "../../../memory/MemoryAccess.ts";
 import * as MemoryService from "../../../memory/MemoryService.ts";
 import * as MemorySyncService from "../../../memory/MemorySyncService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import { schemaIssueSummary } from "../../../memory/memoryDiagnostics.ts";
 import { recallThreads } from "./recallThreads.ts";
 import { MemoryToolkit } from "./tools.ts";
@@ -156,6 +161,80 @@ const callerThread = Effect.gen(function* () {
     ? { environmentId: caller.environmentId, threadId: caller.thread.threadId }
     : undefined;
 });
+/** A project assistant's projects, own and its groups'; undefined for any other caller. */
+const assistantProjects = Effect.gen(function* () {
+  const thread = yield* callerThread;
+  const directory = yield* Effect.serviceOption(AssistantDirectory);
+  if (thread === undefined || Option.isNone(directory)) return undefined;
+  const found = yield* directory.value.forThread(thread.threadId);
+  if (Option.isNone(found) || found.value.assistant.scope !== "project") return undefined;
+  const projectIds = yield* effectiveProjectIdsOf(directory.value, found.value.assistant);
+  const titles =
+    directory.value.projectTitles === undefined
+      ? {}
+      : yield* directory.value.projectTitles(projectIds);
+  return { projectIds, list: projectIds.map((id) => projectLabel(id, titles[id])).join(", ") };
+});
+const refuse = (message: string) =>
+  new M.OrchestratorMcpFailure({ code: "invalid_request", message });
+/** A project memory lands in a project the caller works in, and never in its home one by default. */
+const checkRememberProject = Effect.fn("memory.checkRememberProject")(function* (
+  value: M.MemoryRememberInput,
+) {
+  // A replacement keeps the memory's own scope, so projectId would change nothing.
+  if (value.scope !== "project" || value.memoryId !== undefined) return;
+  const projects = yield* assistantProjects;
+  if (value.projectId !== undefined) {
+    if (projects === undefined)
+      return yield* refuse(
+        "projectId is for assistants that work in several projects; leave it out to save in this conversation's project.",
+      );
+    if (!projects.projectIds.includes(value.projectId))
+      return yield* refuse(
+        `That project is not one of yours, so nothing was saved. Your projects: ${projects.list}.`,
+      );
+    return;
+  }
+  if (projects !== undefined && projects.projectIds.length > 1)
+    return yield* refuse(
+      `You work in several projects (${projects.list}), so nothing was saved. Pass the projectId the fact is about, or use scope user when it holds for all of them.`,
+    );
+});
+/** A project assistant reaches only its own projects' memories; other callers are unchanged. */
+const confineToProjects = Effect.fn("memory.confineToProjects")(function* (
+  space: M.MemorySpaceId,
+  target: { readonly scope?: M.MemoryScope | undefined } | { readonly memoryId: M.MemoryId },
+  permit: Effect.Effect<void, MemoryService.MemoryAccessError>,
+) {
+  const projects = yield* assistantProjects;
+  if (projects === undefined) return;
+  const notYours = refuse(
+    `That memory's project is not one of yours, so nothing ran. Your projects: ${projects.list}.`,
+  );
+  const service = yield* MemoryService.MemoryService;
+  const scope =
+    "memoryId" in target ? yield* service.scopeOf(space, target.memoryId, permit) : target.scope;
+  if (scope?.kind === "thread") {
+    const caller = yield* McpInvocationContext.McpInvocationContext;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const shell =
+      scope.thread.environmentId === caller.environmentId
+        ? yield* threads.getThreadShell(scope.thread.threadId)
+        : null;
+    if (shell === null || !projects.projectIds.includes(shell.projectId)) return yield* notYours;
+    return;
+  }
+  if (scope?.kind !== "project") return;
+  const { environmentId } = yield* McpInvocationContext.McpInvocationContext;
+  // An unresolvable project matches nothing, so it never blocks the others.
+  const keys = yield* Effect.forEach(projects.projectIds, (projectId) =>
+    service
+      .resolveProjectKey(space, { environmentId, projectId })
+      .pipe(Effect.orElseSucceed(() => null)),
+  );
+  if (!keys.some((key) => NodeUtil.isDeepStrictEqual(key, scope.projectKey)))
+    return yield* notYours;
+});
 /** Read tools default to this server's memory space, so a query or id alone is enough. */
 const currentSpace = Effect.gen(function* () {
   const sync = yield* MemorySyncService.MemorySyncService;
@@ -172,8 +251,13 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const value = yield* decodeRecall(input);
+      const projects = yield* assistantProjects;
       const recalled = yield* service.recall(
-        { ...value, memorySpaceId: yield* currentSpace },
+        {
+          ...value,
+          memorySpaceId: yield* currentSpace,
+          ...(projects === undefined ? {} : { projectIds: projects.projectIds }),
+        },
         yield* invocationPermit("read"),
         yield* callerThread,
       );
@@ -185,65 +269,60 @@ const handlers = {
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
       const value = yield* decodeRemember(input);
-      return yield* service
-        .remember(
-          { ...value, memorySpaceId: yield* currentSpace },
-          yield* invocationPermit("write"),
-          yield* callerThread,
-        )
-        .pipe(
-          Effect.catchTags({
-            MemoryRememberScopeUnavailable: () =>
-              Effect.fail(
-                new M.OrchestratorMcpFailure({
-                  code: "invalid_request",
-                  message:
-                    "This conversation has no project memory, so nothing was saved. Save it with scope user.",
-                }),
-              ),
-          }),
-          Effect.flatMap((stored) => receipt(stored.receipt)),
-        );
+      yield* checkRememberProject(value);
+      const memorySpaceId = yield* currentSpace;
+      const permit = yield* invocationPermit("write");
+      if (value.memoryId !== undefined)
+        yield* confineToProjects(memorySpaceId, { memoryId: value.memoryId }, permit);
+      return yield* service.remember({ ...value, memorySpaceId }, permit, yield* callerThread).pipe(
+        Effect.catchTags({
+          MemoryRememberScopeUnavailable: () =>
+            Effect.fail(
+              new M.OrchestratorMcpFailure({
+                code: "invalid_request",
+                message:
+                  "This conversation has no project memory, so nothing was saved. Save it with scope user.",
+              }),
+            ),
+        }),
+        Effect.flatMap((stored) => receipt(stored.receipt)),
+      );
     }).pipe(Effect.catch(memoryFailure("memory_remember"))),
   ),
   memory_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.list(
-        yield* decodeList(yield* withCurrentSpace(input)),
-        yield* invocationPermit("read"),
-        yield* callerThread,
-      );
+      const value = yield* decodeList(yield* withCurrentSpace(input));
+      const permit = yield* invocationPermit("read");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
+      return yield* service.list(value, permit, yield* callerThread);
     }).pipe(Effect.catch(memoryFailure("memory_list"))),
   ),
   memory_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.read(
-        yield* decodeRead(yield* withCurrentSpace(input)),
-        yield* invocationPermit("read"),
-        yield* callerThread,
-      );
+      const value = yield* decodeRead(yield* withCurrentSpace(input));
+      const permit = yield* invocationPermit("read");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
+      return yield* service.read(value, permit, yield* callerThread);
     }).pipe(Effect.catch(memoryFailure("memory_read"))),
   ),
   memory_read_source: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.readSource(
-        yield* decodeReadSource(input),
-        yield* invocationPermit("source"),
-        yield* callerThread,
-      );
+      const value = yield* decodeReadSource(input);
+      const permit = yield* invocationPermit("source");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
+      return yield* service.readSource(value, permit, yield* callerThread);
     }).pipe(Effect.catch(memoryFailure("memory_read_source"))),
   ),
   memory_history: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.history(
-        yield* decodeHistory(yield* withCurrentSpace(input)),
-        yield* invocationPermit("read"),
-        yield* callerThread,
-      );
+      const value = yield* decodeHistory(yield* withCurrentSpace(input));
+      const permit = yield* invocationPermit("read");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
+      return yield* service.history(value, permit, yield* callerThread);
     }).pipe(Effect.catch(memoryFailure("memory_history"))),
   ),
   memory_sync_status: McpToolAccess.reads((input) =>
@@ -261,6 +340,9 @@ const handlers = {
       const service = yield* MemoryService.MemoryService;
       const caller = yield* McpInvocationContext.McpInvocationContext;
       const upsert = yield* decodeUpsert(input);
+      const permit = yield* invocationPermit("write");
+      // The decider refuses a scope change, so the requested scope is the memory's scope.
+      yield* confineToProjects(upsert.memorySpaceId, { scope: upsert.scope }, permit);
       return yield* service
         .upsert(
           // Only the user's own words and the rule extractor may write the rule marker.
@@ -268,7 +350,7 @@ const handlers = {
             ...upsert,
             payload: { ...upsert.payload, text: M.stripMemoryRulePrefix(upsert.payload.text) },
           },
-          yield* invocationPermit("write"),
+          permit,
           caller.thread
             ? { environmentId: caller.environmentId, threadId: caller.thread.threadId }
             : undefined,
@@ -279,19 +361,21 @@ const handlers = {
   memory_forget: McpToolAccess.writesWithCapability((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
+      const value = yield* decodeForget(input);
+      const permit = yield* invocationPermit("write");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
       return yield* service
-        .forget(yield* decodeForget(input), yield* invocationPermit("write"))
+        .forget(value, permit)
         .pipe(Effect.flatMap((stored) => receipt(stored.receipt)));
     }).pipe(Effect.catch(memoryFailure("memory_forget"))),
   ),
   memory_revert_resolution: McpToolAccess.writesWithCapability((input) =>
     Effect.gen(function* () {
       const service = yield* MemoryService.MemoryService;
-      return yield* service.revertResolution(
-        yield* decodeRevertResolution(input),
-        yield* invocationPermit("write"),
-        yield* callerThread,
-      );
+      const value = yield* decodeRevertResolution(input);
+      const permit = yield* invocationPermit("write");
+      yield* confineToProjects(value.memorySpaceId, value, permit);
+      return yield* service.revertResolution(value, permit, yield* callerThread);
     }).pipe(Effect.catch(memoryFailure("memory_revert_resolution"))),
   ),
 } satisfies McpToolAccess.Handlers<typeof MemoryToolkit.tools>;

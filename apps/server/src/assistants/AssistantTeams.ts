@@ -1,4 +1,4 @@
-import type { AssistantId, AssistantTeam, AssistantTeamId } from "@t3tools/contracts";
+import type { AssistantId, AssistantTeam, AssistantTeamId, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -12,6 +12,7 @@ export interface AssistantTeamRow {
   readonly archived_at?: string | null;
   readonly instructions?: string;
   readonly memories_json?: string;
+  readonly project_ids_json?: string;
   /** Chat counters, present when the row comes from `assistant_team_state`. */
   readonly read_seq?: number;
   readonly latest_seq?: number;
@@ -36,6 +37,10 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   archivedAt: row.archived_at ?? null,
   instructions: row.instructions ?? "",
   memories: Option.getOrElse(decodeMemberIds(row.memories_json ?? "[]"), () => []),
+  projectIds: Option.getOrElse(
+    decodeMemberIds(row.project_ids_json ?? "[]"),
+    () => [],
+  ) as ProjectId[],
   ...(row.latest_seq === undefined
     ? {}
     : {

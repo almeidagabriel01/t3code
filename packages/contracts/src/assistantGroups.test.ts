@@ -246,14 +246,20 @@ describe("assistantGroupProjectSlugs", () => {
 });
 
 describe("assistantGroupProjectIds", () => {
-  it("joins the members' project lists in member order, once each, home project as a fallback", () => {
-    expect(
-      assistantGroupProjectIds([
-        { projectId: "home" as never, projectIds: ["p2" as never, "p1" as never] },
-        { projectId: "p3" as never, projectIds: [] },
-        { projectId: "home" as never, projectIds: ["p1" as never] },
-      ]),
-    ).toEqual(["p2", "p1", "p3"]);
-    expect(assistantGroupProjectIds([])).toEqual([]);
+  it("joins the group's projects, then the members' in member order, once each, home project as a fallback", () => {
+    const members = [
+      { projectId: "home" as never, projectIds: ["p2" as never, "p1" as never] },
+      { projectId: "p3" as never, projectIds: [] },
+      { projectId: "home" as never, projectIds: ["p1" as never] },
+    ];
+    expect(assistantGroupProjectIds(members, [])).toEqual(["p2", "p1", "p3"]);
+    expect(assistantGroupProjectIds(members, ["p4" as never, "p1" as never])).toEqual([
+      "p4",
+      "p1",
+      "p2",
+      "p3",
+    ]);
+    expect(assistantGroupProjectIds([], ["p4" as never])).toEqual(["p4"]);
+    expect(assistantGroupProjectIds([], [])).toEqual([]);
   });
 });

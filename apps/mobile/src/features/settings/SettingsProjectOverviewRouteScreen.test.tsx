@@ -45,6 +45,9 @@ vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children, AppTextInput: () => null }));
 vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
+vi.mock("../assistants/ProjectAssistantAccessSection", () => ({
+  ProjectAssistantAccessSection: () => null,
+}));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn(), confirm: mocks.confirm }));
 vi.mock("../../components/ui/ListActionRow", () => ({

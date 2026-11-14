@@ -737,9 +737,10 @@ export function AssistantGroupChatRouteScreen({
   const projectName = (id: ProjectId) =>
     projects.find((project) => project.environmentId === environmentId && project.id === id)
       ?.title ?? "Project";
-  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(members).map(
-    (id) => ({ id, name: projectName(id) }),
-  );
+  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupProjectIds(
+    members,
+    team?.projectIds ?? [],
+  ).map((id) => ({ id, name: projectName(id) }));
   const items = chat === null ? [] : assistantGroupRequestFeed(chat);
   const feedProjects = assistantGroupFeedProjects(items);
   const filter = filterPick !== null && feedProjects.includes(filterPick) ? filterPick : null;

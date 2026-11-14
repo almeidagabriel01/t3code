@@ -72,9 +72,14 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
     assert.deepStrictEqual(yield* sql`SELECT team_id, archived_at FROM assistant_teams`, [
       { team_id: "g1", archived_at: null },
     ]);
-    assert.deepStrictEqual(yield* sql`SELECT task_id, assistant_team_id FROM scheduled_tasks`, [
-      { task_id: "t1", assistant_team_id: null },
-    ]);
+    assert.deepStrictEqual(
+      yield* sql`SELECT task_id, assistant_team_id, owner_assistant_id FROM scheduled_tasks`,
+      [{ task_id: "t1", assistant_team_id: null, owner_assistant_id: null }],
+    );
+    assert.strictEqual(
+      (yield* columnsOf("scheduled_tasks")).filter((name) => name === "owner_assistant_id").length,
+      1,
+    );
 
     const cards = yield* columnsOf("kanban_cards");
     for (const name of ["parent_card_id", "attachments_json", "cover_attachment_id"]) {
@@ -150,6 +155,147 @@ it.effect("turns an assistant's single project into a list of one and keeps a sa
         { assistant_id: "old", project_ids_json: '["p1"]' },
       ],
     );
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("gives each existing group the projects all its members list, and no one more", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    // An older build: groups without their own project list.
+    yield* sql`DROP VIEW assistant_team_state`;
+    yield* sql`ALTER TABLE assistant_teams DROP COLUMN project_ids_json`;
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+    yield* sql`
+      INSERT INTO projection_projects VALUES ('p1', NULL), ('p2', NULL), ('p3', NULL), ('p4', 'gone')`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json, archived_at)
+      VALUES ('a1', 'a1', 'A1', 'p1', 'full', 't', 't', 'project', '["p1","p2","p4"]', NULL),
+             ('a2', 'a2', 'A2', 'p2', 'full', 't', 't', 'project', '["p2","p1","p4"]', NULL),
+             ('all', 'all', 'All', 'home', 'full', 't', 't', 'all', '["home"]', NULL),
+             ('unset', 'unset', 'Unset', 'p3', 'full', 't', 't', NULL, '["p3"]', NULL),
+             ('old', 'old', 'Old', 'p1', 'full', 't', 't', 'project', '["p1"]', 'then')`;
+    const groups: ReadonlyArray<readonly [string, ReadonlyArray<string>, ReadonlyArray<string>]> = [
+      ["shared", ["a1", "a2", "all"], ["p1", "p2"]],
+      ["ghost", ["a1", "nobody"], ["p1", "p2"]],
+      ["anywhere", ["all"], []],
+      ["unset", ["a1", "unset"], []],
+      ["archived", ["a1", "old"], ["p1"]],
+      ["empty", [], []],
+    ];
+    for (const [id, members] of groups) {
+      yield* sql`
+        INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+        VALUES (${id}, ${id}, ${JSON.stringify(members)}, 't', 't')`;
+    }
+    const lists = sql`SELECT assistant_id, project_ids_json FROM assistants ORDER BY assistant_id`;
+
+    yield* ensureForkSchema();
+    yield* ensureForkSchema();
+
+    const rows = yield* sql<{ readonly team_id: string; readonly project_ids_json: string }>`
+      SELECT team_id, project_ids_json FROM assistant_teams`;
+    for (const [id, , expected] of groups) {
+      const row = rows.find((candidate) => candidate.team_id === id);
+      assert.deepStrictEqual([id, JSON.parse(row?.project_ids_json ?? "null")], [id, expected]);
+    }
+    // Only the deleted project leaves the members' own lists.
+    assert.deepStrictEqual(yield* lists, [
+      { assistant_id: "a1", project_ids_json: '["p1","p2"]' },
+      { assistant_id: "a2", project_ids_json: '["p2","p1"]' },
+      { assistant_id: "all", project_ids_json: '["home"]' },
+      { assistant_id: "old", project_ids_json: '["p1"]' },
+      { assistant_id: "unset", project_ids_json: '["p3"]' },
+    ]);
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("adds only the request grouping columns a database lacks, then fills them", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`DROP INDEX assistant_requests_group_idx`;
+    yield* sql`ALTER TABLE assistant_requests DROP COLUMN group_id`;
+    yield* sql`ALTER TABLE assistant_requests DROP COLUMN delivered`;
+    // reply_text is already there, as an older build that stopped halfway left it.
+    yield* sql`
+      INSERT INTO assistant_requests (request_id, sender_thread_id, recipient_thread_id, status, created_at)
+      VALUES ('r1', 's', 'r', 'open', 't')`;
+
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(
+      yield* sql`SELECT request_id, group_id, reply_text, delivered FROM assistant_requests`,
+      [{ request_id: "r1", group_id: "r1", reply_text: null, delivered: 0 }],
+    );
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("adds a group's project list only together with its backfill", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`DROP VIEW assistant_team_state`;
+    yield* sql`ALTER TABLE assistant_teams DROP COLUMN project_ids_json`;
+    // No deleted_at column: the backfill's read fails.
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY)`;
+    yield* sql`INSERT INTO projection_projects VALUES ('p1')`;
+    yield* sql`
+      INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json)
+      VALUES ('a1', 'a1', 'A1', 'p1', 'full', 't', 't', 'project', '["p1"]')`;
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('g', 'g', '["a1"]', 't', 't')`;
+
+    const failed = yield* Effect.exit(ensureForkSchema());
+    assert.strictEqual(failed._tag, "Failure");
+    assert.isFalse((yield* columnsOf("assistant_teams")).includes("project_ids_json"));
+
+    yield* sql`ALTER TABLE projection_projects ADD COLUMN deleted_at TEXT`;
+    yield* ensureForkSchema();
+    assert.deepStrictEqual(yield* sql`SELECT team_id, project_ids_json FROM assistant_teams`, [
+      { team_id: "g", project_ids_json: '["p1"]' },
+    ]);
+  }).pipe(Effect.provide(database)),
+);
+
+it.effect("drops deleted projects from assistant and group lists on start", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* ensureForkSchema();
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+    yield* sql`INSERT INTO projection_projects VALUES ('live', NULL), ('dead', 'then')`;
+    // [table, id, saved list, list after start]
+    const rows = [
+      ["assistants", "both", '["live","dead"]', '["live"]'],
+      ["assistants", "only-dead", '["dead"]', "[]"],
+      ["assistants", "unknown", '["live","elsewhere"]', '["live","elsewhere"]'],
+      ["assistants", "broken", "not json", "not json"],
+      ["assistant_teams", "group", '["dead","live"]', '["live"]'],
+      ["assistant_teams", "broken-group", "{", "{"],
+    ] as const;
+    for (const [table, id, saved] of rows) {
+      yield* table === "assistants"
+        ? sql`
+          INSERT INTO assistants (assistant_id, handle, name, project_id, tool_access, created_at, updated_at, scope, project_ids_json)
+          VALUES (${id}, ${id}, ${id}, 'dead', 'full', 't', 't', 'project', ${saved})`
+        : sql`
+          INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at, project_ids_json)
+          VALUES (${id}, ${id}, '[]', 't', 't', ${saved})`;
+    }
+
+    yield* ensureForkSchema();
+
+    const lists = new Map(
+      (yield* sql<{ readonly id: string; readonly list: string }>`
+        SELECT assistant_id AS id, project_ids_json AS list FROM assistants
+        UNION ALL SELECT team_id, project_ids_json FROM assistant_teams`).map((row) => [
+        row.id,
+        row.list,
+      ]),
+    );
+    for (const [, id, , expected] of rows) {
+      assert.deepStrictEqual([id, lists.get(id)], [id, expected]);
+    }
   }).pipe(Effect.provide(database)),
 );
 

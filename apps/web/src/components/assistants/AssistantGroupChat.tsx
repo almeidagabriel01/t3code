@@ -699,9 +699,10 @@ export function AssistantGroupChat(props: {
     projectFilter !== null && feedProjects.includes(projectFilter) ? projectFilter : null;
   const items = filterAssistantGroupFeed(feed, activeFilter);
   const newestRequest = items.findLast((item) => item.kind === "request");
-  const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(members).map(
-    (id) => ({ id, label: projectName(id) }),
-  );
+  const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(
+    members,
+    team?.projectIds ?? [],
+  ).map((id) => ({ id, label: projectName(id) }));
   const mentionProjects: ReadonlyArray<GroupMentionProject> = groupProjects.map((project) => ({
     id: project.id,
     name: project.label,

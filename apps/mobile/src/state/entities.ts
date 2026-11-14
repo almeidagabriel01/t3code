@@ -191,6 +191,11 @@ export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
 
+/** The projects now, for handlers that run after the render that captured `useProjects`. */
+export function readProjects(): ReadonlyArray<EnvironmentProject> {
+  return appAtomRegistry.get(environmentProjects.projectsAtom);
+}
+
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }

@@ -7,7 +7,9 @@ import {
   type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
+  type ProjectId,
 } from "@t3tools/contracts";
+import { sameProjects } from "@t3tools/client-runtime/assistantSections";
 import {
   MessageSquarePlusIcon,
   PlusIcon,
@@ -40,6 +42,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
+import { GroupProjectsSection } from "./GroupProjectsSection";
 import {
   assistantGroupSettingsAtom,
   type AssistantGroupSettingsTarget,
@@ -128,6 +131,7 @@ function SettingsForm(props: {
   const [rows, setRows] = useState<ReadonlyArray<{ readonly key: number; readonly text: string }>>(
     (team.memories ?? []).map((text, key) => ({ key, text })),
   );
+  const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>(team.projectIds);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,7 +146,8 @@ function SettingsForm(props: {
   const kept = rows.map((row) => row.text.trim()).filter((text) => text !== "");
   const changed =
     instructions.trim() !== (team.instructions ?? "") ||
-    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []);
+    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
+    !sameProjects(projectIds, team.projectIds);
 
   const save = async () => {
     setBusy(true);
@@ -151,6 +156,7 @@ function SettingsForm(props: {
       teamId: team.id,
       instructions: instructions.trim(),
       memories: kept,
+      ...(sameProjects(projectIds, team.projectIds) ? {} : { projectIds }),
     });
     setBusy(false);
     if (!reply.ok) return setError(reply.message);
@@ -253,6 +259,12 @@ function SettingsForm(props: {
                 </Button>
               </div>
             </fieldset>
+            <GroupProjectsSection
+              environmentId={environmentId}
+              team={team}
+              picked={projectIds}
+              onChange={setProjectIds}
+            />
             <section className="flex flex-col gap-1">
               <h3 className="text-sm font-medium">Conversation</h3>
               <p className="text-xs text-muted-foreground">
