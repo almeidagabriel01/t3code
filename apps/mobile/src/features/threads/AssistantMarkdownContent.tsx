@@ -101,6 +101,7 @@ export const AssistantMarkdownContent = memo(function AssistantMarkdownContent(p
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly preserveSoftBreaks?: boolean;
 }) {
   const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
@@ -120,6 +121,7 @@ export const AssistantMarkdownContent = memo(function AssistantMarkdownContent(p
       renderImage={props.renderImage}
       skills={props.skills}
       models={models}
+      preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 });
@@ -133,6 +135,7 @@ function AssistantMarkdownBlocks(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
+  readonly preserveSoftBreaks?: boolean | undefined;
 }) {
   const blocks = useMemo(
     () =>
@@ -174,6 +177,7 @@ function AssistantMarkdownBlocks(props: {
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
+          preserveSoftBreaks={props.preserveSoftBreaks ?? false}
           {...props.linkHandlers}
           renderImage={props.renderImage}
         />

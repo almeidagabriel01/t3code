@@ -55,6 +55,9 @@ const { mocks, Children } = vi.hoisted(() => ({
       onChangeSelection: (selection: { start: number; end: number }) => void;
     },
     decisions: [] as unknown[],
+    /** Member thread titles the store knows. */
+    shells: new Map<string, string>(),
+    openedLink: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
@@ -65,6 +68,7 @@ vi.mock("react-native", () => ({
   ScrollView: Children,
   StyleSheet: { hairlineWidth: 1 },
   Platform: { OS: "ios" },
+  useWindowDimensions: () => ({ width: 400, height: 800, fontScale: 1 }),
   AppState: {
     get currentState() {
       return mocks.appState;
@@ -202,6 +206,68 @@ vi.mock("../threads/ComposerAttachmentButton", () => ({
 }));
 vi.mock("../threads/ComposerCommandPopover", () => ({ ComposerPopoverSurface: Children }));
 vi.mock("../threads/ThreadComposer", () => ({ ComposerSurface: Children }));
+vi.mock("../threads/AssistantMarkdownContent", () => ({
+  AssistantMarkdownContent: (props: {
+    markdown: string;
+    linkHandlers: {
+      onLinkPress: (href: string) => void;
+      linkCustomization?: (href: string) => { label?: string } | undefined;
+    };
+  }) => (
+    <span>
+      {props.markdown}
+      <button
+        aria-label={`link in ${props.markdown}`}
+        onClick={() => {
+          props.linkHandlers.onLinkPress("t3-mention:mention/ada");
+          props.linkHandlers.onLinkPress("src/app.ts");
+        }}
+      />
+    </span>
+  ),
+}));
+// One host per screen; each message's links carry the context they were built with.
+vi.mock("../threads/useThreadMarkdownLinks", async () => {
+  const { useState } = await import("react");
+  return {
+    useMarkdownLinks: (host: { linksFor: (context: unknown) => unknown }, context: unknown) =>
+      host.linksFor(context),
+    useMarkdownLinkHost: () => {
+      const [file, setFile] = useState<unknown>(null);
+      return {
+        linksFor: (context: unknown) => ({
+          linkHandlers: {
+            onLinkPress: (href: string) => mocks.openedLink(href, context),
+            fileContextMenu: () => undefined,
+            onFileContextMenuAction: () => {},
+          },
+          renderImage: () => null,
+        }),
+        onPressPreview: setFile,
+        expandedFile: file,
+        expandedVideo: null,
+        closeFilePreview: () => setFile(null),
+        closeVideoPreview: () => {},
+        fileShareSourceIdentifier: "share",
+        imageSources: () => null,
+      };
+    },
+  };
+});
+vi.mock("../../components/ui/NativePresentation", () => ({ PresentationSource: Children }));
+vi.mock("../../components/ui/VideoPreviewModal", () => ({
+  VideoPreviewModal: () => <div data-testid="video-preview" />,
+}));
+vi.mock("../layout/workspace/useAndroidWorkspaceNavigation", () => ({
+  useWorkspaceBackNavigation: () => mocks.goBack,
+}));
+vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAppearancePreferences: () => ({ appearance: { baseFontSize: 16 } }),
+}));
+vi.mock("../../lib/useUniwindTheme", () => ({
+  useUniwindTheme: () => ({ "--color-icon-subtle": "#888888" }),
+}));
+vi.mock("../threads/thread-work-log", () => ({ ThreadDisclosureChevron: () => null }));
 vi.mock("../threads/ThreadFeed", () => ({
   useMarkdownStyles: () => ({ user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } }),
 }));
@@ -301,9 +367,16 @@ vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
     subtitle?: string;
+    onBack?: () => void;
+    onBackToList?: () => void;
+    hideBottomBorder?: boolean;
     menus?: Array<{ items: Array<MockMenuItem> }>;
   }) => (
-    <header>
+    <header
+      data-back={props.onBack === undefined ? "none" : "back"}
+      data-border={props.hideBottomBorder ? "hidden" : "shown"}
+    >
+      <button aria-label="header:back to list" onClick={props.onBackToList} />
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
       {props.menus?.[0]?.items
@@ -405,9 +478,13 @@ vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("../../state/entities", () => ({
+  useQuietThreadShell: (ref: { threadId: string }) => {
+    const title = mocks.shells.get(ref.threadId);
+    return title === undefined ? null : { title };
+  },
   useProjects: () => [
-    { environmentId: "hub", id: "p1", title: "Alpha" },
-    { environmentId: "hub", id: "p2", title: "Beta" },
+    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/repo/alpha" },
+    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/repo/beta" },
     { environmentId: "other", id: "p3", title: "Elsewhere" },
   ],
   useThreadShell: (ref: { threadId: string } | null) =>
@@ -582,6 +659,7 @@ beforeEach(() => {
     appState: "active",
     decisions: [],
     voicePhase: "idle",
+    shells: new Map(),
     live: snapshot(FEED, [
       task("t1", "paused", "ada", { reason: "stopped" }),
       task("t22", "running", "beto"),
@@ -611,6 +689,7 @@ beforeEach(() => {
     mocks.converse,
     mocks.clear,
     mocks.voiceStart,
+    mocks.openedLink,
   ])
     fn.mockReset();
   mocks.drafts.clear();
@@ -1365,18 +1444,24 @@ describe("requests", () => {
     );
   });
 
+  const FOLDED_FIX = "Fix build, Done · Alpha. Open task";
+
   it("draws each request with its title, project and status, the latest one last", () => {
     setup();
-    expect(all("group-request-title")).toEqual(["Fix build", "ship it", "Review"]);
-    expect(all("group-request-project")).toEqual(["Alpha", "Beta"]);
-    expect(all("group-request-status")).toEqual(["Done", "Needs project", "Working"]);
+    // The finished request is folded to the thread's one activity line: title, status, project.
+    expect(all("group-request-line")).toHaveLength(1);
+    expect(byLabel(FOLDED_FIX)).not.toBeNull();
+    expect(all("group-request-title")).toEqual(["ship it", "Review"]);
+    expect(all("group-request-project")).toEqual(["Beta"]);
+    expect(all("group-request-status")).toEqual(["Needs project", "Working"]);
   });
 
   it("folds a finished request, and the user's toggle opens and folds it again", async () => {
     setup();
     expect(text()).not.toContain("Fixed");
     expect(text()).toContain("[@beto](t3-mention:mention/beto) review");
-    await click("Request Fix build");
+    await click(FOLDED_FIX);
+    expect(all("group-request-line")).toHaveLength(0);
     expect(text()).toContain("Fixed");
     await click("Request Fix build");
     expect(text()).not.toContain("Fixed");
@@ -1400,7 +1485,8 @@ describe("requests", () => {
     await click("Send");
     expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@beto again", projectId: "p2" });
     await click("header:All projects");
-    expect(all("group-request-title")).toHaveLength(3);
+    expect(all("group-request-title")).toHaveLength(2);
+    expect(all("group-request-line")).toHaveLength(1);
     expect(byLabel("Project: Lead decides")).not.toBeNull();
   });
 
@@ -1612,5 +1698,113 @@ describe("conversation actions in the header", () => {
     render();
     for (const title of ["New conversation", "Compact context", "Clear history"])
       expect(byLabel(`header:${title}`)?.disabled).toBe(true);
+  });
+});
+
+describe("the thread's pieces in the feed", () => {
+  const ANSWERS = [
+    message("r1", 1, {
+      author: "user",
+      assistantId: null,
+      text: "@ada go",
+      projectId: "p1",
+      requestId: "r1",
+    }),
+    message("a1", 2, { text: "Done in [app](src/app.ts)", taskId: "t1", requestId: "r1" }),
+    message("r2", 3, {
+      author: "user",
+      assistantId: null,
+      text: "@beto go",
+      projectId: "p2",
+      requestId: "r2",
+    }),
+    message("a2", 4, { assistantId: "beto", text: "Also done", taskId: "t2", requestId: "r2" }),
+  ];
+  const tasks = (first: string, second: string) => [
+    task("t1", first, "ada", {
+      requestMessageId: "r1",
+      instruction: "Scheduled request Nightly:\nBuild the app",
+    }),
+    task("t2", second, "beto", { requestMessageId: "r2" }),
+  ];
+  const cards = () => container.querySelectorAll('[data-testid="group-task-card"]').length;
+  const clickText = (start: string) =>
+    act(async () =>
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent?.startsWith(start))
+        ?.click(),
+    );
+
+  it("uses onBackToList and no bottom border, so a split view draws no back arrow", async () => {
+    render();
+    const header = container.querySelector("header")!;
+    expect(header.dataset.back).toBe("none");
+    expect(header.dataset.border).toBe("hidden");
+    await click("header:back to list");
+    expect(mocks.goBack).toHaveBeenCalledOnce();
+  });
+
+  it("folds a long answer behind Show more and opens it", async () => {
+    mocks.live = snapshot([message("m1", 1, { text: "line\n".repeat(20) })]);
+    render();
+    expect(text()).toContain("Show more");
+    await clickText("Show more");
+    expect(text()).toContain("Show less");
+  });
+
+  it("puts a Worked fold under the author with the task's instruction, without its routing line", async () => {
+    mocks.live = snapshot(ANSWERS, tasks("running", "running"));
+    render();
+    expect(container.querySelector('[data-testid="group-worked-instruction"]')).toBeNull();
+    await clickText("Worked");
+    expect(container.querySelector('[data-testid="group-worked-instruction"]')?.textContent).toBe(
+      "Build the app",
+    );
+  });
+
+  it("shows a completed or cancelled task as one activity line and keeps the card while it runs", async () => {
+    mocks.live = snapshot(ANSWERS, tasks("completed", "cancelled"));
+    mocks.shells = new Map([["assistant:ada:g-0123456789abcdef", "Build the app thread"]]);
+    render();
+    expect(cards()).toBe(0);
+    // The member thread's title when the store has it, else the instruction's gist.
+    expect(byLabel("Build the app thread, Completed. Open task")).not.toBeNull();
+    expect(byLabel("do t2, Cancelled. Open task")).not.toBeNull();
+    await click("do t2, Cancelled. Open task");
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "assistant:beto:g-0123456789abcdef" },
+    });
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.live = snapshot(ANSWERS, tasks("running", "completed"));
+    render();
+    expect(cards()).toBe(1);
+    expect(byLabel("do t2, Completed. Open task")).not.toBeNull();
+  });
+
+  it("opens each answer's links with its own task thread and project root, under one preview host", async () => {
+    mocks.live = snapshot(ANSWERS, tasks("running", "running"));
+    render();
+    await click("link in Done in [app](src/app.ts)");
+    await click("link in Also done");
+    // Mentions are highlights only; everything else reaches the host with the answer's context.
+    expect(mocks.openedLink.mock.calls).toEqual([
+      [
+        "src/app.ts",
+        { threadId: "assistant:ada:g-0123456789abcdef", workspaceRoot: "/repo/alpha" },
+      ],
+      [
+        "src/app.ts",
+        { threadId: "assistant:beto:g-0123456789abcdef", workspaceRoot: "/repo/beta" },
+      ],
+    ]);
+    await click("link in [@ada](t3-mention:mention/ada) go");
+    expect(mocks.openedLink).toHaveBeenLastCalledWith("src/app.ts", {
+      threadId: null,
+      workspaceRoot: "/repo/alpha",
+    });
+    expect(container.querySelectorAll('[data-testid="preview"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="video-preview"]')).toHaveLength(1);
   });
 });

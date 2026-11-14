@@ -18,7 +18,11 @@ import {
   type AssistantGroupRequestBlock,
   type AssistantGroupRequestStatus,
   assistantGroupMessageExcerpt,
+  assistantGroupActivity,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isLongMessage } from "@t3tools/client-runtime/messageFold";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import {
   AssistantTeamId,
@@ -31,17 +35,21 @@ import {
   type AssistantGroupTaskAction,
   type ChatAttachment,
   type ProjectId,
+  assistantGroupInstructionBody,
   assistantGroupProjectIds,
   splitAssistantTransferText,
 } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
-import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { type StaticScreenProps } from "@react-navigation/native";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Keyboard, Linking, Platform, Pressable, View } from "react-native";
+import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Animated, { useReducedMotion, withTiming } from "react-native-reanimated";
 
+import { FoldableContent } from "../../components/FoldableContent";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { PresentationSource } from "../../components/ui/NativePresentation";
+import { VideoPreviewModal } from "../../components/ui/VideoPreviewModal";
 import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -50,6 +58,8 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
+import { deriveThreadWorkLogSizing } from "../../lib/layout";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { contextChipIconSource } from "../../lib/contextChipIconSource";
 import {
   composerGroupMentions,
@@ -61,7 +71,6 @@ import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import {
   SelectableMarkdownText,
   type MarkdownLinkCustomization,
-  type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 import {
   useAssistantEntries,
@@ -69,10 +78,25 @@ import {
   useAssistantGroupChat,
 } from "../../state/assistants";
 import { useDecisionEntries } from "../../state/decisions";
-import { useProjects } from "../../state/entities";
+import { useProjects, useQuietThreadShell } from "../../state/entities";
 import { DecisionCard } from "../decisions/DecisionCard";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import {
+  AssistantMarkdownContent,
+  type MarkdownLinkHandlers,
+  type MarkdownStyleSet,
+} from "../threads/AssistantMarkdownContent";
+import { ASSISTANT_FOLDED_HEIGHT } from "../threads/assistantMessageFold";
+import { TaskEventActivityRow } from "../threads/TaskEventActivityRow";
 import { useMarkdownStyles } from "../threads/ThreadFeed";
+import {
+  useMarkdownLinkHost,
+  useMarkdownLinks,
+  type MarkdownLinkContext,
+} from "../threads/useThreadMarkdownLinks";
+import { WorkedForFold } from "../threads/WorkedForFold";
 import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   MENTION_REQUIRED_COPY,
@@ -88,10 +112,7 @@ import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 
-/** A mention link is a highlight only; any other link opens as the native view would. */
-const onMarkdownLink = (href: string) => {
-  if (!href.startsWith("t3-mention:")) void Linking.openURL(href);
-};
+type LinkHost = Parameters<typeof useMarkdownLinks>[0];
 
 /** Member and project mentions as their own chips: face or folder, and the name. */
 const mentionChip = (
@@ -136,24 +157,43 @@ function JumpHighlight() {
   );
 }
 
+/** The thread's markdown, with links opened in the message's own context and mentions as chips. */
 function GroupMarkdown(props: {
+  readonly environmentId: EnvironmentId;
   readonly text: string;
   readonly members: ReadonlyArray<Assistant>;
   readonly projects: ReadonlyArray<GroupComposerProject>;
-  readonly textStyle: NativeMarkdownTextStyle;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly linkHost: LinkHost;
+  readonly context: MarkdownLinkContext;
+  readonly preserveSoftBreaks: boolean;
 }) {
   const mentions = composerGroupMentions(
     props.members,
     props.projects,
     useAssistantFaceImages(props.members),
   );
+  const links = useMarkdownLinks(props.linkHost, props.context);
+  const isMention = (href: string) => href.startsWith("t3-mention:");
+  const linkHandlers: MarkdownLinkHandlers = {
+    ...links.linkHandlers,
+    // A mention is a highlight only.
+    onLinkPress: (href) => {
+      if (!isMention(href)) links.linkHandlers.onLinkPress(href);
+    },
+    fileContextMenu: (href) =>
+      isMention(href) ? undefined : links.linkHandlers.fileContextMenu(href),
+    linkCustomization: (href) =>
+      mentionChip(href, mentions) ?? links.linkHandlers.linkCustomization?.(href),
+  };
   return (
-    <SelectableMarkdownText
+    <AssistantMarkdownContent
       markdown={assistantGroupMarkdownMentions(props.text, props.members, props.projects)}
-      onLinkPress={onMarkdownLink}
-      linkCustomization={(href) => mentionChip(href, mentions)}
-      textStyle={props.textStyle}
-      preserveSoftBreaks
+      environmentId={props.environmentId}
+      markdownStyles={props.markdownStyles}
+      linkHandlers={linkHandlers}
+      renderImage={links.renderImage}
+      preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 }
@@ -318,6 +358,24 @@ type TaskHandlers = {
   readonly onOpenConversation: (task: AssistantGroupTask) => void;
 };
 
+/** A finished task as the thread's activity line, titled by its member thread when known. */
+function GroupTaskLine(props: {
+  readonly environmentId: EnvironmentId;
+  readonly task: AssistantGroupTask;
+  readonly onOpen: () => void;
+}) {
+  const shell = useQuietThreadShell(scopeThreadRef(props.environmentId, props.task.threadId));
+  return (
+    <TaskEventActivityRow
+      {...assistantGroupActivity(props.task.status, {
+        threadTitle: shell?.title,
+        instruction: props.task.instruction,
+      })}
+      onOpen={props.onOpen}
+    />
+  );
+}
+
 function TaskCards(
   props: TaskHandlers & {
     readonly environmentId: EnvironmentId;
@@ -325,22 +383,31 @@ function TaskCards(
     readonly showOwner: boolean;
   },
 ) {
-  return props.tasks.map((task) => (
-    <GroupTaskCard
-      key={task.id}
-      task={task}
-      environmentId={props.environmentId}
-      ownerName={
-        props.showOwner
-          ? props.members.find((member) => member.id === task.ownerId)?.name
-          : undefined
-      }
-      reassignTo={props.members.filter((member) => member.id !== task.ownerId)}
-      canAct={props.canAct}
-      onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
-      onOpenConversation={() => props.onOpenConversation(task)}
-    />
-  ));
+  return props.tasks.map((task) =>
+    task.status === "completed" || task.status === "cancelled" ? (
+      <GroupTaskLine
+        key={task.id}
+        environmentId={props.environmentId}
+        task={task}
+        onOpen={() => props.onOpenConversation(task)}
+      />
+    ) : (
+      <GroupTaskCard
+        key={task.id}
+        task={task}
+        environmentId={props.environmentId}
+        ownerName={
+          props.showOwner
+            ? props.members.find((member) => member.id === task.ownerId)?.name
+            : undefined
+        }
+        reassignTo={props.members.filter((member) => member.id !== task.ownerId)}
+        canAct={props.canAct}
+        onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
+        onOpenConversation={() => props.onOpenConversation(task)}
+      />
+    ),
+  );
 }
 
 function FeedRow(
@@ -356,10 +423,18 @@ function FeedRow(
     readonly onJump: (messageId: AssistantGroupMessage["id"]) => void;
     readonly onPreview: (source: FilePreviewSource) => void;
     readonly onOpenThread: (threadId: ThreadId) => void;
+    readonly linkHost: LinkHost;
+    /** The root of the request's project, for the message's file links. */
+    readonly workspaceRoot: string | null;
   },
 ) {
   const { message } = props.row;
   const styles = useMarkdownStyles();
+  const { appearance } = useAppearancePreferences();
+  const { fontScale } = useWindowDimensions();
+  const rowSizing = deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale });
+  const iconColor = useUniwindTheme()["--color-icon-subtle"];
+  const [workedOpen, setWorkedOpen] = useState(false);
   const author =
     message.assistantId === null ? undefined : props.assistants.get(message.assistantId);
   const cards = (
@@ -437,10 +512,14 @@ function FeedRow(
           )}
         >
           <GroupMarkdown
+            environmentId={props.environmentId}
             text={parts.body}
             members={props.members}
             projects={props.projects}
-            textStyle={(fromUser ? styles.user : styles.assistant).nativeTextStyle}
+            markdownStyles={fromUser ? styles.user : styles.assistant}
+            linkHost={props.linkHost}
+            context={{ threadId: null, workspaceRoot: props.workspaceRoot }}
+            preserveSoftBreaks
           />
           {parts.files === null ? null : (
             <View testID="group-request-files" className="mt-1.5">
@@ -469,6 +548,7 @@ function FeedRow(
   }
   const name = author?.name ?? "Assistant";
   const reply = () => props.onReply(message, name);
+  const answered = message.taskId === null ? undefined : props.chat.tasks.get(message.taskId);
   return (
     <View testID="group-answer" className="flex-row items-start gap-2.5 px-4 py-2">
       <View className="size-7">
@@ -494,27 +574,60 @@ function FeedRow(
           )}
         </View>
         {quoted("start")}
-        <Menu
-          shouldOpenOnLongPress
-          actions={[
-            {
-              id: "reply",
-              title: "Reply",
-              image: "arrowshape.turn.up.left",
-              attributes: { disabled: props.archived },
-            },
-          ]}
-          onPressAction={() => reply()}
+        {answered === undefined ? null : (
+          // ponytail: plain "Worked" until answers carry how long the member worked.
+          <View className="flex-row items-center">
+            <WorkedForFold
+              label="Worked"
+              expanded={workedOpen}
+              loading={false}
+              error={null}
+              onToggle={() => setWorkedOpen((open) => !open)}
+              rowSizing={rowSizing}
+              iconColor={iconColor}
+            >
+              <Text
+                testID="group-worked-instruction"
+                className="pb-2 text-sm text-foreground-muted"
+              >
+                {assistantGroupInstructionBody(answered.instruction)}
+              </Text>
+            </WorkedForFold>
+          </View>
+        )}
+        <FoldableContent
+          foldable={isLongMessage(message.text)}
+          foldedHeight={ASSISTANT_FOLDED_HEIGHT}
         >
-          <Pressable accessibilityLabel={`Message from ${name}`}>
-            <GroupMarkdown
-              text={message.text}
-              members={props.members}
-              projects={props.projects}
-              textStyle={styles.assistant.nativeTextStyle}
-            />
-          </Pressable>
-        </Menu>
+          <Menu
+            shouldOpenOnLongPress
+            actions={[
+              {
+                id: "reply",
+                title: "Reply",
+                image: "arrowshape.turn.up.left",
+                attributes: { disabled: props.archived },
+              },
+            ]}
+            onPressAction={() => reply()}
+          >
+            <Pressable accessibilityLabel={`Message from ${name}`}>
+              <GroupMarkdown
+                environmentId={props.environmentId}
+                text={message.text}
+                members={props.members}
+                projects={props.projects}
+                markdownStyles={styles.assistant}
+                linkHost={props.linkHost}
+                context={{
+                  threadId: answered?.threadId ?? null,
+                  workspaceRoot: props.workspaceRoot,
+                }}
+                preserveSoftBreaks={shouldPreserveAssistantLineBreaks(message.text)}
+              />
+            </Pressable>
+          </Menu>
+        </FoldableContent>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Reply to ${name}`}
@@ -553,6 +666,21 @@ function RequestHeader(props: {
   readonly onToggle: () => void;
 }) {
   const { block } = props;
+  if (!props.expanded) {
+    const activity = assistantGroupActivity(block.status);
+    return (
+      <View testID="group-request-line" className="mx-3 mt-4">
+        <TaskEventActivityRow
+          title={block.title}
+          status={activity.status}
+          label={
+            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
+          }
+          onOpen={props.onToggle}
+        />
+      </View>
+    );
+  }
   return (
     <Pressable
       accessibilityRole="button"
@@ -678,8 +806,14 @@ export function AssistantGroupChatRouteScreen({
 }: StaticScreenProps<{ readonly environmentId: string; readonly teamId: string }>) {
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const teamId = AssistantTeamId.make(route.params.teamId);
-  const navigation = useNavigation();
+  const goBack = useWorkspaceBackNavigation("threads");
   const selectDetail = useSelectWorkspaceDetail();
+  const markdownStyles = useMarkdownStyles();
+  const links = useMarkdownLinkHost({
+    environmentId,
+    scope: [teamId],
+    markdownStyles: markdownStyles.assistant,
+  });
   const entries = useAssistantEntries();
   const live = useAssistantGroupChat(environmentId, teamId);
   const actions = useAssistantGroupActions(environmentId);
@@ -688,7 +822,6 @@ export function AssistantGroupChatRouteScreen({
   const openEditor = useOpenAssistantEditor();
   const [pages, setPages] = useState<ReadonlyArray<AssistantGroupsHistoryResult>>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const projects = useProjects();
   const [replyTo, setReplyTo] = useState<
     (GroupReplyTarget & { readonly id: AssistantGroupMessage["id"] }) | null
@@ -867,6 +1000,14 @@ export function AssistantGroupChatRouteScreen({
     if (requestId === undefined || chat === null) return null;
     return (chat.messages.get(requestId) ?? chat.requests.get(requestId))?.projectId ?? null;
   };
+  const requestRoot = (requestId: AssistantGroupMessage["requestId"]) => {
+    const projectId = requestProject(requestId);
+    return (
+      projects.find(
+        (project) => project.environmentId === environmentId && project.id === projectId,
+      )?.workspaceRoot ?? null
+    );
+  };
 
   const pickProject = async (block: AssistantGroupRequestBlock, project: GroupComposerProject) => {
     const reply = await actions.post({
@@ -884,7 +1025,7 @@ export function AssistantGroupChatRouteScreen({
   if (team === undefined) {
     return (
       <View className="flex-1 bg-screen">
-        <AppBar title="Group chat" onBack={() => navigation.goBack()} />
+        <AppBar title="Group chat" onBackToList={goBack} hideBottomBorder />
         {entries.environmentIds.includes(environmentId) ? (
           <EmptyState title="Group not found" detail="It may have been deleted." variant="plain" />
         ) : null}
@@ -906,8 +1047,8 @@ export function AssistantGroupChatRouteScreen({
         ]
           .filter((part) => part !== null)
           .join(" · ")}
-        onBack={() => navigation.goBack()}
-
+        onBackToList={goBack}
+        hideBottomBorder
         menus={[
           {
             title: `${team.name} actions`,
@@ -1017,123 +1158,139 @@ export function AssistantGroupChatRouteScreen({
           },
         ]}
       />
-      <LegendList
-        // The initial position is read at mount, so the list restarts once the chat has loaded.
-        key={chat === null ? "loading" : "ready"}
-        ref={list}
-        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-        className="flex-1"
-        data={feedEntries}
-        extraData={{ chat, highlight }}
-        estimatedItemSize={72}
-        keyExtractor={entryKey}
-        alignItemsAtEnd
-        initialScrollAtEnd={jumpTo === null}
-        initialScrollIndex={jumpTo ?? undefined}
-        maintainScrollAtEnd
-        maintainVisibleContentPosition
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        onStartReached={() => void loadOlder()}
-        onScroll={({ nativeEvent }) => {
-          setScrolled(true);
-          setAtBottom(
-            nativeEvent.contentSize.height -
-              nativeEvent.contentOffset.y -
-              nativeEvent.layoutMeasurement.height <
-              48,
-          );
-        }}
-        scrollEventThrottle={100}
-        ListHeaderComponent={
-          chat?.hasMore ? (
-            <View className="items-center py-2">
-              <Button
-                label="Load earlier messages"
-                size="compact"
-                tone="text"
-                disabled={loadingOlder}
-                onPress={() => void loadOlder()}
-              />
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          chat === null ? null : (
-            <EmptyState
-              variant="plain"
-              title="No messages yet"
-              detail={
-                members.length === 0
-                  ? "Add assistants to this group in Edit group, then write here."
-                  : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`
-              }
-            />
-          )
-        }
-        renderItem={({ item }) =>
-          item.kind === "header" ? (
-            <RequestHeader
-              block={item.block}
-              projectName={item.block.projectId === null ? null : projectName(item.block.projectId)}
-              expanded={item.expanded}
-              onToggle={() => toggle(item.block, item.expanded)}
-            />
-          ) : item.kind === "footer" ? (
-            <RequestFooter
-              block={item.block}
-              projects={groupProjects}
-              disabled={archived || !actions.canPost}
-              onPickProject={(project) => void pickProject(item.block, project)}
-              onReply={() =>
-                setReplyTo({
-                  id: item.block.requestId,
-                  name: item.block.title,
-                  to: null,
-                  projectId: item.block.projectId,
-                  excerpt: groupMessageExcerpt(
-                    chat?.messages.get(item.block.requestId)?.text ?? item.block.title,
-                  ),
-                })
-              }
-            />
-          ) : (
-            <Fragment>
-              {item.row.message.seq === newSeq ? <NewDivider /> : null}
-              <View>
-                <FeedRow
-                  environmentId={environmentId}
-                  row={item.row}
-                  chat={chat!}
-                  assistants={byId}
-                  members={members}
+      <PresentationSource identifier={links.fileShareSourceIdentifier} style={{ flex: 1 }}>
+        <View className="flex-1">
+          <LegendList
+            // The initial position is read at mount, so the list restarts once the chat has loaded.
+            key={chat === null ? "loading" : "ready"}
+            ref={list}
+            renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+            className="flex-1"
+            data={feedEntries}
+            // A reconnect brings a new image resolver to the rows.
+            extraData={{ chat, highlight, imageSources: links.imageSources }}
+            estimatedItemSize={72}
+            keyExtractor={entryKey}
+            alignItemsAtEnd
+            initialScrollAtEnd={jumpTo === null}
+            initialScrollIndex={jumpTo ?? undefined}
+            maintainScrollAtEnd
+            maintainVisibleContentPosition
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onStartReached={() => void loadOlder()}
+            onScroll={({ nativeEvent }) => {
+              setScrolled(true);
+              setAtBottom(
+                nativeEvent.contentSize.height -
+                  nativeEvent.contentOffset.y -
+                  nativeEvent.layoutMeasurement.height <
+                  48,
+              );
+            }}
+            scrollEventThrottle={100}
+            ListHeaderComponent={
+              chat?.hasMore ? (
+                <View className="items-center py-2">
+                  <Button
+                    label="Load earlier messages"
+                    size="compact"
+                    tone="text"
+                    disabled={loadingOlder}
+                    onPress={() => void loadOlder()}
+                  />
+                </View>
+              ) : null
+            }
+            ListEmptyComponent={
+              chat === null ? null : (
+                <EmptyState
+                  variant="plain"
+                  title="No messages yet"
+                  detail={
+                    members.length === 0
+                      ? "Add assistants to this group in Edit group, then write here."
+                      : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`
+                  }
+                />
+              )
+            }
+            renderItem={({ item }) =>
+              item.kind === "header" ? (
+                <RequestHeader
+                  block={item.block}
+                  projectName={
+                    item.block.projectId === null ? null : projectName(item.block.projectId)
+                  }
+                  expanded={item.expanded}
+                  onToggle={() => toggle(item.block, item.expanded)}
+                />
+              ) : item.kind === "footer" ? (
+                <RequestFooter
+                  block={item.block}
                   projects={groupProjects}
-                  lead={lead}
-                  canAct={actions.canAct}
-                  archived={archived}
-                  onReply={(message, name) =>
+                  disabled={archived || !actions.canPost}
+                  onPickProject={(project) => void pickProject(item.block, project)}
+                  onReply={() =>
                     setReplyTo({
-                      id: message.id,
-                      name,
-                      to: name,
-                      projectId: requestProject(message.requestId),
-                      excerpt: groupMessageExcerpt(message.text),
+                      id: item.block.requestId,
+                      name: item.block.title,
+                      to: null,
+                      projectId: item.block.projectId,
+                      excerpt: groupMessageExcerpt(
+                        chat?.messages.get(item.block.requestId)?.text ?? item.block.title,
+                      ),
                     })
                   }
-                  onJump={jump}
-                  onPreview={setPreview}
-                  onTaskAction={(task, action, ownerId) => void taskAction(task, action, ownerId)}
-                  onOpenConversation={(task) => openThread(task.threadId)}
-                  onOpenThread={openThread}
                 />
-                {highlight?.id === item.row.message.id ? (
-                  <JumpHighlight key={highlight.nonce} />
-                ) : null}
-              </View>
-            </Fragment>
-          )
-        }
-      />
+              ) : (
+                <Fragment>
+                  {item.row.message.seq === newSeq ? <NewDivider /> : null}
+                  <View>
+                    <FeedRow
+                      environmentId={environmentId}
+                      row={item.row}
+                      chat={chat!}
+                      assistants={byId}
+                      members={members}
+                      projects={groupProjects}
+                      lead={lead}
+                      canAct={actions.canAct}
+                      archived={archived}
+                      onReply={(message, name) =>
+                        setReplyTo({
+                          id: message.id,
+                          name,
+                          to: name,
+                          projectId: requestProject(message.requestId),
+                          excerpt: groupMessageExcerpt(message.text),
+                        })
+                      }
+                      onJump={jump}
+                      onPreview={links.onPressPreview}
+                      linkHost={links}
+                      workspaceRoot={requestRoot(item.row.message.requestId)}
+                      onTaskAction={(task, action, ownerId) =>
+                        void taskAction(task, action, ownerId)
+                      }
+                      onOpenConversation={(task) => openThread(task.threadId)}
+                      onOpenThread={openThread}
+                    />
+                    {highlight?.id === item.row.message.id ? (
+                      <JumpHighlight key={highlight.nonce} />
+                    ) : null}
+                  </View>
+                </Fragment>
+              )
+            }
+          />
+          <VideoPreviewModal
+            source={links.expandedVideo}
+            onRequestClose={links.closeVideoPreview}
+          />
+          <FilePreviewModal source={links.expandedFile} onRequestClose={links.closeFilePreview} />
+        </View>
+      </PresentationSource>
       {archived ? (
         <View
           accessibilityRole="alert"
@@ -1166,7 +1323,6 @@ export function AssistantGroupChatRouteScreen({
         onClearReply={() => setReplyTo(null)}
         onSend={send}
       />
-      <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </KeyboardAvoidingView>
   );
 }
