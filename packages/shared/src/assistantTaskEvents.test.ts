@@ -23,6 +23,18 @@ describe("parseTaskEvent", () => {
     },
   );
 
+  it.each([
+    ["", "Task"],
+    ["  ", "Task"],
+  ])("reads back a headline whose title was %j", (title, expected) => {
+    const text = taskEventHeadline({ title, threadId: task, status: "failed" });
+    expect(parseTaskEvent({ id: "assistant-task:run-1", text, senderThreadId: task })).toEqual({
+      threadId: task,
+      title: expected,
+      status: "failed",
+    });
+  });
+
   it("keeps the event when the headline is not T3's, without inventing a title or state", () => {
     expect(
       parseTaskEvent({ id: "assistant-task:run-1", text: "something else", senderThreadId: task }),

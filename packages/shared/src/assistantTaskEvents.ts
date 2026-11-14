@@ -26,7 +26,9 @@ export function taskEventHeadline(input: {
   readonly threadId: ThreadId;
   readonly status: TaskEventStatus;
 }): string {
-  const link = formatThreadLink({ environmentId: null, threadId: input.threadId }, input.title);
+  // An empty label would make an autolink the parser cannot read back.
+  const title = input.title.trim() || "Task";
+  const link = formatThreadLink({ environmentId: null, threadId: input.threadId }, title);
   return `Task ${link} ${OUTCOMES[input.status]}.`;
 }
 
