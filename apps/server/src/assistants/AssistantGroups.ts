@@ -100,6 +100,7 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
+import { normalizeTeamRead } from "./groupChatSql.ts";
 import { routeGroupMessage } from "./AssistantGroupRouting.ts";
 import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
@@ -3692,11 +3693,13 @@ const make = Effect.gen(function* () {
             UPDATE assistant_teams SET read_seq = MIN(${target}, ${latest})
             WHERE team_id = ${input.teamId} RETURNING read_seq`)[0]!.read_seq;
         }
-        return (yield* sql<{ readonly read_seq: number }>`
+        const cursor = (yield* sql<{ readonly read_seq: number }>`
           INSERT INTO assistant_group_read_cursors (team_id, scope, read_seq)
           VALUES (${input.teamId}, ${scopeKey(scope)}, MIN(${target}, ${latest}))
           ON CONFLICT (team_id, scope) DO UPDATE SET read_seq = excluded.read_seq
           RETURNING read_seq`)[0]!.read_seq;
+        yield* normalizeTeamRead(sql, input.teamId);
+        return cursor;
       });
       const readSeq = yield* lock.withPermits(1)(sql.withTransaction(set));
       yield* assistants.refreshTeamChat(input.teamId);

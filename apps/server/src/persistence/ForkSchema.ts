@@ -756,6 +756,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       WHERE h.message_id = assistant_group_messages.request_id AND h.project_id IS NOT NULL)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_scope_idx ON assistant_group_messages(team_id, request_project_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_open_wait_idx ON assistant_group_messages(team_id) WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_asks_project_idx ON assistant_group_messages(team_id, request_project_id) WHERE asks_project = 1`;
   // How far the user has read one tab of a group: scope is the project id, or '' for General.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_read_cursors (

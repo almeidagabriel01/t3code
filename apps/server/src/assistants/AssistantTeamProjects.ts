@@ -7,7 +7,7 @@ import { assistantGroupProjectIds, type ProjectId } from "@t3tools/contracts";
 
 import { type AssistantRow, savedProjectIdsOf, toAssistant } from "./AssistantDirectory.ts";
 import { encodeMemberIds } from "./AssistantTeams.ts";
-import { countsAsUnreadSql } from "./groupChatSql.ts";
+import { cursorRedundantSql } from "./groupChatSql.ts";
 
 const decodeIds = Schema.decodeOption(Schema.fromJsonString(Schema.Array(Schema.String)));
 
@@ -119,11 +119,12 @@ export const pruneLeftTabCursors = Effect.fn("AssistantTeams.pruneLeftTabCursors
       DELETE FROM assistant_group_read_cursors AS r
       WHERE r.team_id = ${team.team_id} AND r.scope <> ''
         AND r.scope NOT IN (SELECT value FROM json_each(${encodeMemberIds(kept)}))
-        AND NOT EXISTS (SELECT 1 FROM assistant_group_messages m
-          JOIN assistant_teams t ON t.team_id = r.team_id
-          WHERE m.team_id = r.team_id AND m.request_project_id = r.scope
-            AND m.seq > MIN(r.read_seq, t.read_seq) AND m.seq <= MAX(r.read_seq, t.read_seq)
-            AND ${sql.literal(countsAsUnreadSql("m"))})
+        AND ${sql.literal(
+          cursorRedundantSql(
+            "r",
+            "(SELECT t.read_seq FROM assistant_teams t WHERE t.team_id = r.team_id)",
+          ),
+        )}
       RETURNING scope`;
     if (dropped.length > 0) changed.push(team.team_id);
   }

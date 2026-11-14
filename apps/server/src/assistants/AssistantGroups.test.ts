@@ -60,6 +60,7 @@ import {
   taskMessageId,
 } from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
+import { countsAsUnreadSql } from "./groupChatSql.ts";
 import { toAssistantTeam, type AssistantTeamRow } from "./AssistantTeams.ts";
 
 class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
@@ -721,10 +722,22 @@ it.effect.each<{
     cursors: {},
   },
   {
+    name: "reading every tab moves the group's position past them, and the tabs' go",
+    steps: [
+      { read: { projectId: "p1" } },
+      { read: { projectId: "p2" } },
+      { read: { projectId: null } },
+    ],
+    readSeq: 7,
+    scopes: { p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
     name: "reading one tab leaves the others unread",
     steps: [{ read: { projectId: "p1" } }],
     readSeq: 7,
-    scopes: { p1: [0, false, 7], p2: [1, true, 0], "": [1, true, 0] },
+    // The group's position rises to just before the oldest unread line (p2's, at 4).
+    scopes: { p1: [0, false, 7], p2: [1, true, 3], "": [1, true, 3] },
     cursors: { p1: 7 },
   },
   {
@@ -751,7 +764,7 @@ it.effect.each<{
   {
     name: "undoing the last boundary lowers every tab's position below it",
     steps: [{ read: { projectId: "p1" } }, { conversation: "undo" }],
-    scopes: { p1: [0, false, 6], p2: [1, true, 0], "": [1, true, 0] },
+    scopes: { p1: [0, false, 6], p2: [1, true, 3], "": [1, true, 3] },
     cursors: { p1: 6 },
   },
   {
@@ -896,6 +909,108 @@ it.effect("the team chat names the preview's project and counts every tab's runn
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("raising the group's position after a tab read never changes a tab's count", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    let seq = 0;
+    // Requests in p1, p2 and General, each with chatter, a member's lines, and sometimes the
+    // user's answer; then a chat-wide boundary.
+    const request = (scope: string | null, lines: ReadonlyArray<[string, string]>) =>
+      Effect.gen(function* () {
+        const head = `gm:${seq + 1}`;
+        for (const [author, kind] of [["user", "message"], ...lines] as const) {
+          seq += 1;
+          yield* sql`INSERT INTO assistant_group_messages
+            (message_id, team_id, seq, author, kind, text, request_id, project_id,
+              request_project_id, created_at)
+            VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, ${author}, ${kind}, 'x', ${head},
+              ${`gm:${seq}` === head ? scope : null}, ${scope}, 't')`;
+        }
+      });
+    const fill = Effect.gen(function* () {
+      yield* request("p1", [
+        ["assistant", "routing"],
+        ["assistant", "message"],
+      ]);
+      yield* request("p2", [
+        ["assistant", "message"],
+        ["user", "message"],
+        ["agent", "notice"],
+      ]);
+      yield* request(null, [
+        ["assistant", "notice"],
+        ["assistant", "message"],
+      ]);
+      yield* request("p1", [
+        ["assistant", "message"],
+        ["assistant", "change"],
+      ]);
+    });
+    yield* fill;
+    const group = { position: 0 };
+    const tabs = new Map<string, number>();
+    const check = Effect.gen(function* () {
+      const [row] = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+      const shown = toAssistantTeam(row!).chat?.scopes ?? [];
+      for (const scope of ["p1", "p2", ""]) {
+        const position = tabs.get(scope) ?? group.position;
+        const [expected] = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM assistant_group_messages m
+          WHERE m.team_id = ${TEAM} AND m.request_project_id IS NULLIF(${scope}, '')
+            AND m.seq > ${position} AND ${sql.literal(countsAsUnreadSql("m"))}`;
+        const actual = shown.find((tab) => (tab.projectId ?? "") === scope)?.unreadCount ?? 0;
+        assert.equal(actual, expected!.n, `${scope} after ${JSON.stringify([...tabs])}`);
+      }
+    });
+    const steps: ReadonlyArray<{ projectId?: string; readSeq?: number; unread?: true } | "more"> = [
+      { projectId: "p1" },
+      { projectId: "p2", unread: true },
+      { projectId: "", readSeq: 3 },
+      { projectId: "p1", readSeq: 1 },
+      { projectId: "p2" },
+      "more",
+      { projectId: "", unread: true },
+      { readSeq: 4 },
+      { projectId: "p1", unread: true },
+      { projectId: "p2", readSeq: 2 },
+      { projectId: "" },
+      "more",
+      {},
+      // Below the group's position, with other tabs' lines above it: the group's must not drop.
+      { projectId: "p2", unread: true },
+      { projectId: "p1" },
+      { projectId: "p2" },
+      { projectId: "" },
+    ];
+    for (const step of steps) {
+      if (step === "more") {
+        yield* fill;
+      } else {
+        const { projectId, ...rest } = step;
+        const { readSeq } = yield* groups.markRead({
+          teamId: TEAM,
+          ...rest,
+          ...(projectId === undefined
+            ? {}
+            : { scope: { projectId: projectId === "" ? null : ProjectId.make(projectId) } }),
+        });
+        if (projectId === undefined) {
+          group.position = readSeq;
+          tabs.clear();
+        } else {
+          tabs.set(projectId, readSeq);
+        }
+      }
+      yield* check;
+    }
+    // Every tab read: the group's position reaches the newest line and no tab keeps its own.
+    assert.deepEqual(yield* sql`SELECT scope FROM assistant_group_read_cursors`, []);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("two tabs read at once both end read", () => {
   const h = harness();
   return Effect.gen(function* () {
@@ -917,13 +1032,11 @@ it.effect("two tabs read at once both end read", () => {
         groups.markRead({ teamId: TEAM, scope: { projectId: ProjectId.make(projectId) } }),
       { concurrency: "unbounded" },
     );
-    assert.deepEqual(
-      yield* sql`SELECT scope, read_seq FROM assistant_group_read_cursors ORDER BY scope`,
-      [
-        { scope: "p1", read_seq: 2 },
-        { scope: "p2", read_seq: 2 },
-      ],
-    );
+    // With both read, nothing is unread anywhere: the group's position covers both tabs.
+    assert.deepEqual(yield* sql`SELECT scope FROM assistant_group_read_cursors`, []);
+    assert.deepEqual(yield* sql`SELECT read_seq FROM assistant_teams WHERE team_id = ${TEAM}`, [
+      { read_seq: 2 },
+    ]);
   }).pipe(Effect.provide(h.layer));
 });
 
