@@ -17,7 +17,9 @@ const REQUEST_PREFIX = /^(?:Request from .* \(an agent, not the user\)|Scheduled
 
 /** The instruction a member receives: an agent's or routine's request names who asked. */
 export function assistantGroupInstruction(
-  author: { readonly kind: AssistantGroupAuthor; readonly label?: string },
+  author:
+    | { readonly kind: "user" | "assistant" }
+    | { readonly kind: "agent" | "routine"; readonly label: string },
   text: string,
 ): string {
   return author.kind === "agent"
