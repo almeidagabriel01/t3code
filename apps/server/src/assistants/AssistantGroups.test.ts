@@ -19,6 +19,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -360,8 +361,11 @@ const harness = (options: Options = {}) => {
 
   const user = { kind: "user" } as const;
 
-  /** Ends the run the n-th queued task started, as the provider would, and feeds the event. */
-  const finish = (index: number, status: string, answer?: string) =>
+  /**
+   * Ends the run the n-th queued task started, as the provider would, and feeds the event. With
+   * `workedMs`, the run reports when its work started and ended that far apart.
+   */
+  const finish = (index: number, status: string, answer?: string, workedMs?: number) =>
     Effect.gen(function* () {
       const groups = yield* Groups.AssistantGroups;
       const message = sent[index]!;
@@ -375,6 +379,13 @@ const harness = (options: Options = {}) => {
           threadId: message.threadId,
           userMessageId: message.messageId,
           status,
+          ...(workedMs === undefined
+            ? {}
+            : {
+                requestedAt: DateTime.makeUnsafe(0),
+                workStartedAt: DateTime.makeUnsafe(5_000),
+                completedAt: DateTime.makeUnsafe(5_000 + workedMs),
+              }),
         },
       } as never as OrchestrationV2DomainEvent);
     });
@@ -409,6 +420,7 @@ const harness = (options: Options = {}) => {
     text: string;
     reply_to: string | null;
     task_id: string | null;
+    worked_ms: number | null;
   }>("SELECT * FROM assistant_group_messages ORDER BY seq");
 
   /** Ends the live run of a task's current revision. */
@@ -481,10 +493,22 @@ it.effect("an @mention opens one task per member, and the third waits for a free
       [h.threadOf("ada"), h.threadOf("beto")],
     );
     // The first free slot goes to the oldest queued task.
-    yield* h.finish(0, "completed", "Books closed.");
+    yield* h.finish(0, "completed", "Books closed.", 42_000);
     assert.equal(h.sent.length, 3);
     assert.equal(h.sent[2]!.threadId, h.threadOf("cy"));
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed", "beto:running", "cy:running"]);
+    // An answer carries how long the run worked; a run that reports no ending time carries none.
+    yield* h.finish(1, "completed", "Ledger done.");
+    const answers = (yield* groups.history({ teamId: TEAM })).messages.filter(
+      (message) => message.author === "assistant",
+    );
+    assert.deepEqual(
+      answers.map((message) => [message.text, message.workedMs]),
+      [
+        ["Books closed.", 42_000],
+        ["Ledger done.", undefined],
+      ],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

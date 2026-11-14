@@ -42,6 +42,8 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
+  orchestrationV2RunWorkStartedAt,
   type ProjectId,
   type RunId,
   runtimeModeForToolAccess,
@@ -223,6 +225,7 @@ interface MessageRow {
   readonly wait_decision_id: string | null;
   readonly wait_resolved_at: string | null;
   readonly asks_project: number;
+  readonly worked_ms: number | null;
   readonly created_at: string;
 }
 
@@ -299,8 +302,20 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
         },
       }),
   ...(row.asks_project === 1 ? { asksProject: true } : {}),
+  ...(row.worked_ms === null ? {} : { workedMs: row.worked_ms }),
   createdAt: row.created_at,
 });
+
+const workedMsOf = (
+  run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt" | "completedAt">,
+) =>
+  run.completedAt
+    ? Math.max(
+        0,
+        DateTime.toEpochMillis(run.completedAt) -
+          DateTime.toEpochMillis(orchestrationV2RunWorkStartedAt(run)),
+      )
+    : undefined;
 
 const NumbersJson = Schema.fromJsonString(Schema.Array(Schema.Int));
 const StringsJson = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -739,6 +754,8 @@ const make = Effect.gen(function* () {
     readonly wait?: ThreadWait;
     /** The lead's notice asking which project the request is for. */
     readonly asksProject?: boolean;
+    /** A member's answer: how long its run worked. */
+    readonly workedMs?: number | undefined;
   }) {
     const id = yield* newId("gm");
     const requestId = input.requestId === "new" ? id : (input.requestId ?? null);
@@ -747,14 +764,15 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
         task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
-        wait_thread_id, wait_decision_id, asks_project, created_at
+        wait_thread_id, wait_decision_id, asks_project, worked_ms, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
         ${input.replyTo ?? null}, ${input.taskId ?? null}, ${input.clientRequestId ?? null},
         ${encodeAttachments(input.attachments ?? [])}, ${requestId}, ${input.projectId ?? null},
         ${input.title ?? null}, ${input.wait?.key ?? null}, ${input.wait?.threadId ?? null},
-        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${yield* nowIso}
+        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${input.workedMs ?? null},
+        ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -2206,6 +2224,7 @@ const make = Effect.gen(function* () {
         replyTo: task.request_message_id,
         taskId: task.task_id,
         requestId: task.request_id,
+        workedMs: workedMsOf(run),
       });
       const done = yield* patchTask(task, {
         status: "completed",

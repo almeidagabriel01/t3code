@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { type Assistant, AssistantId, AssistantTeamId } from "./assistants.ts";
 import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
 import { DecisionId } from "./decisions.ts";
@@ -132,6 +138,8 @@ export const AssistantGroupMessage = Schema.Struct({
   waiting: Schema.optionalKey(AssistantGroupWaiting),
   /** On the lead's notice asking which project a request is for; absent on every other message. */
   asksProject: Schema.optionalKey(Schema.Literal(true)),
+  /** On a member's answer: how long its run worked; absent on older answers and servers. */
+  workedMs: Schema.optionalKey(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;

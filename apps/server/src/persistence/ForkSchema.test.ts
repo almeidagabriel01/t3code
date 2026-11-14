@@ -469,6 +469,7 @@ it.effect("gives an older group chat its requests: every message and task joins 
       "wait_thread_id",
       "wait_decision_id",
       "wait_resolved_at",
+      "worked_ms",
     ]) {
       assert.strictEqual(
         (yield* columnsOf("assistant_group_messages")).filter((name) => name === column).length,
