@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   AUTONOMY_CHANNEL_LABELS,
   AUTONOMY_MINUTES_BOUNDS,
@@ -13,8 +14,6 @@ import type { AutonomySettings, EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { BellRingIcon } from "lucide-react";
 import { useState } from "react";
-
-import { useAtomValue } from "@effect/atom-react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
