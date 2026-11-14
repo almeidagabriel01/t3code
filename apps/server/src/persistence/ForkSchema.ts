@@ -793,6 +793,17 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         (SELECT m.request_project_id FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
+        -- Each distinct request project is one scope_idx seek, not a walk of the chat.
+        (WITH RECURSIVE r(id) AS (
+            SELECT (SELECT MIN(m.request_project_id) FROM assistant_group_messages m
+              WHERE m.team_id = t.team_id AND m.request_project_id IS NOT NULL)
+            UNION ALL SELECT (SELECT MIN(m.request_project_id) FROM assistant_group_messages m
+              WHERE m.team_id = t.team_id AND m.request_project_id > r.id)
+            FROM r WHERE r.id IS NOT NULL)
+          SELECT json_group_array(g.id) FROM (SELECT r.id FROM r WHERE r.id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM projection_projects p
+              WHERE p.project_id = r.id AND p.deleted_at IS NULL)
+            ORDER BY r.id) g) AS removed_project_ids_json,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
             'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
             'openTasks', x.open_tasks, 'doneTasks', x.done_tasks,

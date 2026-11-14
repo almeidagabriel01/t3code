@@ -1325,6 +1325,23 @@ it("shows every request in All as one line with its project, opened in place, an
   expect(fakeGroupChat.reads).toEqual([]);
 });
 
+it("numbers a removed project by the server's list, so an older page renumbers nothing", async () => {
+  // gone-a's request is on a page not loaded yet; the server already counts it.
+  publishGroupChat(
+    [message(1, { ...inRequest(1), projectId: "gone-b" as ProjectId, title: "Request 1" })],
+    [],
+  );
+  await using _screen = await openChat({
+    people: sitePeople(),
+    team: team({
+      chat: { ...scopedChat(), removedProjectIds: ["gone-a", "gone-b"] as ProjectId[] },
+    }),
+  });
+  await expect
+    .element(blocks().first().getByTestId("group-request-chip"))
+    .toHaveTextContent("Removed project 2");
+});
+
 it("keeps the number that tells two removed projects apart when their chips truncate", async () => {
   const gone = ["gone-a", "gone-b"] as unknown as ReadonlyArray<ProjectId>;
   publishGroupChat(

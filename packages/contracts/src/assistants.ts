@@ -342,6 +342,11 @@ export const AssistantTeamChat = Schema.Struct({
    * position, plus General when it has a request. Absent from older servers, which have no tabs.
    */
   scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
+  /**
+   * The projects of the group's requests that no longer exist, by id, so every client numbers
+   * their "Removed project" labels alike, whatever history it loaded. Absent from older servers.
+   */
+  removedProjectIds: Schema.optionalKey(Schema.Array(ProjectId)),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
 

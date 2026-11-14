@@ -886,8 +886,14 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
   });
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
-  const projectName = (id: ProjectId, seen?: ReadonlyArray<ProjectId>) =>
-    assistantGroupProjectLabel(id, environmentProjects, team?.chat?.scopes, groupProjectIds, seen);
+  const projectName = (id: ProjectId) =>
+    assistantGroupProjectLabel(
+      id,
+      environmentProjects,
+      team?.chat?.scopes,
+      groupProjectIds,
+      team?.chat?.removedProjectIds,
+    );
   const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupComposerProjects(
     groupProjectIds,
     environmentProjects,
@@ -977,12 +983,7 @@ function GroupFeed({
   }
 
   // A request that left this tab's project (it got one) drops out of it.
-  const feed = chat === null ? [] : assistantGroupRequestFeed(chat);
-  const requestProjects = feed.flatMap((item) =>
-    item.kind === "request" && item.block.projectId !== null ? [item.block.projectId] : [],
-  );
-  const requestProjectName = (id: ProjectId) => projectName(id, requestProjects);
-  const items = feed.filter(
+  const items = (chat === null ? [] : assistantGroupRequestFeed(chat)).filter(
     (item) => item.kind !== "request" || assistantGroupInScope(item.block, scope),
   );
   const newestRequest = items.findLast((item) => item.kind === "request");
@@ -1175,9 +1176,7 @@ function GroupFeed({
               isAll ? (
                 <AllRequestLine
                   block={item.block}
-                  chip={
-                    item.block.projectId === null ? null : requestProjectName(item.block.projectId)
-                  }
+                  chip={item.block.projectId === null ? null : projectName(item.block.projectId)}
                   expanded={item.expanded}
                   onToggle={() => toggle(item.block, item.expanded)}
                 />
@@ -1185,7 +1184,7 @@ function GroupFeed({
                 <RequestHeader
                   block={item.block}
                   projectName={
-                    item.block.projectId === null ? null : requestProjectName(item.block.projectId)
+                    item.block.projectId === null ? null : projectName(item.block.projectId)
                   }
                   expanded={item.expanded}
                   onToggle={() => toggle(item.block, item.expanded)}

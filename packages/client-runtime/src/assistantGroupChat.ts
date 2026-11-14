@@ -324,15 +324,15 @@ const numbered = (label: string, index: number) => (index < 1 ? label : `${label
 /**
  * A project's title, else the one the chat last knew. Before the environment's projects load, a
  * group project reads "Unknown project", numbered in group order; any other nameless one is a
- * "Removed project", numbered by id among the chat's tabs, the `seen` request projects of the
- * loaded feed and this one, whatever their order.
+ * "Removed project", numbered by the server's `removed` list of the group's request projects, so
+ * tabs, feed and composer agree; an older server's chat numbers its tabs and this one by id.
  */
 export function assistantGroupProjectLabel(
   projectId: ProjectId,
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
   scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "title">> | undefined,
   groupProjectIds: ReadonlyArray<ProjectId>,
-  seen: ReadonlyArray<ProjectId> = [],
+  removed?: ReadonlyArray<ProjectId>,
 ): string {
   const known = (id: ProjectId) =>
     projects.find((project) => project.id === id)?.title ??
@@ -344,13 +344,22 @@ export function assistantGroupProjectLabel(
     const unknown = groupProjectIds.filter((id) => known(id) === undefined);
     return numbered("Unknown project", unknown.indexOf(projectId));
   }
+  const nameless = (ids: ReadonlyArray<ProjectId>) =>
+    ids.filter((id) => known(id) === undefined && !loading(id));
+  if (removed !== undefined) {
+    const order = nameless(removed);
+    const at = order.indexOf(projectId);
+    return numbered("Removed project", at === -1 ? order.length : at);
+  }
   const listed = (scopes ?? []).flatMap((scope) =>
     scope.projectId === null ? [] : [scope.projectId],
   );
-  const removed = [...new Set([...listed, ...seen, projectId])]
-    .filter((id) => known(id) === undefined && !loading(id))
-    .sort();
-  return numbered("Removed project", removed.indexOf(projectId));
+  return numbered(
+    "Removed project",
+    nameless([...new Set([...listed, projectId])])
+      .sort()
+      .indexOf(projectId),
+  );
 }
 
 /**
@@ -456,7 +465,10 @@ export function assistantGroupTabs(input: {
     },
     ...effective.map((id) => tab(id, title.get(id)!)),
     ...orphans.map((id) =>
-      tab(id, assistantGroupProjectLabel(id, input.projects, scopes, groupIds)),
+      tab(
+        id,
+        assistantGroupProjectLabel(id, input.projects, scopes, groupIds, chat.removedProjectIds),
+      ),
     ),
     ...(keptGeneral || scopes.some((scope) => scope.projectId === null)
       ? [tab(null, "General")]

@@ -1270,35 +1270,64 @@ describe("assistant group tabs", () => {
       labels([lost("x"), { ...titled, unreadCount: 1 }, lost("y")], "all", projects.slice(0, 2)),
       ["All", "One", "Two", "Removed project", "Old three", "Removed project 2"],
     );
+    // R1 is read so its tab is gone; the server's list still numbers R2 after it, as the feed does.
+    const numbered = assistantGroupTabs({
+      team: {
+        projectIds: [],
+        chat: {
+          unreadCount: 1,
+          readSeq: 1,
+          scopes: [lost("r2")],
+          removedProjectIds: ["r1", "r2"],
+        },
+      } as never,
+      members: [P1, P2].map(member),
+      projects: projects.slice(0, 2),
+    });
+    assert.deepStrictEqual(
+      numbered?.map((tab) => tab.label),
+      ["All", "One", "Two", "Removed project 2"],
+    );
   });
 
   it.each([
-    ["a group project whose title has not loaded", P3, [P3], [], [P3, P2], "Unknown project", []],
-    ["the next one loading, in group order", P2, [P3, P2], [], [P3, P2], "Unknown project 2", []],
-    ["a group project the loaded list no longer has", P3, [P3], ONE, [P3], "Removed project", []],
-    ["a project that left the group, unnamed", P3, [], ONE, [P3, P2], "Removed project 2", []],
-    ["the same one, whatever the tab order", P3, [], ONE, [P2, P3], "Removed project 2", []],
-    ["the first unnamed one by id", P2, [P3], ONE, [P3, P2], "Removed project", []],
-    ["a saved tab's one the chat does not list", "p9", [], ONE, [P3, P2], "Removed project 3", []],
-    ["a title known from the chat", P1, [P1], ONE, [P3, P2], "One", []],
+    ["a group project whose title has not loaded", P3, [P3], [], [P3, P2], "Unknown project"],
+    ["the next one loading, in group order", P2, [P3, P2], [], [P3, P2], "Unknown project 2"],
+    ["a group project the loaded list no longer has", P3, [P3], ONE, [P3], "Removed project"],
+    ["a project that left the group, unnamed", P3, [], ONE, [P3, P2], "Removed project 2"],
+    ["the same one, whatever the tab order", P3, [], ONE, [P2, P3], "Removed project 2"],
+    ["the first unnamed one by id", P2, [P3], ONE, [P3, P2], "Removed project"],
+    ["a saved tab's one the chat does not list", "p9", [], ONE, [P3, P2], "Removed project 3"],
+    ["a title known from the chat", P1, [P1], ONE, [P3, P2], "One"],
+    ["the server's list, not the tabs", "p9", [], ONE, [], "Removed project 2", ["p8", "p9"]],
     [
-      "two orphans only the feed shows, by id",
-      "p9",
+      "an older page's one already counts",
+      "r1",
       [],
       ONE,
-      [],
+      ["r2"],
       "Removed project 2",
-      ["p9", "p8"],
+      ["r0", "r1"],
     ],
-  ] as const)("project label: %s", (_name, id, group, projects, order, expected, seen) => {
-    const scopes = order.map((projectId) => ({ projectId }));
+    [
+      "one the server's list lacks comes last",
+      "r3",
+      [],
+      ONE,
+      ["r3"],
+      "Removed project 3",
+      ["r0", "r1"],
+    ],
+    ["a named one in the list takes no number", "r1", [], ONE, [], "Removed project", [P1, "r1"]],
+  ] as const)("project label: %s", (_name, id, group, projects, order, expected, removed?) => {
+    const scopes = order.map((projectId) => ({ projectId: projectId as ProjectId }));
     assert.strictEqual(
       assistantGroupProjectLabel(
         id as ProjectId,
         projects,
         scopes,
         group,
-        seen.map((id) => id as ProjectId),
+        removed?.map((id) => id as ProjectId),
       ),
       expected,
     );

@@ -1049,16 +1049,13 @@ function GroupFeed(props: {
       ? null
       : pages.reduce((state, page) => applyAssistantGroupHistory(state, page), props.live);
   const feed = chat === null ? [] : assistantGroupRequestFeed(chat);
-  const requestProjects = feed.flatMap((item) =>
-    item.kind === "request" && item.block.projectId !== null ? [item.block.projectId] : [],
-  );
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(
       id,
       projects,
       team.chat?.scopes,
       groupProjects.map((project) => project.id),
-      requestProjects,
+      team.chat?.removedProjectIds,
     );
   // A request that left this tab's project since it was sent no longer belongs here.
   const items = feed.filter(
@@ -1466,7 +1463,13 @@ export function AssistantGroupChat(props: {
   useShowGroupTab(environmentId, teamId, tabKey);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const projectName = (id: ProjectId) =>
-    assistantGroupProjectLabel(id, projects, team?.chat?.scopes, groupProjectIds);
+    assistantGroupProjectLabel(
+      id,
+      projects,
+      team?.chat?.scopes,
+      groupProjectIds,
+      team?.chat?.removedProjectIds,
+    );
   const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupComposerProjects(
     groupProjectIds,
     projects,

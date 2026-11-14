@@ -716,6 +716,8 @@ it.effect.each<{
   cursors: Record<string, number>;
   /** Each tab's project title, when the case checks it; null for none. */
   titles?: Record<string, string | null>;
+  /** The chat's request projects that no longer exist, when the case checks them. */
+  removed?: ReadonlyArray<string>;
 }>([
   {
     // p1's task has stopped, so p1 stays listed even once read.
@@ -723,6 +725,7 @@ it.effect.each<{
     steps: [],
     scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
     cursors: {},
+    removed: [],
   },
   {
     name: "reading every tab moves the group's position past them, and the tabs' go",
@@ -834,8 +837,9 @@ it.effect.each<{
     scopes: { p1: [1, false, 0], p2: [1, true, 0], p9: [1, false, 0], "": [1, true, 0] },
     cursors: {},
     titles: { p1: PROJECT_TITLES.p1!, p2: PROJECT_TITLES.p2!, p9: null, "": null },
+    removed: ["p2", "p9"],
   },
-])("$name", ({ steps, readSeq, scopes, cursors, titles }) => {
+])("$name", ({ steps, readSeq, scopes, cursors, titles, removed }) => {
   const h = harness();
   return Effect.gen(function* () {
     const groups = yield* h.setup;
@@ -910,6 +914,7 @@ it.effect.each<{
       chat.unreadCount,
       Object.values(scopes).reduce((sum, [unread]) => sum + unread, 0),
     );
+    if (removed !== undefined) assert.deepEqual(chat.removedProjectIds, removed);
     const stored = yield* sql<{ readonly scope: string; readonly read_seq: number }>`
       SELECT scope, read_seq FROM assistant_group_read_cursors`;
     assert.deepEqual(Object.fromEntries(stored.map((c) => [c.scope, c.read_seq])), cursors);

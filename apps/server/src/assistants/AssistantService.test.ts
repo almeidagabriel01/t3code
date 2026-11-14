@@ -1499,6 +1499,7 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       runningCount: 0,
       preview: null,
       previewProjectId: null,
+      removedProjectIds: [],
       scopes: [],
     });
     yield* sql`INSERT INTO assistant_group_messages

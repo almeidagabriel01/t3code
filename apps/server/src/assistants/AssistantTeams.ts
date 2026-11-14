@@ -29,6 +29,7 @@ export interface AssistantTeamRow {
   readonly preview?: string | null;
   readonly preview_project_id?: string | null;
   readonly scopes_json?: string;
+  readonly removed_project_ids_json?: string;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -87,6 +88,10 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           runningCount: row.running_tasks ?? 0,
           preview: row.preview ?? null,
           previewProjectId: (row.preview_project_id ?? null) as ProjectId | null,
+          removedProjectIds: Option.getOrElse(
+            decodeMemberIds(row.removed_project_ids_json ?? "[]"),
+            () => [],
+          ) as ProjectId[],
           scopes: Option.getOrElse(decodeScopes(row.scopes_json ?? "[]"), () => []).map(
             (scope) => ({
               projectId: scope.projectId as ProjectId | null,
