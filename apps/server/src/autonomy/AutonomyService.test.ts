@@ -356,6 +356,30 @@ it.effect(
   },
 );
 
+it.effect("a rule on a run its assistant was already told about leaves the interval free", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* addAssistant();
+    h.shells.set("t1", plain);
+    yield* (yield* TaskEventNotices.TaskEventNotices).send({
+      threadId: "assistant:jarvis:1" as never,
+      projectId: "p1" as never,
+      run: { id: "r1", threadId: "t1", status: "failed", userMessageId: "m1" } as never,
+      messageId: "assistant-task:r1",
+      text: "Task t1 failed.",
+      createdBy: "agent",
+      senderThreadId: "t1" as never,
+    });
+    yield* service.handleEvent(run("failed", "r1"));
+    yield* service.handleEvent(run("failed", "r2"));
+    assert.deepEqual(
+      h.sent.map((sent) => sent.messageId.startsWith("autonomy-wake:")),
+      [false, true],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("rule wakes keep a minimum interval per thread and a daily cap", () => {
   const h = harness();
   return Effect.gen(function* () {

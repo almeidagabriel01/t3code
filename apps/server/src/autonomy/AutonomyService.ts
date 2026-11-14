@@ -378,8 +378,9 @@ const make = Effect.gen(function* () {
         text,
         createdBy: "user",
       });
-      // Already told counts as fired; a run awaiting its checkpoint or a failed send fires again.
-      if (outcome === "pending" || outcome === "failed") return yield* giveBack;
+      // A watch already told about this run is spent; anything else unsent frees its claim,
+      // so a rule's interval and daily cap count only wakes that reached the assistant.
+      if (outcome !== "sent" && !(isWatch && outcome === "unchanged")) return yield* giveBack;
     } else {
       const sent = yield* threads
         .sendToThread({
