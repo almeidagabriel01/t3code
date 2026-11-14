@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -1103,6 +1104,83 @@ it.effect("a run interrupted right after it reserves the task does not block the
       const second = yield* service.runNow({ id: task.id });
       assert.equal(second.threadId, ThreadId.make("thread:launched"));
       assert.equal(yield* Ref.get(launches), 1);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a task that follows its project resolves the model when its thread is created", () =>
+  Effect.gen(function* () {
+    const projectModel = yield* Ref.make("gpt-5.4");
+    const launchedModels = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.update(launchedModels, (seen) => [...seen, input.modelSelection!.model]).pipe(
+                Effect.as({ threadId: ThreadId.make("thread:launched"), resumed: false } as never),
+              ),
+          }),
+          Layer.mock(ProjectModelSelection.ProjectModelSelectionService)({
+            resolveForNewThread: () =>
+              Ref.get(projectModel).pipe(
+                Effect.map((model) => ({
+                  selection: { instanceId: ProviderInstanceId.make("codex"), model },
+                  layer: "project" as const,
+                })),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = (id: string): ScheduledTaskUpsertInput => ({
+        id: ScheduledTaskId.make(id),
+        title: "Check in",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadMode: "new_thread",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.upsert(input("task:follows"), {
+        memoryGrantCeiling: "none",
+        modelFollowsProject: true,
+      });
+      yield* service.upsert(input("task:explicit"), { memoryGrantCeiling: "none" });
+      // The project's model changes between scheduling and the run.
+      yield* Ref.set(projectModel, "gpt-6-luna");
+      yield* service.runNow({ id: ScheduledTaskId.make("task:follows") });
+      yield* service.runNow({ id: ScheduledTaskId.make("task:explicit") });
+      // An edit that keeps the model keeps following; one that changes it pins the new one.
+      const follows = input("task:follows");
+      yield* service.upsert({ ...follows, prompt: "Check again" }, { memoryGrantCeiling: "none" });
+      yield* service.runNow({ id: follows.id! });
+      yield* service.upsert(
+        { ...follows, modelSelection: { ...follows.modelSelection, model: "gpt-6-sol" } },
+        { memoryGrantCeiling: "none" },
+      );
+      yield* service.runNow({ id: follows.id! });
+      assert.deepEqual(yield* Ref.get(launchedModels), [
+        "gpt-6-luna",
+        "gpt-5.4",
+        "gpt-6-luna",
+        "gpt-6-sol",
+      ]);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

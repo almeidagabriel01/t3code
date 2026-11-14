@@ -2078,7 +2078,8 @@ const make = Effect.gen(function* () {
         yield* refuseOutsideSandbox(scope, undefined);
         yield* refuseOutsideProject(scope, { projectId });
       }
-      // A bound task runs in this thread and keeps its model; a new thread follows the project.
+      // A bound task runs in this thread and keeps its model. A new thread follows the
+      // project when it runs; the model stored now is only what the list shows.
       const modelSelection =
         bindToCurrentThread && parent !== undefined
           ? parent.thread.modelSelection
@@ -2122,7 +2123,7 @@ const make = Effect.gen(function* () {
         ),
       );
       const { task } = yield* scheduledTasks
-        .upsert(upsertInput, { memoryGrantCeiling })
+        .upsert(upsertInput, { memoryGrantCeiling, modelFollowsProject: !bindToCurrentThread })
         .pipe(
           Effect.mapError((error) =>
             failure("orchestration_error", `Could not schedule task: ${error.message}`),

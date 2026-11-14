@@ -313,10 +313,16 @@ const layerThreadHandoffProvided = ThreadHandoffService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerProjectModelSelectionProvided = ProjectModelSelectionService.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+);
+
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,
+      // Tasks scheduled without a model resolve the project's when their thread is made.
+      layerProjectModelSelectionProvided,
       layerThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
@@ -409,10 +415,6 @@ const layerDecisionsProvided = DecisionService.layer.pipe(
 
 const layerAssistantConnectorsProvided = AssistantConnectors.layer.pipe(
   Layer.provide(Layer.merge(ServerSecretStore.layer, AssistantDirectory.layer)),
-);
-
-const layerProjectModelSelectionProvided = ProjectModelSelectionService.layer.pipe(
-  Layer.provide(ProjectStore.layer),
 );
 
 // One instance: the group service watches the same change stream the clients are served from.

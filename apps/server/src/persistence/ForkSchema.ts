@@ -663,6 +663,13 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN missed_run_policy TEXT NOT NULL DEFAULT 'skip'`;
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN max_runs INTEGER`;
   }
+  // Rows saved before it keep the model they were scheduled with.
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "model_follows_project")
+  ) {
+    yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN model_follows_project INTEGER NOT NULL DEFAULT 0`;
+  }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`
   // and whether it is a subagent. Without these each lookup walked every event of the thread.

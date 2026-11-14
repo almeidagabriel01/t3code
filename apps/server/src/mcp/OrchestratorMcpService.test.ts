@@ -2736,6 +2736,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     ])("schedules a task with the model from $name", ({ settings, expected, fromThread }) =>
       Effect.gen(function* () {
         const upserts: Array<ScheduledTaskUpsertInput> = [];
+        const follows: Array<boolean | undefined> = [];
         const callerThreadId = ThreadId.make("thread:scheduling-caller");
         // The caller runs codex gpt-5, which the new thread must not take.
         const callerShell = { ...liveThreadShell(callerThreadId), projectId };
@@ -2792,9 +2793,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-                    upsert: (input) =>
+                    upsert: (input, captured) =>
                       Effect.sync(() => {
                         upserts.push(input);
+                        follows.push(captured?.modelFollowsProject);
                         return { task: task({}) };
                       }),
                   }),
@@ -2806,6 +2808,8 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
         assert.equal(result._tag, "Success");
         assert.deepEqual(upserts[0]?.modelSelection, expected);
+        // A new thread resolves its model again when it runs.
+        assert.deepEqual(follows, [true]);
       }),
     );
 
