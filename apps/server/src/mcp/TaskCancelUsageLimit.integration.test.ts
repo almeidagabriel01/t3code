@@ -53,28 +53,39 @@ const modelSelection = { instanceId, model: "claude-test" };
 // A delegated child that fails on a usage limit is armed to continue at the reset.
 // Until then its task reads usage_limited; it runs again on the continuation.
 // Once its parent cancels the task, nothing is waiting for that continuation.
+// With auto-resume off nothing continues it, so the task fails as any other run.
 it.effect.each([
   {
     cancel: "after its limit",
+    autoResume: true,
     cancelStatus: "cancelled",
     resumed: false,
     statuses: ["usage_limited", "cancelled", "cancelled"],
   },
   {
     cancel: "as its limit lands",
+    autoResume: true,
     cancelStatus: "cancel_requested",
     resumed: false,
     statuses: ["cancelled", "cancelled", "cancelled"],
   },
   {
     cancel: "never",
+    autoResume: true,
     cancelStatus: null,
     resumed: true,
     statuses: ["usage_limited", "usage_limited", "running"],
   },
+  {
+    cancel: "never",
+    autoResume: false,
+    cancelStatus: null,
+    resumed: false,
+    statuses: ["failed", "failed", "failed"],
+  },
 ] as const)(
-  "a delegated child whose task is cancelled $cancel resumes at the reset: $resumed",
-  ({ cancel, cancelStatus, resumed, statuses }) =>
+  "a delegated child whose task is cancelled $cancel, auto-resume $autoResume, resumes at the reset: $resumed",
+  ({ cancel, autoResume, cancelStatus, resumed, statuses }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("task-cancel-usage-limit");
@@ -185,7 +196,7 @@ it.effect.each([
                   }),
               }),
               ProjectionStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
-              ServerSettings.layerTest({ autoResumeLimitedThreads: true }),
+              ServerSettings.layerTest({ autoResumeLimitedThreads: autoResume }),
             ),
           ),
         );
@@ -205,7 +216,7 @@ it.effect.each([
               Layer.mock(ProjectService.ProjectService)({}),
               Layer.mock(SecretRequests.SecretRequests)({}),
               Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-              ServerSettings.layerTest(),
+              ServerSettings.layerTest({ autoResumeLimitedThreads: autoResume }),
               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               NodeServices.layer,
               NodeCrypto.layer,

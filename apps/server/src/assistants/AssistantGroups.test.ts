@@ -88,6 +88,8 @@ interface Options {
   readonly summarize?: (call: number) => string | "fail" | "unsupported";
   /** Holds every summary call until it completes. */
   readonly summaryGate?: Deferred.Deferred<void>;
+  /** The server's auto-resume setting for usage-limited threads; on unless set. */
+  readonly autoResume?: boolean;
   readonly route?: (input: {
     readonly members: ReadonlyArray<{ readonly id: string }>;
   }) => ReadonlyArray<string> | "fail" | "none";
@@ -281,7 +283,7 @@ const harness = (options: Options = {}) => {
       cleanupPreviews: () => Effect.void,
       cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
     }),
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest({ autoResumeLimitedThreads: options.autoResume ?? true }),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -1243,15 +1245,43 @@ it.effect("a task waits for what it assigned, then runs again with the results",
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a failed child still lets the parent continue, and says it failed", () => {
-  const h = harness();
+// A usage limit nothing will continue on its own (auto-resume off) fails the task as before.
+it.effect.each([
+  { failure: "a plain failure", limit: false },
+  { failure: "a usage limit without auto-resume", limit: true },
+])("a failed child still lets the parent continue, and says it failed: $failure", ({ limit }) => {
+  const h = harness({ autoResume: false });
   return Effect.gen(function* () {
     const groups = yield* h.setup;
     yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
     yield* groups.member.assign({ callerThreadId: adaThread, member: "beto", instruction: "Try" });
     yield* h.finish(0, "completed", "waiting");
+    const [childRun] = h.runs.get(betoThread)!;
+    if (limit) {
+      Object.assign(childRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+      h.limits.set(childRun!.id, "2026-01-01T12:00:00.000Z");
+    }
     yield* h.finish(1, "failed");
     assert.include(h.sent[2]!.text, "- Beto (failed):");
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
+    if (!limit) return;
+    // A later provider switch still continues the run; the settled task stays as it is.
+    const continuation = {
+      id: "run:continuation",
+      threadId: betoThread,
+      userMessageId: "limit-continuation:x",
+      usageLimitContinuationOfRunId: childRun!.id,
+      ordinal: 2,
+      status: "running",
+    };
+    h.runs.get(betoThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
+    assert.lengthOf(h.sent, 3);
   }).pipe(Effect.provide(h.layer));
 });
 

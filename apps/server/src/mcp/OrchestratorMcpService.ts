@@ -122,6 +122,7 @@ import type {
 } from "../orchestration-v2/ProjectionStore.ts";
 import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -1579,6 +1580,18 @@ const make = Effect.gen(function* () {
       runRanAfter(latestRun, limitedRun)
         ? latestRun
         : undefined;
+    // Only a wait the recovery worker ends by itself is one: otherwise the run failed as any other.
+    const waitsForReset =
+      limitedRun !== undefined &&
+      continuationRun === undefined &&
+      continuesAtReset(
+        limitFailure?.resetAt,
+        DateTime.toEpochMillis(limitedRun.completedAt ?? limitedRun.requestedAt),
+        DateTime.toEpochMillis(yield* DateTime.now),
+        (yield* serverSettings.getSettings.pipe(
+          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+        )).autoResumeLimitedThreads,
+      );
     const limitState =
       limitedRun === undefined
         ? null
@@ -1586,7 +1599,9 @@ const make = Effect.gen(function* () {
           ? { status: taskStatusForRun(continuationRun), run: continuationRun }
           : task.completionDelivery?.state === "disposed"
             ? { status: "cancelled" as const, run: limitedRun }
-            : { status: "usage_limited" as const, run: limitedRun };
+            : waitsForReset
+              ? { status: "usage_limited" as const, run: limitedRun }
+              : { status: taskStatusForRun(limitedRun), run: limitedRun };
     const heldForRestart =
       task.result === null &&
       taskWorkState === "result_available" &&

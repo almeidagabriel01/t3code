@@ -71,6 +71,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
+import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -1783,9 +1784,18 @@ const make = Effect.gen(function* () {
               .pipe(Effect.orElseSucceed(() => ({ turnItems: [] })))).turnItems,
           )
         : null;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (run.status === "interrupted") {
       yield* patchTask(task, { status: "paused", reason: "stopped" });
-    } else if (failure?.class === "usage_limit") {
+    } else if (
+      failure?.class === "usage_limit" &&
+      continuesAtReset(
+        failure.resetAt,
+        run.completedAt ? DateTime.toEpochMillis(run.completedAt) : nowMs,
+        nowMs,
+        (yield* serverSettings.getSettings).autoResumeLimitedThreads,
+      )
+    ) {
       // Not settled: the thread continues it at the reset or on a provider switch.
       yield* patchTask(task, { status: "usage_limited", reason: failure.resetAt ?? null });
     } else if (run.status !== "completed") {
