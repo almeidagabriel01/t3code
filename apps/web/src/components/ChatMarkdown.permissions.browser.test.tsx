@@ -196,22 +196,6 @@ it("removes host actions after revocation while keeping file preview and copying
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
-it.each(["../other/notes.md:3", "../shots/a.png"])(
-  "only copies %s, a relative link that leaves the workspace, as written",
-  async (href) => {
-    using _setup = setup();
-    state.choose.mockResolvedValue("copy-relative");
-    await using screen = await renderMarkdown(`[Other](${href})`);
-    expect(screen.anchor()).toBeNull();
-    await act(async () => screen.container.querySelector("button")!.click());
-    expect(offeredActions()).toEqual(["copy-relative"]);
-    await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith(href));
-    expect(state.search).not.toHaveBeenCalled();
-    expect(state.openFile).not.toHaveBeenCalled();
-    expect(state.openEditor).not.toHaveBeenCalled();
-  },
-);
-
 it("does not launch an editor after revocation during a native context menu", async () => {
   using _setup = setup();
   let choose: (action: string) => void = () => {

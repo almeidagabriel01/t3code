@@ -210,7 +210,6 @@ export function useMarkdownLinkHost(props: {
         }
         return;
       }
-      if (resolveFileChipTarget(href, workspaceRoot)?.copyOnly) return;
       const media = resolveMarkdownMediaPreview(href, {
         environmentId: props.environmentId,
         threadId: threadId ?? undefined,
@@ -407,7 +406,7 @@ export function useMarkdownLinkHost(props: {
             onMarkdownLinkPress(href);
             return;
           case "save":
-            if (threadId !== null && !target.copyOnly) shareFileChip(target, threadId);
+            if (threadId !== null) shareFileChip(target, threadId);
             return;
         }
       },

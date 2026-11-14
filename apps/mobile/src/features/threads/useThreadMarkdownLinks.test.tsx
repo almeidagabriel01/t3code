@@ -300,29 +300,6 @@ it("offers each link's own menu and runs its actions", () => {
   links.onFileContextMenuAction("https://example.com", "open-file");
 });
 
-it("only copies a relative link that leaves the workspace, and never opens or saves it", async () => {
-  mocks.canRead.value = true;
-  renderHost();
-  const links = linksFor(A).linkHandlers;
-  for (const href of ["../shots/a.png", "../other/report.pdf", "../other/x.ts:3"]) {
-    expect(links.fileContextMenu(href)?.actions.map((action) => action.id)).toEqual([
-      "copy-relative-path",
-    ]);
-    await act(async () => {
-      links.onLinkPress(href);
-      links.onImagePress?.(href);
-      links.onFileContextMenuAction(href, "open-file");
-      links.onFileContextMenuAction(href, "save");
-    });
-    links.onFileContextMenuAction(href, "copy-relative-path");
-    expect(mocks.copy).toHaveBeenLastCalledWith(href.replace(/:\d+$/, ""));
-  }
-  expect(mocks.navigate).not.toHaveBeenCalled();
-  expect(mocks.share).not.toHaveBeenCalled();
-  expect(mocks.query).not.toHaveBeenCalled();
-  expect(host.expandedFile).toBeNull();
-});
-
 it("draws each embedded image by kind, with workspace files only inside a thread", () => {
   renderHost();
   const draw = (context: MarkdownLinkContext, href: string) =>
