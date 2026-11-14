@@ -51,6 +51,7 @@ import {
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { formatModelSlugName } from "@t3tools/shared/model";
+import { teamModelLayer } from "@t3tools/shared/modelSelectionPrecedence";
 import { useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
@@ -1465,6 +1466,10 @@ export function AssistantGroupChat(props: {
   const modelProjectId = replyTo?.projectId ?? groupComposerProject;
   const modelProject =
     modelProjectId === null ? null : { id: modelProjectId, label: projectName(modelProjectId) };
+  const teamModel =
+    team === undefined || modelProjectId === null
+      ? null
+      : (teamModelLayer(team, members, modelProjectId) ?? null);
   const archived = team?.archivedAt != null;
 
   const send = async (
@@ -1577,7 +1582,7 @@ export function AssistantGroupChat(props: {
           projects={groupProjects}
           projectId={groupComposerProject}
           onProjectChange={(projectId) => setComposerPick({ tab: tabKey, projectId })}
-          teamDefault={team.defaultModelSelection ?? null}
+          teamDefault={teamModel}
           replyingTo={replyTo?.quote ?? null}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
@@ -1621,7 +1626,7 @@ export function AssistantGroupChat(props: {
           projectId={modelProject.id}
           projectLabel={modelProject.label}
           member={memberModel}
-          teamDefault={team?.defaultModelSelection ?? null}
+          teamDefault={teamModel}
           onClose={() => setMemberModel(null)}
         />
       )}

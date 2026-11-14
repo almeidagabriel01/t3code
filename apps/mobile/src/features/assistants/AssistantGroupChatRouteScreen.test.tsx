@@ -74,6 +74,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     canWriteSettings: true,
     /** Members' own models in project p1, by assistant id. */
     exceptions: {} as Record<string, unknown>,
+    /** Project p2 turns the codex instance off. */
+    codexOffInBeta: false,
   },
 }));
 vi.mock("react-native", () => ({
@@ -575,6 +577,9 @@ vi.mock("../../state/environments", () => ({
                 defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" },
                 assistantModelSelections: mocks.exceptions,
               },
+              ...(mocks.codexOffInBeta
+                ? { p2: { providerInstances: { codex: { enabled: false } } } }
+                : {}),
             },
           },
         },
@@ -880,6 +885,7 @@ beforeEach(() => {
   );
   mocks.canWriteSettings = true;
   mocks.exceptions = {};
+  mocks.codexOffInBeta = false;
   mocks.drafts.clear();
   mocks.draftListeners.clear();
   mocks.release.mockResolvedValue(undefined);
@@ -1896,6 +1902,10 @@ describe("requests", () => {
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
     setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
     expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
+    // A provider the project turned off is skipped, as the server does when the request starts.
+    mocks.codexOffInBeta = true;
+    render();
+    expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
   });
 
   it("sets a member's own model in the picked project from the header menu, and removes it", async () => {

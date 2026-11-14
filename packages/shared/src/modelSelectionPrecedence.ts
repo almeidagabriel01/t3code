@@ -1,4 +1,12 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import {
+  type Assistant,
+  type AssistantTeam,
+  assistantGroupProjectIds,
+  type ModelSelection,
+  type ProjectId,
+} from "@t3tools/contracts";
+
+import type { ProjectSettingSource } from "./projectSettings.ts";
 
 const OPTIONAL_LAYERS = [
   "message",
@@ -25,4 +33,24 @@ export function resolveModelSelection(
     if (selection !== undefined && isUsable(selection)) return { selection, layer };
   }
   return { selection: layers.global, layer: "global" };
+}
+
+/** A project's own default; a resolved value that comes from the environment is `global`'s. */
+export function projectModelLayer(
+  source: ProjectSettingSource | "mixed",
+  selection: ModelSelection | null,
+): ModelSelection | undefined {
+  return source === "environment" ? undefined : (selection ?? undefined);
+}
+
+/** A group's default holds only in its effective projects: its own plus its members'. */
+export function teamModelLayer(
+  team: Pick<AssistantTeam, "defaultModelSelection" | "projectIds">,
+  members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>,
+  projectId: ProjectId,
+): ModelSelection | undefined {
+  const effective = assistantGroupProjectIds(members, team.projectIds);
+  return effective.length > 0 && !effective.includes(projectId)
+    ? undefined
+    : (team.defaultModelSelection ?? undefined);
 }

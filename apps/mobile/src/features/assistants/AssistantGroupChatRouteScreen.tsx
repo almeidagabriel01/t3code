@@ -28,6 +28,7 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isLongMessage } from "@t3tools/client-runtime/messageFold";
+import { teamModelLayer } from "@t3tools/shared/modelSelectionPrecedence";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import {
@@ -1284,7 +1285,9 @@ export function AssistantGroupChatRouteScreen({
   const projectModel = useGroupProjectModel(
     environmentId,
     modelProjectId,
-    team?.defaultModelSelection ?? null,
+    team === undefined || modelProjectId === null
+      ? null
+      : (teamModelLayer(team, members, modelProjectId) ?? null),
   );
 
   const selectTab = (next: AssistantGroupTab) => {

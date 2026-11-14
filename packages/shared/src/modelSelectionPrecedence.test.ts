@@ -1,10 +1,12 @@
-import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection, type ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type ModelSelectionLayer,
   type ModelSelectionLayers,
+  projectModelLayer,
   resolveModelSelection,
+  teamModelLayer,
 } from "./modelSelectionPrecedence.ts";
 
 const pick = (model: string): ModelSelection => ({
@@ -70,5 +72,30 @@ describe("resolveModelSelection", () => {
       selection: pick("global"),
       layer: "global",
     });
+  });
+});
+
+describe("project and team layers", () => {
+  it.each([
+    ["environment", pick("x"), undefined],
+    ["project", pick("x"), pick("x")],
+    ["folder", pick("x"), pick("x")],
+    ["t3.json", null, undefined],
+  ] as const)("a %s default is the project layer: %j", (source, selection, expected) => {
+    expect(projectModelLayer(source, selection)).toEqual(expected);
+  });
+
+  const p = (id: string) => id as ProjectId;
+  const member = { projectId: p("home"), projectIds: [p("a")] };
+  it.each([
+    ["the group's own project", [p("g")], [member], "g", pick("team")],
+    ["a member's project", [p("g")], [member], "a", pick("team")],
+    ["a project outside the group", [p("g")], [member], "elsewhere", undefined],
+    ["any project of a group with none", [], [], "elsewhere", pick("team")],
+  ] as const)("the group's default holds in %s", (_, projectIds, members, projectId, expected) => {
+    expect(
+      teamModelLayer({ defaultModelSelection: pick("team"), projectIds }, members, p(projectId)),
+    ).toEqual(expected);
+    expect(teamModelLayer({ projectIds }, members, p(projectId))).toBeUndefined();
   });
 });

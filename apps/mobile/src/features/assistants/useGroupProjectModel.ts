@@ -5,7 +5,9 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
+import { projectModelLayer, resolveModelSelection } from "@t3tools/shared/modelSelectionPrecedence";
 
 import { buildModelOptions } from "../../lib/modelOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
@@ -28,7 +30,7 @@ export type GroupProjectModel = NonNullable<ReturnType<typeof useGroupProjectMod
 export function useGroupProjectModel(
   environmentId: EnvironmentId,
   projectId: ProjectId | null,
-  /** The group's default, which the project's requests run on when it has none of its own. */
+  /** The group's default where it holds in this project (`teamModelLayer`). */
   teamDefault: ModelSelection | null,
 ) {
   const navigation = useNavigation();
@@ -57,15 +59,24 @@ export function useGroupProjectModel(
     modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
   const selection = target.settings.defaultModelSelection;
   const members = [{ environmentId, projectId }];
-  const inherited = target.sources.defaultModelSelection === "environment";
+  const settings = target.environment.serverConfig.settings;
+  const layers = {
+    project: projectModelLayer(target.sources.defaultModelSelection, selection),
+    team: teamDefault ?? undefined,
+  };
+  const fallback = layers.project ?? layers.team;
+  // `global` means no project or group model applies: each member runs on its own.
+  const resolved =
+    fallback === undefined
+      ? null
+      : resolveModelSelection({ ...layers, global: fallback }, (value) =>
+          resolveProjectProviderInstanceEnabled(settings, projectId, value.instanceId),
+        );
   return {
-    label: !inherited
-      ? selection === null
-        ? "Automatic"
-        : nameOf(selection)
-      : teamDefault === null
+    label:
+      resolved === null || resolved.layer === "global"
         ? "Members' models"
-        : nameOf(teamDefault),
+        : nameOf(resolved.selection),
     canWrite: writable.has(environmentId),
     /** Members whose new work here runs on their own model, by assistant id. */
     exceptions: (target.environment.serverConfig.settings.projectSettingsOverrides[projectId]

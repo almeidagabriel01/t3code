@@ -1,4 +1,15 @@
-import type { Assistant, EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contracts";
+import {
+  type Assistant,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
+  resolveProjectProviderInstanceEnabled,
+} from "@t3tools/contracts";
+import {
+  type ModelSelectionLayer,
+  projectModelLayer,
+  resolveModelSelection,
+} from "@t3tools/shared/modelSelectionPrecedence";
 import { useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../state/environments";
@@ -31,6 +42,23 @@ const SOURCE_DETAIL = {
   "t3.json": "From the repository's t3.json",
   mixed: "Mixed",
 } as const;
+
+const INHERITED_LABEL: Partial<Record<ModelSelectionLayer, string>> = {
+  project: "Project's model",
+  team: "Group default",
+  assistant: "Member's default",
+  global: "Your default model",
+};
+
+/** The server skips a layer whose provider instance is off in the project; so does what we show. */
+const usableIn =
+  (
+    settings: Parameters<typeof resolveProjectProviderInstanceEnabled>[0],
+    projectId: ProjectId | null | undefined,
+  ) =>
+  (selection: ModelSelection) =>
+    projectId == null ||
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId);
 
 /**
  * The settings scope of exactly one project checkout, so the settings hooks read and write that
@@ -74,18 +102,28 @@ function ProjectModelPicker(props: {
 }) {
   const { settings, representative, providers, selection, entries, modelDisabledReason } =
     useScopedDefaultModel();
+  const { target } = useSettingsScope();
   const source = useScopedSettingSource(["defaultModelSelection"]);
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateScopedSettings();
-  // Without its own default the project's requests run on the group's, else each member's own.
-  const inherited = source === "environment";
-  const shown = inherited ? (props.teamDefault ?? selection) : selection;
-  if (shown === null) return null;
-  const detail = !inherited
-    ? SOURCE_DETAIL[source]
-    : props.teamDefault === null
+  const layers = {
+    project: projectModelLayer(source, selection),
+    team: props.teamDefault ?? undefined,
+  };
+  const fallback = layers.project ?? layers.team ?? selection;
+  if (fallback === null) return null;
+  // `global` means no project or group model applies: each member runs on its own.
+  const { selection: resolved, layer } = resolveModelSelection(
+    { ...layers, global: fallback },
+    usableIn(settings, target?.projectId),
+  );
+  const shown = layer === "global" ? (selection ?? fallback) : resolved;
+  const detail =
+    layer === "global"
       ? "Not set: each member uses its own model"
-      : "Group default";
+      : layer === "team"
+        ? "Group default"
+        : SOURCE_DETAIL[source as keyof typeof SOURCE_DETAIL];
   const save = (value: ModelSelection) => {
     const reason = modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return props.onError(reason);
@@ -100,7 +138,7 @@ function ProjectModelPicker(props: {
       selection={shown}
       label={`Model for ${props.projectLabel}`}
       detail={detail}
-      {...(inherited && props.teamDefault === null ? { placeholder: "Members' models" } : {})}
+      {...(layer === "global" ? { placeholder: "Members' models" } : {})}
       disabled={props.disabled || !canWrite}
       environmentId={representative?.environmentId ?? null}
       instanceEntries={entries}
@@ -115,7 +153,7 @@ export function GroupProjectModelPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly projectLabel: string;
-  /** The group's default, which the project's requests run on when it has none of its own. */
+  /** The group's default where it holds in this project (`teamModelLayer`). */
   readonly teamDefault: ModelSelection | null;
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
@@ -164,14 +202,21 @@ function MemberModelFields(props: {
           ?.assistantModelSelections?.[member.id];
   const shown = exception ?? selection;
   // Without an exception the member runs on what comes next in line, not on the scope's default.
+  const layers = {
+    project: projectModelLayer(source, selection),
+    team: props.teamDefault ?? undefined,
+    assistant: member.defaultModelSelection ?? undefined,
+  };
+  const fallback = layers.project ?? layers.team ?? layers.assistant;
   const inherited =
-    source !== "environment"
-      ? "Project's model"
-      : props.teamDefault !== null
-        ? "Group default"
-        : member.defaultModelSelection
-          ? "Member's default"
-          : "Your default model";
+    (fallback === undefined
+      ? undefined
+      : INHERITED_LABEL[
+          resolveModelSelection(
+            { ...layers, global: fallback },
+            usableIn(settings, target?.projectId),
+          ).layer
+        ]) ?? "Your default model";
   const save = (value: ModelSelection | null) => {
     const reason = value === null ? null : modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return setError(reason);

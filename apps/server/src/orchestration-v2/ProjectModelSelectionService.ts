@@ -1,6 +1,5 @@
 import {
   type AssistantId,
-  assistantGroupProjectIds,
   type AssistantTeamId,
   DEFAULT_MODEL,
   isProviderAvailable,
@@ -12,7 +11,9 @@ import {
 } from "@t3tools/contracts";
 import {
   type ModelSelectionLayer,
+  projectModelLayer,
   resolveModelSelection,
+  teamModelLayer,
 } from "@t3tools/shared/modelSelectionPrecedence";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
@@ -104,21 +105,19 @@ const make = Effect.gen(function* () {
             ? undefined
             : (yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`)[0];
         const teamValue = teamRow === undefined ? undefined : toAssistantTeam(teamRow);
-        const teamProjects =
-          teamValue === undefined || teamValue.memberIds.length === 0
-            ? (teamValue?.projectIds ?? [])
-            : assistantGroupProjectIds(
-                (yield* sql<AssistantRow>`
-                  SELECT * FROM assistants WHERE assistant_id IN ${sql.in(teamValue.memberIds)}`).map(
-                  toAssistant,
-                ),
-                teamValue.projectIds,
-              );
-        // The team's default holds only in its effective projects: its own plus its members'.
         const team =
-          teamValue === undefined || (teamProjects.length > 0 && !teamProjects.includes(projectId))
+          teamValue === undefined
             ? undefined
-            : (teamValue.defaultModelSelection ?? undefined);
+            : teamModelLayer(
+                teamValue,
+                teamValue.memberIds.length === 0
+                  ? []
+                  : (yield* sql<AssistantRow>`
+                      SELECT * FROM assistants WHERE assistant_id IN ${sql.in(teamValue.memberIds)}`).map(
+                      toAssistant,
+                    ),
+                projectId,
+              );
         const assistant =
           assistantId === undefined
             ? undefined
@@ -139,11 +138,10 @@ const make = Effect.gen(function* () {
                 : settings.projectSettingsOverrides[projectId]?.assistantModelSelections?.[
                     assistantId
                   ],
-            // Without its own value, the resolved project default is the global one.
-            project:
-              resolved.sources.defaultModelSelection === "environment"
-                ? undefined
-                : (resolved.settings.defaultModelSelection ?? undefined),
+            project: projectModelLayer(
+              resolved.sources.defaultModelSelection,
+              resolved.settings.defaultModelSelection,
+            ),
             team,
             assistant,
             global: (configuredGlobal !== null && isUsable(configuredGlobal)
