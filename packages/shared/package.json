@@ -163,6 +163,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./modelSelectionPrecedence": {
+      "types": "./src/modelSelectionPrecedence.ts",
+      "import": "./src/modelSelectionPrecedence.ts"
+    },
     "./backgroundActivitySettings": {
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
