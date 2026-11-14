@@ -695,6 +695,7 @@ function RequestHeader(props: {
             props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
           }
           onOpen={props.onToggle}
+          action="Open request"
         />
       </View>
     );

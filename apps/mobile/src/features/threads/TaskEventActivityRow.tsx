@@ -17,12 +17,14 @@ export function TaskEventActivityRow(props: {
   readonly label: string;
   readonly status: "completed" | "failed" | "cancelled" | "interrupted" | null;
   readonly onOpen: () => void;
+  /** What the row opens, for screen readers. */
+  readonly action?: string;
 }) {
   const symbol = STATUS_SYMBOL[props.status ?? "none"];
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${props.title}, ${props.label}. Open task`}
+      accessibilityLabel={`${props.title}, ${props.label}. ${props.action ?? "Open task"}`}
       onPress={props.onOpen}
       className="flex-row items-center gap-1.5 rounded-md px-1 py-1 active:bg-foreground/8"
     >

@@ -1012,7 +1012,7 @@ it("folds a finished request to one activity line and shows each answer as the t
   await using _screen = await openChat();
   const done = blocks().first();
   // A finished request folds away to one line; the newest one stays open.
-  const line = done.getByRole("button", { name: "Open task Budget review" });
+  const line = done.getByRole("button", { name: "Open request Budget review" });
   await expect.element(line).toHaveAttribute("data-task-event-activity", "completed");
   await expect.element(line).toMatchTextContent("· Finished · render");
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
@@ -1130,7 +1130,9 @@ it("picks a project for a new request and keeps a reply in its request's project
       { teamId: "t1", text: "@ada new work", projectId: PROJECT_ID },
     ]),
   );
-  await userEvent.click(blocks().first().getByRole("button", { name: "Open task Budget review" }));
+  await userEvent.click(
+    blocks().first().getByRole("button", { name: "Open request Budget review" }),
+  );
   await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
   await expect.element(main().getByTestId("group-project-locked")).toHaveTextContent("render");
   await expect.element(main().getByRole("combobox", { name: "Project" })).not.toBeInTheDocument();

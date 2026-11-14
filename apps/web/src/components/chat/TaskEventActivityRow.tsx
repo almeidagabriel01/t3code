@@ -22,6 +22,8 @@ export function TaskEventActivityRow(props: {
   label: string;
   status: TaskEventStatus | null;
   onOpen: () => void;
+  /** What the row opens, for screen readers. */
+  action?: string;
 }) {
   const { icon: Icon, className } =
     props.status === null
@@ -31,7 +33,7 @@ export function TaskEventActivityRow(props: {
     <button
       type="button"
       onClick={props.onOpen}
-      aria-label={`Open task ${props.title}`}
+      aria-label={`${props.action ?? "Open task"} ${props.title}`}
       data-task-event-activity={props.status ?? "updated"}
       className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-foreground/8 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none"
     >
