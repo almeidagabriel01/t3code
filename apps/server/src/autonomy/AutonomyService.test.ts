@@ -1297,32 +1297,47 @@ it.effect(
   },
 );
 
-/** A thread whose run hit a usage limit, with the wait the recovery worker armed on it. */
+/** A thread whose latest run hit a usage limit, with the wait the recovery worker armed on it. */
 const limited = (
   h: ReturnType<typeof harness>,
   threadId: string,
   runId: string,
-  input: { provider?: string; resetAt?: string; autoResume?: boolean } = {},
+  input: {
+    provider?: string;
+    resetAt?: string | null;
+    autoResume?: boolean;
+    /** False when the worker armed nothing, as with auto-resume off. */
+    armed?: boolean;
+    failedAt?: string;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const provider = input.provider ?? "claudeAgent";
-    const recovery = {
-      runId,
-      resetAt: input.resetAt ?? "1970-01-01T05:00:00.000Z",
-      autoResume: input.autoResume ?? true,
-      snooze: false,
-    };
+    const resetAt = input.resetAt === undefined ? "1970-01-01T05:00:00.000Z" : input.resetAt;
+    const failedAt = input.failedAt ?? T0;
+    const recovery =
+      input.armed === false || resetAt === null
+        ? {}
+        : {
+            limitRecovery: { runId, resetAt, autoResume: input.autoResume ?? true, snooze: false },
+          };
     h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
     yield* sql`
       INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider,
         runtime_mode, interaction_mode, created_at, updated_at, payload_json)
       VALUES (${threadId}, 'p1', ${`Task ${threadId}`}, ${provider}, 'full-access', 'default', ${T0},
-        ${T0}, ${JSON.stringify({ archivedAt: null, limitRecovery: recovery })})`;
+        ${T0}, ${JSON.stringify({ archivedAt: null, ...recovery })})`;
     yield* sql`
       INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider,
-        provider_instance_id, status, requested_at, payload_json)
-      VALUES (${runId}, ${threadId}, 1, ${provider}, ${provider}, 'failed', ${T0}, '{}')`;
+        provider_instance_id, status, requested_at, completed_at, payload_json)
+      VALUES (${runId}, ${threadId}, 1, ${provider}, ${provider}, 'failed', ${failedAt},
+        ${failedAt}, '{}')`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal,
+        type, status, updated_at, payload_json)
+      VALUES (${`${runId}:error`}, ${threadId}, ${runId}, 1, 'error', 'failed', ${failedAt},
+        ${JSON.stringify({ type: "error", failure: { class: "usage_limit", resetAt } })})`;
   });
 
 it.effect("a wait armed before the service started, or while gated off, is told on a sweep", () => {
@@ -1349,6 +1364,38 @@ it.effect("a wait armed before the service started, or while gated off, is told 
     assert.isTrue(texts.some((text) => text.includes("Task t2")));
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "a usage limit is told with auto-resume off, and with no reset once per local day",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      // Auto-resume off: the worker arms nothing, and the limit is still told.
+      yield* limited(h, "t1", "r1", { armed: false });
+      // No reset time: the window is the local day the run failed.
+      yield* limited(h, "t2", "r2", { provider: "codex", resetAt: null });
+      yield* limited(h, "t3", "r3", { provider: "codex", resetAt: null });
+      yield* service.notifyWaiting;
+      const texts = (yield* outboxRows).map((row) => row.message.text);
+      assert.lengthOf(texts, 2);
+      assert.isTrue(texts.some((text) => text.includes("Task t1")));
+      assert.isTrue(texts.some((text) => text.includes("Task t2")));
+
+      // A day later the same failures are not told again; a failure on the new day is.
+      yield* TestClock.adjust(24 * 60 * MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 2);
+      yield* limited(h, "t4", "r4", {
+        provider: "codex",
+        resetAt: null,
+        failedAt: "1970-01-02T00:00:00.000Z",
+      });
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 3);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect(
   "a usage limit is told once per provider and window, retried after a failed send, gated",

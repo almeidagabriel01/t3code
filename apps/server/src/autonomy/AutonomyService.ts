@@ -131,14 +131,18 @@ interface UsageLimitNotice {
   readonly threadId: ThreadId;
   readonly providerInstanceId: string;
   readonly resetAt: string | null;
+  readonly failedAt: string;
 }
 
-/** One window per provider: a reset parsed from a relative cooldown varies by seconds. */
-const usageLimitSubject = (notice: UsageLimitNotice, nowMs: number) =>
+/**
+ * One window per provider: a reset parsed from a relative cooldown varies by seconds. With no
+ * reset the window is the local day the run failed, so a limit left standing is told once.
+ */
+const usageLimitSubject = (notice: UsageLimitNotice) =>
   `usage-limit:${notice.providerInstanceId}:${
     notice.resetAt === null
       ? DateTime.formatIsoDate(
-          DateTime.setZone(DateTime.makeUnsafe(nowMs), DateTime.zoneMakeLocal()),
+          DateTime.setZone(DateTime.makeUnsafe(notice.failedAt), DateTime.zoneMakeLocal()),
         )
       : DateTime.formatIso(DateTime.makeUnsafe(notice.resetAt)).slice(0, 16)
   }`;
@@ -957,7 +961,7 @@ const make = Effect.gen(function* () {
     config: AutonomySettings,
     nowMs: number,
   ) {
-    const subject = usageLimitSubject(notice, nowMs);
+    const subject = usageLimitSubject(notice);
     if (yield* alreadyTold(subject)) return;
     const clientRequestId = `${DecisionService.NOTICE_REQUEST_PREFIX}${subject}`;
     // Decisions are idempotent per thread: a retry stays on the thread that opened one.
@@ -1167,27 +1171,39 @@ const make = Effect.gen(function* () {
           );
         }
 
-        // Waits the recovery worker armed and that still lie ahead: the run it armed is the last.
+        // Threads whose last run hit a usage limit whose window still lies ahead, armed or not.
         const limited = yield* sql<UsageLimitNotice>`
           SELECT t.thread_id AS "threadId",
             COALESCE(r.provider_instance_id, r.provider) AS "providerInstanceId",
-            json_extract(t.payload_json, '$.limitRecovery.resetAt') AS "resetAt"
+            json_extract(item.payload_json, '$.failure.resetAt') AS "resetAt",
+            COALESCE(r.completed_at, r.requested_at) AS "failedAt"
           FROM orchestration_v2_projection_threads t
           JOIN orchestration_v2_projection_runs r
-            ON r.run_id = json_extract(t.payload_json, '$.limitRecovery.runId')
-            AND r.thread_id = t.thread_id AND r.status = 'failed'
-          WHERE t.deleted_at IS NULL
-            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
-            AND (json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
-              OR json_extract(t.payload_json, '$.limitRecovery.snooze') = 1)
-            AND julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt'))
-              > julianday(${DateTime.formatIso(DateTime.makeUnsafe(nowMs))})
+            ON r.thread_id = t.thread_id AND r.status = 'failed'
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runs later
               WHERE later.thread_id = t.thread_id AND later.ordinal > r.ordinal
                 AND later.status <> 'queued'
             )
+          JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
+            SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
+            WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
+              AND error.type = 'error' AND error.status = 'failed'
+              AND error.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+            ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+            LIMIT 1
+          )
+          WHERE t.deleted_at IS NULL
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND (json_extract(item.payload_json, '$.failure.resetAt') IS NULL
+              OR julianday(json_extract(item.payload_json, '$.failure.resetAt'))
+                > julianday(${DateTime.formatIso(DateTime.makeUnsafe(nowMs))}))
+            -- A Stop disarms this run's wait: the user already knows.
+            AND NOT (json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
+              AND json_extract(t.payload_json, '$.limitRecovery.autoResume') IS NOT 1
+              AND json_extract(t.payload_json, '$.limitRecovery.snooze') IS NOT 1)
           ORDER BY t.thread_id`;
         for (const notice of limited) {
           yield* notifyUsageLimit(notice, config, nowMs).pipe(
