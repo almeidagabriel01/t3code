@@ -50,10 +50,9 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated child that fails on a usage limit is armed to continue at the reset.
-// Until then its task reads usage_limited; it runs again on the continuation.
-// Once its parent cancels the task, nothing is waiting for that continuation.
-// With auto-resume off nothing continues it, so the task fails as any other run.
+// A delegated child that fails on a usage limit reads usage_limited until it continues at the
+// reset, and waits again when the continuation hits a limit too. Once its parent cancels the
+// task, nothing waits for that continuation; with auto-resume off nothing continues it at all.
 it.effect.each([
   {
     cancel: "after its limit",
@@ -83,9 +82,17 @@ it.effect.each([
     resumed: false,
     statuses: ["failed", "failed", "failed"],
   },
+  {
+    cancel: "never",
+    autoResume: true,
+    cancelStatus: null,
+    resumed: true,
+    limitAgain: true,
+    statuses: ["usage_limited", "usage_limited", "running", "usage_limited"],
+  },
 ] as const)(
   "a delegated child whose task is cancelled $cancel, auto-resume $autoResume, resumes at the reset: $resumed",
-  ({ cancel, autoResume, cancelStatus, resumed, statuses }) =>
+  ({ cancel, autoResume, cancelStatus, resumed, statuses, ...row }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("task-cancel-usage-limit");
@@ -320,7 +327,7 @@ it.effect.each([
           });
 
           const now = yield* DateTime.now;
-          const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+          let resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
           const seen: Array<string> = [];
           const readStatus = Effect.gen(function* () {
             const result = yield* service.taskStatus(scope, task.id);
@@ -328,40 +335,48 @@ it.effect.each([
             if (result.status === "usage_limited") assert.equal(result.resetAt, resetAt);
             else assert.isUndefined(result.resetAt);
           });
-          const childFailed = yield* watch(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.id === child.turn.runId &&
-              event.payload.status === "failed",
-          );
-          const hitLimit = Effect.forEach(
-            [
-              {
-                type: "provider_turn.updated",
-                driver,
-                providerTurn: { ...childTurn, status: "failed", completedAt: now },
-              },
-              {
-                type: "turn.terminal",
-                driver,
-                providerThreadId: childTurn.providerThreadId,
-                providerTurnId: childTurn.id,
-                runOrdinal: child.turn.runOrdinal,
-                failureItemOrdinal: 1,
-                status: "failed",
-                failure: {
-                  class: "usage_limit",
-                  message: "Claude usage limit reached.",
-                  code: null,
-                  retryable: null,
-                  resetAt,
+          const limitFailed = (entry: (typeof turns)[number]) =>
+            watch(
+              (event) =>
+                event.type === "run.updated" &&
+                event.payload.id === entry.turn.runId &&
+                event.payload.status === "failed",
+            );
+          const limitEvents = (
+            entry: (typeof turns)[number],
+            providerTurn: typeof childTurn,
+            failedAt: DateTime.Utc,
+          ) =>
+            Effect.forEach(
+              [
+                {
+                  type: "provider_turn.updated",
+                  driver,
+                  providerTurn: { ...providerTurn, status: "failed", completedAt: failedAt },
                 },
-                threadDisposition: "reusable",
-              },
-            ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
-            (event) => Queue.offer(child.events, event),
-            { discard: true },
-          );
+                {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: providerTurn.providerThreadId,
+                  providerTurnId: providerTurn.id,
+                  runOrdinal: entry.turn.runOrdinal,
+                  failureItemOrdinal: 1,
+                  status: "failed",
+                  failure: {
+                    class: "usage_limit",
+                    message: "Claude usage limit reached.",
+                    code: null,
+                    retryable: null,
+                    resetAt,
+                  },
+                  threadDisposition: "reusable",
+                },
+              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+              (event) => Queue.offer(entry.events, event),
+              { discard: true },
+            );
+          const childFailed = yield* limitFailed(child);
+          const hitLimit = limitEvents(child, childTurn, now);
           let cancelled: string | null = null;
           if (cancel === "as its limit lands") {
             limitInFlight = hitLimit;
@@ -384,13 +399,50 @@ it.effect.each([
           yield* sweep;
           if (continuationRunning !== undefined) yield* Fiber.join(continuationRunning);
           yield* readStatus;
+          if ("limitAgain" in row) {
+            // The running continuation hits a limit again, with a later reset.
+            const limitLatestTurn = (minutes: number) =>
+              Effect.gen(function* () {
+                const entry = turns.at(-1)!;
+                const providerTurn = (yield* orchestrator.getThreadProjection(
+                  childThreadId,
+                )).providerTurns.find((turn) => turn.runAttemptId === entry.turn.attemptId)!;
+                const failed = yield* limitFailed(entry);
+                const failedAt = yield* DateTime.now;
+                resetAt = DateTime.formatIso(DateTime.add(failedAt, { minutes }));
+                yield* limitEvents(entry, providerTurn, failedAt);
+                yield* Fiber.join(failed);
+                yield* worker.drain();
+                yield* sweep;
+              });
+            yield* limitLatestTurn(5);
+            yield* readStatus;
+            // A continuation is a task of its own, and it waits the same way when the run that
+            // continues it hits a limit too.
+            const continuationTask = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).subagents.find((entry) => entry.id !== task.id)!;
+            const nextRunning = yield* turnRunning();
+            yield* TestClock.adjust("5 minutes");
+            yield* sweep;
+            yield* Fiber.join(nextRunning);
+            yield* limitLatestTurn(10);
+            const again = yield* service.taskStatus(scope, continuationTask.id);
+            assert.deepEqual([again.status, again.resetAt], ["usage_limited", resetAt]);
+          }
           assert.deepEqual(seen, [...statuses]);
           const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
           assert.deepEqual(
             childAfter.messages.flatMap((message) =>
               message.role === "user" ? [message.text] : [],
             ),
-            resumed ? ["Review the change", "Continue where you left off."] : ["Review the change"],
+            [
+              "Review the change",
+              ...Array.from(
+                { length: !resumed ? 0 : "limitAgain" in row ? 2 : 1 },
+                () => "Continue where you left off.",
+              ),
+            ],
           );
         }).pipe(Effect.provide(layerTest));
       }),

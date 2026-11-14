@@ -1580,28 +1580,33 @@ const make = Effect.gen(function* () {
       runRanAfter(latestRun, limitedRun)
         ? latestRun
         : undefined;
+    // A continuation that hits a limit again waits on its own failure.
+    const waitRun = continuationRun ?? limitedRun;
+    const waitFailure =
+      continuationRun === undefined
+        ? limitFailure
+        : latestRootProviderFailure(continuationRun, resultRecords.turnItems);
     // Only a wait the recovery worker ends by itself is one: otherwise the run failed as any other.
     const waitsForReset =
-      limitedRun !== undefined &&
-      continuationRun === undefined &&
+      waitRun !== undefined &&
+      waitFailure?.class === "usage_limit" &&
       continuesAtReset(
-        limitFailure?.resetAt,
-        DateTime.toEpochMillis(limitedRun.completedAt ?? limitedRun.requestedAt),
+        waitFailure.resetAt,
+        DateTime.toEpochMillis(waitRun.completedAt ?? waitRun.requestedAt),
         DateTime.toEpochMillis(yield* DateTime.now),
         (yield* serverSettings.getSettings.pipe(
           Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
         )).autoResumeLimitedThreads,
       );
     const limitState =
-      limitedRun === undefined
+      waitRun === undefined
         ? null
-        : continuationRun !== undefined
-          ? { status: taskStatusForRun(continuationRun), run: continuationRun }
-          : task.completionDelivery?.state === "disposed"
-            ? { status: "cancelled" as const, run: limitedRun }
-            : waitsForReset
-              ? { status: "usage_limited" as const, run: limitedRun }
-              : { status: taskStatusForRun(limitedRun), run: limitedRun };
+        : task.completionDelivery?.state === "disposed" &&
+            (continuationRun === undefined || waitFailure?.class === "usage_limit")
+          ? { status: "cancelled" as const, run: waitRun }
+          : waitsForReset
+            ? { status: "usage_limited" as const, run: waitRun }
+            : { status: taskStatusForRun(waitRun), run: waitRun };
     const heldForRestart =
       task.result === null &&
       taskWorkState === "result_available" &&
@@ -1701,8 +1706,8 @@ const make = Effect.gen(function* () {
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
       status,
-      ...(status === "usage_limited" && limitFailure?.resetAt != null
-        ? { resetAt: limitFailure.resetAt }
+      ...(status === "usage_limited" && waitFailure?.resetAt != null
+        ? { resetAt: waitFailure.resetAt }
         : {}),
       workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
