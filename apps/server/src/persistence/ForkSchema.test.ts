@@ -552,3 +552,33 @@ it.effect.each(["new", "old", "half-migrated"] as const)(
       ]);
     }).pipe(Effect.provide(database)),
 );
+
+it.effect.each([
+  { author: "agent", kind: "change" },
+  { author: "routine", kind: "change" },
+  { author: "user", kind: "boundary" },
+] as const)(
+  "keeps a $kind line by $author out of every start's request backfill",
+  ({ author, kind }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* ensureForkSchema();
+      yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, created_at)
+      VALUES ('line', 'g1', 1, ${author}, ${kind}, 'x', 't')`;
+      // Even a reply task that names the line does not pull it into a request.
+      yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        request_id, created_at, updated_at)
+      VALUES ('t1', 'g1', 't1', 'reply', 'line', 'ada', 'do', 'completed', 'm1', 't', 't')`;
+      yield* ensureForkSchema();
+      assert.deepStrictEqual(yield* sql`SELECT request_id FROM assistant_group_messages`, [
+        { request_id: null },
+      ]);
+      const plan = yield* sql<{ readonly detail: string }>`
+      EXPLAIN QUERY PLAN SELECT 1 FROM assistant_group_tasks WHERE request_message_id = 'line'`;
+      assert.isTrue(
+        plan.some((row) => row.detail.includes("assistant_group_tasks_request_message_idx")),
+      );
+    }).pipe(Effect.provide(database)),
+);

@@ -652,6 +652,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_message_idx ON assistant_group_tasks(request_message_id)`;
   // Every start, only rows still without a request (an older build could add the columns and stop
   // before filling them): a message that opened root tasks, or a person's message replying to
   // nothing, was a request; a reply joins the request of what it answers, however deep the chain.
@@ -672,7 +673,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         WHERE t.task_id = assistant_group_messages.task_id),
       (SELECT t.request_id FROM assistant_group_tasks t
         WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
-    WHERE request_id IS NULL`;
+    WHERE request_id IS NULL AND (kind = 'message' OR task_id IS NOT NULL)`;
   yield* sql`
     WITH RECURSIVE chain(message_id, request_id) AS (
       SELECT message_id, request_id FROM assistant_group_messages
