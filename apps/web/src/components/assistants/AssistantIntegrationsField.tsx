@@ -38,6 +38,8 @@ export function AssistantIntegrationsField(props: {
   /** Where the assistant's work runs, as chosen in the form. */
   readonly workspace: AssistantWorkspace;
   /** The assistant's provider instance, when it has a model. */
+  /** Leaving for Settings closes the dialog this field sits in. */
+  readonly onNavigate: () => void;
   readonly provider: {
     readonly instanceId: string;
     readonly driverKind: string;
@@ -88,6 +90,7 @@ export function AssistantIntegrationsField(props: {
           No integrations to choose yet. Connect one in{" "}
           <Link
             to="/settings/integrations"
+            onClick={props.onNavigate}
             className="cursor-pointer rounded-sm text-foreground underline underline-offset-2 outline-hidden hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           >
             Settings → Integrations
