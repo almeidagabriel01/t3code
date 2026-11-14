@@ -24,6 +24,8 @@ import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { useAssistantEntries } from "../../state/assistants";
+import { AssistantModelsRow } from "./AssistantModelsRow";
 import { FallbackModelsRow } from "./FallbackModelsRow";
 import { FolderModelsRow } from "./FolderModelsRow";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -46,6 +48,7 @@ import {
   useScopedSettings,
   useScopedSettingsMixed,
   useScopedSettingSource,
+  useUpdateProjectAssistantModel,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
@@ -59,6 +62,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateAssistantModel = useUpdateProjectAssistantModel();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -257,6 +261,29 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   ) : null;
 
+  const assistantEntries = useAssistantEntries().active;
+  const assistantRow =
+    isProjectScope && target?.projectId && representative ? (
+      <AssistantModelsRow
+        settings={settings}
+        providers={providers}
+        anchor={selection}
+        selections={
+          representative.serverConfig?.settings.projectSettingsOverrides[target.projectId]
+            ?.assistantModelSelections ?? {}
+        }
+        assistants={assistantEntries
+          .filter((entry) => entry.environmentId === representative.environmentId)
+          .map(({ assistant }) => assistant)}
+        save={(assistantId, value, onFailed) =>
+          updateAssistantModel(representative.environmentId, assistantId, value, onFailed)
+        }
+        environmentId={representative.environmentId}
+        instanceEntries={entries}
+        getModelDisabledReason={modelDisabledReason}
+      />
+    ) : null;
+
   const folderRow = !isProjectScope ? (
     <FolderModelsRow
       settings={settings}
@@ -278,6 +305,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {assistantRow}
           {fallbackRow}
           {folderRow}
           {workspaceRow}
@@ -285,6 +313,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       ) : category === "general" ? (
         <>
           {modelRow}
+          {assistantRow}
           {fallbackRow}
           {folderRow}
           <SettingsRow

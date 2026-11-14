@@ -8,7 +8,10 @@ import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
+  type AssistantId,
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
+  type ModelSelection,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
   type UnifiedSettings,
@@ -21,6 +24,7 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planProjectAssistantModel,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -49,14 +53,17 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
+  return (
+    plan: ReturnType<typeof planScopedSettingsPatch>,
+    onFailed?: (message: string) => void,
+  ) => {
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
         title: "Setting not saved",
         description: plan.unavailableReason,
       });
-      onFailed?.();
+      onFailed?.(plan.unavailableReason);
       return;
     }
     void persistScopedSettingsPatch(
@@ -79,7 +86,7 @@ function useRunScopedPlan() {
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
       if (failedEnvironments.length === 0) return;
-      onFailed?.();
+      onFailed?.(failedEnvironments.map(({ message }) => message).join("\n"));
       toastManager.add({
         type: "error",
         title:
@@ -103,6 +110,22 @@ export function useUpdateScopedSettings() {
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
     run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+}
+
+/** Sets or clears one assistant's model in the scoped project, on the assistant's environment. */
+export function useUpdateProjectAssistantModel() {
+  const { scope, environments } = useSettingsScope();
+  const run = useRunScopedPlan();
+  return (
+    environmentId: EnvironmentId,
+    assistantId: AssistantId,
+    selection: ModelSelection | null,
+    onFailed: (message: string) => void,
+  ) =>
+    run(
+      planProjectAssistantModel(scope, environments, environmentId, assistantId, selection),
+      onFailed,
+    );
 }
 
 export function useClearScopedSettings() {
