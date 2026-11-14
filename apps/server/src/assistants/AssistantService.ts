@@ -65,6 +65,7 @@ import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
 import { forgetDeletedProjects } from "./AssistantTeamProjects.ts";
+import { RESUBSCRIBE } from "./resubscribe.ts";
 import {
   type AssistantTeamRow,
   allTeams,
@@ -1161,13 +1162,18 @@ const make = Effect.gen(function* () {
       );
     },
   );
-  // Read before forking so a delete committed while the fiber starts is replayed, not missed.
-  const afterSequence = yield* applicationEvents.latestApplicationSequence.pipe(
+  // Read before forking so a delete committed while the fiber starts is replayed, not missed. A
+  // failed stream subscribes again after the last event it handled, so a gap misses nothing.
+  let afterSequence = yield* applicationEvents.latestApplicationSequence.pipe(
     Effect.orElseSucceed(() => 0),
   );
-  yield* applicationEvents.streamApplicationEvents({ afterSequence }).pipe(
+  yield* Stream.suspend(() => applicationEvents.streamApplicationEvents({ afterSequence })).pipe(
+    Stream.tapError((error) =>
+      Effect.logWarning("assistant project tracking failed; subscribing again", error),
+    ),
+    Stream.retry(RESUBSCRIBE),
     Stream.runForEach((event) =>
-      "aggregateKind" in event &&
+      ("aggregateKind" in event &&
       event.aggregateKind === "project" &&
       event.type === "project.deleted"
         ? forgetDeletedProjectsInLists().pipe(
@@ -1175,9 +1181,9 @@ const make = Effect.gen(function* () {
               Effect.logWarning("deleted project was not taken off assistant lists", cause),
             ),
           )
-        : Effect.void,
+        : Effect.void
+      ).pipe(Effect.andThen(Effect.sync(() => void (afterSequence = event.sequence)))),
     ),
-    Effect.catch((error) => Effect.logWarning("assistant project tracking stopped", error)),
     Effect.forkScoped,
   );
 

@@ -1,9 +1,7 @@
 import { isAssistantGroupThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -11,6 +9,7 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantGroups } from "./AssistantGroups.ts";
+import { RESUBSCRIBE } from "./resubscribe.ts";
 
 /** Moves a group task along when its member's run on the group thread ends. */
 export class AssistantGroupReactor extends Context.Service<
@@ -21,13 +20,6 @@ export class AssistantGroupReactor extends Context.Service<
     readonly handle: (event: OrchestrationV2DomainEvent) => Effect.Effect<void>;
   }
 >()("t3/assistants/AssistantGroupReactor") {}
-
-/** A stream that ends in error subscribes again, backing off up to half a minute. */
-const RESUBSCRIBE = Schedule.exponential("1 second").pipe(
-  Schedule.modifyDelay(({ duration }) =>
-    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-  ),
-);
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
