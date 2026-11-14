@@ -39,7 +39,9 @@ export function TaskEventActivityRow(props: {
       <Text numberOfLines={1} className="shrink-0 text-xs text-foreground-muted">
         {`· ${props.label}`}
       </Text>
-      <Text className="shrink-0 font-t3-medium text-xs text-foreground-secondary">Open</Text>
+      <Text className="ml-auto shrink-0 pl-2 font-t3-medium text-xs text-foreground-secondary">
+        Open
+      </Text>
     </Pressable>
   );
 }
