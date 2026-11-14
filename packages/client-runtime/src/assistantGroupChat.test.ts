@@ -1142,6 +1142,26 @@ describe("assistant group tabs", () => {
     assert.deepStrictEqual(viewKeys(result), expected);
   });
 
+  it.each([
+    ["a project tab reads its scope", view([P1, P2], [scope(P1)], "project:p2"), { projectId: P2 }],
+    ["All reads every request", view([P1, P2], [scope(P1)], null), undefined],
+    ["no tabs read every request", view([P1, P2], undefined, null), undefined],
+    ["pending reads nothing", view([P1, P2], [scope(P1)], null, [], true), null],
+    [
+      "an unknown group reads nothing",
+      assistantGroupTabView({
+        team: undefined,
+        members: [],
+        projects,
+        assistants: { has: () => true },
+        saved: null,
+      }),
+      null,
+    ],
+  ])("view scope: %s", (_name, result, expected) => {
+    assert.deepStrictEqual(result.scope, expected);
+  });
+
   it("labels a kept tab by the project's live title, else its last known one", () => {
     const titled = { ...scope(P3), title: "Old three" };
     const labels = (scopes: ReturnType<typeof scope>[], saved: string, loaded = projects) =>

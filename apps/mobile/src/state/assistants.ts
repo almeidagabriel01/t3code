@@ -3,6 +3,7 @@ import {
   assistantErrorMessage,
   assistantForTaskThread,
   assistantForThread,
+  ASSISTANT_GROUP_CHAT_IDLE,
   createAssistantsEnvironmentAtoms,
   selectAssistantTasks,
   selectActiveAssistants,
@@ -334,19 +335,24 @@ export function useAssistantSandboxActions(environmentId: EnvironmentId) {
   };
 }
 
-/** One group's chat, live: null before its first snapshot. Without a scope, every request. */
+/**
+ * One group's chat, live: null before its first snapshot. A scope narrows it to one tab, none
+ * reads every request, and null reads nothing while the tab is not known yet.
+ */
 export function useAssistantGroupChat(
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
-  scope?: AssistantGroupScope,
+  scope?: AssistantGroupScope | null,
 ): AssistantGroupChatState | null {
   return Option.getOrNull(
     AsyncResult.value(
       useAtomValue(
-        assistantsEnvironment.groupChat({
-          environmentId,
-          input: { teamId, ...(scope === undefined ? {} : { scope }) },
-        }),
+        scope === null
+          ? ASSISTANT_GROUP_CHAT_IDLE
+          : assistantsEnvironment.groupChat({
+              environmentId,
+              input: { teamId, ...(scope === undefined ? {} : { scope }) },
+            }),
       ),
     ),
   );

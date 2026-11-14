@@ -1029,6 +1029,7 @@ describe("group chat feed", () => {
     mocks.teams = [];
     render();
     expect(text()).toContain("Group not found");
+    expect(new Set(mocks.subscribe.mock.calls.map((call) => call[2]))).toEqual(new Set([null]));
     mocks.environmentIds = [];
     render();
     expect(text()).not.toContain("Group not found");
@@ -1723,6 +1724,8 @@ describe("requests", () => {
     ];
     render();
     expect(container.querySelector('[data-testid="list"]')).toBeNull();
+    // Nothing is read before the tab is known: not the whole chat, not a scope.
+    expect(new Set(mocks.subscribe.mock.calls.map((call) => call[2]))).toEqual(new Set([null]));
     vi.advanceTimersByTime(1000);
     expect(mocks.markRead).not.toHaveBeenCalled();
     vi.useRealTimers();
@@ -1768,6 +1771,7 @@ describe("requests", () => {
       for (const listener of mocks.preferenceListeners) listener();
     });
     expect(selected(TAB.beta)).toBe("true");
+    expect(mocks.subscribe.mock.calls.map((call) => call[2])).not.toContainEqual(undefined);
   });
 
   it("switches tabs keeping the draft, sets the composer's project, and reopens on the saved tab", async () => {

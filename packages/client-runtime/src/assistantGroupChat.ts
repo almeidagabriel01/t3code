@@ -455,27 +455,33 @@ export function assistantGroupTabsPending(input: {
  * none. A server without scopes has no tabs, so it never waits for the saved one.
  */
 export function assistantGroupTabView(input: {
-  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat">;
+  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat"> | undefined;
   readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   readonly assistants: { readonly has: (id: string) => boolean };
   readonly saved: string | null | undefined;
   /** The saved tab is still being read. */
   readonly loading?: boolean;
-}) {
+}): {
+  readonly pending: boolean;
+  readonly tabs: ReadonlyArray<AssistantGroupTab> | null;
+  readonly tab: AssistantGroupTab | null;
+  /** What the chat reads: the tab's scope, undefined for every request, null for nothing yet. */
+  readonly scope: AssistantGroupScope | undefined | null;
+} {
+  const { team } = input;
+  if (team === undefined) return { pending: false, tabs: null, tab: null, scope: null };
+  const known = { ...input, team };
   // Decided before keeping the saved tab: a project still loading would otherwise show as removed.
   if (
-    (input.loading === true && input.team.chat?.scopes !== undefined) ||
-    (assistantGroupTabs(input) === null && assistantGroupTabsPending(input))
+    (input.loading === true && team.chat?.scopes !== undefined) ||
+    (assistantGroupTabs(known) === null && assistantGroupTabsPending(known))
   ) {
-    return { pending: true, tabs: null, tab: null };
+    return { pending: true, tabs: null, tab: null, scope: null };
   }
-  const tabs = assistantGroupTabs({ ...input, active: input.saved });
-  return {
-    pending: false,
-    tabs,
-    tab: tabs === null ? null : resolveAssistantGroupTab(input.saved, tabs),
-  };
+  const tabs = assistantGroupTabs({ ...known, active: input.saved });
+  const tab = tabs === null ? null : resolveAssistantGroupTab(input.saved, tabs);
+  return { pending: false, tabs, tab, scope: tab?.scope };
 }
 
 /** The saved key's tab, else All. */

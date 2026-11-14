@@ -18,6 +18,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("./query", () => ({ useEnvironmentQuery: mocks.query }));
 
 import { useAtomValue } from "@effect/atom-react";
+import { ASSISTANT_GROUP_CHAT_IDLE } from "@t3tools/client-runtime/state/assistants";
 
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -80,6 +81,11 @@ describe("group chat hooks", () => {
     expect(useAssistantGroupChat("hub" as never, "g1" as never)).toBe(state);
     vi.mocked(useAtomValue).mockReturnValueOnce(AsyncResult.initial());
     expect(useAssistantGroupChat("hub" as never, "g1" as never)).toBeNull();
+    // Before the tab is known nothing is read: not the whole chat, not a scope.
+    vi.mocked(useAtomValue).mockImplementationOnce((atom) =>
+      atom === ASSISTANT_GROUP_CHAT_IDLE ? AsyncResult.initial() : AsyncResult.success(state),
+    );
+    expect(useAssistantGroupChat("hub" as never, "g1" as never, null)).toBeNull();
   });
 
   const commands = () => {

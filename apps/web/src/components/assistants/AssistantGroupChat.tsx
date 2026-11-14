@@ -1436,12 +1436,15 @@ export function AssistantGroupChat(props: {
     return member === undefined || member.archivedAt !== null ? [] : [member];
   });
   // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
-  const { pending, tabs, tab } =
-    team === undefined
-      ? { pending: false, tabs: null, tab: null }
-      : assistantGroupTabView({ team, members, projects, assistants: byId, saved: savedTab });
+  const { pending, tabs, tab, scope } = assistantGroupTabView({
+    team,
+    members,
+    projects,
+    assistants: byId,
+    saved: savedTab,
+  });
   const tabKey = tab?.key ?? null;
-  const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
+  const live = useAssistantGroupChat(environmentId, teamId, scope);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(id, projects, team?.chat?.scopes);
   const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(

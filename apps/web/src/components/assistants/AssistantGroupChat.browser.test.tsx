@@ -1196,6 +1196,8 @@ it("reads nothing, and shows no untabbed feed, while a member of a tabbed group 
   });
   await expect.element(composer()).toBeVisible();
   await expect.element(main().getByText("Ship the app")).not.toBeInTheDocument();
+  // Nothing is read before the tab is known: not the whole chat, not a scope.
+  expect(fakeGroupChat.subscriptions).toEqual([]);
   publishAssistants(loaded, [team({ chat: scopedChat() })]);
   await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
   await expect.element(main().getByText("Ship the app")).toBeVisible();

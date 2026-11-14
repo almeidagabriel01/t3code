@@ -11,7 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { applyAssistantGroupsEvent, type AssistantGroupChatState } from "../assistantGroupChat.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -265,6 +265,11 @@ export function assistantErrorMessage(error: unknown): string {
     ? error.message
     : "The assistant request failed. Try again.";
 }
+
+/** A group chat read before its tab is known: nothing yet, and no subscription. */
+export const ASSISTANT_GROUP_CHAT_IDLE = Atom.make(
+  AsyncResult.initial<AssistantGroupChatState, never>(),
+).pipe(Atom.withLabel("environment-data:assistants:group-chat:idle"));
 
 export function createAssistantsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,

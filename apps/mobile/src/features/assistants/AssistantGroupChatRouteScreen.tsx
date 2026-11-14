@@ -1253,18 +1253,15 @@ export function AssistantGroupChatRouteScreen({
   const { team, everyone, members, groupProjects, projectName } = people;
   const savedTab = useGroupTabPreference(environmentId, teamId);
   // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
-  const { pending, tabs, tab } =
-    team === undefined
-      ? { pending: false, tabs: null, tab: null }
-      : assistantGroupTabView({
-          team,
-          members,
-          projects: projects.filter((project) => project.environmentId === environmentId),
-          assistants: people.byId,
-          saved: savedTab.saved,
-          loading: savedTab.loading,
-        });
-  const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
+  const { pending, tabs, tab, scope } = assistantGroupTabView({
+    team,
+    members,
+    projects: projects.filter((project) => project.environmentId === environmentId),
+    assistants: people.byId,
+    saved: savedTab.saved,
+    loading: savedTab.loading,
+  });
+  const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
   const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
   // The composer's own project pick, until a send or another tab.
