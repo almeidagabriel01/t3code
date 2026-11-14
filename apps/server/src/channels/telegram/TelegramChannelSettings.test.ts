@@ -2,8 +2,10 @@ import * as CryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { TelegramChannelSettingsError } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -228,9 +230,20 @@ it.effect("shows what never reached Telegram and puts it back in line on resend"
     }
     yield* outbox.drain;
     assert.strictEqual((yield* settings.get).undeliveredCount, 2);
-    const [streamed] = yield* Stream.runCollect(Stream.take(settings.streamStatus, 1));
-    assert.strictEqual(streamed?.undeliveredCount, 2);
+    const first = yield* Deferred.make<void>();
+    const watching = yield* settings.streamStatus.pipe(
+      Stream.tap(() => Deferred.succeed(first, undefined)),
+      Stream.take(2),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    yield* Deferred.await(first);
     assert.deepStrictEqual(yield* settings.resendUndelivered, { requeued: 2 });
+    const streamed = yield* Fiber.join(watching);
+    assert.deepStrictEqual(
+      streamed.map((status) => status.undeliveredCount),
+      [2, undefined],
+    );
     assert.isUndefined((yield* settings.get).undeliveredCount);
     const states = yield* sql<{ readonly state: string }>`
       SELECT state FROM channel_outbox ORDER BY rowid`;

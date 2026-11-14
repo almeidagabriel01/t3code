@@ -151,6 +151,10 @@ it.effect("an upgrade leaves unconfirmed only the last piece of a delivery left 
     yield* (yield* transport).send(message({ text: "a".repeat(5000) }));
     // Only the second piece goes again.
     assert.lengthOf(sent, 1);
+    // A later start does not undo that confirmation.
+    yield* ensureForkSchema();
+    yield* (yield* transport).send(message({ text: "a".repeat(5000) }));
+    assert.lengthOf(sent, 1);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory));
 });
 
