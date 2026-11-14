@@ -779,7 +779,7 @@ function RequestBlock(props: {
             props.allChip === null ? null : (
               <span
                 data-testid="group-request-chip"
-                className="flex max-w-36 min-w-0 shrink items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
+                className="flex max-w-28 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
               >
                 <FolderIcon aria-hidden className="size-3 shrink-0" />
                 <span className="truncate">{props.allChip}</span>
