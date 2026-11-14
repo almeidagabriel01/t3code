@@ -3554,6 +3554,28 @@ it.effect("an outside assistant's post without a project takes none the group la
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("another group's projects do not let a member work in this group's requests", () => {
+  const h = harness({ projects: { ada: ["p1"], beto: ["p3"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // Ada is in OTHER_TEAM, which lists Site; that reach stays in OTHER_TEAM's requests.
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["p3"]' WHERE team_id = ${OTHER_TEAM}`;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "@ada @beto fix the site", projectId: ProjectId.make("p3") },
+      h.user,
+    );
+    assert.deepEqual(
+      posted.tasks.map((task) => task.ownerId),
+      ["beto"],
+    );
+    assert.include(
+      (yield* h.messages).map((row) => row.text),
+      "Ada cannot work in Site, so only Beto got this.",
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("only a member that may work in the request's project gets its work", () => {
   const h = harness({ projects: { ada: ["p1", "p2"], beto: ["p1"] } });
   return Effect.gen(function* () {
