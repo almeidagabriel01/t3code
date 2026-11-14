@@ -19,11 +19,12 @@ import { useQuietThreadShells } from "../../state/entities";
 import { AssistantAvatar } from "./assistantPresentation";
 import { moodTextClass } from "./assistantPresenceLabels";
 import { useAssistantFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const MOOD_OF_STATE: Record<AssistantTaskState, AssistantMood> = {
   running: "working",
   waiting: "needs",
-  usage_limited: "needs",
+  usage_limited: "limited",
   failed: "failed",
   done: "idle",
 };
@@ -47,6 +48,7 @@ export function AssistantTaskRows(props: {
   const tasks = useAssistantTasks(environmentId, assistant.id);
   const shells = useQuietThreadShells();
   const flows = useAssistantFlows(environmentId);
+  const limitLabel = useUsageLimitLabel();
   const rows = useMemo(() => {
     if (tasks.length === 0) return [];
     const byId = new Map(
@@ -59,60 +61,68 @@ export function AssistantTaskRows(props: {
   if (rows.length === 0) return null;
   return (
     <View testID="assistant-task-list" className="ml-3.5 border-l border-border pl-1">
-      {rows.map(({ task, shell, state }) => (
-        <View key={task.threadId} className="flex-row items-center">
-          <Pressable
-            testID="assistant-task-row"
-            accessibilityRole="button"
-            accessibilityLabel={`${shell.title}, ${ASSISTANT_TASK_STATE_LABEL[state]}`}
-            onPress={() => flows.openConversation({ threadId: task.threadId })}
-            className="min-h-10 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
-          >
-            <AssistantAvatar
-              assistant={assistant}
-              environmentId={environmentId}
-              mood={ASSISTANT_TASK_FACE[state]}
-              size={18}
-            />
-            <Text
-              className={cn(
-                "min-w-0 flex-1 text-sm",
-                props.sidebar ? "text-drawer-foreground" : "text-foreground",
-              )}
-              numberOfLines={1}
+      {rows.map(({ task, shell, state }) => {
+        const label =
+          (state === "usage_limited" ? limitLabel(shell.runtime?.usageLimitResetAt) : null) ??
+          ASSISTANT_TASK_STATE_LABEL[state];
+        return (
+          <View key={task.threadId} className="flex-row items-center">
+            <Pressable
+              testID="assistant-task-row"
+              accessibilityRole="button"
+              accessibilityLabel={`${shell.title}, ${label}`}
+              onPress={() => flows.openConversation({ threadId: task.threadId })}
+              className="min-h-10 min-w-0 flex-1 flex-row items-center gap-2 rounded-2xl px-2 active:opacity-70"
             >
-              {shell.title}
-            </Text>
-            <Text
-              className={cn("shrink-0 text-xs", moodTextClass(MOOD_OF_STATE[state], props.sidebar))}
-            >
-              {ASSISTANT_TASK_STATE_LABEL[state]}
-            </Text>
-          </Pressable>
-          {canDismissAssistantTask(state) ? (
-            <Menu
-              actions={DISMISS_ACTIONS(flows.canAct)}
-              onPressAction={() => void flows.dismissTask(task.threadId)}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${shell.title} actions`}
-                hitSlop={6}
-                className="size-9 items-center justify-center rounded-full active:opacity-70"
+              <AssistantAvatar
+                assistant={assistant}
+                environmentId={environmentId}
+                mood={ASSISTANT_TASK_FACE[state]}
+                size={18}
+              />
+              <Text
+                className={cn(
+                  "min-w-0 flex-1 text-sm",
+                  props.sidebar ? "text-drawer-foreground" : "text-foreground",
+                )}
+                numberOfLines={1}
               >
-                <SymbolView
-                  name="ellipsis"
-                  size={16}
-                  tintColorClassName={
-                    props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
-                  }
-                  type="monochrome"
-                />
-              </Pressable>
-            </Menu>
-          ) : null}
-        </View>
-      ))}
+                {shell.title}
+              </Text>
+              <Text
+                className={cn(
+                  "shrink-0 text-xs",
+                  moodTextClass(MOOD_OF_STATE[state], props.sidebar),
+                )}
+              >
+                {label}
+              </Text>
+            </Pressable>
+            {canDismissAssistantTask(state) ? (
+              <Menu
+                actions={DISMISS_ACTIONS(flows.canAct)}
+                onPressAction={() => void flows.dismissTask(task.threadId)}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${shell.title} actions`}
+                  hitSlop={6}
+                  className="size-9 items-center justify-center rounded-full active:opacity-70"
+                >
+                  <SymbolView
+                    name="ellipsis"
+                    size={16}
+                    tintColorClassName={
+                      props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle"
+                    }
+                    type="monochrome"
+                  />
+                </Pressable>
+              </Menu>
+            ) : null}
+          </View>
+        );
+      })}
     </View>
   );
 }

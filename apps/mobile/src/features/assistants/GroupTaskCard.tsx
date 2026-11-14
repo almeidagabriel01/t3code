@@ -19,6 +19,7 @@ import { Button } from "../../components/ui/Button";
 import { Menu } from "../../components/ui/Menu";
 import { cn } from "../../lib/cn";
 import { useThreadShell } from "../../state/entities";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const STATUS_TONE: Record<AssistantGroupTask["status"], string> = {
   queued: "text-foreground-muted",
@@ -56,7 +57,9 @@ export function GroupTaskCard(props: {
   );
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
-  const waiting = assistantGroupWaitingReason(task);
+  const limitLabel = useUsageLimitLabel();
+  const waiting =
+    task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   return (
     <View
       testID="group-task-card"

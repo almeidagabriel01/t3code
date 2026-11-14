@@ -57,6 +57,10 @@ vi.mock("../../state/entities", () => ({ useThreadShell: () => mocks.shell }));
 vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { mood?: string }) => <i>{`face:${props.mood}`}</i>,
 }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantFlows: () => ({
     canAct: true,
@@ -120,6 +124,13 @@ describe("AssistantTaskChip", () => {
     render();
     expect(container.textContent).toContain("Task of Jarvis, failed");
     expect(container.textContent).toContain("face:failed");
+
+    mocks.shell = {
+      ...failedShell,
+      runtime: { status: "failed", lastErrorClass: "usage_limit", usageLimitResetAt: "2099-01-01" },
+    };
+    render();
+    expect(container.textContent).toContain("Task of Jarvis, limit until <2099-01-01>");
   });
 
   it("dismisses a finished task, refuses a running one, and restores a dismissed one", async () => {

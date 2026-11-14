@@ -2,8 +2,14 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-type Mood = "idle" | "working" | "needs" | "failed";
-type Presence = { mood: Mood; detail: string; since: string | null; queued?: number };
+type Mood = "idle" | "working" | "needs" | "limited" | "failed";
+type Presence = {
+  mood: Mood;
+  detail: string;
+  since: string | null;
+  queued?: number;
+  resetAt?: string;
+};
 
 const { mocks } = vi.hoisted(() => ({
   mocks: {
@@ -93,10 +99,19 @@ vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
     presence.mood === "needs" ? "waiting" : presence.mood,
   assistantQueuedLabel: (queued: number | undefined) =>
     queued !== undefined && queued > 0 ? `${queued} queued` : null,
-  assistantPresence: (thread: { id: string } | null): Presence =>
-    thread === null
-      ? { mood: "idle", detail: "Idle", since: null }
-      : (mocks.presence[thread.id] ?? { mood: "idle", detail: "Idle", since: null }),
+  assistantPresence: (
+    thread: { id: string } | null,
+    _groups: unknown,
+    limitLabel?: (resetAt: string | undefined) => string | null,
+  ): Presence => {
+    const presence =
+      thread === null
+        ? { mood: "idle" as const, detail: "Idle", since: null }
+        : (mocks.presence[thread.id] ?? { mood: "idle" as const, detail: "Idle", since: null });
+    return presence.mood === "limited"
+      ? { ...presence, detail: limitLabel?.(presence.resetAt) ?? "Usage limit" }
+      : presence;
+  },
 }));
 vi.mock("@t3tools/client-runtime/state/thread-attention", () => ({
   resolveSidebarThreadStatus: (thread: { id: string }) =>
@@ -156,7 +171,13 @@ vi.mock("../../state/entities", () => ({
             ? { status: "running" }
             : mood === "failed"
               ? { status: "failed" }
-              : null,
+              : mood === "limited"
+                ? {
+                    status: "failed",
+                    lastErrorClass: "usage_limit",
+                    usageLimitResetAt: mocks.presence[task.threadId]?.resetAt,
+                  }
+                : null,
       };
     }),
   ],
@@ -193,6 +214,10 @@ vi.mock("./useAssistantFlows", () => ({
 }));
 vi.mock("./assistantTeamTarget", () => ({
   useOpenAssistantTeam: () => ({ edit: mocks.openTeam, chat: mocks.chat }),
+}));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
 }));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.editor }));
 vi.mock("./assistantWorkTarget", () => ({ useOpenAssistantWork: () => mocks.work }));
@@ -337,10 +362,20 @@ describe("HomeAssistantsSection", () => {
     );
   });
 
+  it("says until when a usage limit holds an assistant, in the warning tone", () => {
+    mocks.active = [bot(0)];
+    mocks.presence.t0 = { mood: "limited", detail: "", since: null, resetAt: "2099-01-01T09:30Z" };
+    render(false);
+    const status = container.querySelector('[data-testid="assistant-status"]');
+    expect(status?.textContent).toBe("Limit until <2099-01-01T09:30Z>");
+    expect(status?.className).toContain("text-warning-foreground");
+  });
+
   it("lists an assistant's tasks under it with their state, and opens one on tap", async () => {
     mocks.tasks = [
       { threadId: "w1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "w2", title: "Fix flaky test", createdAt: "2026-11-02T00:00:00.000Z" },
+      { threadId: "w5", title: "Port docs", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "w3", title: "Old chore", createdAt: "2026-10-01T00:00:00.000Z" },
       {
         threadId: "w4",
@@ -351,12 +386,14 @@ describe("HomeAssistantsSection", () => {
     ];
     mocks.presence.w1 = { mood: "working", detail: "Working", since: null };
     mocks.presence.w2 = { mood: "failed", detail: "Last run failed", since: null };
+    mocks.presence.w5 = { mood: "limited", detail: "", since: null, resetAt: "2099-01-01T09:30Z" };
     render(false);
     const rows = Array.from(
       container.querySelectorAll('[data-testid="assistant-task-list"] button'),
     ).filter((row) => row.getAttribute("aria-label")?.includes(", "));
     expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
       "Add retry, Running",
+      "Port docs, Limit until <2099-01-01T09:30Z>",
       "Fix flaky test, Failed",
       "Old chore, Done",
     ]);
@@ -367,8 +404,8 @@ describe("HomeAssistantsSection", () => {
     const dismiss = container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="menu:Dismiss task"]',
     );
-    expect(dismiss).toHaveLength(2);
-    await act(async () => dismiss[0]?.click());
+    expect(dismiss).toHaveLength(3);
+    await act(async () => dismiss[1]?.click());
     expect(mocks.dismissTask).toHaveBeenCalledWith("w2");
     mocks.tasks = [];
     render(true);

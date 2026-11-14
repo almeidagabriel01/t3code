@@ -262,6 +262,10 @@ vi.mock("./assistantPresentation", () => ({
   ),
 }));
 vi.mock("./assistantTeamTarget", () => ({ useOpenAssistantTeam: () => mocks.openTeam }));
+vi.mock("./useUsageLimitLabel", () => ({
+  useUsageLimitLabel: () => (resetAt: string | null | undefined) =>
+    resetAt == null ? null : `Limit until <${resetAt}>`,
+}));
 vi.mock("./openAssistantEditor", () => ({ useOpenAssistantEditor: () => mocks.openEditor }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantTeamFlows: () => ({
@@ -491,6 +495,8 @@ describe("group chat feed", () => {
           resources: ["folder:/w/app", "browser"],
         }),
         task("t22", "running", "bo"),
+        task("t333", "usage_limited", "beto", { resetAt: "2099-01-01T09:30Z" }),
+        task("t4444", "usage_limited", "jarvis"),
       ],
     );
     render();
@@ -501,10 +507,12 @@ describe("group chat feed", () => {
     expect(container.querySelector('[data-testid="group-task-resources"]')?.textContent).toBe(
       "folder:/w/appbrowser",
     );
-    expect(container.querySelectorAll('[data-testid="group-task-waiting"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="group-task-waiting"]')?.textContent).toBe(
-      "waiting for browser (used by Bo)",
-    );
+    // A usage limit says until when; without a reset ahead its badge says it alone.
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="group-task-waiting"]'), (node) => [
+        node.textContent,
+      ]),
+    ).toEqual([["waiting for browser (used by Bo)"], ["Limit until <2099-01-01T09:30Z>"]]);
   });
 
   it("says on a running card when its member waits for the user's approval", () => {
