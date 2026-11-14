@@ -1079,6 +1079,8 @@ const make = Effect.gen(function* () {
   const followModel = Effect.fn("AssistantGroups.followModel")(function* (
     row: ThreadRow,
     target: ModelSelection,
+    /** A request that ended keeps its threads as they are: the move waits for work to come back. */
+    ended = false,
   ) {
     const followed = decodeModelSelectionJson(row.followed_model_selection);
     const thread = yield* inspectThread(row.thread_id as ThreadId);
@@ -1089,6 +1091,12 @@ const make = Effect.gen(function* () {
       modelSelectionsEqual(thread.modelSelection, followed);
     if (!follows || modelSelectionsEqual(target, followed)) {
       yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
+        WHERE thread_id = ${row.thread_id}`;
+      return;
+    }
+    if (ended) {
+      yield* sql`UPDATE assistant_group_request_threads
+        SET pending_model_selection = ${encodeModelSelectionJson(target)}
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
@@ -1117,13 +1125,15 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** A move `followModel` deferred while the thread was mid-turn. */
+  /** A move `followModel` deferred while the thread was mid-turn or its request had ended. */
   const applyPendingModel = Effect.fn("AssistantGroups.applyPendingModel")(function* (
     threadId: string,
   ) {
     const row = (yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_request_threads
-      WHERE thread_id = ${threadId} AND pending_model_selection IS NOT NULL`)[0];
+      SELECT * FROM assistant_group_request_threads r
+      WHERE thread_id = ${threadId} AND pending_model_selection IS NOT NULL
+        AND EXISTS (SELECT 1 FROM assistant_group_tasks t
+          WHERE t.request_id = r.request_id AND t.status IN ${sql.in(OPEN)})`)[0];
     const pending = decodeModelSelectionJson(row?.pending_model_selection);
     if (row !== undefined && pending !== null) yield* followModel(row, pending);
   });
@@ -1133,6 +1143,8 @@ const make = Effect.gen(function* () {
       SELECT request_id FROM assistant_group_tasks WHERE status IN ${sql.in(OPEN)})`;
 
   // A thread keeps the project it was launched in (or adopted), whatever the request's became.
+  // ponytail: reads every request thread ever made, only when a project's model changes; index
+  // the threads by project if that history grows large.
   const followProjectModels: AssistantGroups["Service"]["followProjectModels"] = Effect.fn(
     "AssistantGroups.followProjectModels",
   )(function* (projectIds) {
@@ -1140,7 +1152,8 @@ const make = Effect.gen(function* () {
     const wanted = new Set<string>(projectIds);
     yield* lock.withPermits(1)(
       Effect.gen(function* () {
-        for (const row of yield* openRequestThreads) {
+        const open = new Set((yield* openRequestThreads).map((row) => row.thread_id));
+        for (const row of yield* sql<ThreadRow>`SELECT * FROM assistant_group_request_threads`) {
           const thread = yield* inspectThread(row.thread_id as ThreadId);
           if (thread === undefined || !wanted.has(thread.projectId)) continue;
           const resolved = yield* modelSelections
@@ -1157,26 +1170,20 @@ const make = Effect.gen(function* () {
             });
             continue;
           }
-          yield* followModel(row, resolved.success.selection);
+          yield* followModel(row, resolved.success.selection, !open.has(row.thread_id));
         }
       }),
     );
   }, quietly("project model change"));
 
-  /** Only the projects open requests' threads work in are compared, so most changes cost one query. */
+  /** Every project is compared, as a request that ended takes its project's model when it reopens. */
   const followSettingsChange = Effect.fn("AssistantGroups.followSettingsChange")(function* (
     previous: ServerSettingsValue,
     next: ServerSettingsValue,
   ) {
-    const projectIds = new Set<string>();
-    for (const row of yield* openRequestThreads) {
-      const thread = yield* inspectThread(row.thread_id as ThreadId);
-      if (thread !== undefined && thread.deletedAt === null) projectIds.add(thread.projectId);
-    }
-    if (projectIds.size === 0) return;
+    if ((yield* sql`SELECT 1 FROM assistant_group_request_threads LIMIT 1`).length === 0) return;
     const projects = yield* sql<{ readonly project_id: string; readonly workspace_root: string }>`
-      SELECT project_id, workspace_root FROM projection_projects
-      WHERE project_id IN ${sql.in([...projectIds])}`;
+      SELECT project_id, workspace_root FROM projection_projects WHERE deleted_at IS NULL`;
     yield* followProjectModels(
       projectModelChanges(
         previous,
@@ -1202,9 +1209,6 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<{ readonly status: string }>`
       SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
-    // Like the moves `followProjectModels` makes, a deferred one is for open requests only.
-    yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
-      WHERE request_id = ${requestId}`;
     yield* settleThreads(yield* requestThreads(requestId));
   });
 
@@ -1316,6 +1320,24 @@ const make = Effect.gen(function* () {
       return yield* failed(
         exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
       );
+    }
+    // A queued turn starts on the thread's model when the live one ends, before any deferred move
+    // can land; the task waits for that end instead (`handleRunEvent` pumps on it). Its own earlier
+    // revision, still stopping, is the one turn it may queue behind.
+    const busy = yield* engine
+      .getThreadRecords(exec.success.threadId, ["runs"], { runStatuses: [...LIVE_RUN_STATUSES] })
+      .pipe(
+        Effect.map((records) =>
+          records.runs.some(
+            (run) => parseTaskMessageId(run.userMessageId ?? "")?.taskId !== task.task_id,
+          ),
+        ),
+        // Unread, it queues as before rather than holding the task.
+        Effect.orElseSucceed(() => false),
+      );
+    if (busy) {
+      yield* setWaitReason(task, "waiting for the conversation's current turn to end");
+      return false;
     }
     const seen =
       (yield* sql<ThreadRow>`
@@ -2649,8 +2671,18 @@ const make = Effect.gen(function* () {
       if (
         parseTaskMessageId(event.payload.userMessageId) === null &&
         !isLimitContinuation(event.payload)
-      )
-        return;
+      ) {
+        // The user's own turn in a request thread: a task may be waiting for it to end.
+        if (!ENDED_RUN.has(event.payload.status)) return;
+        return yield* lock.withPermits(1)(
+          Effect.gen(function* () {
+            const owner = yield* threadRowOf(event.payload.threadId);
+            if (owner?.request_id == null) return;
+            yield* applyPendingModel(owner.thread_id);
+            yield* pump(owner.team_id);
+          }),
+        );
+      }
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
           yield* finishRun(event.payload);
