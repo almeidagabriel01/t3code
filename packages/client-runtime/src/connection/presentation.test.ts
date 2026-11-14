@@ -13,7 +13,7 @@ import {
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import { environmentMcpUrl, environmentReachable, presentConnectionState } from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -155,6 +155,22 @@ describe("connection presentation", () => {
       error: "Disconnected.",
       traceId: "trace-1",
     });
+  });
+
+  it.each([
+    ["connected", true],
+    ["offline", false],
+    ["reconnecting", false],
+    ["error", false],
+    ["unsupported", false],
+    // Before the first attempt settles nothing is known, so nothing says "disconnected" yet.
+    ["available", null],
+    ["connecting", null],
+  ] as const)("a %s environment is reachable: %s", (phase, expected) => {
+    expect(environmentReachable({ phase })).toBe(expected);
+  });
+  it("an environment with no presentation yet is unknown", () => {
+    expect(environmentReachable(null)).toBe(null);
   });
 
   it("preserves an explicitly available environment while offline", () => {

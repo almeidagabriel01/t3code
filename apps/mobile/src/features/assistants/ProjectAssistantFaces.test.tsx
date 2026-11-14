@@ -37,7 +37,6 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
 }));
 vi.mock("@t3tools/client-runtime/assistantRobot", () => ({
   assistantFace: () => "idle",
-  assistantPresenceOf: () => ({ mood: "idle", detail: "Idle", since: null }),
 }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode; testID?: string }) => (
@@ -65,8 +64,8 @@ vi.mock("../../components/ui/Menu", () => ({
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ active: mocks.active }),
   useAssistantLiveWork: () => ({ sites: mocks.sites }),
+  useAssistantStatus: () => ({ of: () => ({ mood: "idle", detail: "Idle", since: null }) }),
 }));
-vi.mock("../../state/entities", () => ({ useQuietThreadShells: () => [] }));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.select,
 }));

@@ -72,11 +72,17 @@ describe("AssistantWorkLibrarySection", () => {
   it.each([
     ["loading", { data: null, error: null }, "Loading its files."],
     ["empty", { data: { files: [], truncated: false }, error: null }, "No files yet."],
-    ["failed", { data: null, error: "Server said no" }, "Could not load its files: Server said no"],
+    // The raw error can carry a transport failure and the server's URL; neither is for the user.
+    [
+      "failed",
+      { data: null, error: "Failed to fetch http://127.0.0.1:14729/x. Transport error" },
+      "Could not load its files.",
+    ],
   ] as const)("%s", (_name, library, message) => {
     mocks.library = library as never;
     render();
     expect(container.textContent).toContain(message);
+    expect(container.textContent).not.toMatch(/Transport|http/);
     expect(container.textContent).not.toContain("Showing the newest files.");
   });
 });

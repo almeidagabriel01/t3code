@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   assistantIndicator,
+  assistantStatus,
+  assistantStatusOf,
   countWaits,
   folderIndicator,
   needsYouItems,
@@ -183,13 +185,193 @@ describe("indicators", () => {
   });
 
   it.each([
-    [1, "working", { kind: "needs", count: 1 }],
+    [2, "needs", { kind: "needs", count: 2 }],
     [0, "failed", { kind: "failed" }],
     [0, "working", { kind: "running", count: 1 }],
-    // A "needs" mood with no listed wait (a request T3 answers itself) shows nothing.
-    [0, "needs", null],
     [0, "idle", null],
+    // A disconnected environment's assistant reads idle; its cached waits show nothing.
+    [1, "idle", null],
   ] as const)("an assistant with %i waits and mood %s shows %o", (needsYou, mood, expected) => {
     expect(assistantIndicator({ needsYou, mood })).toEqual(expected);
+  });
+
+  const presence = (mood: "idle" | "working" | "needs" | "failed", detail = "Idle") => ({
+    mood,
+    detail,
+    since: "2026-11-14T10:00:00.000Z",
+    reading: false,
+    queued: 0,
+  });
+  const site = (face: "working" | "waiting") => ({ face });
+  it.each([
+    // QA's task asked a question: Home says Needs you, so every screen does.
+    [
+      "a listed wait beats an idle chat",
+      presence("idle"),
+      1,
+      [site("waiting")],
+      true,
+      "needs",
+      "Needs you",
+    ],
+    [
+      "a listed wait beats a working chat",
+      presence("working", "Fixing it"),
+      1,
+      [],
+      true,
+      "needs",
+      "Needs you",
+    ],
+    [
+      "its own question keeps its detail",
+      presence("needs", "Asked you a question"),
+      1,
+      [],
+      true,
+      "needs",
+      "Asked you a question",
+    ],
+    [
+      "a request T3 answers itself is work",
+      presence("needs", "Needs your approval"),
+      0,
+      [],
+      true,
+      "working",
+      "Working",
+    ],
+    [
+      "a waiting task with no listed wait is work",
+      presence("idle"),
+      0,
+      [site("waiting")],
+      true,
+      "working",
+      "Working",
+    ],
+    [
+      "a failed run beats work in a task",
+      presence("failed", "Last run failed"),
+      0,
+      [site("working")],
+      true,
+      "failed",
+      "Last run failed",
+    ],
+    [
+      "its chat working keeps what it says",
+      presence("working", "Fixing it"),
+      0,
+      [site("working")],
+      true,
+      "working",
+      "Fixing it",
+    ],
+    [
+      "a running task makes it work",
+      presence("idle"),
+      0,
+      [site("working")],
+      true,
+      "working",
+      "Working",
+    ],
+    ["nothing going on is idle", presence("idle"), 0, [], true, "idle", "Idle"],
+    ["an unknown connection changes nothing", presence("idle"), 1, [], null, "needs", "Needs you"],
+    [
+      "a disconnected environment wins",
+      presence("working", "Fixing it"),
+      1,
+      [site("waiting")],
+      false,
+      "idle",
+      "This environment is disconnected",
+    ],
+  ] as const)("%s", (_name, own, needsYou, sites, reachable, mood, detail) => {
+    const status = assistantStatus({ presence: own, needsYou, sites, reachable });
+    expect([status.mood, status.detail]).toEqual([mood, detail]);
+    // The sidebar row reads the same answer.
+    expect(assistantIndicator({ needsYou, mood: status.mood })?.kind === "needs").toBe(
+      mood === "needs",
+    );
+  });
+});
+
+describe("assistantStatusOf", () => {
+  const thread = (id: string, extra: object = {}) =>
+    ({
+      ...shell(id),
+      title: id,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      pendingSubagentRequest: null,
+      pendingGuestMessageCount: 0,
+      queuedMessageCount: 0,
+      blockedOnThreadWait: false,
+      latestRun: null,
+      runtime: null,
+      source: { latestVisibleMessage: null },
+      ...extra,
+    }) as never;
+  const qa = { id: "qa", threadId: "assistant:qa:1" };
+  const bo = { id: "bo", threadId: "assistant:bo:1" };
+  const shells = [
+    thread("assistant:qa:1"),
+    thread("assistant:bo:1"),
+    // QA's task asked the user a question; QA's own chat is idle.
+    thread("ask-me", {
+      hasPendingUserInput: true,
+      pendingRequest: { id: "r1", kind: "user_input", createdAt: "2026-11-14T10:00:00.000Z" },
+    }),
+    thread("bo-task", { runtime: { status: "running" } }),
+  ];
+  const ownerOf = threadOwnerResolver({
+    shells,
+    taskAssistantByThreadKey: new Map([
+      ["e:ask-me", "e:qa"],
+      ["e:bo-task", "e:bo"],
+    ]),
+    teamKeyByThreadKey: new Map(),
+    activeAssistantKeys: new Set(["e:qa", "e:bo"]),
+  });
+  const read = (reachable: boolean | null) =>
+    assistantStatusOf({
+      shells,
+      decisions: [],
+      ownerOf,
+      sites: [
+        {
+          environmentId: "e",
+          assistantId: "qa",
+          projectId: "p",
+          threadId: "ask-me",
+          face: "waiting",
+        },
+        {
+          environmentId: "e",
+          assistantId: "bo",
+          projectId: "p",
+          threadId: "bo-task",
+          face: "working",
+        },
+      ] as never,
+      reachable: () => reachable,
+    });
+
+  it("reads each assistant from its own waits and tasks", () => {
+    const status = read(true);
+    expect(status.of("e", qa).mood).toBe("needs");
+    expect(status.of("e", bo).mood).toBe("working");
+    expect(status.of("e", null).mood).toBe("idle");
+    expect(status.items.map((item) => item.threadId)).toEqual(["ask-me"]);
+  });
+
+  it("a disconnected environment reads disconnected for all", () => {
+    const status = read(false);
+    expect([status.of("e", qa).detail, status.of("e", bo).detail]).toEqual([
+      "This environment is disconnected",
+      "This environment is disconnected",
+    ]);
   });
 });

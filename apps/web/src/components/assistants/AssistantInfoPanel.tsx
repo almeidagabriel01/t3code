@@ -14,7 +14,7 @@ import {
   assistantWorkingHereLabel,
   assistantWorkingNow,
 } from "@t3tools/client-runtime/assistantLiveWork";
-import { assistantFace, assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime/autonomy";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
@@ -48,6 +48,7 @@ import {
   useAssistantSpend,
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells } from "../../state/entities";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -155,13 +156,14 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
   const flows = useAssistantFlows(environmentId);
   const navigate = useNavigate();
   const shells = useQuietThreadShells();
+  const status = useAssistantStatus();
   const work = useAssistantLiveWork();
   const nowMs = useNowMinuteMs();
   const { teams } = useAssistantEntries();
   const projectOf = useProjectLookup();
   const spend = useAssistantSpend(environmentId, assistant.budget === null ? null : assistant.id);
   const archived = assistant.archivedAt !== null;
-  const presence = assistantPresenceOf(assistant, environmentId, shells);
+  const presence = status.of(environmentId, assistant);
   const workingNow = archived ? [] : assistantWorkingNow(work, environmentId, assistant.id);
   const nameOf = (projectId: string) => projectOf(environmentId, projectId)?.title ?? "Project";
   const projects = assistantInfoProjects(assistant, workingNow, nameOf);
@@ -382,6 +384,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
   const flows = useAssistantTeamFlows(environmentId);
   const navigate = useNavigate();
   const shells = useQuietThreadShells();
+  const status = useAssistantStatus();
   const { active, archived: archivedAssistants } = useAssistantEntries();
   const chat = useAssistantGroupChat(environmentId, team.id);
   const projectOf = useProjectLookup();
@@ -412,7 +415,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
               key: member.id,
               assistant: member.assistant ?? removedAssistantFace(member.id),
               mood: member.assistant
-                ? assistantFace(assistantPresenceOf(member.assistant, environmentId, shells))
+                ? assistantFace(status.of(environmentId, member.assistant))
                 : "sleeping",
             }))}
           />
@@ -479,7 +482,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
       )}
       <Section title="Members">
         {members.map((member) => {
-          const presence = assistantPresenceOf(member.assistant, environmentId, shells);
+          const presence = status.of(environmentId, member.assistant);
           const face = (
             <AssistantAvatar
               assistant={member.assistant ?? removedAssistantFace(member.id)}

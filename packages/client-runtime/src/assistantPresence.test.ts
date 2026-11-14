@@ -108,53 +108,48 @@ describe("assistant look", () => {
 });
 
 describe("assistantSenderLook", () => {
-  const presence = (mood: string) => ({ mood }) as never;
-  const qa = { assistantId: "qa", assistant: { id: "qa" } as Assistant };
+  const status = (mood: string) => ({ mood, reading: false, since: null }) as never;
+  const qa = { assistant: { id: "qa" } as Assistant };
   it.each([
-    { name: "no task: presence", task: null, mood: "working", expected: ["working", true] },
-    { name: "no task: idle", task: null, mood: "idle", expected: ["idle", false] },
-    { name: "task running", task: "running", mood: "idle", expected: ["working", true] },
-    { name: "task waiting", task: "waiting", mood: "idle", expected: ["waiting", true] },
-    { name: "task failed", task: "failed", mood: "working", expected: ["failed", false] },
-    { name: "task done", task: "done", mood: "working", expected: ["done", false] },
-  ] as const)("face and section agree: $name", ({ task, mood, expected }) => {
-    const look = assistantSenderLook(
-      qa,
-      presence(mood),
-      task === null ? null : { assistantId: "qa", state: task },
-    );
-    expect([look.face, look.working]).toEqual(expected);
+    { mood: "needs", expected: ["waiting", "needs"] },
+    { mood: "working", expected: ["working", "working"] },
+    { mood: "failed", expected: ["failed", "idle"] },
+    { mood: "idle", expected: ["idle", "idle"] },
+  ] as const)("face and section agree: $mood", ({ mood, expected }) => {
+    const look = assistantSenderLook(qa, status(mood));
+    expect([look.face, look.section]).toEqual(expected);
   });
 
-  it("a task of another assistant and a removed assistant fall back to presence", () => {
-    const other = { assistantId: "qa", state: "failed" as const };
-    expect(
-      assistantSenderLook({ assistantId: "ada", assistant: null }, presence("idle"), other),
-    ).toEqual({ face: "sleeping", working: false });
+  it("a removed assistant sleeps", () => {
+    expect(assistantSenderLook({ assistant: null }, status("working"))).toEqual({
+      face: "sleeping",
+      section: "working",
+    });
   });
 });
 
 describe("presence rows", () => {
   it.each([
-    [false, 1, false, "Idle · 1 message here"],
-    [false, 6, false, "Idle · 6 messages here"],
-    [true, 2, true, "Working · 2 messages here · Asks before acting"],
-    [true, 0, true, "Working · Asks before acting"],
-  ])("working %s, %i messages, asks %s → %s", (working, count, asks, expected) => {
-    expect(assistantPresenceStatus(working, { count }, asks)).toBe(expected);
+    ["idle", 1, false, "Idle · 1 message here"],
+    ["idle", 6, false, "Idle · 6 messages here"],
+    ["working", 2, true, "Working · 2 messages here · Asks before acting"],
+    ["needs", 2, false, "Needs you · 2 messages here"],
+    ["working", 0, true, "Working · Asks before acting"],
+  ] as const)("%s, %i messages, asks %s → %s", (section, count, asks, expected) => {
+    expect(assistantPresenceStatus(section, { count }, asks)).toBe(expected);
   });
 
-  it.each([
-    { name: "mixed", working: ["b", "d"], expected: { working: ["b", "d"], idle: ["a", "c"] } },
-    { name: "all idle", working: [], expected: { working: [], idle: ["a", "b", "c", "d"] } },
-    {
-      name: "all working",
-      working: ["a", "b", "c", "d"],
-      expected: { working: ["a", "b", "c", "d"], idle: [] },
-    },
-  ])("lists Working before Idle in speaking order: $name", ({ working, expected }) => {
-    expect(assistantPresenceSections(["a", "b", "c", "d"], (id) => working.includes(id))).toEqual(
-      expected,
-    );
+  it("lists Needs you, then Working, then Idle, in speaking order", () => {
+    const sectionOf = (id: string) =>
+      id === "c"
+        ? ("needs" as const)
+        : id === "b" || id === "d"
+          ? ("working" as const)
+          : ("idle" as const);
+    expect(assistantPresenceSections(["a", "b", "c", "d", "e"], sectionOf)).toEqual({
+      needs: ["c"],
+      working: ["b", "d"],
+      idle: ["a", "e"],
+    });
   });
 });

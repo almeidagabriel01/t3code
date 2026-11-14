@@ -38,6 +38,9 @@ const rankOf = (mood: AssistantPresence["mood"]) =>
 export function rankAssistants<E extends RankableAssistant>(
   entries: ReadonlyArray<E>,
   shells: ReadonlyArray<RankShell>,
+  /** The shared `assistantStatus` reading; the bare presence when omitted. */
+  statusOf: (entry: E, presence: AssistantPresence) => AssistantPresence = (_entry, presence) =>
+    presence,
 ): Array<RankedAssistant<E>> {
   const byThread = new Map(shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]));
   return entries
@@ -47,9 +50,9 @@ export function rankAssistants<E extends RankableAssistant>(
         assistant.threadId === null
           ? null
           : (byThread.get(`${environmentId}:${assistant.threadId}`) ?? null);
-      const presence = assistantPresence(
-        own,
-        assistantGroupThreadsOf(shells, environmentId, assistant.id),
+      const presence = statusOf(
+        entry,
+        assistantPresence(own, assistantGroupThreadsOf(shells, environmentId, assistant.id)),
       );
       const parsed = own === null ? Number.NaN : Date.parse(own.updatedAt);
       return { entry, presence, activityAt: Number.isNaN(parsed) ? 0 : parsed };

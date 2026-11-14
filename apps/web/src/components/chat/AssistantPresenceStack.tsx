@@ -1,12 +1,14 @@
 import {
+  ASSISTANT_PRESENCE_SECTIONS,
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
+  type AssistantPresenceSection,
   type AssistantSender,
 } from "@t3tools/client-runtime/assistantPresence";
-import { assistantPresenceOf, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
+import type { AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantTaskState,
   canDismissAssistantTask,
@@ -30,11 +32,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import {
-  useQuietThreadProjection,
-  useQuietThreadShells,
-  useThreadShell,
-} from "../../state/entities";
+import { useQuietThreadProjection, useThreadShell } from "../../state/entities";
 import {
   useAssistantActions,
   useAssistantEntries,
@@ -49,6 +47,7 @@ import {
 } from "../assistants/assistantPresentation";
 import { openAssistantInfo } from "../assistants/assistantInfoState";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -74,7 +73,7 @@ function AssistantPresenceRow(props: {
   readonly threadKey: string;
   readonly sender: AssistantSender;
   readonly face: AssistantFace;
-  readonly working: boolean;
+  readonly section: AssistantPresenceSection;
   /** Set on the row of the assistant that launched this thread as a task. */
   readonly task: {
     readonly threadId: ThreadId;
@@ -83,7 +82,7 @@ function AssistantPresenceRow(props: {
   } | null;
   readonly onDone: () => void;
 }) {
-  const { sender, environmentId, task, working } = props;
+  const { sender, environmentId, task, section } = props;
   const { assistant } = sender;
   const actions = useAssistantActions(environmentId);
   const flows = useAssistantFlows(environmentId);
@@ -227,7 +226,7 @@ function AssistantPresenceRow(props: {
         data-assistant-presence-status
         className="truncate ps-7 text-xs whitespace-nowrap text-muted-foreground"
       >
-        {assistantPresenceStatus(working, sender, assistant?.askBeforeActing === true)}
+        {assistantPresenceStatus(section, sender, assistant?.askBeforeActing === true)}
       </p>
     </div>
   );
@@ -246,7 +245,7 @@ function PresenceSection(props: { readonly title: string; readonly children: Rea
 
 /**
  * The header's one assistant control: who from your assistants spoke in this thread or launched it
- * as a task, what each is doing, and a way to each one's info. The task owner wears the task's mood.
+ * as a task, what each is doing (its shared status: Needs you, Working, Idle), and a way to its info.
  */
 export function AssistantPresenceStack(props: {
   readonly environmentId: EnvironmentId;
@@ -259,7 +258,7 @@ export function AssistantPresenceStack(props: {
     isAssistantThread ? null : scopeThreadRef(environmentId, threadId),
   );
   const { active, archived } = useAssistantEntries();
-  const shells = useQuietThreadShells();
+  const status = useAssistantStatus();
   const owner = useTaskAssistant(environmentId, threadId);
   const taskShell = useThreadShell(owner === null ? null : scopeThreadRef(environmentId, threadId));
   const taskRecord = useAssistantTask(environmentId, threadId);
@@ -284,19 +283,17 @@ export function AssistantPresenceStack(props: {
           dismissed: taskRecord?.dismissedAt != null,
         };
   const threadKey = scopedThreadKey(scopeThreadRef(environmentId, threadId));
-  const presenceById = new Map(
+  const looks = new Map(
     senders.map((sender) => [
       sender.assistantId,
-      assistantPresenceOf(sender.assistant, environmentId, shells),
+      assistantSenderLook(sender, status.of(environmentId, sender.assistant)),
     ]),
   );
   const taskOf = (sender: AssistantSender) =>
     task !== null && task.assistantId === sender.assistantId ? task : null;
-  const lookOf = (sender: AssistantSender) =>
-    assistantSenderLook(sender, presenceById.get(sender.assistantId), task);
-  const faceOf = (sender: AssistantSender) => lookOf(sender).face;
-  const isWorking = (sender: AssistantSender) => lookOf(sender).working;
-  const sections = assistantPresenceSections(senders, isWorking);
+  const faceOf = (sender: AssistantSender) => looks.get(sender.assistantId)?.face ?? "sleeping";
+  const sectionOf = (sender: AssistantSender) => looks.get(sender.assistantId)?.section ?? "idle";
+  const sections = assistantPresenceSections(senders, sectionOf);
   const row = (sender: AssistantSender) => (
     <AssistantPresenceRow
       key={sender.assistantId}
@@ -304,7 +301,7 @@ export function AssistantPresenceStack(props: {
       threadKey={threadKey}
       sender={sender}
       face={faceOf(sender)}
-      working={isWorking(sender)}
+      section={sectionOf(sender)}
       task={taskOf(sender)}
       onDone={() => setOpen(false)}
     />
@@ -335,11 +332,12 @@ export function AssistantPresenceStack(props: {
         <h2 className="px-1.5 pt-0.5 pb-1 text-xs font-medium text-muted-foreground">
           Assistants in this thread · {senders.length}
         </h2>
-        {sections.working.length === 0 ? null : (
-          <PresenceSection title="Working">{sections.working.map(row)}</PresenceSection>
-        )}
-        {sections.idle.length === 0 ? null : (
-          <PresenceSection title="Idle">{sections.idle.map(row)}</PresenceSection>
+        {ASSISTANT_PRESENCE_SECTIONS.map(([id, title]) =>
+          sections[id].length === 0 ? null : (
+            <PresenceSection key={id} title={title}>
+              {sections[id].map(row)}
+            </PresenceSection>
+          ),
         )}
       </PopoverPopup>
     </Popover>

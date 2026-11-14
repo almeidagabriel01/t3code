@@ -69,11 +69,7 @@ export function AssistantWorkLibrary(props: {
   };
 
   if (library.error !== null) {
-    return (
-      <p className="text-xs text-destructive-foreground">
-        Could not load its files: {library.error}
-      </p>
-    );
+    return <p className="text-xs text-destructive-foreground">Could not load its files.</p>;
   }
   const files = library.data?.files ?? [];
   if (files.length === 0) {

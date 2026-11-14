@@ -31,7 +31,7 @@ export function AssistantWorkLibrarySection(props: {
       </View>
       {library.error !== null ? (
         <Text textRole="footnote" className="px-2 text-danger-foreground">
-          Could not load its files: {library.error}
+          Could not load its files.
         </Text>
       ) : files.length === 0 ? (
         <Text textRole="footnote" className="px-2 text-foreground-muted">

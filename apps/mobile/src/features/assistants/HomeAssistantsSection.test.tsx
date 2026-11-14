@@ -269,19 +269,29 @@ vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => Date.parse("2026-11-06
 vi.mock("../../state/entities", () => ({ useQuietThreadShells: helpers.quietShells }));
 vi.mock("../../state/assistants", async () => {
   const { buildThreadOwnership } = await import("../../state/threadOwnership");
+  const { assistantStatusOf } = await import("@t3tools/client-runtime/sidebarZones");
+  const ownership = () =>
+    buildThreadOwnership({
+      shells: helpers.quietShells() as never,
+      active: mocks.active,
+      activeTeams: mocks.teams.map((entry) => ({
+        environmentId: entry.environmentId,
+        team: { id: entry.team.id, chat: { threadIds: entry.team.chat?.threadIds ?? [] } },
+      })),
+      tasksByAssistant: helpers.tasksByAssistant(),
+    });
   return {
     useAssistantEntries: () => ({ active: mocks.active, activeTeams: mocks.teams }),
     useAssistantLiveWork: () => mocks.liveWork,
     useAssistantTasksByAssistant: helpers.tasksByAssistant,
-    useThreadOwnership: () =>
-      buildThreadOwnership({
+    useThreadOwnership: ownership,
+    useAssistantStatus: () =>
+      assistantStatusOf({
         shells: helpers.quietShells() as never,
-        active: mocks.active,
-        activeTeams: mocks.teams.map((entry) => ({
-          environmentId: entry.environmentId,
-          team: { id: entry.team.id, chat: { threadIds: entry.team.chat?.threadIds ?? [] } },
-        })),
-        tasksByAssistant: helpers.tasksByAssistant(),
+        decisions: [],
+        ownerOf: ownership().ownerOf,
+        sites: (mocks.liveWork?.sites ?? []) as never,
+        reachable: () => null,
       }),
   };
 });
@@ -727,11 +737,15 @@ describe("HomeAssistantsSection", () => {
       kind: "user_input",
       createdAt: "2026-11-01T00:00:00.000Z",
     };
-    // A presence that says "needs" without a listed wait gets no indicator.
+    // A "needs" presence the Needs you list does not hold (T3 answers it itself) reads as work.
     mocks.presence.t2 = { mood: "needs", detail: "Needs you", since: null };
     render(false);
-    expect(assistantRows()).toEqual(["Bot0, CEO, Needs you", "Bot1, Working", "Bot2, Ops"]);
-    expect(indicators()).toEqual(["Needs you", "Working"]);
+    expect(assistantRows()).toEqual([
+      "Bot0, CEO, Needs you",
+      "Bot1, Working",
+      "Bot2, Ops, Working",
+    ]);
+    expect(indicators()).toEqual(["Needs you", "Working", "Working"]);
     expect(container.textContent).toContain("CEO");
     expect(container.textContent).not.toContain("spinner");
     // Too narrow for the role: the name stays, the role leaves.

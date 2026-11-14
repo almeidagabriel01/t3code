@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   messages: [] as ReadonlyArray<{ id: string; senderThreadId?: string }>,
   assistants: [] as ReadonlyArray<unknown>,
   working: new Set<string>(),
+  needs: new Set<string>(),
   update: vi.fn(async (_input: unknown) => ({ ok: true as const, value: undefined })),
   owner: null as unknown,
   taskShell: null as unknown,
@@ -17,17 +18,24 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useQuietThreadProjection: (() => ({ projection: { messages: state.messages } })) as never,
-  useQuietThreadShells: (() => []) as never,
   useThreadShell: (() => state.taskShell) as never,
 }));
-vi.mock(import("@t3tools/client-runtime/assistantRobot"), async (importOriginal) => ({
+vi.mock(import("../sidebar/useSidebarZones"), async (importOriginal) => ({
   ...(await importOriginal()),
-  assistantPresenceOf: ((assistant: { id: string } | null) => ({
-    mood: assistant && state.working.has(assistant.id) ? "working" : "idle",
-    detail: "",
-    since: null,
-    reading: false,
-    queued: 0,
+  useAssistantStatus: (() => ({
+    of: (_environmentId: string, assistant: { id: string } | null) => ({
+      mood: !assistant
+        ? "idle"
+        : state.needs.has(assistant.id)
+          ? "needs"
+          : state.working.has(assistant.id)
+            ? "working"
+            : "idle",
+      detail: "",
+      since: null,
+      reading: false,
+      queued: 0,
+    }),
   })) as never,
 }));
 vi.mock(import("../../state/assistants"), async (importOriginal) => ({
@@ -78,6 +86,7 @@ function setup() {
   state.task = null;
   for (const fn of Object.values(state.flows)) fn.mockClear();
   state.working = new Set(["jarvis"]);
+  state.needs = new Set();
   state.assistants = [assistant("jarvis", "Jarvis", "full"), assistant("owl", "Owl", "read-only")];
   state.messages = [
     { id: "m1", senderThreadId: "assistant:owl:1" },
@@ -118,6 +127,24 @@ it("groups the assistants into Working and Idle, each on one status line", async
     const fontSize = Number.parseFloat(getComputedStyle(status).fontSize);
     expect(status.getBoundingClientRect().height).toBeLessThan(fontSize * 2);
   }
+});
+
+it("an assistant that needs you sits above Working, and says so", async () => {
+  setup();
+  state.needs = new Set(["owl"]);
+  await using screen = await renderStack();
+  await screen.getByRole("button", { name: "Assistants in this thread: 2" }).click();
+  const regions = [...document.querySelectorAll("section[aria-label]")].map((section) =>
+    section.getAttribute("aria-label"),
+  );
+  expect(regions).toEqual(["Needs you", "Working"]);
+  await expect
+    .element(
+      page
+        .getByRole("region", { name: "Needs you" })
+        .getByText("Needs you · 1 message here · Asks before acting"),
+    )
+    .toBeVisible();
 });
 
 it("an idle-only thread draws no Working section", async () => {
@@ -174,7 +201,7 @@ it("renders nothing when no assistant wrote in the thread", async () => {
   expect(screen.container.querySelector("button")).toBeNull();
 });
 
-it("the assistant that launched the thread joins the one control in the task's mood, with the task's actions", async () => {
+it("the assistant that launched the thread joins the one control in its shared status, with the task's actions", async () => {
   setup();
   const jarvis = state.assistants[0] as ReturnType<typeof assistant>;
   state.owner = { environmentId: ENVIRONMENT_ID, assistant: jarvis };
@@ -198,6 +225,7 @@ it("the assistant that launched the thread joins the one control in the task's m
   expect(state.flows.openConversation).toHaveBeenCalledWith(jarvis);
 
   state.messages = [{ id: "m1", senderThreadId: "assistant:jarvis:1" }];
+  state.working = new Set();
   state.taskShell = {
     hasPendingApprovals: false,
     hasPendingUserInput: false,

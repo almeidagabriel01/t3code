@@ -13,7 +13,7 @@ import {
   assistantWorkingHereLabel,
   assistantWorkingNow,
 } from "@t3tools/client-runtime/assistantLiveWork";
-import { assistantFace, assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { PROBLEM_LEVEL_LEGEND, problemLevelLabel } from "@t3tools/client-runtime/autonomy";
 import { assistantProjectsChip } from "@t3tools/client-runtime/assistantSections";
 import { ASSISTANT_TASK_STATE_LABEL } from "@t3tools/client-runtime/assistantTasks";
@@ -36,6 +36,7 @@ import {
   useAssistantEntries,
   useAssistantGroupChat,
   useAssistantLiveWork,
+  useAssistantStatus,
   useAssistantSpend,
 } from "../../state/assistants";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -132,6 +133,7 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
   const openTeam = useOpenAssistantTeam();
   const selectDetail = useSelectWorkspaceDetail();
   const shells = useThreadShells();
+  const status = useAssistantStatus();
   const work = useAssistantLiveWork();
   const nowMs = useNowMinuteMs();
   const { teams } = useAssistantEntries();
@@ -141,7 +143,7 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
     assistant.budget === null ? null : assistant.id,
   ).data;
   const archived = assistant.archivedAt !== null;
-  const presence = assistantPresenceOf(assistant, environmentId, shells);
+  const presence = status.of(environmentId, assistant);
   const workingNow = archived ? [] : assistantWorkingNow(work, environmentId, assistant.id);
   const projects = assistantInfoProjects(assistant, workingNow, nameOf);
   const groups = assistantInfoGroups(
@@ -279,6 +281,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
   const flows = useAssistantTeamFlows(environmentId);
   const openTeam = useOpenAssistantTeam();
   const shells = useThreadShells();
+  const status = useAssistantStatus();
   const { active, archived: archivedAssistants } = useAssistantEntries();
   const chat = useAssistantGroupChat(environmentId, team.id);
   const nameOf = useProjectName(environmentId);
@@ -306,7 +309,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
               key: member.id,
               assistant: member.assistant ?? removedAssistantFace(member.id),
               mood: member.assistant
-                ? assistantFace(assistantPresenceOf(member.assistant, environmentId, shells))
+                ? assistantFace(status.of(environmentId, member.assistant))
                 : "sleeping",
             }))}
           />
@@ -361,7 +364,7 @@ function GroupInfoBody(props: { readonly entry: AssistantTeamEntry }) {
       <ListSection title="Members">
         {members.map((member) => {
           const memberAssistant = member.assistant;
-          const presence = assistantPresenceOf(memberAssistant, environmentId, shells);
+          const presence = status.of(environmentId, memberAssistant);
           const leading = (
             <AssistantAvatar
               assistant={memberAssistant ?? removedAssistantFace(member.id)}

@@ -1,6 +1,13 @@
 import { assistantIdFromThreadId } from "@t3tools/contracts";
 import { decisionWaitsOnUser, requestWaitsOnUser } from "@t3tools/shared/needsUser";
 
+import type { AssistantWorkSite } from "./assistantLiveWork.ts";
+import {
+  assistantPresence,
+  assistantPresenceOf,
+  type AssistantPresence,
+} from "./assistantRobot.ts";
+
 /**
  * The sidebar's three zones (Needs you, Teams, Projects), derived once so web and mobile draw the
  * same rows and every indicator reads the same answer to "what waits on the user".
@@ -224,12 +231,12 @@ export function countWaits(
   ).length;
 }
 
-/** An assistant row's one indicator: waits on you, failed, or working. */
+/** An assistant row's one indicator from its `assistantStatus` mood: waits on you, failed, or working. */
 export function assistantIndicator(input: {
   readonly needsYou: number;
   readonly mood: Mood;
 }): ZoneIndicator | null {
-  if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
+  if (input.mood === "needs") return { kind: "needs", count: Math.max(1, input.needsYou) };
   if (input.mood === "failed") return { kind: "failed" };
   if (input.mood === "working") return { kind: "running", count: 1 };
   return null;
@@ -260,4 +267,75 @@ export function folderIndicator(input: {
   if (running > 0) return { kind: "running", count: running };
   if ((input.chat?.unreadCount ?? 0) > 0) return { kind: "unread", count: input.chat!.unreadCount };
   return null;
+}
+
+export const ENVIRONMENT_DISCONNECTED_LABEL = "This environment is disconnected";
+
+/**
+ * The one status every screen shows for an assistant (sidebar, Home, info, Work, a thread's
+ * presence menu). A known-disconnected environment wins, since its cached threads are stale. Then
+ * comes a wait the Needs you list holds, then a failed run, then work in its own threads or in
+ * tasks it launched, then idle.
+ */
+export function assistantStatus(input: {
+  /** `assistantPresence` of its own conversation and group threads. */
+  readonly presence: AssistantPresence;
+  /** `countWaits` for this assistant alone. */
+  readonly needsYou: number;
+  /** Its live launched tasks and delegated children. */
+  readonly sites: ReadonlyArray<Pick<AssistantWorkSite, "face">>;
+  /** False when its environment is known to be unreachable; null while that is unknown. */
+  readonly reachable: boolean | null;
+}): AssistantPresence {
+  const { presence } = input;
+  const still = { since: null, reading: false } as const;
+  if (input.reachable === false) {
+    return { mood: "idle", detail: ENVIRONMENT_DISCONNECTED_LABEL, ...still, queued: 0 };
+  }
+  if (input.needsYou > 0) {
+    return presence.mood === "needs"
+      ? presence
+      : { ...presence, mood: "needs", detail: "Needs you", ...still };
+  }
+  if (presence.mood === "failed" || presence.mood === "working") return presence;
+  // A request nobody lists (T3 answers it itself) and a live task are both work in progress.
+  if (presence.mood === "needs" || input.sites.length > 0) {
+    return { ...presence, mood: "working", detail: "Working", ...still };
+  }
+  return presence;
+}
+
+/**
+ * Every assistant's `assistantStatus` at once, from the shared state both clients hold: `items` is
+ * the Needs you list, `read` adjusts a presence in hand, `of` reads an assistant from the shells.
+ */
+export function assistantStatusOf<
+  S extends ZoneShell & Parameters<typeof assistantPresenceOf>[2][number],
+  D extends NeedsYouDecision,
+>(input: {
+  readonly shells: ReadonlyArray<S>;
+  readonly decisions: ReadonlyArray<{ readonly environmentId: string; readonly decision: D }>;
+  readonly ownerOf: (shell: Pick<S, "environmentId" | "id">) => ThreadOwner;
+  readonly sites: ReadonlyArray<AssistantWorkSite>;
+  readonly reachable: (environmentId: string) => boolean | null;
+}) {
+  const { shells, sites } = input;
+  const items = needsYouItems({ shells, decisions: input.decisions, ownerOf: input.ownerOf });
+  const read = (environmentId: string, assistantId: string, presence: AssistantPresence) =>
+    assistantStatus({
+      presence,
+      needsYou: countWaits(items, { assistantKeys: new Set([keyOf(environmentId, assistantId)]) }),
+      sites: sites.filter(
+        (site) => site.environmentId === environmentId && site.assistantId === assistantId,
+      ),
+      reachable: input.reachable(environmentId),
+    });
+  const of = (
+    environmentId: string,
+    assistant: { readonly id: string; readonly threadId: string | null } | null,
+  ) =>
+    assistant === null
+      ? assistantPresence(null)
+      : read(environmentId, assistant.id, assistantPresenceOf(assistant, environmentId, shells));
+  return { items, read, of };
 }

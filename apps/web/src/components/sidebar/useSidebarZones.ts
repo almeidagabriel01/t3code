@@ -1,31 +1,41 @@
+import { useAtomValue } from "@effect/atom-react";
 import { rankAssistants } from "@t3tools/client-runtime/assistantList";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
 import {
   assistantIndicator,
+  assistantStatusOf,
   countWaits,
   folderIndicator,
-  needsYouItems,
   teamsLayout,
   threadOwnerResolver,
   type ZoneIndicator,
 } from "@t3tools/client-runtime/sidebarZones";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { useClientSettings } from "../../hooks/useSettings";
-import { useAssistantEntries, useAssistantTasksByAssistant } from "../../state/assistants";
+import {
+  useAssistantEntries,
+  useAssistantLiveWork,
+  useAssistantTasksByAssistant,
+} from "../../state/assistants";
 import { useDecisionEntries } from "../../state/decisions";
 import { useQuietThreadShells } from "../../state/entities";
+import { environmentPresentations } from "../../state/presentation";
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 
 /**
- * The sidebar's three zones derived once from app state: what waits on the user, who owns each
- * thread, and the Teams layout with its indicators. Every zone and count reads this one result.
+ * What waits on the user, who owns each thread, and every assistant's one status
+ * (`assistantStatus`), read alike by the sidebar, the presence popover, info and Work. `of` takes
+ * an assistant; `read` adjusts a presence in hand.
  */
-export function useSidebarZones() {
+export function useAssistantStatus() {
   const shells = useQuietThreadShells();
   const { active, activeTeams } = useAssistantEntries();
   const tasksByAssistant = useAssistantTasksByAssistant();
   const decisions = useDecisionEntries().open;
-  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
+  const { sites } = useAssistantLiveWork();
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
 
   const taskAssistantByThreadKey = new Map<string, string>();
   for (const [assistantKey, tasks] of tasksByAssistant) {
@@ -48,7 +58,24 @@ export function useSidebarZones() {
       active.map((entry) => `${entry.environmentId}:${entry.assistant.id}`),
     ),
   });
-  const items = needsYouItems({ shells, decisions, ownerOf });
+  const status = assistantStatusOf({
+    shells,
+    decisions,
+    ownerOf,
+    sites,
+    reachable: (environmentId) =>
+      environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
+  });
+  return { shells, active, activeTeams, ownerOf, ...status };
+}
+
+/**
+ * The sidebar's three zones derived once from app state: what waits on the user, who owns each
+ * thread, and the Teams layout with its indicators. Every zone and count reads this one result.
+ */
+export function useSidebarZones() {
+  const { shells, active, activeTeams, ownerOf, items, read } = useAssistantStatus();
+  const teamsShown = useClientSettings((settings) => settings.sidebarShowAssistantsSection);
   // With Teams switched off the assistant's work has nowhere else to be drawn, so Projects keeps it.
   const ownedThreadKeys = teamsShown
     ? new Set(
@@ -58,7 +85,9 @@ export function useSidebarZones() {
       )
     : NO_KEYS;
 
-  const ranked = rankAssistants(active, shells);
+  const ranked = rankAssistants(active, shells, (entry, presence) =>
+    read(entry.environmentId, entry.assistant.id, presence),
+  );
   const layout = teamsLayout({ assistants: ranked, teams: activeTeams });
   const assistantIndicators = new Map<string, ZoneIndicator | null>();
   for (const { entry, presence } of ranked) {
