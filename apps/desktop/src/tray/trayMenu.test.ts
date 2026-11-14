@@ -4,7 +4,7 @@ import type { DesktopTrayMenu, DesktopTrayThread } from "@t3tools/contracts";
 
 import { SECTION_ROWS, trayLabel, trayMenuTemplate } from "./trayMenu.ts";
 import { createTrayMenuGate } from "./trayMenuGate.ts";
-import { TrayMenuPayload } from "./trayMenuPayload.ts";
+import { TrayMenuPayload, TrayMenuThread } from "./trayMenuPayload.ts";
 
 const thread = (n: number, extra: Partial<DesktopTrayThread> = {}): DesktopTrayThread => ({
   environmentId: "env",
@@ -135,6 +135,7 @@ describe("createTrayMenuGate", () => {
 
 describe("TrayMenuPayload", () => {
   const decode = Schema.decodeUnknownSync(TrayMenuPayload);
+  const decodeRow = Schema.decodeSync(TrayMenuThread);
   const valid = { attention: [thread(1)], running: [], pinned: [], attentionCount: 1 };
 
   it("accepts a menu and null", () => {
@@ -146,10 +147,16 @@ describe("TrayMenuPayload", () => {
     ["negative count", { ...valid, attentionCount: -1 }],
     ["fractional count", { ...valid, attentionCount: 0.5 }],
     ["too many rows", { ...valid, running: threads(21) }],
-    ["empty thread id", { ...valid, attention: [thread(1, { threadId: "" })] }],
     ["missing section", { attention: [], running: [], attentionCount: 0 }],
-    ["huge title", { ...valid, attention: [thread(1, { title: "x".repeat(1_001) })] }],
   ])("rejects %s", (_name, payload) => {
     expect(() => decode(payload)).toThrow();
+  });
+
+  it.each([
+    ["empty thread id", thread(1, { threadId: "" })],
+    ["huge title", thread(1, { title: "x".repeat(1_001) })],
+    ["huge thread id", thread(1, { threadId: "x".repeat(4_097) })],
+  ])("rejects a row with %s", (_name, row) => {
+    expect(() => decodeRow(row)).toThrow();
   });
 });
