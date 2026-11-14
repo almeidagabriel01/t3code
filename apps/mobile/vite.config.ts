@@ -43,6 +43,7 @@ const reactTests = [
   "src/features/kanban/ThreadKanbanCardControls.test.tsx",
   "src/features/kanban/KanbanCardAttachments.test.tsx",
   "src/features/threads/useThreadMenu.test.tsx",
+  "src/features/threads/useThreadMarkdownLinks.test.tsx",
   "src/features/threads/thread-list-v2-items.test.tsx",
   "src/features/kanban/KanbanCardRouteScreen.test.tsx",
   "src/features/notes/NotesRouteScreen.test.tsx",

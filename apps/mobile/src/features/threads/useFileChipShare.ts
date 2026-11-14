@@ -10,11 +10,7 @@ import { usePreparedConnection } from "../../state/session";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
 
-export function useFileChipShare(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  sourceIdentifier: string,
-) {
+export function useFileChipShare(environmentId: EnvironmentId, sourceIdentifier: string) {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -25,7 +21,7 @@ export function useFileChipShare(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight file share download when the component unmounts
   useEffect(() => () => requestRef.current?.abort(), []);
 
-  return (target: FileChipTarget) => {
+  return (target: FileChipTarget, threadId: ThreadId) => {
     const source = fileChipShareSource(target, threadId);
     if (!source || requestRef.current) return;
     const request = new AbortController();
