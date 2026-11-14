@@ -25,9 +25,14 @@ import {
   type AssistantGroupTaskStatus,
   type AssistantGroupsEvent,
   type AssistantGroupsHistoryResult,
+  type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import {
+  type ModelSelectionLayers,
+  resolveModelSelection,
+} from "@t3tools/shared/modelSelectionPrecedence";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
@@ -375,10 +380,24 @@ export function assistantGroupComposerProjects(
     : groupProjectIds.filter((id) => projects.some((project) => project.id === id));
 }
 
-/** The user's project pick in the composer, for the tab it was made in. */
-export interface AssistantGroupProjectPick {
+/** A composer pick (its project, its model), for the tab it was made in. */
+export interface AssistantGroupTabPick<T> {
   readonly tab: AssistantGroupTabKey | null;
-  readonly projectId: ProjectId | null;
+  readonly value: T;
+}
+
+export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
+
+/**
+ * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
+ * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
+ * brings it back.
+ */
+export function assistantGroupTabPick<T>(
+  pick: AssistantGroupTabPick<T> | null,
+  tab: AssistantGroupTabKey | null,
+): AssistantGroupTabPick<T> | null {
+  return pick !== null && pick.tab === tab ? pick : null;
 }
 
 /**
@@ -392,13 +411,28 @@ export function assistantGroupComposerProject(input: {
   readonly replying: boolean;
   readonly groupProjects: ReadonlyArray<{ readonly id: ProjectId }>;
 }): ProjectId | null {
+  const held = assistantGroupTabPick(input.pick, input.tab?.key ?? null);
   const chosen =
-    input.pick !== null && input.pick.tab === (input.tab?.key ?? null)
-      ? input.pick.projectId
-      : input.replying
-        ? null
-        : (input.tab?.projectId ?? null);
+    held !== null ? held.value : input.replying ? null : (input.tab?.projectId ?? null);
   return input.groupProjects.some((project) => project.id === chosen) ? chosen : null;
+}
+
+/**
+ * What the composer's model chip shows: the pick for the next message, made in the open tab, as
+ * the resolver's `message` layer over the defaults, so a pick the project cannot use shows the
+ * default the server falls back to.
+ */
+export function assistantGroupComposerModel(input: {
+  readonly pick: AssistantGroupTabPick<ModelSelection> | null;
+  readonly tab: AssistantGroupTabKey | null;
+  readonly defaults: Omit<ModelSelectionLayers, "message">;
+  readonly isUsable: (selection: ModelSelection) => boolean;
+}) {
+  const resolved = resolveModelSelection(
+    { ...input.defaults, message: assistantGroupTabPick(input.pick, input.tab)?.value },
+    input.isUsable,
+  );
+  return { ...resolved, forMessage: resolved.layer === "message" };
 }
 
 /** Any tab waits on the user: the dot on All and on the group's row. */

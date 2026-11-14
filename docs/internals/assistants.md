@@ -155,6 +155,18 @@ messages name; sharing the group's ids would delete the group's files with one m
 group's own files go when the group is removed. Agent posts (`t3_assistant group_post`) still pass
 `paths`, which land as links in the text.
 
+A message's composer model is `assistant_group_messages.model_selection`, never a default. A task
+reaches it through `request_message_id` (subtasks inherit it), so lead routing, `routePending` and
+hand-offs need not carry it; "continue" and the answer to a request not yet routed copy it onto the
+message that owns that work. Each task start, after the busy gate, resolves its thread's model with
+it as the `message` layer (`aimModel`): moving earlier would switch another message's live turn, and
+the next message's task brings the thread back to its defaults' model. A switch deferred by a
+still-running (stopping) turn makes the task wait rather than start on the old model. A pick the
+resolver cannot use (a provider it does not know or the project turns off, a model its provider
+does not list) falls to the next layer; `post` never refuses one. Over a model picked in the thread
+by hand, the switch records that model in `restore_model_selection` instead of following the pick,
+and the next task without a pick switches back to it, so a hand pick outlives message picks.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
 tasks run per group. A finished run posts the `result` tool text or the run's last assistant message,

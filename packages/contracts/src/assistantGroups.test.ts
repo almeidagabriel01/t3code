@@ -217,6 +217,14 @@ describe("group message attachments", () => {
       decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
     ).toThrow();
   });
+
+  it("keeps a post's model for its work", () => {
+    const decode = Schema.decodeUnknownSync(AssistantGroupsPostInput);
+    const modelSelection = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    expect(decode({ teamId: "t1", text: "@ada look", modelSelection }).modelSelection).toEqual(
+      modelSelection,
+    );
+  });
 });
 
 describe("assistantGroupProjectMentions", () => {

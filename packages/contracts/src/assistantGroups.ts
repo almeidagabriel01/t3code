@@ -11,6 +11,7 @@ import {
 import { type Assistant, AssistantId, AssistantTeamId } from "./assistants.ts";
 import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
 import { DecisionId } from "./decisions.ts";
+import { ModelSelection } from "./modelSelection.ts";
 
 /**
  * A group's shared chat, as in an OpenBot channel. A message there runs no agent itself: it opens
@@ -364,6 +365,8 @@ export const AssistantGroupsPostInput = Schema.Struct({
   replyToMessageId: Schema.optional(AssistantGroupMessageId),
   /** A new request's project, one of the group's; absent lets the lead decide. */
   projectId: Schema.optional(ProjectId),
+  /** The model this message's work starts on, ahead of every default; it saves no default. */
+  modelSelection: Schema.optional(ModelSelection),
   /** A repeat with the same id posts nothing more. */
   clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   /** Pending uploads, as for a thread message; the server keeps them with the message. */

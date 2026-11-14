@@ -66,7 +66,8 @@ export class ProjectModelSelectionService extends Context.Service<
   {
     /**
      * The model new work starts on: explicit, assistant in project, project, team, assistant,
-     * then global. A layer whose instance is missing or disabled for the project is skipped.
+     * then global. A layer whose instance is missing or disabled for the project is skipped, and
+     * an explicit model its provider does not list.
      * Never falls back to `fallbackModelSelections`: switching provider is the user's call.
      */
     readonly resolveForNewThread: (input: {
@@ -128,10 +129,19 @@ const make = Effect.gen(function* () {
         const providers = Option.isSome(providerRegistry)
           ? yield* providerRegistry.value.getProviders
           : [];
+        // A message's model comes from a client or an agent: one its provider does not list is
+        // unknown and falls to the next layer. Without a registry only `isUsable` can tell.
+        const offered = (selection: ModelSelection) =>
+          Option.isNone(providerRegistry) ||
+          providers.some(
+            (provider) =>
+              provider.instanceId === selection.instanceId &&
+              provider.models.some((model) => model.slug === selection.model),
+          );
         const configuredGlobal = settings.defaultModelSelection;
         const result = resolveModelSelection(
           {
-            message: explicit,
+            message: explicit !== undefined && offered(explicit) ? explicit : undefined,
             assistantProject:
               assistantId === undefined
                 ? undefined

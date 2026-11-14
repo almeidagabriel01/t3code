@@ -1405,28 +1405,79 @@ it("picks a project for a new request and keeps a reply in its request's project
   );
 });
 
-it("shows the chosen project's model beside the project and saves a pick as its default", async () => {
+it("picks the composer's model for the next message only, never as the project's default", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings(null);
+  twoRequests(SITE_PROJECT);
+  await using _screen = await openChat({
+    people: sitePeople(),
+    team: team({ chat: scopedChat() }),
+  });
+  // The lead decides the project, so there is no project model to show.
+  await expect.element(main().getByRole("button", { name: /^Model for/ })).not.toBeInTheDocument();
+  await userEvent.click(tab("render"));
+  // Without a project or group default, each member runs on its own model.
+  const chip = () => main().getByRole("button", { name: /^Model for/ });
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  const pick = async () => {
+    await userEvent.click(chip());
+    await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
+    await expect
+      .element(main().getByRole("button", { name: "Model for this message, This message only" }))
+      .toHaveTextContent("GPT-5.5");
+    // Always in view, not only in a menu: the pick is for this message.
+    await expect.element(main().getByText("This message", { exact: true })).toBeVisible();
+  };
+  const reset = main().getByRole("button", { name: "Use render's model" });
+  await pick();
+  await userEvent.click(reset);
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  await expect.element(reset).not.toBeInTheDocument();
+  // A pick lasts only in the tab it was made in.
+  await pick();
+  await userEvent.click(tab("All"));
+  const all = localStorage.getItem(TAB_KEY)!;
+  await userEvent.click(tab("render"));
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  // A tab the user did not choose here (another window saved it) drops it for good too.
+  await pick();
+  const render = localStorage.getItem(TAB_KEY)!;
+  const savedElsewhere = (value: string) => {
+    localStorage.setItem(TAB_KEY, value);
+    window.dispatchEvent(new StorageEvent("storage", { key: TAB_KEY }));
+  };
+  savedElsewhere(all);
+  await expect.element(chip()).not.toBeInTheDocument();
+  savedElsewhere(render);
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  // It goes with the next send, then the chip shows the default again.
+  await pick();
+  await userEvent.type(composer(), "@bo go{Enter}");
+  await eventually(() =>
+    expect(fakeGroupChat.posts.at(-1)).toEqual({
+      teamId: "t1",
+      text: "@bo go",
+      projectId: PROJECT_ID,
+      modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+    }),
+  );
+  await expect.element(chip()).toHaveTextContent("Members' models");
+  expect(fakeSettings.patches).toEqual([]);
+});
+
+it("saves the project's model from the group menu", async () => {
   fakeSettings.patches = [];
   fakeSettings.refuse = null;
   setFakeServerSettings(null);
   await using _screen = await openChat();
-  await expect.element(main().getByRole("combobox", { name: "Project" })).toBeVisible();
-  // The lead decides the project, so there is no project model to show.
-  await expect
-    .element(main().getByRole("button", { name: /^Model for render/ }))
-    .not.toBeInTheDocument();
   await userEvent.click(main().getByRole("combobox", { name: "Project" }));
   await userEvent.click(page.getByRole("option", { name: "render" }));
-  // Without a project or group default, each member runs on its own model.
-  const trigger = main().getByRole("button", {
-    name: "Model for render, Not set: each member uses its own model",
-  });
-  await expect.element(trigger).toHaveTextContent("Members' models");
-  await userEvent.click(
-    main().getByRole("button", {
-      name: "Model for render, Not set: each member uses its own model",
-    }),
-  );
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Project's model" }));
+  await expect.element(page.getByRole("dialog", { name: "Model in render" })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: /^Model for render/ }));
   await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
   await eventually(() =>
     expect(fakeSettings.patches.at(-1)).toEqual({
@@ -1465,15 +1516,19 @@ it("says inline why the project's model was not saved and keeps the shown one", 
   await using _screen = await openChat();
   await userEvent.click(main().getByRole("combobox", { name: "Project" }));
   await userEvent.click(page.getByRole("option", { name: "render" }));
-  await userEvent.click(main().getByRole("button", { name: /^Model for render/ }));
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Project's model" }));
+  const dialog = page.getByRole("dialog", { name: "Model in render" });
+  await userEvent.click(dialog.getByRole("button", { name: /^Model for render/ }));
   await userEvent.click(page.getByRole("option", { name: /GPT-5\.5/ }));
-  await eventually(() =>
-    expect(document.querySelector('[data-testid="group-composer-alert"]')?.textContent).toBe(
-      "The provider instance codex does not exist or is disabled for this project.",
-    ),
-  );
   await expect
-    .element(main().getByRole("button", { name: /^Model for render/ }))
+    .element(dialog.getByRole("alert"))
+    .toHaveTextContent(
+      "The provider instance codex does not exist or is disabled for this project.",
+    );
+  await expect
+    .element(dialog.getByRole("button", { name: /^Model for render/ }))
     .toHaveTextContent("Members' models");
   fakeSettings.refuse = null;
 });

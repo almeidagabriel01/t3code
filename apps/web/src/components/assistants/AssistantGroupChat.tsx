@@ -20,6 +20,8 @@ import {
   assistantGroupComposerProject,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
+  type AssistantGroupTabPick,
+  assistantGroupTabPick,
   assistantGroupTabView,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
   type AssistantGroupChatState,
@@ -66,6 +68,7 @@ import {
   CircleCheckIcon,
   CornerUpLeftIcon,
   EllipsisIcon,
+  FolderCogIcon,
   FolderIcon,
   HashIcon,
   MessageCircleQuestionMarkIcon,
@@ -162,7 +165,11 @@ import {
   type GroupSendResult,
 } from "./GroupComposer";
 import { GroupMentionChip, type GroupMentionProject } from "./GroupMentionChip";
-import { MemberProjectModelDialog, useMemberModelExceptions } from "./GroupProjectModel";
+import {
+  MemberProjectModelDialog,
+  ProjectModelDialog,
+  useMemberModelExceptions,
+} from "./GroupProjectModel";
 import { GroupTaskCard } from "./GroupTaskCard";
 import { useGroupReadMarker } from "./useGroupReadMarker";
 import { useAssistantTeamFlows } from "./useAssistantFlows";
@@ -198,6 +205,7 @@ function GroupHeader(props: {
   readonly running: number;
   /** The project new messages run in, for each member's own model there. */
   readonly modelProject: GroupProjectOption | null;
+  readonly onProjectModel: () => void;
   readonly onMemberModel: (member: Assistant) => void;
 }) {
   const { environmentId, team, modelProject } = props;
@@ -311,6 +319,11 @@ function GroupHeader(props: {
                 <span className="max-w-56 truncate">Model in {modelProject.label}</span>
               </MenuSubTrigger>
               <MenuSubPopup>
+                <MenuItem onClick={props.onProjectModel}>
+                  <FolderCogIcon />
+                  <span className="min-w-0 flex-1 truncate">Project's model</span>
+                </MenuItem>
+                <MenuSeparator />
                 {props.members.map((member) => {
                   const exception = exceptions[member.id];
                   return (
@@ -1429,6 +1442,9 @@ export function AssistantGroupChat(props: {
   const flows = useAssistantTeamFlows(environmentId);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [memberModel, setMemberModel] = useState<Assistant | null>(null);
+  const [projectModelOpen, setProjectModelOpen] = useState(false);
+  // The composer's model for the next message only; it never saves a default.
+  const [modelPick, setModelPick] = useState<AssistantGroupTabPick<ModelSelection> | null>(null);
   // The composer's own project pick, until a send or another tab.
   const [composerPick, setComposerPick] = useState<AssistantGroupProjectPick | null>(null);
   const feedHandle = useRef<GroupFeedHandle>(null);
@@ -1459,6 +1475,10 @@ export function AssistantGroupChat(props: {
     saved: savedTab,
   });
   const tabKey = tab?.key ?? null;
+  // Another tab, chosen or not (a saved tab loading, a removed one), drops both picks for good.
+  const heldModelPick = assistantGroupTabPick(modelPick, tabKey);
+  if (heldModelPick !== modelPick) setModelPick(null);
+  if (assistantGroupTabPick(composerPick, tabKey) !== composerPick) setComposerPick(null);
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   useShowGroupTab(environmentId, teamId, pending ? undefined : tabKey);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
@@ -1497,6 +1517,8 @@ export function AssistantGroupChat(props: {
       ? null
       : (teamModelLayer(team, members, modelProjectId) ?? null);
   const archived = team?.archivedAt != null;
+  // Only a pick the chip shows goes with the send.
+  const messageModel = modelProjectId === null ? undefined : heldModelPick?.value;
 
   const send = async (
     text: string,
@@ -1511,12 +1533,14 @@ export function AssistantGroupChat(props: {
       ...(groupComposerProject === null || replyTo?.projectId != null
         ? {}
         : { projectId: groupComposerProject }),
+      ...(messageModel === undefined ? {} : { modelSelection: messageModel }),
     });
     if (reply.ok) {
       feedHandle.current?.followEnd();
       // A reply or tab the user opened while the post was on its way stays.
       setReplyTo((current) => (current === replyTo ? null : current));
       setComposerPick((current) => (current === composerPick ? null : current));
+      setModelPick((current) => (current === modelPick ? null : current));
       // A send that lands in another tab's project takes the user there, so it never vanishes.
       const landed = replyTo?.projectId ?? groupComposerProject;
       if (tabs !== null && tab !== null) {
@@ -1577,7 +1601,6 @@ export function AssistantGroupChat(props: {
               setSavedTab(key);
               // An open reply would answer a request out of view; the draft itself stays.
               setReplyTo(null);
-              setComposerPick(null);
             }}
           />
         )}
@@ -1609,8 +1632,14 @@ export function AssistantGroupChat(props: {
           disabledReason={archived ? "Restore the group to write here" : null}
           projects={groupProjects}
           projectId={groupComposerProject}
-          onProjectChange={(projectId) => setComposerPick({ tab: tabKey, projectId })}
+          onProjectChange={(projectId) => setComposerPick({ tab: tabKey, value: projectId })}
           teamDefault={teamModel}
+          messageModel={{
+            pick: heldModelPick,
+            tab: tabKey,
+            onPick: (selection) =>
+              setModelPick(selection === null ? null : { tab: tabKey, value: selection }),
+          }}
           replyingTo={replyTo?.quote ?? null}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
@@ -1644,10 +1673,20 @@ export function AssistantGroupChat(props: {
             team.chat?.runningCount ?? (live === null ? 0 : assistantGroupRunningCount(live))
           }
           modelProject={modelProject}
+          onProjectModel={() => setProjectModelOpen(true)}
           onMemberModel={setMemberModel}
         />
       )}
       {body()}
+      {!projectModelOpen || modelProject === null ? null : (
+        <ProjectModelDialog
+          environmentId={environmentId}
+          projectId={modelProject.id}
+          projectLabel={modelProject.label}
+          teamDefault={teamModel}
+          onClose={() => setProjectModelOpen(false)}
+        />
+      )}
       {memberModel === null || modelProject === null ? null : (
         <MemberProjectModelDialog
           environmentId={environmentId}

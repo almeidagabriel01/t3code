@@ -97,6 +97,8 @@ function ToolbarChip(props: {
   readonly iconOnly?: boolean;
   /** A longer label (a model and its provider) that takes the room a wide screen has. */
   readonly wide?: boolean;
+  /** A short tag after the label, always in view. */
+  readonly tag?: string;
   readonly onPress?: () => void;
 }) {
   return (
@@ -112,6 +114,13 @@ function ToolbarChip(props: {
         <Text className="shrink text-xs font-t3-medium text-foreground" numberOfLines={1}>
           {props.label}
         </Text>
+      )}
+      {props.tag === undefined || props.iconOnly ? null : (
+        <View className="shrink-0 rounded-full bg-primary/14 px-1.5 py-px">
+          <Text numberOfLines={1} className="text-2xs font-t3-medium text-primary">
+            {props.tag}
+          </Text>
+        </View>
       )}
       {props.chevron === false || props.iconOnly ? null : (
         <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-subtle" />
@@ -595,7 +604,32 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
-            {projectModel === null || runProject === null ? null : (
+            {projectModel === null || runProject === null ? null : projectModel.forMessage ? (
+              <MenuSlot>
+                <Menu
+                  accessibilityLabel="Model for this message"
+                  title="This message only"
+                  actions={[
+                    { id: "change", title: "Change model" },
+                    { id: "default", title: `Back to ${projectModel.defaultLabel}` },
+                  ]}
+                  onPressAction={({ nativeEvent }) =>
+                    nativeEvent.event === "change"
+                      ? projectModel.openMessagePicker()
+                      : projectModel.clearMessageModel()
+                  }
+                >
+                  <ToolbarChip
+                    icon="cube"
+                    label={projectModel.label}
+                    tag="This message"
+                    wide
+                    accessibilityLabel={`Model for this message: ${projectModel.label}`}
+                    disabled={props.disabled}
+                  />
+                </Menu>
+              </MenuSlot>
+            ) : (
               <MenuSlot>
                 <ToolbarChip
                   icon="cube"
@@ -603,8 +637,8 @@ export function GroupComposer(props: {
                   wide
                   accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
                   chevron={false}
-                  disabled={props.disabled || !projectModel.canWrite}
-                  onPress={projectModel.openProjectPicker}
+                  disabled={props.disabled}
+                  onPress={projectModel.openMessagePicker}
                 />
               </MenuSlot>
             )}

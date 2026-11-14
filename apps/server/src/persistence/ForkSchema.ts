@@ -746,6 +746,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* addColumns("assistant_group_messages", [["asks_project", "INTEGER NOT NULL DEFAULT 0"]]);
   // A member's answer: how long its run worked.
   yield* addColumns("assistant_group_messages", [["worked_ms", "INTEGER"]]);
+  // The model a user message's work starts on, picked for that message only.
+  yield* addColumns("assistant_group_messages", [["model_selection", "TEXT"]]);
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
@@ -862,6 +864,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["followed_model_selection", "TEXT"],
     ["pending_model_selection", "TEXT"],
   ]);
+  // A model picked in the thread that a message's own model set aside until its task is done.
+  yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (

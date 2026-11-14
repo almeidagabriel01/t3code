@@ -70,7 +70,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { GroupAttachmentChips } from "./GroupAttachments";
 import { GroupMentionChip } from "./GroupMentionChip";
-import { GroupProjectModelPicker } from "./GroupProjectModel";
+import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
 import { useGroupAttachments } from "./useGroupAttachments";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
@@ -256,6 +256,8 @@ export function GroupComposer(props: {
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
   readonly teamDefault: ModelSelection | null;
+  /** The model the next message runs on, picked here only for it. */
+  readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
@@ -689,6 +691,7 @@ export function GroupComposer(props: {
                         teamDefault={props.teamDefault}
                         disabled={props.disabled}
                         onError={setError}
+                        message={props.messageModel}
                       />
                     )}
                     <Menu>

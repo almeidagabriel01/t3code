@@ -17,6 +17,7 @@ import {
   assistantGroupTabAfterSend,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
+  assistantGroupTabPick,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
   assistantGroupTabView,
@@ -52,6 +53,7 @@ import {
   assistantGroupProjectIds,
   splitAssistantTransferText,
 } from "@t3tools/contracts";
+import { useAtom } from "@effect/atom-react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import {
@@ -128,6 +130,7 @@ import {
   type GroupSendResult,
 } from "./GroupComposer";
 import { GroupProjectTabs } from "./GroupProjectTabs";
+import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
 import { useGroupProjectModel } from "./useGroupProjectModel";
 import { GroupStatusLabel, GroupTaskCard, type GroupStatusTone } from "./GroupTaskCard";
 import { AssistantAvatar } from "./assistantPresentation";
@@ -1294,16 +1297,16 @@ export function AssistantGroupChatRouteScreen({
     loading: pushedTab === undefined && savedTab.loading,
   });
   const mount = useId();
-  const tabKey = pending ? undefined : (tab?.key ?? null);
+  const tabKey = pending ? null : (tab?.key ?? null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- push presentation runs outside React and skips only the tab on screen
   useEffect(
     () =>
       showAgentNotificationGroupTab(
         mount,
         buildAssistantGroupDeepLink({ environmentId, teamId }),
-        tabKey,
+        pending ? undefined : tabKey,
       ),
-    [mount, environmentId, teamId, tabKey],
+    [mount, environmentId, teamId, pending, tabKey],
   );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
@@ -1313,6 +1316,8 @@ export function AssistantGroupChatRouteScreen({
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
   const [tabsHeight, setTabsHeight] = useState(0);
+  // Another tab, chosen or not (the saved one loading, a removed one), drops both picks for good.
+  if (assistantGroupTabPick(projectPick, tabKey) !== projectPick) setProjectPick(null);
 
   const composerProject = assistantGroupComposerProject({
     pick: projectPick,
@@ -1328,12 +1333,19 @@ export function AssistantGroupChatRouteScreen({
     team === undefined || modelProjectId === null
       ? null
       : (teamModelLayer(team, members, modelProjectId) ?? null),
+    { teamId, tab: tabKey },
   );
+  const [modelPick, setModelPick] = useAtom(groupMessageModelAtom(teamId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen and cannot be set while rendering
+  useEffect(() => {
+    if (assistantGroupTabPick(modelPick, tabKey) !== modelPick) setModelPick(null);
+  }, [modelPick, tabKey, setModelPick]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen; leaving the group drops it
+  useEffect(() => () => setModelPick(null), [setModelPick]);
 
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
     savedTab.save(next.key);
-    setProjectPick(null);
     setReplyTo(null);
   };
 
@@ -1348,11 +1360,15 @@ export function AssistantGroupChatRouteScreen({
       ...(attachments.length === 0 ? {} : { attachments }),
       ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
       ...(projectId === undefined ? {} : { projectId }),
+      ...(projectModel?.messageModel === undefined
+        ? {}
+        : { modelSelection: projectModel.messageModel }),
     });
     if (reply.ok) {
       // What the user changed while the post was on its way stays: a new reply, pick or tab.
       setReplyTo((current) => (current === replyTo ? null : current));
       setProjectPick((current) => (current === projectPick ? null : current));
+      setModelPick((current) => (current === modelPick ? null : current));
       feed.current?.scrollToEnd();
       // A request that lands in another project's tab would vanish from this one: follow it.
       const landed = replyTo?.projectId ?? projectId ?? null;
@@ -1444,39 +1460,49 @@ export function AssistantGroupChatRouteScreen({
                       id: "member-models",
                       title: `Model in ${projectName(modelProjectId)}`,
                       icon: "cube",
-                      items: members.map((member) => {
-                        const exception = projectModel.exceptions[member.id];
-                        const disabled = !projectModel.canWrite;
-                        return exception === undefined
-                          ? {
-                              id: `model:${member.id}`,
-                              title: member.name,
-                              subtitle: "No exception",
-                              disabled,
-                              onPress: () => projectModel.openMemberPicker(member.id),
-                            }
-                          : {
-                              id: `model:${member.id}`,
-                              title: `${member.name} · ${projectModel.nameOf(exception)}`,
-                              items: [
-                                {
-                                  id: `model:${member.id}:change`,
-                                  title: "Change model",
-                                  icon: "cube",
-                                  disabled,
-                                  onPress: () => projectModel.openMemberPicker(member.id),
-                                },
-                                {
-                                  id: `model:${member.id}:remove`,
-                                  title: "Remove exception",
-                                  icon: "trash",
-                                  destructive: true,
-                                  disabled,
-                                  onPress: () => projectModel.removeException(member.id),
-                                },
-                              ],
-                            };
-                      }),
+                      items: [
+                        {
+                          id: "model:project",
+                          title: "Project's model",
+                          subtitle: projectModel.defaultLabel,
+                          icon: "folder.fill",
+                          disabled: !projectModel.canWrite,
+                          onPress: projectModel.openProjectPicker,
+                        },
+                        ...members.map((member) => {
+                          const exception = projectModel.exceptions[member.id];
+                          const disabled = !projectModel.canWrite;
+                          return exception === undefined
+                            ? {
+                                id: `model:${member.id}`,
+                                title: member.name,
+                                subtitle: "No exception",
+                                disabled,
+                                onPress: () => projectModel.openMemberPicker(member.id),
+                              }
+                            : {
+                                id: `model:${member.id}`,
+                                title: `${member.name} · ${projectModel.nameOf(exception)}`,
+                                items: [
+                                  {
+                                    id: `model:${member.id}:change`,
+                                    title: "Change model",
+                                    icon: "cube",
+                                    disabled,
+                                    onPress: () => projectModel.openMemberPicker(member.id),
+                                  },
+                                  {
+                                    id: `model:${member.id}:remove`,
+                                    title: "Remove exception",
+                                    icon: "trash",
+                                    destructive: true,
+                                    disabled,
+                                    onPress: () => projectModel.removeException(member.id),
+                                  },
+                                ],
+                              };
+                        }),
+                      ],
                     },
                   ]),
               {
@@ -1585,7 +1611,7 @@ export function AssistantGroupChatRouteScreen({
         leadId={team.leadId}
         projects={groupProjects}
         projectId={composerProject}
-        onProjectChange={(projectId) => setProjectPick({ tab: tab?.key ?? null, projectId })}
+        onProjectChange={(projectId) => setProjectPick({ tab: tabKey, value: projectId })}
         projectName={projectName}
         projectModel={projectModel}
         disabled={archived || !actions.canPost}

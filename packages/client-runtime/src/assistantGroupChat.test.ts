@@ -6,6 +6,7 @@ import type {
   AssistantGroupsEvent,
   AssistantId,
   AssistantTeamId,
+  ModelSelection,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -21,6 +22,8 @@ import {
   assistantGroupTabAfterSend,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
+  assistantGroupComposerModel,
+  assistantGroupTabPick,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
@@ -1341,16 +1344,16 @@ describe("assistant group tabs", () => {
   });
 
   it.each([
-    ["a pick in the open tab", { tab: "project:p1", projectId: P2 }, "project:p1", false, P2],
-    ["a pick for lead decides", { tab: "project:p1", projectId: null }, "project:p1", false, null],
-    ["a pick from another tab lapses", { tab: "all", projectId: P2 }, "project:p1", false, P1],
+    ["a pick in the open tab", { tab: "project:p1", value: P2 }, "project:p1", false, P2],
+    ["a pick for lead decides", { tab: "project:p1", value: null }, "project:p1", false, null],
+    ["a pick from another tab lapses", { tab: "all", value: P2 }, "project:p1", false, P1],
     ["the open tab's project", null, "project:p2", false, P2],
     ["All leaves it to the lead", null, "all", false, null],
     ["a reply keeps its request's", null, "project:p2", true, null],
-    ["a pick still counts in a reply", { tab: "all", projectId: P1 }, "all", true, P1],
-    ["a project that left the group", { tab: "all", projectId: P3 }, "all", false, null],
+    ["a pick still counts in a reply", { tab: "all", value: P1 }, "all", true, P1],
+    ["a project that left the group", { tab: "all", value: P3 }, "all", false, null],
     ["a removed project's tab", null, "project:p3", false, null],
-    ["no tabs", { tab: null, projectId: P1 }, null, false, P1],
+    ["no tabs", { tab: null, value: P1 }, null, false, P1],
   ] as const)("composer project: %s", (_name, pick, open, replying, expected) => {
     const opened = tabs([P1, P2], [scope(P1), scope(P2), scope(P3, 1)])?.find(
       (tab) => tab.key === open,
@@ -1364,6 +1367,48 @@ describe("assistant group tabs", () => {
       }),
       expected,
     );
+  });
+
+  const pickOf = (model: string, tab: string | null = "project:p1") => ({
+    tab: tab as "project:p1" | null,
+    value: { instanceId: "claudeAgent", model } as ModelSelection,
+  });
+  it.each([
+    ["no pick shows the default", null, "project:p1", "project", "project"],
+    ["a pick in the open tab is this message's", pickOf("opus"), "project:p1", "opus", "message"],
+    ["another tab drops the pick", pickOf("opus"), "all", "project", "project"],
+    [
+      "a pick the project cannot use shows the default",
+      pickOf("off"),
+      "project:p1",
+      "project",
+      "project",
+    ],
+    ["no tabs yet", pickOf("opus", null), null, "opus", "message"],
+  ] as const)("composer model: %s", (_name, pick, tab, model, layer) => {
+    const shown = assistantGroupComposerModel({
+      pick,
+      tab,
+      defaults: {
+        project: { instanceId: "codex", model: "project" } as ModelSelection,
+        global: { instanceId: "codex", model: "global" } as ModelSelection,
+      },
+      isUsable: (selection) => selection.model !== "off",
+    });
+    assert.deepStrictEqual(
+      { model: shown.selection.model, layer: shown.layer, forMessage: shown.forMessage },
+      { model, layer, forMessage: layer === "message" },
+    );
+  });
+
+  it("a tab pick is dropped for good once another tab shows, chosen or not", () => {
+    const pick = { tab: "project:p1" as const, value: P2 };
+    assert.strictEqual(assistantGroupTabPick(pick, "project:p1"), pick);
+    // The client keeps what it returns, so coming back to the tab finds nothing.
+    let kept = assistantGroupTabPick(pick, "all");
+    assert.isNull(kept);
+    kept = assistantGroupTabPick(kept, "project:p1");
+    assert.isNull(kept);
   });
 
   it.each([

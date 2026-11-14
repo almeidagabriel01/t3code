@@ -11,6 +11,7 @@ import {
   AssistantTeamId,
   type AssistantGroupMessageId,
   AssistantGroupsHistoryInput,
+  type AssistantGroupsPostInput,
   type AssistantGroupsEvent,
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
@@ -1769,6 +1770,191 @@ it.effect("a model change deferred by a manual turn reaches the member's next ta
     );
     assert.equal(h.sent.at(-1)!.threadId, ada);
     assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect.each([
+  { via: "a mention", text: "@ada one", lead: undefined },
+  { via: "the lead", text: "one", lead: "beto" },
+])(
+  "a message's model, routed by $via, starts its work only and saves no default",
+  ({ text, lead }) => {
+    const h = harness({
+      ...(lead === undefined ? {} : { lead, routable: [claude], route: () => ["ada"] }),
+      settings: {
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const before = yield* settings.getSettings;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post({ teamId: TEAM, text, modelSelection: opus }, h.user);
+      yield* groups.idle;
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // A subtask the member hands off is that message's work too.
+      const child = yield* groups.member.assign({
+        callerThreadId: ada,
+        member: "cy",
+        instruction: "Check the build",
+      });
+      const cy = requestThreadId("cy", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(cy)!.modelSelection, opus);
+      yield* h.finishTask(child.taskId, "completed", "Build is green.");
+      yield* h.finish(0, "completed", "done");
+
+      // The next message to the same member in the same request is back on the default.
+      const ask = (more: Partial<AssistantGroupsPostInput>) =>
+        groups.post(
+          { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+          h.user,
+        );
+      yield* ask({});
+      assert.equal(h.sent.at(-1)!.threadId, ada);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      yield* ask({ modelSelection: opus });
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      assert.deepEqual(yield* settings.getSettings, before);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect.each([
+  ["a provider nobody has", selection(ProviderInstanceId.make("gone"), "x"), {}],
+  [
+    "a provider that is off everywhere",
+    selection(claude, "opus"),
+    { [claude]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false } },
+  ],
+] as const)(
+  "a message's model from %s posts on the project's model and saves nothing",
+  ([, pick, providerInstances]) => {
+    const h = harness({
+      settings: {
+        providerInstances,
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const before = yield* settings.getSettings;
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada one", modelSelection: pick },
+        h.user,
+      );
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+      assert.deepEqual(yield* settings.getSettings, before);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a message's model the request's project turns off falls back to the project's", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: {
+        [p1]: {
+          defaultModelSelection: selection(codex, "p1-model"),
+          providerInstances: { [claude]: { enabled: false } },
+        },
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const request = yield* groups.post(
+      { teamId: TEAM, text: "@ada one", modelSelection: selection(claude, "opus") },
+      h.user,
+    );
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(codex, "p1-model"));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a message's model leaves a model picked in the thread for the next task", () => {
+  const h = harness({
+    settings: {
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
+    },
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+    const ada = requestThreadId("ada", TEAM, request.message.id);
+    yield* h.finish(0, "completed", "done");
+    const handPicked = selection(codex, "ada-pick");
+    h.fakeThreads.get(ada)!.modelSelection = handPicked;
+    const ask = (more: Partial<AssistantGroupsPostInput>) =>
+      groups.post(
+        { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
+        h.user,
+      );
+    yield* ask({ modelSelection: selection(claude, "opus") });
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "opus"));
+    yield* h.finish(h.sent.length - 1, "completed", "done");
+    yield* ask({});
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, handPicked);
+    // It is still the thread's own pick: a new project model leaves it.
+    yield* h.finish(h.sent.length - 1, "completed", "done");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-new") } },
+    });
+    yield* groups.followProjectModels([p1]);
+    yield* ask({});
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, handPicked);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a continue with a model resumes the stopped work on it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const first = yield* groups.post({ teamId: TEAM, text: "@ada draft the plan" }, h.user);
+    yield* groups.taskAction({ taskId: first.tasks[0]!.id, action: "stop" });
+    const opus = selection(claude, "opus");
+    yield* groups.post({ teamId: TEAM, text: "continue", modelSelection: opus }, h.user);
+    // Another provider waits for the stopped turn to end, so the resumed turn starts on it.
+    assert.lengthOf(h.sent, 1);
+    yield* h.finish(0, "interrupted");
+    assert.lengthOf(h.sent, 2);
+    const ada = requestThreadId("ada", TEAM, first.message.id);
+    assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the answer to the lead's project question gives the request its model", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p3"] },
+    route: () => ({ assistantIds: ["ada"], projectId: "p1" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const request = yield* groups.post({ teamId: TEAM, text: "fix #core and #mobile-app" }, h.user);
+    yield* groups.idle;
+    assert.lengthOf(h.launched, 0);
+    const opus = selection(claude, "opus");
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Core",
+        replyToMessageId: request.message.id,
+        projectId: p1,
+        modelSelection: opus,
+      },
+      h.user,
+    );
+    yield* groups.idle;
+    assert.deepEqual(
+      h.launched.map((launch) => launch.modelSelection),
+      [opus],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

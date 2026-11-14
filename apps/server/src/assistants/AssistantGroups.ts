@@ -294,6 +294,8 @@ interface MessageRow {
   readonly asks_project: number;
   readonly worked_ms: number | null;
   readonly request_project_id: string | null;
+  /** The model its work starts on, picked for this message only. */
+  readonly model_selection?: string | null;
   readonly created_at: string;
 }
 
@@ -337,6 +339,7 @@ interface ThreadRow {
   readonly request_id: string | null;
   readonly followed_model_selection?: string | null;
   readonly pending_model_selection?: string | null;
+  readonly restore_model_selection?: string | null;
 }
 
 const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
@@ -491,6 +494,8 @@ export class AssistantGroups extends Context.Service<
       readonly clientRequestId?: string;
       /** The request's project, by id or name, among the group's; absent lets the lead decide. */
       readonly project?: string;
+      /** The model this request's work starts on; it saves no default. */
+      readonly modelSelection?: ModelSelection;
     }) => Effect.Effect<AssistantGroupsPostResult, AssistantError>;
     /** The chat line an agent's change to the group leaves: "<who> <text>". A repeat adds none. */
     readonly announce: (input: {
@@ -865,6 +870,7 @@ const make = Effect.gen(function* () {
     readonly asksProject?: boolean;
     /** A member's answer: how long its run worked. */
     readonly workedMs?: number | undefined;
+    readonly modelSelection?: ModelSelection | undefined;
   }) {
     const id = yield* newId("gm");
     const requestId = input.requestId === "new" ? id : (input.requestId ?? null);
@@ -873,7 +879,8 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
         task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
-        wait_thread_id, wait_decision_id, asks_project, worked_ms, request_project_id, created_at
+        wait_thread_id, wait_decision_id, asks_project, worked_ms, request_project_id,
+        model_selection, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
@@ -883,7 +890,7 @@ const make = Effect.gen(function* () {
         ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${input.workedMs ?? null},
         COALESCE((SELECT h.project_id FROM assistant_group_messages h WHERE h.message_id = ${requestId}),
           ${input.requestId === "new" ? (input.projectId ?? null) : null}),
-        ${yield* nowIso}
+        ${encodeModelSelectionJson(input.modelSelection ?? null)}, ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -1047,6 +1054,8 @@ const make = Effect.gen(function* () {
     team: AssistantTeam,
     member: AssistantRow,
     request: MessageRow,
+    /** The model the task's message picked; a new thread starts on it. */
+    explicit: ModelSelection | undefined,
   ) {
     const rows = yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_request_threads
@@ -1070,6 +1079,7 @@ const make = Effect.gen(function* () {
           projectId,
           assistantId: member.assistant_id as AssistantId,
           teamId: team.id,
+          explicit,
         })
         .pipe(
           Effect.mapError(() =>
@@ -1109,7 +1119,8 @@ const make = Effect.gen(function* () {
         ${encodeModelSelectionJson(followed)})
       ON CONFLICT (request_id, assistant_id) DO UPDATE
       SET thread_id = excluded.thread_id, seen_seq = 0,
-        followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL
+        followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL,
+        restore_model_selection = NULL
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
     // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
@@ -1125,58 +1136,74 @@ const make = Effect.gen(function* () {
   const requestThreads = (requestId: string) =>
     sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
 
+  /** Switches a thread's model now; "busy" while a turn on another provider is still ending. */
+  const switchModel = Effect.fn("AssistantGroups.switchModel")(function* (
+    threadId: string,
+    target: ModelSelection,
+  ) {
+    const switched = yield* engine
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`assistant-group-model:${threadId}:${yield* newId("m")}`),
+        threadId: threadId as ThreadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    if (switched._tag === "Success") return "switched" as const;
+    if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") return "busy" as const;
+    yield* Effect.logWarning("assistant groups: request thread kept its model", {
+      threadId,
+      cause: switched.failure,
+    });
+    return "failed" as const;
+  });
+
   /**
-   * Moves a request thread to `target` while it still runs on the model the project gave it; a
-   * change made in the thread wins. A thread mid-turn refuses another provider, so the move waits
-   * for the turn to end (`applyPendingModel`).
+   * Moves a request thread to `target` while it still runs on the model the project gave it;
+   * a change made in the thread wins. A thread mid-turn refuses another provider, so the move
+   * waits for the turn to end (`applyPendingModel`). True when it waits.
    */
   const followModel = Effect.fn("AssistantGroups.followModel")(function* (
     row: ThreadRow,
     target: ModelSelection,
     /** A request that ended keeps its threads as they are: the move waits for work to come back. */
     ended = false,
+    /** A message's own model moves the thread even off a model set in it. */
+    force = false,
   ) {
     const followed = decodeModelSelectionJson(row.followed_model_selection);
     const thread = yield* inspectThread(row.thread_id as ThreadId);
-    const follows =
+    const following =
       followed !== null &&
       thread !== undefined &&
-      thread.deletedAt === null &&
       modelSelectionsEqual(thread.modelSelection, followed);
-    if (!follows || modelSelectionsEqual(target, followed)) {
+    if (thread === undefined || thread.deletedAt !== null || !(force || following)) {
       yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
-    if (ended) {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET pending_model_selection = ${encodeModelSelectionJson(target)}
-        WHERE thread_id = ${row.thread_id}`;
+    // Off a model picked in the thread, the thread is not followed: the next task brings that
+    // pick back (`aimModel`), and a project's new model leaves it.
+    const settle = following
+      ? sql`UPDATE assistant_group_request_threads
+          SET followed_model_selection = ${encodeModelSelectionJson(target)},
+            pending_model_selection = NULL
+          WHERE thread_id = ${row.thread_id}`
+      : sql`UPDATE assistant_group_request_threads
+          SET pending_model_selection = NULL, restore_model_selection =
+            COALESCE(restore_model_selection, ${encodeModelSelectionJson(thread.modelSelection)})
+          WHERE thread_id = ${row.thread_id}`;
+    if (modelSelectionsEqual(target, thread.modelSelection)) {
+      yield* settle;
       return;
     }
-    const switched = yield* engine
-      .dispatch({
-        type: "thread.model-selection.set",
-        commandId: CommandId.make(`assistant-group-model:${row.thread_id}:${yield* newId("m")}`),
-        threadId: row.thread_id as ThreadId,
-        modelSelection: target,
-      })
-      .pipe(Effect.result);
-    if (switched._tag === "Success") {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET followed_model_selection = ${encodeModelSelectionJson(target)},
-          pending_model_selection = NULL
-        WHERE thread_id = ${row.thread_id}`;
-    } else if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET pending_model_selection = ${encodeModelSelectionJson(target)}
-        WHERE thread_id = ${row.thread_id}`;
-    } else {
-      yield* Effect.logWarning("assistant groups: request thread kept its model", {
-        threadId: row.thread_id,
-        cause: switched.failure,
-      });
-    }
+    const outcome = ended ? "busy" : yield* switchModel(row.thread_id, target);
+    if (outcome === "switched") yield* settle;
+    if (outcome !== "busy") return;
+    yield* sql`UPDATE assistant_group_request_threads
+      SET pending_model_selection = ${encodeModelSelectionJson(target)}
+      WHERE thread_id = ${row.thread_id}`;
+    if (!ended) return true;
   });
 
   /** A move `followModel` deferred while the thread was mid-turn or its request had ended. */
@@ -1190,6 +1217,51 @@ const make = Effect.gen(function* () {
           WHERE t.request_id = r.request_id AND t.status IN ${sql.in(OPEN)})`)[0];
     const pending = decodeModelSelectionJson(row?.pending_model_selection);
     if (row !== undefined && pending !== null) yield* followModel(row, pending);
+  });
+
+  /**
+   * Before a task's turn: the thread moves to its message's model, or back to its defaults' after
+   * another message's. Resolving at each start also lands a move deferred while it was mid-turn.
+   * True when the move waits for a turn still ending.
+   */
+  const aimModel = Effect.fn("AssistantGroups.aimModel")(function* (
+    team: AssistantTeam,
+    owner: AssistantRow,
+    exec: { readonly threadId: ThreadId; readonly projectId: ProjectId },
+    explicit: ModelSelection | undefined,
+  ) {
+    const row = (yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads WHERE thread_id = ${exec.threadId}`)[0];
+    const resolved = yield* modelSelections
+      .resolveForNewThread({
+        projectId: exec.projectId,
+        assistantId: owner.assistant_id as AssistantId,
+        teamId: team.id,
+        explicit,
+      })
+      .pipe(Effect.result);
+    if (row === undefined || resolved._tag === "Failure") {
+      yield* applyPendingModel(exec.threadId);
+      return false;
+    }
+    const restore = decodeModelSelectionJson(row.restore_model_selection);
+    if (restore !== null && resolved.success.layer !== "message") {
+      const thread = yield* inspectThread(exec.threadId);
+      const outcome =
+        thread === undefined || modelSelectionsEqual(thread.modelSelection, restore)
+          ? "switched"
+          : yield* switchModel(exec.threadId, restore);
+      if (outcome === "busy") return true;
+      yield* sql`UPDATE assistant_group_request_threads SET restore_model_selection = NULL
+        WHERE thread_id = ${exec.threadId}`;
+      return false;
+    }
+    return yield* followModel(
+      row,
+      resolved.success.selection,
+      false,
+      resolved.success.layer === "message",
+    );
   });
 
   const openRequestThreads = sql<ThreadRow>`
@@ -1371,7 +1443,11 @@ const make = Effect.gen(function* () {
     const requestId = task.request_id ?? task.request_message_id;
     const request = yield* getMessage(requestId);
     if (request === undefined) return yield* failed("request_missing");
-    const exec = yield* ensureRequestThread(team, owner, request).pipe(Effect.result);
+    // Its subtasks inherit the message, so a hand-off stays on the model the user picked.
+    const explicit =
+      decodeModelSelectionJson((yield* getMessage(task.request_message_id))?.model_selection) ??
+      undefined;
+    const exec = yield* ensureRequestThread(team, owner, request, explicit).pipe(Effect.result);
     if (exec._tag === "Failure") {
       return yield* failed(
         exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
@@ -1391,7 +1467,8 @@ const make = Effect.gen(function* () {
         // Unread, it queues as before rather than holding the task.
         Effect.orElseSucceed(() => false),
       );
-    if (busy) {
+    // Its own stopping revision blocks only a switch to another provider; the turn waits for it.
+    if (busy || (yield* aimModel(team, owner, exec.success, explicit)) === true) {
       yield* setWaitReason(task, "waiting for the conversation's current turn to end");
       return false;
     }
@@ -1485,8 +1562,6 @@ const make = Effect.gen(function* () {
       exec.success.threadId,
       attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
     );
-    // A turn that was no task (the user writing in the thread) may have deferred a move.
-    yield* applyPendingModel(exec.success.threadId);
     const sent = yield* threads
       .sendToThread({
         projectId: exec.success.projectId,
@@ -2420,6 +2495,7 @@ const make = Effect.gen(function* () {
               requestId: request?.message_id ?? "new",
               projectId: request === undefined ? projectId : null,
               title: request === undefined ? titleFromText(input.text) : null,
+              modelSelection: input.modelSelection,
             }).pipe(
               Effect.onError(() =>
                 AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
@@ -2427,6 +2503,15 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
+            // "continue" and an answer to a request not yet routed start an earlier message's work.
+            const workOf =
+              resumed?.request_message_id ??
+              (viaLead && request !== undefined && !started ? request.message_id : undefined);
+            if (input.modelSelection !== undefined && workOf !== undefined) {
+              yield* sql`UPDATE assistant_group_messages
+                SET model_selection = ${encodeModelSelectionJson(input.modelSelection)}
+                WHERE message_id = ${workOf}`;
+            }
             // The project picked while answering a request that has none yet.
             if (request !== undefined && projectId !== null) {
               yield* setRequestProject(request, projectId, null);
@@ -3270,6 +3355,7 @@ const make = Effect.gen(function* () {
             ? {}
             : { clientRequestId: input.clientRequestId }),
           ...(projectId === undefined ? {} : { projectId }),
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         },
         { kind: "agent", assistantId: assistantId as AssistantId | null, label },
       );

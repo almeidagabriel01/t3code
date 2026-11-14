@@ -1,4 +1,9 @@
 import {
+  type AssistantGroupTabKey,
+  type AssistantGroupTabPick,
+  assistantGroupComposerModel,
+} from "@t3tools/client-runtime/assistantGroupChat";
+import {
   type Assistant,
   type EnvironmentId,
   type ModelSelection,
@@ -10,6 +15,7 @@ import {
   projectModelLayer,
   resolveModelSelection,
 } from "@t3tools/shared/modelSelectionPrecedence";
+import { XIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { useEnvironments } from "../../state/environments";
@@ -23,6 +29,8 @@ import {
   useUpdateScopedSettings,
 } from "../settings/useScopedSettings";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { ComposerControl } from "../chat/ComposerControl";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -35,6 +43,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Label } from "../ui/label";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const SOURCE_DETAIL = {
   project: "Set for this project",
@@ -94,12 +103,21 @@ function GroupProjectScope(props: {
   );
 }
 
+/** The composer's pick for the next message, which never saves a default. */
+export interface GroupMessageModel {
+  readonly pick: AssistantGroupTabPick<ModelSelection> | null;
+  readonly tab: AssistantGroupTabKey | null;
+  readonly onPick: (selection: ModelSelection | null) => void;
+}
+
 function ProjectModelPicker(props: {
   readonly projectLabel: string;
   readonly teamDefault: ModelSelection | null;
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
+  readonly message?: GroupMessageModel | undefined;
 }) {
+  const { message } = props;
   const { settings, representative, providers, selection, entries, modelDisabledReason } =
     useScopedDefaultModel();
   const { target } = useSettingsScope();
@@ -112,43 +130,79 @@ function ProjectModelPicker(props: {
   };
   const fallback = layers.project ?? layers.team ?? selection;
   if (fallback === null) return null;
+  const defaults = { ...layers, global: fallback };
+  const isUsable = usableIn(settings, target?.projectId);
   // `global` means no project or group model applies: each member runs on its own.
-  const { selection: resolved, layer } = resolveModelSelection(
-    { ...layers, global: fallback },
-    usableIn(settings, target?.projectId),
-  );
+  const { selection: resolved, layer } =
+    message === undefined
+      ? resolveModelSelection(defaults, isUsable)
+      : assistantGroupComposerModel({ ...message, defaults, isUsable });
   const shown = layer === "global" ? (selection ?? fallback) : resolved;
   const detail =
-    layer === "global"
-      ? "Not set: each member uses its own model"
-      : layer === "team"
-        ? "Group default"
-        : SOURCE_DETAIL[source as keyof typeof SOURCE_DETAIL];
+    layer === "message"
+      ? "This message only"
+      : layer === "global"
+        ? "Not set: each member uses its own model"
+        : layer === "team"
+          ? "Group default"
+          : SOURCE_DETAIL[source as keyof typeof SOURCE_DETAIL];
   const save = (value: ModelSelection) => {
     const reason = modelDisabledReason(value.instanceId, value.model);
     if (reason !== null) return props.onError(reason);
     props.onError(null);
+    if (message !== undefined) return message.onPick(value);
     update({ defaultModelSelection: value }, { onFailed: props.onError });
   };
-  return (
+  const picker = (
     <SelectionPicker
-      composer
+      composer={message !== undefined}
       settings={settings}
       providers={providers}
       selection={shown}
-      label={`Model for ${props.projectLabel}`}
+      label={layer === "message" ? "Model for this message" : `Model for ${props.projectLabel}`}
       detail={detail}
       {...(layer === "global" ? { placeholder: "Members' models" } : {})}
-      disabled={props.disabled || !canWrite}
+      // A message's pick saves nothing, so it needs no right to change settings.
+      disabled={props.disabled || (message === undefined && !canWrite)}
       environmentId={representative?.environmentId ?? null}
       instanceEntries={entries}
       getModelDisabledReason={modelDisabledReason}
       onChange={save}
     />
   );
+  if (message === undefined || layer !== "message") return picker;
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {picker}
+      <Tooltip>
+        <TooltipTrigger render={<Badge variant="info" size="sm" className="shrink-0" />}>
+          This message
+        </TooltipTrigger>
+        <TooltipPopup>Only the message you send next runs on this model</TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ComposerControl
+              size="xs"
+              aria-label={`Use ${props.projectLabel}'s model`}
+              disabled={props.disabled}
+              onClick={() => message.onPick(null)}
+            />
+          }
+        >
+          <XIcon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup>Back to {props.projectLabel}'s model</TooltipPopup>
+      </Tooltip>
+    </span>
+  );
 }
 
-/** The model and effort new work in the project starts on; a change saves the project's default. */
+/**
+ * The model and effort new work in the project starts on. With `message` it picks for the next
+ * message only; without, a change saves the project's default.
+ */
 export function GroupProjectModelPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
@@ -157,6 +211,7 @@ export function GroupProjectModelPicker(props: {
   readonly teamDefault: ModelSelection | null;
   readonly disabled: boolean;
   readonly onError: (message: string | null) => void;
+  readonly message?: GroupMessageModel;
 }) {
   return (
     <GroupProjectScope environmentId={props.environmentId} projectId={props.projectId}>
@@ -165,8 +220,54 @@ export function GroupProjectModelPicker(props: {
         teamDefault={props.teamDefault}
         disabled={props.disabled}
         onError={props.onError}
+        message={props.message}
       />
     </GroupProjectScope>
+  );
+}
+
+/** The project's own default for new work, from the group chat; a message can still pick another. */
+export function ProjectModelDialog(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly projectLabel: string;
+  readonly teamDefault: ModelSelection | null;
+  readonly onClose: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Dialog open onOpenChange={(open) => !open && props.onClose()}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Model in {props.projectLabel}</DialogTitle>
+          <DialogDescription>
+            New work in {props.projectLabel} starts on this model. A message can still pick its own
+            in the composer.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="flex flex-col items-start gap-1.5">
+            <Label>Model</Label>
+            <GroupProjectModelPicker
+              environmentId={props.environmentId}
+              projectId={props.projectId}
+              projectLabel={props.projectLabel}
+              teamDefault={props.teamDefault}
+              disabled={false}
+              onError={setError}
+            />
+            {error === null ? null : (
+              <p role="alert" className="text-xs text-destructive-foreground">
+                {error}
+              </p>
+            )}
+          </div>
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <DialogClose render={<Button variant="outline" />}>Done</DialogClose>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 

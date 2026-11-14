@@ -9,6 +9,8 @@ type Item = { message: { id: string } };
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
+    modelPick: null as unknown,
+    pickListeners: new Set<() => void>(),
     /** Group threads that wait on the user's approval. */
     waiting: new Set<string>(),
     live: null as unknown,
@@ -689,6 +691,15 @@ vi.mock("@effect/atom-react", async () => {
     mocks.preferenceListeners.add(listener);
     return () => mocks.preferenceListeners.delete(listener);
   };
+  const subscribePick = (listener: () => void) => {
+    mocks.pickListeners.add(listener);
+    return () => mocks.pickListeners.delete(listener);
+  };
+  // Stable, as the real setter is.
+  const setPick = (next: unknown) => {
+    mocks.modelPick = typeof next === "function" ? next(mocks.modelPick) : next;
+    for (const listener of mocks.pickListeners) listener();
+  };
   return {
     useAtomValue: () =>
       useSyncExternalStore(subscribe, () => {
@@ -702,6 +713,8 @@ vi.mock("@effect/atom-react", async () => {
         return result;
       }),
     useAtomSet: () => mocks.savePreferences,
+    // Only the composer's model pick, whose picker is another route, is read with useAtom here.
+    useAtom: () => [useSyncExternalStore(subscribePick, () => mocks.modelPick), setPick],
   };
 });
 vi.mock("./assistantPresentation", () => ({
@@ -843,6 +856,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = window.document.createElement("div");
   root = createRoot(container);
+  mocks.modelPick = null;
   Object.assign(mocks, {
     teams: [team()],
     environmentIds: ["hub"],
@@ -1983,25 +1997,105 @@ describe("requests", () => {
     expect(byLabel("Project: Lead decides")).not.toBeNull();
   });
 
-  it("shows the picked project's model beside it and opens that project's picker", async () => {
+  it("shows the picked project's model beside it and picks the next message's model there", async () => {
     setup();
     // The lead decides the project, so there is no project model to show.
     expect(container.querySelector('[aria-label^="Model for"]')).toBeNull();
     expect(text()).not.toContain("Model in");
     await click("Project:Alpha");
     await click("Model for Alpha: name:gpt-5.5");
-    expect(mocks.navigate).toHaveBeenCalledWith("SettingsProjectModel", {
-      members: [{ environmentId: "hub", projectId: "p1" }],
+    expect(mocks.navigate).toHaveBeenCalledWith("GroupMessageModel", {
+      environmentId: "hub",
+      projectId: "p1",
+      teamId: "g1",
+      tab: null,
+      selected: expect.objectContaining({ model: "gpt-5.5" }),
     });
+    // A message's pick saves nothing, so it needs no right to change settings.
     mocks.canWriteSettings = false;
     render();
-    expect(byLabel("Model for Alpha: name:gpt-5.5")?.disabled).toBe(true);
+    expect(byLabel("Model for Alpha: name:gpt-5.5")?.disabled).toBe(false);
+  });
+
+  const OPUS = { instanceId: "claudeAgent", model: "opus" };
+  const setPick = (pick: unknown) =>
+    act(() => {
+      mocks.modelPick = pick;
+      for (const listener of mocks.pickListeners) listener();
+    });
+  const pickOpus = (tab: string | null = null) => setPick({ tab, value: OPUS });
+
+  it("sends the message's own model once and never saves it as the project's", async () => {
+    setup();
+    await click("Project:Alpha");
+    await pickOpus();
+    expect(byLabel("Model for this message: name:opus")).not.toBeNull();
+    // Always in view, not only in its menu: the pick is for this message.
+    expect(byLabel("Model for this message: name:opus")?.textContent).toContain("This message");
+    await click("Model for this message:Back to name:gpt-5.5");
+    expect(mocks.modelPick).toBeNull();
+    expect(byLabel("Model for Alpha: name:gpt-5.5")).not.toBeNull();
+    await pickOpus();
+    await type("@ada go");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({
+      teamId: "g1",
+      text: "@ada go",
+      projectId: "p1",
+      modelSelection: OPUS,
+    });
+    expect(mocks.modelPick).toBeNull();
+    expect(mocks.writeSettings).not.toHaveBeenCalled();
+  });
+
+  it("drops the message's model when the user leaves the group", async () => {
+    setup();
+    await click("Project:Alpha");
+    await pickOpus();
+    expect(byLabel("Model for this message: name:opus")).not.toBeNull();
+    act(() => root.unmount());
+    expect(mocks.modelPick).toBeNull();
+  });
+
+  it("drops the message's model on another tab", async () => {
+    tabbed();
+    await click(TAB.alpha);
+    await pickOpus("project:p1");
+    expect(byLabel("Model for this message: name:opus")).not.toBeNull();
+    await click(TAB.beta);
+    expect(mocks.modelPick).toBeNull();
+    expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+  });
+
+  it("drops both composer picks for good on a tab the user did not choose here", async () => {
+    tabbed();
+    await click(TAB.alpha);
+    await pickOpus("project:p1");
+    expect(byLabel("Model for this message: name:opus")).not.toBeNull();
+    await click("Project:Beta");
+    expect(byLabel("Project: Beta")).not.toBeNull();
+    // Another device saves this group's tab, then the one the picks were made in.
+    const savedElsewhere = (tab: string) =>
+      act(() => {
+        mocks.preferences = { assistantGroupTabs: { "hub:g1": tab } };
+        for (const listener of mocks.preferenceListeners) listener();
+      });
+    savedElsewhere("all");
+    expect(mocks.modelPick).toBeNull();
+    savedElsewhere("project:p1");
+    expect(selected(TAB.alpha)).toBe("true");
+    expect(byLabel("Project: Alpha")).not.toBeNull();
+    expect(byLabel("Model for Alpha: name:gpt-5.5")).not.toBeNull();
   });
 
   it("shows the group's default, else the members' own models, for a project without its own", async () => {
     setup();
     await click("Project:Beta");
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    // With no default at all, a pick still shows as this message's model.
+    await pickOpus();
+    expect(byLabel("Model for this message: name:opus")?.textContent).toContain("This message");
+    await setPick(null);
     setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
     expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
     // A provider the project turned off is skipped, as the server does when the request starts.
@@ -2019,6 +2113,12 @@ describe("requests", () => {
         (node) => node.textContent,
       );
     expect(submenus()).toEqual(["Model in Alpha", "Ada · name:gpt-5.4"]);
+    // The project's own model is set here, not from the composer.
+    expect(byLabel("header:Project's model")?.dataset.subtitle).toBe("name:gpt-5.5");
+    await click("header:Project's model");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+    });
     await click("header:Beto");
     expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
       members: [{ environmentId: "hub", projectId: "p1" }],
