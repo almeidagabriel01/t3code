@@ -89,6 +89,16 @@ describe("extractAgentNotificationDeepLink", () => {
     ).toBeNull();
   });
 
+  // The router leaves `:` and `@` unescaped in a path; pushes escape them, so both must agree.
+  it.each([
+    ["/threads/env/assistant:jarvis:1", "/threads/env/assistant%3Ajarvis%3A1"],
+    ["/assistant-groups/env/team:a@b/tasks", "/assistant-groups/env/team%3Aa%40b"],
+    ["/assistant-groups/env/team?tab=general", "/assistant-groups/env/team"],
+    ["/threads/env/%E0%A4%A", null],
+  ])("the screen at %s is the push link %s", (pathname, expected) => {
+    expect(threadDeepLinkOnScreen(pathname)).toBe(expected);
+  });
+
   it.each([
     ["/assistant-groups/env/team?tab=project%3Ap1", "/assistant-groups/env/team?tab=project%3Ap1"],
     ["/assistant-groups/env/team?tab=general", "/assistant-groups/env/team?tab=general"],

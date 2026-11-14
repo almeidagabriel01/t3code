@@ -103,12 +103,18 @@ function normalizeDeepLink(value: string): string | null {
   }
 }
 
+/** The push link of the screen at `pathname`, escaped as pushes are (the router leaves `:` bare). */
 export function threadDeepLinkOnScreen(pathname: string): string | null {
-  const match = /^\/(threads|assistant-groups)\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
+  const match = /^\/(threads|assistant-groups)\/([^/?]+)\/([^/?]+)(?:[/?]|$)/.exec(pathname);
   if (!match?.[2] || !match[3]) {
     return null;
   }
-  return `/${match[1]}/${match[2]}/${match[3]}`;
+  try {
+    const [environmentId, id] = [match[2], match[3]].map(decodeURIComponent);
+    return `/${match[1]}/${encodeURIComponent(environmentId!)}/${encodeURIComponent(id!)}`;
+  } catch {
+    return null;
+  }
 }
 
 export function extractAgentNotificationDeepLink(response: unknown): string | null {
