@@ -72,6 +72,7 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -508,6 +509,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const assistants = yield* AssistantService;
+  const modelSelections = yield* ProjectModelSelection.ProjectModelSelectionService;
   const directory = yield* AssistantDirectory;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -953,10 +955,17 @@ const make = Effect.gen(function* () {
       return yield* invalid(`${member.name} cannot work in this request's project.`);
     }
     if (thread === undefined) {
-      const current =
-        member.thread_id === null ? undefined : yield* inspectThread(member.thread_id as ThreadId);
-      const modelSelection: ModelSelection =
-        current?.modelSelection ?? (yield* assistants.defaultModel(projectId));
+      const { selection: modelSelection } = yield* modelSelections
+        .resolveForNewThread({
+          projectId,
+          assistantId: member.assistant_id as AssistantId,
+          teamId: team.id,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            assistantError("storage", "Could not work out the model for this request."),
+          ),
+        );
       yield* launches
         .launch({
           // A launch's receipt may outlive its thread (rows copied without their threads), so a
@@ -1214,16 +1223,12 @@ const make = Effect.gen(function* () {
       memories: team.memories ?? [],
     });
     const messageId = taskMessageId(task.task_id, task.revision);
-    // The member works on its own current model, so a change in its conversation reaches its groups.
-    const own =
-      owner.thread_id === null ? undefined : yield* inspectThread(owner.thread_id as ThreadId);
     const attachments = yield* copyForThread(
       exec.success.threadId,
       attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
     );
     const sent = yield* threads
       .sendToThread({
-        ...(own?.modelSelection === undefined ? {} : { modelSelection: own.modelSelection }),
         projectId: exec.success.projectId,
         commandId: CommandId.make(messageId),
         messageId: MessageId.make(messageId),

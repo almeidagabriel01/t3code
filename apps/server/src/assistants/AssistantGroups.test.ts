@@ -18,6 +18,8 @@ import {
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
+import type { DeepPartial } from "@t3tools/shared/Struct";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -38,6 +40,8 @@ import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupServ
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -62,6 +66,8 @@ const TEAM = AssistantTeamId.make("team:1");
 const OTHER_TEAM = AssistantTeamId.make("team:2");
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
+const p1 = ProjectId.make("p1");
+const p2 = ProjectId.make("p2");
 const selection = (instanceId: ProviderInstanceId, model = "m"): ModelSelection => ({
   instanceId,
   model,
@@ -114,6 +120,8 @@ interface Options {
       };
   /** Projects each member may work in (by assistant id); the rest work anywhere from p1. */
   readonly projects?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Server settings beside auto-resume, such as each project's default model. */
+  readonly settings?: DeepPartial<ServerSettingsValue>;
 }
 
 /** Titles of the projects tests use; each exists in the projection. */
@@ -339,7 +347,16 @@ const harness = (options: Options = {}) => {
       cleanupPreviews: () => Effect.void,
       cleanupAttachments: (ids) => Effect.sync(() => void cleaned.push(...ids)),
     }),
-    ServerSettings.layerTest({ autoResumeLimitedThreads: options.autoResume ?? true }),
+    ProjectModelSelection.layer.pipe(
+      Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone })),
+    ),
+  ).pipe(
+    Layer.provideMerge(
+      ServerSettings.layerTest({
+        ...options.settings,
+        autoResumeLimitedThreads: options.autoResume ?? true,
+      }),
+    ),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -812,6 +829,11 @@ it.effect(
       );
       assert.lengthOf(yield* h.messages, 1);
       assert.lengthOf(h.sent, 1);
+      assert.lengthOf(h.launched, 1);
+      assert.notInclude(
+        h.dispatched.map((command) => command.type),
+        "thread.model-selection.set",
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -843,18 +865,34 @@ it.effect("agents and schedules open tasks whose instruction names their sender"
 });
 
 it.effect(
-  "a member gets one thread per request, launched lazily in its project and reused within it",
+  "a member gets one thread per request, launched lazily in its project on that project's model",
   () => {
-    const h = harness();
+    const h = harness({
+      projects: { ada: ["p1", "p2"] },
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(codex, "p1-model") },
+          [p2]: { defaultModelSelection: selection(claude, "p2-model") },
+        },
+      },
+    });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      const one = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
-      // Ada switched models in her own conversation: the next task in the group follows.
+      const one = yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: p1 }, h.user);
+      // Ada's own conversation is not the group's model: each request follows its project.
       h.fakeThreads.get("assistant:ada:1")!.modelSelection = selection(claude, "ada-new");
-      const two = yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+      const two = yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: p2 }, h.user);
+      assert.deepEqual(
+        h.launched.map((input) => [input.projectId, input.modelSelection]),
+        [
+          ["p1", selection(codex, "p1-model")],
+          ["p2", selection(claude, "p2-model")],
+        ],
+      );
+      // Later tasks run on what the thread has, so a change made in it stays.
       assert.deepEqual(
         h.sent.map((input) => input.modelSelection),
-        [selection(codex, "ada-model"), selection(claude, "ada-new")],
+        [undefined, undefined],
       );
       const first = requestThreadId("ada", TEAM, one.message.id);
       const second = requestThreadId("ada", TEAM, two.message.id);
@@ -870,7 +908,6 @@ it.effect(
         title: "Ada · Team team:1 · one",
         // Ada is read-only, so the thread asks before acting.
         runtimeMode: "approval-required",
-        modelSelection: selection(codex, "ada-model"),
         generateTitle: false,
         createdBy: "system",
       });

@@ -441,6 +441,7 @@ const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
       layerThreadLaunchProvided,
       layerAssistantServiceProvided,
       layerScheduledTaskProvided,
+      layerProjectModelSelectionProvided,
       ProjectionStore.layer,
       AssistantDirectory.layer,
     ),
