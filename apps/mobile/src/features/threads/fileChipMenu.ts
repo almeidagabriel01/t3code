@@ -1,5 +1,5 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileBasename, relativeLinkLeavesWorkspace } from "@t3tools/shared/path";
 import type { ThreadId } from "@t3tools/contracts";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import type { MarkdownFileContextMenu } from "../../native/SelectableMarkdownText.types";
@@ -15,6 +15,8 @@ import {
 export interface FileChipTarget {
   readonly fullPath?: string;
   readonly relativePath?: string;
+  /** A relative link that leaves the workspace: only its written path is copied. */
+  readonly copyOnly?: true;
 }
 
 export function fileChipClipboardPath(
@@ -31,6 +33,9 @@ export function resolveFileChipTarget(
 ): FileChipTarget | null {
   const presentation = resolveMarkdownLinkPresentation(href);
   if (presentation.kind !== "file") return null;
+  if (relativeLinkLeavesWorkspace(presentation.path, workspaceRoot)) {
+    return { relativePath: presentation.path, copyOnly: true };
+  }
   const path = resolveFileLinkPath(workspaceRoot, presentation.path);
   if (path === null) return null;
   const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
@@ -47,6 +52,7 @@ export function resolveFileChipTarget(
 }
 
 function fileChipMetadata(target: FileChipTarget) {
+  if (target.copyOnly) return null;
   const path = target.fullPath ?? target.relativePath;
   if (!path) return null;
   const name = fileBasename(path);
@@ -68,6 +74,12 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
 }
 
 export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
+  if (target.copyOnly) {
+    return {
+      title: target.relativePath ?? "",
+      actions: [{ id: "copy-relative-path", title: "Copy relative path" }],
+    };
+  }
   return {
     title: target.fullPath ?? target.relativePath ?? "",
     actions: [

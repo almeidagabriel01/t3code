@@ -32,6 +32,7 @@ interface MarkdownFileLinkProps {
   iconPath: string;
   isAppBundle?: boolean;
   workspaceRelativePath: string | null;
+  copyOnlyPath: string | null;
   panelPath: string | null;
   line?: number | undefined;
   label: string;
@@ -57,6 +58,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   iconPath,
   isAppBundle = false,
   workspaceRelativePath,
+  copyOnlyPath,
   panelPath,
   line,
   label,
@@ -249,7 +251,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     if (!api) return;
 
     try {
-      const copyItems = markdownFileCopyMenuItems({ targetPath, workspaceRelativePath });
+      const copyItems = markdownFileCopyMenuItems({
+        targetPath,
+        workspaceRelativePath,
+        copyOnlyPath,
+      });
       const clicked = await api.contextMenu.show(
         [
           ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
@@ -408,6 +414,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
     previous.workspaceRelativePath === next.workspaceRelativePath &&
+    previous.copyOnlyPath === next.copyOnlyPath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&

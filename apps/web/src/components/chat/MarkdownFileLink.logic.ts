@@ -32,7 +32,18 @@ export function hasMarkdownFilePrimaryAction(input: {
 export function markdownFileCopyMenuItems({
   targetPath,
   workspaceRelativePath,
-}: Pick<MarkdownFileLinkMeta, "targetPath" | "workspaceRelativePath">) {
+  copyOnlyPath,
+}: Pick<MarkdownFileLinkMeta, "targetPath" | "workspaceRelativePath" | "copyOnlyPath">) {
+  if (copyOnlyPath !== null) {
+    return [
+      {
+        id: "copy-relative",
+        label: "Copy relative path",
+        value: copyOnlyPath,
+        title: "Relative path",
+      },
+    ];
+  }
   const items = [
     { id: "copy-full", label: "Copy full path", value: targetPath, title: "Full path" },
   ];

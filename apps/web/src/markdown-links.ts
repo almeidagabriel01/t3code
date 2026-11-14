@@ -1,5 +1,10 @@
 import { isLocalEditorFileUrl } from "@t3tools/contracts";
-import { fileBasename, isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
+import {
+  fileBasename,
+  isAbsolutePath,
+  relativeLinkLeavesWorkspace,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
 import {
   inlineCodeFilePathCandidate,
   isRelativeFilePath,
@@ -7,7 +12,11 @@ import {
   parseMarkdownFileLink,
   resolveMarkdownFileLinkTarget,
 } from "@t3tools/shared/markdownLinks";
-import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import {
+  formatFilePathPosition,
+  parseFileUrlHref,
+  splitFilePathPosition,
+} from "@t3tools/shared/fileLinks";
 
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { isTerminalLinkActivation } from "./terminal-links";
@@ -18,6 +27,8 @@ export interface MarkdownFileLinkMeta {
   targetPath: string;
   displayPath: string;
   workspaceRelativePath: string | null;
+  /** A relative link that leaves the workspace, as written: it is only copied. */
+  copyOnlyPath: string | null;
   basename: string;
   line?: number;
   column?: number;
@@ -83,10 +94,13 @@ export function resolveMarkdownFileLinkMeta(
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
   if (!targetPath) return null;
   const source = href ? parseMarkdownFileLink(href) : null;
+  const copyOnly = source !== null && relativeLinkLeavesWorkspace(source.path, cwd, baseDir);
   return {
     ...buildFileLinkMetaFromTarget(targetPath, cwd),
     ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
+    copyOnlyPath: copyOnly ? formatFilePathPosition(source) : null,
     workspaceLookupPath:
+      !copyOnly &&
       source !== null &&
       !isAbsolutePath(source.path) &&
       baseDir !== undefined &&

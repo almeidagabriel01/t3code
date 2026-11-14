@@ -121,6 +121,24 @@ export function workspaceRelativeFilePath(
   return relativePath;
 }
 
+/**
+ * A relative link written in the workspace that climbs out of it. Clients only copy it: the server
+ * reads no workspace file there. Absolute and `~/` links are host files and do not count.
+ */
+export function relativeLinkLeavesWorkspace(
+  path: string,
+  workspaceRoot: string | null | undefined,
+  baseDir: string | null | undefined = workspaceRoot,
+): boolean {
+  if (isAbsolutePath(path) || /^~[\\/]/.test(path)) return false;
+  const root = workspaceRoot || "/";
+  const base = baseDir || root;
+  return (
+    workspaceRelativeFilePath(base, root) !== null &&
+    workspaceRelativeFilePath(resolveWorkspaceFilePath(path, base), root) === null
+  );
+}
+
 export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }

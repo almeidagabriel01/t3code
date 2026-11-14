@@ -43,7 +43,19 @@ describe("resolveFileChipTarget", () => {
   it("ignores links that are not files or cannot be opened", () => {
     expect(resolveFileChipTarget("https://example.com/app.ts", "/repo")).toBeNull();
     expect(resolveFileChipTarget("~/report.md", "/repo")).toBeNull();
-    expect(resolveFileChipTarget("../other/file.ts", "/repo")).toBeNull();
+  });
+
+  it.each([
+    ["../other/file.ts", "/repo"],
+    ["src/../../shots/a.png", "/repo"],
+    ["../report.pdf:3", null],
+  ])("offers only a copy of %s, which leaves the workspace, as written", (href, root) => {
+    const target = resolveFileChipTarget(href, root)!;
+    expect(fileChipMenu(target).actions).toEqual([
+      { id: "copy-relative-path", title: "Copy relative path" },
+    ]);
+    expect(fileChipClipboardPath(target, "copy-relative-path")).toBe(href.replace(/:\d+$/, ""));
+    expect(fileChipShareSource(target, ThreadId.make("thread-1"))).toBeNull();
   });
 });
 

@@ -40,9 +40,11 @@ export function markdownFileCopyPaths(
   const fullPath = markdownFileEditorTarget(meta, hostPath);
   return {
     fullPath,
-    relativePath: formatFilePathPosition({
-      ...meta,
-      path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? meta.filePath,
-    }),
+    relativePath:
+      meta.copyOnlyPath ??
+      formatFilePathPosition({
+        ...meta,
+        path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? meta.filePath,
+      }),
   };
 }

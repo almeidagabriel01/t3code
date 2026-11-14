@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  relativeLinkLeavesWorkspace,
   workspaceRelativeFilePath,
   newProjectFolderName,
   normalizeProjectPathForComparison,
@@ -123,5 +124,27 @@ describe("workspaceRelativeFilePath", () => {
     ["\\\\server\\share\\repo\\..\\notes.md", "\\\\server\\share\\repo", null],
   ])("relates %s to %s", (path, workspaceRoot, relativePath) => {
     expect(workspaceRelativeFilePath(path, workspaceRoot)).toBe(relativePath);
+  });
+});
+
+describe("relativeLinkLeavesWorkspace", () => {
+  it.each([
+    ["/repo/src/a.ts", "/repo", undefined, false],
+    // An absolute or home path is a host file, read in place.
+    ["/other/x.ts", "/repo", undefined, false],
+    ["/repo/../other/x.ts", "/repo", undefined, false],
+    ["~/notes.md", "/repo", undefined, false],
+    ["../other/x.ts", "/repo", undefined, true],
+    ["src/../../x.ts", "/repo", undefined, true],
+    ["..\\other\\x.ts", "C:\\repo", undefined, true],
+    ["../x.ts", null, undefined, true],
+    ["a/../b.ts", "/repo", undefined, false],
+    ["./b.ts", "/repo", undefined, false],
+    ["../src/x.ts", "/repo", "/repo/docs", false],
+    ["../../x.ts", "/repo", "/repo/docs", true],
+    // A file outside the workspace anchors its own links: those are host files too.
+    ["../x.md", "/repo", "/tmp/report", false],
+  ])("%s from %s (base %s) leaves: %s", (path, root, baseDir, leaves) => {
+    expect(relativeLinkLeavesWorkspace(path, root, baseDir)).toBe(leaves);
   });
 });

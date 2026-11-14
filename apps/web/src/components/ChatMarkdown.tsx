@@ -822,8 +822,11 @@ function useChatMarkdownState({
         cwd,
         findWorkspaceMatch: () => findWorkspaceFileMatch(fileLinkMeta),
       });
+    // A relative link that leaves the workspace is only copied.
+    const copyOnly = fileLinkMeta.copyOnlyPath !== null;
     const isAppBundle = isMacOS && fileLinkMeta.filePath.endsWith(".app");
     const canOpenApp =
+      !copyOnly &&
       environmentId !== null &&
       isAppBundle &&
       isClientHost &&
@@ -834,9 +837,10 @@ function useChatMarkdownState({
       mediaMimeTypeFromExtension(
         fileLinkMeta.basename.slice(fileLinkMeta.basename.lastIndexOf(".")),
       ) !== null;
-    const panelPath =
-      fileLinkMeta.workspaceRelativePath ??
-      (!canPreviewMedia && isHostPath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+    const panelPath = copyOnly
+      ? null
+      : (fileLinkMeta.workspaceRelativePath ??
+        (!canPreviewMedia && isHostPath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null));
 
     return (
       <MarkdownFileLink
@@ -850,6 +854,7 @@ function useChatMarkdownState({
         }
         isAppBundle={isAppBundle}
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
+        copyOnlyPath={fileLinkMeta.copyOnlyPath}
         panelPath={isAppBundle ? null : panelPath}
         line={fileLinkMeta.line}
         label={fileLinkLabel(
@@ -871,7 +876,7 @@ function useChatMarkdownState({
                   environmentId,
                   input: { cwd: (await resolveHostPath()).absolutePath, editor: "file-manager" },
                 })
-            : canUseShellActions
+            : canUseShellActions && !copyOnly
               ? async () =>
                   openInPreferredEditor(
                     markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
@@ -883,19 +888,20 @@ function useChatMarkdownState({
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={
-          threadRef && canPreviewMedia
+          threadRef && canPreviewMedia && !copyOnly
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
             : undefined
         }
         openInEditorMenuLabel={canOpenApp ? "Open app" : preferredEditorMenuLabel}
         onReveal={
-          canUseShellActions && revealInFileManagerLabel !== undefined
+          canUseShellActions && revealInFileManagerLabel !== undefined && !copyOnly
             ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
         onOpenInBrowser={
           threadRef &&
+          !copyOnly &&
           canOperatePreview &&
           isPreviewAvailableFor(threadRef.environmentId) &&
           isBrowserPreviewFile(fileLinkMeta.filePath)
