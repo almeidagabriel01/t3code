@@ -16,7 +16,7 @@ import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
 
 /**
  * An assistant is a named, long-lived conversation: a row that points at its current real thread.
- * The thread's own model selection is the assistant's model; a reset starts a new generation.
+ * Its conversation runs on the thread's own model; a reset starts a new generation.
  */
 export const ASSISTANT_NAME_MAX_LENGTH = 60;
 export const ASSISTANT_ROLE_MAX_LENGTH = 60;
@@ -268,6 +268,8 @@ export const Assistant = Schema.Struct({
   scope: AssistantScope.pipe(Schema.withDecodingDefault(Effect.succeed("all" as const))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
   mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The model its new work starts on when the project names none. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -324,6 +326,8 @@ export const AssistantTeam = Schema.Struct({
   /** Absent from older servers. */
   instructions: Schema.optionalKey(AssistantTeamInstructions),
   memories: Schema.optionalKey(AssistantTeamMemories),
+  /** The model a group request starts on, below the project's own default. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -440,6 +444,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
   archived: Schema.optional(Schema.Boolean),
+  /** Null clears it. Unlike `modelSelection`, it leaves the current conversation's model alone. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
 
@@ -617,6 +623,8 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   instructions: Schema.optional(AssistantTeamInstructions),
   /** Replaces the whole list. */
   memories: Schema.optional(AssistantTeamMemories),
+  /** Null clears it. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 

@@ -68,6 +68,7 @@ import {
   allTeams,
   encodeMemberIds,
   encodeMemories,
+  encodeModelSelectionJson,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import {
@@ -740,6 +741,10 @@ const make = Effect.gen(function* () {
                   : encodeAvatar(input.avatar),
             scope: resolved?.scope ?? row.scope,
             projectIdsJson: resolved?.json ?? row.project_ids_json ?? null,
+            defaultModelSelectionJson:
+              input.defaultModelSelection === undefined
+                ? (row.default_model_selection ?? null)
+                : encodeModelSelectionJson(input.defaultModelSelection),
           };
           const saved =
             input.mcpServers === undefined
@@ -771,7 +776,7 @@ const make = Effect.gen(function* () {
                 project_id = ${next.projectId}, thread_id = ${threadId}, generation = ${generation},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             yield* followSchedules({ ...row, generation }, threadId, next.projectId);
             yield* retire(previousThreadId);
@@ -783,7 +788,7 @@ const make = Effect.gen(function* () {
                 instructions = ${next.instructions}, tool_access = ${next.toolAccess},
                 budget_json = ${next.budgetJson}, autonomy_json = ${next.autonomyJson},
                 role = ${next.role},
-                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, archived_at = ${archivedAt}, updated_at = ${now}
+                ask_before_acting = ${next.askBeforeActing}, workspace = ${next.workspace}, icon = ${next.icon}, avatar_json = ${next.avatarJson}, scope = ${next.scope}, project_ids_json = ${next.projectIdsJson}, mcp_servers_json = ${mcpServersJson}, default_model_selection = ${next.defaultModelSelectionJson}, archived_at = ${archivedAt}, updated_at = ${now}
               WHERE assistant_id = ${row.assistant_id}`;
             if (
               previousThreadId !== null &&
@@ -953,6 +958,11 @@ const make = Effect.gen(function* () {
             archived_at = ${archivedAt},
             instructions = ${input.instructions?.trim() ?? current.instructions ?? ""},
             memories_json = ${encodeMemories(input.memories ?? current.memories ?? [])},
+            default_model_selection = ${
+              input.defaultModelSelection === undefined
+                ? (row.default_model_selection ?? null)
+                : encodeModelSelectionJson(input.defaultModelSelection)
+            },
             updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));

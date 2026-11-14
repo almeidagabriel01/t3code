@@ -622,6 +622,47 @@ it.effect("a budget round-trips through create and update, and null removes it",
   }).pipe(Effect.provide(layer));
 });
 
+it.effect(
+  "assistant and team model defaults are stored apart from the conversation, null clears",
+  () => {
+    const { layer, dispatched } = harness();
+    const beyond = model("claude-opus-5-5");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const made = yield* assistants.create(create());
+      assert.isNull(made.defaultModelSelection);
+      const set = yield* assistants.update({ assistantId: made.id, defaultModelSelection: beyond });
+      assert.deepEqual(set.defaultModelSelection, beyond);
+      // Other edits keep it, and it never switches the current conversation.
+      assert.deepEqual(
+        (yield* assistants.update({ assistantId: made.id, name: "Renamed" })).defaultModelSelection,
+        beyond,
+      );
+      assert.isFalse(dispatched.some((command) => command.type === "thread.model-selection.set"));
+      assert.isNull(
+        (yield* assistants.update({ assistantId: made.id, defaultModelSelection: null }))
+          .defaultModelSelection,
+      );
+
+      const team = yield* assistants.createTeam({ name: "Dev", memberIds: [made.id] });
+      assert.isNull(team.defaultModelSelection);
+      const withDefault = yield* assistants.updateTeam({
+        teamId: team.id,
+        defaultModelSelection: beyond,
+      });
+      assert.deepEqual(withDefault.defaultModelSelection, beyond);
+      assert.deepEqual(
+        (yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" })).defaultModelSelection,
+        beyond,
+      );
+      assert.isNull(
+        (yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: null }))
+          .defaultModelSelection,
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("subscribers get a snapshot, then every change", () => {
   const { layer } = harness();
   return Effect.gen(function* () {

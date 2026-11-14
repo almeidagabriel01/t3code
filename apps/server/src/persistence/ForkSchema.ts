@@ -237,6 +237,13 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     INSERT OR IGNORE INTO assistant_seeds (assistant_id, seeded_at)
     SELECT assistant_id, created_at FROM assistants WHERE is_default = 1
   `;
+  // One marker per seeded model default, so a default the user cleared never comes back.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS model_selection_seeds (
+      seed_id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `;
 
   // Chat-app bridge. The inbox is keyed by the transport's idempotency key so a redelivery is a
   // no-op; the outbox by delivery id so a replayed event never posts twice.
@@ -423,6 +430,23 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
     yield* sql`ALTER TABLE assistants ADD COLUMN project_ids_json TEXT`;
   }
   yield* sql`UPDATE assistants SET project_ids_json = json_array(project_id) WHERE project_ids_json IS NULL`;
+  // Starts as the model of its current conversation, once: a default the user clears stays cleared.
+  if (!assistantColumns.some((column) => column.name === "default_model_selection")) {
+    const threadTables = yield* sql`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name = 'orchestration_v2_projection_threads'`;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistants ADD COLUMN default_model_selection TEXT`;
+        if (threadTables.length === 0) return;
+        yield* sql`
+            UPDATE assistants SET default_model_selection = (
+              SELECT json_extract(t.payload_json, '$.modelSelection')
+              FROM orchestration_v2_projection_threads t WHERE t.thread_id = assistants.thread_id)
+            WHERE default_model_selection IS NULL AND thread_id IS NOT NULL`;
+      }),
+    );
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS autonomy_watches (
       watch_id TEXT PRIMARY KEY,
@@ -574,6 +598,10 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!teamColumns.some((column) => column.name === "instructions")) {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN instructions TEXT NOT NULL DEFAULT ''`;
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN memories_json TEXT NOT NULL DEFAULT '[]'`;
+  }
+  // The model a group request starts on, below the project's own default.
+  if (!teamColumns.some((column) => column.name === "default_model_selection")) {
+    yield* sql`ALTER TABLE assistant_teams ADD COLUMN default_model_selection TEXT`;
   }
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
   yield* sql`
