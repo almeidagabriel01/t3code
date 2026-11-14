@@ -298,6 +298,11 @@ export function assistantGroupRequestProject(
 
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
+/** The tab of a project's requests; General for those with none. */
+export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+  return projectId === null ? "general" : `project:${projectId}`;
+}
+
 export interface AssistantGroupTab {
   readonly key: AssistantGroupTabKey;
   /** undefined for All (unscoped reads); { projectId: null } for General. */
@@ -393,7 +398,7 @@ export function assistantGroupTabs(input: {
   const tab = (projectId: ProjectId | null, label: string): AssistantGroupTab => {
     const found = scopes.find((scope) => scope.projectId === projectId);
     return {
-      key: projectId === null ? "general" : `project:${projectId}`,
+      key: assistantGroupTabKey(projectId),
       scope: { projectId },
       label,
       projectId,
@@ -1046,7 +1051,7 @@ export function assistantGroupFinished(
   previous: TeamChat | undefined,
   next: TeamChat,
   projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
-): { readonly title: string; readonly body: string } | null {
+): { readonly title: string; readonly body: string; readonly projectId: ProjectId | null } | null {
   // Archiving a busy group pauses its tasks; that is not a request finishing.
   if (next.archivedAt != null) return null;
   if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
@@ -1056,7 +1061,20 @@ export function assistantGroupFinished(
   return {
     title: `${next.name} finished`,
     body: project === undefined || body === "" ? body : projectNoticePrefix(project.title, body),
+    // The group's whole work ends at once; the preview's request names whose it was.
+    projectId: next.chat.previewProjectId ?? null,
   };
+}
+
+/**
+ * The user already sees a finished request in its open chat: on All (or with no tab row), or on
+ * its project's tab. Any other tab hides it, so it still deserves a notice.
+ */
+export function assistantGroupFinishedInView(
+  open: AssistantGroupTabKey | null,
+  projectId: ProjectId | null,
+): boolean {
+  return open === null || open === "all" || open === assistantGroupTabKey(projectId);
 }
 
 /** "N running" count for the header: tasks being worked right now. */

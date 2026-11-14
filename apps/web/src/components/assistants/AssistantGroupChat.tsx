@@ -56,7 +56,6 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { teamModelLayer } from "@t3tools/shared/modelSelectionPrecedence";
 import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -89,6 +88,7 @@ import {
 
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { groupTabStorageKey, SavedGroupTab } from "./groupTabStorage";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { observeResize } from "../../lib/observeResize";
@@ -97,6 +97,7 @@ import {
   useAssistantEntries,
   useAssistantGroupActions,
   useAssistantGroupChat,
+  useShowGroupTab,
 } from "../../state/assistants";
 import { useProject, useProjects, useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
@@ -1401,8 +1402,6 @@ function GroupFeed(props: {
   );
 }
 
-const SavedTab = Schema.NullOr(Schema.String);
-
 /** One group's chat, as in a channel: requests, each member's answers and the tasks between. */
 export function AssistantGroupChat(props: {
   readonly environmentId: EnvironmentId;
@@ -1418,9 +1417,9 @@ export function AssistantGroupChat(props: {
   const [composerPick, setComposerPick] = useState<AssistantGroupProjectPick | null>(null);
   const feedHandle = useRef<GroupFeedHandle>(null);
   const [savedTab, setSavedTab] = useLocalStorage(
-    `t3code:group-tab:${environmentId}:${teamId}`,
+    groupTabStorageKey(environmentId, teamId),
     null,
-    SavedTab,
+    SavedGroupTab,
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
 
@@ -1445,6 +1444,7 @@ export function AssistantGroupChat(props: {
   });
   const tabKey = tab?.key ?? null;
   const live = useAssistantGroupChat(environmentId, teamId, scope);
+  useShowGroupTab(environmentId, teamId, tabKey);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(id, projects, team?.chat?.scopes);
   const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(

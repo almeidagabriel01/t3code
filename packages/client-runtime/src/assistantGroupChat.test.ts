@@ -29,6 +29,7 @@ import {
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
   assistantGroupFinished,
+  assistantGroupFinishedInView,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
@@ -875,6 +876,7 @@ describe("read position", () => {
     assert.deepStrictEqual(assistantGroupFinished(busy, idle, []), {
       title: "Ops finished",
       body: "All done. Ship it.",
+      projectId: null,
     });
     assert.isNull(assistantGroupFinished(idle, idle, []));
     assert.isNull(assistantGroupFinished(undefined, idle, []));
@@ -894,15 +896,31 @@ describe("read position", () => {
       ...idle,
       chat: { ...idle.chat, previewProjectId },
     });
-    assert.strictEqual(
-      assistantGroupFinished(busy, scoped("p-web" as ProjectId), web)?.body,
-      "[web] All done. Ship it.",
-    );
+    assert.deepStrictEqual(assistantGroupFinished(busy, scoped("p-web" as ProjectId), web), {
+      title: "Ops finished",
+      body: "[web] All done. Ship it.",
+      projectId: "p-web" as ProjectId,
+    });
     assert.strictEqual(assistantGroupFinished(busy, scoped(null), web)?.body, "All done. Ship it.");
     assert.strictEqual(
       assistantGroupFinished(busy, scoped("p-gone" as ProjectId), web)?.body,
       "All done. Ship it.",
     );
+  });
+});
+
+describe("assistantGroupFinishedInView", () => {
+  it.each([
+    ["no tab row", null, "p1", true],
+    ["All", "all", "p1", true],
+    ["All, for General", "all", null, true],
+    ["its project's tab", "project:p1", "p1", true],
+    ["another project's tab", "project:p2", "p1", false],
+    ["a project's tab, for General", "project:p1", null, false],
+    ["General, for General", "general", null, true],
+    ["General, for a project", "general", "p1", false],
+  ] as const)("%s", (_name, open, projectId, expected) => {
+    assert.strictEqual(assistantGroupFinishedInView(open, projectId as ProjectId | null), expected);
   });
 });
 
