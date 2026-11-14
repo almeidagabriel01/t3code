@@ -78,18 +78,24 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         onPress={() => run(() => flows.connect(primary.catalogId))}
       />
     );
-  // The text keeps a 200dp floor; when the action does not fit beside it, the action wraps
-  // under the text instead of squeezing it. Rows with an action never have onPress.
+  // The 240dp text floor makes every phone (Pro Max included) wrap the action under the text,
+  // while tablets and wide panes keep it beside. Rows with an action never have onPress.
   const body = (
     <View className="min-h-14 flex-row items-center gap-3 py-3 ps-4 pe-2">
       <IntegrationIcon icon={row.icon} />
       <View className="min-w-0 flex-1 flex-row flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        <View className="min-w-0 shrink grow basis-[200px] gap-1">
+        <View className="min-w-0 shrink grow basis-[240px] gap-1">
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {row.title}
           </Text>
           {row.description === "" ? null : (
-            <Text textRole="footnote" className="text-foreground-muted" numberOfLines={2}>
+            <Text
+              textRole="footnote"
+              className="text-foreground-muted"
+              // Rows without a catalog entry describe themselves by their URL or command.
+              numberOfLines={row.entry === null ? 1 : 2}
+              ellipsizeMode={row.entry === null ? "head" : "tail"}
+            >
               {row.description}
             </Text>
           )}
