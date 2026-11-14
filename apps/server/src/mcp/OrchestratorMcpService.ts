@@ -71,7 +71,11 @@ import {
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+  runRanAfter,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import {
   normalizeThreadPullRequestKey,
@@ -517,6 +521,7 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
   return (
     result.hasPendingQuestion ||
     result.pendingApproval !== null ||
+    result.status === "usage_limited" ||
     isTerminalTaskStatus(result.status)
   );
 }
@@ -1542,9 +1547,12 @@ const make = Effect.gen(function* () {
           ? "result_available"
           : "working"
         : progress.state;
+    const latestRun = latestExecutedRun(childControls.runs) ?? undefined;
     const resultRunIds = [
       ...new Set(
-        [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
+        [taskResultRun?.id, terminalRun?.id, latestRun?.id].filter(
+          (id): id is RunId => id !== undefined,
+        ),
       ),
     ];
     const resultRecords = yield* threadManagement
@@ -1560,6 +1568,25 @@ const make = Effect.gen(function* () {
       messages: [...childControls.messages, ...resultRecords.messages],
       turnItems: resultRecords.turnItems,
     };
+    // A usage limit pauses the task until the thread runs again, by reset or provider switch.
+    const taskRun = taskResultRun ?? childRun;
+    const limitFailure = latestRootProviderFailure(taskRun ?? null, resultRecords.turnItems);
+    const limitedRun = limitFailure?.class === "usage_limit" ? taskRun : undefined;
+    const continuationRun =
+      limitedRun !== undefined &&
+      latestRun !== undefined &&
+      latestRun.id !== limitedRun.id &&
+      runRanAfter(latestRun, limitedRun)
+        ? latestRun
+        : undefined;
+    const limitState =
+      limitedRun === undefined
+        ? null
+        : continuationRun !== undefined
+          ? { status: taskStatusForRun(continuationRun), run: continuationRun }
+          : task.completionDelivery?.state === "disposed"
+            ? { status: "cancelled" as const, run: limitedRun }
+            : { status: "usage_limited" as const, run: limitedRun };
     const heldForRestart =
       task.result === null &&
       taskWorkState === "result_available" &&
@@ -1567,28 +1594,48 @@ const make = Effect.gen(function* () {
         .delegatedTaskResultPending(task.childThreadId, childRun?.delegatedTaskId)
         .pipe(Effect.mapError(threadManagementFailure)));
     const workState =
-      task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
+      limitState !== null
+        ? isTerminalTaskStatus(limitState.status)
+          ? "result_available"
+          : "working"
+        : task.result !== null
+          ? "result_available"
+          : heldForRestart
+            ? "working"
+            : taskWorkState;
     const status =
-      task.result !== null
-        ? taskStatusForRun(
-            task.status === "completed" ||
-              task.status === "failed" ||
-              task.status === "cancelled" ||
-              task.status === "interrupted"
-              ? { status: task.status }
-              : childRun,
-          )
-        : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
-          : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-            ? "queued"
-            : "running";
+      limitState !== null
+        ? limitState.status
+        : task.result !== null
+          ? taskStatusForRun(
+              task.status === "completed" ||
+                task.status === "failed" ||
+                task.status === "cancelled" ||
+                task.status === "interrupted"
+                ? { status: task.status }
+                : childRun,
+            )
+          : workState === "result_available"
+            ? taskStatusForRun(taskResultRun ?? childRun)
+            : taskStatusForRun(taskResultRun ?? childRun) === "queued"
+              ? "queued"
+              : "running";
+    const shownTerminalRun =
+      limitState === null
+        ? terminalRun
+        : isTerminalTaskStatus(limitState.status)
+          ? limitState.run
+          : undefined;
     const derivedResult =
-      task.result !== null
-        ? task.result
-        : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
-          : null;
+      limitState !== null
+        ? shownTerminalRun === undefined
+          ? null
+          : subagentResultForRun(childProjection, shownTerminalRun).text
+        : task.result !== null
+          ? task.result
+          : taskResultRun !== undefined && isTerminalTaskStatus(status)
+            ? subagentResultForRun(childProjection, taskResultRun).text
+            : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
         transfer.type === "subagent_result" &&
@@ -1604,19 +1651,26 @@ const make = Effect.gen(function* () {
             : undefined) ??
           null);
     const resultTransfer = taskResultTransfer(scope.thread.threadId, childProjection, task) ?? null;
-    const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
-    const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
-      ? terminalRun.id === childRun?.id
+    const terminalStatus =
+      shownTerminalRun === undefined
+        ? null
+        : limitState !== null
+          ? limitState.status
+          : taskStatusForRun(shownTerminalRun);
+    const latestTerminalSummary = canExposeTaskRunResult(shownTerminalRun)
+      ? shownTerminalRun.id === childRun?.id || limitState !== null
         ? derivedResult
-        : subagentResultForRun(childProjection, terminalRun).text
+        : subagentResultForRun(childProjection, shownTerminalRun).text
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
-    const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
+    const latestTerminalResultContextTransferId =
+      resultTransferForRun(shownTerminalRun)?.id ?? null;
     const executionRun =
-      task.result === null
+      limitState?.run ??
+      (task.result === null
         ? (taskResultRun ?? childRun)
         : (childControls.runs.find((run) => run.id === resultTransfer?.sourcePoint.runId) ??
-          childRun);
+          childRun));
     const modelSelection = executionRun?.modelSelection ??
       childControls.thread.modelSelection ?? {
         instanceId: task.providerInstanceId,
@@ -1632,6 +1686,9 @@ const make = Effect.gen(function* () {
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
       status,
+      ...(status === "usage_limited" && limitFailure?.resetAt != null
+        ? { resetAt: limitFailure.resetAt }
+        : {}),
       workState,
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
@@ -1640,7 +1697,7 @@ const make = Effect.gen(function* () {
       options: modelSelection.options ?? [],
       summary: derivedResult,
       resultContextTransferId,
-      latestTerminalRunId: terminalRun?.id ?? null,
+      latestTerminalRunId: shownTerminalRun?.id ?? null,
       latestTerminalStatus:
         terminalStatus !== null && isTerminalTaskStatus(terminalStatus) ? terminalStatus : null,
       latestTerminalSummary: latestTerminalSummary === derivedResult ? null : latestTerminalSummary,
@@ -2818,14 +2875,16 @@ const make = Effect.gen(function* () {
         );
         return subagents.some((task) => task.id === input.taskId && task.status === "cancelled");
       }).pipe(Effect.mapError(threadManagementFailure));
-      if (isTerminalTaskStatus(current.status)) {
+      const status = current.status;
+      if (isTerminalTaskStatus(status) || status === "usage_limited") {
         // The child can still run work for another turn, so it is stopped either way.
+        // Stop also disarms a usage-limited task's continuation at the reset.
         yield* stopWithinLimit;
         const cancelled = yield* cancelOrphan;
         yield* disposeCompletionDelivery;
         return {
           taskId: input.taskId,
-          status: cancelled ? "cancelled" : current.status,
+          status: cancelled || status === "usage_limited" ? "cancelled" : status,
         } satisfies OrchestratorMcpTaskCancelResult;
       }
       const child = yield* loadThreadRecords(childThreadId, ["runs"]);

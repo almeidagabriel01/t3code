@@ -51,14 +51,30 @@ const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
 // A delegated child that fails on a usage limit is armed to continue at the reset.
+// Until then its task reads usage_limited; it runs again on the continuation.
 // Once its parent cancels the task, nothing is waiting for that continuation.
 it.effect.each([
-  { cancel: "after its limit", cancelStatus: "failed", resumed: false },
-  { cancel: "as its limit lands", cancelStatus: "cancel_requested", resumed: false },
-  { cancel: "never", cancelStatus: null, resumed: true },
+  {
+    cancel: "after its limit",
+    cancelStatus: "cancelled",
+    resumed: false,
+    statuses: ["usage_limited", "cancelled", "cancelled"],
+  },
+  {
+    cancel: "as its limit lands",
+    cancelStatus: "cancel_requested",
+    resumed: false,
+    statuses: ["cancelled", "cancelled", "cancelled"],
+  },
+  {
+    cancel: "never",
+    cancelStatus: null,
+    resumed: true,
+    statuses: ["usage_limited", "usage_limited", "running"],
+  },
 ] as const)(
   "a delegated child whose task is cancelled $cancel resumes at the reset: $resumed",
-  ({ cancel, cancelStatus, resumed }) =>
+  ({ cancel, cancelStatus, resumed, statuses }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("task-cancel-usage-limit");
@@ -293,6 +309,14 @@ it.effect.each([
           });
 
           const now = yield* DateTime.now;
+          const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+          const seen: Array<string> = [];
+          const readStatus = Effect.gen(function* () {
+            const result = yield* service.taskStatus(scope, task.id);
+            seen.push(result.status);
+            if (result.status === "usage_limited") assert.equal(result.resetAt, resetAt);
+            else assert.isUndefined(result.resetAt);
+          });
           const childFailed = yield* watch(
             (event) =>
               event.type === "run.updated" &&
@@ -319,7 +343,7 @@ it.effect.each([
                   message: "Claude usage limit reached.",
                   code: null,
                   retryable: null,
-                  resetAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+                  resetAt,
                 },
                 threadDisposition: "reusable",
               },
@@ -339,11 +363,17 @@ it.effect.each([
 
           // The sweep runs every few seconds, so it arms the child before a parent reacts.
           yield* sweep;
+          yield* readStatus;
           if (cancel === "after its limit") cancelled = yield* cancelTask;
           assert.equal(cancelled, cancelStatus);
+          yield* readStatus;
 
+          const continuationRunning = resumed ? yield* turnRunning() : undefined;
           yield* TestClock.adjust("1 minute");
           yield* sweep;
+          if (continuationRunning !== undefined) yield* Fiber.join(continuationRunning);
+          yield* readStatus;
+          assert.deepEqual(seen, [...statuses]);
           const childAfter = yield* orchestrator.getThreadProjection(childThreadId);
           assert.deepEqual(
             childAfter.messages.flatMap((message) =>
