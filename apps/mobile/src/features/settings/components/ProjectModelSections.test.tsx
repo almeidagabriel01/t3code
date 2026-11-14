@@ -77,7 +77,9 @@ vi.mock("../../../components/ui/Menu", () => ({
   ),
 }));
 vi.mock("../../threads/ThreadSettingsSheet", () => ({ ThreadSettingsPickerScreen: () => null }));
-vi.mock("../../../lib/modelOptions", () => ({
+vi.mock("../../../lib/modelOptions", async (importOriginal) => ({
+  withInstanceName: (await importOriginal<typeof import("../../../lib/modelOptions")>())
+    .withInstanceName,
   // The environment lists gpt-5.5 by its display name; other models are unknown to it.
   buildModelOptions: (_config: unknown, selection: { instanceId: string; model: string } | null) =>
     selection === null
@@ -86,6 +88,10 @@ vi.mock("../../../lib/modelOptions", () => ({
           {
             selection,
             label: selection.model === "gpt-5.5" ? "GPT-5.5" : selection.model,
+            // A second Codex instance carries a badge; the default one does not.
+            ...(selection.instanceId === "codex_work"
+              ? { providerBadge: { displayName: "Work", showBadge: true } }
+              : {}),
           },
         ],
 }));
@@ -298,6 +304,28 @@ describe("ProjectModelSections", () => {
       ["p1", { ada: null }],
       ["p2", { ada: null }],
     ]);
+  });
+
+  it("names the instance beside the model when the driver has several", () => {
+    const work = { instanceId: "codex_work" as never, model: "gpt-5.5" };
+    render(
+      resolveMobileSettingsTargets(
+        [
+          environment("hub", {
+            providerInstances: { ["codex_work" as never]: { driver: "codex" as never } },
+            projectSettingsOverrides: {
+              ["p1" as never]: {
+                defaultModelSelection: work,
+                assistantModelSelections: { ["ada" as never]: work },
+              },
+            },
+          }),
+        ],
+        [{ environmentId: "hub" as never, id: "p1" as never }],
+      ),
+    );
+    expect(button("Model, GPT-5.5 · Work")).not.toBeNull();
+    expect(button("Model for Ada, GPT-5.5 · Work")).not.toBeNull();
   });
 
   it("disables every write without permission to change the environment's settings", () => {

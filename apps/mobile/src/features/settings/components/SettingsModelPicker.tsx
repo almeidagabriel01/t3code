@@ -2,7 +2,12 @@ import type { EnvironmentId, ModelSelection, ProjectId } from "@t3tools/contract
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { useMemo } from "react";
 
-import { buildModelOptions, groupByProvider, type ModelOption } from "../../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  type ModelOption,
+  withInstanceName,
+} from "../../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../../lib/providerOptions";
 import { useEnvironmentServerConfig } from "../../../state/entities";
 import { ThreadSettingsPickerScreen } from "../../threads/ThreadSettingsSheet";
@@ -11,12 +16,15 @@ const sameModel = (option: ModelOption, selection: ModelSelection) =>
   option.selection.instanceId === selection.instanceId &&
   option.selection.model === selection.model;
 
-/** A model's display name ("Claude Opus 5.5"); a model the environment does not list reads from its slug. */
+/** A model's display name ("Claude Opus 5.5 · Beyond" when ambiguous); an unlisted model reads from its slug. */
 export function modelDisplayName(options: ReadonlyArray<ModelOption>, selection: ModelSelection) {
   const option = options.find((candidate) => sameModel(candidate, selection));
-  return option && option.label !== selection.model
-    ? option.label
-    : formatModelSlugName(selection.model);
+  return withInstanceName(
+    option && option.label !== selection.model
+      ? option.label
+      : formatModelSlugName(selection.model),
+    option,
+  );
 }
 
 /** A Settings model picker over one environment's models, with effort for the picked one. */
