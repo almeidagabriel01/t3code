@@ -642,12 +642,19 @@ export function assistantGroupActivity(
   };
 }
 
-/** Where an answer's relative file links resolve: its task thread's worktree, else the request project. */
+/**
+ * Where an answer's relative file links resolve: its task thread's worktree, else that thread's
+ * project; the request's project only when there is no thread (or its shell is not loaded yet).
+ */
 export function assistantGroupAnswerRoot(input: {
-  readonly threadWorktreePath: string | null | undefined;
-  readonly projectRoot: string | null | undefined;
+  readonly thread: {
+    readonly worktreePath: string | null;
+    readonly projectRoot: string | null | undefined;
+  } | null;
+  readonly requestRoot: string | null | undefined;
 }): string | null {
-  return input.threadWorktreePath ?? input.projectRoot ?? null;
+  if (input.thread === null) return input.requestRoot ?? null;
+  return input.thread.worktreePath ?? input.thread.projectRoot ?? null;
 }
 
 const PAUSE_REASON_LABEL: Record<string, string> = {

@@ -59,6 +59,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     shells: new Map<string, string>(),
     /** Member threads that run in their own worktree. */
     worktrees: new Map<string, string>(),
+    /** Member threads' projects, when not the request's. */
+    threadProjects: new Map<string, string>(),
     openedLink: vi.fn(),
     /** Each render of a message's markdown, with the link handlers it got. */
     markdownRender: vi.fn(),
@@ -498,10 +500,15 @@ vi.mock("../../state/entities", () => ({
   useQuietThreadShell: (ref: { threadId: string } | null) => {
     const title = ref === null ? undefined : mocks.shells.get(ref.threadId);
     const worktreePath = ref === null ? undefined : mocks.worktrees.get(ref.threadId);
-    return title === undefined && worktreePath === undefined
+    const projectId = ref === null ? undefined : mocks.threadProjects.get(ref.threadId);
+    return title === undefined && worktreePath === undefined && projectId === undefined
       ? null
-      : { title: title ?? "", worktreePath: worktreePath ?? null };
+      : { title: title ?? "", worktreePath: worktreePath ?? null, projectId };
   },
+  useProject: (ref: { environmentId: string; projectId: string } | null) =>
+    PROJECTS.find(
+      (project) => project.environmentId === ref?.environmentId && project.id === ref.projectId,
+    ) ?? null,
   useProjects: () => PROJECTS,
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || !mocks.waiting.has(ref.threadId)
@@ -684,6 +691,7 @@ beforeEach(() => {
     voicePhase: "idle",
     shells: new Map(),
     worktrees: new Map(),
+    threadProjects: new Map(),
     live: snapshot(FEED, [
       task("t1", "paused", "ada", { reason: "stopped" }),
       task("t22", "running", "beto"),
@@ -1839,15 +1847,14 @@ describe("the thread's pieces in the feed", () => {
   it("opens each answer's links with its own task thread and its worktree or project root, under one preview host", async () => {
     mocks.live = snapshot(ANSWERS, tasks("running", "running"));
     mocks.worktrees = new Map([["assistant:beto:g-0123456789abcdef", "/worktrees/beto"]]);
+    // Ada's thread lives in another project than the request's (Alpha).
+    mocks.threadProjects = new Map([["assistant:ada:g-0123456789abcdef", "p2"]]);
     render();
     await click("link in Done in [app](src/app.ts)");
     await click("link in Also done");
     // Mentions are highlights only; everything else reaches the host with the answer's context.
     expect(mocks.openedLink.mock.calls).toEqual([
-      [
-        "src/app.ts",
-        { threadId: "assistant:ada:g-0123456789abcdef", workspaceRoot: "/repo/alpha" },
-      ],
+      ["src/app.ts", { threadId: "assistant:ada:g-0123456789abcdef", workspaceRoot: "/repo/beta" }],
       [
         "src/app.ts",
         { threadId: "assistant:beto:g-0123456789abcdef", workspaceRoot: "/worktrees/beto" },

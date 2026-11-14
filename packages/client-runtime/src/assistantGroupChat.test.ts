@@ -505,11 +505,22 @@ it.each([
 });
 
 it.each([
-  [{ threadWorktreePath: "/wt/feature", projectRoot: "/repo" }, "/wt/feature"],
-  [{ threadWorktreePath: null, projectRoot: "/repo" }, "/repo"],
-  [{ threadWorktreePath: undefined, projectRoot: "/repo" }, "/repo"],
-  [{ threadWorktreePath: "/wt/feature", projectRoot: null }, "/wt/feature"],
-  [{ threadWorktreePath: null, projectRoot: undefined }, null],
+  [
+    { thread: { worktreePath: "/wt/feature", projectRoot: "/other" }, requestRoot: "/repo" },
+    "/wt/feature",
+  ],
+  [{ thread: { worktreePath: null, projectRoot: "/repo" }, requestRoot: "/repo" }, "/repo"],
+  // A member thread in another project resolves against its own project, not the request's.
+  [{ thread: { worktreePath: null, projectRoot: "/other" }, requestRoot: "/repo" }, "/other"],
+  [
+    { thread: { worktreePath: "/wt/feature", projectRoot: null }, requestRoot: null },
+    "/wt/feature",
+  ],
+  // Its project is not loaded: no root beats a guess that resolves links in the wrong tree.
+  [{ thread: { worktreePath: null, projectRoot: null }, requestRoot: "/repo" }, null],
+  // No thread (or its shell not loaded yet): only then the request's project.
+  [{ thread: null, requestRoot: "/repo" }, "/repo"],
+  [{ thread: null, requestRoot: undefined }, null],
 ] as const)("assistantGroupAnswerRoot(%j)", (input, root) => {
   assert.strictEqual(assistantGroupAnswerRoot(input), root);
 });

@@ -21,7 +21,7 @@ import {
   assistantGroupActivity,
   assistantGroupAnswerRoot,
 } from "@t3tools/client-runtime/assistantGroupChat";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isLongMessage } from "@t3tools/client-runtime/messageFold";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
@@ -79,7 +79,7 @@ import {
   useAssistantGroupChat,
 } from "../../state/assistants";
 import { useDecisionEntries } from "../../state/decisions";
-import { useProjects, useQuietThreadShell } from "../../state/entities";
+import { useProject, useProjects, useQuietThreadShell } from "../../state/entities";
 import { DecisionCard } from "../decisions/DecisionCard";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -442,6 +442,9 @@ function FeedRow(
   const answeredShell = useQuietThreadShell(
     answered === undefined ? null : scopeThreadRef(props.environmentId, answered.threadId),
   );
+  const answeredProject = useProject(
+    answeredShell === null ? null : scopeProjectRef(props.environmentId, answeredShell.projectId),
+  );
   const cards = (
     <TaskCards {...props} tasks={props.row.tasks} showOwner={props.row.role !== "answer"} />
   );
@@ -626,8 +629,14 @@ function FeedRow(
                 context={{
                   threadId: answered?.threadId ?? null,
                   workspaceRoot: assistantGroupAnswerRoot({
-                    threadWorktreePath: answeredShell?.worktreePath,
-                    projectRoot: props.workspaceRoot,
+                    thread:
+                      answeredShell === null
+                        ? null
+                        : {
+                            worktreePath: answeredShell.worktreePath,
+                            projectRoot: answeredProject?.workspaceRoot,
+                          },
+                    requestRoot: props.workspaceRoot,
                   }),
                 }}
                 preserveSoftBreaks={shouldPreserveAssistantLineBreaks(message.text)}

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   applyAssistantGroupHistory,
   assistantGroupActivity,
@@ -70,7 +70,7 @@ import {
   useAssistantGroupActions,
   useAssistantGroupChat,
 } from "../../state/assistants";
-import { useProjects, useQuietThreadShell } from "../../state/entities";
+import { useProject, useProjects, useQuietThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -446,13 +446,22 @@ function FeedRow(props: {
   const answeredShell = useQuietThreadShell(
     answered === undefined ? null : scopeThreadRef(props.environmentId, answered.threadId),
   );
+  const answeredProject = useProject(
+    answeredShell === null ? null : scopeProjectRef(props.environmentId, answeredShell.projectId),
+  );
   const markdown = (text: string) => (
     <ChatMarkdown
       text={assistantGroupMarkdownMentions(text, props.members, props.projects)}
       cwd={
         assistantGroupAnswerRoot({
-          threadWorktreePath: answeredShell?.worktreePath,
-          projectRoot: props.cwd,
+          thread:
+            answeredShell === null
+              ? null
+              : {
+                  worktreePath: answeredShell.worktreePath,
+                  projectRoot: answeredProject?.workspaceRoot,
+                },
+          requestRoot: props.cwd,
         }) ?? undefined
       }
       threadRef={
