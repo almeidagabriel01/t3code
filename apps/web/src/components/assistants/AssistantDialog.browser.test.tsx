@@ -305,10 +305,37 @@ it("an unchanged assistant keeps its avatar out of the update", async () => {
   await using _screen = await openApp();
   openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "jarvis" as AssistantId });
   await userEvent.fill(page.getByLabelText("Name"), "Jarvis 2");
+  // A server without assistant default models sends no field, so there is nothing to edit.
+  expect(page.getByText("Default model").query()).toBeNull();
   await userEvent.click(page.getByRole("button", { name: "Save" }));
   await eventually(() => expect(fakeAssistantEdits.updates).toHaveLength(1));
   expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("avatar");
   expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("icon");
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("defaultModelSelection");
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("clears an assistant's own default model back to the user's default", async () => {
+  fakeAssistantEdits.updates = [];
+  publishAssistants([
+    assistant("jarvis", "Jarvis", {
+      defaultModelSelection: { instanceId: "codex" as never, model: "gpt-5.5" },
+    }),
+  ]);
+  await using _screen = await openApp();
+  openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "jarvis" as AssistantId });
+  await expect
+    .element(page.getByRole("button", { name: "Assistant default model" }))
+    .toHaveTextContent("GPT-5.5");
+  await userEvent.click(page.getByRole("button", { name: "Use your default" }));
+  await expect.element(page.getByText("Follows your default model, GPT-5.4.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() =>
+    expect(fakeAssistantEdits.updates).toMatchObject([
+      { assistantId: "jarvis", defaultModelSelection: null },
+    ]),
+  );
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("modelSelection");
   appAtomRegistry.set(assistantDialogAtom, null);
 });
 

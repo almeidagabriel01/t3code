@@ -15,6 +15,8 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  type ServerProvider,
+  type UnifiedSettings,
 } from "@t3tools/contracts";
 import {
   connectorDraftsFrom,
@@ -33,10 +35,10 @@ import {
   toggleAssistantProject,
 } from "@t3tools/client-runtime/assistantSections";
 import { sameAssistantAutonomy } from "@t3tools/client-runtime/autonomy";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 import { Link, useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { BrainIcon } from "lucide-react";
+import { BrainIcon, Undo2Icon } from "lucide-react";
 import { useState } from "react";
 
 import { assistantRobotLook, newAssistantLook } from "@t3tools/client-runtime/assistantRobot";
@@ -66,6 +68,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAssistantHomeProject } from "@t3tools/client-runtime/state/projects";
 import { validateMemorySettingsSearch } from "../settings/MemorySettings.logic";
 import { cn } from "../../lib/utils";
+import { getDisplayModelName } from "../chat/providerIconUtils";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { getTraitsSectionVisibility, TraitsPicker } from "../chat/TraitsPicker";
 import { BUDGET_PERIOD_LABELS } from "../settings/ProviderBudgetSection";
@@ -127,6 +130,97 @@ function FieldLabel(props: {
     <div className="flex flex-col gap-0.5">
       <Label htmlFor={props.htmlFor}>{props.label}</Label>
       <p className="text-xs text-muted-foreground">{props.description}</p>
+    </div>
+  );
+}
+
+/** The assistant's own default model; cleared, it follows the user's default. */
+function DefaultModelField(props: {
+  readonly environmentId: EnvironmentId | null;
+  readonly settings: UnifiedSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly entries: ReturnType<typeof providerInstanceEntriesFor>;
+  readonly value: ModelSelection | null;
+  readonly inherited: ModelSelection | null;
+  readonly onChange: (value: ModelSelection | null) => void;
+}) {
+  const shown = props.value ?? props.inherited;
+  const entry =
+    shown === null ? undefined : props.entries.find((item) => item.instanceId === shown.instanceId);
+  const inheritedName =
+    props.inherited === null
+      ? null
+      : (() => {
+          const found = props.providers
+            .find((provider) => provider.instanceId === props.inherited?.instanceId)
+            ?.models.find((model) => model.slug === props.inherited?.model);
+          return found ? getDisplayModelName(found) : formatModelSlugName(props.inherited.model);
+        })();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <FieldLabel
+        htmlFor="assistant-default-model"
+        label="Default model"
+        description={
+          props.value !== null
+            ? "New conversations and tasks start on it when the project names no model for this assistant."
+            : inheritedName === null
+              ? "Follows your default model."
+              : `Follows your default model, ${inheritedName}.`
+        }
+      />
+      <div id="assistant-default-model" className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {shown !== null && entry !== undefined ? (
+          <>
+            <ProviderModelPicker
+              environmentId={props.environmentId}
+              activeInstanceId={shown.instanceId}
+              model={shown.model}
+              lockedProvider={null}
+              instanceEntries={props.entries}
+              modelOptionsByInstance={getCustomModelOptionsByInstance(
+                props.settings,
+                props.providers,
+                shown.instanceId,
+                shown.model,
+              )}
+              triggerAriaLabel="Assistant default model"
+              isComposerOwned={false}
+              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+              onInstanceModelChange={(instanceId, model) =>
+                props.onChange(createModelSelection(instanceId, model))
+              }
+            />
+            {getTraitsSectionVisibility({
+              provider: entry.driverKind,
+              models: entry.models,
+              model: shown.model,
+              modelOptions: shown.options ?? [],
+              allowPromptInjectedEffort: false,
+            }).hasAnyControls ? (
+              <TraitsPicker
+                provider={entry.driverKind}
+                models={entry.models}
+                model={shown.model}
+                modelOptions={shown.options ?? []}
+                allowPromptInjectedEffort={false}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onModelOptionsChange={(options) =>
+                  props.onChange(createModelSelection(shown.instanceId, shown.model, options))
+                }
+              />
+            ) : null}
+          </>
+        ) : (
+          <span className="text-sm text-muted-foreground">No providers available</span>
+        )}
+        {props.value !== null ? (
+          <Button size="xs" variant="ghost" onClick={() => props.onChange(null)}>
+            <Undo2Icon />
+            Use your default
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -298,6 +392,8 @@ function AssistantDialog(props: {
         : null,
   );
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
+  /** Undefined until the user touches it; null clears the assistant's own default. */
+  const [defaultDraft, setDefaultDraft] = useState<ModelSelection | null | undefined>(undefined);
   const [role, setRole] = useState(assistant?.role ?? "");
   const [budgetDraft, setBudgetDraft] = useState(() => budgetToDraft(assistant?.budget ?? null));
   const [autonomy, setAutonomy] = useState<AssistantAutonomy>(
@@ -437,6 +533,7 @@ function AssistantDialog(props: {
           ...(handle !== assistant.handle ? { handle } : {}),
           ...(projectsChanged ? assistantProjectFields(pickedIds, homeId) : {}),
           ...(pickedModel ? { modelSelection: pickedModel } : {}),
+          ...(defaultDraft === undefined ? {} : { defaultModelSelection: defaultDraft }),
           ...(instructions !== assistant.instructions ? { instructions } : {}),
           ...(toolAccess !== assistant.toolAccess ? { toolAccess } : {}),
           ...(askBeforeActing !== assistant.askBeforeActing ? { askBeforeActing } : {}),
@@ -620,6 +717,17 @@ function AssistantDialog(props: {
                 </div>
               </div>
             </div>
+            {assistant !== null && assistant.defaultModelSelection !== undefined ? (
+              <DefaultModelField
+                environmentId={environmentId}
+                settings={settings}
+                providers={providers}
+                entries={entries}
+                value={defaultDraft === undefined ? assistant.defaultModelSelection : defaultDraft}
+                inherited={defaultModel}
+                onChange={setDefaultDraft}
+              />
+            ) : null}
             <div className="flex flex-col gap-1.5">
               <FieldLabel
                 htmlFor="assistant-instructions"
