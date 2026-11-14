@@ -43,6 +43,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { assistantRunReply } from "../assistants/assistantRunReply.ts";
+import type { TurnOrigin } from "../mcp/turnOrigin.ts";
 import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
@@ -377,7 +378,8 @@ const make = Effect.gen(function* () {
         text,
         createdBy: "user",
       });
-      if (outcome !== "sent") return yield* giveBack;
+      // Already told counts as fired; a run awaiting its checkpoint or a failed send fires again.
+      if (outcome === "pending" || outcome === "failed") return yield* giveBack;
     } else {
       const sent = yield* threads
         .sendToThread({
@@ -555,14 +557,15 @@ const make = Effect.gen(function* () {
     run: FinishedRun,
     label: string,
     config: AutonomySettings,
+    origin: TurnOrigin,
   ) {
     const assistantRows = yield* sql<AssistantRow>`
       SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
     if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
     const render = yield* answerOf(run);
-    // An autonomy wake is an event: a quiet end tells no one, and chat apps get the short version.
-    const text = assistantRunReply(render("en"), "other");
+    // A wake is an event: a quiet end tells no one, and chat apps get the short version.
+    const text = assistantRunReply(render("en"), origin);
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
     const chat = yield* ownerChat(channels);
@@ -579,7 +582,7 @@ const make = Effect.gen(function* () {
           deliveryId: `autonomy-run:${run.id}`,
           destination: chat,
           senderName: assistant.name,
-          text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), "other") ?? text}`,
+          text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), origin) ?? text}`,
           markdown: true,
           language,
         });
@@ -609,7 +612,7 @@ const make = Effect.gen(function* () {
     const wakes = yield* sql<{ readonly label: string }>`
       SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
     if (wakes[0] === undefined) return;
-    yield* deliverResult(run, wakes[0].label, config);
+    yield* deliverResult(run, wakes[0].label, config, "other");
   });
 
   /** A schedule in an assistant's own conversation ended: its answer reaches the user like a wake's. */
@@ -624,7 +627,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_team_id IS NULL AND substr(${fireKey}, 1, length(task_id) + 1) = task_id || ':'
       ORDER BY length(task_id) DESC LIMIT 1`;
     if (tasks[0] === undefined) return;
-    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config);
+    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config, "routine");
   });
 
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(

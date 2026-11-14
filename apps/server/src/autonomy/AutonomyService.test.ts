@@ -319,6 +319,43 @@ it.effect(
   },
 );
 
+it.effect(
+  "a one-shot watch on a run its assistant was already told about is spent, not sent",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      h.shells.set("t1", plain);
+      yield* (yield* TaskEventNotices.TaskEventNotices).send({
+        threadId: "assistant:jarvis:1" as never,
+        projectId: "p1" as never,
+        run: { id: "r1", threadId: "t1", status: "completed", userMessageId: "m1" } as never,
+        messageId: "assistant-task:r1",
+        text: "Task t1 finished.",
+        createdBy: "agent",
+        senderThreadId: "t1" as never,
+      });
+      yield* service.upsertWatch({
+        assistantId: "jarvis",
+        title: "t1 done",
+        filter: { event: "run_finished", threadId: "t1" as never },
+        instruction: "",
+        oneShot: true,
+        expiresAt: null,
+      });
+      yield* service.handleEvent(run("completed", "r1"));
+      assert.deepEqual(
+        h.sent.map((sent) => sent.messageId),
+        ["assistant-task:r1"],
+      );
+      const [stored] = yield* service.listWatches;
+      assert.equal(stored!.triggerCount, 1);
+      assert.isFalse(stored!.enabled);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("rule wakes keep a minimum interval per thread and a daily cap", () => {
   const h = harness();
   return Effect.gen(function* () {
@@ -1412,7 +1449,10 @@ it.effect(
       yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
       yield* addScheduledTask("task:remind");
       yield* addScheduledTask("task:group", "team-1");
-      h.answers.set("assistant:jarvis:1", "Time to renew acme.dev.");
+      // A routine is asked for, so its whole answer goes out, tables included.
+      const answer =
+        "Time to renew acme.dev.\n\n| Domain | Expires |\n| --- | --- |\n| acme.dev | Friday |";
+      h.answers.set("assistant:jarvis:1", answer);
       yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
       yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
       yield* service.handleEvent(scheduledRun("completed", "s2", "task:group"));
@@ -1420,7 +1460,7 @@ it.effect(
       yield* service.handleEvent(scheduledRun("completed", "s4", "task:remind", "t1"));
       const rows = yield* outboxRows;
       assert.lengthOf(rows, 1);
-      assert.equal(rows[0]!.message.text, "Routine: Renew the domain\n\nTime to renew acme.dev.");
+      assert.equal(rows[0]!.message.text, `Routine: Renew the domain\n\n${answer}`);
       assert.equal(rows[0]!.message.senderName, "Jarvis");
       yield* Ref.set(h.settings, { ...ON, enabled: false });
       yield* service.handleEvent(scheduledRun("completed", "s5", "task:remind"));
