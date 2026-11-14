@@ -4,7 +4,7 @@ import type {
   ProviderInstanceId,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 import { PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -25,6 +25,7 @@ function SelectionPicker(
     readonly providers: Providers;
     readonly selection: ModelSelection;
     readonly label: string;
+    readonly disabled: boolean;
     readonly onChange: (selection: ModelSelection) => void;
   },
 ) {
@@ -35,6 +36,9 @@ function SelectionPicker(
       <ProviderModelPicker
         {...modelPickerProps(props, props.settings, props.providers, selection)}
         triggerAriaLabel={props.label}
+        // A provider that is gone or off cannot name its model; the slug still reads cleanly.
+        {...(entry ? {} : { triggerLabel: formatModelSlugName(selection.model) })}
+        disabled={props.disabled}
         onInstanceModelChange={(instanceId, model) =>
           props.onChange(createModelSelection(instanceId, model))
         }
@@ -46,6 +50,7 @@ function SelectionPicker(
           model={selection.model}
           modelOptions={selection.options ?? []}
           allowPromptInjectedEffort={false}
+          disabled={props.disabled}
           triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
           onModelOptionsChange={(options) =>
             props.onChange(createModelSelection(selection.instanceId, selection.model, options))
@@ -64,7 +69,11 @@ export function AssistantModelsRow(
     /** The model a new exception starts with. */
     readonly anchor: ModelSelection | null;
     readonly selections: Readonly<Record<string, ModelSelection>>;
+    /** Active assistants, offered for a new exception; archived ones only name their rows. */
     readonly assistants: ReadonlyArray<{ readonly id: AssistantId; readonly name: string }>;
+    readonly archivedAssistants: ReadonlyArray<{ readonly id: AssistantId; readonly name: string }>;
+    /** False when this connection may not change settings. */
+    readonly canWrite: boolean;
     readonly save: (
       assistantId: AssistantId,
       selection: ModelSelection | null,
@@ -79,7 +88,8 @@ export function AssistantModelsRow(
   const [pickedModel, setPickedModel] = useState<ModelSelection | null>(null);
   const draftModel = pickedModel ?? anchor;
   const nameOf = (id: string) =>
-    assistants.find((assistant) => assistant.id === id)?.name ?? "Removed assistant";
+    [...assistants, ...props.archivedAssistants].find((assistant) => assistant.id === id)?.name ??
+    "Removed assistant";
   const rows = Object.entries(selections)
     .map(([id, selection]) => ({ id: id as AssistantId, name: nameOf(id), selection }))
     .toSorted((left, right) => left.name.localeCompare(right.name));
@@ -109,7 +119,7 @@ export function AssistantModelsRow(
           <Button
             size="sm"
             variant="outline"
-            disabled={available.length === 0}
+            disabled={!props.canWrite || available.length === 0}
             onClick={() => setAdding(true)}
           >
             <PlusIcon />
@@ -127,9 +137,14 @@ export function AssistantModelsRow(
                 {...props}
                 selection={row.selection}
                 label={`Model for ${row.name}`}
+                disabled={!props.canWrite}
                 onChange={(selection) => save(row.id, selection)}
               />
-              <IconAction label={`Remove ${row.name}`} onClick={() => save(row.id, null)}>
+              <IconAction
+                label={`Remove ${row.name}`}
+                disabled={!props.canWrite}
+                onClick={() => save(row.id, null)}
+              >
                 <Trash2Icon />
               </IconAction>
             </li>
@@ -177,6 +192,7 @@ export function AssistantModelsRow(
               {...props}
               selection={draftModel}
               label="Model for the new assistant"
+              disabled={!props.canWrite}
               onChange={setPickedModel}
             />
           </div>

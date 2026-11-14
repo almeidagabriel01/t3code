@@ -48,6 +48,7 @@ import {
   useScopedSettings,
   useScopedSettingsMixed,
   useScopedSettingSource,
+  useScopedSettingsWriteAllowed,
   useUpdateProjectAssistantModel,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
@@ -63,6 +64,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
   const updateAssistantModel = useUpdateProjectAssistantModel();
+  const canWriteSettings = useScopedSettingsWriteAllowed();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
@@ -261,7 +263,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   ) : null;
 
-  const assistantEntries = useAssistantEntries().active;
+  const assistantEntries = useAssistantEntries();
+  const ownAssistants = (list: typeof assistantEntries.active) =>
+    list
+      .filter((entry) => entry.environmentId === representative?.environmentId)
+      .map(({ assistant }) => assistant);
   const assistantRow =
     isProjectScope && target?.projectId && representative ? (
       <AssistantModelsRow
@@ -272,9 +278,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           representative.serverConfig?.settings.projectSettingsOverrides[target.projectId]
             ?.assistantModelSelections ?? {}
         }
-        assistants={assistantEntries
-          .filter((entry) => entry.environmentId === representative.environmentId)
-          .map(({ assistant }) => assistant)}
+        assistants={ownAssistants(assistantEntries.active)}
+        archivedAssistants={ownAssistants(assistantEntries.archived)}
+        canWrite={canWriteSettings}
         save={(assistantId, value, onFailed) =>
           updateAssistantModel(representative.environmentId, assistantId, value, onFailed)
         }

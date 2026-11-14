@@ -62,13 +62,15 @@ type Save = (
   onFailed: (message: string) => void,
 ) => void;
 
-const row = (selections: Record<string, ModelSelection>, save: Save) => (
+const row = (selections: Record<string, ModelSelection>, save: Save, canWrite = true) => (
   <AssistantModelsRow
     settings={DEFAULT_UNIFIED_SETTINGS}
     providers={[claude]}
     anchor={opus}
     selections={selections}
     assistants={assistants}
+    archivedAssistants={[{ id: AssistantId.make("cleo"), name: "Cleo" }]}
+    canWrite={canWrite}
     save={save}
     environmentId={EnvironmentId.make("device")}
     instanceEntries={providerInstanceEntriesFor([claude], DEFAULT_UNIFIED_SETTINGS, null)}
@@ -112,4 +114,23 @@ it("keeps the stored exception and shows the server's error inline when a save f
     .element(page.getByRole("alert"))
     .toHaveTextContent("Provider instance claudeAgent is disabled.");
   await expect.element(page.getByRole("button", { name: "Model for Ada" })).toBeVisible();
+});
+
+it("names archived assistants, shows a model whose provider is gone by name, and still removes it", async () => {
+  const save = vi.fn<Save>();
+  const gone = { instanceId: ProviderInstanceId.make("gone"), model: "claude-opus-5-5" };
+  await using _screen = await render(row({ cleo: gone }, save), { router: false });
+
+  await expect.element(page.getByText("Cleo")).toBeVisible();
+  expect(document.body.textContent).not.toContain("claude-opus-5-5");
+  await userEvent.click(page.getByRole("button", { name: "Remove Cleo" }));
+  expect(save).toHaveBeenCalledWith(AssistantId.make("cleo"), null, expect.any(Function));
+});
+
+it("offers no change to a connection that may not write settings", async () => {
+  await using _screen = await render(row({ ada: opus }, vi.fn<Save>(), false), { router: false });
+
+  await expect.element(page.getByRole("button", { name: "Add assistant" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Remove Ada" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Model for Ada" })).toBeDisabled();
 });
