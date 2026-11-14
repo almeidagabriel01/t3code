@@ -206,15 +206,23 @@ const make = Effect.gen(function* () {
   // What already waited when waiting notices first ran (on install or the update that added them)
   // is never told: the user has seen it, and a burst of old cards would bury what is new.
   const BASELINE_SUBJECT = "baseline";
-  yield* sql`
+  const recordBaseline = (nowMs: number) => sql`
     INSERT OR IGNORE INTO autonomy_needs_you (subject_key, decision_id, created_at)
-    VALUES (${BASELINE_SUBJECT}, '', ${iso(yield* Clock.currentTimeMillis)})`.pipe(
+    VALUES (${BASELINE_SUBJECT}, '', ${iso(nowMs)})`;
+  yield* recordBaseline(yield* Clock.currentTimeMillis).pipe(
     Effect.catchCause((cause) => Effect.logWarning("autonomy: no waiting baseline", { cause })),
   );
-  const waitingBaseline = sql<{ readonly created_at: string }>`
-    SELECT created_at FROM autonomy_needs_you WHERE subject_key = ${BASELINE_SUBJECT}`.pipe(
-    Effect.map((rows) => (rows[0] === undefined ? 0 : Date.parse(rows[0].created_at))),
-  );
+  // Fails closed: with no baseline the cycle errors and is skipped, it never tells the old backlog.
+  const waitingBaseline = (nowMs: number) =>
+    recordBaseline(nowMs).pipe(
+      Effect.andThen(sql<{ readonly created_at: string }>`
+        SELECT created_at FROM autonomy_needs_you WHERE subject_key = ${BASELINE_SUBJECT}`),
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.die(new Error("autonomy: no waiting baseline"))
+          : Effect.succeed(Date.parse(rows[0].created_at)),
+      ),
+    );
   const settings = settingsService.getSettings.pipe(
     Effect.map((current) => current.autonomy),
     Effect.orElseSucceed((): AutonomySettings => DEFAULT_AUTONOMY_SETTINGS),
@@ -1057,7 +1065,7 @@ const make = Effect.gen(function* () {
         const config = yield* settings;
         if (!config.enabled || !config.notifyWaiting) return;
         const nowMs = yield* Clock.currentTimeMillis;
-        const baseline = yield* waitingBaseline;
+        const baseline = yield* waitingBaseline(nowMs);
         const due = (createdAt: string) => {
           const at = Date.parse(createdAt);
           return at >= baseline && at + config.notifyWaitingAfterMinutes * MINUTE_MS <= nowMs;

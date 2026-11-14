@@ -1009,6 +1009,23 @@ it.effect("what already waited before the first run is never told, what came aft
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect(
+  "a baseline that could not be recorded at start never lets the old backlog through",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM autonomy_needs_you WHERE subject_key = 'baseline'`;
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "old", threadId: "t1" });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
   const h = harness();
   return Effect.gen(function* () {
