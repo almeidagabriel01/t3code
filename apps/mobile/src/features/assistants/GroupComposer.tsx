@@ -135,9 +135,9 @@ function ToolbarChip(props: {
   );
 }
 
-function MenuSlot(props: { readonly children: ReactNode }) {
+function MenuSlot(props: { readonly children: ReactNode; readonly keep?: boolean }) {
   // The Menu ignores layout classes on itself, so the wrapper carries them.
-  return <View className="shrink">{props.children}</View>;
+  return <View className={props.keep ? "shrink-0" : "shrink"}>{props.children}</View>;
 }
 
 function SuggestionRow(props: {
@@ -583,7 +583,8 @@ export function GroupComposer(props: {
                 disabled
               />
             ) : (
-              <MenuSlot>
+              // The project reads in full; the model beside it is the one cut short.
+              <MenuSlot keep>
                 <Menu
                   accessibilityLabel="Project"
                   actions={[
