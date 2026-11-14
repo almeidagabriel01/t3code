@@ -366,27 +366,30 @@ function GroupRow(props: {
         <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
         <span className="min-w-0 truncate">{team.name}</span>
         {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
-        <span
-          className={cn(
-            "flex shrink-0 items-center ps-0.5",
-            props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
-          )}
-          data-testid="group-avatars"
-        >
-          {shown.map(({ assistant }) => (
-            <AssistantAvatar
-              key={assistant.id}
-              assistant={assistant}
-              className="-ms-1 size-4 shrink-0 first:ms-0"
-            />
-          ))}
-          {more > 0 ? (
-            <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
-              +{more}
-            </span>
-          ) : null}
+        {/* The faces get only the width the name leaves: past it they wrap onto a clipped line. */}
+        <span className="flex h-4 min-w-0 flex-1 flex-wrap overflow-hidden">
+          <span className="h-4 w-0" />
+          <span
+            className={cn(
+              "flex h-4 shrink-0 items-center ps-0.5",
+              props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
+            )}
+            data-testid="group-avatars"
+          >
+            {shown.map(({ assistant }) => (
+              <AssistantAvatar
+                key={assistant.id}
+                assistant={assistant}
+                className="-ms-1 size-4 shrink-0 first:ms-0"
+              />
+            ))}
+            {more > 0 ? (
+              <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
+                +{more}
+              </span>
+            ) : null}
+          </span>
         </span>
-        <span className="flex-1" />
         {props.running > 0 ? (
           <span
             data-testid="group-status"

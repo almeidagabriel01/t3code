@@ -173,19 +173,34 @@ function AssistantRow(props: {
           >
             {assistant.name}
           </Text>
-          {assistant.role === "" ? null : (
-            <View className="max-w-20 rounded-md border border-border px-1.5 py-px">
-              <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                {assistant.role}
-              </Text>
+          {/* Gets only the width the name leaves. The always-present first item keeps
+              line one non-empty, so a project chip that does not fit wraps and is clipped. */}
+          <View className="h-5 min-w-2 flex-1 flex-row flex-wrap items-center justify-between gap-x-2 overflow-hidden">
+            <View className="h-5 min-w-0 shrink flex-row items-center gap-2">
+              {assistant.role === "" ? null : (
+                <View className="min-w-0 max-w-20 shrink rounded-md border border-border px-1.5 py-px">
+                  <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                    {assistant.role}
+                  </Text>
+                </View>
+              )}
+              {props.environmentLabel ? (
+                <Text className={cn("min-w-0 shrink text-xs", muted)} numberOfLines={1}>
+                  {props.environmentLabel}
+                </Text>
+              ) : null}
             </View>
-          )}
-          {props.environmentLabel ? (
-            <Text className={cn("max-w-[25%] text-xs", muted)} numberOfLines={1}>
-              {props.environmentLabel}
-            </Text>
-          ) : null}
-          <View className="min-w-2 flex-1" />
+            {meta === null && props.projectLabel ? (
+              <View
+                testID="assistant-project"
+                className="max-w-24 rounded-md border border-border px-1.5 py-px"
+              >
+                <Text className={cn("text-2xs", muted)} numberOfLines={1}>
+                  {props.projectLabel}
+                </Text>
+              </View>
+            ) : null}
+          </View>
           {meta !== null ? (
             <Text
               testID="assistant-status"
@@ -197,15 +212,6 @@ function AssistantRow(props: {
             >
               {meta}
             </Text>
-          ) : props.projectLabel ? (
-            <View
-              testID="assistant-project"
-              className="max-w-24 rounded-md border border-border px-1.5 py-px"
-            >
-              <Text className={cn("text-2xs", muted)} numberOfLines={1}>
-                {props.projectLabel}
-              </Text>
-            </View>
           ) : null}
         </Pressable>
         <RowMenuButton
@@ -267,17 +273,22 @@ function GroupFoldRow(props: {
           {team.name}
         </Text>
         {/* The narrow tablet bar drops the faces while the group runs, so its name stays whole. */}
-        {props.sidebar && props.running > 0 ? null : (
-          <View testID="group-avatars" className="flex-row items-center pl-0.5">
-            {shown.map(({ assistant }, index) => (
-              <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
-                <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
-              </View>
-            ))}
-            {more > 0 ? <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text> : null}
-          </View>
-        )}
-        <View className="min-w-2 flex-1" />
+        {/* Same clip as the assistant row: faces that do not fit beside the name wrap away. */}
+        <View className="h-4 min-w-2 flex-1 flex-row flex-wrap overflow-hidden">
+          <View className="h-4 w-0" />
+          {props.sidebar && props.running > 0 ? null : (
+            <View testID="group-avatars" className="h-4 flex-row items-center pl-0.5">
+              {shown.map(({ assistant }, index) => (
+                <View key={assistant.id} style={{ marginLeft: index === 0 ? 0 : -6 }}>
+                  <AssistantAvatar assistant={assistant} environmentId={environmentId} size={16} />
+                </View>
+              ))}
+              {more > 0 ? (
+                <Text className="pl-1 text-2xs text-foreground-muted">+{more}</Text>
+              ) : null}
+            </View>
+          )}
+        </View>
         {unread > 0 ? (
           <View
             testID="group-unread"
