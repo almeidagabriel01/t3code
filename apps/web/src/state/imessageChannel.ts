@@ -3,7 +3,10 @@ import {
   applyImessageStatusEvent,
   createImessageChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/imessageChannel";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ImessageChannelConfigureInput } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -63,19 +66,22 @@ export type ImessageReply =
 export function useImessageActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
+  const reply = (result: AtomCommandResult<unknown, unknown>): ImessageReply => {
+    if (result._tag === "Success") return { ok: true };
+    const error = squashAtomCommandFailure(result);
+    return {
+      ok: false,
+      message:
+        error instanceof Error && error.message.trim() !== ""
+          ? error.message
+          : "Something went wrong. Try again.",
+    };
+  };
   return {
     canAct,
-    configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {
-      const result = await configure({ environmentId, input });
-      if (result._tag === "Success") return { ok: true };
-      const error = squashAtomCommandFailure(result);
-      return {
-        ok: false,
-        message:
-          error instanceof Error && error.message.trim() !== ""
-            ? error.message
-            : "Something went wrong. Try again.",
-      };
-    },
+    configure: async (input: ImessageChannelConfigureInput) =>
+      reply(await configure({ environmentId, input })),
+    resendUndelivered: async () => reply(await resend({ environmentId, input: {} })),
   };
 }
