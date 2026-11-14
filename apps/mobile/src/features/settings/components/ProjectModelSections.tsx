@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectId,
 } from "@t3tools/contracts";
+import { Equal } from "effect";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -29,8 +30,9 @@ import { SettingsSection } from "./SettingsSection";
 
 type Member = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
 
-const sameModel = (left: ModelSelection | null, right: ModelSelection | null) =>
-  left?.instanceId === right?.instanceId && left?.model === right?.model;
+// Options (effort) count: the web calls checkouts that differ only in effort mixed too.
+const sameModel = (left: ModelSelection | null | undefined, right: ModelSelection | null) =>
+  Equal.equals(left ?? null, right);
 
 /** A model's display name as its environment lists it for the project. */
 function useModelName(environmentId: EnvironmentId, projectId: ProjectId | null) {
@@ -96,6 +98,8 @@ function AssistantModelRow(props: {
   readonly target: ScopedMobileSettingsTarget;
   readonly assistant: Assistant | undefined;
   readonly selection: ModelSelection;
+  /** The project's checkouts hold different models for this assistant. */
+  readonly mixed: boolean;
   readonly environmentLabel: string | null;
   readonly separated: boolean;
   readonly disabled: boolean;
@@ -105,7 +109,7 @@ function AssistantModelRow(props: {
   const { target } = props;
   const nameOf = useModelName(target.environment.environmentId, target.projectId);
   const name = props.assistant?.name ?? "Removed assistant";
-  const model = nameOf(props.selection);
+  const model = props.mixed ? "Mixed" : nameOf(props.selection);
   return (
     <View
       className={
@@ -207,31 +211,46 @@ export function ProjectModelSections(props: {
       ? undefined
       : target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId]
           ?.assistantModelSelections;
-  const rows = targets.flatMap((target) =>
-    Object.entries(assistantSelections(target) ?? {}).map(([id, selection]) => {
-      const environmentId = target.environment.environmentId;
-      const assistant = [...active, ...archived].find(
-        (entry) => entry.environmentId === environmentId && entry.assistant.id === id,
-      )?.assistant;
-      return {
-        key: `${environmentId}:${target.projectId}:${id}`,
-        target,
-        environmentId,
-        assistantId: id as AssistantId,
-        assistant,
-        name: assistant?.name ?? "Removed assistant",
-        selection,
-      };
-    }),
-  );
+  // One row per assistant: a logical project can span several checkouts of its environment.
+  const rows = [
+    ...new Map(
+      targets.flatMap((target) =>
+        Object.entries(assistantSelections(target) ?? {}).map(([id, selection]) => {
+          const environmentId = target.environment.environmentId;
+          const key = `${environmentId}:${id}`;
+          const assistant = [...active, ...archived].find(
+            (entry) => entry.environmentId === environmentId && entry.assistant.id === id,
+          )?.assistant;
+          const mixed = targets.some(
+            (other) =>
+              other.environment.environmentId === environmentId &&
+              !sameModel(assistantSelections(other)?.[id as AssistantId], selection),
+          );
+          return [
+            key,
+            {
+              key,
+              target,
+              environmentId,
+              assistantId: id as AssistantId,
+              assistant,
+              name: assistant?.name ?? "Removed assistant",
+              selection,
+              mixed,
+            },
+          ] as const;
+        }),
+      ),
+    ).values(),
+  ];
   rows.sort((left, right) => left.name.localeCompare(right.name));
   const available = active.filter(
     (entry) =>
       writable.has(entry.environmentId) &&
-      targets.some(
-        (target) =>
-          target.environment.environmentId === entry.environmentId &&
-          assistantSelections(target)?.[entry.assistant.id] === undefined,
+      targets.some((target) => target.environment.environmentId === entry.environmentId) &&
+      !rows.some(
+        (row) =>
+          row.environmentId === entry.environmentId && row.assistantId === entry.assistant.id,
       ),
   );
   const openAssistantPicker = (environmentId: EnvironmentId, assistantId: AssistantId) =>
@@ -287,6 +306,7 @@ export function ProjectModelSections(props: {
               target={row.target}
               assistant={row.assistant}
               selection={row.selection}
+              mixed={row.mixed}
               environmentLabel={severalEnvironments ? row.target.environment.label : null}
               separated={index > 0}
               disabled={props.disabled || !writable.has(row.environmentId)}

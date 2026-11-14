@@ -246,6 +246,60 @@ describe("ProjectModelSections", () => {
     });
   });
 
+  it("shows one row per assistant across a project's checkouts, Mixed where they differ", () => {
+    const high = { ...codex("gpt-5.5"), options: [{ id: "effort", value: "high" }] };
+    const twoCheckouts = resolveMobileSettingsTargets(
+      [
+        environment("hub", {
+          projectSettingsOverrides: {
+            ["p1" as never]: {
+              defaultModelSelection: high as never,
+              assistantModelSelections: {
+                ["ada" as never]: high as never,
+                ["beto" as never]: codex("gpt-5.5"),
+              },
+            },
+            ["p2" as never]: {
+              defaultModelSelection: codex("gpt-5.5"),
+              assistantModelSelections: {
+                ["ada" as never]: high as never,
+                ["beto" as never]: codex("gpt-5.4-mini"),
+              },
+            },
+          },
+        }),
+      ],
+      [
+        { environmentId: "hub" as never, id: "p1" as never },
+        { environmentId: "hub" as never, id: "p2" as never },
+      ],
+    );
+    render(twoCheckouts);
+    expect(section("Model")?.textContent).toContain("Mixed");
+    const rows = Array.from(
+      section("Model by assistant")!.querySelectorAll("button[aria-label^='Model for ']"),
+      (row) => row.getAttribute("aria-label"),
+    );
+    expect(rows).toEqual(["Model for Ada, GPT-5.5", "Model for Beto, Mixed"]);
+    act(() =>
+      section("Model by assistant")!
+        .querySelector<HTMLButtonElement>('button[aria-label="menu:Remove"]')!
+        .click(),
+    );
+    const write = mocks.write.mock.calls[0]?.[1] as Array<{
+      patch: { projectSettingsOverrides: Record<string, { assistantModelSelections: unknown }> };
+    }>;
+    expect(
+      Object.entries(write[0]!.patch.projectSettingsOverrides).map(([id, override]) => [
+        id,
+        override.assistantModelSelections,
+      ]),
+    ).toEqual([
+      ["p1", { ada: null }],
+      ["p2", { ada: null }],
+    ]);
+  });
+
   it("disables every write without permission to change the environment's settings", () => {
     mocks.writable = new Set();
     render(hubProject);
