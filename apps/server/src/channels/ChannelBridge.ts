@@ -18,7 +18,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as AssistantService from "../assistants/AssistantService.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
+import type * as FileSystem from "effect/FileSystem";
+
+import type * as ServerConfig from "../config.ts";
+import * as ThreadMessageIntake from "../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import type * as DocumentText from "../provider/DocumentText.ts";
 import { forkParked } from "../serverActivation.ts";
 import { ChannelGateway } from "./ChannelGateway.ts";
 import { channelStrings, localizeDecision } from "./channelStrings.ts";
@@ -100,7 +105,13 @@ const make = Effect.gen(function* () {
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const assistants = yield* AssistantService.AssistantService;
   const decisions = yield* DecisionService.DecisionService;
-  const threads = yield* ThreadManagement.ThreadManagementService;
+  // Claiming a message's pending images for the thread reads and copies them on disk.
+  const intakeContext = yield* Effect.context<
+    | ThreadManagement.ThreadManagementService
+    | ServerConfig.ServerConfig
+    | FileSystem.FileSystem
+    | DocumentText.DocumentText
+  >();
   const channelLanguage = yield* ChannelLanguage;
 
   /** Sends one of T3's own phrases, written in the language set when it goes out. */
@@ -160,7 +171,21 @@ const make = Effect.gen(function* () {
   const deliverMessage = Effect.fn("ChannelBridge.deliverMessage")(function* (
     message: ChannelInboundMessage,
   ) {
-    const number = parseNumberReply(message.text);
+    const attachments = message.attachments ?? [];
+    if (message.attachmentProblem !== undefined) {
+      yield* reply(message, "attachment", (t) =>
+        message.attachmentProblem === "download_failed"
+          ? t.attachmentDownloadFailed
+          : t.attachmentUnsupported,
+      );
+      // Without its images the words alone would mislead; the sender resends them.
+      if (attachments.length === 0) {
+        yield* markSent(message);
+        return;
+      }
+    }
+    // A caption is never an answer to a card.
+    const number = attachments.length === 0 ? parseNumberReply(message.text) : undefined;
     if (number !== undefined && (yield* answerByNumber(message, number))) {
       yield* markSent(message);
       return;
@@ -189,7 +214,7 @@ const make = Effect.gen(function* () {
       return;
     }
     const { assistant, text } = picked.success;
-    if (text === "") {
+    if (text === "" && attachments.length === 0) {
       yield* reply(message, "switched", (t) => t.switched(assistant.name));
       yield* markSent(message);
       return;
@@ -198,26 +223,25 @@ const make = Effect.gen(function* () {
     const sent =
       assistant.threadId === null
         ? NOT_STARTED
-        : yield* threads
-            .sendToThread({
-              projectId: assistant.projectId,
-              commandId: CommandId.make(id),
-              messageId: MessageId.make(id),
-              threadId: assistant.threadId,
-              text,
-              attachments: [],
-              mode: "queue",
-              createdBy: "user",
-              creationSource: "server",
-            })
-            .pipe(
-              Effect.as(undefined),
-              Effect.catch((failure) =>
-                Effect.logWarning("channel message was not delivered", { failure }).pipe(
-                  Effect.as(String(failure.message ?? failure._tag).slice(0, 200)),
-                ),
+        : yield* ThreadMessageIntake.sendToThread({
+            projectId: assistant.projectId,
+            commandId: CommandId.make(id),
+            messageId: MessageId.make(id),
+            threadId: assistant.threadId,
+            text,
+            attachments,
+            mode: "queue",
+            createdBy: "user",
+            creationSource: "server",
+          }).pipe(
+            Effect.provide(intakeContext),
+            Effect.as(undefined),
+            Effect.catch((failure) =>
+              Effect.logWarning("channel message was not delivered", { failure }).pipe(
+                Effect.as(String(failure.message ?? failure._tag).slice(0, 200)),
               ),
-            );
+            ),
+          );
     if (sent !== undefined) {
       yield* reply(
         message,

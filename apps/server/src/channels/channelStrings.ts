@@ -19,6 +19,8 @@ export interface ChannelStrings {
   readonly couldNotPassOn: (reason: string) => string;
   readonly conversationNotStarted: string;
   readonly rateLimited: string;
+  readonly attachmentUnsupported: string;
+  readonly attachmentDownloadFailed: string;
   readonly replyWithNumber: string;
   readonly truncatedNote: string;
   /** Ends a long reply cut down to its outline so the part that waits on you fits one message. */
@@ -85,6 +87,9 @@ const en: ChannelStrings = {
   couldNotPassOn: (reason) => `I could not pass that on: ${reason}`,
   conversationNotStarted: "its conversation has not started yet",
   rateLimited: "You're sending messages too fast. I'll read new ones again in a minute.",
+  attachmentUnsupported:
+    "I can't read that kind of attachment. Send it as a photo (PNG, JPEG, WebP or GIF up to 10 MB) or as text.",
+  attachmentDownloadFailed: "I couldn't download that attachment. Please send it again.",
   replyWithNumber: "Reply with the number.",
   truncatedNote: "… The rest of this reply was too long to send.",
   summaryNote: "Summary. The full reply is in T3.",
@@ -153,6 +158,9 @@ const ptBR: ChannelStrings = {
   couldNotPassOn: (reason) => `Não consegui repassar isso: ${reason}`,
   conversationNotStarted: "a conversa dele ainda não começou",
   rateLimited: "Você está mandando mensagens rápido demais. Volto a ler as novas em um minuto.",
+  attachmentUnsupported:
+    "Não consigo ler esse tipo de anexo. Mande como foto (PNG, JPEG, WebP ou GIF de até 10 MB) ou como texto.",
+  attachmentDownloadFailed: "Não consegui baixar esse anexo. Mande de novo, por favor.",
   replyWithNumber: "Responda com o número.",
   truncatedNote: "… O resto desta resposta era longo demais para enviar.",
   summaryNote: "Resumo. A resposta completa está no T3.",
