@@ -30,6 +30,8 @@ const thread = "assistant:jarvis:2";
 interface Records {
   messages: Array<{ text: string }>;
   turnItems: Array<{ type: string; failure?: { message: string } }>;
+  /** The message that started the run; the user's own by default. */
+  started?: { readonly id: string; readonly senderThreadId?: string };
 }
 
 const harness = (language: "en" | "pt-BR" = "en") => {
@@ -49,6 +51,11 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: () => Effect.succeed({} as never),
           getThreadRecords: (_threadId, _kinds, filter) => {
+            if (filter?.messageIds !== undefined) {
+              return Effect.succeed({
+                messages: [records.get("run-1")?.started ?? { id: "m1", createdBy: "user" }],
+              } as never);
+            }
             const runId = filter?.messageRunIds?.[0] ?? "";
             reads.push(runId);
             return Effect.succeed((records.get(runId) ?? { messages: [], turnItems: [] }) as never);
@@ -167,6 +174,30 @@ const outcomes: ReadonlyArray<{
     status: "interrupted",
     records: { messages: [{ text: "Stopped here" }], turnItems: [] },
     text: "Stopped here",
+  },
+  {
+    name: "a task event's long report, sent as its short version",
+    status: "completed",
+    records: {
+      messages: [
+        {
+          text: "Upload retry is done.\n\n| Check | Result |\n| --- | --- |\n| tests | 12 passed |",
+        },
+      ],
+      turnItems: [],
+      started: { id: "assistant-task:run-0", senderThreadId: "mcp:launch:task" },
+    },
+    text: "Upload retry is done.\n…",
+  },
+  {
+    name: "a task event the assistant ended quiet",
+    status: "completed",
+    records: {
+      messages: [{ text: "NO_REPLY" }],
+      turnItems: [],
+      started: { id: "assistant-task:run-0", senderThreadId: "mcp:launch:task" },
+    },
+    text: undefined,
   },
   {
     name: "still running",

@@ -1021,6 +1021,7 @@ it.effect("a task also carries its request's older messages it names by #seq or 
 const outcomeTable = [
   ["completed with an answer", "completed", "All done.", null, "completed", "All done."],
   ["completed with no words", "completed", undefined, null, "completed", "(no answer)"],
+  ["completed quiet", "completed", "Nothing to add.\n\nNO_REPLY", null, "completed", "Nothing new"],
   [
     "completed after result was called",
     "completed",
@@ -1051,9 +1052,10 @@ it.effect.each(outcomeTable)("run outcome: %s", ([, runStatus, answer, result, s
     );
     if (posted !== null) {
       const [row] = rows;
+      // A quiet end is a muted line: never unread, and the request still reads as answered.
       assert.deepEqual(
         [row!.assistant_id, row!.task_id, row!.kind],
-        ["ada", task!.task_id, "message"],
+        ["ada", task!.task_id, posted === "Nothing new" ? "change" : "message"],
       );
       assert.equal(row!.reply_to, (yield* h.messages)[0]!.message_id);
     }

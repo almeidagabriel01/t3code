@@ -16,9 +16,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
 import { cardContext } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { turnOriginOf } from "../mcp/turnOrigin.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -101,7 +103,13 @@ const make = Effect.gen(function* () {
       turnItemRunIds: [run.id],
       turnItemTypes: ["error"],
     });
-    const answer = records.messages.findLast((message) => message.text.trim() !== "")?.text;
+    const started = yield* threads.getThreadRecords(run.threadId, ["messages"], {
+      messageIds: [run.userMessageId],
+    });
+    const answer = assistantRunReply(
+      records.messages.findLast((message) => message.text.trim() !== "")?.text,
+      turnOriginOf(started.messages[0]),
+    );
     const failure = records.turnItems.findLast((item) => item.type === "error");
     const language = yield* channelLanguage.current;
     const text =

@@ -81,6 +81,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { assistantRunReply } from "./assistantRunReply.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { routeGroupMessage } from "./AssistantGroupRouting.ts";
 import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
@@ -118,6 +119,7 @@ const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
 export const MENTION_REQUIRED_MESSAGE = "Mention a member with @, or set a lead that can route.";
 const NO_ANSWER = "(no answer)";
+const QUIET_NOTE = "Nothing new";
 /** Why a hand-off was refused: what the chat says, and what the member that asked is told. */
 export const HANDOFF_PAUSES = {
   no_delivery: {
@@ -2188,9 +2190,11 @@ const make = Effect.gen(function* () {
     } else if ((yield* unsettledChildren(task.task_id)).length > 0) {
       yield* patchTask(task, { status: "waiting", reason: null });
     } else {
-      const answer =
-        task.result_text?.trim() || (yield* answerOf(run.threadId, run.id)) || NO_ANSWER;
-      if (yield* isDelivery(task, answer)) {
+      const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
+      // A member woken by its subtasks may end quiet: a muted line, so the request never reads as waiting.
+      const quiet = said !== undefined && assistantRunReply(said, "group") === undefined;
+      const answer = quiet ? QUIET_NOTE : said || NO_ANSWER;
+      if (!quiet && (yield* isDelivery(task, answer))) {
         yield* sql`
           UPDATE assistant_group_tasks SET undelivered_hops = 0 WHERE task_id = ${task.root_id}`;
       }
@@ -2198,7 +2202,7 @@ const make = Effect.gen(function* () {
         teamId: task.team_id,
         author: "assistant",
         assistantId: task.owner_id,
-        kind: "message",
+        kind: quiet ? "change" : "message",
         text: answer,
         replyTo: task.request_message_id,
         taskId: task.task_id,
