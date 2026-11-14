@@ -24,6 +24,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
+import * as AssistantService from "../assistants/AssistantService.ts";
 import * as AutonomyService from "../autonomy/AutonomyService.ts";
 import * as ChannelLanguage from "../channels/ChannelLanguage.ts";
 import { channelStrings, type ResolvedChannelLanguage } from "../channels/channelStrings.ts";
@@ -214,6 +215,7 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const settingsService = yield* Settings.ServerSettingsService;
   const autonomy = yield* AutonomyService.AutonomyService;
+  const assistants = yield* AssistantService.AssistantService;
   const channelLanguage = yield* ChannelLanguage.ChannelLanguage;
   const lock = yield* Semaphore.make(1);
   // Last reading per slot, so a repeated snapshot costs no query; the database stays the authority.
@@ -375,6 +377,8 @@ const make = Effect.gen(function* () {
   // Backoff per instance after a failed or signed-out probe: 30, 60, 120, then 240 minutes.
   const backoff = new Map<string, { readonly failures: number; readonly untilMs: number }>();
   const check = Effect.fn("UsageLimitAlerts.check")(function* () {
+    // Rechecked here too: a probe refreshes every client's provider list, and no one could send.
+    if ((yield* defaultAssistant) === null) return;
     const settings = yield* settingsService.getSettings;
     const nowMs = yield* Clock.currentTimeMillis;
     for (const provider of yield* registry.getProviders) {
@@ -422,7 +426,9 @@ const make = Effect.gen(function* () {
   ) {
     const settings = yield* settingsService.getSettings;
     const active =
-      canDeliver(settings) && providers.some((provider) => hasUsageLimitAlert(provider, settings));
+      canDeliver(settings) &&
+      providers.some((provider) => hasUsageLimitAlert(provider, settings)) &&
+      (yield* defaultAssistant) !== null;
     if (active) yield* FiberHandle.run(loop, checkLoop, { onlyIfMissing: true });
     else yield* FiberHandle.clear(loop);
     yield* evaluate(providers);
@@ -442,6 +448,15 @@ const make = Effect.gen(function* () {
   // A new threshold may already be crossed by the reading on hand.
   yield* Effect.forkScoped(
     Stream.runForEach(settingsService.streamChanges, () => onCurrent),
+    { startImmediately: true },
+  );
+  // A default assistant created, restored or archived starts or stops the check.
+  const assistantChanges = yield* assistants.subscribeChanges;
+  yield* Effect.forkScoped(
+    Stream.fromSubscription(assistantChanges).pipe(
+      Stream.filter((event) => event.type === "upserted" || event.type === "removed"),
+      Stream.runForEach(() => onCurrent),
+    ),
     { startImmediately: true },
   );
   yield* onCurrent;

@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  AssistantId,
+  type AssistantsEvent,
   AutonomyError,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
@@ -22,6 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as AssistantService from "../assistants/AssistantService.ts";
 import * as AutonomyService from "../autonomy/AutonomyService.ts";
 import * as ChannelLanguage from "../channels/ChannelLanguage.ts";
 import { ensureForkSchema } from "../persistence/ForkSchema.ts";
@@ -261,6 +264,8 @@ interface Harness {
   readonly refreshes: Ref.Ref<number>;
   readonly notify: Ref.Ref<"ok" | "fail" | "crashAfterRecord">;
   readonly refreshAuth: Ref.Ref<"authenticated" | "unauthenticated">;
+  /** Archives or restores the default assistant; `announce` publishes the change like the service does. */
+  readonly setDefaultAssistant: (active: boolean, announce: boolean) => Effect.Effect<void>;
 }
 
 const autonomyOn = { ...DEFAULT_SERVER_SETTINGS.autonomy, enabled: true };
@@ -292,6 +297,8 @@ const makeHarness = Effect.gen(function* () {
   const attempts = yield* Ref.make(0);
   const notify = yield* Ref.make<"ok" | "fail" | "crashAfterRecord">("ok");
   const refreshAuth = yield* Ref.make<"authenticated" | "unauthenticated">("authenticated");
+  const assistantChanges = yield* PubSub.unbounded<AssistantsEvent>();
+  const sql = yield* SqlClient.SqlClient;
 
   const registry = {
     getProviders: Ref.get(providers),
@@ -338,6 +345,10 @@ const makeHarness = Effect.gen(function* () {
       }),
   } as unknown as AutonomyService.AutonomyService["Service"];
 
+  const assistants = {
+    subscribeChanges: PubSub.subscribe(assistantChanges),
+  } as unknown as AssistantService.AssistantService["Service"];
+
   const harness: Harness = {
     setProviders: (next) =>
       Ref.set(providers, next).pipe(Effect.andThen(PubSub.publish(providerChanges, next))),
@@ -351,11 +362,25 @@ const makeHarness = Effect.gen(function* () {
     refreshes,
     notify,
     refreshAuth,
+    setDefaultAssistant: (active, announce) =>
+      sql`UPDATE assistants SET archived_at = ${active ? null : "t"}`.pipe(
+        Effect.andThen(
+          announce
+            ? PubSub.publish(assistantChanges, {
+                type: "removed",
+                assistantId: AssistantId.make("jarvis"),
+              })
+            : Effect.void,
+        ),
+        Effect.asVoid,
+        Effect.orDie,
+      ),
   };
   const deps = Layer.mergeAll(
     Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
     Layer.succeed(Settings.ServerSettingsService, settingsService),
     Layer.succeed(AutonomyService.AutonomyService, autonomy),
+    Layer.succeed(AssistantService.AssistantService, assistants),
     ChannelLanguage.ChannelLanguage.layerFixed("en"),
   );
   return { harness, deps };
@@ -643,11 +668,20 @@ describe("UsageLimitAlerts", () => {
           const tick = TestClock.adjust("15 minutes").pipe(
             Effect.andThen(Ref.get(harness.refreshes)),
           );
+          // With no assistant to send it, an alert is no reason to probe.
+          yield* harness.setDefaultAssistant(false, true);
           yield* harness.setSettings({ usageLimitAlerts: utcAlerts });
           // Lets the settings change reach the service before the clock moves an interval.
           yield* TestClock.adjust("1 second");
+          assert.equal(yield* tick, 0);
+          yield* harness.setDefaultAssistant(true, true);
+          yield* TestClock.adjust("1 second");
           assert.equal(yield* tick, 1);
           assert.equal(yield* tick, 2);
+          // A running check rereads the assistant, even when no change was announced.
+          yield* harness.setDefaultAssistant(false, false);
+          assert.equal(yield* tick, 2);
+          yield* harness.setDefaultAssistant(true, false);
           // Alerts that may ignore the pause keep checking with Autonomy off.
           yield* harness.setSettings({ autonomy: pausedOff });
           yield* TestClock.adjust("1 second");
