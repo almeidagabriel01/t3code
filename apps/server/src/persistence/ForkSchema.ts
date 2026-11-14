@@ -502,14 +502,13 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   `;
   // A request sent to several assistants shares a group; its replies are held in the rows until the
   // group is complete, then delivered to the asker as one message.
-  const addedRequestColumns = yield* addColumns("assistant_requests", [
+  yield* addColumns("assistant_requests", [
     ["group_id", "TEXT"],
     ["reply_text", "TEXT"],
     ["delivered", "INTEGER NOT NULL DEFAULT 0"],
   ]);
-  if (addedRequestColumns.includes("group_id")) {
-    yield* sql`UPDATE assistant_requests SET group_id = request_id`;
-  }
+  // Runs on every start: an older build could add the column and stop before filling it.
+  yield* sql`UPDATE assistant_requests SET group_id = request_id WHERE group_id IS NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
   // A thread an assistant launched for real work; its state is the thread's own.
@@ -632,51 +631,50 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
 
   // Requests: a message replying to nothing starts one (request_id = its own id) and everything
   // said or done for it carries that id. The first message holds the project and short title.
-  const addedRequestIds = [
-    ...(yield* addColumns("assistant_group_messages", [
-      ["request_id", "TEXT"],
-      ["project_id", "TEXT"],
-      ["title", "TEXT"],
-    ])),
-    ...(yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]])),
-  ];
-  if (addedRequestIds.includes("request_id")) {
-    // Older chats: a message that opened root tasks, or a person's message replying to nothing, was
-    // a request; a reply joins the request of what it answers, however deep the chain.
-    yield* sql`
-      UPDATE assistant_group_tasks SET request_id = (
-        SELECT r.request_message_id FROM assistant_group_tasks r
-        WHERE r.task_id = assistant_group_tasks.root_id)
-      WHERE request_id IS NULL`;
-    yield* sql`
-      UPDATE assistant_group_messages SET request_id = message_id
-      WHERE request_id IS NULL AND (
-        EXISTS (SELECT 1 FROM assistant_group_tasks t
-          WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
-        OR (kind = 'message' AND author <> 'assistant' AND reply_to IS NULL))`;
-    yield* sql`
-      UPDATE assistant_group_messages SET request_id = COALESCE(
-        (SELECT t.request_id FROM assistant_group_tasks t
-          WHERE t.task_id = assistant_group_messages.task_id),
-        (SELECT t.request_id FROM assistant_group_tasks t
-          WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
-      WHERE request_id IS NULL`;
-    yield* sql`
-      WITH RECURSIVE chain(message_id, request_id) AS (
-        SELECT message_id, request_id FROM assistant_group_messages WHERE request_id IS NOT NULL
-        UNION
-        SELECT m.message_id, c.request_id FROM assistant_group_messages m
-        JOIN chain c ON m.reply_to = c.message_id
-        WHERE m.request_id IS NULL
-      )
-      UPDATE assistant_group_messages SET request_id = (
-        SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id)
-      WHERE request_id IS NULL AND reply_to IS NOT NULL`;
-    // A person's reply to a message that is gone, or that belongs to no request, starts its own.
-    yield* sql`
-      UPDATE assistant_group_messages SET request_id = message_id
-      WHERE request_id IS NULL AND kind = 'message' AND author <> 'assistant'`;
-  }
+  yield* addColumns("assistant_group_messages", [
+    ["request_id", "TEXT"],
+    ["project_id", "TEXT"],
+    ["title", "TEXT"],
+  ]);
+  yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  // Every start, only rows still without a request (an older build could add the columns and stop
+  // before filling them): a message that opened root tasks, or a person's message replying to
+  // nothing, was a request; a reply joins the request of what it answers, however deep the chain.
+  yield* sql`
+    UPDATE assistant_group_tasks SET request_id = (
+      SELECT r.request_message_id FROM assistant_group_tasks r
+      WHERE r.task_id = assistant_group_tasks.root_id)
+    WHERE request_id IS NULL`;
+  yield* sql`
+    UPDATE assistant_group_messages SET request_id = message_id
+    WHERE request_id IS NULL AND (
+      EXISTS (SELECT 1 FROM assistant_group_tasks t
+        WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
+      OR (kind = 'message' AND author <> 'assistant' AND reply_to IS NULL))`;
+  yield* sql`
+    UPDATE assistant_group_messages SET request_id = COALESCE(
+      (SELECT t.request_id FROM assistant_group_tasks t
+        WHERE t.task_id = assistant_group_messages.task_id),
+      (SELECT t.request_id FROM assistant_group_tasks t
+        WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
+    WHERE request_id IS NULL`;
+  yield* sql`
+    WITH RECURSIVE chain(message_id, request_id) AS (
+      SELECT message_id, request_id FROM assistant_group_messages
+      WHERE request_id IS NOT NULL AND message_id IN (
+        SELECT reply_to FROM assistant_group_messages WHERE request_id IS NULL)
+      UNION
+      SELECT m.message_id, c.request_id FROM assistant_group_messages m
+      JOIN chain c ON m.reply_to = c.message_id
+      WHERE m.request_id IS NULL
+    )
+    UPDATE assistant_group_messages SET request_id = (
+      SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id)
+    WHERE request_id IS NULL AND reply_to IS NOT NULL`;
+  // A person's reply to a message that is gone, or that belongs to no request, starts its own.
+  yield* sql`
+    UPDATE assistant_group_messages SET request_id = message_id
+    WHERE request_id IS NULL AND kind = 'message' AND author <> 'assistant'`;
   // A notice that a member's conversation waits on the user: one per wait (`wait_key`), resolved in
   // place once nothing waits any more.
   yield* addColumns("assistant_group_messages", [

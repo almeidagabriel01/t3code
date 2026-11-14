@@ -1845,6 +1845,7 @@ const make = Effect.gen(function* () {
           kind: "notice",
           text: UNROUTED_NOTICE,
           replyTo: message.message_id,
+          requestId: message.request_id,
         });
       }
     }

@@ -331,3 +331,78 @@ it.effect("gives an older group chat its requests: every message and task joins 
     }
   }).pipe(Effect.provide(database)),
 );
+
+it.effect.each(["new", "old", "half-migrated"] as const)(
+  "fills request ids and groups in a %s database",
+  (shape) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // "half-migrated": an older build added the columns and stopped before filling them.
+      const added =
+        shape === "half-migrated"
+          ? {
+              requests: ", group_id TEXT, reply_text TEXT, delivered INTEGER NOT NULL DEFAULT 0",
+              messages: ", request_id TEXT, project_id TEXT, title TEXT",
+              tasks: ", request_id TEXT",
+            }
+          : { requests: "", messages: "", tasks: "" };
+      if (shape === "new") {
+        yield* ensureForkSchema();
+      } else {
+        yield* sql.unsafe(`CREATE TABLE assistant_requests (
+          request_id TEXT PRIMARY KEY, sender_thread_id TEXT NOT NULL,
+          recipient_thread_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+          ${added.requests})`);
+        yield* sql.unsafe(`CREATE TABLE assistant_group_messages (
+          message_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, seq INTEGER NOT NULL,
+          author TEXT NOT NULL, assistant_id TEXT, author_label TEXT, kind TEXT NOT NULL,
+          text TEXT NOT NULL, reply_to TEXT, task_id TEXT, client_request_id TEXT,
+          created_at TEXT NOT NULL ${added.messages}, UNIQUE (team_id, seq))`);
+        yield* sql.unsafe(`CREATE TABLE assistant_group_tasks (
+          task_id TEXT PRIMARY KEY, team_id TEXT NOT NULL, root_id TEXT NOT NULL, parent_id TEXT,
+          kind TEXT NOT NULL, request_message_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+          instruction TEXT NOT NULL, status TEXT NOT NULL, reason TEXT,
+          revision INTEGER NOT NULL DEFAULT 1, result_text TEXT, hops INTEGER NOT NULL DEFAULT 0,
+          followup TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL ${added.tasks})`);
+      }
+      // A new database holds what the app writes; the others hold rows from before the columns.
+      const filled = shape === "new";
+      yield* sql`INSERT INTO assistant_requests
+        (request_id, sender_thread_id, recipient_thread_id, status, created_at)
+        VALUES ('q1', 's', 'r', 'open', 't')`;
+      if (filled) yield* sql`UPDATE assistant_requests SET group_id = 'q1'`;
+      const message = (id: string, seq: number, kind: string, replyTo: string | null) =>
+        sql`INSERT INTO assistant_group_messages
+          (message_id, team_id, seq, author, kind, text, reply_to, created_at)
+          VALUES (${id}, 'g1', ${seq}, 'user', ${kind}, 'x', ${replyTo}, 't')`;
+      yield* message("m1", 1, "message", null);
+      yield* message("m2", 2, "message", "m1");
+      yield* message("m3", 3, "boundary", null);
+      yield* sql`INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+          created_at, updated_at)
+        VALUES ('t1', 'g1', 't1', 'root', 'm1', 'ada', 'do', 'running', 't', 't')`;
+      if (filled) {
+        yield* sql`UPDATE assistant_group_messages SET request_id = 'm1' WHERE message_id <> 'm3'`;
+        yield* sql`UPDATE assistant_group_tasks SET request_id = 'm1'`;
+      }
+
+      yield* ensureForkSchema();
+      yield* ensureForkSchema();
+
+      assert.deepStrictEqual(yield* sql`SELECT request_id, group_id FROM assistant_requests`, [
+        { request_id: "q1", group_id: "q1" },
+      ]);
+      assert.deepStrictEqual(
+        yield* sql`SELECT message_id, request_id FROM assistant_group_messages ORDER BY seq`,
+        [
+          { message_id: "m1", request_id: "m1" },
+          { message_id: "m2", request_id: "m1" },
+          { message_id: "m3", request_id: null },
+        ],
+      );
+      assert.deepStrictEqual(yield* sql`SELECT task_id, request_id FROM assistant_group_tasks`, [
+        { task_id: "t1", request_id: "m1" },
+      ]);
+    }).pipe(Effect.provide(database)),
+);
