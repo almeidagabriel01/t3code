@@ -2,6 +2,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type ModelSelection,
   type Project,
+  type ProjectId,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -10,8 +11,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { encodeModelSelectionJson } from "./AssistantTeams.ts";
@@ -113,14 +117,47 @@ const listProjects = Effect.gen(function* () {
   return projects;
 });
 
+const seedProject = Effect.fn("ModelSelectionSeeds.seedProject")(function* (projectId: ProjectId) {
+  const project = yield* (yield* ProjectService.ProjectService).getById(projectId);
+  if (Option.isNone(project)) return;
+  // The resolver, not the enrichment cache: a finished clone refreshes it before its meta update.
+  const repositoryIdentity =
+    yield* (yield* RepositoryIdentityResolver.RepositoryIdentityResolver).resolve(
+      project.value.workspaceRoot,
+    );
+  yield* applyModelSelectionSeeds([{ ...project.value, repositoryIdentity }]);
+});
+
 /**
- * Runs on server start, off the startup path: resolving each project's repository runs git.
- * ponytail: start only; a t3code project added later gets its seed on the next start.
+ * Seeds every listed project off the startup path (resolving repositories runs git), then each
+ * project created or updated later. Events after the sequence read first cover the listing race.
  */
-export const start = listProjects.pipe(
-  Effect.flatMap(applyModelSelectionSeeds),
-  Effect.catchCause((cause) => Effect.logWarning("Failed to apply model selection seeds.", cause)),
-  Effect.withSpan("ModelSelectionSeeds.start"),
+export const start = Effect.gen(function* () {
+  const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+  const afterSequence = yield* events.latestApplicationSequence;
+  yield* listProjects.pipe(
+    Effect.flatMap(applyModelSelectionSeeds),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to apply model selection seeds.", cause),
+    ),
+  );
+  yield* events
+    .streamApplicationEvents({ afterSequence })
+    .pipe(
+      Stream.runForEach((event) =>
+        "aggregateKind" in event &&
+        event.aggregateKind === "project" &&
+        (event.type === "project.created" || event.type === "project.meta-updated")
+          ? seedProject(event.aggregateId).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to apply a project's model selection seed.", cause),
+              ),
+            )
+          : Effect.void,
+      ),
+    );
+}).pipe(
+  Effect.catchCause((cause) => Effect.logWarning("Model selection seeding stopped.", cause)),
   Effect.forkScoped,
   Effect.asVoid,
 );

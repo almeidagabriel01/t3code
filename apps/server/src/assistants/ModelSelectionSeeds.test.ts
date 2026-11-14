@@ -1,19 +1,31 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   type ModelSelection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
-import { applyModelSelectionSeeds, BEYOND_INSTANCE_ID } from "./ModelSelectionSeeds.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { applyModelSelectionSeeds, BEYOND_INSTANCE_ID, start } from "./ModelSelectionSeeds.ts";
 
 const t3code = ProjectId.make("t3code-main");
 const preset = ProjectId.make("t3code-preset");
@@ -128,4 +140,93 @@ it.effect("does nothing and marks nothing while the Beyond instance is missing o
     yield* applyModelSelectionSeeds(projects);
     assert.deepStrictEqual((yield* state).projects[t3code], beyond);
   }).pipe(Effect.provide(layer({}))),
+);
+
+class SeedPasses extends Context.Service<SeedPasses, Queue.Queue<void>>()(
+  "t3/assistants/ModelSelectionSeeds.test/SeedPasses",
+) {}
+
+// Each finished seed pass ends an apply span, so the test awaits passes instead of polling.
+const layerSeedPasses = Layer.effectContext(
+  Effect.gen(function* () {
+    const passes = yield* Queue.unbounded<void>();
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (...args) => {
+          end(...args);
+          if (span.name === "ModelSelectionSeeds.apply") Queue.offerUnsafe(passes, undefined);
+        };
+        return span;
+      },
+    });
+    return Context.make(SeedPasses, passes).pipe(Context.add(Tracer.Tracer, tracer));
+  }),
+);
+
+const repositoryOf = (workspaceRoot: string) => ({
+  ...repo(workspaceRoot.split("/").at(-1)!),
+  rootPath: workspaceRoot,
+});
+
+const layerProjects = RuntimeLayer.layerProjectService.pipe(
+  Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
+  Layer.provideMerge(ProjectEnrichmentService.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Layer.succeed(WorkspacePaths.WorkspacePaths, {
+        normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
+        resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+          Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),
+      }),
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) => Effect.succeed(repositoryOf(workspaceRoot)),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: () => Effect.succeed(null),
+      }),
+    ),
+  ),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+  Layer.provideMerge(
+    ServerSettingsModule.layerTest({
+      providerInstances: beyondInstance,
+      projectSettingsOverrides: { [preset]: { defaultModelSelection: chosen } },
+    }),
+  ),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "model-selection-seeds-test-" })),
+  Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(layerSeedPasses),
+);
+
+it.effect("seeds a t3code project created after start, without a restart", () =>
+  Effect.gen(function* () {
+    const passes = yield* SeedPasses;
+    const service = yield* ProjectService.ProjectService;
+    yield* start;
+    yield* Queue.take(passes);
+
+    for (const [projectId, workspaceRoot] of [
+      [t3code, "/work/t3code"],
+      [other, "/work/other"],
+      [preset, "/work/forks/t3code"],
+    ] as const) {
+      yield* service.create({
+        commandId: CommandId.make(`create:${projectId}`),
+        projectId,
+        title: projectId,
+        workspaceRoot,
+      });
+      yield* Queue.take(passes);
+    }
+
+    const after = yield* state;
+    assert.deepStrictEqual(after.projects, { [t3code]: beyond, [preset]: chosen, [other]: null });
+    assert.deepStrictEqual(after.seeds, [
+      "project-default:t3code-main",
+      "project-default:t3code-preset",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(layerProjects)),
 );
