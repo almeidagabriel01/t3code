@@ -1265,13 +1265,19 @@ it.effect.each([
     assert.include(h.sent[2]!.text, "- Beto (failed):");
     assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
     if (!limit) return;
-    // A later provider switch still continues the run; the settled task stays as it is.
+    // Beto's next task starts, its run held behind the limited one on his thread.
+    yield* groups.member.assign({
+      callerThreadId: adaThread,
+      member: "beto",
+      instruction: "Again",
+    });
+    Object.assign(h.runs.get(betoThread)![1]!, { ordinal: 2, status: "queued" });
+    // A later provider switch still continues the limited run; no task takes its answer.
     const continuation = {
       id: "run:continuation",
       threadId: betoThread,
       userMessageId: "limit-continuation:x",
-      usageLimitContinuationOfRunId: childRun!.id,
-      ordinal: 2,
+      ordinal: 3,
       status: "running",
     };
     h.runs.get(betoThread)!.push(continuation);
@@ -1280,8 +1286,12 @@ it.effect.each([
     yield* update();
     continuation.status = "completed";
     yield* update();
-    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed"]);
-    assert.lengthOf(h.sent, 3);
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:running", "beto:failed", "beto:running"]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.assistant_id === "beto"),
+      0,
+    );
+    assert.lengthOf(h.sent, 4);
   }).pipe(Effect.provide(h.layer));
 });
 
