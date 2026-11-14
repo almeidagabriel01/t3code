@@ -57,6 +57,16 @@ export function useImessageChannel(environmentId: EnvironmentId) {
   const settings = stored && event ? applyImessageStatusEvent(stored, event) : stored;
   const canConfigure = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
+  const failed = (result: Parameters<typeof squashAtomCommandFailure>[0]): ImessageReply => {
+    const failure = squashAtomCommandFailure(result);
+    const base =
+      failure instanceof Error && failure.message.trim().length > 0
+        ? failure.message
+        : "The request could not be completed.";
+    const detail = isImessageSettingsError(failure) ? failure.detail : undefined;
+    return { ok: false, message: detail ? `${detail}: ${base}` : base };
+  };
   return {
     settings,
     loadError: settingsQuery.error,
@@ -70,13 +80,11 @@ export function useImessageChannel(environmentId: EnvironmentId) {
         setSaved(result.value);
         return { ok: true };
       }
-      const failure = squashAtomCommandFailure(result);
-      const base =
-        failure instanceof Error && failure.message.trim().length > 0
-          ? failure.message
-          : "The request could not be completed.";
-      const detail = isImessageSettingsError(failure) ? failure.detail : undefined;
-      return { ok: false, message: detail ? `${detail}: ${base}` : base };
+      return failed(result);
+    },
+    resendUndelivered: async (): Promise<ImessageReply> => {
+      const result = await resend({ environmentId, input: {} });
+      return result._tag === "Success" ? { ok: true } : failed(result);
     },
   };
 }

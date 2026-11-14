@@ -124,4 +124,17 @@ describe("useImessageChannel", () => {
     });
     act(() => root.unmount());
   });
+
+  it("resends what never arrived and reports a refusal", async () => {
+    const root = mount();
+    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 1 } });
+    expect(await latest().resendUndelivered()).toEqual({ ok: true });
+    mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
+    mocks.failure = "boom";
+    expect(await latest().resendUndelivered()).toEqual({
+      ok: false,
+      message: "The request could not be completed.",
+    });
+    act(() => root.unmount());
+  });
 });
