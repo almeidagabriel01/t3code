@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
@@ -862,18 +863,24 @@ type TeamChat = Pick<AssistantTeam, "name"> & {
   readonly archivedAt?: AssistantTeam["archivedAt"];
 };
 
-/** A group whose tasks went from open to none: the work of a request is done. */
+/**
+ * A group whose tasks went from open to none: the work of a request is done. The body starts with
+ * the preview's project in brackets, like chat-app notices; none for General or an unknown project.
+ */
 export function assistantGroupFinished(
   previous: TeamChat | undefined,
   next: TeamChat,
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
 ): { readonly title: string; readonly body: string } | null {
   // Archiving a busy group pauses its tasks; that is not a request finishing.
   if (next.archivedAt != null) return null;
   if (previous?.chat?.working !== true || next.chat === undefined || next.chat.working) return null;
   const preview = next.chat.preview?.replace(/\s+/g, " ").trim() ?? "";
+  const body = preview.length > 140 ? `${preview.slice(0, 139)}…` : preview;
+  const project = projects.find((candidate) => candidate.id === next.chat?.previewProjectId);
   return {
     title: `${next.name} finished`,
-    body: preview.length > 140 ? `${preview.slice(0, 139)}…` : preview,
+    body: project === undefined || body === "" ? body : projectNoticePrefix(project.title, body),
   };
 }
 

@@ -829,21 +829,36 @@ describe("read position", () => {
     });
     const busy = { name: "Ops", chat: chatOf(true, null) };
     const idle = { name: "Ops", chat: chatOf(false, "All   done.\nShip it.") };
-    assert.deepStrictEqual(assistantGroupFinished(busy, idle), {
+    assert.deepStrictEqual(assistantGroupFinished(busy, idle, []), {
       title: "Ops finished",
       body: "All done. Ship it.",
     });
-    assert.isNull(assistantGroupFinished(idle, idle));
-    assert.isNull(assistantGroupFinished(undefined, idle));
-    assert.isNull(assistantGroupFinished(busy, busy));
-    assert.isNull(assistantGroupFinished(busy, { name: "Ops" }));
+    assert.isNull(assistantGroupFinished(idle, idle, []));
+    assert.isNull(assistantGroupFinished(undefined, idle, []));
+    assert.isNull(assistantGroupFinished(busy, busy, []));
+    assert.isNull(assistantGroupFinished(busy, { name: "Ops" }, []));
     assert.isNull(
-      assistantGroupFinished(busy, { ...idle, archivedAt: "2026-11-09T00:00:00.000Z" }),
+      assistantGroupFinished(busy, { ...idle, archivedAt: "2026-11-09T00:00:00.000Z" }, []),
     );
     assert.strictEqual(
-      assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) })?.body
+      assistantGroupFinished(busy, { name: "Ops", chat: chatOf(false, "x".repeat(300)) }, [])?.body
         .length,
       140,
+    );
+    // The request's project leads the body; General and an unknown project add nothing.
+    const web = [{ id: "p-web" as ProjectId, title: "web" }];
+    const scoped = (previewProjectId: ProjectId | null) => ({
+      ...idle,
+      chat: { ...idle.chat, previewProjectId },
+    });
+    assert.strictEqual(
+      assistantGroupFinished(busy, scoped("p-web" as ProjectId), web)?.body,
+      "[web] All done. Ship it.",
+    );
+    assert.strictEqual(assistantGroupFinished(busy, scoped(null), web)?.body, "All done. Ship it.");
+    assert.strictEqual(
+      assistantGroupFinished(busy, scoped("p-gone" as ProjectId), web)?.body,
+      "All done. Ship it.",
     );
   });
 });

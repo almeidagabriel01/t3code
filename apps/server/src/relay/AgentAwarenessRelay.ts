@@ -24,6 +24,7 @@ import {
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -1019,9 +1020,21 @@ export const make = Effect.gen(function* () {
     if (rows[0]?.thread_id == null) return;
     const threadId = ThreadId.make(rows[0].thread_id);
     const preview = (team.chat?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    const previewProjectId = team.chat?.previewProjectId;
+    const project =
+      previewProjectId == null
+        ? Option.none<Project>()
+        : yield* projects
+            .getById(previewProjectId)
+            .pipe(Effect.orElseSucceed(() => Option.none<Project>()));
     groupFinishes.set(threadId, {
       title: team.name,
-      preview: preview === "" ? team.name : preview,
+      preview:
+        preview === ""
+          ? team.name
+          : Option.isSome(project)
+            ? projectNoticePrefix(project.value.title, preview)
+            : preview,
       deepLink: buildAssistantGroupDeepLink({
         environmentId: yield* serverEnvironment.getEnvironmentId,
         teamId: team.id,

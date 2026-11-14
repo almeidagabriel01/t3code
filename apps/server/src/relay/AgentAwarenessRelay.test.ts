@@ -640,7 +640,7 @@ describe("AgentAwarenessRelay", () => {
 
   describe("assistant group finish", () => {
     const GROUP_THREAD = ThreadId.make("assistant:lead:g-abc");
-    const team = (working: boolean, archivedAt: string | null = null) =>
+    const team = (working: boolean, archivedAt: string | null = null, previewProjectId?: string) =>
       decodeTeam({
         id: "team-1",
         name: "Release crew",
@@ -653,6 +653,7 @@ describe("AgentAwarenessRelay", () => {
           unreadCount: 1,
           working,
           preview: "Shipped  the\nrelease",
+          ...(previewProjectId === undefined ? {} : { previewProjectId }),
         },
         createdAt: NOW,
         updatedAt: NOW,
@@ -698,15 +699,15 @@ describe("AgentAwarenessRelay", () => {
       Effect.gen(function* () {
         const { relay, publications, send } = yield* setup;
         yield* relay.publishThread(GROUP_THREAD);
-        yield* send({ type: "teamUpserted", team: team(false) });
-        yield* send({ type: "teamUpserted", team: team(false) });
+        yield* send({ type: "teamUpserted", team: team(false, null, "project-1") });
+        yield* send({ type: "teamUpserted", team: team(false, null, "project-1") });
         yield* TestClock.adjust("5 seconds");
         yield* relay.drain;
         const pushed = alerts(publications);
         assert.equal(pushed.length, 1);
         assert.equal(pushed[0]?.phase, "completed");
         assert.equal(pushed[0]?.threadTitle, "Release crew");
-        assert.equal(pushed[0]?.projectTitle, "Shipped the release");
+        assert.equal(pushed[0]?.projectTitle, "[Project] Shipped the release");
         assert.equal(pushed[0]?.deepLink, "/assistant-groups/relay-environment/team-1");
       }).pipe(Effect.scoped),
     );

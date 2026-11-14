@@ -1,10 +1,11 @@
 import { assistantGroupFinished } from "@t3tools/client-runtime/assistantGroupChat";
-import type { AssistantTeam, AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
+import type { AssistantTeam, AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { getClientSettings } from "../hooks/useSettings";
 import { assistantTeamEntriesAtom, type AssistantTeamEntry } from "../state/assistants";
+import { environmentProjects } from "../state/projects";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
@@ -17,6 +18,9 @@ type Notice = { readonly title: string; readonly body: string };
 /** Remembers each group between updates and reports the ones whose work just finished. */
 export function createGroupFinishedObserver(
   report: (environmentId: EnvironmentId, teamId: AssistantTeamId, notice: Notice) => void,
+  projectsOf: (
+    environmentId: EnvironmentId,
+  ) => ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
 ) {
   const previous = new Map<string, AssistantTeam>();
   return (entries: ReadonlyArray<AssistantTeamEntry>) => {
@@ -24,7 +28,7 @@ export function createGroupFinishedObserver(
     for (const { environmentId, team } of entries) {
       const key = `${environmentId}:${team.id}`;
       seen.add(key);
-      const finished = assistantGroupFinished(previous.get(key), team);
+      const finished = assistantGroupFinished(previous.get(key), team, projectsOf(environmentId));
       previous.set(key, team);
       if (finished !== null) report(environmentId, team.id, finished);
     }
@@ -40,8 +44,12 @@ export function startGroupNotifications(
   registry: AtomRegistry.AtomRegistry,
   router: AnyRouter,
 ): () => void {
-  const observe = createGroupFinishedObserver((environmentId, teamId, notice) =>
-    presentGroupFinished(router, environmentId, teamId, notice),
+  const observe = createGroupFinishedObserver(
+    (environmentId, teamId, notice) => presentGroupFinished(router, environmentId, teamId, notice),
+    (environmentId) =>
+      registry
+        .get(environmentProjects.projectsAtom)
+        .filter((project) => project.environmentId === environmentId),
   );
   return registry.subscribe(assistantTeamEntriesAtom, observe, { immediate: true });
 }

@@ -38,7 +38,7 @@ const teamWith = (working: boolean, name = "Ops"): AssistantTeam =>
 
 it("reports a group once when its work goes from open to none, and forgets removed groups", () => {
   const report = vi.fn();
-  const observe = createGroupFinishedObserver(report);
+  const observe = createGroupFinishedObserver(report, () => []);
   observe([{ environmentId: ENV, team: teamWith(false) }]);
   observe([{ environmentId: ENV, team: teamWith(true) }]);
   observe([{ environmentId: ENV, team: teamWith(false) }]);
