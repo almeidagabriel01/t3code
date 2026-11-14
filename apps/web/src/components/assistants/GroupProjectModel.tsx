@@ -136,7 +136,12 @@ function ProjectModelPicker(props: {
   const { selection: resolved, layer } =
     message === undefined
       ? resolveModelSelection(defaults, isUsable)
-      : assistantGroupComposerModel({ ...message, defaults, isUsable });
+      : assistantGroupComposerModel({
+          ...message,
+          defaults,
+          isUsable,
+          available: { settings, projectId: target?.projectId ?? null, providers },
+        });
   const shown = layer === "global" ? (selection ?? fallback) : resolved;
   const detail =
     layer === "message"

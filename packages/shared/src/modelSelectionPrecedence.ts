@@ -4,6 +4,8 @@ import {
   assistantGroupProjectIds,
   type ModelSelection,
   type ProjectId,
+  type ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 
 import type { ProjectSettingSource } from "./projectSettings.ts";
@@ -22,6 +24,36 @@ export type ModelSelectionLayer = (typeof OPTIONAL_LAYERS)[number] | "global";
 export type ModelSelectionLayers = {
   readonly [Layer in (typeof OPTIONAL_LAYERS)[number]]?: ModelSelection | undefined;
 } & { readonly global: ModelSelection };
+
+/** What a server says its providers offer, custom models included (`ServerProvider`). */
+export type ProviderModelListing = ReadonlyArray<{
+  readonly instanceId: ProviderInstanceId;
+  readonly models: ReadonlyArray<{ readonly slug: string }>;
+}>;
+
+/**
+ * Whether a model a client or an agent picked can run in a project, ruled the same on the server,
+ * which falls back from one it cannot, and on the client, which then shows that fallback. Its
+ * provider must be on there and list the model; a list still empty (a provider probing, a server
+ * starting) cannot tell, so only the first holds.
+ */
+export function isPickedModelUsable(
+  settings: Parameters<typeof resolveProjectProviderInstanceEnabled>[0],
+  projectId: ProjectId | null,
+  providers: ProviderModelListing | undefined,
+  selection: ModelSelection,
+): boolean {
+  if (!resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)) {
+    return false;
+  }
+  if (providers === undefined || providers.length === 0) return true;
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  return (
+    provider !== undefined &&
+    (provider.models.length === 0 ||
+      provider.models.some((model) => model.slug === selection.model))
+  );
+}
 
 /** The first present, usable layer wins in `OPTIONAL_LAYERS` order; `global` is the last resort. */
 export function resolveModelSelection(

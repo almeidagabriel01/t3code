@@ -30,7 +30,9 @@ import {
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
 import {
+  isPickedModelUsable,
   type ModelSelectionLayers,
+  type ProviderModelListing,
   resolveModelSelection,
 } from "@t3tools/shared/modelSelectionPrecedence";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -426,10 +428,24 @@ export function assistantGroupComposerModel(input: {
   readonly pick: AssistantGroupTabPick<ModelSelection> | null;
   readonly tab: AssistantGroupTabKey | null;
   readonly defaults: Omit<ModelSelectionLayers, "message">;
+  /** For the defaults; the pick is ruled as the server rules it, by `available`. */
   readonly isUsable: (selection: ModelSelection) => boolean;
+  readonly available: {
+    readonly settings: Parameters<typeof isPickedModelUsable>[0];
+    readonly projectId: ProjectId | null;
+    readonly providers: ProviderModelListing;
+  };
 }) {
+  const { settings, projectId, providers } = input.available;
+  const pick = assistantGroupTabPick(input.pick, input.tab)?.value;
   const resolved = resolveModelSelection(
-    { ...input.defaults, message: assistantGroupTabPick(input.pick, input.tab)?.value },
+    {
+      ...input.defaults,
+      message:
+        pick !== undefined && isPickedModelUsable(settings, projectId, providers, pick)
+          ? pick
+          : undefined,
+    },
     input.isUsable,
   );
   return { ...resolved, forMessage: resolved.layer === "message" };

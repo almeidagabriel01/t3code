@@ -89,6 +89,7 @@ export function useGroupProjectModel(
           defaults: { ...layers, global },
           isUsable: (value) =>
             resolveProjectProviderInstanceEnabled(settings, projectId, value.instanceId),
+          available: { settings, projectId, providers: config?.providers ?? [] },
         });
   };
   const labelOf = (resolved: ReturnType<typeof shown>) =>

@@ -43,6 +43,7 @@ const layer = ProjectModelSelection.layer.pipe(
           enabled("team"),
           enabled("assistant"),
           enabled("global"),
+          enabled("probing"),
           ["off", { driver: "codex", enabled: false }],
         ]),
         defaultModelSelection: pick("global"),
@@ -63,6 +64,8 @@ const layer = ProjectModelSelection.layer.pipe(
         getProviders: Effect.succeed([
           { instanceId: ProviderInstanceId.make("team"), models: [{ slug: "team-model" }] },
           { instanceId: ProviderInstanceId.make("off"), models: [{ slug: "off-model" }] },
+          // Still probing: no models listed yet, so it cannot tell a pick is unknown.
+          { instanceId: ProviderInstanceId.make("probing"), models: [] },
         ] as never),
       }),
       SqlitePersistence.layerMemory,
@@ -105,6 +108,7 @@ it.effect("each layer wins over the ones below it, and a disabled instance skips
       [{ projectId: disabled, assistantId: ana, teamId: offTeam }, "assistant", "assistant"],
       [{ projectId: withDefault, assistantId: ana, explicit: pick("team") }, "message", "team"],
       [{ projectId: bare, explicit: pick("off") }, "global", "global"],
+      [{ projectId: withDefault, explicit: pick("probing") }, "message", "probing"],
       // A message's model nobody offers falls to the next layer, never an error.
       [{ projectId: withDefault, explicit: pick("nowhere") }, "project", "project"],
       [

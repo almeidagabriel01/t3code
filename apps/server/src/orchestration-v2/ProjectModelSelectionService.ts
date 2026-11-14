@@ -10,6 +10,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  isPickedModelUsable,
   type ModelSelectionLayer,
   projectModelLayer,
   resolveModelSelection,
@@ -129,19 +130,19 @@ const make = Effect.gen(function* () {
         const providers = Option.isSome(providerRegistry)
           ? yield* providerRegistry.value.getProviders
           : [];
-        // A message's model comes from a client or an agent: one its provider does not list is
-        // unknown and falls to the next layer. Without a registry only `isUsable` can tell.
-        const offered = (selection: ModelSelection) =>
-          Option.isNone(providerRegistry) ||
-          providers.some(
-            (provider) =>
-              provider.instanceId === selection.instanceId &&
-              provider.models.some((model) => model.slug === selection.model),
-          );
         const configuredGlobal = settings.defaultModelSelection;
         const result = resolveModelSelection(
           {
-            message: explicit !== undefined && offered(explicit) ? explicit : undefined,
+            message:
+              explicit !== undefined &&
+              isPickedModelUsable(
+                settings,
+                projectId,
+                Option.isSome(providerRegistry) ? providers : undefined,
+                explicit,
+              )
+                ? explicit
+                : undefined,
             assistantProject:
               assistantId === undefined
                 ? undefined

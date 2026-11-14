@@ -1385,6 +1385,8 @@ describe("assistant group tabs", () => {
       "project",
     ],
     ["no tabs yet", pickOf("opus", null), null, "opus", "message"],
+    // The server drops it too, as `isPickedModelUsable` rules on both sides.
+    ["a pick its provider no longer lists", pickOf("gone"), "project:p1", "project", "project"],
   ] as const)("composer model: %s", (_name, pick, tab, model, layer) => {
     const shown = assistantGroupComposerModel({
       pick,
@@ -1394,6 +1396,16 @@ describe("assistant group tabs", () => {
         global: { instanceId: "codex", model: "global" } as ModelSelection,
       },
       isUsable: (selection) => selection.model !== "off",
+      available: {
+        settings: { providerInstances: {}, projectSettingsOverrides: {} },
+        projectId: P1,
+        providers: [
+          {
+            instanceId: "claudeAgent" as ModelSelection["instanceId"],
+            models: [{ slug: "opus" }, { slug: "off" }],
+          },
+        ],
+      },
     });
     assert.deepStrictEqual(
       { model: shown.selection.model, layer: shown.layer, forMessage: shown.forMessage },
