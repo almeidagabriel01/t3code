@@ -51,7 +51,7 @@ const moveFailure = (action: string, result: QueueFile.MoveResult) => {
       return Effect.fail(
         failure(
           "not-allowed",
-          "This job only runs on this Mac (exclusive or on the Mac-only list).",
+          "This job only runs on this Mac (exclusive, on the Mac-only list, or the Runner is off for its project).",
         ),
       );
     case "unconfirmed":
