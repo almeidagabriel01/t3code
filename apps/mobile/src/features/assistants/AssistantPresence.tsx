@@ -309,49 +309,52 @@ function PresenceStackView(props: {
 }) {
   const byId = (id: string) => props.senders.find((candidate) => candidate.assistantId === id);
   return (
-    <Menu
-      title={`Assistants in this thread · ${props.senders.length}`}
-      actions={presenceMenuActions(props.senders, props.looks, props.canAct, props.task)}
-      onPressAction={({ nativeEvent }) => {
-        const id = nativeEvent.event;
-        if (id === DISMISS_TASK) props.onDismissTask();
-        else if (id === RESTORE_TASK) props.onRestoreTask();
-        else if (id.startsWith(JUMP_PREFIX)) {
-          const sender = byId(id.slice(JUMP_PREFIX.length));
-          if (sender)
-            requestThreadMessageJump(
-              scopedThreadKey(props.environmentId, props.threadId),
-              sender.lastMessageId as MessageId,
-            );
-        } else if (id.startsWith(ACCESS_PREFIX)) {
-          const [assistantId, access] = id.slice(ACCESS_PREFIX.length).split("|");
-          props.onAccess(assistantId!, access as Assistant["toolAccess"]);
-        } else if (id.startsWith(CHAT_PREFIX)) {
-          const assistant = byId(id.slice(CHAT_PREFIX.length))?.assistant;
-          if (assistant) props.onOpenChat(assistant);
-        } else if (id.startsWith(INFO_PREFIX)) {
-          props.onOpenInfo(id.slice(INFO_PREFIX.length));
-        }
-      }}
-    >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Assistants in this thread: ${props.senders
-          .map((sender) => sender.assistant?.name ?? "Assistant")
-          .join(", ")}`}
-        hitSlop={6}
-        className="self-end rounded-lg p-0.5 active:opacity-70"
+    // The menu anchors to its own frame and ignores layout classes, so this view sizes and places it.
+    <View className="mb-1 mr-1.5 self-end">
+      <Menu
+        title={`Assistants in this thread · ${props.senders.length}`}
+        actions={presenceMenuActions(props.senders, props.looks, props.canAct, props.task)}
+        onPressAction={({ nativeEvent }) => {
+          const id = nativeEvent.event;
+          if (id === DISMISS_TASK) props.onDismissTask();
+          else if (id === RESTORE_TASK) props.onRestoreTask();
+          else if (id.startsWith(JUMP_PREFIX)) {
+            const sender = byId(id.slice(JUMP_PREFIX.length));
+            if (sender)
+              requestThreadMessageJump(
+                scopedThreadKey(props.environmentId, props.threadId),
+                sender.lastMessageId as MessageId,
+              );
+          } else if (id.startsWith(ACCESS_PREFIX)) {
+            const [assistantId, access] = id.slice(ACCESS_PREFIX.length).split("|");
+            props.onAccess(assistantId!, access as Assistant["toolAccess"]);
+          } else if (id.startsWith(CHAT_PREFIX)) {
+            const assistant = byId(id.slice(CHAT_PREFIX.length))?.assistant;
+            if (assistant) props.onOpenChat(assistant);
+          } else if (id.startsWith(INFO_PREFIX)) {
+            props.onOpenInfo(id.slice(INFO_PREFIX.length));
+          }
+        }}
       >
-        <AssistantCluster
-          environmentId={props.environmentId}
-          size={26}
-          faces={props.senders.map((sender) => ({
-            key: sender.assistantId,
-            assistant: sender.assistant ?? removedAssistantFace(sender.assistantId),
-            mood: props.looks.get(sender.assistantId)?.face ?? "sleeping",
-          }))}
-        />
-      </Pressable>
-    </Menu>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Assistants in this thread: ${props.senders
+            .map((sender) => sender.assistant?.name ?? "Assistant")
+            .join(", ")}`}
+          hitSlop={6}
+          className="rounded-lg p-1.5 active:opacity-70"
+        >
+          <AssistantCluster
+            environmentId={props.environmentId}
+            size={26}
+            faces={props.senders.map((sender) => ({
+              key: sender.assistantId,
+              assistant: sender.assistant ?? removedAssistantFace(sender.assistantId),
+              mood: props.looks.get(sender.assistantId)?.face ?? "sleeping",
+            }))}
+          />
+        </Pressable>
+      </Menu>
+    </View>
   );
 }

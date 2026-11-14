@@ -14,6 +14,7 @@ import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { MenuPopup } from "./MenuPopup";
+import { useMenuSurface } from "./MenuPopup.android";
 
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
@@ -45,6 +46,7 @@ export type AndroidAnchoredMenuProps = {
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
+  const surface = useMenuSurface();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
@@ -194,6 +196,8 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   left,
                   width: menuWidth,
                   borderRadius: 4 * scale,
+                  borderWidth: surface.border.width,
+                  borderColor: surface.border.color,
                   ...verticalPlacement,
                 }}
               >
