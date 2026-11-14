@@ -846,16 +846,18 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toLinux(entry, "waiting for Linux to come back");
       continue;
     }
-    if (intent === "automatic" || intent === "macFirst") {
+    // A run that failed on Linux follows "If a Linux run fails" in every mode, below.
+    if ((intent === "automatic" || intent === "macFirst") && (up || entry.dropped !== true)) {
       const hybrid = intent === "automatic";
       const mode = hybrid ? "Hybrid" : "Mac first";
       if (hybrid && paused) {
         toMac(entry, "Hybrid: queue paused");
         continue;
       }
-      if (!up && entry.dropped === true && config.runnerDropped === "agent") tellAgent(entry);
-      else if (!up) toMac(entry, `${mode}: Linux is unavailable`);
-      if (!up) continue;
+      if (!up) {
+        toMac(entry, `${mode}: Linux is unavailable`);
+        continue;
+      }
       const busy = linuxBusy(worktree);
       if (macOver && health.overLimit && !(busy !== null && startsOnLinux(entry, busy))) {
         routes[entry.id] = "linux";

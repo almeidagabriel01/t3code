@@ -954,25 +954,34 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     expect(outcomeOf(plan, "a")).toBe(outcome);
   });
 
-  // Hybrid and Mac first never wait for Linux: the job runs here instead of failing there again.
-  it.each(["automatic", "macFirst"] as const)(
-    "%s keeps an environment failure under Wait on this Mac",
-    (where) => {
-      const entry = job("a", "vp test run", {
-        dropped: true,
-        failure: "sh: 1: tsgo: not found",
-        linuxFailedAt: NOW - 5000,
-      } as never);
-      const plan = planRoutes(
-        input(
-          [entry],
-          { runnerWhere: where, runnerDropped: "wait" },
-          { health: { ...READ, okAt: NOW - 100 } },
-        ),
-      );
-      expect(outcomeOf(plan, "a")).toBe("mac-start");
-    },
-  );
+  // An environment failure follows "If a Linux run fails" in every mode, with Linux still online.
+  it.each(
+    (["linux", "automatic", "macFirst"] as const).flatMap((where) =>
+      (
+        [
+          ["mac", "mac-start"],
+          ["wait", "linux-wait"],
+          ["ask", "ask"],
+          ["agent", "cancel"],
+        ] as const
+      ).map(([policy, outcome]) => [where, policy, outcome] as const),
+    ),
+  )("%s, environment failure under %s → %s", (where, policy, outcome) => {
+    const entry = job("a", "vp test run", {
+      dropped: true,
+      failure: "sh: 1: tsgo: not found",
+      linuxFailedAt: NOW - 5000,
+    } as never);
+    const plan = planRoutes(
+      input(
+        [entry],
+        { runnerWhere: where, runnerDropped: policy },
+        { health: { ...READ, okAt: NOW - 100 } },
+      ),
+    );
+    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+  });
 
   it("an open question holds the job until its deadline", () => {
     const plan = offline(job("a", "vp test run", { ask: asked(60_000) }), {});
