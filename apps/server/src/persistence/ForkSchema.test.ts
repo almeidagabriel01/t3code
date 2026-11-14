@@ -479,18 +479,18 @@ it.effect("gives an older group chat its requests: every message and task joins 
   }).pipe(Effect.provide(database)),
 );
 
-it.effect.each(["new", "old", "half-migrated", "scope-half-migrated"] as const)(
+it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)(
   "fills request ids, groups and request projects in a %s database",
   (shape) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // "half-migrated": an older build added the columns and stopped before filling them.
       const added =
-        shape === "half-migrated" || shape === "scope-half-migrated"
+        shape === "half-migrated" || shape === "scope-column-present"
           ? {
               requests: ", group_id TEXT, reply_text TEXT, delivered INTEGER NOT NULL DEFAULT 0",
               messages: `, request_id TEXT, project_id TEXT, title TEXT${
-                shape === "scope-half-migrated" ? ", request_project_id TEXT" : ""
+                shape === "scope-column-present" ? ", request_project_id TEXT" : ""
               }`,
               tasks: ", request_id TEXT",
             }
@@ -540,6 +540,11 @@ it.effect.each(["new", "old", "half-migrated", "scope-half-migrated"] as const)(
       if (project !== null) {
         yield* sql`UPDATE assistant_group_messages SET project_id = ${project} WHERE message_id = 'm1'`;
       }
+      if (filled) {
+        yield* sql`UPDATE assistant_group_messages SET request_project_id = ${project} WHERE message_id <> 'm3'`;
+      }
+      // A database that already has the column is never swept again, even with rows left NULL.
+      const carried = shape === "scope-column-present" ? null : project;
 
       yield* ensureForkSchema();
       yield* ensureForkSchema();
@@ -550,8 +555,8 @@ it.effect.each(["new", "old", "half-migrated", "scope-half-migrated"] as const)(
       assert.deepStrictEqual(
         yield* sql`SELECT message_id, request_id, request_project_id FROM assistant_group_messages ORDER BY seq`,
         [
-          { message_id: "m1", request_id: "m1", request_project_id: project },
-          { message_id: "m2", request_id: "m1", request_project_id: project },
+          { message_id: "m1", request_id: "m1", request_project_id: carried },
+          { message_id: "m2", request_id: "m1", request_project_id: carried },
           { message_id: "m3", request_id: null, request_project_id: null },
         ],
       );

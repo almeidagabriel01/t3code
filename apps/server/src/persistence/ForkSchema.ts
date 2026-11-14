@@ -706,9 +706,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
   // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
-  // pages its own lines. Every start fills only rows still without one whose head has a project.
-  yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
-  yield* sql`
+  // pages its own lines. Filled once, in the start that adds the column (this is one transaction);
+  // from then on every write keeps it, so General's rows are never swept again.
+  const scoped = yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
+  if (scoped.length > 0)
+    yield* sql`
     UPDATE assistant_group_messages SET request_project_id = (
       SELECT h.project_id FROM assistant_group_messages h
       WHERE h.message_id = assistant_group_messages.request_id)
