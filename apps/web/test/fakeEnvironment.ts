@@ -697,6 +697,8 @@ export const fakeGroupChat = {
     readonly reason: "mention_required" | "archived";
     readonly message: string;
   } | null,
+  /** Holds each post's reply until it settles. */
+  postGate: null as Promise<void> | null,
   posts: [] as Array<Record<string, unknown>>,
   taskActions: [] as Array<Record<string, unknown>>,
   reads: [] as Array<Record<string, unknown>>,
@@ -746,7 +748,9 @@ handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
     id: `posted-${fakeGroupChat.posts.length}`,
     text: String(input.text),
   } as AssistantGroupMessage;
-  return Effect.succeed({ message, tasks: [] });
+  const gate = fakeGroupChat.postGate;
+  const reply = { message, tasks: [] };
+  return gate === null ? Effect.succeed(reply) : Effect.promise(() => gate).pipe(Effect.as(reply));
 };
 handlers[WS_METHODS.assistantGroupsMarkRead] = (input: { readonly readSeq?: number }) => {
   fakeGroupChat.reads.push(input);

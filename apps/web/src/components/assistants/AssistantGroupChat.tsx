@@ -15,6 +15,7 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupRunningCount,
+  assistantGroupTabAfterSend,
   assistantGroupTabView,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
   type AssistantGroupChatState,
@@ -1489,13 +1490,12 @@ export function AssistantGroupChat(props: {
     });
     if (reply.ok) {
       feedHandle.current?.followEnd();
-      setReplyTo(null);
+      // A reply or tab the user opened while the post was on its way stays.
+      setReplyTo((current) => (current === replyTo ? null : current));
       // A send that lands in another tab's project takes the user there, so it never vanishes.
-      if (tabs !== null && tab !== null && tab.key !== "all") {
-        // One with no project yet may still get one from the lead: only All is sure to hold it.
-        const landed = replyTo?.projectId ?? groupComposerProject;
-        const target = tabs.find((entry) => entry.scope?.projectId === landed);
-        if (target?.key !== tab.key) setSavedTab(landed === null ? "all" : (target?.key ?? "all"));
+      const landed = replyTo?.projectId ?? groupComposerProject;
+      if (tabs !== null) {
+        setSavedTab((saved) => assistantGroupTabAfterSend(tabs, saved, landed) ?? saved);
       }
       return { ok: true };
     }

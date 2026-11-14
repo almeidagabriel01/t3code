@@ -13,11 +13,15 @@ export function useGroupTabPreference(environmentId: EnvironmentId, teamId: Assi
     saved: AsyncResult.isSuccess(preferences)
       ? preferences.value.assistantGroupTabs?.[group]
       : undefined,
-    save: (tab: string) =>
+    /** A function decides from the tab saved when it runs; null keeps that one. */
+    save: (tab: string | ((saved: string | undefined) => string | null)) =>
       savePreferences({
-        transform: (current) => ({
-          assistantGroupTabs: { ...current.assistantGroupTabs, [group]: tab },
-        }),
+        transform: (current) => {
+          const next = typeof tab === "string" ? tab : tab(current.assistantGroupTabs?.[group]);
+          return next === null
+            ? {}
+            : { assistantGroupTabs: { ...current.assistantGroupTabs, [group]: next } };
+        },
       }),
   } as const;
 }

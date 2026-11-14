@@ -17,6 +17,7 @@ import {
   assistantGroupTabs,
   assistantGroupTabsPending,
   assistantGroupTabView,
+  assistantGroupTabAfterSend,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
@@ -1164,6 +1165,19 @@ describe("assistant group tabs", () => {
   ])("resolves saved %j", (saved, expected) => {
     const result = tabs([P1, P2], [scope(P1), scope(P2)])!;
     assert.strictEqual(resolveAssistantGroupTab(saved, result).key, expected);
+  });
+
+  it.each([
+    ["All stays", "all", P2, null],
+    ["its own project stays", "project:p1", P1, null],
+    ["another project follows", "project:p1", P2, "project:p2"],
+    ["no project yet goes to All", "project:p1", null, "all"],
+    ["General keeps one with none", "general", null, null],
+    ["a project without a tab goes to All", "general", P3, "all"],
+    ["a stale key is All", "project:gone", P2, null],
+  ] as const)("after a send: %s", (_name, saved, landed, expected) => {
+    const result = tabs([P1, P2], [scope(P1), scope(P2), scope(null)])!;
+    assert.strictEqual(assistantGroupTabAfterSend(result, saved, landed), expected);
   });
 
   it.each([

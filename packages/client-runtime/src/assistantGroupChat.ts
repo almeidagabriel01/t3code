@@ -434,6 +434,23 @@ export function resolveAssistantGroupTab(
   return tabs.find((tab) => tab.key === saved) ?? tabs[0]!;
 }
 
+/**
+ * After a send lands in `landed`, the tab that still shows it, or null to stay on the open one
+ * (the `saved` key read when the send settles, not when it started). One with no project yet may
+ * still get one from the lead: only All is sure to hold it.
+ */
+export function assistantGroupTabAfterSend(
+  tabs: ReadonlyArray<AssistantGroupTab>,
+  saved: string | null | undefined,
+  landed: ProjectId | null,
+): AssistantGroupTabKey | null {
+  const open = resolveAssistantGroupTab(saved, tabs);
+  if (open.key === "all") return null;
+  const target = tabs.find((entry) => entry.scope?.projectId === landed);
+  if (target?.key === open.key) return null;
+  return landed === null ? "all" : (target?.key ?? "all");
+}
+
 /** False for a request whose project no longer matches the scope. */
 export function assistantGroupInScope(
   block: Pick<AssistantGroupRequestBlock, "projectId">,

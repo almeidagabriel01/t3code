@@ -14,6 +14,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
+  assistantGroupTabAfterSend,
   assistantGroupTabView,
   type AssistantGroupChatState,
   type AssistantGroupTab,
@@ -1305,16 +1306,13 @@ export function AssistantGroupChatRouteScreen({
       ...(projectId === undefined ? {} : { projectId }),
     });
     if (reply.ok) {
-      setReplyTo(null);
-      setProjectPick(undefined);
+      // What the user changed while the post was on its way stays: a new reply, pick or tab.
+      setReplyTo((current) => (current === replyTo ? null : current));
+      setProjectPick((current) => (current === projectPick ? undefined : current));
       feed.current?.scrollToEnd();
       // A request that lands in another project's tab would vanish from this one: follow it.
-      // One with no project yet may still get one from the lead: only All is sure to hold it.
       const landed = replyTo?.projectId ?? projectId ?? null;
-      if (tabs !== null && tab !== null && tab.key !== "all") {
-        const target = tabs.find((candidate) => candidate.scope?.projectId === landed);
-        if (target?.key !== tab.key) selectTab((landed === null ? null : target) ?? tabs[0]!);
-      }
+      if (tabs !== null) savedTab.save((saved) => assistantGroupTabAfterSend(tabs, saved, landed));
       return { ok: true };
     }
     return {

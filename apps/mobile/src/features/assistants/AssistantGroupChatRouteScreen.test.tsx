@@ -1873,6 +1873,26 @@ describe("requests", () => {
     await type("@ada go");
     await click("Send");
     expect(selected(TAB.all)).toBe("true");
+    // A tab opened, or a reply started, while the post was on its way is where the user stays.
+    const sendHeld = async (opened: string) => {
+      await click(TAB.alpha);
+      await click("Project:Beta");
+      await type("@beto late");
+      let settle!: (reply: unknown) => void;
+      mocks.post.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+      await click("Send");
+      await click(opened);
+      return () => act(async () => settle({ ok: true, value: {} }));
+    };
+    await (
+      await sendHeld(TAB.all)
+    )();
+    expect(selected(TAB.all)).toBe("true");
+    const settle = await sendHeld(TAB.beta);
+    await click("Reply to request Review");
+    await settle();
+    expect(selected(TAB.beta)).toBe("true");
+    expect(text()).toContain("Replying to Review");
   });
 
   it("sends the picked project on a new request and lets the lead decide by default", async () => {

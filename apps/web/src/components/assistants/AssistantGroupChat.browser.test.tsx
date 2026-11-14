@@ -235,6 +235,7 @@ async function openChat(
     histories: [],
     subscriptions: [],
     postRefusal: null,
+    postGate: null,
     older: null,
   });
   fakeTeamEdits.updates = [];
@@ -1259,6 +1260,30 @@ it("narrows the feed to a project tab, keeps the draft, sets the composer's proj
   await userEvent.click(page.getByRole("option", { name: "Lead decides" }));
   await userEvent.type(composer(), "@bo later{Enter}");
   await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  // A tab opened, or a reply started, while the post was on its way is where the user stays.
+  const sendHeld = async (opened: string) => {
+    const posted = fakeGroupChat.posts.length;
+    let open!: () => void;
+    fakeGroupChat.postGate = new Promise((resolve) => (open = resolve));
+    await userEvent.click(tab("site"));
+    await userEvent.click(composerProject());
+    await userEvent.click(page.getByRole("option", { name: "render" }));
+    await userEvent.type(composer(), "@bo late{Enter}");
+    await eventually(() => expect(fakeGroupChat.posts).toHaveLength(posted + 1));
+    await userEvent.click(tab(opened));
+    return open;
+  };
+  const posts = fakeGroupChat.posts.length;
+  (await sendHeld("All"))();
+  await eventually(() => expect(composerText()).toBe(""));
+  await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  const open = await sendHeld("render");
+  await userEvent.click(main().getByRole("button", { name: "Reply to request Budget review" }));
+  open();
+  await eventually(() => expect(composerText()).toBe(""));
+  expect(fakeGroupChat.posts).toHaveLength(posts + 2);
+  await expect.element(tab("render")).toHaveAttribute("aria-pressed", "true");
+  await expect.element(main().getByTestId("group-reply-chip")).toBeVisible();
 });
 
 it("shows every request in All as one line with its project, opened in place, and marks nothing read", async () => {
