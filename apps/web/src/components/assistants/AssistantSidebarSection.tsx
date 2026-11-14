@@ -134,7 +134,12 @@ const AssistantRow = memo(function AssistantRow(props: {
     }
   };
   return (
-    <li className={cn("list-none py-px", props.nested && "ms-3.5 border-s border-foreground/10")}>
+    <li
+      className={cn(
+        "@container/assistant-row list-none py-px",
+        props.nested && "ms-3.5 border-s border-foreground/10",
+      )}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -169,7 +174,8 @@ const AssistantRow = memo(function AssistantRow(props: {
         </span>
         <span className="min-w-0 truncate">{assistant.name}</span>
         {/* Chips get only the width the name leaves: past it they wrap onto a clipped line. */}
-        <span className="flex h-5 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-4 overflow-hidden">
+        {/* Its negative margin takes back the row gap, so an empty clip leaves no hole. */}
+        <span className="-ms-2 flex h-5 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-4 overflow-hidden">
           <span className="h-5 w-0" />
           {assistant.role === "" ? null : (
             <Badge variant="outline" size="sm" data-testid="assistant-role">
@@ -200,7 +206,8 @@ const AssistantRow = memo(function AssistantRow(props: {
                 <span
                   data-testid="assistant-project"
                   aria-label={`Project: ${props.projectLabel}`}
-                  className="inline-flex shrink-0 items-center"
+                  // A narrow row keeps the name; Assistant settings in the row menu shows the project.
+                  className="inline-flex shrink-0 items-center @max-[14rem]/assistant-row:hidden"
                 />
               }
             >
@@ -370,11 +377,11 @@ function GroupRow(props: {
         <span className="min-w-0 truncate">{team.name}</span>
         {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
         {/* The faces get only the width the name leaves: past it they wrap onto a clipped line. */}
-        <span className="flex h-4 min-w-0 flex-1 flex-wrap gap-y-4 overflow-hidden">
+        <span className="-ms-2 flex h-4 min-w-0 flex-1 flex-wrap gap-y-4 overflow-hidden">
           <span className="h-4 w-0" />
           <span
             className={cn(
-              "flex h-4 shrink-0 items-center ps-0.5",
+              "flex h-4 shrink-0 items-center ps-2.5",
               props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
             )}
             data-testid="group-avatars"
