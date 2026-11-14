@@ -66,11 +66,12 @@ function Harness(props: {
   readonly onChange: (next: AssistantIntegrations) => void;
   readonly driverKind: string;
   readonly workspace?: "host" | "sandbox";
+  readonly state?: IntegrationsState;
 }) {
   const [value, setValue] = useState(props.initial);
   return (
     <AssistantIntegrationsField
-      state={STATE}
+      state={props.state ?? STATE}
       value={value}
       workspace={props.workspace ?? "host"}
       onChange={(next) => {
@@ -106,6 +107,21 @@ it("Choose… starts from what All connected gave, then each checkmark edits the
   expect(onChange).toHaveBeenLastCalledWith({ mode: "selected", names: ["linear"] });
   await userEvent.click(page.getByRole("radio", { name: "All connected" }));
   expect(onChange).toHaveBeenLastCalledWith({ mode: "all" });
+});
+
+it("points to Settings → Integrations when Choose… has nothing to list", async () => {
+  await using _screen = await render(
+    <Harness
+      initial={{ mode: "selected", names: [] }}
+      onChange={vi.fn()}
+      driverKind="claudeAgent"
+      state={{ ...STATE, integrations: [], detected: [] }}
+    />,
+  );
+  await expect.element(page.getByText(/^No integrations to choose yet\./)).toBeVisible();
+  await expect
+    .element(page.getByRole("link", { name: "Settings → Integrations" }))
+    .toHaveAttribute("href", "/settings/integrations");
 });
 
 it("says integrations stay out of work the assistant runs in the sandbox", async () => {

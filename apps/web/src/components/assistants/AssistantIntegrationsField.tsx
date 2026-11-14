@@ -12,6 +12,7 @@ import type {
   EnvironmentId,
   IntegrationsState,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 
 import { useIntegrationsState } from "../../state/integrations";
 import { TONE_BADGE } from "../integrations/IntegrationRow";
@@ -54,6 +55,10 @@ export function AssistantIntegrationsField(props: {
   return (
     <fieldset className="flex flex-col gap-1.5">
       <legend className="text-sm font-medium">Integrations</legend>
+      <p className="text-xs text-muted-foreground">
+        Services it can use, such as your calendar or email. Changes it makes there follow its tool
+        access.
+      </p>
       {sandboxNote === null ? null : <p className="text-xs text-muted-foreground">{sandboxNote}</p>}
       {provider !== null && !integrationProviderSupport(provider.driverKind) ? (
         <p className="text-xs text-warning-foreground">
@@ -78,7 +83,18 @@ export function AssistantIntegrationsField(props: {
           Choose…
         </label>
       </RadioGroup>
-      {props.value.mode === "selected" ? (
+      {props.value.mode === "selected" && picker.items.length === 0 ? (
+        <p className="ps-6 text-xs text-muted-foreground">
+          No integrations to choose yet. Connect one in{" "}
+          <Link
+            to="/settings/integrations"
+            className="cursor-pointer rounded-sm text-foreground underline underline-offset-2 outline-hidden hover:text-foreground/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
+            Settings → Integrations
+          </Link>
+          .
+        </p>
+      ) : props.value.mode === "selected" ? (
         <ul className="flex max-h-56 flex-col gap-0.5 overflow-y-auto ps-6">
           {picker.items.map((item) => (
             <li key={item.key}>

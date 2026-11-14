@@ -19,6 +19,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     upload: vi.fn(),
     teams: [] as unknown[],
     goBack: vi.fn(),
+    navigate: vi.fn(),
     entries: [] as unknown[],
     tasks: [] as Array<{ threadId: string | null; prompt: string }>,
     sandbox: null as unknown,
@@ -68,7 +69,7 @@ vi.mock("../../state/assets", () => ({ useAssetUrlState: () => null }));
 vi.mock("uniwind", () => ({ withUniwind: (component: unknown) => component }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: mocks.goBack, dispatch: vi.fn(), navigate: vi.fn() }),
+  useNavigation: () => ({ goBack: mocks.goBack, dispatch: vi.fn(), navigate: mocks.navigate }),
   usePreventRemove: () => undefined,
 }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
@@ -747,6 +748,21 @@ describe("assistant integrations", () => {
     pick("All connected");
     await act(async () => pick("Create assistant"));
     expect(mocks.create.mock.calls[0]?.[0]).not.toHaveProperty("integrations");
+  });
+
+  it("points to Settings → Integrations when Choose… has nothing to list", () => {
+    setup();
+    mocks.integrations = {
+      ...(mocks.integrations as object),
+      integrations: [],
+      detected: [],
+    };
+    render({
+      ...assistant(),
+      integrations: { mode: "selected", names: [] },
+    } as unknown as Assistant);
+    pick("No integrations to choose yet. Connect one in Settings → Integrations.");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsIntegrations");
   });
 
   it("names the provider that cannot use integrations", () => {
