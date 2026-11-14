@@ -191,9 +191,23 @@ private enum NavigationBarScrollPocket {
       (refreshed.object(forKey: stack)?.intValue ?? 0) < generation
     else { return }
     refreshed.setObject(NSNumber(value: generation), forKey: stack)
-    // After the move that brought the stack on screen, so the bar is not toggled mid-transition.
+    // After the move that brought the stack on screen, and after any push, pop or presentation it
+    // is part of, so the bar never changes mid-transition.
     Task { @MainActor [weak stack] in
-      guard let stack, stack.viewIfLoaded?.window != nil, !stack.isNavigationBarHidden else { return }
+      guard let stack else { return }
+      if let coordinator = stack.transitionCoordinator {
+        coordinator.animate(alongsideTransition: nil) { [weak stack] _ in
+          if let stack { rehandBar(of: stack) }
+        }
+      } else {
+        rehandBar(of: stack)
+      }
+    }
+  }
+
+  private static func rehandBar(of stack: UINavigationController) {
+    guard stack.viewIfLoaded?.window != nil, !stack.isNavigationBarHidden else { return }
+    UIView.performWithoutAnimation {
       stack.setNavigationBarHidden(true, animated: false)
       stack.setNavigationBarHidden(false, animated: false)
     }
