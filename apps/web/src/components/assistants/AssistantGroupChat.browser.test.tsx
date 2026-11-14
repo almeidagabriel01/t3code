@@ -1315,7 +1315,7 @@ it("narrows the feed to a project tab, keeps the draft, sets the composer's proj
 
 it("keeps what the user writes in another tab during a send, and a refused one in its own tab", async () => {
   twoRequests(SITE_PROJECT);
-  await using _screen = await openChat({
+  await using screen = await openChat({
     people: sitePeople(),
     team: team({ chat: scopedChat() }),
   });
@@ -1340,6 +1340,14 @@ it("keeps what the user writes in another tab during a send, and a refused one i
   await expect.element(submit).toBeEnabled();
   await expectComposer("meanwhile");
   await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  // Leaving the chat and coming back keeps it, in its own tab.
+  await screen.router.navigate({ to: "/assistants" });
+  await expect.element(composer()).not.toBeInTheDocument();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+  });
+  await expectComposer("meanwhile");
   await userEvent.click(tab("site"));
   await expectComposer("@bo second");
   await expect

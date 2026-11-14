@@ -6,6 +6,7 @@ import {
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupShowsOutgoing,
+  createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
   type AssistantGroupTabKey,
@@ -21,7 +22,7 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -60,6 +61,10 @@ import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
+/** Its text waits in the draft store under the group's `:outgoing` key. */
+const outgoings = createAssistantGroupOutgoingStore<
+  AssistantGroupOutgoing & { readonly projectId: ProjectId | null; readonly error: string | null }
+>();
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
@@ -326,13 +331,8 @@ export function GroupComposer(props: {
   const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
   // Sent text leaves the draft for its own key, so another tab never shows it beside its project.
   const outgoingKey = `${groupKey}:outgoing`;
-  const [outgoing, setOutgoing] = useState<
-    | (AssistantGroupOutgoing & {
-        readonly projectId: ProjectId | null;
-        readonly error: string | null;
-      })
-    | null
-  >(null);
+  const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(groupKey));
+  const setOutgoing = (next: Parameters<typeof outgoings.set>[1]) => outgoings.set(groupKey, next);
   const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
   const draftKey = shown === null ? groupKey : outgoingKey;
   const faces = useAssistantFaceImages(props.members);

@@ -2027,6 +2027,10 @@ describe("requests", () => {
     )({ ok: false, message: "server down", reason: null });
     expect(input().value).toBe("meanwhile");
     expect(text()).not.toContain("server down");
+    // Leaving the chat and coming back keeps it, in its own tab.
+    remount();
+    render();
+    expect(input().value).toBe("meanwhile");
     await click(TAB.alpha);
     expect(input().value).toBe("@ada second");
     expect(text()).toContain("server down");

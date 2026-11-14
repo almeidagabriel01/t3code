@@ -8,6 +8,7 @@ import {
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupShowsOutgoing,
+  createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
@@ -23,7 +24,14 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
-import { useId, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ClipboardEvent,
+  type DragEvent,
+} from "react";
 
 import { collapseExpandedComposerCursor, composerSubmissionIntentForKey } from "~/composer-logic";
 import {
@@ -106,7 +114,10 @@ const NO_SKILLS: never[] = [];
 const drafts = new Map<string, string>();
 
 /** For tests: each starts with empty drafts. */
-export const clearGroupDrafts = () => drafts.clear();
+export const clearGroupDrafts = () => {
+  drafts.clear();
+  outgoings.clear();
+};
 
 function MentionOptionLabel(props: {
   readonly option: AssistantGroupMentionOption<Assistant>;
@@ -253,6 +264,8 @@ interface Outgoing extends AssistantGroupOutgoing {
   readonly error: string | null;
 }
 
+const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
+
 export function GroupComposer(props: {
   readonly draftKey: string;
   /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
@@ -303,7 +316,8 @@ export function GroupComposer(props: {
     setDraftState({ value, cursor, expanded });
   };
   // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
-  const [outgoing, setOutgoing] = useState<Outgoing | null>(null);
+  const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(props.draftKey));
+  const setOutgoing = (next: Outgoing | null) => outgoings.set(props.draftKey, next);
   const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
   const sending = outgoing !== null && !outgoing.failed;
   const prompt = shown?.prompt ?? draft;

@@ -631,6 +631,30 @@ export function assistantGroupShowsOutgoing(
   return outgoing !== null && (tab === outgoing.tab || (!outgoing.failed && tab === "all"));
 }
 
+/**
+ * The outgoing message of each group composer, outside any one mount: a send that settles or is
+ * refused after the user left the chat shows in the composer they come back to.
+ */
+export function createAssistantGroupOutgoingStore<T extends AssistantGroupOutgoing>() {
+  const entries = new Map<string, T>();
+  const listeners = new Set<() => void>();
+  return {
+    get: (key: string): T | null => entries.get(key) ?? null,
+    set: (key: string, next: T | null) => {
+      if (next === null) entries.delete(key);
+      else entries.set(key, next);
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear: () => entries.clear(),
+  };
+}
+
 /** False for a request whose project no longer matches the scope. */
 export function assistantGroupInScope(
   block: Pick<AssistantGroupRequestBlock, "projectId">,
