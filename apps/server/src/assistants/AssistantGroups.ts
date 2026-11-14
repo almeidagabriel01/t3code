@@ -522,8 +522,8 @@ export class AssistantGroups extends Context.Service<
     /** Brings group state in line with the teams now stored, for changes made while down. */
     readonly reconcile: Effect.Effect<void>;
     /**
-     * These projects' default or per-assistant model changed: their open requests' threads that
-     * still run on the model the project gave them move to the one it gives now.
+     * These projects' default or per-assistant model changed: open requests' threads working in
+     * them that still run on the model the project gave them move to the one it gives now.
      */
     readonly followProjectModels: (projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<void>;
     /** Watches the assistants stream for the changes above. */
@@ -1104,44 +1104,40 @@ const make = Effect.gen(function* () {
     if (row !== undefined && pending !== null) yield* followModel(row, pending);
   });
 
+  const openRequestThreads = sql<ThreadRow>`
+    SELECT * FROM assistant_group_request_threads WHERE request_id IN (
+      SELECT request_id FROM assistant_group_tasks WHERE status IN ${sql.in(OPEN)})`;
+
+  // A thread keeps the project it was launched in (or adopted), whatever the request's became.
   const followProjectModels: AssistantGroups["Service"]["followProjectModels"] = Effect.fn(
     "AssistantGroups.followProjectModels",
   )(function* (projectIds) {
     if (projectIds.length === 0) return;
-    const open = yield* sql<{ readonly request_id: string; readonly project_id: string }>`
-        SELECT DISTINCT m.message_id AS request_id, m.project_id FROM assistant_group_messages m
-        JOIN assistant_group_tasks t ON t.request_id = m.message_id
-        WHERE m.project_id IN ${sql.in(projectIds)} AND t.status IN ${sql.in(OPEN)}`;
+    const wanted = new Set<string>(projectIds);
     yield* lock.withPermits(1)(
-      Effect.forEach(open, (row) =>
-        followRequestProject(row.request_id, row.project_id as ProjectId),
-      ),
+      Effect.gen(function* () {
+        for (const row of yield* openRequestThreads) {
+          const thread = yield* inspectThread(row.thread_id as ThreadId);
+          if (thread === undefined || !wanted.has(thread.projectId)) continue;
+          const resolved = yield* modelSelections
+            .resolveForNewThread({
+              projectId: thread.projectId as ProjectId,
+              assistantId: row.assistant_id as AssistantId,
+              teamId: row.team_id as AssistantTeamId,
+            })
+            .pipe(Effect.result);
+          if (resolved._tag === "Failure") {
+            yield* Effect.logWarning("assistant groups: no model for a request thread", {
+              threadId: row.thread_id,
+              cause: resolved.failure,
+            });
+            continue;
+          }
+          yield* followModel(row, resolved.success.selection);
+        }
+      }),
     );
   }, quietly("project model change"));
-
-  /** Each of a request's threads follows the model resolved for its member in `projectId`. */
-  const followRequestProject = Effect.fn("AssistantGroups.followRequestProject")(function* (
-    requestId: string,
-    projectId: ProjectId,
-  ) {
-    for (const row of yield* requestThreads(requestId)) {
-      const resolved = yield* modelSelections
-        .resolveForNewThread({
-          projectId,
-          assistantId: row.assistant_id as AssistantId,
-          teamId: row.team_id as AssistantTeamId,
-        })
-        .pipe(Effect.result);
-      if (resolved._tag === "Failure") {
-        yield* Effect.logWarning("assistant groups: no model for a request thread", {
-          threadId: row.thread_id,
-          cause: resolved.failure,
-        });
-        continue;
-      }
-      yield* followModel(row, resolved.success.selection);
-    }
-  });
 
   /**
    * A request that ended with every task delivered or cancelled settles its members' threads: they
@@ -1754,7 +1750,6 @@ const make = Effect.gen(function* () {
       SET project_id = ${projectId}, title = COALESCE(${title}, title)
       WHERE message_id = ${request.message_id} RETURNING *`;
     if (rows[0] !== undefined) yield* publishMessage(rows[0]);
-    yield* followRequestProject(request.message_id, projectId as ProjectId);
   });
 
   const route = Effect.fn("AssistantGroups.route")(function* (

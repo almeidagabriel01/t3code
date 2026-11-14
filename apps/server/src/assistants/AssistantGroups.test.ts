@@ -958,7 +958,7 @@ it.effect(
 );
 
 it.effect(
-  "a request given its project later moves its threads to that project's model once each is free",
+  "a request thread follows the model of the project it works in, not the request's later one",
   () => {
     const h = harness({
       projects: { ada: ["p1", "p2"] },
@@ -972,11 +972,13 @@ it.effect(
     return Effect.gen(function* () {
       const groups = yield* h.setup;
       const sql = yield* SqlClient.SqlClient;
+      const settings = yield* ServerSettings.ServerSettingsService;
       const one = yield* groups.post(
         { teamId: TEAM, text: "@ada @beto one", projectId: p1 },
         h.user,
       );
-      // As a request from before requests had projects: started, with none.
+      // As a request from before requests had projects: started with none, so its threads were
+      // launched in each member's own project (p1) and keep working in that checkout.
       yield* sql`UPDATE assistant_group_messages SET project_id = NULL WHERE message_id = ${one.message.id}`;
       const ada = requestThreadId("ada", TEAM, one.message.id);
       const beto = requestThreadId("beto", TEAM, one.message.id);
@@ -989,15 +991,23 @@ it.effect(
         { teamId: TEAM, text: "this is for p2", replyToMessageId: one.message.id, projectId: p2 },
         h.user,
       );
+      yield* groups.followProjectModels([p2]);
+      assert.lengthOf(switches(), 0);
+
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(claude, "p1-new") },
+        },
+      });
+      yield* groups.followProjectModels([p1]);
       // Ada's turn is still running, so her provider changes when it ends.
       assert.lengthOf(switches(), 0);
       yield* h.finish(0, "completed", "done");
-      yield* h.finish(1, "completed", "done");
       assert.deepEqual(
         switches().map((command) => command.threadId),
         [ada],
       );
-      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p2-model"));
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "p1-new"));
       assert.deepEqual(h.fakeThreads.get(beto)!.modelSelection, selection(codex, "beto-pick"));
       assert.lengthOf(h.launched, 2);
     }).pipe(Effect.provide(h.layer));
