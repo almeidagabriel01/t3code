@@ -218,6 +218,14 @@ Three things follow the row, none of them a new mechanism:
 - `AssistantTaskReactor` queues a message to the owner's current conversation when a run of the task
   thread ends. The message id derives from the run, so a replay wakes once, and it carries the task
   thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
+- Every run-end wake, from a task or a watch, goes through `TaskEventNotices`, the one door that
+  remembers what each assistant was told per subject thread (`assistant_task_notices`). A run with no
+  answer to an agent, no changed files, no new HEAD and the same end state wakes no one, and a new
+  event drops older queued events about the same task. A stopped run waits for its checkpoint first.
+- An assistant ends an event turn with `NO_REPLY` (`QUIET_REPLY`) when nothing is new.
+  `assistantRunReply` is the one exit for chat apps, group chat and autonomy delivery: a quiet event
+  turn posts nothing and other event turns send `briefReply`, while user and routine turns go out
+  whole. Clients drop only a reply that is the bare token, so no text is ever unreadable in T3.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
@@ -314,7 +322,9 @@ through the same turn path as any message. Three things keep it from feeding its
 - Signals about `assistant:` threads, subagents, delegated children and side chats are dropped
   before any rule or watch is read. An assistant's own run therefore never triggers a rule.
 - A wake is keyed by (run or thread, event, rule or watch, assistant) in `autonomy_wakes`, claimed
-  before the send and given back if the send fails, so a replayed event wakes once.
+  before the send and given back if the send fails, so a replayed event wakes once. A run the
+  assistant was already told about spends a watch's claim but frees a rule's, so the interval below
+  only counts wakes that were sent.
 - Rule wakes also share a minimum interval per thread, and every wake counts against
   `maxWakesPerDay`. Watches are asked for, so only the daily cap limits them.
 
