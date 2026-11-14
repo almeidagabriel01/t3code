@@ -135,7 +135,10 @@ import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadR
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGroupChatRouteScreen";
-import { AssistantGroupSettingsRouteScreen } from "./features/assistants/AssistantGroupSettingsRouteScreen";
+import {
+  AssistantGroupSettingsRouteScreen,
+  GroupDefaultModelPickerRouteScreen,
+} from "./features/assistants/AssistantGroupSettingsRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
 import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRouteScreen";
@@ -402,6 +405,10 @@ const SETTINGS_SCREENS = {
   }),
   SettingsAssistantModel: createNativeStackScreen({
     screen: AssistantModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
+  SettingsGroupDefaultModel: createNativeStackScreen({
+    screen: GroupDefaultModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
   SettingsMemoryModel: createNativeStackScreen({

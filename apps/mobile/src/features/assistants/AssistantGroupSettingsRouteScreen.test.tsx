@@ -5,12 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
-    target: null as null | { environmentId: string; teamId: string | null; section?: "routines" },
+    target: null as null | {
+      environmentId: string;
+      teamId: string | null;
+      section?: "routines";
+      defaultModelDraft?: unknown;
+    },
     scrollTo: vi.fn(),
     teams: [] as unknown[],
     chat: null as null | { messages: Map<string, { seq: number; kind: string }> },
     canConverse: true,
+    canAct: true,
     update: vi.fn(),
+    navigate: vi.fn(),
     conversation: vi.fn(),
     goBack: vi.fn(),
     confirm: vi.fn(),
@@ -18,7 +25,9 @@ const { mocks, Children } = vi.hoisted(() => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.target }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
-vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ goBack: mocks.goBack }) }));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({ goBack: mocks.goBack, navigate: mocks.navigate }),
+}));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("../../components/ui/Button", () => ({
   Button: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
@@ -38,6 +47,24 @@ vi.mock("../../components/ui/ListActionRow", () => ({
     <button disabled={props.disabled} onClick={props.onPress}>
       {props.label}
     </button>
+  ),
+}));
+vi.mock("../../components/ui/ListRow", () => ({
+  ListRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+    <button aria-label="Group default model" disabled={props.disabled} onClick={props.onPress}>
+      {props.label}
+    </button>
+  ),
+}));
+vi.mock("../../lib/modelOptions", () => ({ buildModelOptions: () => [] }));
+vi.mock("../../state/entities", () => ({ useEnvironmentServerConfig: () => null }));
+vi.mock("../settings/components/SettingsModelPicker", () => ({
+  modelDisplayName: (_options: unknown, selection: { model: string }) => selection.model,
+  SettingsModelPicker: (props: {
+    selected: { model: string } | null;
+    onPick: (selection: unknown) => void;
+  }) => (
+    <button onClick={() => props.onPick(opus)}>{`Picking from ${props.selected?.model}`}</button>
   ),
 }));
 vi.mock("../../components/ui/ListSection", () => ({
@@ -65,6 +92,7 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./AssistantFormFields", () => ({
+  FieldHeader: (props: { label: string }) => <h3>{props.label}</h3>,
   TextField: (props: { label: string; value: string; onChange: (value: string) => void }) => (
     <textarea
       aria-label={props.label}
@@ -73,7 +101,12 @@ vi.mock("./AssistantFormFields", () => ({
     />
   ),
 }));
-vi.mock("./assistantTeamTarget", () => ({ assistantTeamTargetAtom: {} }));
+vi.mock("./assistantTeamTarget", () => ({
+  assistantTeamTargetAtom: {},
+  setGroupDefaultModelDraft: (defaultModelDraft: unknown) => {
+    mocks.target = { ...mocks.target!, defaultModelDraft };
+  },
+}));
 vi.mock("./GroupRoutinesSection", () => ({ GroupRoutinesSection: () => null }));
 vi.mock("./GroupProjectsSection", () => ({
   GroupProjectsSection: (props: { onChange: (next: string[]) => void }) => (
@@ -82,7 +115,7 @@ vi.mock("./GroupProjectsSection", () => ({
 }));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ teams: mocks.teams }),
-  useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
+  useAssistantTeamActions: () => ({ canAct: mocks.canAct, update: mocks.update }),
   useAssistantGroupActions: () => ({
     canConverse: mocks.canConverse,
     conversation: mocks.conversation,
@@ -90,7 +123,12 @@ vi.mock("../../state/assistants", () => ({
   useAssistantGroupChat: () => mocks.chat,
 }));
 
-import { AssistantGroupSettingsRouteScreen } from "./AssistantGroupSettingsRouteScreen";
+import {
+  AssistantGroupSettingsRouteScreen,
+  GroupDefaultModelPickerRouteScreen,
+} from "./AssistantGroupSettingsRouteScreen";
+
+const opus = { instanceId: "claude", model: "claude-opus-5-5" };
 
 const team = (extra: object = {}) => ({
   id: "t1",
@@ -100,6 +138,7 @@ const team = (extra: object = {}) => ({
   leadId: null,
   instructions: "Be brief.",
   memories: ["Budget is 5k"],
+  defaultModelSelection: null,
   ...extra,
 });
 
@@ -128,8 +167,16 @@ beforeEach(() => {
     teams: [{ environmentId: "hub", team: team() }],
     chat: null,
     canConverse: true,
+    canAct: true,
   });
-  for (const fn of [mocks.scrollTo, mocks.update, mocks.conversation, mocks.goBack, mocks.confirm])
+  for (const fn of [
+    mocks.scrollTo,
+    mocks.update,
+    mocks.conversation,
+    mocks.goBack,
+    mocks.confirm,
+    mocks.navigate,
+  ])
     fn.mockReset();
   mocks.update.mockResolvedValue({ ok: true, value: {} });
   mocks.conversation.mockResolvedValue({ ok: true, value: undefined });
@@ -186,6 +233,57 @@ describe("group settings", () => {
     await press("Save");
     expect(container.textContent).toContain("Nope.");
     expect(mocks.goBack).not.toHaveBeenCalled();
+  });
+
+  it("opens the picker from the default model row and saves the picked model", async () => {
+    await render();
+    expect(buttonNamed("Members' models")).toBeDefined();
+    expect(buttonNamed("Use members' defaults")).toBeUndefined();
+    await press("Members' models");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsGroupDefaultModel");
+    mocks.target = { environmentId: "hub", teamId: "t1", defaultModelDraft: opus };
+    await render();
+    expect(buttonNamed("Save")?.disabled).toBe(false);
+    await press("Save");
+    expect(mocks.update).toHaveBeenCalledWith({
+      teamId: "t1",
+      instructions: "Be brief.",
+      memories: ["Budget is 5k"],
+      defaultModelSelection: opus,
+    });
+  });
+
+  it("clears the group's default back to the members' defaults", async () => {
+    mocks.teams = [{ environmentId: "hub", team: team({ defaultModelSelection: opus }) }];
+    await render();
+    await press("Use members' defaults");
+    await render();
+    expect(buttonNamed("Members' models")).toBeDefined();
+    await press("Save");
+    expect(mocks.update).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultModelSelection: null }),
+    );
+  });
+
+  it("holds the default model row without write access, and hides it for older servers", async () => {
+    mocks.canAct = false;
+    mocks.teams = [{ environmentId: "hub", team: team({ defaultModelSelection: opus }) }];
+    await render();
+    expect(buttonNamed("claude-opus-5-5")?.disabled).toBe(true);
+    expect(buttonNamed("Use members' defaults")?.disabled).toBe(true);
+    mocks.teams = [{ environmentId: "hub", team: team({ defaultModelSelection: undefined }) }];
+    await render();
+    expect(container.textContent).not.toContain("Default model");
+  });
+
+  it("the picker starts on the draft and picks into it", async () => {
+    mocks.teams = [{ environmentId: "hub", team: team({ defaultModelSelection: opus }) }];
+    await act(async () => root.render(<GroupDefaultModelPickerRouteScreen />));
+    await press("Picking from claude-opus-5-5");
+    expect(mocks.target?.defaultModelDraft).toEqual(opus);
+    mocks.target = null;
+    await act(async () => root.render(<GroupDefaultModelPickerRouteScreen />));
+    expect(container.textContent).toContain("Open a group first.");
   });
 
   it("starts a new conversation or compacts without asking, and clear asks first", async () => {
