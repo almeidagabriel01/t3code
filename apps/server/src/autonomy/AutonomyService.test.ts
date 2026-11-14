@@ -79,7 +79,6 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     selfHandles: [],
   });
   const dispatched: Array<Record<string, unknown>> = [];
-  const runs = new Map<string, { id: string; threadId: string; providerInstanceId: string }>();
   const layer = Autonomy.layer.pipe(
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
@@ -105,13 +104,8 @@ const harness = (language: "en" | "pt-BR" = "en") => {
                   });
                   return {} as never;
                 }),
-          getThreadRecords: (threadId, _fields, filter) =>
+          getThreadRecords: (threadId) =>
             Effect.succeed({
-              runs: [...runs.values()].filter(
-                (candidate) =>
-                  candidate.threadId === threadId &&
-                  filter?.runIds?.includes(candidate.id as never),
-              ),
               messages: [{ text: answers.get(threadId) ?? "" }],
               turnItems: [...contexts.values()].flatMap((context) =>
                 context.item === undefined ? [] : [context.item],
@@ -161,7 +155,6 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     contexts,
     imessage,
     dispatched,
-    runs,
   };
 };
 
@@ -1304,11 +1297,58 @@ it.effect(
   },
 );
 
-const armed = (threadId: string, runId: string, resetAt: string, autoResume = true) =>
-  ev("thread.metadata-updated", threadId, {
-    id: threadId,
-    limitRecovery: { runId, resetAt, autoResume, snooze: false },
+/** A thread whose run hit a usage limit, with the wait the recovery worker armed on it. */
+const limited = (
+  h: ReturnType<typeof harness>,
+  threadId: string,
+  runId: string,
+  input: { provider?: string; resetAt?: string; autoResume?: boolean } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const provider = input.provider ?? "claudeAgent";
+    const recovery = {
+      runId,
+      resetAt: input.resetAt ?? "1970-01-01T05:00:00.000Z",
+      autoResume: input.autoResume ?? true,
+      snooze: false,
+    };
+    h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider,
+        runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES (${threadId}, 'p1', ${`Task ${threadId}`}, ${provider}, 'full-access', 'default', ${T0},
+        ${T0}, ${JSON.stringify({ archivedAt: null, limitRecovery: recovery })})`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider,
+        provider_instance_id, status, requested_at, payload_json)
+      VALUES (${runId}, ${threadId}, 1, ${provider}, ${provider}, 'failed', ${T0}, '{}')`;
   });
+
+it.effect("a wait armed before the service started, or while gated off, is told on a sweep", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* limited(h, "t1", "r1");
+    yield* limited(h, "t2", "r2", { provider: "codex" });
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.set(h.settings, { ...ON, notifyWaiting: false });
+    // The arm seen while gated off does not spend the notice.
+    yield* service.handleEvent(
+      ev("thread.metadata-updated", "t2", {
+        id: "t2",
+        limitRecovery: { runId: "r2", resetAt: "1970-01-01T05:00:00.000Z", autoResume: true },
+      }),
+    );
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.set(h.settings, ON);
+    yield* service.notifyWaiting;
+    const texts = (yield* outboxRows).map((row) => row.message.text);
+    assert.lengthOf(texts, 2);
+    assert.isTrue(texts.some((text) => text.includes("Task t1")));
+    assert.isTrue(texts.some((text) => text.includes("Task t2")));
+  }).pipe(Effect.provide(h.layer));
+});
 
 it.effect(
   "a usage limit is told once per provider and window, retried after a failed send, gated",
@@ -1317,48 +1357,38 @@ it.effect(
     return Effect.gen(function* () {
       const service = yield* Autonomy.AutonomyService;
       const sql = yield* SqlClient.SqlClient;
-      const limited = (threadId: string, runId: string, providerInstanceId = "claudeAgent") => {
-        h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
-        h.runs.set(runId, { id: runId, threadId, providerInstanceId });
-      };
-      const reset = "1970-01-01T05:00:00.000Z";
-      limited("t1", "r1");
-      limited("t2", "r2");
-      // Gate off: nothing is told.
-      yield* Ref.set(h.settings, { ...ON, notifyWaiting: false });
-      yield* service.handleEvent(armed("t1", "r1", reset));
-      assert.lengthOf(yield* outboxRows, 0);
-      yield* Ref.set(h.settings, ON);
+      yield* limited(h, "t2", "r2");
 
-      // A failed send leaves no mark; the waiting sweep retries with the same key.
+      // A failed send leaves no mark; the next sweep retries on the same decision.
       yield* sql`CREATE TRIGGER outbox_down BEFORE INSERT ON channel_outbox
         BEGIN SELECT RAISE(ABORT, 'down'); END`;
-      yield* service.handleEvent(armed("t2", "r2", reset));
+      yield* service.notifyWaiting;
       assert.lengthOf(yield* outboxRows, 0);
       assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_needs_you`, 0);
       yield* sql`DROP TRIGGER outbox_down`;
+      // Another task in the same window, sorting first, reuses the decision already opened.
+      yield* limited(h, "t1", "r1", { resetAt: "1970-01-01T05:00:40.000Z" });
       yield* service.notifyWaiting;
       const rows = yield* outboxRows;
       assert.lengthOf(rows, 1);
       assert.include(rows[0]!.message.text, "Usage limit reached");
       assert.include(rows[0]!.message.text, "Task t2");
 
-      // Same provider and window from another task, or a replay: no second notice.
-      limited("t3", "r3");
-      yield* service.handleEvent(armed("t3", "r3", "1970-01-01T05:00:40.000Z"));
-      yield* service.handleEvent(armed("t2", "r2", reset));
+      // Same provider and window on a later sweep: no second notice.
       yield* service.notifyWaiting;
       assert.lengthOf(yield* outboxRows, 1);
 
       // A new window, or another provider, is told again.
-      limited("t4", "r4");
-      yield* service.handleEvent(armed("t4", "r4", "1970-01-01T10:00:00.000Z"));
-      limited("t5", "r5", "codex");
-      yield* service.handleEvent(armed("t5", "r5", reset));
-      assert.lengthOf(yield* outboxRows, 3);
-      // A Stop's hold arms nothing to wait for.
-      limited("t6", "r6", "cursor");
-      yield* service.handleEvent(armed("t6", "r6", reset, false));
+      yield* limited(h, "t4", "r4", { resetAt: "1970-01-01T10:00:00.000Z" });
+      yield* limited(h, "t5", "r5", { provider: "codex" });
+      // A Stop's hold arms nothing to wait for, and a thread that ran again waits no more.
+      yield* limited(h, "t6", "r6", { provider: "cursor", autoResume: false });
+      yield* limited(h, "t7", "r7", { provider: "opencode" });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider,
+          provider_instance_id, status, requested_at, payload_json)
+        VALUES ('r7b', 't7', 2, 'opencode', 'opencode', 'completed', ${T0}, '{}')`;
+      yield* service.notifyWaiting;
       assert.lengthOf(yield* outboxRows, 3);
       // Telling never dispatches anything, so no thread changes provider.
       assert.lengthOf(h.dispatched, 0);
