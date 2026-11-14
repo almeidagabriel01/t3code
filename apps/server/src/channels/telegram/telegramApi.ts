@@ -5,6 +5,7 @@
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Predicate from "effect/Predicate";
@@ -122,6 +123,33 @@ const failureFor = (code: number, retryAfter?: number) => {
   return fail("unreachable", code >= 500 ? "unknown" : "not_sent");
 };
 
+/** Socket errors raised before a byte of the request left this machine. */
+const NOT_SENT_SOCKET_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+/** `not_sent` only when the request provably never went out; reads codes, never the error itself. */
+const transportOutcome = (error: unknown): "not_sent" | "unknown" => {
+  if (!HttpClientError.isHttpClientError(error)) return "unknown";
+  const { reason } = error;
+  if (reason._tag === "EncodeError" || reason._tag === "InvalidUrlError") return "not_sent";
+  if (reason._tag !== "TransportError") return "unknown";
+  let cause = reason.cause;
+  for (let depth = 0; depth < 4 && Predicate.isObject(cause); depth++) {
+    if (Predicate.hasProperty(cause, "code") && typeof cause.code === "string") {
+      return NOT_SENT_SOCKET_CODES.has(cause.code) ? "not_sent" : "unknown";
+    }
+    cause = Predicate.hasProperty(cause, "cause") ? cause.cause : undefined;
+  }
+  return "unknown";
+};
+
 export interface TelegramApi {
   readonly getMe: Effect.Effect<{ readonly username: string | undefined }, TelegramApiError>;
   readonly getUpdates: (input: {
@@ -172,7 +200,7 @@ export const makeTelegramApi = (
       Effect.mapError((error) =>
         Predicate.isTagged(error, "TelegramApiError")
           ? error
-          : new TelegramApiError({ code: "unreachable", outcome: "unknown" }),
+          : new TelegramApiError({ code: "unreachable", outcome: transportOutcome(error) }),
       ),
     );
 
