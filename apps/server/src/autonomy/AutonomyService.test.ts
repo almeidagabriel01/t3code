@@ -16,6 +16,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
@@ -1391,8 +1392,31 @@ it.effect(
         resetAt: null,
         failedAt: "1970-01-02T00:00:00.000Z",
       });
-      yield* service.notifyWaiting;
+      // The sweep runs every few seconds: it reads failed errors by their index, not every thread.
+      const statements: Array<string> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (...args) => {
+            end(...args);
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") statements.push(query);
+          };
+          return span;
+        },
+      });
+      yield* service.notifyWaiting.pipe(Effect.withTracer(tracer));
       assert.lengthOf(yield* outboxRows, 3);
+      const query = statements.find((statement) => statement.includes('AS "failedAt"'));
+      assert.isDefined(query);
+      const sql = yield* SqlClient.SqlClient;
+      const scans = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .filter((detail) => detail.startsWith("SCAN"));
+      assert.deepEqual(scans, [
+        "SCAN failure USING INDEX orchestration_v2_projection_turn_items_failed_error_idx",
+      ]);
     }).pipe(Effect.provide(h.layer));
   },
 );

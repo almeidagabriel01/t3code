@@ -1194,6 +1194,13 @@ const make = Effect.gen(function* () {
             LIMIT 1
           )
           WHERE t.deleted_at IS NULL
+            -- The sweep runs every few seconds: the partial index of failed errors keeps it to
+            -- threads that ever hit a limit, not every run of every thread.
+            AND t.thread_id IN (
+              SELECT failure.thread_id FROM orchestration_v2_projection_turn_items failure
+              WHERE failure.type = 'error' AND failure.status = 'failed'
+                AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+            )
             AND json_extract(t.payload_json, '$.archivedAt') IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
