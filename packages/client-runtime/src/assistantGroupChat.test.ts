@@ -1265,16 +1265,19 @@ describe("assistant group tabs", () => {
   });
 
   it.each([
-    ["All stays", "all", P2, null],
-    ["its own project stays", "project:p1", P1, null],
-    ["another project follows", "project:p1", P2, "project:p2"],
-    ["no project yet goes to All", "project:p1", null, "all"],
-    ["General keeps one with none", "general", null, null],
-    ["a project without a tab goes to All", "general", P3, "all"],
-    ["a stale key is All", "project:gone", P2, null],
-  ] as const)("after a send: %s", (_name, saved, landed, expected) => {
+    ["All stays", "all", "all", P2, null],
+    ["its own project stays", "project:p1", "project:p1", P1, null],
+    ["another project follows", "project:p1", "project:p1", P2, "project:p2"],
+    ["no project yet goes to All", "project:p1", "project:p1", null, "all"],
+    ["General keeps one with none", "general", "general", null, null],
+    ["a project without a tab goes to All", "general", "general", P3, "all"],
+    ["a stale key is All", "all", "project:gone", P2, null],
+    ["leaving its own project for another stays", "project:p1", "project:p2", P1, null],
+    ["leaving for General stays off the target", "project:p1", "general", P2, null],
+    ["leaving for the target stays", "project:p1", "project:p2", P2, null],
+  ] as const)("after a send: %s", (_name, sent, saved, landed, expected) => {
     const result = tabs([P1, P2], [scope(P1), scope(P2), scope(null)])!;
-    assert.strictEqual(assistantGroupTabAfterSend(result, saved, landed), expected);
+    assert.strictEqual(assistantGroupTabAfterSend(result, sent, saved, landed), expected);
   });
 
   it.each([

@@ -1502,8 +1502,8 @@ export function AssistantGroupChat(props: {
       setComposerPick((current) => (current === composerPick ? null : current));
       // A send that lands in another tab's project takes the user there, so it never vanishes.
       const landed = replyTo?.projectId ?? groupComposerProject;
-      if (tabs !== null) {
-        setSavedTab((saved) => assistantGroupTabAfterSend(tabs, saved, landed) ?? saved);
+      if (tabs !== null && tab !== null) {
+        setSavedTab((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed) ?? saved);
       }
       return { ok: true };
     }

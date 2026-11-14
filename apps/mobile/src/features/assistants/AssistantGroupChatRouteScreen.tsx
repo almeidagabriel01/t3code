@@ -1314,7 +1314,9 @@ export function AssistantGroupChatRouteScreen({
       feed.current?.scrollToEnd();
       // A request that lands in another project's tab would vanish from this one: follow it.
       const landed = replyTo?.projectId ?? projectId ?? null;
-      if (tabs !== null) savedTab.save((saved) => assistantGroupTabAfterSend(tabs, saved, landed));
+      if (tabs !== null && tab !== null) {
+        savedTab.save((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed));
+      }
       return { ok: true };
     }
     return {

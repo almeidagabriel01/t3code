@@ -1909,9 +1909,9 @@ describe("requests", () => {
     await click("Send");
     expect(selected(TAB.all)).toBe("true");
     // A tab opened, or a reply started, while the post was on its way is where the user stays.
-    const sendHeld = async (opened: string) => {
+    const sendHeld = async (opened: string, pick = "Project:Beta") => {
       await click(TAB.alpha);
-      await click("Project:Beta");
+      await click(pick);
       await type("@beto late");
       let settle!: (reply: unknown) => void;
       mocks.post.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
@@ -1919,10 +1919,16 @@ describe("requests", () => {
       await click(opened);
       return () => act(async () => settle({ ok: true, value: {} }));
     };
-    await (
-      await sendHeld(TAB.all)
-    )();
-    expect(selected(TAB.all)).toBe("true");
+    for (const [opened, pick] of [
+      [TAB.all, "Project:Beta"],
+      [TAB.general, "Project:Beta"],
+      [TAB.beta, "Project:Alpha"],
+    ] as const) {
+      await (
+        await sendHeld(opened, pick)
+      )();
+      expect(selected(opened)).toBe("true");
+    }
     const settle = await sendHeld(TAB.beta);
     await click("Reply to request Review");
     await settle();
