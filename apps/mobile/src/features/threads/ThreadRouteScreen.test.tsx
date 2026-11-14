@@ -7,6 +7,7 @@ import { expect, it, vi } from "vite-plus/test";
 const { harness, Nothing, noop } = vi.hoisted(() => ({
   harness: {
     selectedThread: null as { environmentId: string; id: string; title: string } | null,
+    detailMessages: null as ReadonlyArray<{ id: string }> | null,
   },
   Nothing: () => null,
   noop: () => undefined,
@@ -66,7 +67,18 @@ vi.mock("../../state/use-thread-detail", async () => {
     status: "ready",
     history: { hasMoreHistory: false, loading: false, error: null },
   };
-  return { useSelectedThreadDetailState: () => detail };
+  const withMessages = {
+    ...detail,
+    data: Option.some({
+      messages: [{ id: "m" }],
+      runs: [],
+      contextTransfers: [],
+      thread: { lineage: {} },
+    }),
+  };
+  return {
+    useSelectedThreadDetailState: () => (harness.detailMessages === null ? detail : withMessages),
+  };
 });
 vi.mock("../../state/use-thread-composer-state", () => ({
   useThreadComposerState: () => ({
@@ -221,6 +233,20 @@ it("shows a starting side chat's message, then why it failed, then the thread it
   await act(async () => setStartingSideChat(sideChatId, null));
   expect(host.textContent).toContain("thread: Side chat thread");
   expect(host.textContent).not.toContain("why does this fail?");
+
+  // Started, but its detail has not loaded the message yet: the message stays.
+  await act(async () =>
+    setStartingSideChat(sideChatId, { prompt: "why does this fail?", error: null, started: true }),
+  );
+  expect(host.textContent).toContain("why does this fail?");
+  expect(host.textContent).not.toContain("thread: Side chat thread");
+
+  harness.detailMessages = [{ id: "m" }];
+  await act(async () =>
+    setStartingSideChat(sideChatId, { prompt: "why does this fail?", error: null, started: true }),
+  );
+  expect(host.textContent).toContain("thread: Side chat thread");
+  harness.detailMessages = null;
 
   await act(async () => root.unmount());
   vi.unstubAllGlobals();

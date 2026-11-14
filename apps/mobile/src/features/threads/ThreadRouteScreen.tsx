@@ -319,9 +319,17 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  // Before the thread branch: an empty shell arriving first must not replace the message.
+  // Before the thread branch: an empty shell or detail arriving first must not replace the message.
   // A failed start whose thread exists after all shows the thread, not the stale error.
-  if (startingSideChat && !(startingSideChat.error !== null && threadReady)) {
+  const sideChatDetailShown =
+    startingSideChat?.started === true &&
+    (Option.exists(selectedThreadDetailState.data, (detail) => detail.messages.length > 0) ||
+      Option.isSome(detailError) ||
+      selectedThreadDetailState.status === "deleted");
+  if (
+    startingSideChat &&
+    !(threadReady && (startingSideChat.error !== null || sideChatDetailShown))
+  ) {
     return withInspectorHeader(<StartingSideChatScreen {...startingSideChat} />);
   }
 

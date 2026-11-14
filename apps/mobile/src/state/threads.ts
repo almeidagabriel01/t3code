@@ -22,6 +22,7 @@ import {
   selectThreadCreationDetail,
 } from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
+import { sideChatNotCreatedYet, startingSideChatsAtom } from "./starting-side-chats";
 import { environmentShell } from "./shell";
 import { threadOutboxManager } from "./thread-outbox";
 
@@ -68,6 +69,7 @@ export function startOpeningEnvironmentThread(environmentId: EnvironmentId, thre
       threadOutboxManager.queuedMessagesByThreadKeyAtom,
     ),
     outcomes: appAtomRegistry.get(pendingThreadCreationOutcomesAtom),
+    startingSideChat: sideChatNotCreatedYet(appAtomRegistry.get(startingSideChatsAtom)[threadId]),
   });
   if (detailRef === null) return;
   const release = appAtomRegistry.mount(environmentThreads.stateAtom(environmentId, threadId));

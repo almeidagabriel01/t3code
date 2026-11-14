@@ -129,7 +129,10 @@ describe("useStartSideChatWithPrompt", () => {
     expect(mocks.waitForShell).toHaveBeenLastCalledWith(
       scopeThreadRef(environmentId, "side" as ThreadId),
     );
-    expect(starting()).toEqual({});
+    // The screen keeps the message until the side chat's detail carries it.
+    expect(starting()).toEqual({
+      side: { prompt: "why does this fail?", error: null, started: true },
+    });
     // A fork copies its parent's mode, so the unchanged mode is not set again.
     expect(mocks.commands.setRuntimeMode).not.toHaveBeenCalled();
     expect(mocks.commands.delete).not.toHaveBeenCalled();
