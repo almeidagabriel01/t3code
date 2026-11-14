@@ -228,8 +228,10 @@ export function useMarkdownLinkHost(props: {
         };
         const resource = "resource" in media.source ? media.source.resource : null;
         const mediaPath = resource && "path" in resource ? resource.path : null;
+        // Only a thread has a file view to open a directory in.
         if (
           typeof mediaPath === "string" &&
+          threadId !== null &&
           readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
         ) {
           void executeAtomQuery(
@@ -251,6 +253,7 @@ export function useMarkdownLinkHost(props: {
 
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
+        if (threadId === null) return;
         const path = resolveFileLinkPath(workspaceRoot, presentation.path);
         if (path === null) return;
         const relativePath = resolveWorkspaceRelativeFilePath(workspaceRoot, path);
@@ -369,7 +372,11 @@ export function useMarkdownLinkHost(props: {
           };
         }
         const target = resolveFileChipTarget(href, workspaceRoot);
-        return target ? fileChipMenu(target) : undefined;
+        if (!target) return undefined;
+        const menu = fileChipMenu(target);
+        return threadId === null
+          ? { ...menu, actions: menu.actions.filter((action) => action.id.startsWith("copy-")) }
+          : menu;
       },
       onFileContextMenuAction: (href, actionId) => {
         const skill = enrichedSkillReference(href, props.skills);
@@ -437,11 +444,12 @@ export function useMarkdownLinkHost(props: {
       ) {
         const name =
           media?.source.name ?? (fileLink.kind === "file" ? fileLink.label : "Open file");
+        const opens = threadId !== null || (media !== null && media.kind !== "file");
         return (
           <Text
-            accessibilityRole="link"
-            accessibilityLabel={`Open ${name}`}
-            onPress={() => onMarkdownLinkPress(image.href, true)}
+            accessibilityRole={opens ? "link" : undefined}
+            accessibilityLabel={opens ? `Open ${name}` : name}
+            onPress={opens ? () => onMarkdownLinkPress(image.href, true) : undefined}
             style={{
               color: props.markdownStyles.nativeTextStyle.linkColor,
               fontSize: props.markdownStyles.nativeTextStyle.fontSize,

@@ -11,14 +11,15 @@ const mocks = vi.hoisted(() => ({
   openLinked: vi.fn(),
   copy: vi.fn(),
   query: vi.fn(),
+  haptic: vi.fn(),
   canRead: { value: false },
 }));
 
-vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
-vi.mock("@react-navigation/native", () => ({
-  useFocusEffect: () => {},
-  useNavigation: () => ({ navigate: mocks.navigate }),
-}));
+vi.mock("expo-haptics", () => ({ selectionAsync: async () => mocks.haptic() }));
+vi.mock("@react-navigation/native", () => {
+  const navigation = { navigate: (...args: unknown[]) => mocks.navigate(...args) };
+  return { useFocusEffect: () => {}, useNavigation: () => navigation };
+});
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   executeAtomQuery: (_registry: unknown, query: unknown) => mocks.query(query),
 }));
@@ -133,6 +134,7 @@ beforeEach(() => {
     mocks.openLinked,
     mocks.copy,
     mocks.query,
+    mocks.haptic,
   ])
     fn.mockReset();
   mocks.canRead.value = false;
@@ -152,15 +154,41 @@ it("opens each message's file links in its own thread, resolved from its own roo
   ]);
 });
 
-it("opens no file view and shares nothing for a link written outside a thread", () => {
+it("offers no file view or save for a file link written outside a thread, and looks nothing up", async () => {
+  mocks.canRead.value = true;
+  mocks.query.mockResolvedValue({ _tag: "Success", value: { kind: "directory" } });
   renderHost();
-  const links = linksFor({ threadId: null, workspaceRoot: "/repo/a" }).linkHandlers;
-  links.onLinkPress("/repo/a/src/app.ts");
-  links.onFileContextMenuAction("/repo/a/src/app.ts", "save");
+  const outside = { threadId: null, workspaceRoot: "/repo/a" };
+  const { linkHandlers: links, renderImage } = linksFor(outside);
+  await act(async () => {
+    links.onLinkPress("/repo/a/src/app.ts");
+    links.onLinkPress("app.ts");
+    links.onImagePress?.("/repo/a/src/app.ts:3");
+    links.onFileContextMenuAction("/repo/a/src/app.ts", "save");
+  });
   expect(mocks.navigate).not.toHaveBeenCalled();
   expect(mocks.share).not.toHaveBeenCalled();
+  expect(mocks.query).not.toHaveBeenCalled();
+  expect(mocks.haptic).not.toHaveBeenCalled();
+  expect(links.fileContextMenu("/repo/a/src/app.ts")?.actions.map((action) => action.id)).toEqual([
+    "copy-full-path",
+    "copy-relative-path",
+  ]);
+  const embed = renderImage({ href: "/repo/a/src/app.ts:3", alt: null } as never) as ReactElement<{
+    onPress?: () => void;
+    accessibilityRole?: string;
+  }>;
+  expect(embed.props.onPress).toBeUndefined();
+  expect(embed.props.accessibilityRole).toBeUndefined();
+  // A media file outside a thread still previews, from the project root, without a lookup.
+  act(() => links.onLinkPress("/repo/a/assets/logo.png"));
+  expect(mocks.query).not.toHaveBeenCalled();
+  expect(host.expandedFile).toMatchObject({ kind: "image" });
   linksFor(A).linkHandlers.onFileContextMenuAction("/repo/a/src/app.ts", "save");
   expect(mocks.share).toHaveBeenCalledWith(expect.anything(), A.threadId);
+  expect(linksFor(A).linkHandlers.fileContextMenu("/repo/a/src/app.ts")?.actions).toContainEqual(
+    expect.objectContaining({ id: "open-file" }),
+  );
 });
 
 it("keeps one preview for every context, closed when the host's scope changes", () => {
@@ -184,6 +212,13 @@ it("gives each message the same image resolver across renders, and another messa
   expect(aAgain).toBe(a);
   expect(bAgain).toBe(b);
   expect(b).not.toBe(a);
+  // Opening and closing a preview hands the rows no new link builders.
+  const { linksFor: build, imageSources, onPressPreview } = host;
+  act(() => host.onPressPreview({ kind: "pdf", uri: "https://example.com/a.pdf", name: "a.pdf" }));
+  act(() => host.closeFilePreview());
+  expect(host.linksFor).toBe(build);
+  expect(host.imageSources).toBe(imageSources);
+  expect(host.onPressPreview).toBe(onPressPreview);
 });
 
 it("builds a thread's links from its fixed thread and root", () => {
