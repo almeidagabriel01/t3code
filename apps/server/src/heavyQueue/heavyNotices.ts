@@ -103,6 +103,11 @@ const PC_CAUSES: ReadonlyArray<readonly [RegExp, FaultReason, string]> = [
 /** The PC is down or off the network: Linux is offline, which the heartbeat shows; no fault. */
 const PC_UNREACHABLE =
   /PC indisponível|connect to host .*timed out|Connection timed out|Host is down|Connection refused|No route to host|Network is unreachable/i;
+/** ssh's or `remoto`'s own line saying the PC is unreachable; later output (rsync's) must not hide it. */
+export const unreachableLine = (text: string) =>
+  /^(?:ssh: connect to host .*|\[remoto\] PC indisponível.*)$/m.exec(
+    text.replace(/\r/g, ""),
+  )?.[0] ?? null;
 const LINK_CAUSES: ReadonlyArray<readonly [RegExp, string]> = [
   [/timed? ?out/i, "timeout"],
   [/Connection (?:reset|closed)|closed by remote host|Broken pipe/i, "closed"],

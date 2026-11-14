@@ -7,6 +7,7 @@ import {
   endedRecord,
   EVENT_LOG_SIZE,
   faultOf,
+  unreachableLine,
   faultRecord,
   type FaultSeen,
   groupNotices,
@@ -297,6 +298,20 @@ describe("faults T3 records for the problem detector", () => {
       expect(fault.cause.startsWith(`${fault.reason}:`)).toBe(true);
       expect(fault).toMatchObject(job);
     }
+  });
+
+  // ssh's own line, not the rsync error after it, says the PC went away mid-sync.
+  it.each([
+    [
+      "ssh: connect to host pc port 22: Host is down\r\nrsync: connection unexpectedly closed (0 bytes received so far) [sender]\nrsync error: unexplained error (code 255) at io.c(232)\n",
+      "ssh: connect to host pc port 22: Host is down",
+    ],
+    ["[remoto] PC indisponível.\n", "[remoto] PC indisponível."],
+    ["Error: connect ECONNREFUSED 127.0.0.1:5432 (Connection refused)\n", null],
+    ["rsync error: timeout in data send/receive (code 30) at io.c(201)\n", null],
+  ])("finds the unreachable line in %j", (text, line) => {
+    expect(unreachableLine(text)).toBe(line);
+    if (line !== null) expect(faultOf(sync, line, job)).toBeNull();
   });
 
   it("gives the same cause for the same fault, whatever the numbers or paths", () => {
