@@ -358,7 +358,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     }),
     Effect.provideService(ManagedProjectFolders, {
       namedProjectsRoot: "",
-      isAssistantHomeProject: (id) => Effect.succeed(id === "home-project"),
+      isAssistantHomeProject: (id: string) => Effect.succeed(id === "home-project"),
     } as never),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
