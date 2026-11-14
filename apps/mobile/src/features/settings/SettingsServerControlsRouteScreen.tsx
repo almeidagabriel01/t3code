@@ -1,5 +1,5 @@
 import * as Equal from "effect/Equal";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -15,7 +15,7 @@ import {
   type ProjectScopedServerSettingKey,
   RUNNER_PROJECT_KEYS,
 } from "@t3tools/contracts";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -174,8 +174,16 @@ function planServerSettingsWrites(
   ];
 }
 
-export function SettingsThreadsRouteScreen() {
-  return <ServerSettingsDetail page="threads" />;
+/** Set by a link from a project's menu: one of its checkouts, which Settings scopes to. */
+export type SettingsThreadsParams = {
+  readonly environmentId?: string;
+  readonly projectId?: string;
+};
+
+export function SettingsThreadsRouteScreen({
+  route,
+}: StaticScreenProps<SettingsThreadsParams | undefined>) {
+  return <ServerSettingsDetail page="threads" linkedProject={route.params} />;
 }
 
 export function SettingsEnvironmentSourceControlRouteScreen() {
@@ -190,12 +198,39 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
 }
 
-function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+function ServerSettingsDetail(props: {
+  readonly page: SettingsPage;
+  readonly linkedProject?: SettingsThreadsParams | undefined;
+}) {
   const environmentMenu = useSettingsEnvironmentMenu();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-  const { selectedTargets, selectedProjects, selectedProjectGroups } =
-    useSettingsEnvironmentFilter();
+  const {
+    selectedTargets,
+    selectedProjects,
+    selectedProjectGroups,
+    projectGroups,
+    selectAll,
+    selectAllProjects,
+    toggleProject,
+  } = useSettingsEnvironmentFilter();
+  const linked = props.linkedProject;
+  const linkedProjectKey = projectGroups.find((group) =>
+    group.members.some(
+      (member) =>
+        member.project.environmentId === linked?.environmentId &&
+        member.project.id === linked.projectId,
+    ),
+  )?.key;
+  const appliedLink = useRef<string | undefined>(undefined);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the Settings scope lives in a provider that clears it while Settings is closed, so a link scopes it once the page is open
+  useEffect(() => {
+    if (linkedProjectKey === undefined || appliedLink.current === linkedProjectKey) return;
+    appliedLink.current = linkedProjectKey;
+    selectAll();
+    selectAllProjects();
+    toggleProject(linkedProjectKey);
+  }, [linkedProjectKey, selectAll, selectAllProjects, toggleProject]);
   const projectSelected = selectedProjects !== null;
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const targets = resolveMobileSettingsTargets(selectedTargets, selectedProjects);

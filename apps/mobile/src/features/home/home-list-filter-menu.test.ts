@@ -35,4 +35,31 @@ describe("buildHomeListFilterMenuItems archive action", () => {
     action.onPress();
     expect(onArchiveProject).toHaveBeenCalledOnce();
   });
+
+  it("opens the selected project's settings from its own entry", () => {
+    const onOpenProjectSettings = vi.fn();
+    const items = buildHomeListFilterMenuItems({
+      ...base,
+      selectedProjectKey: "p",
+      onOpenProjectSettings,
+      onArchiveProject: vi.fn(),
+    });
+    expect(items.map((item) => item.title)).toEqual([
+      "Environment",
+      "Project",
+      "Project settings",
+      "Archive project",
+    ]);
+    const settings = items[2];
+    if (!settings || !("onPress" in settings)) throw new Error("expected an action");
+    settings.onPress();
+    expect(onOpenProjectSettings).toHaveBeenCalledOnce();
+    expect(
+      buildHomeListFilterMenuItems({
+        ...base,
+        selectedProjectKey: null,
+        onOpenProjectSettings,
+      }).map((item) => item.title),
+    ).toEqual(["Environment", "Project"]);
+  });
 });
