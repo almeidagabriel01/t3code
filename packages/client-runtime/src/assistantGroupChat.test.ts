@@ -782,24 +782,27 @@ describe("composer helpers", () => {
 });
 
 describe("read position", () => {
-  const chat = start(
-    snapshot(
-      [
-        message(1),
-        message(2, { author: "assistant", kind: "routing" }),
-        message(3, { author: "assistant" }),
-        message(4),
-        message(5, { author: "agent", kind: "notice" }),
-      ],
-      [],
-    ),
-  );
+  const first = { requestId: "m1" as never };
+  const second = { requestId: "m4" as never };
+  const lines = [
+    message(1, first),
+    message(2, { ...first, author: "assistant", kind: "routing" }),
+    message(3, { ...first, author: "assistant" }),
+    message(4, second),
+    message(5, { ...second, author: "agent", kind: "notice" }),
+  ];
+  const chat = start(snapshot(lines, []));
   it("puts the New line before the first message others wrote past the read position", () => {
     assert.strictEqual(assistantGroupLatestSeq(chat), 5);
     assert.strictEqual(assistantGroupNewSeq(chat, 0), 3);
     assert.strictEqual(assistantGroupNewSeq(chat, 3), 5);
     assert.strictEqual(assistantGroupNewSeq(chat, 5), null);
     assert.strictEqual(assistantGroupLatestSeq({ ...chat, messages: new Map() }), 0);
+    // A line the user answered later in its request, or of no request, is not new.
+    const answered = start(snapshot([...lines, message(6, second)], []));
+    assert.strictEqual(assistantGroupNewSeq(answered, 3), null);
+    const loose = start(snapshot([message(7, { author: "agent", kind: "notice" })], []));
+    assert.strictEqual(assistantGroupNewSeq(loose, 0), null);
   });
 
   it("All's New line skips what a tab already read", () => {
@@ -811,7 +814,7 @@ describe("read position", () => {
           message(2, { author: "assistant", requestId: "m1" as never }),
           message(3, { requestId: "m3" as never }),
           message(4, { author: "assistant", requestId: "m3" as never }),
-          message(5, { author: "agent", kind: "notice" }),
+          message(5, { author: "agent", kind: "notice", requestId: "m3" as never }),
         ],
         [],
       ),

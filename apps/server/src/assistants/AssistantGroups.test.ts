@@ -3704,8 +3704,63 @@ it.effect(
       const [current] = yield* sql<{ readonly scopes_json: string }>`
       SELECT scopes_json FROM assistant_team_state WHERE team_id = ${TEAM}`;
       const scopes = JSON.parse(current!.scopes_json);
-      assert.isTrue(scopes.some((scope: { projectId: string | null }) => scope.projectId === "p2"));
+      // General no longer holds the request, and the answered question is new nowhere.
+      assert.isFalse(
+        scopes.some((scope: { projectId: string | null }) => scope.projectId === null),
+      );
       assert.deepEqual(JSON.parse(h.published.get(TEAM)!), scopes);
+    }).pipe(Effect.provide(h.layer), Effect.scoped);
+  },
+);
+
+/** A request moving into tab p2 brings no line in as read that is new, nor as new that was answered. */
+it.effect.each([
+  { path: "post", cursor: false },
+  { path: "post", cursor: true },
+  { path: "route", cursor: false },
+  { path: "route", cursor: true },
+] as const)(
+  "a request moving tabs by $path, p2 read ahead: $cursor, keeps what is unread",
+  ({ path, cursor }) => {
+    const h = harness({
+      lead: "beto",
+      routable: [claude],
+      projects: { ada: ["p1", "p2"], beto: ["p1"] },
+      route:
+        path === "post"
+          ? () => ({ assistantIds: [], question: "Core or the Mobile App?" })
+          : () => ({ assistantIds: ["ada"], projectId: "p2" }),
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const sql = yield* SqlClient.SqlClient;
+      const p2 = { projectId: ProjectId.make("p2") };
+      const unreadIn = Effect.gen(function* () {
+        const [row] = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+        const scopes = toAssistantTeam(row!).chat?.scopes ?? [];
+        return scopes.find((scope) => scope.projectId === "p2")?.unreadCount ?? 0;
+      });
+      if (path === "post") {
+        const posted = yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+        yield* groups.idle;
+        if (cursor) yield* groups.markRead({ teamId: TEAM, scope: p2 });
+        // The lead's question in General is answered by the user's pick: nothing new arrives in p2.
+        yield* sql`UPDATE assistant_teams SET lead_id = NULL WHERE team_id = ${TEAM}`;
+        yield* groups.post(
+          { teamId: TEAM, text: "Mobile App", replyToMessageId: posted.message.id, ...p2 },
+          h.user,
+        );
+        yield* groups.idle;
+        assert.equal(yield* unreadIn, 0);
+      } else {
+        if (cursor) yield* groups.markRead({ teamId: TEAM, scope: p2 });
+        yield* groups.post({ teamId: TEAM, text: "fix the login" }, h.user);
+        yield* groups.idle;
+        // The member's answer after the move is new in p2.
+        yield* h.finish(0, "completed", "Fixed.");
+        assert.equal(yield* unreadIn, 1);
+      }
     }).pipe(Effect.provide(h.layer), Effect.scoped);
   },
 );

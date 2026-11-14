@@ -21,16 +21,34 @@ it.effect("the server's chat rules answer exactly as the contract's, for every v
     yield* ensureForkSchema();
     const authors = AssistantGroupAuthor.literals;
     const kinds = AssistantGroupMessageKind.literals;
-    for (const [index, author] of authors.entries()) {
-      for (const [offset, kind] of kinds.entries()) {
-        const id = `m${index}-${offset}`;
-        yield* sql`INSERT INTO assistant_group_messages
-          (message_id, team_id, seq, author, kind, text, request_id, created_at)
-          VALUES (${id}, 'g', ${index * kinds.length + offset + 1}, ${author}, ${kind}, 'x', ${id}, 't')`;
-        const [row] = yield* sql<{ readonly counts: number }>`
-          SELECT ${sql.literal(countsAsUnreadSql("m"))} AS counts
-          FROM assistant_group_messages m WHERE m.message_id = ${id}`;
-        assert.equal(Boolean(row!.counts), assistantGroupCountsAsUnread({ author, kind }), id);
+    // Every author and kind, outside a request, in one, and in one the user wrote in afterwards.
+    let seq = 0;
+    for (const author of authors) {
+      for (const kind of kinds) {
+        for (const shape of ["none", "open", "answered"] as const) {
+          const id = `m${(seq += 1)}`;
+          const requestId = shape === "none" ? undefined : id;
+          yield* sql`INSERT INTO assistant_group_messages
+            (message_id, team_id, seq, author, kind, text, request_id, created_at)
+            VALUES (${id}, 'g', ${seq}, ${author}, ${kind}, 'x', ${requestId ?? null}, 't')`;
+          const lineSeq = seq;
+          if (shape === "answered") {
+            yield* sql`INSERT INTO assistant_group_messages
+              (message_id, team_id, seq, author, kind, text, request_id, created_at)
+              VALUES (${`${id}:answer`}, 'g', ${(seq += 1)}, 'user', 'message', 'x', ${id}, 't')`;
+          }
+          const [row] = yield* sql<{ readonly counts: number }>`
+            SELECT ${sql.literal(countsAsUnreadSql("m"))} AS counts
+            FROM assistant_group_messages m WHERE m.message_id = ${id}`;
+          assert.equal(
+            Boolean(row!.counts),
+            assistantGroupCountsAsUnread(
+              { author, kind, seq: lineSeq, requestId },
+              shape === "answered" ? seq : undefined,
+            ),
+            `${author} ${kind} ${shape}`,
+          );
+        }
       }
     }
     // Every request of up to two tasks, in every pair of statuses.

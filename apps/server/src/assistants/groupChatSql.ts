@@ -11,7 +11,10 @@ const list = (values: ReadonlyArray<string>) => values.map((value) => `'${value}
 /** Message `m` counts as unread: `assistantGroupCountsAsUnread`, for a request's line. */
 export const countsAsUnreadSql = (m: string) =>
   `(${m}.request_id IS NOT NULL AND ${m}.author <> '${ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR}'
-    AND ${m}.kind NOT IN (${list(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS)}))`;
+    AND ${m}.kind NOT IN (${list(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS)})
+    AND NOT EXISTS (SELECT 1 FROM assistant_group_messages u
+      WHERE u.request_id = ${m}.request_id AND u.seq > ${m}.seq AND u.team_id = ${m}.team_id
+        AND u.author = '${ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR}'))`;
 
 /** The tasks of request `requestId` (an expression) need the user: `assistantGroupTasksNeedUser`. */
 export const tasksNeedUserSql = (requestId: string) =>

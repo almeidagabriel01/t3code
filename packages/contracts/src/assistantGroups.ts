@@ -193,14 +193,25 @@ export const ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS = [
 /** The user's own lines are never unread. */
 export const ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR = "user" satisfies AssistantGroupAuthor;
 
-/** A line the user did not write and that is worth reading. The server's counters mirror this. */
-export function assistantGroupCountsAsUnread(message: {
-  readonly author: AssistantGroupAuthor;
-  readonly kind: AssistantGroupMessageKind;
-}): boolean {
+/**
+ * A request's line the user did not write, worth reading, and not already answered: the user wrote
+ * later in its request (`lastUserSeq`, the request's newest user line), wherever that line was
+ * read. The server's counters mirror this.
+ */
+export function assistantGroupCountsAsUnread(
+  message: {
+    readonly author: AssistantGroupAuthor;
+    readonly kind: AssistantGroupMessageKind;
+    readonly seq: number;
+    readonly requestId?: string | undefined;
+  },
+  lastUserSeq: number | undefined,
+): boolean {
   return (
+    message.requestId !== undefined &&
     message.author !== ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR &&
-    !isOneOf(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS, message.kind)
+    !isOneOf(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS, message.kind) &&
+    (lastUserSeq === undefined || lastUserSeq < message.seq)
   );
 }
 

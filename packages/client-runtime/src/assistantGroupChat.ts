@@ -411,9 +411,20 @@ export function assistantGroupRequestExpanded(
   newest: boolean,
 ): boolean {
   if (newest || (block.status !== "done" && block.status !== "cancelled")) return true;
+  const lastUserSeq = lastUserSeqs(block.rows.map((row) => row.message)).get(block.requestId);
   return block.rows.some(
-    (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message),
+    (row) => row.message.seq > readSeq && assistantGroupCountsAsUnread(row.message, lastUserSeq),
   );
+}
+
+/** Each request's newest line by the user among `messages`: what answers the lines before it. */
+function lastUserSeqs(messages: Iterable<AssistantGroupMessage>): Map<string, number> {
+  const latest = new Map<string, number>();
+  for (const message of messages) {
+    if (message.author !== "user" || message.requestId === undefined) continue;
+    latest.set(message.requestId, Math.max(latest.get(message.requestId) ?? 0, message.seq));
+  }
+  return latest;
 }
 
 type Recipient = Pick<Assistant, "id" | "name" | "handle">;
@@ -860,11 +871,15 @@ export function assistantGroupNewSeq(
   readSeq: number | ((message: AssistantGroupMessage) => number),
 ): number | null {
   let first: number | null = null;
+  const answered = lastUserSeqs(state.messages.values());
   for (const message of state.messages.values()) {
     const position = typeof readSeq === "number" ? readSeq : readSeq(message);
     if (
       message.seq > position &&
-      assistantGroupCountsAsUnread(message) &&
+      assistantGroupCountsAsUnread(
+        message,
+        message.requestId === undefined ? undefined : answered.get(message.requestId),
+      ) &&
       (first === null || message.seq < first)
     )
       first = message.seq;
