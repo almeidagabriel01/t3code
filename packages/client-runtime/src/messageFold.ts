@@ -25,3 +25,6 @@ export function isLongMessage(text: string): boolean {
   if (visible.trim().length === 0) return false;
   return visible.length > MAX_FOLDED_LENGTH || visible.split("\n").length > MAX_FOLDED_LINES;
 }
+
+/** The fold toggle's label, the same on every client. */
+export const foldToggleLabel = (expanded: boolean) => (expanded ? "Show less" : "Show more");

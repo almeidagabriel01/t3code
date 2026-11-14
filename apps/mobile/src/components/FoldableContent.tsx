@@ -1,3 +1,4 @@
+import { foldToggleLabel } from "@t3tools/client-runtime/messageFold";
 import { useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
@@ -27,7 +28,7 @@ export function FoldableContent(props: {
           className="active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-foreground-secondary">
-            {expanded ? "Show less" : "Show more"}
+            {foldToggleLabel(expanded)}
           </Text>
         </Pressable>
       ) : null}

@@ -1,4 +1,4 @@
-import { isLongMessage } from "@t3tools/client-runtime/messageFold";
+import { foldToggleLabel, isLongMessage } from "@t3tools/client-runtime/messageFold";
 import { useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -47,7 +47,7 @@ export function CollapsibleMessageBody(props: {
             onClick={() => setExpanded((value) => !value)}
             className="-ml-1"
           >
-            {expanded ? "Show less" : "Show full message"}
+            {foldToggleLabel(expanded)}
           </Button>
         </div>
       ) : null}

@@ -1131,7 +1131,7 @@ describe("MessagesTimeline agent messages", () => {
         routeThreadKey: "environment-local:assistant:jarvis:1",
       });
       expect(screen.container.querySelector("[data-user-message-collapsed='true']")).not.toBeNull();
-      await click(screen.button("Show full message"));
+      await click(screen.button("Show more"));
       expect(
         screen.container.querySelector("[data-user-message-collapsed='false']"),
       ).not.toBeNull();
@@ -1139,7 +1139,7 @@ describe("MessagesTimeline agent messages", () => {
     }
     await using plain = await renderTimeline([entry]);
     expect(plain.container.querySelector("[data-user-message-collapsible]")).toBeNull();
-    expect(plain.buttons("Show full message")).toHaveLength(0);
+    expect(plain.buttons("Show more")).toHaveLength(0);
   });
 
   it("leaves messages sent by T3 Code as full bubbles", async () => {
