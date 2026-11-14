@@ -25,7 +25,7 @@ import {
   UNREADABLE_SCRIPT,
 } from "./heavyHook.ts";
 import { commitRoute } from "./commitHooks.ts";
-import { faultOf, type FaultSeen } from "./heavyNotices.ts";
+import { faultOf, type FaultSeen, unreachableLine } from "./heavyNotices.ts";
 import { readMemorySync, swapInRate } from "./hostReader.ts";
 import {
   answerBashCall,
@@ -1088,12 +1088,13 @@ const runLinuxPart = async (
   }
   let recorded: string | null = null;
   let lastError: string | null = null;
+  let unreachable: string | null = null;
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   const bringsBack = configFor(doc, cwd).runnerBringBack;
   /** When the latest run's sync began, on this Mac's clock. */
   let since = 0;
   const fault = (seen: FaultSeen) => {
-    const found = faultOf(seen, lastError, {
+    const found = faultOf(seen, seen.kind === "exit" ? lastError : (unreachable ?? lastError), {
       command: labelOf(program, args),
       projectFolder: root,
     });
@@ -1117,6 +1118,7 @@ const runLinuxPart = async (
       stderr: (text) => {
         process.stderr.write(text);
         lastError = lastLineOf(text) ?? lastError;
+        unreachable ??= unreachableLine(text);
       },
       onProgress: (progress) => {
         if (progress.phase === recorded || progress.phase === null) return;

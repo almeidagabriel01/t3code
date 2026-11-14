@@ -520,8 +520,8 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const workers = gated ? workersFor(cpuCount, fresh ? sample.busyCores : null) : null;
     const {
-      ask: _ask,
-      route: _route,
+      ask,
+      route,
       dropped: _dropped,
       failure: _failure,
       linuxFailedAt: _failed,
@@ -534,6 +534,14 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       ...(workers === null ? {} : { workers }),
       ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
       ...(admit.ungated ? { ungated: true } : {}),
+      ...(admit.runner === "linux" && (ask !== undefined || route !== undefined)
+        ? {
+            held: {
+              ...(ask === undefined ? {} : { ask }),
+              ...(route === undefined ? {} : { route }),
+            },
+          }
+        : {}),
     };
     return {
       doc: {
@@ -1216,18 +1224,22 @@ export const requeue = (
     if (target === undefined) return { doc, result: false };
     const active = runningOf(doc.entries).filter((entry) => entry.id !== id);
     const waiters = doc.entries.filter((entry) => entry.startedAt === null && entry.id !== id);
-    const { routeReason: _reason, ...previous }: QueuedEntry = withoutAttempt(target);
+    const { routeReason: _reason, held, ...previous }: QueuedEntry = withoutAttempt(target);
+    // An attempt that never ran there leaves the question and its deadline, or the answer, as they were.
+    const kept = next.dropped !== true && next.route === undefined ? held : undefined;
     const again: QueuedEntry = {
       ...previous,
+      ...kept,
       ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined)),
     };
     // A run that lost the link goes back by itself: people hear once it counts Linux unavailable.
     const retrying =
       next.linkFailures !== undefined &&
       next.linkFailures < linkAttempts(doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG);
-    const record = retrying
-      ? null
-      : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    const record =
+      retrying || kept !== undefined
+        ? null
+        : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
     return {
       doc: {
         ...doc,

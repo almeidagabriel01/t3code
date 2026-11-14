@@ -94,18 +94,15 @@ const PC_CAUSES: ReadonlyArray<readonly [RegExp, FaultReason, string]> = [
     "sign-in-expired",
     "ssh-key",
   ],
-  [
-    /Could not resolve hostname|Name or service not known|Temporary failure in name resolution/i,
-    "network",
-    "dns",
-  ],
-  [/Network is unreachable|No route to host/i, "network", "unreachable"],
-  [/Connection refused/i, "network", "refused"],
 ];
-const LINK_CAUSES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/timed? ?out/i, "timeout"],
-  [/Connection (?:reset|closed)|closed by remote host|Broken pipe/i, "closed"],
-];
+/** The PC or the network is away: Linux is offline, which the heartbeat shows, or dropped; no fault. */
+const PC_UNREACHABLE =
+  /PC indisponível|Could not resolve hostname|Name or service not known|Temporary failure in name resolution|timed? ?out|Host is down|Connection refused|No route to host|Network is unreachable|Connection (?:reset|closed)|closed by remote host|Broken pipe/i;
+/** ssh's or `remoto`'s own line saying the PC is unreachable; later output (rsync's) must not hide it. */
+export const unreachableLine = (text: string) =>
+  /^(?:ssh: (?:connect to host|Could not resolve hostname) .*|\[remoto\] PC indisponível.*)$/m.exec(
+    text.replace(/\r/g, ""),
+  )?.[0] ?? null;
 /** `vp: command not found`, `sh: 1: vp: not found`, `bash: ./x: Permission denied`. */
 const MISSING_TOOL = /([^\s:]+): (?:command not found|not found|Permission denied)\s*$/;
 
@@ -134,6 +131,7 @@ export const faultOf = (
     const tool = (line === null ? null : MISSING_TOOL.exec(line)?.[1]) ?? seen.program;
     return fault("command-not-found", tool, `${tool}: command not found`);
   }
+  if (line !== null && PC_UNREACHABLE.test(line)) return null;
   const pc = line === null ? undefined : PC_CAUSES.find(([pattern]) => pattern.test(line));
   if (pc !== undefined) return fault(pc[1], `${seen.kind}-${pc[2]}`, "");
   if (seen.kind === "install") {
@@ -143,14 +141,10 @@ export const faultOf = (
       "Dependency install on Linux failed",
     );
   }
-  const link =
-    line === null
-      ? "unknown"
-      : (LINK_CAUSES.find(([pattern]) => pattern.test(line))?.[1] ?? "unknown");
-  const via = line !== null && /rsync/i.test(line) ? `rsync-${link}` : link;
+  const via = line !== null && /rsync/i.test(line) ? "rsync-unknown" : "unknown";
   if (seen.kind === "sync") return fault("linux-sync", via, "Linux sync failed");
   if (seen.kind === "lost") return fault("linux-lost", via, "Linux dropped the job");
-  return fault("network", via, "Linux is unavailable");
+  return null;
 };
 
 /** The record of a fault, beside the job's own `ended` or `linux-lost` record. */

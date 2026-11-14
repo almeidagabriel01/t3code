@@ -727,6 +727,66 @@ describe("Runner in the queue file", () => {
     ]);
   });
 
+  // Linux comes back long enough to take the job, which never reaches it, then goes again.
+  const flap = (dir: string, at: number) => {
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, NOW + at);
+    expect(Queue.tryStart(dir, "a", NOW + at)).toMatchObject({
+      status: "started",
+      runner: "linux",
+    });
+    Queue.requeue(dir, "a", { linuxFailedAt: NOW + at + 1, linkFailures: 3 });
+    Queue.recordHealth(dir, { ok: false, error: "down" }, NOW + at + 2);
+    Queue.recordHealth(dir, { ok: false, error: "down" }, NOW + at + 2 + beat);
+    return NOW + at + 2 + beat;
+  };
+
+  it.each([
+    ["cancel", "canceled", "Linux is unavailable and nobody answered in time: canceled"],
+    ["mac", "started", undefined],
+    ["wait", "waiting", "Linux is unavailable: no answer, waiting for it"],
+  ] as const)("a flapping link keeps the first deadline, then %s", (action, status, reason) => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerAskMinutes: 2, runnerDeadlineAction: action })),
+      false,
+    );
+    Queue.enqueue(dir, test("a"));
+    Queue.tryStart(dir, "a", NOW);
+    const deadline = { reason: "unavailable", deadlineAt: new Date(NOW + 120_000).toISOString() };
+    const back = flap(dir, 30_000);
+    expect(Queue.tryStart(dir, "a", back)).toMatchObject({
+      status: "waiting",
+      reason: "Linux is unavailable: waiting for your answer",
+    });
+    expect(Queue.read(dir)[0]!.ask).toEqual(deadline);
+    const ended = Queue.tryStart(dir, "a", NOW + 120_000);
+    expect(ended.status).toBe(status);
+    if (reason !== undefined) expect(ended).toMatchObject({ reason });
+    // The question was out all along: no second "Linux was unavailable" notice for it.
+    expect(Queue.readDoc(dir).events.map((event) => event.kind)).not.toContain("linux-lost");
+  });
+
+  // A hand route lasts until the entry ends: an answer, or a move while Linux was up.
+  it.each([
+    ["answered Wait for Linux", false],
+    ["moved to Linux by hand", true],
+  ] as const)("a flapping link asks nobody again once %s", (_, online) => {
+    const dir = queueWith(
+      block(config({ runnerWhere: "linux", runnerUnavailable: "ask" })),
+      online,
+    );
+    Queue.enqueue(dir, test("a"));
+    if (!online) Queue.tryStart(dir, "a", NOW);
+    expect(Queue.route(dir, "a", "linux")).toBe("ok");
+    const back = flap(dir, 30_000);
+    expect(Queue.tryStart(dir, "a", back)).toMatchObject({
+      status: "waiting",
+      reason: "waiting for Linux to come back",
+    });
+    expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
+    expect(Queue.readDoc(dir).events).toEqual([]);
+  });
+
   // "When Linux is offline" decides a waiting job once, not again on every tick.
   it.each(["ask", "mac", "wait"] as const)("Linux offline, %s: applied once", (policy) => {
     const dir = queueWith(
