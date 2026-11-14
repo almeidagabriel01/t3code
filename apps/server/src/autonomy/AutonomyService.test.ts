@@ -28,6 +28,7 @@ import * as TelegramChannelSettings from "../channels/telegram/TelegramChannelSe
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -92,6 +93,8 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
       Layer.mergeAll(
+        // No stopped run here awaits a checkpoint capture.
+        Layer.mock(EffectOutbox.EffectOutboxV2)({ listByCommandId: () => Effect.succeed([]) }),
         ChannelTransport.layer,
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,

@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -82,24 +83,38 @@ interface NoticeRow {
   readonly message_id: string;
 }
 
+/** A capture still to run, or one whose re-sent run has not reached this door yet. */
+const CAPTURE_COMING = new Set<EffectOutbox.OrchestrationEffectStatusV2>([
+  "pending",
+  "running",
+  "succeeded",
+]);
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const outbox = yield* EffectOutbox.EffectOutboxV2;
   // Reactors call in from separate fibers; a judgment and its mark must not interleave.
   const lock = yield* Semaphore.make(1);
 
-  /** Stopped runs end before their checkpoint is captured; the capture re-sends the run with it. */
+  /**
+   * A stopped run ends before its checkpoint, and the capture re-sends the run with it. Only the
+   * capture effect the run's end enqueued says one is coming: a failed run, a run cancelled from
+   * the queue or a thread with nowhere to capture has none, and is judged at once.
+   */
   const awaitsCapture = Effect.fn("TaskEventNotices.awaitsCapture")(function* (
     run: TaskEventNotice["run"],
   ) {
-    if (run.checkpointId !== null || run.status === "completed") return false;
-    const records = yield* threads
-      .getThreadRecords(run.threadId, ["checkpointScopes"])
-      .pipe(Effect.orElseSucceed(() => ({ checkpointScopes: [] })));
-    return records.checkpointScopes.length > 0;
+    if (run.checkpointId !== null || (run.status !== "interrupted" && run.status !== "cancelled")) {
+      return false;
+    }
+    const captures = yield* outbox
+      .listByCommandId(CommandId.make(`command:effect:checkpoint.capture:${run.id}`))
+      .pipe(Effect.orElseSucceed(() => []));
+    return captures.some((capture) => CAPTURE_COMING.has(capture.status));
   });
 
   const headOf = Effect.fn("TaskEventNotices.headOf")(function* (threadId: ThreadId) {
@@ -212,13 +227,8 @@ const make = Effect.gen(function* () {
                 ? undefined
                 : { runId: previous.run_id, status: previous.status, headSha: previous.head_sha };
             if (!isNews(mark, facts)) return "unchanged" as const;
-            const write = (row: NoticeRow) => markNotice(notice, row);
-            yield* write({
-              run_id: facts.runId,
-              status: facts.status,
-              head_sha: facts.headSha,
-              message_id: notice.messageId,
-            });
+            // The command id is the message id, so a send repeated after a crash lands once;
+            // marking only after it succeeds never records an event nobody was told.
             const sent = yield* threads
               .sendToThread({
                 projectId: notice.projectId,
@@ -236,11 +246,6 @@ const make = Effect.gen(function* () {
               })
               .pipe(Effect.result);
             if (sent._tag === "Failure") {
-              // Give the mark back so the next event about this thread is judged against the last one told.
-              yield* previous === undefined
-                ? sql`DELETE FROM assistant_task_notices
-                  WHERE thread_id = ${notice.threadId} AND subject_thread_id = ${notice.run.threadId}`
-                : write(previous);
               yield* Effect.logWarning("task notice could not be sent", {
                 threadId: notice.threadId,
                 subjectThreadId: notice.run.threadId,
@@ -248,6 +253,12 @@ const make = Effect.gen(function* () {
               });
               return "failed" as const;
             }
+            yield* markNotice(notice, {
+              run_id: facts.runId,
+              status: facts.status,
+              head_sha: facts.headSha,
+              message_id: notice.messageId,
+            });
             yield* dropQueued(notice.threadId, (queued) =>
               queued
                 .filter(
