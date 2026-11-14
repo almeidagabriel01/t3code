@@ -181,8 +181,9 @@ window, including the 5-hour session and per-model weekly limits, starts off.
 Change it in **Settings → Providers**, under **Limit alerts** on each provider's card. On mobile,
 open **Settings → Limit alerts**. Each window takes its own share, or **Off**.
 
-- Alerts arrive only while **Settings → Assistants → Autonomy** is on, through the same channels as
-  your assistant's other messages, and they count toward its daily message limit.
+- Alerts go through the same channels as your assistant's other messages and count toward its daily
+  message limit. They arrive even while **Settings → Assistants → Autonomy** is off; turn off
+  **Alert while Autonomy is off** to hold them until Autonomy is back on.
 - The server checks every 15 minutes or so while an alert is on, with no app open, and it also reads
   the limits your turns report. Accounts that are signed out or fail to report are checked less
   often until they recover.

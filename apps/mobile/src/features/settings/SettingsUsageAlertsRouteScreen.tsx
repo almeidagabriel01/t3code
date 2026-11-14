@@ -14,6 +14,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   usageAlertMenuActions,
@@ -68,7 +69,8 @@ function EnvironmentAlerts(props: {
     label: "usage limit alert update",
     reportFailure: true,
   });
-  const sections = usageAlertSections(providers ?? [], settings?.usageLimitAlerts);
+  const sections = usageAlertSections(providers ?? [], settings?.usageLimitAlerts.instances);
+  const ignorePause = settings?.usageLimitAlerts.ignoreAutonomyPause ?? true;
   const suffix = props.showEnvironment ? ` · ${props.environment.label}` : "";
   return (
     <>
@@ -124,15 +126,31 @@ function EnvironmentAlerts(props: {
           </SettingsSection>
         ))
       )}
-      {sections.length > 0 && settings?.autonomy.enabled === false ? (
-        <View className="overflow-hidden rounded-2xl">
-          <ListRow
-            icon="bell.badge"
-            label="Assistant notifications are paused"
-            description="Turn on Autonomy in Assistants settings to receive these alerts."
-            onPress={() => navigation.navigate("SettingsAssistants")}
+      {sections.length > 0 ? (
+        <SettingsSection title={`Delivery${suffix}`}>
+          <SettingsSwitchRow
+            label="Alert while Autonomy is off"
+            subtitle="Limit alerts from every provider still reach you while assistant notifications are paused."
+            value={ignorePause}
+            disabled={!allowed}
+            onValueChange={(value) =>
+              void update({
+                environmentId,
+                input: { patch: { usageLimitAlerts: { ignoreAutonomyPause: value } } },
+              })
+            }
           />
-        </View>
+          {settings?.autonomy.enabled === false && !ignorePause ? (
+            <View className="border-t border-border-subtle">
+              <ListRow
+                icon="bell.badge"
+                label="Alerts are paused"
+                description="Assistant notifications are off, so these alerts wait. Turn on the switch above, or Autonomy in Assistants settings."
+                onPress={() => navigation.navigate("SettingsAssistants")}
+              />
+            </View>
+          ) : null}
+        </SettingsSection>
       ) : null}
     </>
   );

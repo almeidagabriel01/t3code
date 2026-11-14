@@ -15,6 +15,7 @@ import { Link } from "@tanstack/react-router";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -48,18 +49,21 @@ export function UsageLimitAlertsSection({
   const rows = usageLimitAlertRows({
     driver: provider.driver,
     windows: provider.usageLimits?.windows,
-    config: settings?.usageLimitAlerts?.[instanceId],
+    config: settings?.usageLimitAlerts.instances[instanceId],
   });
   if (rows.length === 0) return null;
+  const ignorePause = settings?.usageLimitAlerts.ignoreAutonomyPause ?? true;
   const save = (windowId: string, threshold: UsageLimitAlertThreshold) =>
     updateSettings({
       usageLimitAlerts: {
-        // The zone of the client that saved it names the reset time in the message.
-        [instanceId]: {
-          windows: {
-            [windowId]: usageLimitAlertOverride({ driver: provider.driver, windowId, threshold }),
+        instances: {
+          // The zone of the client that saved it names the reset time in the message.
+          [instanceId]: {
+            windows: {
+              [windowId]: usageLimitAlertOverride({ driver: provider.driver, windowId, threshold }),
+            },
+            timeZone: LOCAL_TIME_ZONE,
           },
-          timeZone: LOCAL_TIME_ZONE,
         },
       },
     });
@@ -71,22 +75,6 @@ export function UsageLimitAlertsSection({
       aria-disabled={readOnly || undefined}
       className={readOnly ? "opacity-50 select-none" : undefined}
     >
-      {settings?.autonomy.enabled === false ? (
-        <SettingsRow
-          title="Alerts are paused"
-          description={
-            <>
-              They reach you through your assistant, and assistant notifications are off.{" "}
-              <Link
-                to="/settings/assistants"
-                className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              >
-                Turn on Autonomy
-              </Link>
-            </>
-          }
-        />
-      ) : null}
       {rows.map((row) => {
         const value = row.threshold === null ? OFF : String(row.threshold);
         return (
@@ -120,6 +108,36 @@ export function UsageLimitAlertsSection({
           />
         );
       })}
+      <SettingsRow
+        title="Alert while Autonomy is off"
+        description="Limit alerts from every provider still reach you while assistant notifications are paused."
+        control={
+          <Switch
+            checked={ignorePause}
+            onCheckedChange={(checked) =>
+              updateSettings({ usageLimitAlerts: { ignoreAutonomyPause: Boolean(checked) } })
+            }
+            aria-label="Alert while Autonomy is off"
+          />
+        }
+      />
+      {settings?.autonomy.enabled === false && !ignorePause ? (
+        <SettingsRow
+          title="Alerts are paused"
+          description={
+            <>
+              Assistant notifications are off, so these alerts wait. Turn on the switch above, or{" "}
+              <Link
+                to="/settings/assistants"
+                className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                turn on Autonomy
+              </Link>
+              .
+            </>
+          }
+        />
+      ) : null}
     </SettingsSection>
   );
 }

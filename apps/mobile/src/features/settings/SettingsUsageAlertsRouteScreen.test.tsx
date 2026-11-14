@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
   allowed: true,
   autonomy: true,
+  ignorePause: true,
   alerts: {} as Record<string, unknown>,
   windows: [] as Array<{ id: string; label: string }>,
 }));
@@ -34,7 +35,10 @@ vi.mock("@effect/atom-react", () => ({
         ])
       : atom.key === "allowed"
         ? mocks.allowed
-        : { autonomy: { enabled: mocks.autonomy }, usageLimitAlerts: mocks.alerts },
+        : {
+            autonomy: { enabled: mocks.autonomy },
+            usageLimitAlerts: { ignoreAutonomyPause: mocks.ignorePause, instances: mocks.alerts },
+          },
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
@@ -101,6 +105,18 @@ vi.mock("./components/SettingsSection", () => ({
     <section aria-label={p.title}>{p.children}</section>
   ),
 }));
+vi.mock("./components/SettingsSwitchRow", () => ({
+  SettingsSwitchRow: (p: {
+    label: string;
+    subtitle: string;
+    value: boolean;
+    onValueChange: (value: boolean) => void;
+  }) => (
+    <button role="switch" aria-checked={p.value} onClick={() => p.onValueChange(!p.value)}>
+      {p.label}. {p.subtitle}
+    </button>
+  ),
+}));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
     selectedTargets: [
@@ -116,7 +132,14 @@ vi.mock("./settings-environment-filter", () => ({
 import { SettingsUsageAlertsRouteScreen } from "./SettingsUsageAlertsRouteScreen";
 
 async function mount(input: Partial<typeof mocks> = {}) {
-  Object.assign(mocks, { allowed: true, autonomy: true, alerts: {}, windows: [], ...input });
+  Object.assign(mocks, {
+    allowed: true,
+    autonomy: true,
+    ignorePause: true,
+    alerts: {},
+    windows: [],
+    ...input,
+  });
   mocks.update.mockClear();
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -150,7 +173,8 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     await click(items.find((i) => i.textContent === "5%"));
     await click(items.find((i) => i.textContent === "Off"));
     await click(items.find((i) => i.textContent === "15%"));
-    const sent = (n: number) => mocks.update.mock.calls[n]![0].input.patch.usageLimitAlerts.claude;
+    const sent = (n: number) =>
+      mocks.update.mock.calls[n]![0].input.patch.usageLimitAlerts.instances.claude;
     expect(sent(0).windows).toEqual({ seven_day: 5 });
     expect(sent(1).windows).toEqual({ seven_day: "off" });
     // Picking the default clears the override.
@@ -167,12 +191,23 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     await unmount();
   });
 
-  it("explains paused notifications and links to Assistants settings", async () => {
-    const { host, unmount } = await mount({ windows: [weekly], autonomy: false });
-    const note = host.querySelector("[data-note]")!;
-    expect(note.textContent).toContain("Assistant notifications are paused");
+  it("alerts through the Autonomy pause by default and says so when that is off", async () => {
+    const paused = await mount({ windows: [weekly], autonomy: false });
+    const toggle = paused.host.querySelector("[role=switch]")!;
+    expect(toggle.textContent).toContain("Alert while Autonomy is off");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(paused.host.querySelector("[data-note]")).toBeNull();
+    await click(toggle);
+    expect(mocks.update.mock.calls[0]![0].input.patch).toEqual({
+      usageLimitAlerts: { ignoreAutonomyPause: false },
+    });
+    await paused.unmount();
+
+    const waiting = await mount({ windows: [weekly], autonomy: false, ignorePause: false });
+    const note = waiting.host.querySelector("[data-note]")!;
+    expect(note.textContent).toContain("Alerts are paused");
     await click(note);
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistants");
-    await unmount();
+    await waiting.unmount();
   });
 });

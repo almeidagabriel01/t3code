@@ -16,7 +16,7 @@ export interface UsageAlertSection {
 /** Enabled provider instances that report at least one alertable window. */
 export function usageAlertSections(
   providers: ReadonlyArray<ServerProvider>,
-  alerts: ServerSettings["usageLimitAlerts"] | undefined,
+  alerts: ServerSettings["usageLimitAlerts"]["instances"] | undefined,
 ): ReadonlyArray<UsageAlertSection> {
   return providers
     .filter((provider) => provider.enabled)
@@ -61,15 +61,17 @@ export function usageAlertPatch(input: {
   if (choice !== "off" && !Number.isInteger(choice)) return null;
   return {
     usageLimitAlerts: {
-      [input.instanceId]: {
-        windows: {
-          [input.windowId]: usageLimitAlertOverride({
-            driver: input.driver,
-            windowId: input.windowId,
-            threshold: choice,
-          }),
+      instances: {
+        [input.instanceId]: {
+          windows: {
+            [input.windowId]: usageLimitAlertOverride({
+              driver: input.driver,
+              windowId: input.windowId,
+              threshold: choice,
+            }),
+          },
+          timeZone: input.timeZone,
         },
-        timeZone: input.timeZone,
       },
     },
   };
