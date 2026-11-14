@@ -892,8 +892,9 @@ const make = Effect.gen(function* () {
     }
     const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
     const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
-    if (wasOpen && !isOpen) yield* closeRequestIfDone(task.request_id);
-    if (!wasOpen && isOpen) yield* reopenRequest(task.request_id);
+    const requestId = task.request_id ?? task.request_message_id;
+    if (wasOpen && !isOpen) yield* closeRequestIfDone(requestId);
+    if (!wasOpen && isOpen) yield* reopenRequest(requestId);
     return rows[0]!;
   });
 
@@ -1206,8 +1207,10 @@ const make = Effect.gen(function* () {
     requestId: string | null,
   ) {
     if (requestId === null) return;
+    // A task from before requests had ids (request_id NULL) belongs to its request message's.
     const tasks = yield* sql<{ readonly status: string }>`
-      SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
+      SELECT status FROM assistant_group_tasks
+      WHERE request_id = ${requestId} OR (request_id IS NULL AND request_message_id = ${requestId})`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
     yield* settleThreads(yield* requestThreads(requestId));
   });

@@ -4729,6 +4729,12 @@ it.effect(
       assert.include(settled(), cyThread);
       assert.include(settled(), requestThreadId("ada", TEAM, failed.message.id));
       assert.notInclude(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      // A task from before requests had ids is found by its request message.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
+        WHERE task_id = ${paused.tasks[0]!.id}`;
+      yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
+      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
     }).pipe(Effect.provide(h.layer));
   },
 );
