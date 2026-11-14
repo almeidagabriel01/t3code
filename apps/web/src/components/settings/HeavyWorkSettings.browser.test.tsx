@@ -209,7 +209,9 @@ it("hides the queue rows while the queue is off, and a search still reaches one 
   await expect.element(searched.getByRole("heading", { name: "CPU limit" })).toBeVisible();
   await expect
     .element(
-      searched.getByText("Only applies while the heavy work queue is on or jobs run in Hybrid."),
+      searched.getByText(
+        "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.",
+      ),
     )
     .toBeVisible();
   expect(searched.getByRole("heading", { name: "Keep memory free" }).elements()).toHaveLength(0);

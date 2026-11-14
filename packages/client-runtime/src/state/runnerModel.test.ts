@@ -266,13 +266,15 @@ describe("Runner fields that do nothing under the current choices", () => {
 });
 
 describe("heavyLimitIdle", () => {
-  const QUEUE_OFF = "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+  const QUEUE_OFF =
+    "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.";
   const BOTH_OFF = "Only applies while the heavy work queue or the Runner is on.";
   it.each([
     ["macCpuCeilingPercent", true, false, "mac", null],
     ["macCpuCeilingPercent", false, true, "automatic", null],
     ["macCpuCeilingPercent", false, true, null, null],
     ["macCpuCeilingPercent", false, null, "automatic", null],
+    ["macCpuCeilingPercent", false, true, "macFirst", null],
     ["macCpuCeilingPercent", false, true, "linux", QUEUE_OFF],
     ["macMemoryFloorPercent", false, true, "mac", QUEUE_OFF],
     ["macMemoryFloorPercent", false, false, "automatic", QUEUE_OFF],

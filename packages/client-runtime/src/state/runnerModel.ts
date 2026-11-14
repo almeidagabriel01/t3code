@@ -360,7 +360,7 @@ export interface HeavyLimitChoices {
 
 /**
  * Why a Mac limit does nothing under these choices, or null when it applies. The Mac limits gate
- * the queue and Hybrid's routing; how long a limit must hold also times Linux's limits. Null
+ * the queue and the routing of Hybrid and Mac first; how long a limit must hold also times Linux's limits. Null
  * (targets disagree) counts as applying.
  */
 export function heavyLimitIdle(key: HeavyQueueLimitKey, choices: HeavyLimitChoices): string | null {
@@ -369,7 +369,8 @@ export function heavyLimitIdle(key: HeavyQueueLimitKey, choices: HeavyLimitChoic
   if (key === "heavyOverLimitSeconds") {
     return runnerOn ? null : "Only applies while the heavy work queue or the Runner is on.";
   }
-  return runnerOn && (choices.runnerWhere === null || choices.runnerWhere === "automatic")
+  const where = choices.runnerWhere;
+  return runnerOn && (where === null || where === "automatic" || where === "macFirst")
     ? null
-    : "Only applies while the heavy work queue is on or jobs run in Hybrid.";
+    : "Only applies while the heavy work queue is on or jobs run in Hybrid or Mac first.";
 }
