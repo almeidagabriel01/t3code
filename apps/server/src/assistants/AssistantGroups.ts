@@ -1565,7 +1565,11 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows[0]?.title ?? "this project"),
     );
 
-  /** Sets a request's project (and the lead's title) on its first message, for every client. */
+  /**
+   * Sets a request's project (and the lead's title) on its first message, for every client. Only
+   * ever NULL -> X: a request that has a project keeps it, and nothing is published. Callers hold
+   * the group lock.
+   */
   const setRequestProject = Effect.fn("AssistantGroups.setRequestProject")(function* (
     request: MessageRow,
     projectId: string,
@@ -1576,7 +1580,11 @@ const make = Effect.gen(function* () {
       UPDATE assistant_group_messages SET request_project_id = ${projectId},
         project_id = IIF(message_id = request_id, ${projectId}, project_id),
         title = IIF(message_id = request_id, COALESCE(${title}, title), title)
-      WHERE request_id = ${request.message_id} RETURNING *`;
+      WHERE request_id = ${request.message_id} AND (
+        SELECT h.project_id FROM assistant_group_messages h WHERE h.message_id = ${request.message_id}
+      ) IS NULL
+      RETURNING *`;
+    if (rows.length === 0) return;
     // The new tab gets the whole request; General gets only the head, and drops it by its project.
     for (const row of rows.toSorted((a, b) => a.seq - b.seq)) {
       yield* publishMessage(
@@ -2109,7 +2117,7 @@ const make = Effect.gen(function* () {
               ),
             );
             // The project picked while answering a request that has none yet.
-            if (request !== undefined && request.project_id === null && projectId !== null) {
+            if (request !== undefined && projectId !== null) {
               yield* setRequestProject(request, projectId, null);
             }
             const picked = projectList.find((project) => project.id === input.projectId);
@@ -2334,7 +2342,9 @@ const make = Effect.gen(function* () {
       const resolved = yield* sql<MessageRow>`
         UPDATE assistant_group_messages SET wait_resolved_at = ${yield* nowIso}
         WHERE message_id = ${row.message_id} AND wait_resolved_at IS NULL RETURNING *`;
-      if (resolved[0] !== undefined) yield* publishMessage(resolved[0]);
+      if (resolved[0] === undefined) continue;
+      yield* publishMessage(resolved[0]);
+      yield* assistants.refreshTeamChat(resolved[0].team_id);
     }
   });
 
@@ -3024,6 +3034,7 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_tasks WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_read_cursors WHERE team_id = ${teamId}`;
   });
 
   /** The group is gone: its work stops, its threads, chat and schedules go. */
@@ -3194,19 +3205,37 @@ const make = Effect.gen(function* () {
   const markRead: AssistantGroups["Service"]["markRead"] = Effect.fn("AssistantGroups.markRead")(
     function* (input) {
       yield* teamRow(input.teamId);
-      const target =
-        input.unread === true
-          ? ((yield* sql<{ readonly seq: number | null }>`
-              SELECT MAX(seq) AS seq FROM assistant_group_messages
-              WHERE team_id = ${input.teamId} AND author != 'user'
-                AND kind NOT IN ('routing', 'boundary', 'change')`)[0]?.seq ?? 1) - 1
-          : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
-      const rows = yield* sql<{ readonly read_seq: number }>`
-        UPDATE assistant_teams SET read_seq = MIN(${target}, COALESCE(
-          (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0))
-        WHERE team_id = ${input.teamId} RETURNING read_seq`;
+      // A tab's own position; without a scope the group's, which every tab then follows.
+      const scope = input.scope;
+      const inScope =
+        scope === undefined
+          ? sql.literal("")
+          : sql`AND request_project_id IS ${scope.projectId} AND request_id IS NOT NULL`;
+      const set = Effect.gen(function* () {
+        const target =
+          input.unread === true
+            ? ((yield* sql<{ readonly seq: number | null }>`
+                SELECT MAX(seq) AS seq FROM assistant_group_messages
+                WHERE team_id = ${input.teamId} ${inScope} AND author != 'user'
+                  AND kind NOT IN ('routing', 'boundary', 'change')`)[0]?.seq ?? 1) - 1
+            : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
+        const latest = sql`COALESCE(
+          (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = ${input.teamId}), 0)`;
+        if (scope === undefined) {
+          yield* sql`DELETE FROM assistant_group_read_cursors WHERE team_id = ${input.teamId}`;
+          return (yield* sql<{ readonly read_seq: number }>`
+            UPDATE assistant_teams SET read_seq = MIN(${target}, ${latest})
+            WHERE team_id = ${input.teamId} RETURNING read_seq`)[0]!.read_seq;
+        }
+        return (yield* sql<{ readonly read_seq: number }>`
+          INSERT INTO assistant_group_read_cursors (team_id, scope, read_seq)
+          VALUES (${input.teamId}, ${scopeKey(scope)}, MIN(${target}, ${latest}))
+          ON CONFLICT (team_id, scope) DO UPDATE SET read_seq = excluded.read_seq
+          RETURNING read_seq`)[0]!.read_seq;
+      });
+      const readSeq = yield* lock.withPermits(1)(sql.withTransaction(set));
       yield* assistants.refreshTeamChat(input.teamId);
-      return { readSeq: rows[0]!.read_seq };
+      return { readSeq };
     },
     storage,
   );
@@ -3282,6 +3311,9 @@ const make = Effect.gen(function* () {
               WHERE team_id = ${teamId}`;
             yield* sql`
               UPDATE assistant_teams SET read_seq = MIN(read_seq, ${latest.seq - 1})
+              WHERE team_id = ${teamId}`;
+            yield* sql`
+              UPDATE assistant_group_read_cursors SET read_seq = MIN(read_seq, ${latest.seq - 1})
               WHERE team_id = ${teamId}`;
             return yield* publishPage([ALL_SCOPE]);
           }

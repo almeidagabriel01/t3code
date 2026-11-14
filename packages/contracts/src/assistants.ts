@@ -300,6 +300,16 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * routes a group request that mentions nobody; it gains no permission.
  */
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
+export const AssistantTeamChatScope = Schema.Struct({
+  projectId: Schema.NullOr(ProjectId),
+  unreadCount: Schema.Int,
+  /** An open wait on the user, or the lead asking which project, in this tab. */
+  waiting: Schema.Boolean,
+  /** The tab's read position: its own, else the group's. */
+  readSeq: Schema.Int,
+});
+export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
+
 export const AssistantTeamChat = Schema.Struct({
   latestSeq: Schema.Int,
   /** The last message the user has read; unread messages are the newer ones not written by them. */
@@ -307,8 +317,17 @@ export const AssistantTeamChat = Schema.Struct({
   unreadCount: Schema.Int,
   /** A task of the group is queued, running or waiting. */
   working: Schema.Boolean,
+  /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
+  runningCount: Schema.optionalKey(Schema.Int),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
+  /** The project of the request `preview` comes from; null for none. Absent from older servers. */
+  previewProjectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
+  /**
+   * Per project tab (`null` = General): tabs with unread or waiting messages or their own read
+   * position, plus General when it has a request. Absent from older servers, which have no tabs.
+   */
+  scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
 

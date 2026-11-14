@@ -3,6 +3,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { toAssistantTeam, type AssistantTeamRow } from "../assistants/AssistantTeams.ts";
 import { ensureForkSchema } from "./ForkSchema.ts";
 
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
@@ -564,7 +565,14 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
         { task_id: "t1", request_id: "m1" },
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_read_cursors`, []);
-      assert.lengthOf(yield* sql`SELECT team_id FROM assistant_team_state`, 0);
+      // The team's chat decodes; General is listed only when it holds the request.
+      yield* sql`INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+        VALUES ('g1', 'Core', '[]', 't', 't')`;
+      const [team] = yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state`;
+      assert.deepEqual(
+        toAssistantTeam(team!).chat?.scopes,
+        carried === null ? [{ projectId: null, unreadCount: 0, waiting: false, readSeq: 0 }] : [],
+      );
       // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.
       for (const scope of ["p1", null]) {
         const page = yield* sql<{ readonly detail: string }>`

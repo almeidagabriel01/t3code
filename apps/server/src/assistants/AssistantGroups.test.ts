@@ -55,6 +55,7 @@ import {
   taskMessageId,
 } from "./AssistantGroups.ts";
 import { AssistantService } from "./AssistantService.ts";
+import { toAssistantTeam, type AssistantTeamRow } from "./AssistantTeams.ts";
 
 class Boom extends Schema.TaggedError<Boom>()("Boom", {}) {}
 
@@ -584,6 +585,240 @@ it.effect(
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+type ReadStep =
+  | { readonly read: { projectId?: string | null; readSeq?: number; unread?: true } }
+  | { readonly conversation: "undo" | "clear" }
+  | { readonly removeGroup: true }
+  | { readonly sql: string };
+
+/** Unread, waiting and read position per tab after each step, and the stored tab positions. */
+it.effect.each<{
+  name: string;
+  steps: ReadonlyArray<ReadStep>;
+  readSeq?: number;
+  scopes: Record<string, [unread: number, waiting: boolean, readSeq: number]>;
+  cursors: Record<string, number>;
+}>([
+  {
+    name: "a chat lists every tab with unread or waiting, and General with its request",
+    steps: [],
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: {},
+  },
+  {
+    name: "reading one tab leaves the others unread",
+    steps: [{ read: { projectId: "p1" } }],
+    readSeq: 7,
+    scopes: { p1: [0, false, 7], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: { p1: 7 },
+  },
+  {
+    name: "reading the whole group drops every tab's own position",
+    steps: [{ read: { projectId: "p1", readSeq: 2 } }, { read: {} }],
+    readSeq: 7,
+    scopes: { p2: [0, true, 7], "": [0, true, 7] },
+    cursors: {},
+  },
+  {
+    name: "marking one tab unread moves only that tab",
+    steps: [{ read: {} }, { read: { projectId: "p2", unread: true } }],
+    readSeq: 3,
+    scopes: { p2: [1, true, 3], "": [0, true, 7] },
+    cursors: { p2: 3 },
+  },
+  {
+    name: "marking the group unread drops every tab's own position",
+    steps: [{ read: { projectId: "p1" } }, { read: { unread: true } }],
+    readSeq: 5,
+    scopes: { p2: [0, true, 5], "": [1, true, 5] },
+    cursors: {},
+  },
+  {
+    name: "undoing the last boundary lowers every tab's position below it",
+    steps: [{ read: { projectId: "p1" } }, { conversation: "undo" }],
+    scopes: { p1: [0, false, 6], p2: [1, true, 0], "": [1, true, 0] },
+    cursors: { p1: 6 },
+  },
+  {
+    name: "clearing the chat deletes every tab's position",
+    steps: [{ read: { projectId: "p1" } }, { conversation: "clear" }],
+    scopes: {},
+    cursors: {},
+  },
+  {
+    name: "removing the group deletes its tabs' positions",
+    steps: [{ read: { projectId: "p1" } }, { removeGroup: true }],
+    scopes: {},
+    cursors: {},
+  },
+  {
+    name: "General is listed only while it has a request, and an answered wait goes dark",
+    steps: [
+      { sql: "DELETE FROM assistant_group_messages WHERE request_id = 'gm:5'" },
+      { sql: "UPDATE assistant_group_messages SET wait_resolved_at = 't' WHERE seq = 4" },
+      { read: {} },
+    ],
+    readSeq: 7,
+    scopes: {},
+    cursors: {},
+  },
+])("$name", ({ steps, readSeq, scopes, cursors }) => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    // p1: a request and its answer; p2: a request waiting on the user; General: a request the
+    // lead asked the project of; then a chat-wide boundary. A paused p1 task never lights a tab.
+    const line = (
+      seq: number,
+      author: string,
+      kind: string,
+      request: string | null,
+      project: string | null,
+      extra: { waitKey?: string; asksProject?: boolean } = {},
+    ) => sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+        wait_key, asks_project, created_at)
+      VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, ${author}, ${kind}, 'x', ${request},
+        ${request === `gm:${seq}` ? project : null}, ${project}, ${extra.waitKey ?? null},
+        ${extra.asksProject === true ? 1 : 0}, '2026-01-01')`;
+    yield* line(1, "user", "message", "gm:1", "p1");
+    yield* line(2, "assistant", "message", "gm:1", "p1");
+    yield* line(3, "user", "message", "gm:3", "p2");
+    yield* line(4, "assistant", "notice", "gm:3", "p2", { waitKey: "w1" });
+    yield* line(5, "user", "message", "gm:5", null);
+    yield* line(6, "assistant", "notice", "gm:5", null, { asksProject: true });
+    yield* line(7, "user", "boundary", null, null);
+    yield* sql`INSERT INTO assistant_group_tasks
+      (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
+        request_id, created_at, updated_at)
+      VALUES ('gt:1', ${TEAM}, 'gt:1', 'root', 'gm:1', 'ada', 'do', 'paused', 'gm:1', 't', 't')`;
+    let lastRead: number | undefined;
+    for (const step of steps) {
+      if ("read" in step) {
+        const { projectId, ...rest } = step.read;
+        lastRead = (yield* groups.markRead({
+          teamId: TEAM,
+          ...rest,
+          ...(projectId === undefined
+            ? {}
+            : { scope: { projectId: projectId === null ? null : ProjectId.make(projectId) } }),
+        })).readSeq;
+      } else if ("conversation" in step) {
+        yield* groups.conversation({ teamId: TEAM, action: step.conversation });
+      } else if ("removeGroup" in step) {
+        yield* groups.handleAssistantEvent({ type: "teamRemoved", teamId: TEAM });
+      } else {
+        yield* sql.unsafe(step.sql);
+      }
+    }
+    if (readSeq !== undefined) assert.equal(lastRead, readSeq);
+    const [row] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const chat = toAssistantTeam(row!).chat!;
+    assert.deepEqual(
+      Object.fromEntries(
+        (chat.scopes ?? []).map((scope) => [
+          scope.projectId ?? "",
+          [scope.unreadCount, scope.waiting, scope.readSeq],
+        ]),
+      ),
+      scopes,
+    );
+    assert.equal(
+      chat.unreadCount,
+      Object.values(scopes).reduce((sum, [unread]) => sum + unread, 0),
+    );
+    const stored = yield* sql<{ readonly scope: string; readonly read_seq: number }>`
+      SELECT scope, read_seq FROM assistant_group_read_cursors`;
+    assert.deepEqual(Object.fromEntries(stored.map((c) => [c.scope, c.read_seq])), cursors);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("the team chat names the preview's project and counts every tab's running tasks", () => {
+  const h = harness({ projects: { ada: ["p1", "p2"] } });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    yield* groups.post({ teamId: TEAM, text: "@ada one", projectId: ProjectId.make("p1") }, h.user);
+    yield* groups.post({ teamId: TEAM, text: "@ada two", projectId: ProjectId.make("p2") }, h.user);
+    yield* h.finish(0, "completed", "one done");
+    const [row] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${TEAM}`;
+    const chat = toAssistantTeam(row!).chat!;
+    assert.deepEqual([chat.preview, chat.previewProjectId], ["one done", "p1"]);
+    const running = (yield* h.tasks).filter((task) => task.status === "running").length;
+    assert.isAbove(running, 0);
+    assert.equal(chat.runningCount, running);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("two tabs read at once both end read", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const sql = yield* SqlClient.SqlClient;
+    for (const [seq, project] of [
+      [1, "p1"],
+      [2, "p2"],
+    ] as const) {
+      yield* sql`INSERT INTO assistant_group_messages
+        (message_id, team_id, seq, author, kind, text, request_id, project_id, request_project_id,
+          created_at)
+        VALUES (${`gm:${seq}`}, ${TEAM}, ${seq}, 'assistant', 'message', 'x', ${`gm:${seq}`},
+          ${project}, ${project}, 't')`;
+    }
+    yield* Effect.forEach(
+      ["p1", "p2"],
+      (projectId) =>
+        groups.markRead({ teamId: TEAM, scope: { projectId: ProjectId.make(projectId) } }),
+      { concurrency: "unbounded" },
+    );
+    assert.deepEqual(
+      yield* sql`SELECT scope, read_seq FROM assistant_group_read_cursors ORDER BY scope`,
+      [
+        { scope: "p1", read_seq: 2 },
+        { scope: "p2", read_seq: 2 },
+      ],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a request that already has a project keeps it when another is picked", () => {
+  const h = harness({
+    lead: "beto",
+    routable: [claude],
+    projects: { ada: ["p1", "p2"], beto: ["p1"] },
+    route: () => ({ assistantIds: [], question: "Who should take it?" }),
+  });
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post(
+      { teamId: TEAM, text: "fix the login", projectId: ProjectId.make("p2") },
+      h.user,
+    );
+    yield* groups.idle;
+    const pull = yield* Stream.toPull(groups.subscribe(TEAM, { projectId: ProjectId.make("p1") }));
+    assert.equal((yield* pull)[0]!.type, "snapshot");
+    yield* groups.post(
+      {
+        teamId: TEAM,
+        text: "Core",
+        replyToMessageId: posted.message.id,
+        projectId: ProjectId.make("p1"),
+      },
+      h.user,
+    );
+    yield* groups.idle;
+    const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    assert.deepEqual([...new Set(lines.map((m) => m.request_project_id))], ["p2"]);
+    // Nothing reached the other project's tab before the clear's empty page.
+    yield* groups.conversation({ teamId: TEAM, action: "clear" });
+    const [next] = yield* pull;
+    assert.deepEqual(next, { type: "snapshot", messages: [], tasks: [], hasMore: false });
+  }).pipe(Effect.provide(h.layer), Effect.scoped);
+});
 
 const recipientTable = [
   ["a leading @handle", "@beto please look", ["beto"]],
@@ -2743,13 +2978,16 @@ it.effect("a tab's stream carries only its lines, and a request that gets a proj
     );
     yield* groups.idle;
     const lines = (yield* h.messages).filter((m) => m.request_id === posted.message.id);
+    // A chat-wide boundary and its undo reach All only.
+    yield* groups.conversation({ teamId: TEAM, action: "new" });
+    yield* groups.conversation({ teamId: TEAM, action: "undo" });
     // Clearing empties every tab, so each one ends on an empty snapshot.
     yield* groups.conversation({ teamId: TEAM, action: "clear" });
     const untilCleared = Effect.fnUntraced(function* (pull: (typeof tabs)["all"]) {
       const seen: AssistantGroupsEvent[] = [];
       while (true) {
         for (const event of yield* pull) {
-          if (event.type === "snapshot") return seen;
+          if (event.type === "snapshot" && event.messages.length === 0) return seen;
           seen.push(event);
         }
       }
@@ -2770,7 +3008,8 @@ it.effect("a tab's stream carries only its lines, and a request that gets a proj
       [...new Set(p2.map((message) => message.id))].toSorted(),
       lines.map((line) => line.message_id).toSorted(),
     );
-    assert.isAbove(messages(yield* untilCleared(tabs.all)).length, 0);
+    const all = yield* untilCleared(tabs.all);
+    assert.deepEqual([messages(all).at(-1)?.kind, all.at(-1)?.type], ["boundary", "snapshot"]);
   }).pipe(Effect.provide(h.layer), Effect.scoped);
 });
 
@@ -4425,10 +4664,13 @@ it.effect(
       assert.include(posted[0]!.text, "Options:");
       assert.equal(posted[1]!.text, "Which region?\n\nPick one.\n\nOptions: EU · US");
 
-      // Answered anywhere (here, straight in the store): the notices stay, marked resolved.
+      // Answered anywhere (here, straight in the store): the notices stay, marked resolved, and
+      // the group's waiting dot is refreshed.
       yield* sql`UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved'
         WHERE runtime_request_id = 'rr-1'`;
+      const refreshedBefore = h.refreshed.length;
       yield* groups.handleRunEvent(event);
+      assert.isAbove(h.refreshed.length, refreshedBefore);
       yield* sql`UPDATE decisions SET status = 'answered' WHERE decision_id = 'd-asked'`;
       yield* groups.reconcile;
       assert.deepEqual(

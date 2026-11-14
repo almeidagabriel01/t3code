@@ -18,7 +18,10 @@ export interface AssistantTeamRow {
   readonly latest_seq?: number;
   readonly unread_count?: number;
   readonly open_tasks?: number;
+  readonly running_tasks?: number;
   readonly preview?: string | null;
+  readonly preview_project_id?: string | null;
+  readonly scopes_json?: string;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -27,6 +30,18 @@ const MemberIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeMemberIds = Schema.decodeOption(MemberIdsJson);
 export const encodeMemories = Schema.encodeSync(MemberIdsJson);
 export const encodeMemberIds = Schema.encodeSync(MemberIdsJson);
+const decodeScopes = Schema.decodeOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        projectId: Schema.NullOr(Schema.String),
+        unreadCount: Schema.Number,
+        waiting: Schema.Number,
+        readSeq: Schema.Number,
+      }),
+    ),
+  ),
+);
 
 // A row that no longer decodes has no members rather than hiding every team.
 export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
@@ -49,7 +64,17 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
           readSeq: row.read_seq ?? 0,
           unreadCount: row.unread_count ?? 0,
           working: (row.open_tasks ?? 0) > 0,
+          runningCount: row.running_tasks ?? 0,
           preview: row.preview ?? null,
+          previewProjectId: (row.preview_project_id ?? null) as ProjectId | null,
+          scopes: Option.getOrElse(decodeScopes(row.scopes_json ?? "[]"), () => []).map(
+            (scope) => ({
+              projectId: scope.projectId as ProjectId | null,
+              unreadCount: scope.unreadCount,
+              waiting: scope.waiting !== 0,
+              readSeq: scope.readSeq,
+            }),
+          ),
         },
       }),
   createdAt: row.created_at,

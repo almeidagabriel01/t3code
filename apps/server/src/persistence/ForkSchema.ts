@@ -729,21 +729,61 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     )
   `;
   // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every
-  // start, after every column it reads.
+  // start, after every column it reads. A tab reads from its own cursor, else the group's
+  // read_seq; it is listed while it has unread, a wait on the user or its own cursor, and General
+  // while it has a request. Each count walks scope_idx from the tab's position.
   yield* sql`
     CREATE VIEW assistant_team_state AS
-    SELECT t.*,
-      COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
-        AS latest_seq,
-      (SELECT COUNT(*) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
-          AND m.kind NOT IN ('routing', 'boundary', 'change')) AS unread_count,
-      (SELECT COUNT(*) FROM assistant_group_tasks k
-        WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
-      (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
-        ORDER BY m.seq DESC LIMIT 1) AS preview
-    FROM assistant_teams t
+    SELECT s.*,
+      (SELECT COALESCE(SUM(j.value ->> '$.unreadCount'), 0) FROM json_each(s.scopes_json) j)
+        AS unread_count
+    FROM (
+      SELECT t.*,
+        COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
+          AS latest_seq,
+        (SELECT COUNT(*) FROM assistant_group_tasks k
+          WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
+        (SELECT COUNT(*) FROM assistant_group_tasks k
+          WHERE k.team_id = t.team_id AND k.status = 'running') AS running_tasks,
+        (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
+          WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+          ORDER BY m.seq DESC LIMIT 1) AS preview,
+        (SELECT m.request_project_id FROM assistant_group_messages m
+          WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+          ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
+        (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
+            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq))
+          FROM (
+            SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
+              (SELECT COUNT(*) FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.request_project_id IS NULLIF(c.scope, '')
+                  AND m.seq > COALESCE(r.read_seq, t.read_seq) AND m.request_id IS NOT NULL
+                  AND m.author <> 'user' AND m.kind NOT IN ('routing', 'boundary', 'change'))
+                AS unread,
+              (EXISTS (SELECT 1 FROM assistant_group_messages m
+                  WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
+                    AND m.wait_resolved_at IS NULL
+                    AND COALESCE(m.request_project_id, '') = c.scope)
+                OR (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
+                  WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
+                    AND m.asks_project = 1))) AS waiting,
+              (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
+                  AND m.request_id IS NOT NULL)) AS general
+            FROM (
+              SELECT scope FROM assistant_group_read_cursors WHERE team_id = t.team_id
+              UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.request_id IS NOT NULL
+              UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
+                  AND m.wait_resolved_at IS NULL
+              UNION SELECT ''
+            ) c
+            LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
+          ) x
+          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general) AS scopes_json
+      FROM assistant_teams t
+    ) s
   `;
   // A member's hidden thread for one request, in the request's project. The per-group threads above
   // stay for history and for runs that started before requests had their own.
