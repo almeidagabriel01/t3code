@@ -1280,6 +1280,32 @@ it.effect(
   },
 );
 
+it.effect("a paused branch of a group request is told once, for its top task", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+    const task = (id: string, parent: string | null) => sql`
+      INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
+         status, reason, created_at, updated_at)
+      VALUES (${id}, 'team-1', 'root', ${parent}, ${parent === null ? "root" : "subtask"}, 'msg-1',
+        'ana', ${`Do ${id}`}, 'paused', 'handoff_limit', ${T0}, ${T0})`;
+    yield* task("root", null);
+    yield* task("child", "root");
+    yield* task("grandchild", "child");
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 1);
+    assert.include(rows[0]!.message.text, "Do root");
+  }).pipe(Effect.provide(h.layer));
+});
+
 const scheduledRun = (
   status: string,
   runId: string,

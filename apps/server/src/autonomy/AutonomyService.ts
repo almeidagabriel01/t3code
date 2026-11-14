@@ -1099,6 +1099,7 @@ const make = Effect.gen(function* () {
         }
 
         // Stopping a task or archiving its group is the user's own doing; the rest wait on them.
+        // A pause stops a whole branch, so only its top task is told: resuming it resumes the rest.
         const tasks = yield* sql<PausedTask>`
           SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at,
             gt.thread_id, tm.name AS team_name, a.name AS owner_name, a.project_id
@@ -1108,7 +1109,10 @@ const make = Effect.gen(function* () {
           LEFT JOIN assistant_group_threads gt
             ON gt.team_id = t.team_id AND gt.assistant_id = t.owner_id
           WHERE t.status = 'paused' AND t.kind <> 'reply'
-            AND COALESCE(t.reason, '') NOT IN ('stopped', 'group_archived')`;
+            AND COALESCE(t.reason, '') NOT IN ('stopped', 'group_archived')
+            AND NOT EXISTS (
+              SELECT 1 FROM assistant_group_tasks parent
+              WHERE parent.task_id = t.parent_id AND parent.status = 'paused')`;
         for (const task of tasks) {
           if (!due(task.updated_at)) continue;
           yield* notifyGroupTask(task, config, nowMs).pipe(
