@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { ProjectId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -623,7 +624,13 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
         VALUES ('g1', 'Core', '[]', 't', 't')`;
       const [team] = yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state`;
       assert.deepEqual(toAssistantTeam(team!).chat?.scopes, [
-        { projectId: carried, unreadCount: 0, waiting: false, readSeq: 0, openTasks: 1 },
+        {
+          projectId: carried === null ? null : ProjectId.make(carried),
+          unreadCount: 0,
+          waiting: false,
+          readSeq: 0,
+          openTasks: 1,
+        },
       ]);
       // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.
       for (const scope of ["p1", null]) {
