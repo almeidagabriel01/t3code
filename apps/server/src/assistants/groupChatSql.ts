@@ -45,21 +45,19 @@ export const scopeNeedsUserSql = (team: string, scope: string) =>
 /** A task counts toward the group's `working`: queued, running or waiting. */
 export const workingTaskStatusesSql = list(ASSISTANT_GROUP_WORKING_TASK_STATUSES);
 
-const taskScopesSql = (team: string, status: string) =>
-  `SELECT COALESCE(h.request_project_id, '') AS scope FROM assistant_group_tasks k
-    LEFT JOIN assistant_group_messages h ON h.message_id = k.request_id
-    WHERE k.team_id = ${team} AND k.status ${status}`;
-
 /**
- * The tab ('' for General) of each working task of `team`: its request's project. A task with no
- * request, or whose request is gone, is General's, so every working task lands in one tab.
+ * Each tab ('' for General) of `team` with tasks, and how many work and how many stopped, in one
+ * walk of the team's tasks. A task's tab is its request's project; one with no request, or whose
+ * request is gone, is General's, so every task counts in one tab.
  */
-export const workingTaskScopesSql = (team: string) =>
-  taskScopesSql(team, `IN (${workingTaskStatusesSql})`);
-
-/** The tab ('' for General) of each stopped task of `team`, by the same rule. */
-export const stoppedTaskScopesSql = (team: string) =>
-  taskScopesSql(team, `NOT IN (${workingTaskStatusesSql})`);
+export const taskCountsByScopeSql = (team: string) =>
+  `SELECT COALESCE(h.request_project_id, '') AS scope,
+      SUM(k.status IN (${workingTaskStatusesSql})) AS working,
+      SUM(k.status NOT IN (${workingTaskStatusesSql})) AS stopped
+    FROM assistant_group_tasks k
+    LEFT JOIN assistant_group_messages h ON h.message_id = k.request_id
+    WHERE k.team_id = ${team}
+    GROUP BY 1`;
 
 /** The tabs ('' for General) of `team` that have a task needing the user, for the tab list. */
 export const needsUserTaskScopesSql = (team: string) =>

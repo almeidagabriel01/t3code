@@ -8,8 +8,7 @@ import {
   countsAsUnreadSql,
   needsUserTaskScopesSql,
   scopeNeedsUserSql,
-  stoppedTaskScopesSql,
-  workingTaskScopesSql,
+  taskCountsByScopeSql,
   workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
@@ -817,14 +816,15 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                   AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
               ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
-              (SELECT COUNT(*) FROM (${sql.literal(workingTaskScopesSql("t.team_id"))}) w
-                WHERE w.scope = c.scope) AS open_tasks,
-              (SELECT COUNT(*) FROM (${sql.literal(stoppedTaskScopesSql("t.team_id"))}) w
-                WHERE w.scope = c.scope) AS done_tasks,
+              c.working AS open_tasks,
+              c.stopped AS done_tasks,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
                   AND m.request_id IS NOT NULL)) AS general
-            FROM (
+            -- The task counts are one grouped walk of the team's tasks, joined to every other tab.
+            FROM (SELECT COALESCE(o.scope, n.scope) AS scope, COALESCE(n.working, 0) AS working,
+                COALESCE(n.stopped, 0) AS stopped
+              FROM (
               SELECT scope FROM assistant_group_read_cursors WHERE team_id = t.team_id
               UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
                 WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.request_id IS NOT NULL
@@ -832,9 +832,9 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                 WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
                   AND m.wait_resolved_at IS NULL
               UNION ${sql.literal(needsUserTaskScopesSql("t.team_id"))}
-              UNION ${sql.literal(workingTaskScopesSql("t.team_id"))}
-              UNION ${sql.literal(stoppedTaskScopesSql("t.team_id"))}
               UNION SELECT ''
+              ) o
+              FULL JOIN (${sql.literal(taskCountsByScopeSql("t.team_id"))}) n ON n.scope = o.scope
             ) c
             LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
             -- A stable order, so a client's "Removed project 2" stays the same project.
