@@ -487,7 +487,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
-    sendsToSideChat: parseSideChatCommand(draftMessage) !== null,
+    sendsToSideChat: props.offersSideChat === true && parseSideChatCommand(draftMessage) !== null,
   });
   const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
