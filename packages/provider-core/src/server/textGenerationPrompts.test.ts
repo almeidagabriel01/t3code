@@ -64,11 +64,48 @@ describe("group routing prompt", () => {
       request: "ok",
     });
     const decode = Schema.decodeUnknownSync(outputSchema as never) as (v: unknown) => unknown;
-    expect(decode({ assistantIds: ["a"] })).toEqual({ assistantIds: ["a"], noReply: false });
+    const empty = { projectId: "", question: "", title: "" };
+    expect(decode({ assistantIds: ["a"] })).toEqual({
+      assistantIds: ["a"],
+      noReply: false,
+      ...empty,
+    });
     expect(decode({ assistantIds: [], noReply: true })).toEqual({
       assistantIds: [],
       noReply: true,
+      ...empty,
     });
+  });
+
+  it("asks for a project, a title, the summary and the request's follow-ups only when given", () => {
+    const { prompt } = buildAssistantGroupRoutingPrompt({
+      groupName: "G",
+      members: [],
+      recentMessages: [],
+      request: "fix the login",
+      followUps: [{ from: "user", text: "the mobile one" }],
+      summary: "  Ada owns billing.  ",
+      projects: [
+        { id: "p1", name: "Core" },
+        { id: "p2", name: "Mobile App" },
+      ],
+      newRequest: true,
+    });
+    expect(prompt).toContain("Projects:\n- id p1: Core\n- id p2: Mobile App");
+    expect(prompt).toContain('do not guess: projectId is "" and question is one short sentence');
+    expect(prompt).toContain("- title: a short title for the request");
+    expect(prompt).toContain("Summary of earlier chat:\nAda owns billing.");
+    expect(prompt.endsWith("Said in this request since:\nuser: the mobile one")).toBe(true);
+    const bare = buildAssistantGroupRoutingPrompt({
+      groupName: "G",
+      members: [],
+      recentMessages: [],
+      request: "hi",
+    }).prompt;
+    expect(bare).toContain('- projectId and question are ""');
+    expect(bare).toContain('- title is ""');
+    expect(bare).not.toContain("Projects:");
+    expect(bare).not.toContain("Summary of earlier chat");
   });
 
   it("says so when there is no chat yet", () => {

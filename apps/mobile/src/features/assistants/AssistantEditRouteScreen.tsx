@@ -59,6 +59,7 @@ import { AssistantConnectorsSection } from "./AssistantConnectorsSection";
 import { AssistantNotificationsSection } from "./AssistantNotificationsSection";
 import { AssistantSchedulesSection } from "./AssistantSchedulesSection";
 import { AssistantWatchesSection } from "./AssistantWatchesSection";
+import { InheritedProjectsSection } from "./InheritedProjectsSection";
 import {
   assistantAdvancedSummary,
   BUDGET_PERIOD_OPTIONS,
@@ -393,6 +394,13 @@ function AssistantForm(props: { readonly editor: AssistantEditor }) {
               />
             ))}
           </ListSection>
+          {assistant !== null && !allPicked ? (
+            <InheritedProjectsSection
+              environmentId={environmentId}
+              assistant={assistant}
+              teams={groups}
+            />
+          ) : null}
           {projectChanged ? (
             <Text textRole="footnote" className="px-2 text-warning-foreground">
               Changing the home project starts a new conversation. The current one moves to Archive,

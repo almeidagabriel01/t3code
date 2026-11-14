@@ -3,6 +3,7 @@ import {
   type AssistantTeam,
   type AssistantTeamId,
   ModelSelection,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,6 +19,7 @@ export interface AssistantTeamRow {
   readonly instructions?: string;
   readonly memories_json?: string;
   readonly default_model_selection?: string | null;
+  readonly project_ids_json?: string;
   /** Chat counters, present when the row comes from `assistant_team_state`. */
   readonly read_seq?: number;
   readonly latest_seq?: number;
@@ -52,6 +54,10 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
   instructions: row.instructions ?? "",
   memories: Option.getOrElse(decodeMemberIds(row.memories_json ?? "[]"), () => []),
   defaultModelSelection: decodeModelSelectionJson(row.default_model_selection),
+  projectIds: Option.getOrElse(
+    decodeMemberIds(row.project_ids_json ?? "[]"),
+    () => [],
+  ) as ProjectId[],
   ...(row.latest_seq === undefined
     ? {}
     : {

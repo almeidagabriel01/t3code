@@ -4,7 +4,9 @@ import * as Option from "effect/Option";
 
 import type { AssistantDirectoryShape } from "./AssistantDirectory.ts";
 import {
+  effectiveProjectIdsOf,
   HOST_CONTAINER_NOTE_LINE,
+  projectLabel,
   projectScopeNoteLine,
   sandboxNoteLine,
 } from "./AssistantSandboxPolicy.ts";
@@ -21,7 +23,9 @@ const colleague = (other: Colleague) =>
   `${other.name} (@${other.handle}, threadId ${other.threadId ?? "none yet"})`;
 
 export interface TeamMembership {
-  readonly team: Pick<AssistantTeam, "name">;
+  readonly team: Pick<AssistantTeam, "name"> & {
+    readonly projectIds?: AssistantTeam["projectIds"] | undefined;
+  };
   readonly lead: Colleague | null;
   readonly teammates: ReadonlyArray<Colleague & { readonly role?: string | undefined }>;
 }
@@ -30,7 +34,11 @@ const TEAM_GUIDANCE =
   "These are your teammates; you may hand work to any of them with t3_thread_send to its threadId. Do not wait: send, then end your turn. The answer arrives later as a new message in this conversation. When a teammate's request carries a requestId, answer it with t3_thread_send to the asker's threadId and replyTo set to that requestId, as Status (done | partial | blocked), Result, Evidence, and Unblock when blocked; never reply to a reply. Message one only when the work needs them, and keep exchanges short. When the user asks you to post in a group's chat, use t3_assistant group_post instead; members answer in that chat, not here. Summarize for the user what the group did.";
 
 /** One block per group the assistant is in; empty when it is in none. */
-function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMembership>): string {
+function teamsLines(
+  self: Pick<Colleague, "handle">,
+  teams: ReadonlyArray<TeamMembership>,
+  projectTitles: Readonly<Record<string, string>>,
+): string {
   if (teams.length === 0) return "";
   const lines = teams.map(({ team, lead, teammates }) => {
     const members = teammates
@@ -42,7 +50,12 @@ function teamsLines(self: Pick<Colleague, "handle">, teams: ReadonlyArray<TeamMe
         : lead.handle === self.handle
           ? " You route group requests that mention no one."
           : ` ${lead.name} routes group requests that mention no one.`;
-    return `Group "${team.name}": ${members}.${leadLine}`;
+    const projects = team.projectIds ?? [];
+    const projectsLine =
+      projects.length === 0
+        ? ""
+        : ` The group works in: ${projects.map((id) => projectLabel(id, projectTitles[id])).join(", ")}.`;
+    return `Group "${team.name}": ${members}.${leadLine}${projectsLine}`;
   });
   return escapeBody([...lines, TEAM_GUIDANCE].join("\n"));
 }
@@ -78,7 +91,7 @@ export function assistantNoteFor(
       : `access="${assistant.toolAccess}"`;
   const open = `<t3_assistant name="${escapeAttribute(assistant.name)}" handle="${assistant.handle}"${role} ${access}>`;
   const body = [
-    teamsLines(assistant, teams),
+    teamsLines(assistant, teams, projectTitles),
     assistant.workspace === "sandbox"
       ? sandboxNoteLine(sandboxEnvironmentId)
       : HOST_CONTAINER_NOTE_LINE,
@@ -133,9 +146,12 @@ export const assistantNote = Effect.fn("AssistantNote.forTurn")(function* (
     assistant.workspace === "sandbox"
       ? Option.getOrNull(yield* directory.value.sandboxEnvironmentId)
       : null;
+  // The note lists the effective projects; its own list alone would miss its groups' projects.
+  const projectIds = yield* effectiveProjectIdsOf(directory.value, assistant);
+  const named = [...new Set([...projectIds, ...teams.flatMap(({ team }) => team.projectIds)])];
   const titles =
-    assistant.scope === "project" && directory.value.projectTitles !== undefined
-      ? yield* directory.value.projectTitles(assistant.projectIds)
+    named.length > 0 && directory.value.projectTitles !== undefined
+      ? yield* directory.value.projectTitles(named)
       : {};
-  return assistantNoteFor(assistant, userText, teams, sandbox, titles);
+  return assistantNoteFor({ ...assistant, projectIds }, userText, teams, sandbox, titles);
 });

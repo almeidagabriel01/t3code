@@ -24,8 +24,8 @@ vi.mock(import("./server"), () => ({
   serverEnvironment: {} as never,
 }));
 vi.mock(import("./assets"), () => ({ projectFaviconUrlAtom: (() => null) as never }));
-vi.mock(import("../native/ProjectChipIconImages"), () => ({
-  projectGlyphImageAtom: (() => null) as never,
+vi.mock(import("../native/ChipIconImages"), () => ({
+  chipIconImageAtom: (() => null) as never,
   projectGlyphKey: (() => "") as never,
 }));
 

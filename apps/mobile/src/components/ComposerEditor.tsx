@@ -31,6 +31,7 @@ import { useModelMentions } from "../state/model-mentions";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
 import { useLinkedEnvironments } from "../state/peerLinks";
+import { isGroupMentionSource } from "../lib/groupMentionChips";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
 import {
@@ -196,6 +197,7 @@ export function ComposerEditor({
             onInertChipPress?.();
             return;
           }
+          if (isGroupMentionSource(selection.source, props.groupMentions)) return;
           const path = composerMentionPath(selection.source, draft.context);
           if (path && onOpenMention) {
             onOpenMention(path);

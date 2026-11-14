@@ -8,6 +8,7 @@ import {
   type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentRef } from "react";
 import { View } from "react-native";
@@ -27,6 +28,7 @@ import {
 } from "../../state/assistants";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { TextField } from "./AssistantFormFields";
+import { GroupProjectsSection } from "./GroupProjectsSection";
 import { GroupRoutinesSection } from "./GroupRoutinesSection";
 import { assistantTeamTargetAtom, type AssistantTeamTarget } from "./assistantTeamTarget";
 
@@ -78,6 +80,7 @@ function SettingsForm(props: {
   const chat = useAssistantGroupChat(environmentId, team.id);
   const [instructions, setInstructions] = useState(team.instructions ?? "");
   const [memories, setMemories] = useState((team.memories ?? []).join("\n"));
+  const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>(team.projectIds);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,9 +92,13 @@ function SettingsForm(props: {
       (message) => message.seq === latest && message.kind === "boundary",
     );
   const kept = memoriesOf(memories);
+  const projectsChanged =
+    projectIds.length !== team.projectIds.length ||
+    projectIds.some((id) => !team.projectIds.includes(id));
   const changed =
     instructions.trim() !== (team.instructions ?? "") ||
-    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []);
+    JSON.stringify(kept) !== JSON.stringify(team.memories ?? []) ||
+    projectsChanged;
   const converseDisabled = busy || working || !groupActions.canConverse;
 
   const save = async () => {
@@ -101,6 +108,7 @@ function SettingsForm(props: {
       teamId: team.id,
       instructions: instructions.trim(),
       memories: kept.slice(0, ASSISTANT_TEAM_MEMORIES_MAX),
+      ...(projectsChanged ? { projectIds } : {}),
     });
     setBusy(false);
     if (reply.ok) navigation.goBack();
@@ -160,6 +168,12 @@ function SettingsForm(props: {
           multiline
           autoCapitalize="sentences"
           onChange={setMemories}
+        />
+        <GroupProjectsSection
+          environmentId={environmentId}
+          team={team}
+          value={projectIds}
+          onChange={setProjectIds}
         />
         {error === null ? null : (
           <Text

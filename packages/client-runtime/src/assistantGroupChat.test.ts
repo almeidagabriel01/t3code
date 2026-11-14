@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import type {
   AssistantGroupMessage,
   AssistantGroupTask,
   AssistantGroupsEvent,
   AssistantId,
   AssistantTeamId,
+  ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -15,16 +17,26 @@ import {
   assistantGroupAwaitingRoute,
   assistantGroupBoundaryLabel,
   assistantGroupFeed,
+  assistantGroupFeedProjects,
   assistantGroupFinished,
+  assistantGroupRequestExpanded,
+  assistantGroupRequestFeed,
+  filterAssistantGroupFeed,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
   assistantGroupReadStep,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
+  assistantGroupProjectOptions,
+  assistantGroupProjectQuery,
+  assistantGroupMessageExcerpt,
+  insertAssistantGroupProject,
   ASSISTANT_MENTION_HREF,
   assistantGroupMarkdownMentions,
-  assistantGroupTextParts,
-  assistantGroupPauseReasonLabel,
+  assistantGroupMentionHref,
+  assistantGroupMentionTarget,
+  assistantGroupMentionTargets,
+  assistantGroupTaskReasonLabel,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
   insertAssistantGroupMention,
@@ -109,7 +121,12 @@ describe("group chat state", () => {
     assert.strictEqual(merged.tasks.size, 2);
     assert.isFalse(merged.hasMore);
     assert.isNull(
-      oldestAssistantGroupSeq({ messages: new Map(), tasks: new Map(), hasMore: false }),
+      oldestAssistantGroupSeq({
+        messages: new Map(),
+        tasks: new Map(),
+        hasMore: false,
+        requests: new Map(),
+      }),
     );
     // After a clear nothing of an earlier page comes back, even once new messages arrive.
     const cleared = start(snapshot([], [], false));
@@ -117,6 +134,245 @@ describe("group chat state", () => {
     assert.strictEqual(applyAssistantGroupHistory(cleared, page).messages.size, 0);
     const restarted = start(snapshot([message(1, { id: "fresh" } as never)], [], false));
     assert.strictEqual(applyAssistantGroupHistory(restarted, page).messages.size, 1);
+  });
+});
+
+describe("group requests", () => {
+  const core = "p-core" as ProjectId;
+  const site = "p-site" as ProjectId;
+  const inRequest = (
+    seq: number,
+    request: number,
+    overrides: Partial<AssistantGroupMessage> = {},
+  ) => message(seq, { requestId: `m${request}` as never, ...overrides });
+
+  it("keeps off-page request roots apart, updates them in place and folds them into a page", () => {
+    const root = inRequest(1, 1, { projectId: core, title: "Fix login" });
+    let state = start({
+      type: "snapshot",
+      messages: [inRequest(5, 1, { author: "assistant", assistantId: "ada" as AssistantId })],
+      tasks: [],
+      hasMore: true,
+      requests: [root],
+    });
+    assert.strictEqual(oldestAssistantGroupSeq(state), 5);
+    state = applyAssistantGroupsEvent(state, {
+      type: "message",
+      message: { ...root, title: "Fix the login" },
+    })!;
+    assert.strictEqual(state.requests.get("m1" as never)!.title, "Fix the login");
+    assert.isFalse(state.messages.has("m1" as never));
+    // A root older than the page that comes again (its project was set) stays out of the page too.
+    state = applyAssistantGroupsEvent(state, {
+      type: "message",
+      message: inRequest(2, 2, { projectId: site }),
+    })!;
+    assert.isTrue(state.requests.has("m2" as never));
+    assert.strictEqual(oldestAssistantGroupSeq(state), 5);
+    const merged = applyAssistantGroupHistory(state, {
+      messages: [root, inRequest(3, 3)],
+      tasks: [],
+      hasMore: false,
+      requests: [inRequest(2, 2), inRequest(3, 3)],
+    });
+    assert.deepStrictEqual([...merged.requests.keys()], ["m2"]);
+    assert.strictEqual(merged.requests.get("m2" as never)!.projectId, site);
+    assert.isTrue(merged.messages.has("m1" as never));
+  });
+
+  it("cuts the feed into requests ordered by latest activity, with loose lines in place", () => {
+    const state = start({
+      type: "snapshot",
+      messages: [
+        inRequest(1, 1, { projectId: core, title: "Fix login" }),
+        inRequest(2, 2, { projectId: site }),
+        message(3, { kind: "change", author: "agent", text: "renamed" }),
+        inRequest(4, 1, {
+          author: "assistant",
+          assistantId: "ada" as AssistantId,
+          taskId: "a" as never,
+        }),
+        message(5, { kind: "boundary", text: "new" }),
+      ],
+      tasks: [
+        task("a", 1, { requestId: "m1" as never, status: "completed" }),
+        task("b", 2, { status: "running" }),
+      ],
+      hasMore: false,
+      requests: [],
+    });
+    const feed = assistantGroupRequestFeed(state);
+    assert.deepStrictEqual(
+      feed.map((item) =>
+        item.kind === "request"
+          ? [item.block.requestId, item.block.title, item.block.status, item.block.rows.length]
+          : [item.row.message.seq, item.row.role],
+      ),
+      [
+        ["m2", "text 2", "working", 1],
+        [3, "note"],
+        ["m1", "Fix login", "done", 2],
+        [5, "boundary"],
+      ],
+    );
+    assert.deepStrictEqual(assistantGroupFeedProjects(feed), [site, core]);
+    assert.deepStrictEqual(
+      filterAssistantGroupFeed(feed, core).map(
+        (item) => item.kind === "request" && (item.block.requestId as string),
+      ),
+      ["m1"],
+    );
+    assert.strictEqual(filterAssistantGroupFeed(feed, null), feed);
+    // A request the lead has not placed yet shows under any filter.
+    const waiting = start({
+      type: "snapshot",
+      messages: [inRequest(1, 1), inRequest(2, 2, { projectId: site })],
+      tasks: [],
+      hasMore: false,
+    });
+    assert.deepStrictEqual(
+      filterAssistantGroupFeed(assistantGroupRequestFeed(waiting), core).map(
+        (item) => item.kind === "request" && (item.block.requestId as string),
+      ),
+      ["m1"],
+    );
+  });
+
+  it.each([
+    { name: "routing", tasks: [], extra: [], status: "routing" },
+    {
+      name: "a lead question without a project",
+      tasks: [],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          text: "Which project?",
+          replyToMessageId: "m1" as never,
+          asksProject: true,
+        }),
+      ],
+      status: "needs-project",
+    },
+    {
+      name: "another lead notice without a project",
+      tasks: [],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          text: "I could not route this.",
+          replyToMessageId: "m1" as never,
+        }),
+      ],
+      status: "done",
+    },
+    {
+      name: "a muted no-reply line",
+      tasks: [],
+      extra: [inRequest(2, 1, { kind: "routing", replyToMessageId: "m1" as never })],
+      status: "done",
+    },
+    {
+      name: "a paused task",
+      tasks: [task("a", 1, { status: "paused" })],
+      extra: [],
+      status: "needs-you",
+    },
+    {
+      name: "a failed task",
+      tasks: [task("a", 1, { status: "failed" })],
+      extra: [],
+      status: "needs-you",
+    },
+    {
+      name: "a task held by a usage limit",
+      tasks: [task("a", 1, { status: "usage_limited" })],
+      extra: [],
+      status: "working",
+    },
+    {
+      name: "a member waiting on the user while it works",
+      tasks: [task("a", 1, { status: "running" })],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          waiting: { threadId: "assistant:ada:g-0000000000000000" as ThreadId, resolved: false },
+        }),
+      ],
+      status: "needs-you",
+    },
+    {
+      name: "a waiting notice answered since",
+      tasks: [task("a", 1, { status: "running" })],
+      extra: [
+        inRequest(2, 1, {
+          kind: "notice",
+          author: "assistant",
+          waiting: { threadId: "assistant:ada:g-0000000000000000" as ThreadId, resolved: true },
+        }),
+      ],
+      status: "working",
+    },
+    {
+      name: "only cancelled tasks",
+      tasks: [task("a", 1, { status: "cancelled" })],
+      extra: [],
+      status: "cancelled",
+    },
+    {
+      name: "a queued and a completed task",
+      tasks: [task("a", 1, { status: "completed" }), task("b", 1, { status: "queued" })],
+      extra: [],
+      status: "working",
+    },
+  ] as const)("a request with $name reads $status", ({ tasks, extra, status }) => {
+    const state = start({
+      type: "snapshot",
+      messages: [inRequest(1, 1), ...extra],
+      tasks: [...tasks],
+      hasMore: false,
+    });
+    const [item] = assistantGroupRequestFeed(state);
+    assert.strictEqual(item!.kind === "request" && item!.block.status, status);
+  });
+
+  it("names a request by its title, else its text without mentions, else a placeholder", () => {
+    const long = "x".repeat(90);
+    const state = start({
+      type: "snapshot",
+      messages: [
+        inRequest(1, 1, { text: "\n@ada, @beto: check the totals\nmore" }),
+        inRequest(2, 2, { text: long }),
+        inRequest(3, 9),
+        inRequest(4, 4, { text: "@ada" }),
+      ],
+      tasks: [],
+      hasMore: false,
+    });
+    assert.deepStrictEqual(
+      assistantGroupRequestFeed(state).map((item) => item.kind === "request" && item.block.title),
+      ["check the totals", `${"x".repeat(79)}…`, "Earlier request", "Request"],
+    );
+  });
+
+  it("opens a block that needs attention, holds unread news or is the newest", () => {
+    const state = start({
+      type: "snapshot",
+      messages: [
+        inRequest(1, 1),
+        inRequest(2, 1, { author: "assistant", assistantId: "ada" as AssistantId }),
+      ],
+      tasks: [task("a", 1, { status: "completed" })],
+      hasMore: false,
+    });
+    const [item] = assistantGroupRequestFeed(state);
+    const block = item!.kind === "request" ? item!.block : null;
+    assert.isTrue(assistantGroupRequestExpanded(block!, 0, false));
+    assert.isFalse(assistantGroupRequestExpanded(block!, 2, false));
+    assert.isTrue(assistantGroupRequestExpanded(block!, 2, true));
+    assert.isTrue(assistantGroupRequestExpanded({ ...block!, status: "needs-you" }, 2, false));
   });
 });
 
@@ -172,16 +428,22 @@ describe("group feed", () => {
     assert.isNull(assistantGroupNewSeq(state, 5));
   });
 
-  it("labels pauses in words and an unknown reason as paused", () => {
-    assert.strictEqual(assistantGroupPauseReasonLabel("stopped"), "Stopped");
-    assert.strictEqual(
-      assistantGroupPauseReasonLabel("routing_failed"),
-      "The lead could not route this",
-    );
-    assert.match(assistantGroupPauseReasonLabel("handoff_limit"), /since your last action/);
-    assert.match(assistantGroupPauseReasonLabel("no_delivery"), /without a delivery/);
-    assert.strictEqual(assistantGroupPauseReasonLabel("brand_new"), "Paused");
-    assert.strictEqual(assistantGroupPauseReasonLabel(null), "Paused");
+  it.each([
+    ["paused", "stopped", "Stopped"],
+    ["paused", "routing_failed", "The lead could not route this"],
+    ["paused", "handoff_limit", /since your last action/],
+    ["paused", "no_delivery", /without a delivery/],
+    ["paused", "brand_new", "Paused"],
+    ["paused", null, "Paused"],
+    ["failed", "outside_project", "Owner cannot work in this request's project"],
+    ["failed", "thread_unavailable", "Could not open the owner's conversation"],
+    ["failed", "failed", null],
+    ["failed", null, null],
+    ["running", "stopped", null],
+  ] as const)("labels a %s task's reason %s", (status, reason, expected) => {
+    const label = assistantGroupTaskReasonLabel({ status, reason });
+    if (expected instanceof RegExp) assert.match(label ?? "", expected);
+    else assert.strictEqual(label, expected);
   });
 });
 
@@ -282,27 +544,136 @@ describe("composer helpers", () => {
     assert.isNull(assistantGroupMentionQuery(text, caret));
   });
 
-  it("cuts a text into plain and mention runs, as the server reads it", () => {
-    const text = "Oi @Beto Silva, e `@ada` ou ada@x.com; @ADA!";
-    assert.deepStrictEqual(assistantGroupTextParts(text, [ada, beto]), [
-      { start: 0, text: "Oi ", mention: false },
-      { start: 3, text: "@Beto Silva", mention: true },
-      { start: 14, text: ", e `@ada` ou ada@x.com; ", mention: false },
-      { start: 39, text: "@ADA", mention: true },
-      { start: 43, text: "!", mention: false },
+  it.each([
+    ["#", 1, "", 0],
+    ["fix #Bill", 9, "bill", 4],
+    ["(#agenda-ins", 12, "agenda-ins", 1],
+    ["#café", 5, "cafe", 0],
+  ] as const)("opens the project picker for %j", (text, caret, query, start) => {
+    assert.deepStrictEqual(assistantGroupProjectQuery(text, caret), { start, end: caret, query });
+  });
+
+  it.each([
+    ["issue#4", 7],
+    ["#core ", 6],
+    ["# heading", 9],
+  ] as const)("does not open the project picker for %j", (text, caret) => {
+    assert.isNull(assistantGroupProjectQuery(text, caret));
+  });
+
+  it("links #projects next to @members, never inside code", () => {
+    const projects = [{ id: "p1", name: "Billing API" }];
+    assert.strictEqual(
+      assistantGroupMarkdownMentions(
+        "- @ada fix #billing-api\n- `#billing-api` #nope",
+        [ada],
+        projects,
+      ),
+      "- [@ada](t3-mention:mention/ada) fix [#billing-api](t3-mention:project/billing-api)\n- `#billing-api` #nope",
+    );
+  });
+
+  it.each([
+    ["t3-mention:mention/ada", { kind: "member", value: "ada" }],
+    ["t3-mention:mention/everyone", { kind: "member", value: "everyone" }],
+    ["t3-mention:project/billing-api", { kind: "project", value: "billing-api" }],
+    ["t3-mention:mention", null],
+    ["https://x.dev/ada", null],
+  ] as const)("reads the mention link %j", (href, expected) => {
+    assert.deepStrictEqual(assistantGroupMentionHref(href), expected);
+  });
+
+  it("chips the members and projects the server reads, by handle or name, ignoring accents", () => {
+    const zoe = { id: "zoe" as AssistantId, name: "Zoé Martins", handle: "zoe" };
+    const cafe = { id: "p1", name: "Café App" };
+    const targets = assistantGroupMentionTargets([ada, zoe], [cafe]);
+    const tokens = collectComposerInlineTokens("@Zoé, run #café-app with @everyone", targets);
+    assert.deepStrictEqual(
+      tokens.map((token) => [token.type, token.value]),
+      [
+        ["member", "zoe"],
+        ["project", "cafe-app"],
+        ["member", "everyone"],
+      ],
+    );
+    const target = (kind: "member" | "project", value: string) =>
+      assistantGroupMentionTarget(kind, value, [ada, zoe], [cafe]);
+    for (const value of ["zoe", "Zoé", "Zoé Martins", "zoemartins"])
+      assert.deepStrictEqual(target("member", value), { kind: "member", member: zoe });
+    assert.deepStrictEqual(target("member", "everyone"), { kind: "member", member: null });
+    assert.deepStrictEqual(target("project", "Café-App"), { kind: "project", project: cafe });
+    for (const [kind, value] of [
+      ["member", "zoe-x"],
+      ["member", "zo"],
+      ["project", "cafe"],
+    ] as const)
+      assert.isNull(target(kind, value));
+  });
+
+  it("tells projects whose titles make the same slug apart, everywhere a client names them", () => {
+    const second = { id: "p2", name: "Core" };
+    const first = { id: "p1", name: "core" };
+    const projects = [second, first];
+    assert.deepStrictEqual(assistantGroupMentionTargets([], projects).projectSlugs, [
+      "core-2",
+      "core",
     ]);
-    assert.deepStrictEqual(assistantGroupTextParts("plain", [ada]), [
-      { start: 0, text: "plain", mention: false },
+    const [token] = collectComposerInlineTokens(
+      "run #core-2",
+      assistantGroupMentionTargets([], projects),
+    );
+    assert.deepStrictEqual(assistantGroupMentionTarget("project", token!.value, [], projects), {
+      kind: "project",
+      project: second,
+    });
+    assert.strictEqual(
+      assistantGroupMarkdownMentions("#core-2 #core", [], projects),
+      "[#core-2](t3-mention:project/core-2) [#core](t3-mention:project/core)",
+    );
+    const query = assistantGroupProjectQuery("#core", 5)!;
+    const [option] = assistantGroupProjectOptions("core-", projects);
+    assert.deepStrictEqual(insertAssistantGroupProject("#core", query, option!), {
+      text: "#core-2 ",
+      caret: 8,
+    });
+  });
+
+  it("offers matching projects and inserts the picked one as its #slug", () => {
+    const projects = [
+      { id: "p1", name: "Billing API" },
+      { id: "p2", name: "agenda-instagram" },
+    ];
+    assert.deepStrictEqual(assistantGroupProjectOptions("billing-a", projects), [
+      { ...projects[0]!, slug: "billing-api" },
     ]);
-    assert.deepStrictEqual(assistantGroupTextParts("", [ada]), []);
+    assert.deepStrictEqual(
+      assistantGroupProjectOptions("", projects).map((project) => project.id),
+      ["p1", "p2"],
+    );
+    const query = assistantGroupProjectQuery("run in #bil now", 11)!;
+    assert.deepStrictEqual(
+      insertAssistantGroupProject(
+        "run in #bil now",
+        query,
+        assistantGroupProjectOptions(query.query, projects)[0]!,
+      ),
+      {
+        text: "run in #billing-api now",
+        caret: 20,
+      },
+    );
   });
 
   it("links member mentions in markdown, but not in code or author bold", () => {
-    const m = (t: string) => `[${t}](${ASSISTANT_MENTION_HREF})`;
+    const m = (t: string) => `[${t}](${ASSISTANT_MENTION_HREF}/${t.slice(1).toLowerCase()})`;
     const md = "Oi @Ada, `@ada` e @ghost\n```\n@ada\n```\n- @beto ok\n````\n```\n@ada\n````\n@ada";
     assert.strictEqual(
       assistantGroupMarkdownMentions(md, [ada, beto]),
       `Oi ${m("@Ada")}, \`@ada\` e @ghost\n\`\`\`\n@ada\n\`\`\`\n- ${m("@beto")} ok\n\`\`\`\`\n\`\`\`\n@ada\n\`\`\`\`\n${m("@ada")}`,
+    );
+    assert.strictEqual(
+      assistantGroupMarkdownMentions("Oi @Beto Silva e @everyone", [ada, beto]),
+      "Oi [@Beto Silva](t3-mention:mention/beto) e [@everyone](t3-mention:mention/everyone)",
     );
     assert.strictEqual(assistantGroupMarkdownMentions("**bold** text", [ada]), "**bold** text");
     assert.strictEqual(assistantGroupMarkdownMentions("no mention", [ada]), "no mention");
@@ -418,5 +789,18 @@ describe("read position", () => {
         .length,
       140,
     );
+  });
+});
+
+describe("assistantGroupMessageExcerpt", () => {
+  it.each([
+    [
+      "Found it:\n- `AuthStore.load()` skips\n- **the** build",
+      "Found it: AuthStore.load() skips the build",
+    ],
+    ["## Plan\n1. see [docs](https://x.y)\n```ts\nconst a = 1\n```", "Plan see docs const a = 1"],
+    ["> quoted\nplain  text", "quoted plain text"],
+  ])("%j", (input, expected) => {
+    assert.strictEqual(assistantGroupMessageExcerpt(input), expected);
   });
 });

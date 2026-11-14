@@ -107,6 +107,7 @@ const team = (id: string, name: string, memberIds: string[]): AssistantTeam => (
   memberIds: memberIds as AssistantId[],
   leadId: null,
   archivedAt: null,
+  projectIds: [],
   createdAt: "2026-03-17T19:00:00.000Z",
   updatedAt: "2026-03-17T19:00:00.000Z",
 });

@@ -328,10 +328,31 @@ export const AssistantTeam = Schema.Struct({
   memories: Schema.optionalKey(AssistantTeamMemories),
   /** The model a group request starts on, below the project's own default. Absent from older servers. */
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Projects every member may work in, on top of its own; absent from older servers. */
+  projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type AssistantTeam = typeof AssistantTeam.Type;
+
+/**
+ * The projects a project assistant may work in: its own, then those of each active group it is in.
+ * Empty for scope "all", which reaches every project. The one place this union is computed.
+ */
+export function assistantEffectiveProjectIds(
+  assistant: Pick<Assistant, "id" | "scope" | "projectIds">,
+  teams: ReadonlyArray<Pick<AssistantTeam, "memberIds" | "archivedAt" | "projectIds">>,
+): ReadonlyArray<ProjectId> {
+  if (assistant.scope !== "project") return [];
+  return [
+    ...new Set([
+      ...assistant.projectIds,
+      ...teams.flatMap((team) =>
+        team.archivedAt === null && team.memberIds.includes(assistant.id) ? team.projectIds : [],
+      ),
+    ]),
+  ];
+}
 
 /** The first reason a team is unusable, or null. Clients and the server share it. */
 export function assistantTeamProblem(team: {
@@ -625,6 +646,10 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   memories: Schema.optional(AssistantTeamMemories),
   /** Null clears it. */
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** Replaces the group's projects; the two lists below then apply to it, removals last. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
+  addProjectIds: Schema.optional(Schema.Array(ProjectId)),
+  removeProjectIds: Schema.optional(Schema.Array(ProjectId)),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 

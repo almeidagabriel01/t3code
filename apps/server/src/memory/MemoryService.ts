@@ -187,7 +187,11 @@ export class MemoryService extends Context.Service<
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<Store.StoredReceipt, MemoryServiceError | MemoryRememberScopeUnavailable>;
     readonly recall: (
-      input: M.MemoryRecallInput & { readonly memorySpaceId: M.MemorySpaceId },
+      input: M.MemoryRecallInput & {
+        readonly memorySpaceId: M.MemorySpaceId;
+        /** Search these projects instead of the conversation's one. */
+        readonly projectIds?: ReadonlyArray<M.ProjectId> | undefined;
+      },
       permit: Permit,
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<M.MemoryRecallResult, MemoryServiceError>;
@@ -218,6 +222,12 @@ export class MemoryService extends Context.Service<
       permit: Permit,
       sourceThread?: M.ScopedThreadRef,
     ) => Effect.Effect<M.MemoryItem, MemoryServiceError>;
+    /** A memory's scope, kept after it is forgotten; null when it never existed. */
+    readonly scopeOf: (
+      space: M.MemorySpaceId,
+      memoryId: M.MemoryId,
+      permit: Permit,
+    ) => Effect.Effect<M.MemoryScope | null, MemoryServiceError>;
     readonly history: (
       input: M.MemoryHistoryInput,
       permit: Permit,
@@ -1662,6 +1672,14 @@ const make = Effect.fnUntraced(function* (
       }),
     );
   });
+  const scopeOf = Effect.fn("MemoryService.scopeOf")(function* (
+    space: M.MemorySpaceId,
+    memoryId: M.MemoryId,
+    permit: Permit,
+  ) {
+    yield* permit;
+    return (yield* store.readAccess(space, memoryId)).identity?.scope ?? null;
+  });
   const page = Effect.fn("MemoryService.page")(function* (
     input: M.MemoryListInput | M.MemorySearchInput,
     permit: Permit,
@@ -2734,6 +2752,7 @@ const make = Effect.fnUntraced(function* (
     retryForgetExpansion,
     revertResolution,
     read,
+    scopeOf,
     list,
     search,
     history,

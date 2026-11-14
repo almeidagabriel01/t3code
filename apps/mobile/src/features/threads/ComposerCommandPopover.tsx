@@ -90,7 +90,10 @@ interface ComposerCommandPopoverProps {
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
-function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
+export function ComposerPopoverSurface(props: {
+  readonly children: React.ReactNode;
+  readonly style?: ViewStyle;
+}) {
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
@@ -233,7 +236,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   const label = groupLabel(props.triggerKind, props.items);
 
   return (
-    <PopoverSurface>
+    <ComposerPopoverSurface>
       {label ? (
         <View className="px-3.5 pt-2.5 pb-1">
           <Text className="text-3xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
@@ -264,6 +267,6 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
           </Text>
         </View>
       )}
-    </PopoverSurface>
+    </ComposerPopoverSurface>
   );
 });

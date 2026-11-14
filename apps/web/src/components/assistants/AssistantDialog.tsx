@@ -98,6 +98,7 @@ import { toastManager } from "../ui/toast";
 import { AssistantAvatarPicker, type AvatarDraft } from "./AssistantAvatarPicker";
 import { AssistantConnectorsField } from "./AssistantConnectorsField";
 import { AssistantNotifications } from "./AssistantNotifications";
+import { InheritedProjectsList } from "./InheritedProjectsList";
 import { AssistantWorkspaceField } from "./AssistantWorkspaceField";
 import { AssistantSchedules } from "./AssistantSchedules";
 import { AssistantWatches } from "./AssistantWatches";
@@ -790,7 +791,7 @@ function AssistantDialog(props: {
                 onChange={(event) => setRole(event.target.value)}
               />
             </div>
-            <fieldset className="flex flex-col gap-1.5">
+            <fieldset className="flex min-w-0 flex-col gap-1.5">
               <legend className="text-sm font-medium">Projects</legend>
               <p className="text-xs text-muted-foreground">
                 All projects, or the projects it works in. Work in any other project is refused.
@@ -819,6 +820,13 @@ function AssistantDialog(props: {
                   </li>
                 ))}
               </ul>
+              {assistant !== null && environmentId !== null && !allPicked ? (
+                <InheritedProjectsList
+                  environmentId={environmentId}
+                  assistant={assistant}
+                  teams={teams}
+                />
+              ) : null}
               {projectChanged ? (
                 <Alert variant="warning">
                   <AlertDescription>

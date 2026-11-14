@@ -7,6 +7,11 @@ import {
   AssistantGroupsPostInput,
   assistantGroupAddress,
   assistantGroupMentions,
+  assistantGroupProjectIds,
+  assistantGroupProjectMentionRanges,
+  assistantGroupProjectMentions,
+  assistantGroupProjectSlug,
+  assistantGroupProjectSlugs,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
@@ -211,5 +216,92 @@ describe("group message attachments", () => {
     expect(() =>
       decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
     ).toThrow();
+  });
+});
+
+describe("assistantGroupProjectMentions", () => {
+  const projects = [
+    { id: "p1", name: "Billing API" },
+    { id: "p2", name: "agenda-instagram" },
+    { id: "p3", name: "Café" },
+  ];
+  it.each([
+    ["a one-word name", "deploy #cafe now", ["p3"]],
+    ["a name with spaces, as hyphens", "fix #billing-api.", ["p1"]],
+    ["a hyphenated name", "(#agenda-instagram) post it", ["p2"]],
+    ["case and accents ignored", "#BILLING-API and #Café", ["p1", "p3"]],
+    ["each project once", "#cafe or #cafe", ["p3"]],
+    ["an unknown project", "see #nope and issue #42", []],
+    ["a heading or a word with #", "# Billing api\nsee page#cafe", []],
+    ["code and links", "`#cafe` https://x.dev/#cafe", []],
+  ])("%s", (_name, text, ids) => {
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual(ids);
+  });
+  it("gives each mention's offsets, without trailing punctuation", () => {
+    expect(
+      assistantGroupProjectMentionRanges("fix #billing-api. #cafe", projects).map((found) => [
+        found.start,
+        found.end,
+        found.project.id,
+      ]),
+    ).toEqual([
+      [4, 16, "p1"],
+      [18, 23, "p3"],
+    ]);
+  });
+});
+
+describe("assistantGroupProjectSlugs", () => {
+  const projects = [
+    { id: "p4", name: "My App (v2)" },
+    { id: "p5", name: "C++" },
+    { id: "p6", name: "Foo & Bar" },
+    { id: "p7", name: "api." },
+    { id: "p8", name: "Ação Rápida" },
+    { id: "p9", name: "++" },
+    { id: "p0", name: "Me\u0301dia" },
+    { id: "p3", name: "core" },
+    { id: "p1", name: "Core" },
+    { id: "p2", name: "Core 2" },
+  ];
+  it.each([
+    ["punctuation", "p4", "my-app-v2", "ship #my-app-v2 today"],
+    ["a symbol at the end", "p5", "c", "fix #c."],
+    ["a symbol between words", "p6", "foo-bar", "(#foo-bar)"],
+    ["a trailing dot", "p7", "api", "see #api"],
+    ["accents", "p8", "acao-rapida", "#Ação-Rápida"],
+    ["nothing left", "p9", "project", "in #project"],
+    ["decomposed accents", "p0", "media", "#média"],
+    ["the first id of a collision", "p1", "core", "#core"],
+    ["a later id, past a slug another title makes", "p3", "core-3", "#core-3"],
+    ["a title that makes the suffix itself", "p2", "core-2", "#core-2"],
+  ])("%s", (_name, id, slug, text) => {
+    expect(assistantGroupProjectSlugs(projects).get(id)).toBe(slug);
+    expect(assistantGroupProjectSlugs([...projects].reverse()).get(id)).toBe(slug);
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual([
+      id,
+    ]);
+  });
+  it("names one project the same way alone", () => {
+    expect(assistantGroupProjectSlug("My App (v2)")).toBe("my-app-v2");
+  });
+});
+
+describe("assistantGroupProjectIds", () => {
+  it("joins the group's projects, then the members' in member order, once each, home project as a fallback", () => {
+    const members = [
+      { projectId: "home" as never, projectIds: ["p2" as never, "p1" as never] },
+      { projectId: "p3" as never, projectIds: [] },
+      { projectId: "home" as never, projectIds: ["p1" as never] },
+    ];
+    expect(assistantGroupProjectIds(members, [])).toEqual(["p2", "p1", "p3"]);
+    expect(assistantGroupProjectIds(members, ["p4" as never, "p1" as never])).toEqual([
+      "p4",
+      "p1",
+      "p2",
+      "p3",
+    ]);
+    expect(assistantGroupProjectIds([], ["p4" as never])).toEqual(["p4"]);
+    expect(assistantGroupProjectIds([], [])).toEqual([]);
   });
 });

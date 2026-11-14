@@ -45,6 +45,7 @@ import { sortScopedProjectsForSidebar } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
+import { offerProjectAssistantAccess } from "../assistants/ProjectAssistantAccessDialog";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { suggestAppAccessForRemote } from "../sourceControlAppAccessToast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
@@ -256,6 +257,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "failed", message: "The clone started, but its project did not appear." });
       return;
     }
+    offerProjectAssistantAccess(environmentId, project.id);
     if (link.kind === "pull-request") {
       setState({
         status: "failed",

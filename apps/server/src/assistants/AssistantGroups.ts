@@ -29,6 +29,9 @@ import {
   type AssistantsEvent,
   type AssistantTeam,
   type AssistantTeamId,
+  assistantGroupAddress,
+  assistantGroupProjectIds,
+  assistantGroupProjectMentions,
   assistantIdFromThreadId,
   ChatAttachment,
   ChatAttachmentId,
@@ -43,6 +46,7 @@ import {
   type RunId,
   runtimeModeForToolAccess,
   ThreadId,
+  type DecisionId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -70,6 +74,7 @@ import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
@@ -84,6 +89,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { routeGroupMessage } from "./AssistantGroupRouting.ts";
+import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {
   childResultsText,
@@ -93,7 +99,12 @@ import {
   type PacketMember,
 } from "./AssistantGroupPacket.ts";
 import { AssistantService } from "./AssistantService.ts";
-import { type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import { AssistantDirectory, type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import {
+  assistantProjects,
+  assistantWorksIn,
+  projectScopeRefusal,
+} from "./AssistantSandboxPolicy.ts";
 import { type AssistantTeamRow, toAssistantTeam } from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
 
@@ -132,8 +143,6 @@ const HISTORY_PAGE_CHARS = 24_000;
 const HISTORY_MESSAGE_CHARS = 16_000;
 const RESULT_MAX_CHARS = 20_000;
 const ROUTING_HISTORY_MESSAGES = 10;
-/** The chat grows past this many unsummarized characters, and the summary is refreshed. */
-export const SUMMARY_TRIGGER_CHARS = 16_000;
 /** What one summary call reads of the new messages, newest first. */
 const SUMMARY_INPUT_CHARS = 24_000;
 const SUMMARY_MESSAGE_CHARS = 2_000;
@@ -152,12 +161,12 @@ const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = [
   "waiting",
   "usage_limited",
 ];
-const isActive = (task: { readonly status: string }) =>
-  ACTIVE.includes(task.status as AssistantGroupTaskStatus);
 /** Everything the user can still act on. */
 const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
 const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
+/** A request whose tasks all ended this way is done; a failed one still waits on the user. */
+const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const LIVE_RUN_STATUSES = ["queued", "preparing", "starting", "running", "waiting"] as const;
@@ -172,6 +181,23 @@ export const groupThreadId = (assistantId: string, teamId: string) =>
 /** A deleted thread keeps its id reserved, so its replacement derives a new one from it. */
 const nextGroupThreadId = (assistantId: string, teamId: string, dead: string) =>
   ThreadId.make(`assistant:${assistantId}:g-${sha256(`${teamId}\n${dead}`).slice(0, 16)}`);
+
+/** The member's hidden thread for one request; the same shape, so it reads as a group thread. */
+export const requestThreadId = (assistantId: string, teamId: string, requestId: string) =>
+  ThreadId.make(
+    `assistant:${assistantId}:g-${sha256(`${teamId}\nrequest:${requestId}`).slice(0, 16)}`,
+  );
+
+const TITLE_CHARS = 80;
+/** A request's title until the lead names it: its first line, without the @mentions it opens with. */
+const titleFromText = (text: string) => {
+  const line =
+    text
+      .split("\n")
+      .find((candidate) => candidate.trim() !== "")
+      ?.trim() ?? "";
+  return clip(line.replace(/^(?:@\S+[\s,]+)+/u, "") || line, TITLE_CHARS);
+};
 
 export const taskMessageId = (taskId: string, revision: number) =>
   `group-task:${taskId}:${revision}`;
@@ -204,6 +230,14 @@ interface MessageRow {
   readonly task_id: string | null;
   readonly client_request_id: string | null;
   readonly attachments_json: string;
+  readonly request_id: string | null;
+  readonly project_id: string | null;
+  readonly title: string | null;
+  readonly wait_key: string | null;
+  readonly wait_thread_id: string | null;
+  readonly wait_decision_id: string | null;
+  readonly wait_resolved_at: string | null;
+  readonly asks_project: number;
   readonly created_at: string;
 }
 
@@ -228,6 +262,7 @@ interface TaskRow {
   readonly expected_result: string | null;
   readonly source_seqs_json: string;
   readonly resources_json: string;
+  readonly request_id: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -237,6 +272,8 @@ interface ThreadRow {
   readonly assistant_id: string;
   readonly thread_id: string;
   readonly seen_seq: number;
+  /** Set for a request's thread; null for the member's older thread for the whole group. */
+  readonly request_id: string | null;
 }
 
 const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
@@ -258,6 +295,25 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
   replyToMessageId: row.reply_to as AssistantGroupMessageId | null,
   taskId: row.task_id as AssistantGroupTaskId | null,
   ...(attachmentsOf(row).length === 0 ? {} : { attachments: attachmentsOf(row) }),
+  ...(row.request_id === null ? {} : { requestId: row.request_id as AssistantGroupMessageId }),
+  ...(row.request_id !== row.message_id
+    ? {}
+    : {
+        ...(row.project_id === null ? {} : { projectId: row.project_id as ProjectId }),
+        title: row.title ?? titleFromText(row.text),
+      }),
+  ...(row.wait_thread_id === null
+    ? {}
+    : {
+        waiting: {
+          threadId: row.wait_thread_id as ThreadId,
+          ...(row.wait_decision_id === null
+            ? {}
+            : { decisionId: row.wait_decision_id as DecisionId }),
+          resolved: row.wait_resolved_at !== null,
+        },
+      }),
+  ...(row.asks_project === 1 ? { asksProject: true } : {}),
   createdAt: row.created_at,
 });
 
@@ -286,6 +342,7 @@ const toTask = (row: TaskRow, threadId: ThreadId): AssistantGroupTask => ({
     ? { reason: null, ...(row.reason === null ? {} : { resetAt: row.reason }) }
     : { reason: row.reason }),
   threadId,
+  ...(row.request_id === null ? {} : { requestId: row.request_id as AssistantGroupMessageId }),
   ...(row.expected_result === null ? {} : { expectedResult: row.expected_result }),
   ...(sourceSeqsOf(row).length === 0 ? {} : { sourceSeqs: sourceSeqsOf(row) }),
   ...(resourcesOf(row).length === 0 ? {} : { resources: resourcesOf(row) }),
@@ -302,10 +359,26 @@ const clip = (text: string, max: number) => {
   return chars.length <= max ? text : `${chars.slice(0, max).join("")}…`;
 };
 
-const joinNames = (names: ReadonlyArray<string>) =>
+const joinNames = (names: ReadonlyArray<string>, conjunction = "and") =>
   names.length <= 1
     ? (names[0] ?? "")
-    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+    : `${names.slice(0, -1).join(", ")} ${conjunction} ${names[names.length - 1]}`;
+
+/** A request without a project (from before requests had one) runs in the member's home. */
+const worksIn = (member: AssistantRow, team: AssistantTeam, projectId: string | null) =>
+  projectId === null || assistantWorksIn(toAssistant(member), team, projectId as ProjectId);
+
+/** The notice when members a message named or the lead picked cannot work in its project. */
+const outsideProjectText = (
+  left: ReadonlyArray<AssistantRow>,
+  project: string,
+  reached: ReadonlyArray<AssistantRow>,
+) =>
+  `${joinNames(left.map((row) => row.name))} cannot work in ${project}, so ${
+    reached.length === 0
+      ? "nobody got this. Send it again mentioning a member who works there."
+      : `only ${joinNames(reached.map((row) => row.name))} got this.`
+  }`;
 
 export class AssistantGroups extends Context.Service<
   AssistantGroups,
@@ -340,6 +413,8 @@ export class AssistantGroups extends Context.Service<
       readonly text: string;
       readonly paths?: ReadonlyArray<string>;
       readonly clientRequestId?: string;
+      /** The request's project, by id or name, among the group's; absent lets the lead decide. */
+      readonly project?: string;
     }) => Effect.Effect<AssistantGroupsPostResult, AssistantError>;
     /** The chat line an agent's change to the group leaves: "<who> <text>". A repeat adds none. */
     readonly announce: (input: {
@@ -408,6 +483,11 @@ export class AssistantGroups extends Context.Service<
         AssistantError
       >;
     };
+    /**
+     * Posts or resolves the notices of what a request's member conversations wait on the user for;
+     * a no-op for a thread that is no request's.
+     */
+    readonly syncWaitingThread: (threadId: ThreadId) => Effect.Effect<void>;
     /** A member's run on a group thread ended or changed; moves its task along. */
     readonly handleRunEvent: (event: OrchestrationV2DomainEvent) => Effect.Effect<void>;
     /** Team and assistant changes: members leaving, groups archived or deleted. */
@@ -428,6 +508,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const assistants = yield* AssistantService;
+  const directory = yield* AssistantDirectory;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const textGeneration = yield* TextGeneration;
@@ -436,6 +517,7 @@ const make = Effect.gen(function* () {
   const documents = yield* DocumentText.DocumentText;
   const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const lock = yield* Semaphore.make(1);
   const events = yield* PubSub.unbounded<{
     readonly teamId: string;
@@ -443,9 +525,8 @@ const make = Effect.gen(function* () {
   }>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
   const routing = yield* FiberSet.make<void, never>();
-  /** Groups being summarized now, and the newest message each attempt covered. */
+  /** Groups being summarized now. */
   const summarizing = new Set<string>();
-  const summaryTried = new Map<string, number>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const storage = <A, R>(self: Effect.Effect<A, SqlError | AssistantError, R>) =>
@@ -467,23 +548,48 @@ const make = Effect.gen(function* () {
         Effect.catchCause((cause) => Effect.logWarning(`assistant groups: ${what}`, { cause })),
       );
 
-  /** Tasks as clients see them, each with its owner's current thread for the group. */
+  /**
+   * Tasks as clients see them, each with the thread its owner works it in: the request's thread,
+   * else the older thread for the whole group (work from before requests had their own).
+   */
   const wireTasks = Effect.fn("AssistantGroups.wireTasks")(function* (
     tasks: ReadonlyArray<TaskRow>,
   ) {
     const teams = [...new Set(tasks.map((task) => task.team_id))];
-    const rows =
+    const requests = [...new Set(tasks.flatMap((task) => task.request_id ?? []))];
+    const legacy =
       teams.length === 0
         ? []
         : yield* sql<ThreadRow>`
             SELECT * FROM assistant_group_threads WHERE team_id IN ${sql.in(teams)}`;
+    const own =
+      requests.length === 0
+        ? []
+        : yield* sql<ThreadRow>`
+            SELECT * FROM assistant_group_request_threads WHERE request_id IN ${sql.in(requests)}`;
     return tasks.map((task) =>
       toTask(
         task,
-        (rows.find((row) => row.team_id === task.team_id && row.assistant_id === task.owner_id)
-          ?.thread_id ?? groupThreadId(task.owner_id, task.team_id)) as ThreadId,
+        (own.find((row) => row.request_id === task.request_id && row.assistant_id === task.owner_id)
+          ?.thread_id ??
+          legacy.find((row) => row.team_id === task.team_id && row.assistant_id === task.owner_id)
+            ?.thread_id ??
+          (task.request_id === null
+            ? groupThreadId(task.owner_id, task.team_id)
+            : requestThreadId(task.owner_id, task.team_id, task.request_id))) as ThreadId,
       ),
     );
+  });
+
+  /** The member thread a run happened in: a request's, or the older one for the whole group. */
+  const threadRowOf = Effect.fn("AssistantGroups.threadRowOf")(function* (threadId: string) {
+    const rows = yield* sql<ThreadRow>`
+      SELECT team_id, assistant_id, thread_id, seen_seq, request_id
+      FROM assistant_group_request_threads WHERE thread_id = ${threadId}
+      UNION ALL
+      SELECT team_id, assistant_id, thread_id, seen_seq, NULL AS request_id
+      FROM assistant_group_threads WHERE thread_id = ${threadId}`;
+    return rows[0];
   });
 
   const newId = (prefix: string) =>
@@ -572,9 +678,11 @@ const make = Effect.gen(function* () {
         return task;
       }
     }
+    // A request's thread only ever runs that request's tasks.
     const owned = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${row.team_id} AND owner_id = ${row.assistant_id} AND status = 'running'
+        AND (${row.request_id} IS NULL OR request_id = ${row.request_id})
       ORDER BY updated_at ASC, rowid ASC LIMIT 1`;
     return owned[0];
   });
@@ -598,10 +706,22 @@ const make = Effect.gen(function* () {
         OR task_id IN ${sql.in(shownTasks.length === 0 ? [""] : shownTasks)}
         OR request_message_id IN ${sql.in(shownRequests.length === 0 ? [""] : shownRequests)}
       ) ORDER BY rowid ASC`;
+    // A request whose first message lies on an older page still needs its header and project.
+    const onPage = new Set(page.map((row) => row.message_id));
+    const missing = [...new Set([...page, ...tasks].flatMap((row) => row.request_id ?? []))].filter(
+      (id) => !onPage.has(id),
+    );
+    const requests =
+      missing.length === 0
+        ? []
+        : yield* sql<MessageRow>`
+            SELECT * FROM assistant_group_messages WHERE message_id IN ${sql.in(missing)}
+            ORDER BY seq ASC`;
     return {
       messages: page.map(toMessage),
       tasks: yield* wireTasks(tasks),
       hasMore: rows.length > ASSISTANT_GROUP_PAGE_SIZE,
+      ...(requests.length === 0 ? {} : { requests: requests.map(toMessage) }),
     };
   });
 
@@ -628,18 +748,31 @@ const make = Effect.gen(function* () {
     readonly taskId?: string | null;
     readonly clientRequestId?: string | null;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
+    /** The request it belongs to; `new` starts one with this message; absent for chat-wide lines. */
+    readonly requestId?: string | null;
+    /** A new request's project and title. */
+    readonly projectId?: string | null;
+    readonly title?: string | null;
+    /** A notice that a member's conversation waits on the user. */
+    readonly wait?: ThreadWait;
+    /** The lead's notice asking which project the request is for. */
+    readonly asksProject?: boolean;
   }) {
     const id = yield* newId("gm");
+    const requestId = input.requestId === "new" ? id : (input.requestId ?? null);
     // The next number is read in the same statement that takes it.
     const rows = yield* sql<MessageRow>`
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
-        task_id, client_request_id, attachments_json, created_at
+        task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
+        wait_thread_id, wait_decision_id, asks_project, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
         ${input.replyTo ?? null}, ${input.taskId ?? null}, ${input.clientRequestId ?? null},
-        ${encodeAttachments(input.attachments ?? [])}, ${yield* nowIso}
+        ${encodeAttachments(input.attachments ?? [])}, ${requestId}, ${input.projectId ?? null},
+        ${input.title ?? null}, ${input.wait?.key ?? null}, ${input.wait?.threadId ?? null},
+        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -661,6 +794,7 @@ const make = Effect.gen(function* () {
     readonly expectedResult?: string | null;
     readonly sourceSeqs?: ReadonlyArray<number>;
     readonly resources?: ReadonlyArray<string>;
+    readonly requestId: string | null;
   }) {
     const id = yield* newId("gt");
     const now = yield* nowIso;
@@ -668,14 +802,15 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_tasks (
         task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
         status, reason, revision, hops, followup, expected_result, source_seqs_json, resources_json,
-        created_at, updated_at
+        request_id, created_at, updated_at
       ) VALUES (
         ${id}, ${input.teamId}, ${input.rootId ?? id}, ${input.parentId ?? null}, ${input.kind},
         ${input.requestMessageId}, ${input.ownerId}, ${input.instruction}, ${input.status},
         ${input.reason ?? null}, 1, 0, ${input.followup ?? null}, ${input.expectedResult ?? null},
         ${encodeNumbers(input.sourceSeqs ?? [])}, ${encodeStrings(input.resources ?? [])},
-        ${now}, ${now}
+        ${input.requestId}, ${now}, ${now}
       ) RETURNING *`;
+    if (OPEN.includes(input.status)) yield* reopenRequest(input.requestId);
     yield* publishTask(rows[0]!);
     yield* assistants.refreshTeamChat(input.teamId);
     return rows[0]!;
@@ -698,6 +833,10 @@ const make = Effect.gen(function* () {
     if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
       yield* assistants.refreshTeamChat(task.team_id);
     }
+    const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
+    const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
+    if (wasOpen && !isOpen) yield* closeRequestIfDone(task.request_id);
+    if (!wasOpen && isOpen) yield* reopenRequest(task.request_id);
     return rows[0]!;
   });
 
@@ -787,22 +926,32 @@ const make = Effect.gen(function* () {
     return yield* patchTask(task, { status: "paused", reason });
   });
 
-  const ensureThread = Effect.fn("AssistantGroups.ensureThread")(function* (
+  /**
+   * The member's thread for a request, launched in the request's project the first time one of its
+   * tasks starts, and reused by every later task of that member in the request (a reviewer handing
+   * work back lands in the same conversation). A request that ended archived it; work coming back
+   * restores it.
+   */
+  const ensureRequestThread = Effect.fn("AssistantGroups.ensureRequestThread")(function* (
     team: AssistantTeam,
     member: AssistantRow,
+    request: MessageRow,
   ) {
     const rows = yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_threads
-      WHERE team_id = ${team.id} AND assistant_id = ${member.assistant_id}`;
+      SELECT * FROM assistant_group_request_threads
+      WHERE request_id = ${request.message_id} AND assistant_id = ${member.assistant_id}`;
     const stored = rows[0]?.thread_id;
-    let threadId = (stored ?? groupThreadId(member.assistant_id, team.id)) as ThreadId;
+    let threadId = (stored ??
+      requestThreadId(member.assistant_id, team.id, request.message_id)) as ThreadId;
     let thread = yield* inspectThread(threadId);
     while (thread !== undefined && thread.deletedAt !== null) {
       threadId = nextGroupThreadId(member.assistant_id, team.id, threadId);
       thread = yield* inspectThread(threadId);
     }
-    // The row may also name a thread that is absent: rows copied without their threads.
-    const projectId = (thread?.projectId ?? member.project_id) as ProjectId;
+    const projectId = (thread?.projectId ?? request.project_id ?? member.project_id) as ProjectId;
+    if (!assistantWorksIn(toAssistant(member), team, projectId)) {
+      return yield* invalid(`${member.name} cannot work in this request's project.`);
+    }
     if (thread === undefined) {
       const current =
         member.thread_id === null ? undefined : yield* inspectThread(member.thread_id as ThreadId);
@@ -810,15 +959,14 @@ const make = Effect.gen(function* () {
         current?.modelSelection ?? (yield* assistants.defaultModel(projectId));
       yield* launches
         .launch({
-          // The first launch's receipt may outlive its thread, so a relaunch names the thread.
+          // A launch's receipt may outlive its thread (rows copied without their threads), so a
+          // relaunch of a stored thread uses another id.
           commandId: CommandId.make(
-            stored === undefined
-              ? `assistant-group-launch:${team.id}:${member.assistant_id}`
-              : `assistant-group-relaunch:${team.id}:${member.assistant_id}:${threadId}`,
+            `${stored === undefined ? "assistant-group-launch" : "assistant-group-relaunch"}:${threadId}`,
           ),
           threadId,
           projectId,
-          title: `${member.name} · ${team.name}`,
+          title: `${member.name} · ${team.name} · ${clip(request.title ?? titleFromText(request.text), 60)}`,
           generateTitle: false,
           modelSelection,
           runtimeMode: runtimeModeForToolAccess(toAssistant(member).toolAccess),
@@ -829,26 +977,119 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(() =>
-            assistantError("storage", "Could not start the member's thread for this group."),
+            assistantError("storage", "Could not start the member's thread for this request."),
           ),
         );
     }
-    // A new thread has seen none of the chat.
+    // A new thread has seen none of the request.
     yield* sql`
-      INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id, seen_seq)
-      VALUES (${team.id}, ${member.assistant_id}, ${threadId}, 0)
-      ON CONFLICT (team_id, assistant_id) DO UPDATE
+      INSERT INTO assistant_group_request_threads
+        (request_id, assistant_id, team_id, thread_id, seen_seq)
+      VALUES (${request.message_id}, ${member.assistant_id}, ${team.id}, ${threadId}, 0)
+      ON CONFLICT (request_id, assistant_id) DO UPDATE
       SET thread_id = excluded.thread_id, seen_seq = 0
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
-    // A member that left and came back finds its thread archived.
+    // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
       yield* dispatchLifecycle(
-        `assistant-group-unarchive:${team.id}:${member.assistant_id}:${yield* newId("u")}`,
+        `assistant-group-unarchive:${threadId}:${yield* newId("u")}`,
         "thread.unarchive",
         threadId,
       );
     }
     return { threadId, projectId };
+  });
+
+  const requestThreads = (requestId: string) =>
+    sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
+
+  /**
+   * A request that ended with every task delivered or cancelled settles its members' threads: they
+   * stay in history, and settling closes idle terminals, ends watches and lets the project's
+   * worktree rules run. Paused or failed work, or a request waiting on the user, stays active. A
+   * thread whose run is still ending is refused here and settles when that run ends.
+   */
+  const closeRequestIfDone = Effect.fn("AssistantGroups.closeRequestIfDone")(function* (
+    requestId: string | null,
+  ) {
+    if (requestId === null) return;
+    const tasks = yield* sql<{ readonly status: string }>`
+      SELECT status FROM assistant_group_tasks WHERE request_id = ${requestId}`;
+    if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
+    yield* settleThreads(yield* requestThreads(requestId));
+  });
+
+  const settleThreads = Effect.fn("AssistantGroups.settleThreads")(function* (
+    rows: ReadonlyArray<ThreadRow>,
+  ) {
+    for (const row of rows) {
+      const thread = yield* inspectThread(row.thread_id as ThreadId);
+      if (
+        thread === undefined ||
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled"
+      ) {
+        continue;
+      }
+      yield* threads
+        .settleThread({
+          threadId: row.thread_id as ThreadId,
+          commandId: CommandId.make(`assistant-group-settle:${row.thread_id}:${yield* newId("s")}`),
+          byOwnAgent: false,
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logDebug("assistant groups: request thread not settled yet", {
+              threadId: row.thread_id,
+              cause,
+            }),
+          ),
+        );
+    }
+  });
+
+  /** Work coming back to a request (Resume, Reply, "continue") makes its settled threads active. */
+  const reopenRequest = Effect.fn("AssistantGroups.reopenRequest")(function* (
+    requestId: string | null,
+  ) {
+    if (requestId === null) return;
+    for (const row of yield* requestThreads(requestId)) {
+      const thread = yield* inspectThread(row.thread_id as ThreadId);
+      if (thread?.settledOverride !== "settled" || thread.archivedAt !== null) continue;
+      yield* engine
+        .dispatch({
+          type: "thread.unsettle",
+          commandId: CommandId.make(
+            `assistant-group-unsettle:${row.thread_id}:${yield* newId("r")}`,
+          ),
+          threadId: row.thread_id as ThreadId,
+          reason: "user",
+        })
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("assistant groups: request thread not unsettled", {
+              threadId: row.thread_id,
+              cause,
+            }),
+          ),
+        );
+    }
+  });
+
+  const archiveThreads = Effect.fn("AssistantGroups.archiveThreads")(function* (
+    rows: ReadonlyArray<ThreadRow>,
+  ) {
+    for (const row of rows) {
+      const thread = yield* inspectThread(row.thread_id as ThreadId);
+      if (thread !== undefined && thread.deletedAt === null && thread.archivedAt === null) {
+        yield* dispatchLifecycle(
+          `assistant-group-archive:${row.thread_id}:${yield* newId("a")}`,
+          "thread.archive",
+          row.thread_id as ThreadId,
+        );
+      }
+    }
   });
 
   const labelOf = (row: MessageRow, names: ReadonlyMap<string, string>) => {
@@ -877,16 +1118,24 @@ const make = Effect.gen(function* () {
     }
     const failed = (reason: string) =>
       patchTask(task, { status: "failed", reason }).pipe(Effect.as(false));
-    const exec = yield* ensureThread(team, owner).pipe(Effect.result);
-    if (exec._tag === "Failure") return yield* failed("thread_unavailable");
+    // Work from before requests existed counts its first message as its request.
+    const requestId = task.request_id ?? task.request_message_id;
+    const request = yield* getMessage(requestId);
+    if (request === undefined) return yield* failed("request_missing");
+    const exec = yield* ensureRequestThread(team, owner, request).pipe(Effect.result);
+    if (exec._tag === "Failure") {
+      return yield* failed(
+        exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
+      );
+    }
     const seen =
       (yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_threads
-      WHERE team_id = ${team.id} AND assistant_id = ${owner.assistant_id}`)[0]?.seen_seq ?? 0;
-    const boundary = yield* boundaryOf(team.id);
+      SELECT * FROM assistant_group_request_threads
+      WHERE request_id = ${requestId} AND assistant_id = ${owner.assistant_id}`)[0]?.seen_seq ?? 0;
+    // Only this request's messages: another request's never reach the member.
     const chat = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
-      WHERE team_id = ${team.id} AND seq > ${Math.max(seen, boundary)} AND kind = 'message'
+      WHERE request_id = ${requestId} AND seq > ${seen} AND kind = 'message'
         AND message_id <> ${task.kind === "child" ? "" : task.request_message_id}
         AND NOT (author = 'assistant' AND assistant_id = ${owner.assistant_id})
       ORDER BY seq ASC`;
@@ -911,10 +1160,6 @@ const make = Effect.gen(function* () {
         : parent === undefined
           ? null
           : `${yield* nameOf(parent.owner_id)} (a teammate, not the user)`;
-    const summary =
-      (yield* sql<{ readonly summary: string }>`
-        SELECT summary FROM assistant_group_summaries WHERE team_id = ${team.id}`)[0]?.summary ??
-      null;
     const replyTarget = (yield* getMessage(task.request_message_id))?.reply_to ?? "";
     const mentioned = [
       ...new Set([
@@ -925,18 +1170,17 @@ const make = Effect.gen(function* () {
     const given = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
       JOIN assistant_group_tasks p ON p.task_id = t.parent_id
-      WHERE t.team_id = ${team.id} AND p.owner_id = ${owner.assistant_id} AND t.kind = 'child'
+      WHERE t.request_id = ${requestId} AND p.owner_id = ${owner.assistant_id} AND t.kind = 'child'
         AND t.task_id <> ${task.task_id} AND t.status IN ${sql.in([...ACTIVE, "paused"])}
       ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ${STOPPED_LISTED}`;
     const stopped = yield* sql<TaskRow>`
-      SELECT t.* FROM assistant_group_tasks t
-      JOIN assistant_group_messages m ON m.message_id = t.request_message_id
-      WHERE t.team_id = ${team.id} AND t.owner_id = ${owner.assistant_id}
-        AND t.task_id <> ${task.task_id} AND t.status IN ('paused', 'failed') AND m.seq > ${boundary}
-      ORDER BY t.updated_at DESC, t.rowid DESC LIMIT ${STOPPED_LISTED}`;
+      SELECT * FROM assistant_group_tasks
+      WHERE request_id = ${requestId} AND owner_id = ${owner.assistant_id}
+        AND task_id <> ${task.task_id} AND status IN ('paused', 'failed')
+      ORDER BY updated_at DESC, rowid DESC LIMIT ${STOPPED_LISTED}`;
     const quoted = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
-      WHERE team_id = ${team.id} AND kind = 'message'
+      WHERE request_id = ${requestId} AND kind = 'message'
         AND message_id <> ${task.request_message_id}
         AND (seq IN ${sql.in(mentioned.length === 0 ? [-1] : mentioned)} OR message_id = ${replyTarget})
       ORDER BY seq ASC`;
@@ -947,7 +1191,7 @@ const make = Effect.gen(function* () {
       self: member(owner),
       members: members.map(member),
       news: chat.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
-      summary,
+      request: request.title ?? titleFromText(request.text),
       quoted: quoted.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
       from,
       instruction: task.instruction,
@@ -999,25 +1243,21 @@ const make = Effect.gen(function* () {
       return yield* failed("could_not_start");
     }
     yield* sql`
-      UPDATE assistant_group_threads SET seen_seq = ${topSeq}
-      WHERE team_id = ${team.id} AND assistant_id = ${owner.assistant_id}`;
+      UPDATE assistant_group_request_threads SET seen_seq = ${topSeq}
+      WHERE request_id = ${requestId} AND assistant_id = ${owner.assistant_id}`;
     yield* patchTask(task, { status: "running", reason: null });
     return true;
   });
 
   /**
-   * Folds the chat since the last summary into a new one once enough has piled up. A failure or a
-   * provider without the operation leaves the old summary (or none) and costs the tasks nothing.
+   * Compact folds the chat since the last summary into a new one. It mixes requests, so only the
+   * lead reads it, when it routes. A failure or a provider without the operation keeps the old one.
    */
-  const summarize = Effect.fn("AssistantGroups.summarize")(function* (
-    teamId: string,
-    force: boolean,
-  ) {
+  const summarize = Effect.fn("AssistantGroups.summarize")(function* (teamId: string) {
     if (summarizing.has(teamId)) return false;
     summarizing.add(teamId);
     return yield* Effect.gen(function* () {
       const team = yield* loadTeam(teamId);
-      if (team.archivedAt !== null && !force) return false;
       const boundary = yield* boundaryOf(teamId);
       const through = Math.max(
         boundary,
@@ -1025,20 +1265,12 @@ const make = Effect.gen(function* () {
           SELECT through_seq FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]
           ?.through_seq ?? 0,
       );
-      const stats = (yield* sql<{ readonly chars: number | null; readonly top: number | null }>`
-        SELECT SUM(LENGTH(text)) AS chars, MAX(seq) AS top FROM assistant_group_messages
-        WHERE team_id = ${teamId} AND seq > ${through} AND kind = 'message'`)[0];
-      const top = stats?.top ?? 0;
-      // Retry a failed attempt only once the chat has moved on.
-      if (
-        !force &&
-        ((stats?.chars ?? 0) < SUMMARY_TRIGGER_CHARS || top <= (summaryTried.get(teamId) ?? 0))
-      ) {
-        return false;
-      }
+      const top =
+        (yield* sql<{ readonly top: number | null }>`
+          SELECT MAX(seq) AS top FROM assistant_group_messages
+          WHERE team_id = ${teamId} AND seq > ${through} AND kind = 'message'`)[0]?.top ?? 0;
       // Nothing new since the last summary: it already covers the chat.
-      if (top === 0) return force;
-      summaryTried.set(teamId, top);
+      if (top === 0) return true;
       const previous =
         (yield* sql<{ readonly summary: string }>`
           SELECT summary FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]?.summary ??
@@ -1106,7 +1338,6 @@ const make = Effect.gen(function* () {
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
-    yield* FiberSet.run(routing, summarize(teamId, false).pipe(quietly("summary")));
     // Queued work of a request whose root is stopped waits until the user picks it up again.
     const live = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
@@ -1120,7 +1351,7 @@ const make = Effect.gen(function* () {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
     };
     // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot. Its
-    // owner's thread stays its own: another task there would take over the run it continues.
+    // owner waits too: its other requests run in their own threads but on the same provider limit.
     const limitedOwners = new Set<string>();
     for (const task of live) {
       if (task.status !== "running" && task.status !== "usage_limited") continue;
@@ -1216,6 +1447,7 @@ const make = Effect.gen(function* () {
           teamId: team.id,
           kind: "root",
           requestMessageId: message.message_id,
+          requestId: message.request_id ?? message.message_id,
           ownerId: recipient.assistant_id,
           instruction,
           status: "queued",
@@ -1263,18 +1495,11 @@ const make = Effect.gen(function* () {
       WHERE task_id IN ${sql.in(rootIds)}`;
   });
 
-  /** A user's message reaches these members: it counts for the live requests they work in. */
-  const userReached = Effect.fn("AssistantGroups.userReached")(function* (
-    teamId: string,
-    memberIds: ReadonlyArray<string>,
-  ) {
-    if (memberIds.length === 0) return;
-    const roots = yield* sql<{ readonly root_id: string }>`
-      SELECT DISTINCT t.root_id FROM assistant_group_tasks t
-      JOIN assistant_group_tasks r ON r.task_id = t.root_id
-      WHERE t.team_id = ${teamId} AND t.owner_id IN ${sql.in(memberIds)}
-        AND r.status IN ${sql.in(ACTIVE)}`;
-    yield* restartHandoffs(roots.map((row) => row.root_id));
+  /** The user wrote in a request: every hand-off count of that request starts over, no other's. */
+  const userReached = Effect.fn("AssistantGroups.userReached")(function* (requestId: string) {
+    const roots = yield* sql<{ readonly task_id: string }>`
+      SELECT task_id FROM assistant_group_tasks WHERE request_id = ${requestId} AND kind = 'root'`;
+    yield* restartHandoffs(roots.map((row) => row.task_id));
   });
 
   /**
@@ -1321,6 +1546,42 @@ const make = Effect.gen(function* () {
 
   const routingNow = new Set<string>();
 
+  /** The group's projects with their titles, in member order, a deleted one left out: what every offer and inference reads. */
+  const groupProjects = Effect.fn("AssistantGroups.groupProjects")(function* (
+    team: AssistantTeam,
+    members: ReadonlyArray<AssistantRow>,
+  ) {
+    const ids = assistantGroupProjectIds(members.map(toAssistant), team.projectIds);
+    if (ids.length === 0) return [];
+    const rows = yield* sql<{ readonly project_id: string; readonly title: string }>`
+      SELECT project_id, title FROM projection_projects
+      WHERE project_id IN ${sql.in(ids)} AND deleted_at IS NULL`;
+    return ids.flatMap((id) => {
+      const row = rows.find((candidate) => candidate.project_id === id);
+      return row === undefined ? [] : [{ id: row.project_id, name: row.title }];
+    });
+  });
+
+  /** A project's title for the chat, even when no member lists it any more. */
+  const projectTitle = (projectId: string | null) =>
+    sql<{ readonly title: string }>`
+      SELECT title FROM projection_projects WHERE project_id = ${projectId ?? ""}`.pipe(
+      Effect.map((rows) => rows[0]?.title ?? "this project"),
+    );
+
+  /** Sets a request's project (and the lead's title) on its first message, for every client. */
+  const setRequestProject = Effect.fn("AssistantGroups.setRequestProject")(function* (
+    request: MessageRow,
+    projectId: string,
+    title: string | null,
+  ) {
+    const rows = yield* sql<MessageRow>`
+      UPDATE assistant_group_messages
+      SET project_id = ${projectId}, title = COALESCE(${title}, title)
+      WHERE message_id = ${request.message_id} RETURNING *`;
+    if (rows[0] !== undefined) yield* publishMessage(rows[0]);
+  });
+
   const route = Effect.fn("AssistantGroups.route")(function* (
     teamId: string,
     messageId: string,
@@ -1332,65 +1593,179 @@ const make = Effect.gen(function* () {
         const team = yield* loadTeam(teamId);
         const members = yield* activeMembers(team);
         const lead = members.find((member) => member.assistant_id === leadId);
-        const message = yield* getMessage(messageId);
-        if (lead === undefined || message === undefined) return undefined;
+        const trigger = yield* getMessage(messageId);
+        if (lead === undefined || trigger === undefined) return undefined;
+        const request =
+          trigger.request_id === null
+            ? trigger
+            : ((yield* getMessage(trigger.request_id)) ?? trigger);
+        // Until a request has started, every message in it routes the request itself.
+        const started =
+          (yield* sql<{ readonly n: number }>`
+            SELECT COUNT(*) AS n FROM assistant_group_tasks
+            WHERE request_id = ${request.message_id}`)[0]!.n > 0;
+        const message = started ? trigger : request;
+        const projects = yield* groupProjects(team, members);
+        // A request that already ran without one (from before requests had projects) keeps going.
+        const needsProject = !started && request.project_id === null && projects.length > 1;
+        // With the project known the lead only sees who can work there; otherwise it is checked after.
+        // A request that started without one runs in each member's home, so nobody is left out.
+        const knownProject =
+          request.project_id ?? (started || needsProject ? null : (projects[0]?.id ?? null));
+        const candidates = members.filter((member) => worksIn(member, team, knownProject));
+        const names = new Map(members.map((member) => [member.assistant_id, member.name]));
         const recent = yield* sql<MessageRow>`
           SELECT * FROM assistant_group_messages
           WHERE team_id = ${teamId} AND seq < ${message.seq} AND kind = 'message'
             AND seq > ${yield* boundaryOf(teamId)}
           ORDER BY seq DESC LIMIT ${ROUTING_HISTORY_MESSAGES}`;
-        const names = new Map(members.map((member) => [member.assistant_id, member.name]));
+        const followUps = started
+          ? []
+          : yield* sql<MessageRow>`
+              SELECT * FROM assistant_group_messages
+              WHERE request_id = ${request.message_id} AND seq > ${request.seq}
+                AND kind IN ('message', 'notice')
+              ORDER BY seq ASC LIMIT ${ROUTING_HISTORY_MESSAGES}`;
+        const summary =
+          (yield* sql<{ readonly summary: string }>`
+            SELECT summary FROM assistant_group_summaries WHERE team_id = ${teamId}`)[0]?.summary ??
+          null;
+        const named = assistantGroupAddress(
+          message.text,
+          members.map((member) => ({
+            id: member.assistant_id,
+            handle: member.handle,
+            name: member.name,
+          })),
+        );
         return {
           team,
           members,
+          candidates,
           lead,
+          trigger,
+          request,
           message,
-          recent: recent.toReversed().map((row) => ({
-            from: labelOf(row, names),
-            text: row.text,
-          })),
+          started,
+          projects,
+          needsProject,
+          // Two `#projects` in the text: the lead asks which one instead of picking.
+          mentionedProjects: needsProject
+            ? assistantGroupProjectMentions(trigger.text, projects)
+            : [],
+          named:
+            named?.map((member) => member.id) ??
+            (members.length === 1 ? [members[0]!.assistant_id] : null),
+          summary,
+          recent: recent.toReversed().map((row) => ({ from: labelOf(row, names), text: row.text })),
+          followUps: followUps.map((row) => ({ from: labelOf(row, names), text: row.text })),
         };
       }),
     );
     if (prepared === undefined) return;
     // The model call runs outside the lock: it takes seconds and nothing else should wait on it.
     const routeCall = textGeneration.routeAssistantGroup;
-    const picked = yield* (
-      routeCall === undefined
-        ? Effect.fail(
-            new TextGenerationError({
-              operation: "routeAssistantGroup",
-              detail: "unsupported_operation",
-            }),
-          )
-        : routeCall({
-            cwd: config.baseDir,
-            modelSelection: selection,
-            groupName: prepared.team.name,
-            members: prepared.members.map((member) => ({
-              id: member.assistant_id,
-              handle: member.handle,
-              name: member.name,
-              role: member.role,
-              instructions: member.instructions,
-            })),
-            recentMessages: prepared.recent,
-            request: prepared.message.text,
-          })
-    ).pipe(Effect.result);
+    const nobodyCan = !prepared.needsProject && prepared.candidates.length === 0;
+    const picked =
+      (prepared.named !== null && !prepared.needsProject) || nobodyCan
+        ? undefined
+        : yield* (
+            routeCall === undefined
+              ? Effect.fail(
+                  new TextGenerationError({
+                    operation: "routeAssistantGroup",
+                    detail: "unsupported_operation",
+                  }),
+                )
+              : routeCall({
+                  cwd: config.baseDir,
+                  modelSelection: selection,
+                  groupName: prepared.team.name,
+                  members: prepared.candidates.map((member) => ({
+                    id: member.assistant_id,
+                    handle: member.handle,
+                    name: member.name,
+                    role: member.role,
+                    instructions: member.instructions,
+                  })),
+                  recentMessages: prepared.recent,
+                  request: prepared.message.text,
+                  followUps: prepared.followUps,
+                  summary: prepared.summary,
+                  projects: prepared.needsProject ? prepared.projects : [],
+                  newRequest: !prepared.started,
+                })
+          ).pipe(Effect.result);
     yield* lock
       .withPermits(1)(
         Effect.gen(function* () {
+          const { lead, message, request, trigger } = prepared;
           // A repeat of the same routing, or a group that changed meanwhile, opens nothing twice.
-          if ((yield* tasksOfMessage(messageId)).length > 0) return;
+          if ((yield* tasksOfMessage(message.message_id)).length > 0) return;
           const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
           if (team === undefined) return;
+          const answer = picked?._tag === "Success" ? picked.success : undefined;
           const known = new Set(prepared.members.map((member) => member.assistant_id));
-          const ids =
-            picked._tag === "Success"
-              ? [...new Set(picked.success.assistantIds.filter((id) => known.has(id)))]
-              : [];
-          if (ids.length === 0 && picked._tag === "Success" && picked.success.noReply === true) {
+          const inferred =
+            prepared.mentionedProjects.length > 1
+              ? undefined
+              : prepared.projects.find((project) => project.id === answer?.projectId);
+          const current = (yield* getMessage(request.message_id)) ?? request;
+          if (current.project_id === null && prepared.needsProject) {
+            if (inferred === undefined) {
+              // Ambiguous: the lead asks instead of guessing; the user's answer routes it again.
+              yield* insertMessage({
+                teamId,
+                author: "assistant",
+                assistantId: leadId,
+                kind: "notice",
+                text:
+                  answer?.question?.trim() ||
+                  `Which project is this for: ${joinNames(
+                    (prepared.mentionedProjects.length > 1
+                      ? prepared.mentionedProjects
+                      : prepared.projects
+                    ).map((project) => project.name),
+                    "or",
+                  )}?`,
+                replyTo: trigger.message_id,
+                requestId: request.message_id,
+                asksProject: true,
+              });
+              return;
+            }
+          }
+          const decided =
+            current.project_id === null ? (inferred ?? prepared.projects[0]) : undefined;
+          if (decided !== undefined) {
+            yield* setRequestProject(
+              current,
+              decided.id,
+              prepared.started ? null : answer?.title?.trim() || null,
+            );
+          } else if (!prepared.started && (answer?.title?.trim() ?? "") !== "") {
+            const rows = yield* sql<MessageRow>`
+              UPDATE assistant_group_messages SET title = ${answer!.title!.trim()}
+              WHERE message_id = ${request.message_id} RETURNING *`;
+            if (rows[0] !== undefined) yield* publishMessage(rows[0]);
+          }
+          if (nobodyCan && prepared.named === null) {
+            const projectId = current.project_id ?? decided?.id ?? null;
+            yield* insertMessage({
+              teamId,
+              author: "assistant",
+              assistantId: leadId,
+              kind: "notice",
+              text: `Nobody in the group can work in ${yield* projectTitle(projectId)}, so nobody got this.`,
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
+            });
+            return;
+          }
+          const ids = prepared.named ?? [
+            ...new Set((answer?.assistantIds ?? []).filter((id) => known.has(id))),
+          ];
+          if (ids.length === 0 && answer?.noReply === true) {
             // The lead found nothing to do; the muted line also keeps the message from being routed again.
             yield* insertMessage({
               teamId,
@@ -1398,27 +1773,28 @@ const make = Effect.gen(function* () {
               assistantId: leadId,
               kind: "change",
               text: NO_REPLY_NOTE,
-              replyTo: messageId,
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
             });
             return;
           }
-          const sender = prepared.message;
           const author: GroupAuthor =
-            sender.author === "agent"
+            message.author === "agent"
               ? {
                   kind: "agent",
-                  assistantId: sender.assistant_id as AssistantId | null,
-                  label: sender.author_label ?? "an agent",
+                  assistantId: message.assistant_id as AssistantId | null,
+                  label: message.author_label ?? "an agent",
                 }
-              : sender.author === "routine"
-                ? { kind: "routine", label: sender.author_label ?? "" }
+              : message.author === "routine"
+                ? { kind: "routine", label: message.author_label ?? "" }
                 : { kind: "user" };
-          const instruction = instructionFor(author, sender.text);
+          const instruction = instructionFor(author, message.text);
           if (ids.length === 0) {
             yield* insertTask({
               teamId,
               kind: "root",
-              requestMessageId: messageId,
+              requestMessageId: message.message_id,
+              requestId: request.message_id,
               ownerId: leadId,
               instruction,
               status: "paused",
@@ -1426,19 +1802,49 @@ const make = Effect.gen(function* () {
             });
             return;
           }
-          const recipients = ids.flatMap((id) =>
+          const named = ids.flatMap((id) =>
             prepared.members.filter((member) => member.assistant_id === id),
           );
-          if (author.kind === "user") yield* userReached(teamId, ids);
-          yield* openRoots(team, prepared.message, recipients, instruction);
-          if (!(ids.length === 1 && ids[0] === leadId)) {
+          const projectId = current.project_id ?? decided?.id ?? null;
+          const recipients = named.filter((member) => worksIn(member, team, projectId));
+          if (recipients.length < named.length) {
+            yield* insertMessage({
+              teamId,
+              author: "assistant",
+              assistantId: leadId,
+              kind: "notice",
+              text: outsideProjectText(
+                named.filter((member) => !recipients.includes(member)),
+                yield* projectTitle(projectId),
+                recipients,
+              ),
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
+            });
+            if (recipients.length === 0) return;
+          }
+          if (author.kind === "user" || trigger.author === "user") {
+            yield* userReached(request.message_id);
+          }
+          yield* openRoots(team, message, recipients, instruction);
+          const pickedByLead = prepared.needsProject && inferred !== undefined;
+          const toOthers = !(ids.length === 1 && ids[0] === leadId);
+          // The line also marks a later message that routed its request as handled.
+          if (pickedByLead || toOthers || trigger.message_id !== message.message_id) {
+            const who = `${lead.name} (lead)`;
+            const routed = toOthers
+              ? `routed it to ${joinNames(recipients.map((member) => member.name))}`
+              : "took it";
             yield* insertMessage({
               teamId,
               author: "assistant",
               assistantId: leadId,
               kind: "routing",
-              text: `${prepared.lead.name} (lead) routed it to ${joinNames(recipients.map((member) => member.name))}`,
-              replyTo: messageId,
+              text: pickedByLead
+                ? `${who} picked ${inferred!.name} and ${routed}`
+                : `${who} ${routed}`,
+              replyTo: trigger.message_id,
+              requestId: request.message_id,
             });
           }
           yield* pump(teamId);
@@ -1494,6 +1900,7 @@ const make = Effect.gen(function* () {
           kind: "notice",
           text: UNROUTED_NOTICE,
           replyTo: message.message_id,
+          requestId: message.request_id,
         });
       }
     }
@@ -1576,9 +1983,21 @@ const make = Effect.gen(function* () {
               if (repeat[0] !== undefined) return { message: repeat[0], lead: undefined };
             }
             const members = yield* activeMembers(team);
+            const projectList = yield* groupProjects(team, members);
+            const projects = projectList.map((project) => project.id as ProjectId);
+            if (input.projectId !== undefined && !projects.includes(input.projectId)) {
+              return yield* invalid("That project is not one of the group's projects.");
+            }
+            // `#project` in the text picks like the picker does; the picker wins when they differ.
+            const mentioned = assistantGroupProjectMentions(input.text, projectList);
+            // A reply continues the request of the message it answers.
+            let request: MessageRow | undefined;
             let replyOwnerId: string | null = null;
             if (input.replyToMessageId !== undefined) {
               const target = yield* getMessage(input.replyToMessageId);
+              if (target?.team_id === team.id && target.request_id !== null) {
+                request = yield* getMessage(target.request_id);
+              }
               const task =
                 target?.team_id === team.id &&
                 target.author === "assistant" &&
@@ -1590,11 +2009,19 @@ const make = Effect.gen(function* () {
                 replyOwnerId = null;
               }
             }
-            const tasksNow = yield* sql<TaskRow>`
+            const stopped = yield* sql<TaskRow>`
               SELECT * FROM assistant_group_tasks
-              WHERE team_id = ${team.id} AND kind <> 'reply' AND status IN ${sql.in([...ACTIVE, "paused", "failed"])}
+              WHERE team_id = ${team.id} AND kind = 'root' AND status IN ('paused', 'failed')
+                AND (${request?.message_id ?? null} IS NULL OR request_id = ${request?.message_id ?? null})
               ORDER BY updated_at DESC, rowid DESC`;
+            const requestOwners =
+              request === undefined
+                ? []
+                : yield* sql<{ readonly owner_id: string }>`
+                    SELECT DISTINCT owner_id FROM assistant_group_tasks
+                    WHERE request_id = ${request.message_id} AND kind = 'root'`;
             const decision = routeGroupMessage({
+              requestOwnerId: requestOwners.length === 1 ? requestOwners[0]!.owner_id : null,
               text: input.text,
               members: members.map((row) => ({
                 id: row.assistant_id,
@@ -1602,31 +2029,52 @@ const make = Effect.gen(function* () {
                 name: row.name,
               })),
               replyOwnerId,
-              stopped: tasksNow
-                .filter((task) => task.parent_id === null && !isActive(task))
-                .map((task) => ({ taskId: task.task_id, ownerId: task.owner_id })),
-              open: tasksNow
-                .filter((task) => task.parent_id === null && isActive(task))
-                .map((task) => task.owner_id),
+              stopped: stopped.map((task) => ({ taskId: task.task_id, ownerId: task.owner_id })),
               fromUser: author.kind === "user",
             });
             const resumed =
               decision?.kind === "resume"
-                ? tasksNow.find((task) => task.task_id === decision.taskId)
+                ? stopped.find((task) => task.task_id === decision.taskId)
                 : undefined;
+            // "continue" carries on the request of the work it resumes.
+            if (resumed !== undefined && request === undefined) {
+              request = yield* getMessage(resumed.request_id ?? resumed.request_message_id);
+            }
+            const started =
+              request !== undefined &&
+              (yield* sql<{ readonly n: number }>`
+                SELECT COUNT(*) AS n FROM assistant_group_tasks
+                WHERE request_id = ${request.message_id}`)[0]!.n > 0;
+            const projectId =
+              request?.project_id ??
+              input.projectId ??
+              (mentioned.length === 1 ? (mentioned[0]!.id as ProjectId) : null) ??
+              (projects.length === 1 ? projects[0]! : null);
+            // A request that has not started needs its project first; with several, the lead picks.
+            const needsProject = !started && projectId === null && projects.length > 1;
+            // An answer in a request that has not started (the lead asked for its project) routes
+            // the request itself, through the lead.
+            const viaLead =
+              decision === null || needsProject || (request !== undefined && !started);
             const recipients: ReadonlyArray<AssistantRow> | undefined =
-              decision?.kind === "members"
+              decision?.kind === "members" && !viaLead
                 ? decision.ids.flatMap((id) => members.filter((row) => row.assistant_id === id))
                 : undefined;
             let lead:
               | { readonly row: AssistantRow; readonly selection: ModelSelection }
               | undefined;
-            if (decision === null) {
+            if (viaLead) {
               const row = members.find((member) => member.assistant_id === team.leadId);
+              const selection = row === undefined ? undefined : yield* leadSelection(row);
+              const capable = selection === undefined ? false : yield* canRoute(selection);
+              if (needsProject && !capable) {
+                return yield* invalid(
+                  "Pick the project for this request: the group has no lead that can choose it.",
+                );
+              }
               // With no lead the message waits; clients show it, and a lead set later routes it.
-              if (row !== undefined) {
-                const selection = yield* leadSelection(row);
-                if (!(yield* canRoute(selection))) {
+              if (row !== undefined && selection !== undefined) {
+                if (!capable) {
                   return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
                 }
                 lead = { row, selection };
@@ -1643,6 +2091,9 @@ const make = Effect.gen(function* () {
               replyTo: input.replyToMessageId ?? null,
               clientRequestId: input.clientRequestId ?? null,
               attachments: claimed.attachments,
+              requestId: request?.message_id ?? "new",
+              projectId: request === undefined ? projectId : null,
+              title: request === undefined ? titleFromText(input.text) : null,
             }).pipe(
               Effect.onError(() =>
                 AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
@@ -1650,6 +2101,31 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
+            // The project picked while answering a request that has none yet.
+            if (request !== undefined && request.project_id === null && projectId !== null) {
+              yield* setRequestProject(request, projectId, null);
+            }
+            const picked = projectList.find((project) => project.id === input.projectId);
+            if (
+              picked !== undefined &&
+              request?.project_id == null &&
+              mentioned.length > 0 &&
+              !mentioned.includes(picked)
+            ) {
+              yield* insertMessage({
+                teamId: team.id,
+                author: "assistant",
+                assistantId: members.some((member) => member.assistant_id === team.leadId)
+                  ? team.leadId
+                  : null,
+                kind: "notice",
+                text: `Running this in ${picked.name}, the project you picked. The text also names ${joinNames(
+                  mentioned.map((project) => project.name),
+                )}.`,
+                replyTo: message.message_id,
+                requestId: request?.message_id ?? message.message_id,
+              });
+            }
             if (lead !== undefined) return { message, lead };
             if (resumed !== undefined) {
               yield* requeue(resumed);
@@ -1659,15 +2135,31 @@ const make = Effect.gen(function* () {
                 kind: "routing",
                 text: `Resumed ${yield* nameOf(resumed.owner_id)}'s task`,
                 replyTo: message.message_id,
+                requestId: message.request_id,
               });
             } else if (recipients !== undefined) {
-              if (author.kind === "user") {
-                yield* userReached(
-                  team.id,
-                  recipients.map((row) => row.assistant_id),
-                );
+              const allowed = recipients.filter((row) => worksIn(row, team, projectId));
+              if (allowed.length < recipients.length) {
+                yield* insertMessage({
+                  teamId: team.id,
+                  author: "assistant",
+                  assistantId: members.some((member) => member.assistant_id === team.leadId)
+                    ? team.leadId
+                    : null,
+                  kind: "notice",
+                  text: outsideProjectText(
+                    recipients.filter((row) => !allowed.includes(row)),
+                    yield* projectTitle(projectId),
+                    allowed,
+                  ),
+                  replyTo: message.message_id,
+                  requestId: message.request_id,
+                });
               }
-              yield* openRoots(team, message, recipients, instructionFor(author, input.text));
+              if (allowed.length > 0) {
+                if (author.kind === "user") yield* userReached(message.request_id!);
+                yield* openRoots(team, message, allowed, instructionFor(author, input.text));
+              }
             }
             yield* pump(team.id);
             return { message, lead: undefined };
@@ -1769,9 +2261,7 @@ const make = Effect.gen(function* () {
     // start was not seen still ends the task it continues.
     if (task.status !== "running" && !(task.status === "usage_limited" && isLimitContinuation(run)))
       return;
-    const exec = yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_threads WHERE thread_id = ${run.threadId}`;
-    const runner = exec[0]?.assistant_id;
+    const runner = (yield* threadRowOf(run.threadId))?.assistant_id;
     const failure =
       run.status === "failed"
         ? latestRootProviderFailure(
@@ -1826,6 +2316,7 @@ const make = Effect.gen(function* () {
         text: answer,
         replyTo: task.request_message_id,
         taskId: task.task_id,
+        requestId: task.request_id,
       });
       const done = yield* patchTask(task, {
         status: "completed",
@@ -1836,10 +2327,90 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * One notice per wait in the request's block, written by the member whose conversation waits;
+   * once nothing waits on it any more (answered anywhere) the notice is marked resolved, not removed.
+   */
+  const syncWaiting = Effect.fn("AssistantGroups.syncWaiting")(function* (requestId: string) {
+    const request = yield* getMessage(requestId);
+    if (request === undefined) return;
+    const members = yield* sql<{ readonly thread_id: string; readonly assistant_id: string }>`
+      SELECT thread_id, assistant_id FROM assistant_group_request_threads
+      WHERE request_id = ${requestId}`;
+    const names = new Map(
+      (yield* assistantRows(members.map((row) => row.assistant_id))).map((row) => [
+        row.assistant_id,
+        row.name,
+      ]),
+    );
+    const ownerOf = new Map(members.map((row) => [row.thread_id, row.assistant_id]));
+    const waits = yield* threadsWaitingOnUser(
+      members.map((row) => ({
+        threadId: row.thread_id as ThreadId,
+        agent: names.get(row.assistant_id) ?? "A member",
+      })),
+    ).pipe(
+      Effect.provideService(SqlClient.SqlClient, sql),
+      Effect.provideService(ProjectionStore.ProjectionStoreV2, projections),
+    );
+    const posted = yield* sql<MessageRow>`
+      SELECT * FROM assistant_group_messages
+      WHERE request_id = ${requestId} AND wait_key IS NOT NULL`;
+    const known = new Set(posted.map((row) => row.wait_key));
+    for (const wait of waits) {
+      if (known.has(wait.key)) continue;
+      yield* insertMessage({
+        teamId: request.team_id,
+        author: "assistant",
+        assistantId: ownerOf.get(wait.threadId) ?? null,
+        kind: "notice",
+        text: [
+          wait.title,
+          wait.context,
+          wait.options.length === 0 ? "" : `Options: ${wait.options.join(" · ")}`,
+        ]
+          .filter((part) => part.trim() !== "")
+          .join("\n\n"),
+        requestId,
+        wait,
+      });
+    }
+    const live = new Set(waits.map((wait) => wait.key));
+    for (const row of posted) {
+      if (row.wait_resolved_at !== null || live.has(row.wait_key!)) continue;
+      const resolved = yield* sql<MessageRow>`
+        UPDATE assistant_group_messages SET wait_resolved_at = ${yield* nowIso}
+        WHERE message_id = ${row.message_id} AND wait_resolved_at IS NULL RETURNING *`;
+      if (resolved[0] !== undefined) yield* publishMessage(resolved[0]);
+    }
+  });
+
+  const syncWaitingThread: AssistantGroups["Service"]["syncWaitingThread"] = Effect.fn(
+    "AssistantGroups.syncWaitingThread",
+  )(
+    function* (threadId) {
+      if (!isAssistantGroupThreadId(threadId)) return;
+      yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          const owner = yield* threadRowOf(threadId);
+          if (owner?.request_id == null) return;
+          yield* syncWaiting(owner.request_id);
+        }),
+      );
+    },
+    (effect) =>
+      effect.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: a waiting notice could not be synced", { cause }),
+        ),
+      ),
+  );
+
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",
   )(
     function* (event) {
+      if (event.type === "runtime-request.updated") return yield* syncWaitingThread(event.threadId);
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) return;
       if (
@@ -1850,9 +2421,11 @@ const make = Effect.gen(function* () {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
           yield* finishRun(event.payload);
-          const owner = yield* sql<ThreadRow>`
-            SELECT * FROM assistant_group_threads WHERE thread_id = ${event.payload.threadId}`;
-          if (owner[0] !== undefined) yield* pump(owner[0].team_id);
+          const owner = yield* threadRowOf(event.payload.threadId);
+          if (owner === undefined) return;
+          // A request that ended while this run was still stopping settles now that it has.
+          if (ENDED_RUN.has(event.payload.status)) yield* closeRequestIfDone(owner.request_id);
+          yield* pump(owner.team_id);
         }),
       );
     },
@@ -1891,13 +2464,15 @@ const make = Effect.gen(function* () {
               const ownerId = input.action === "reassign" ? input.ownerId : task.owner_id;
               if (ownerId === undefined)
                 return yield* invalid("Choose the member that takes the task.");
-              if (!members.some((member) => member.assistant_id === ownerId)) {
+              const owner = members.find((member) => member.assistant_id === ownerId);
+              if (owner === undefined) {
                 return yield* invalid(
                   input.action === "reassign"
                     ? "That member is not in the group."
                     : "Its member is no longer in the group; reassign it.",
                 );
               }
+              yield* refuseOutsideProject(team, owner, task.request_id ?? task.request_message_id);
               const next = yield* requeue(task, ownerId);
               yield* pump(team.id);
               return (yield* wireTasks([(yield* getTask(next.task_id)) ?? next]))[0]!;
@@ -1923,12 +2498,11 @@ const make = Effect.gen(function* () {
   });
 
   const callerOf = Effect.fn("AssistantGroups.callerOf")(function* (threadId: ThreadId) {
-    const rows = yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_threads WHERE thread_id = ${threadId}`;
-    if (rows[0] === undefined) {
+    const row = yield* threadRowOf(threadId);
+    if (row === undefined) {
       return yield* invalid("This tool only works inside a group task.");
     }
-    return rows[0];
+    return row;
   });
 
   /** The caller's team (open for work) and the task it is running. */
@@ -1986,19 +2560,43 @@ const make = Effect.gen(function* () {
       kind: "notice",
       text: HANDOFF_PAUSES[reason].notice,
       replyTo: task.request_message_id,
+      requestId: task.request_id,
     });
     yield* pump(team.id);
     return yield* invalid(HANDOFF_PAUSES[reason].refusal);
   });
 
+  /** Work in a request goes only to a member that may work in its project. */
+  const refuseOutsideProject = Effect.fn("AssistantGroups.refuseOutsideProject")(function* (
+    team: AssistantTeam,
+    member: AssistantRow,
+    requestId: string | null,
+  ) {
+    const projectId =
+      requestId === null ? null : ((yield* getMessage(requestId))?.project_id ?? null);
+    if (!worksIn(member, team, projectId)) {
+      return yield* invalid(
+        `${member.name} cannot work in this request's project; give it to a member who does.`,
+      );
+    }
+  });
+
   const memberTools: AssistantGroups["Service"]["member"] = {
     history: Effect.fn("AssistantGroups.member.history")(function* (input) {
       const caller = yield* callerOf(input.callerThreadId);
-      const rows = yield* sql<MessageRow>`
-          SELECT * FROM assistant_group_messages
-          WHERE team_id = ${caller.team_id} AND seq < ${input.beforeSeq ?? Number.MAX_SAFE_INTEGER}
-            AND seq > ${input.beforeSeq === undefined ? yield* boundaryOf(caller.team_id) : 0}
-          ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`;
+      // A request's thread reads only that request; an older group-wide thread reads the chat.
+      const rows =
+        caller.request_id === null
+          ? yield* sql<MessageRow>`
+              SELECT * FROM assistant_group_messages
+              WHERE team_id = ${caller.team_id} AND seq < ${input.beforeSeq ?? Number.MAX_SAFE_INTEGER}
+                AND seq > ${input.beforeSeq === undefined ? yield* boundaryOf(caller.team_id) : 0}
+              ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`
+          : yield* sql<MessageRow>`
+              SELECT * FROM assistant_group_messages
+              WHERE request_id = ${caller.request_id}
+                AND seq < ${input.beforeSeq ?? Number.MAX_SAFE_INTEGER}
+              ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`;
       const messages: AssistantGroupMessage[] = [];
       let used = 0;
       let more = rows.length > ASSISTANT_GROUP_PAGE_SIZE;
@@ -2022,6 +2620,7 @@ const make = Effect.gen(function* () {
           if (target.assistant_id === task.owner_id) {
             return yield* invalid("Do not assign a task to yourself.");
           }
+          yield* refuseOutsideProject(team, target, task.request_id);
           // A repeat of the same assignment lands on the same task.
           const repeat = yield* sql<TaskRow>`
               SELECT * FROM assistant_group_tasks
@@ -2044,6 +2643,7 @@ const make = Effect.gen(function* () {
             parentId: task.task_id,
             kind: "child",
             requestMessageId: task.request_message_id,
+            requestId: task.request_id,
             ownerId: target.assistant_id,
             instruction: input.instruction,
             status: "queued",
@@ -2071,6 +2671,7 @@ const make = Effect.gen(function* () {
             status: row.status as AssistantGroupTaskStatus,
           });
           if (target.assistant_id === task.owner_id) return settled(task);
+          yield* refuseOutsideProject(team, target, task.request_id);
           yield* chargeHandoff(team, task);
           const from = yield* nameOf(task.owner_id);
           // The new owner takes over when the caller's run ends.
@@ -2103,17 +2704,20 @@ const make = Effect.gen(function* () {
             target.team_id !== team.id ||
             target.author !== "assistant" ||
             target.kind !== "message" ||
-            target.assistant_id === null
+            target.assistant_id === null ||
+            (task.request_id !== null && target.request_id !== task.request_id)
           ) {
-            return yield* invalid("Reply to a message a member wrote in this group.");
+            return yield* invalid("Reply to a message a member wrote in this request.");
           }
           if (target.assistant_id === caller.assistant_id) {
             return yield* invalid("You cannot ask yourself.");
           }
           const members = yield* activeMembers(team);
-          if (!members.some((member) => member.assistant_id === target.assistant_id)) {
+          const asked = members.find((member) => member.assistant_id === target.assistant_id);
+          if (asked === undefined) {
             return yield* invalid("That member is no longer in the group.");
           }
+          yield* refuseOutsideProject(team, asked, task.request_id);
           const root = yield* rootOf(task);
           const accepted = (taskId: string): GroupToolResult => ({
             accepted: true,
@@ -2127,10 +2731,9 @@ const make = Effect.gen(function* () {
                 AND m.reply_to = ${target.message_id} AND m.text = ${input.text}`;
           if (repeat[0] !== undefined) return accepted(repeat[0].task_id);
           const used = (yield* sql<{ readonly n: number }>`
-              SELECT COUNT(*) AS n FROM assistant_group_tasks reply
-              WHERE reply.kind = 'reply' AND reply.root_id IN (
-                SELECT task_id FROM assistant_group_tasks
-                WHERE kind = 'root' AND request_message_id = ${root.request_message_id})`)[0]!.n;
+              SELECT COUNT(*) AS n FROM assistant_group_tasks
+              WHERE kind = 'reply' AND request_id = ${task.request_id ?? root.request_message_id}`)[0]!
+            .n;
           if (used >= ASSISTANT_GROUP_REPLY_LIMIT) {
             return { accepted: false, message: REPLY_LIMIT_MESSAGE };
           }
@@ -2142,6 +2745,7 @@ const make = Effect.gen(function* () {
             kind: "message",
             text: input.text,
             replyTo: target.message_id,
+            requestId: task.request_id,
           });
           const reply = yield* insertTask({
             teamId: team.id,
@@ -2149,6 +2753,7 @@ const make = Effect.gen(function* () {
             parentId: task.task_id,
             kind: "reply",
             requestMessageId: question.message_id,
+            requestId: task.request_id,
             ownerId: target.assistant_id,
             instruction: `Question from ${asker} (a teammate, not the user): ${input.text}`,
             status: "queued",
@@ -2182,6 +2787,7 @@ const make = Effect.gen(function* () {
           if (
             target === undefined ||
             target.team_id !== team.id ||
+            target.request_id !== task.request_id ||
             parent === undefined ||
             parent.owner_id !== task.owner_id
           ) {
@@ -2233,6 +2839,41 @@ const make = Effect.gen(function* () {
       }
       const team = byId ?? matches[0];
       if (team === undefined) return yield* assistantError("not_found", "Group not found.");
+      const wantedProject = input.project?.trim() ?? "";
+      const group = toAssistantTeam(team);
+      const projects = yield* groupProjects(group, yield* activeMembers(group));
+      let projectId: ProjectId | undefined;
+      if (wantedProject !== "") {
+        const found = projects.filter(
+          (project) =>
+            project.id === wantedProject ||
+            project.name.toLowerCase() === wantedProject.toLowerCase(),
+        );
+        if (found.length !== 1) {
+          return yield* invalid(
+            `Pick one of the group's projects: ${projects.map((project) => `${project.name} (${project.id})`).join(", ")}.`,
+          );
+        }
+        projectId = found[0]!.id as ProjectId;
+      }
+      const outside = yield* projectScopeRefusal(Option.some(directory), {
+        threadId: input.callerThreadId,
+        projectId,
+      });
+      if (Option.isSome(outside)) return yield* invalid(outside.value);
+      if (projectId === undefined) {
+        const poster = yield* directory.forThread(input.callerThreadId);
+        // A project assistant's work stays in its home project, when the group has it, unless it
+        // names another of its own.
+        const home = Option.isSome(poster) ? poster.value.assistant : undefined;
+        if (
+          home !== undefined &&
+          assistantProjects(home, group) !== "all" &&
+          projects.some((project) => project.id === home.projectId)
+        ) {
+          projectId = home.projectId;
+        }
+      }
       const assistantId = assistantIdFromThreadId(input.callerThreadId);
       const sender = assistantId === null ? [] : yield* assistantRows([assistantId]);
       const title = yield* inspectThread(input.callerThreadId);
@@ -2276,6 +2917,7 @@ const make = Effect.gen(function* () {
           ...(input.clientRequestId === undefined
             ? {}
             : { clientRequestId: input.clientRequestId }),
+          ...(projectId === undefined ? {} : { projectId }),
         },
         { kind: "agent", assistantId: assistantId as AssistantId | null, label },
       );
@@ -2327,24 +2969,28 @@ const make = Effect.gen(function* () {
 
   /** Members that left lose their open work and their thread; an archived group pauses everything. */
   const reconcileTeam = Effect.fn("AssistantGroups.reconcileTeam")(function* (team: AssistantTeam) {
-    const rows =
-      yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${team.id}`;
-    for (const row of rows.filter(
-      (candidate) => !team.memberIds.includes(candidate.assistant_id as AssistantId),
-    )) {
-      const open = yield* sql<TaskRow>`
+    const legacy = yield* sql<ThreadRow>`
+      SELECT team_id, assistant_id, thread_id, seen_seq, NULL AS request_id
+      FROM assistant_group_threads WHERE team_id = ${team.id}`;
+    // A request's threads are already archived once it ends; only open ones matter here.
+    const open = yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads r
+      WHERE r.team_id = ${team.id} AND EXISTS (
+        SELECT 1 FROM assistant_group_tasks t
+        WHERE t.request_id = r.request_id AND t.status IN ${sql.in(OPEN)})`;
+    const rows = [...legacy, ...open];
+    const gone = new Set(
+      rows
+        .map((row) => row.assistant_id)
+        .filter((id) => !team.memberIds.includes(id as AssistantId)),
+    );
+    for (const assistantId of gone) {
+      const tasks = yield* sql<TaskRow>`
         SELECT * FROM assistant_group_tasks
-        WHERE team_id = ${team.id} AND owner_id = ${row.assistant_id} AND status IN ${sql.in(ACTIVE)}`;
-      for (const task of open) yield* pauseTask(task, "member_removed");
-      const thread = yield* inspectThread(row.thread_id as ThreadId);
-      if (thread !== undefined && thread.deletedAt === null && thread.archivedAt === null) {
-        yield* dispatchLifecycle(
-          `assistant-group-archive:${team.id}:${row.assistant_id}:${yield* newId("a")}`,
-          "thread.archive",
-          row.thread_id as ThreadId,
-        );
-      }
+        WHERE team_id = ${team.id} AND owner_id = ${assistantId} AND status IN ${sql.in(ACTIVE)}`;
+      for (const task of tasks) yield* pauseTask(task, "member_removed");
     }
+    yield* archiveThreads(rows.filter((row) => gone.has(row.assistant_id)));
     if (team.archivedAt !== null) {
       const open = yield* sql<TaskRow>`
         SELECT * FROM assistant_group_tasks
@@ -2353,10 +2999,22 @@ const make = Effect.gen(function* () {
     }
     // A renamed group or member renames the hidden threads, which clients show as "Ada · Group".
     const names = new Map((yield* activeMembers(team)).map((row) => [row.assistant_id, row.name]));
+    const requestTitles = new Map(
+      (open.length === 0
+        ? []
+        : yield* sql<MessageRow>`
+            SELECT * FROM assistant_group_messages
+            WHERE message_id IN ${sql.in([...new Set(open.map((row) => row.request_id!))])}`
+      ).map((row) => [row.message_id, row.title ?? titleFromText(row.text)]),
+    );
     for (const row of rows) {
       const name = names.get(row.assistant_id);
       if (name === undefined) continue;
-      const title = `${name} · ${team.name}`;
+      const requestTitle = row.request_id === null ? undefined : requestTitles.get(row.request_id);
+      const title =
+        requestTitle === undefined
+          ? `${name} · ${team.name}`
+          : `${name} · ${team.name} · ${clip(requestTitle, 60)}`;
       const thread = yield* inspectThread(row.thread_id as ThreadId);
       if (thread === undefined || thread.deletedAt !== null || thread.title === title) continue;
       yield* engine
@@ -2384,7 +3042,7 @@ const make = Effect.gen(function* () {
       const thread = yield* inspectThread(row.thread_id as ThreadId);
       if (thread !== undefined && thread.deletedAt === null) {
         yield* dispatchLifecycle(
-          `assistant-group-delete:${row.team_id}:${row.assistant_id}`,
+          `assistant-group-delete:${row.thread_id}`,
           "thread.delete",
           row.thread_id as ThreadId,
         );
@@ -2392,8 +3050,19 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** The group's chat, tasks, summary and the files of its messages; nothing else of the group. */
+  const groupRequestThreads = (teamId: string) =>
+    sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
+
+  /**
+   * The group's chat, tasks, summary and the files of its messages; nothing else of the group. The
+   * members keep their requests' conversations, settled and no longer the group's.
+   */
   const clearChat = Effect.fn("AssistantGroups.clearChat")(function* (teamId: string) {
+    yield* settleThreads(yield* groupRequestThreads(teamId));
+    yield* sql`
+      INSERT OR IGNORE INTO assistant_kept_threads (thread_id, assistant_id)
+      SELECT thread_id, assistant_id FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     const owned = (yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages WHERE team_id = ${teamId}`).flatMap(attachmentsOf);
     yield* cleanup
@@ -2416,6 +3085,8 @@ const make = Effect.gen(function* () {
     yield* deleteThreads(
       yield* sql<ThreadRow>`SELECT * FROM assistant_group_threads WHERE team_id = ${teamId}`,
     );
+    yield* deleteThreads(yield* groupRequestThreads(teamId));
+    yield* sql`DELETE FROM assistant_group_request_threads WHERE team_id = ${teamId}`;
     yield* scheduledTasks
       .deleteForTeam(teamId)
       .pipe(
@@ -2427,18 +3098,27 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM assistant_group_threads WHERE team_id = ${teamId}`;
   });
 
-  /** A deleted assistant: its group threads go with it; its tasks wait for a new owner. */
+  /** A deleted assistant: its group threads and kept conversations go; its tasks wait for a new owner. */
   const removeAssistant = Effect.fn("AssistantGroups.removeAssistant")(function* (
     assistantId: string,
   ) {
     const rows = yield* sql<ThreadRow>`
-      SELECT * FROM assistant_group_threads WHERE assistant_id = ${assistantId}`;
+      SELECT team_id, assistant_id, thread_id, seen_seq, NULL AS request_id
+      FROM assistant_group_threads WHERE assistant_id = ${assistantId}
+      UNION ALL
+      SELECT team_id, assistant_id, thread_id, seen_seq, request_id
+      FROM assistant_group_request_threads WHERE assistant_id = ${assistantId}
+      UNION ALL
+      SELECT '' AS team_id, assistant_id, thread_id, 0 AS seen_seq, NULL AS request_id
+      FROM assistant_kept_threads WHERE assistant_id = ${assistantId}`;
     const open = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE owner_id = ${assistantId} AND status IN ${sql.in(ACTIVE)}`;
     for (const task of open) yield* pauseTask(task, "member_removed");
     yield* deleteThreads(rows);
     yield* sql`DELETE FROM assistant_group_threads WHERE assistant_id = ${assistantId}`;
+    yield* sql`DELETE FROM assistant_group_request_threads WHERE assistant_id = ${assistantId}`;
+    yield* sql`DELETE FROM assistant_kept_threads WHERE assistant_id = ${assistantId}`;
   });
 
   const handleAssistantEvent: AssistantGroups["Service"]["handleAssistantEvent"] = Effect.fn(
@@ -2483,14 +3163,36 @@ const make = Effect.gen(function* () {
           toAssistantTeam,
         );
         for (const team of teams) yield* reconcileTeam(team);
+        // What a member's conversation started waiting on, or stopped, while the server was down.
+        const waiting = yield* sql<{ readonly request_id: string }>`
+          SELECT rt.request_id FROM assistant_group_request_threads rt
+          WHERE EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r
+              WHERE r.thread_id = rt.thread_id AND r.status = 'pending')
+            OR EXISTS (SELECT 1 FROM decisions d
+              WHERE d.from_thread_id = rt.thread_id AND d.status = 'open')
+          UNION SELECT request_id FROM assistant_group_messages
+          WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL AND request_id IS NOT NULL`;
+        // One bad request never keeps the others' notices from being synced.
+        for (const row of waiting) {
+          yield* syncWaiting(row.request_id).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("assistant groups: a waiting notice could not be synced", {
+                requestId: row.request_id,
+                cause,
+              }),
+            ),
+          );
+        }
         const known = new Set<string>(teams.map((team) => team.id));
         const stored = yield* sql<{ readonly team_id: string }>`
           SELECT team_id FROM assistant_group_threads
+          UNION SELECT team_id FROM assistant_group_request_threads
           UNION SELECT team_id FROM assistant_group_tasks
           UNION SELECT team_id FROM assistant_group_messages`;
         for (const row of stored) if (!known.has(row.team_id)) yield* removeGroup(row.team_id);
         const owners = yield* sql<{ readonly assistant_id: string }>`
-          SELECT DISTINCT assistant_id FROM assistant_group_threads`;
+          SELECT assistant_id FROM assistant_group_threads
+          UNION SELECT assistant_id FROM assistant_group_request_threads`;
         const existing = new Set(
           (yield* assistantRows(owners.map((row) => row.assistant_id))).map(
             (row) => row.assistant_id,
@@ -2581,7 +3283,7 @@ const make = Effect.gen(function* () {
         WHERE team_id = ${teamId} AND seq > ${boundary} AND kind = 'message'`;
       if ((fresh[0]?.n ?? 0) === 0) return yield* invalid("There is nothing to compact.");
       // The summary is written before the boundary, so a failure leaves the chat as it was.
-      const done = yield* summarize(teamId, true).pipe(
+      const done = yield* summarize(teamId).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("assistant groups: compact failed", { teamId, cause }).pipe(
             Effect.as(false),
@@ -2617,6 +3319,9 @@ const make = Effect.gen(function* () {
             // The next message reuses this number, so nothing may count it as seen already.
             yield* sql`
               UPDATE assistant_group_threads SET seen_seq = MIN(seen_seq, ${latest.seq - 1})
+              WHERE team_id = ${teamId}`;
+            yield* sql`
+              UPDATE assistant_group_request_threads SET seen_seq = MIN(seen_seq, ${latest.seq - 1})
               WHERE team_id = ${teamId}`;
             yield* sql`
               UPDATE assistant_teams SET read_seq = MIN(read_seq, ${latest.seq - 1})
@@ -2655,6 +3360,7 @@ const make = Effect.gen(function* () {
     announceRoutine,
     member: memberTools,
     handleRunEvent,
+    syncWaitingThread,
     handleAssistantEvent,
     reconcile,
     start,

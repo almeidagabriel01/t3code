@@ -121,6 +121,13 @@ const assistantEntriesAtom = Atom.family((key: string) =>
   }).pipe(Atom.withLabel(`web-assistant-entries:${key}`)),
 );
 
+/** One read, for code that is not a component. */
+export function readAssistantEntries() {
+  return appAtomRegistry.get(
+    assistantEntriesAtom(environmentIdsKey(appAtomRegistry.get(assistantsEnvironmentIdsAtom))),
+  );
+}
+
 const threadAssistantAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     const [environmentKey, threadId] = key.split("\u0000") as [string, ThreadId];

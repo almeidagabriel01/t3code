@@ -2,7 +2,7 @@ import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
-  assistantGroupPauseReasonLabel,
+  assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
@@ -21,15 +21,43 @@ import { cn } from "../../lib/cn";
 import { useThreadShell } from "../../state/entities";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
-const STATUS_TONE: Record<AssistantGroupTask["status"], string> = {
-  queued: "text-foreground-muted",
-  running: "text-primary-text",
-  waiting: "text-warning-foreground",
-  usage_limited: "text-warning-foreground",
-  completed: "text-success-foreground",
-  paused: "text-warning-foreground",
-  cancelled: "text-foreground-muted",
-  failed: "text-danger-foreground",
+export type GroupStatusTone = "quiet" | "active" | "attention" | "done" | "failed";
+
+// Text on the canvas or a card in both themes; the `-foreground` status tokens sit on their fills.
+const TONE_CLASSES: Record<GroupStatusTone, { readonly dot: string; readonly text: string }> = {
+  quiet: { dot: "bg-foreground-muted", text: "text-foreground-muted" },
+  active: { dot: "bg-adaptive-sky-600-400", text: "text-adaptive-sky-700-300" },
+  attention: { dot: "bg-adaptive-amber-700-400", text: "text-adaptive-amber-700-300" },
+  done: { dot: "bg-adaptive-emerald-600-400", text: "text-adaptive-emerald-700-300" },
+  failed: { dot: "bg-adaptive-rose-600-400", text: "text-adaptive-rose-700-300" },
+};
+
+/** A status as a coloured dot and its label. */
+export function GroupStatusLabel(props: {
+  readonly tone: GroupStatusTone;
+  readonly label: string;
+  readonly testID?: string;
+}) {
+  const tone = TONE_CLASSES[props.tone];
+  return (
+    <View className="flex-row items-center gap-1.5">
+      <View className={cn("size-1.5 rounded-full", tone.dot)} />
+      <Text testID={props.testID} className={cn("text-xs font-t3-medium", tone.text)}>
+        {props.label}
+      </Text>
+    </View>
+  );
+}
+
+const STATUS_TONE: Record<AssistantGroupTask["status"], GroupStatusTone> = {
+  queued: "quiet",
+  running: "active",
+  waiting: "attention",
+  usage_limited: "attention",
+  completed: "done",
+  paused: "attention",
+  cancelled: "quiet",
+  failed: "failed",
 };
 
 const ACTION_LABEL: Record<Exclude<AssistantGroupTaskAction, "reassign">, string> = {
@@ -60,23 +88,28 @@ export function GroupTaskCard(props: {
   const limitLabel = useUsageLimitLabel();
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
+  const reasonLabel = assistantGroupTaskReasonLabel(task);
   return (
     <View
       testID="group-task-card"
-      className="mt-1.5 gap-1.5 self-stretch rounded-xl border border-border px-3 py-2"
+      className="mt-2 gap-2 self-stretch rounded-2xl border border-foreground/10 bg-foreground/3 px-3 py-2.5"
     >
       <View className="flex-row items-center gap-2">
-        <Text
+        <GroupStatusLabel
           testID="group-task-status"
-          className={cn("text-xs font-t3-bold", STATUS_TONE[task.status])}
-        >
-          {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
-        </Text>
+          tone={STATUS_TONE[task.status]}
+          label={ASSISTANT_GROUP_STATUS_LABEL[task.status]}
+        />
         {props.ownerName === undefined ? null : (
-          <Text className="text-xs font-t3-bold text-foreground">{props.ownerName}</Text>
+          <Text
+            className="shrink text-xs font-t3-medium text-foreground-secondary"
+            numberOfLines={1}
+          >
+            {props.ownerName}
+          </Text>
         )}
       </View>
-      <Text className="text-xs text-foreground" numberOfLines={2}>
+      <Text className="text-sm text-foreground" numberOfLines={3}>
         {task.instruction}
       </Text>
       {task.expectedResult === undefined ? null : (
@@ -91,27 +124,28 @@ export function GroupTaskCard(props: {
       {task.resources === undefined ? null : (
         <View testID="group-task-resources" className="flex-row flex-wrap gap-1">
           {task.resources.map((resource) => (
-            <View key={resource} className="rounded-full border border-border px-2 py-0.5">
+            <View key={resource} className="rounded-full bg-foreground/6 px-2 py-0.5">
               <Text className="text-[11px] text-foreground-muted">{resource}</Text>
             </View>
           ))}
         </View>
       )}
       {waiting === null ? null : (
-        <Text testID="group-task-waiting" className="text-xs text-warning-foreground">
+        <Text testID="group-task-waiting" className="text-xs text-adaptive-amber-700-300">
           {waiting}
         </Text>
       )}
       {needs === null ? null : (
-        <Text testID="group-task-needs" className="text-xs font-t3-bold text-warning-foreground">
+        <Text
+          testID="group-task-needs"
+          className="text-xs font-t3-bold text-adaptive-amber-700-300"
+        >
           {needs} · Open the conversation to answer
         </Text>
       )}
-      {task.status === "paused" ? (
-        <Text className="text-xs text-foreground-muted">
-          {assistantGroupPauseReasonLabel(task.reason)}
-        </Text>
-      ) : null}
+      {reasonLabel === null ? null : (
+        <Text className="text-xs text-foreground-muted">{reasonLabel}</Text>
+      )}
       <View className="flex-row flex-wrap items-center gap-1.5">
         {assistantGroupTaskActions(task).map((action) =>
           action === "reassign" ? (

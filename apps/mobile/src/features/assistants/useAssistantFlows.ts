@@ -1,6 +1,7 @@
 import {
   ASSISTANTS_RESTORE_DEFAULT_INPUT,
   type Assistant,
+  type AssistantGroupConversationAction,
   type AssistantTeam,
   type EnvironmentId,
   type ThreadId,
@@ -122,6 +123,26 @@ export function useAssistantTeamFlows(environmentId: EnvironmentId) {
   return {
     canAct: actions.canAct,
     canMarkRead: reading.canMarkRead,
+    canConverse: reading.canConverse,
+    /** New conversation or compact; the chat follows through its own stream. */
+    converse: async (team: Pick<AssistantTeam, "id">, action: AssistantGroupConversationAction) =>
+      failed("Could not change the conversation", await reading.conversation(team.id, action)),
+    clear(team: Pick<AssistantTeam, "id" | "name">, onCleared: () => void) {
+      Dialog.confirm({
+        title: `Clear the history of ${team.name}?`,
+        message:
+          "Every message, task and file in this chat is deleted. Members keep their own conversations. This cannot be undone.",
+        confirmText: "Clear history",
+        destructive: true,
+        onConfirm: () => {
+          void (async () => {
+            const reply = await reading.conversation(team.id, "clear");
+            failed("Could not clear the history", reply);
+            if (reply.ok) onCleared();
+          })();
+        },
+      });
+    },
     markRead: (team: Pick<AssistantTeam, "id" | "chat">) =>
       mark(team.id, { readSeq: team.chat?.latestSeq ?? 0 }),
     markUnread: (team: Pick<AssistantTeam, "id">) => mark(team.id, { unread: true }),

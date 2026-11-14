@@ -100,8 +100,15 @@ const assistant = (id: string, name: string, overrides: Partial<Assistant> = {})
   ...overrides,
 });
 
-const team = (id: string, name: string, memberIds: string[], leadId?: string): AssistantTeam => ({
+const team = (
+  id: string,
+  name: string,
+  memberIds: string[],
+  leadId?: string,
+  projectIds: ProjectId[] = [],
+): AssistantTeam => ({
   id: id as AssistantTeamId,
+  projectIds,
   name,
   memberIds: memberIds as AssistantId[],
   leadId: (leadId ?? null) as AssistantId | null,
@@ -390,6 +397,29 @@ it("joins the groups it is ticked into, leaves others and hands back a lead", as
       { teamId: "t2", memberIds: ["ana", "jarvis"] },
     ]),
   );
+  appAtomRegistry.set(assistantDialogAtom, null);
+});
+
+it("lists the projects a group gives and never saves them as its own", async () => {
+  fakeAssistantEdits.updates = [];
+  publishAssistants(
+    [
+      assistant("ana", "Ana", {
+        scope: "project",
+        projectIds: [],
+        avatar: { kind: "robot", hue: 150 },
+      }),
+    ],
+    [team("t2", "Research", ["ana"], undefined, [PROJECT_ID])],
+  );
+  await using _screen = await openApp();
+  openAssistantDialog({ environmentId: ENVIRONMENT_ID, assistantId: "ana" as AssistantId });
+  await expect.element(page.getByText("From groups")).toBeVisible();
+  await expect.element(page.getByText("via Research")).toBeVisible();
+  await userEvent.click(page.getByRole("radio", { name: "Color 280" }));
+  await userEvent.click(page.getByRole("button", { name: "Save" }));
+  await eventually(() => expect(fakeAssistantEdits.updates).toHaveLength(1));
+  expect(fakeAssistantEdits.updates[0]).not.toHaveProperty("projectIds");
   appAtomRegistry.set(assistantDialogAtom, null);
 });
 

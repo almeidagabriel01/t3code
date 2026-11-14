@@ -246,6 +246,8 @@ interface ChatMarkdownProps {
   /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
+  /** Draws a `t3-mention:` link, given its href and written text. */
+  renderMention?: ((href: string, text: string) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
@@ -502,6 +504,7 @@ function useChatMarkdownState({
   workspaceMutationId,
   onImageExpand,
   renderContextReference,
+  renderMention,
   headingLevelOffset = 0,
   sourceControlMedia = false,
   sourceControlMediaRepository,
@@ -914,6 +917,7 @@ function useChatMarkdownState({
     sourceControlMedia,
     sourceControlMediaRepository,
     renderContextReference,
+    renderMention,
     headingLevelOffset,
     imageBaseDir,
     workspaceMutationId,
@@ -1096,10 +1100,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
+      renderMention,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     if (href?.startsWith("t3-mention:"))
-      return <span className="font-semibold text-primary">{children}</span>;
+      return renderMention ? (
+        renderMention(href, hastPlainTextDeep(node))
+      ) : (
+        <span className="font-semibold text-primary">{children}</span>
+      );
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
     const threadLink = href ? parseThreadLinkHref(href) : null;

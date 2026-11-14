@@ -2,6 +2,7 @@ import {
   type AssistantError,
   type MemoryTaskGrantCeiling,
   CommandId,
+  assistantThreadIdFor,
   isAssistantThreadId,
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -60,7 +61,9 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as AssistantDirectory from "../assistants/AssistantDirectory.ts";
 import { AssistantGroupGate } from "../assistants/AssistantGroupGate.ts";
+import { effectiveProjectIdsOf } from "../assistants/AssistantSandboxPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
@@ -221,6 +224,7 @@ interface ScheduledTaskRow {
   readonly project_id: string;
   readonly thread_id: string | null;
   readonly assistant_team_id?: string | null;
+  readonly owner_assistant_id?: string | null;
   readonly thread_mode: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
@@ -250,6 +254,8 @@ export interface CapturedTaskMemoryGrant {
    * Omitted keeps the stored choice unless the save changes the model, which pins it.
    */
   readonly modelFollowsProject?: boolean;
+  /** Recorded on the first save only; later edits keep it. */
+  readonly ownerAssistantId?: string | null;
 }
 
 interface WebhookDeliveryRow {
@@ -423,6 +429,7 @@ const decodeRow = Effect.fnUntraced(
       projectId: row.project_id,
       threadId: row.thread_id,
       ...(row.assistant_team_id ? { assistantTeamId: row.assistant_team_id } : {}),
+      ...(row.owner_assistant_id ? { ownerAssistantId: row.owner_assistant_id } : {}),
       threadMode: row.thread_mode,
       workspaceStrategy,
       modelSelection,
@@ -506,6 +513,23 @@ export const layer = Layer.effect(
     const projectModelSelection = yield* Effect.serviceOption(
       ProjectModelSelection.ProjectModelSelectionService,
     );
+    const directory = yield* AssistantDirectory.AssistantDirectory;
+    /** Why the task's owner may no longer start work in its project, or null. */
+    const ownerRefusal = Effect.fn("ScheduledTaskService.ownerRefusal")(function* (
+      task: ScheduledTask,
+    ) {
+      if (task.ownerAssistantId == null) return null;
+      // forThread falls back to the id inside an assistant thread id, archived ones included.
+      const found = yield* directory.forThread(assistantThreadIdFor(task.ownerAssistantId, 0));
+      if (Option.isNone(found))
+        return "The assistant that made this task no longer exists, so the task does not run. Delete it, or make it again.";
+      const { assistant } = found.value;
+      if (assistant.scope !== "project") return null;
+      const projectIds = yield* effectiveProjectIdsOf(directory, assistant);
+      return projectIds.includes(task.projectId)
+        ? null
+        : `${assistant.name} may no longer work in this task's project, so the task does not run. Give the project back to ${assistant.name}, or delete the task.`;
+    });
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -554,6 +578,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         assistant_team_id,
+        owner_assistant_id,
         thread_mode,
         workspace_strategy_json,
         model_selection_json,
@@ -600,6 +625,7 @@ export const layer = Layer.effect(
         project_id,
         thread_id,
         assistant_team_id,
+        owner_assistant_id,
         thread_mode,
         workspace_strategy_json,
         model_selection_json,
@@ -703,6 +729,7 @@ export const layer = Layer.effect(
           project_id,
           thread_id,
           assistant_team_id,
+          owner_assistant_id,
           thread_mode,
           workspace_strategy_json,
           model_selection_json,
@@ -733,6 +760,7 @@ export const layer = Layer.effect(
           ${task.projectId},
           ${task.threadId},
           ${task.assistantTeamId ?? null},
+          ${task.ownerAssistantId ?? null},
           ${scheduledTaskThreadMode(task)},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
@@ -1097,7 +1125,13 @@ export const layer = Layer.effect(
               yield* Effect.exit(postToGroup(active, prompt, fireKey))
             : active.threadId === null
               ? yield* Effect.exit(
-                  newThreadModel(active).pipe(
+                  ownerRefusal(active).pipe(
+                    Effect.flatMap((refusal) =>
+                      refusal === null
+                        ? Effect.void
+                        : Effect.fail(taskError(refusal, { taskId: active.id })),
+                    ),
+                    Effect.andThen(newThreadModel(active)),
                     Effect.flatMap((modelSelection) =>
                       threadLaunch.launch({
                         commandId,
@@ -1487,6 +1521,8 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
+      const owner =
+        existingTask === null ? captured?.ownerAssistantId : existingTask.ownerAssistantId;
       const threadMode = resolveThreadMode(input, existingTask);
       const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
@@ -1604,6 +1640,7 @@ export const layer = Layer.effect(
         projectId: input.projectId,
         threadId: input.assistantTeamId ? null : threadId,
         ...(input.assistantTeamId ? { assistantTeamId: input.assistantTeamId } : {}),
+        ...(owner ? { ownerAssistantId: owner } : {}),
         threadMode,
         workspaceStrategy,
         modelSelection: input.modelSelection,
@@ -2809,4 +2846,4 @@ export const layer = Layer.effect(
       triggerWebhook,
     });
   }),
-);
+).pipe(Layer.provide(AssistantDirectory.layer));

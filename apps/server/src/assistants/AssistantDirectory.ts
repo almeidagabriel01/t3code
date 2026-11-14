@@ -85,15 +85,18 @@ const ProjectIdsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeProjectIds = Schema.decodeOption(ProjectIdsJson);
 export const encodeProjectIds = Schema.encodeSync(ProjectIdsJson);
 
-/** The projects a row may work in: empty for "all", else its saved list or its one project. */
-const projectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> => {
-  if (row.scope !== "project") return [];
+/** The row's saved project list, or its one project; whatever its scope. */
+export const savedProjectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> => {
   const saved =
     row.project_ids_json == null
       ? []
       : Option.getOrElse(decodeProjectIds(row.project_ids_json), () => []);
   return (saved.length === 0 ? [row.project_id] : saved) as ReadonlyArray<ProjectId>;
 };
+
+/** The projects a row may work in: empty for "all", else its saved list or its one project. */
+const projectIdsOf = (row: AssistantRow): ReadonlyArray<ProjectId> =>
+  row.scope === "project" ? savedProjectIdsOf(row) : [];
 
 export const toAssistant = (row: AssistantRow): Assistant => ({
   id: row.assistant_id as AssistantId,
@@ -141,6 +144,8 @@ export interface AssistantDirectoryShape {
   ) => Effect.Effect<Option.Option<{ readonly assistant: Assistant; readonly current: boolean }>>;
   /** The assistant that launched this thread as a task. Task threads are ordinary threads. */
   readonly taskOwner: (threadId: ThreadId) => Effect.Effect<Option.Option<Assistant>>;
+  /** Whether a group still owns this hidden thread; absent means it does. */
+  readonly inGroup?: (threadId: ThreadId) => Effect.Effect<boolean>;
   /** Titles of the projects that still exist; a missing or unreadable one is simply absent. */
   readonly projectTitles?: (
     projectIds: ReadonlyArray<string>,
@@ -209,6 +214,17 @@ const make = Effect.gen(function* () {
         : Option.some({ assistant: toAssistant(owner[0]), current: false });
       // A failed read must not look like "not an assistant": that would drop its read-only limit.
     }, Effect.orDie),
+    inGroup: Effect.fn("AssistantDirectory.inGroup")(
+      function* (threadId) {
+        const rows = yield* sql`
+        SELECT 1 FROM assistant_group_threads WHERE thread_id = ${threadId}
+        UNION ALL SELECT 1 FROM assistant_group_request_threads WHERE thread_id = ${threadId}
+        LIMIT 1`;
+        return rows.length > 0;
+        // A failed read keeps the thread the group's: the guard then refuses instead of letting it go.
+      },
+      Effect.orElseSucceed(() => true),
+    ),
   };
   return AssistantDirectory.of(directory);
 });

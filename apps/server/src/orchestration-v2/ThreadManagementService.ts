@@ -849,7 +849,13 @@ const make = Effect.gen(function* () {
               command.type === "thread.delete" ||
               command.type === "thread.unarchive")
           ) {
-            return refuse("group_thread");
+            // A conversation a cleared chat left the member is the member's to keep or let go.
+            const inGroup = assistantDirectory.value.inGroup?.(threadId) ?? Effect.succeed(true);
+            return inGroup.pipe(
+              Effect.flatMap((linked) =>
+                linked ? refuse("group_thread") : Effect.succeed(command),
+              ),
+            );
           }
           switch (command.type) {
             case "thread.runtime-mode.set":
@@ -913,7 +919,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.orElseSucceed(() => null));
       const outside = yield* projectScopeRefusal(assistantDirectory, {
         threadId: sender,
-        projectId: target?.projectId,
+        projectId: target?.projectId ?? found.value.assistant.projectId,
       });
       if (Option.isSome(outside)) return yield* reject(command, outside.value);
     }

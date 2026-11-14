@@ -75,6 +75,11 @@ vi.mock("./AssistantFormFields", () => ({
 }));
 vi.mock("./assistantTeamTarget", () => ({ assistantTeamTargetAtom: {} }));
 vi.mock("./GroupRoutinesSection", () => ({ GroupRoutinesSection: () => null }));
+vi.mock("./GroupProjectsSection", () => ({
+  GroupProjectsSection: (props: { onChange: (next: string[]) => void }) => (
+    <button onClick={() => props.onChange(["p1", "p2"])}>Pick projects</button>
+  ),
+}));
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({ teams: mocks.teams }),
   useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
@@ -91,6 +96,7 @@ const team = (extra: object = {}) => ({
   id: "t1",
   name: "Growth",
   memberIds: [],
+  projectIds: [],
   leadId: null,
   instructions: "Be brief.",
   memories: ["Budget is 5k"],
@@ -157,6 +163,20 @@ describe("group settings", () => {
       memories: ["Budget is 5k", "The year starts in March"],
     });
     expect(mocks.goBack).toHaveBeenCalled();
+  });
+
+  it("sends picked projects in the same single update as the text", async () => {
+    await render();
+    await press("Pick projects");
+    await write("Group instructions", "Be brief and kind.");
+    await press("Save");
+    expect(mocks.update).toHaveBeenCalledOnce();
+    expect(mocks.update).toHaveBeenCalledWith({
+      teamId: "t1",
+      instructions: "Be brief and kind.",
+      memories: ["Budget is 5k"],
+      projectIds: ["p1", "p2"],
+    });
   });
 
   it("a refused save stays on the screen and says why", async () => {

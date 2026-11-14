@@ -59,6 +59,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { listLibrary, removeOwnerTransfers } from "./AssistantTransfers.ts";
 import * as ServerConfig from "../config.ts";
@@ -67,6 +68,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as AssistantAvatars from "./AssistantAvatars.ts";
 import * as AssistantConnectors from "./AssistantConnectors.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
+import { forgetDeletedProjects } from "./AssistantTeamProjects.ts";
+import { RESUBSCRIBE } from "./resubscribe.ts";
 import {
   type AssistantTeamRow,
   allTeams,
@@ -189,6 +192,7 @@ const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const connectors = yield* AssistantConnectors.AssistantConnectors;
   const tasks = yield* AssistantTasks;
+  const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
   const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
   const projectModelSelection = yield* ProjectModelSelectionService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -926,6 +930,25 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /** The group's next project list; every project it gains must exist and be a real workspace. */
+  const teamProjects = Effect.fn("AssistantService.teamProjects")(function* (
+    current: ReadonlyArray<ProjectId>,
+    input: Pick<AssistantTeamsUpdateInput, "projectIds" | "addProjectIds" | "removeProjectIds">,
+  ) {
+    const removed = new Set(input.removeProjectIds ?? []);
+    const next = [
+      ...new Set([...(input.projectIds ?? current), ...(input.addProjectIds ?? [])]),
+    ].filter((id) => !removed.has(id));
+    for (const projectId of next) {
+      if (current.includes(projectId)) continue;
+      yield* requireProject(projectId);
+      if ((yield* scopeFor(projectId)) === "all") {
+        return yield* invalid("That project does not exist.");
+      }
+    }
+    return next;
+  });
+
   const createTeam: AssistantService["Service"]["createTeam"] = Effect.fn(
     "AssistantService.createTeam",
   )(function* (input, options) {
@@ -972,6 +995,7 @@ const make = Effect.gen(function* () {
               ? current.leadId
               : null;
         yield* checkTeam({ memberIds, leadId }, current.memberIds);
+        const projectIds = yield* teamProjects(current.projectIds, input);
         const archivedAt =
           input.archived === undefined
             ? current.archivedAt
@@ -989,6 +1013,7 @@ const make = Effect.gen(function* () {
                 ? (row.default_model_selection ?? null)
                 : encodeModelSelectionJson(input.defaultModelSelection)
             },
+            project_ids_json = ${encodeMemberIds(projectIds)},
             updated_at = ${yield* nowIso}
           WHERE team_id = ${input.teamId}`;
         const team = toAssistantTeam(yield* findTeamRow(input.teamId));
@@ -1181,6 +1206,48 @@ const make = Effect.gen(function* () {
       return yield* listLibrary(config.sharedDir, row.assistant_id);
     },
     storage,
+  );
+
+  /** Takes deleted projects off every list and tells subscribers which rows changed. */
+  const forgetDeletedProjectsInLists = Effect.fn("AssistantService.forgetDeletedProjects")(
+    function* () {
+      const changed = yield* lock.withPermits(1)(forgetDeletedProjects(sql));
+      yield* Effect.forEach(changed.assistantIds, publish, { discard: true });
+      yield* Effect.forEach(
+        changed.teamIds,
+        (teamId) =>
+          findTeamRow(teamId).pipe(
+            Effect.flatMap((row) =>
+              PubSub.publish(events, { type: "teamUpserted", team: toAssistantTeam(row) }),
+            ),
+          ),
+        { discard: true },
+      );
+    },
+  );
+  // Read before forking so a delete committed while the fiber starts is replayed, not missed. A
+  // failed stream subscribes again after the last event it handled, so a gap misses nothing.
+  let afterSequence = yield* applicationEvents.latestApplicationSequence.pipe(
+    Effect.orElseSucceed(() => 0),
+  );
+  yield* Stream.suspend(() => applicationEvents.streamApplicationEvents({ afterSequence })).pipe(
+    Stream.tapError((error) =>
+      Effect.logWarning("assistant project tracking failed; subscribing again", error),
+    ),
+    Stream.retry(RESUBSCRIBE),
+    Stream.runForEach((event) =>
+      ("aggregateKind" in event &&
+      event.aggregateKind === "project" &&
+      event.type === "project.deleted"
+        ? forgetDeletedProjectsInLists().pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("deleted project was not taken off assistant lists", cause),
+            ),
+          )
+        : Effect.void
+      ).pipe(Effect.andThen(Effect.sync(() => void (afterSequence = event.sequence)))),
+    ),
+    Effect.forkScoped,
   );
 
   return AssistantService.of({
