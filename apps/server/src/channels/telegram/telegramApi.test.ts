@@ -33,6 +33,11 @@ const withFetch = <A, E>(
     return { exit, requests };
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
+/** How Node's fetch rejects: a TypeError whose cause holds the socket error's code. */
+const fetchFailure = (cause: Error) => async (): Promise<Response> => {
+  throw new TypeError("fetch failed", { cause });
+};
+
 const failureOf = (exit: Exit.Exit<unknown, unknown>) => {
   assert.isTrue(Exit.isFailure(exit));
   const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : undefined;
@@ -175,6 +180,23 @@ it.effect("turns every failure into a fixed code that never carries the token", 
         async () => {
           throw new Error(`connect failed for https://api.telegram.org/bot${TOKEN}/getMe`);
         },
+        "unreachable",
+        "unknown",
+      ],
+      // Node's fetch: a name that does not resolve or a refused connection never sent the request.
+      [
+        fetchFailure(Object.assign(new Error("getaddrinfo"), { code: "ENOTFOUND" })),
+        "unreachable",
+        "not_sent",
+      ],
+      [
+        fetchFailure(Object.assign(new AggregateError([], "connect"), { code: "ECONNREFUSED" })),
+        "unreachable",
+        "not_sent",
+      ],
+      // A socket dropped mid-request may have posted.
+      [
+        fetchFailure(Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" })),
         "unreachable",
         "unknown",
       ],

@@ -10,6 +10,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     loadError: null as string | null,
     can: true,
     configure: vi.fn(),
+    resend: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
@@ -71,9 +72,14 @@ vi.mock("../../components/ui/ListSection", () => ({
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("../settings/components/SettingsActionRow", () => ({
-  SettingsActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
+  SettingsActionRow: (props: {
+    label: string;
+    description?: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
     <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress}>
-      {props.label}
+      {props.label} {props.description}
     </button>
   ),
 }));
@@ -117,6 +123,7 @@ vi.mock("../../state/telegramChannel", () => ({
     loadError: mocks.loadError,
     canConfigure: mocks.can,
     configure: mocks.configure,
+    resendUndelivered: mocks.resend,
   }),
 }));
 
@@ -158,6 +165,7 @@ beforeEach(() => {
   mocks.loadError = null;
   mocks.can = true;
   mocks.configure.mockReset().mockResolvedValue({ ok: true });
+  mocks.resend.mockReset().mockResolvedValue({ ok: true });
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -172,6 +180,21 @@ describe("Telegram settings", () => {
     });
     expect(container.textContent).toContain("Telegram does not accept this bot token");
     expect(container.textContent).toContain("send the bot a message first");
+  });
+
+  it("offers to resend replies that never reached Telegram, and shows a refusal", async () => {
+    render({ status: "running" });
+    expect(button("Resend undelivered replies")).toBeNull();
+    render({ status: "running", undeliveredCount: 2 });
+    expect(container.textContent).toContain("2 replies did not reach Telegram.");
+    await press("Resend undelivered replies");
+    expect(mocks.resend).toHaveBeenCalledOnce();
+    mocks.resend.mockResolvedValueOnce({ ok: false, message: "Not allowed." });
+    await press("Resend undelivered replies");
+    expect(container.textContent).toContain("Not allowed.");
+    mocks.can = false;
+    render({ status: "running", undeliveredCount: 2 });
+    expect(button("Resend undelivered replies")!.disabled).toBe(true);
   });
 
   it("explains how to make a bot", () => {

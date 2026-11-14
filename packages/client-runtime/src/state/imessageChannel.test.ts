@@ -3,6 +3,7 @@ import type { ImessageChannelSettings, ImessageChannelStatusEvent } from "@t3too
 
 import {
   applyImessageStatusEvent,
+  imessageUndeliveredLabel,
   compactImessageHandle,
   formatImessageHandleInput,
   imessageDefaultCallingCode,
@@ -37,6 +38,11 @@ describe("applyImessageStatusEvent", () => {
       ...withoutError,
       status: "running",
     });
+    const behind = applyImessageStatusEvent(settings, { status: "running", undeliveredCount: 3 });
+    assert.strictEqual(imessageUndeliveredLabel(behind), "3 replies did not reach Messages.");
+    assert.isNull(
+      imessageUndeliveredLabel(applyImessageStatusEvent(behind, { status: "running" })),
+    );
   });
 });
 

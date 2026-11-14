@@ -883,7 +883,7 @@ const make = Effect.gen(function* () {
       VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
   /**
    * A card the chat app failed to show, or may not have shown, is no longer told: dropping its
-   * delivery lets the next cycle enqueue it again. An ambiguous part already claimed stays deduplicated.
+   * delivery lets the next cycle enqueue it again. A part the chat app confirmed is not sent twice.
    */
   const retellUndelivered = Effect.fn("AutonomyService.retellUndelivered")(function* (
     nowMs: number,

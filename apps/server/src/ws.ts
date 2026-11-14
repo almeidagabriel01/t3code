@@ -2708,6 +2708,8 @@ export const layerWsRpc = (
         [WS_METHODS.imessageChannelConfigure]: (input) => imessageChannelSettings.configure(input),
         [WS_METHODS.imessageChannelSubscribeStatus]: () => imessageChannelSettings.streamStatus,
         [WS_METHODS.imessageChannelCheckAccess]: () => imessageChannelSettings.checkAccess,
+        [WS_METHODS.imessageChannelResendUndelivered]: () =>
+          imessageChannelSettings.resendUndelivered,
         [WS_METHODS.keepAwakeSubscribeStatus]: () => keepAwake.streamStatus,
         [WS_METHODS.heavyQueueSubscribe]: () => heavyQueue.stream,
         [WS_METHODS.heavyQueueSubscribeCommands]: () => heavyCommands.stream,
@@ -2732,6 +2734,8 @@ export const layerWsRpc = (
         [WS_METHODS.telegramChannelGetSettings]: () => telegramChannelSettings.get,
         [WS_METHODS.telegramChannelConfigure]: (input) => telegramChannelSettings.configure(input),
         [WS_METHODS.telegramChannelSubscribeStatus]: () => telegramChannelSettings.streamStatus,
+        [WS_METHODS.telegramChannelResendUndelivered]: () =>
+          telegramChannelSettings.resendUndelivered,
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>

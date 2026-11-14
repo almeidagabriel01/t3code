@@ -465,6 +465,12 @@ If the status shows an error, it says what to fix; T3 Code keeps retrying, waiti
 failure, and turning the switch off stops it at once. Two programs cannot read the same bot at the
 same time, so use one bot per T3 Code server.
 
+A reply that cannot get through, for example while the network is down, is tried again for about a
+quarter of an hour and goes out on its own once a later message reaches the chat. If it still has
+not arrived, **Undelivered replies** in Settings (Telegram or iMessage) says how many and offers
+**Resend**; you can also ask an assistant to send again the ones from the last day. A part that already arrived is not
+sent twice, though a reply cut off mid-send can occasionally show up twice.
+
 ## Memory follows the project
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory

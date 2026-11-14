@@ -160,6 +160,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.autonomyWatchDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.imessageChannelConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.telegramChannelConfigure]: AuthOrchestrationOperateScope,
+  // Sends again what the chat app never confirmed, as the outbox would on its own.
+  [WS_METHODS.imessageChannelResendUndelivered]: AuthOrchestrationOperateScope,
+  [WS_METHODS.telegramChannelResendUndelivered]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.handoffThread]: AuthOrchestrationOperateScope,
   [WS_METHODS.memorySearch]: AuthMemoryReadScope,

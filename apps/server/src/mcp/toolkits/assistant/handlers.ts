@@ -24,6 +24,7 @@ import { AssistantDirectory } from "../../../assistants/AssistantDirectory.ts";
 import * as AssistantGroups from "../../../assistants/AssistantGroups.ts";
 import * as AssistantService from "../../../assistants/AssistantService.ts";
 import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
+import * as ChannelOutbox from "../../../channels/ChannelOutbox.ts";
 import * as DecisionService from "../../../decisions/DecisionService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import { runtimeModeRank } from "../../delegatedTaskModes.ts";
@@ -248,6 +249,16 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
     );
 
   switch (input.action) {
+    case "resend_undelivered": {
+      const outbox = yield* ChannelOutbox.ChannelOutbox;
+      const requeued = { telegram: 0, imessage: 0 };
+      for (const kind of input.channel === undefined
+        ? (["telegram", "imessage"] as const)
+        : [input.channel]) {
+        requeued[kind] = yield* outbox.resend(kind, { recentOnly: true });
+      }
+      return { requeued } satisfies Out;
+    }
     case "notify_user": {
       const self = caller.caller === undefined ? null : assistantIdFromThreadId(caller.caller.id);
       const assistant = all.find(

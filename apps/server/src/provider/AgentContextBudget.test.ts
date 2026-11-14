@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
 import { AssetSigner } from "../assets/AssetSigner.ts";
+import { ChannelOutbox } from "../channels/ChannelOutbox.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
@@ -119,6 +120,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ServerSettingsService)({}),
   Layer.mock(SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService)({}),
+  Layer.mock(ChannelOutbox)({}),
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(ThreadHandoffService)({}),

@@ -18,8 +18,8 @@ export type ImessageSendReport =
 
 /**
  * Sends each piece of a reply through Messages. A fingerprint of every piece is stored before it
- * goes out, so its echo in a self chat is not read back as the user's own message, and a retry
- * after a later piece failed does not send the earlier ones again.
+ * goes out, so its echo in a self chat is not read back as the user's own message. A piece is
+ * confirmed once Messages took it or its echo arrived; a retry sends every other piece again.
  */
 export function makeImessageTransport(input: {
   readonly connectionId: string;
@@ -44,17 +44,19 @@ export function makeImessageTransport(input: {
       }
       const pieces = formatImessageMessages(message);
       for (const [index, text] of pieces.entries()) {
-        const claimed = yield* sql`
-          INSERT OR IGNORE INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms)
+        const pending = yield* sql`
+          INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms, confirmed)
           VALUES (${message.deliveryId}, ${index}, ${target.chatGuid}, ${fingerprintText(text)},
-            ${(yield* DateTime.now).epochMilliseconds})
+            ${(yield* DateTime.now).epochMilliseconds}, 0)
+          ON CONFLICT (delivery_id, chunk_index) DO UPDATE SET sent_at_ms = excluded.sent_at_ms
+          WHERE confirmed = 0 AND consumed = 0
           RETURNING id`.pipe(Effect.orDie);
-        if (claimed.length === 0) continue;
+        if (pending.length === 0) continue;
         const result = yield* Effect.promise(() =>
           input.sender.sendText({ chatGuid: target.chatGuid, text }),
         );
         if ("outcome" in result) {
-          // Certainly not sent: free the piece so a retry sends it. A timeout keeps its claim.
+          // Certainly not sent: its fingerprint must not swallow a real message with the same text.
           if (result.outcome === "not_sent") {
             yield* sql`
               DELETE FROM imessage_sent
@@ -69,6 +71,9 @@ export function makeImessageTransport(input: {
             deliveryErrorCode: result.code,
           });
         }
+        yield* sql`
+          UPDATE imessage_sent SET confirmed = 1
+          WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}`.pipe(Effect.orDie);
       }
       yield* input.report({ ok: true });
       return {
