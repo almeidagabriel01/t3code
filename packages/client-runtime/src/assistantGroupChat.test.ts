@@ -30,6 +30,7 @@ import {
   assistantGroupRequestProject,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
+  assistantGroupAllReadSeq,
   assistantGroupReadStep,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
@@ -801,6 +802,32 @@ describe("read position", () => {
     assert.strictEqual(assistantGroupLatestSeq({ ...chat, messages: new Map() }), 0);
   });
 
+  it("All's New line skips what a tab already read", () => {
+    const project = "p1" as ProjectId;
+    const state = start(
+      snapshot(
+        [
+          message(1, { requestId: "m1" as never, projectId: project }),
+          message(2, { author: "assistant", requestId: "m1" as never }),
+          message(3, { requestId: "m3" as never }),
+          message(4, { author: "assistant", requestId: "m3" as never }),
+          message(5, { author: "agent", kind: "notice" }),
+        ],
+        [],
+      ),
+    );
+    const scopes = [{ projectId: project, unreadCount: 0, waiting: false, readSeq: 2 }];
+    assert.strictEqual(assistantGroupNewSeq(state, 0), 2);
+    assert.strictEqual(
+      assistantGroupNewSeq(state, assistantGroupAllReadSeq(state, { readSeq: 0, scopes })),
+      4,
+    );
+    assert.strictEqual(
+      assistantGroupNewSeq(state, assistantGroupAllReadSeq(state, { readSeq: 4, scopes })),
+      5,
+    );
+  });
+
   it.each([
     { name: "unread when opened", latestSeq: 4, readSeq: 1, seen: 0, seenAfter: 1, target: 4 },
     { name: "read when opened", latestSeq: 4, readSeq: 4, seen: 0, seenAfter: 4, target: null },
@@ -1005,6 +1032,8 @@ describe("assistant group tabs", () => {
     );
     assert.strictEqual(result[0]!.scope, undefined);
     assert.deepStrictEqual(result[4]!.scope, { projectId: null });
+    // A tab the server does not list has nothing unread: it reads from the group's position.
+    assert.strictEqual(tabs([P1, P2], [scope(P1)])![2]!.readSeq, 1);
     assert.deepStrictEqual(result[1]!.scope, { projectId: P1 });
   });
 

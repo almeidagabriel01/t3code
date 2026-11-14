@@ -11,6 +11,7 @@ import {
   foldAssistantGroupText,
   type Assistant,
   type AssistantTeam,
+  type AssistantTeamChat,
   type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantGroupMessageId,
@@ -308,7 +309,7 @@ export interface AssistantGroupTab {
   readonly projectId: ProjectId | null;
   readonly unreadCount: number;
   readonly waiting: boolean;
-  /** Where the tab's "New" line and read marker start. All uses chat.readSeq. */
+  /** Where the tab's "New" line and read marker start: the tab's own position, else the group's. */
   readonly readSeq: number;
 }
 
@@ -339,7 +340,7 @@ export function assistantGroupTabs(input: {
       projectId,
       unreadCount: found?.unreadCount ?? 0,
       waiting: found?.waiting ?? false,
-      readSeq: found?.readSeq ?? 0,
+      readSeq: found?.readSeq ?? chat.readSeq,
     };
   };
   const orphans = scopes.filter(
@@ -860,17 +861,37 @@ export function assistantGroupLatestSeq(state: AssistantGroupChatState): number 
   return latest;
 }
 
-/** Where the "New" line goes: the first message past the read position that others wrote. */
+/**
+ * Where the "New" line goes: the first message past the read position that others wrote. All
+ * passes `assistantGroupAllReadSeq`, so a message read in its tab is not new there.
+ */
 export function assistantGroupNewSeq(
   state: AssistantGroupChatState,
-  readSeq: number,
+  readSeq: number | ((message: AssistantGroupMessage) => number),
 ): number | null {
   let first: number | null = null;
   for (const message of state.messages.values()) {
-    if (message.seq > readSeq && countsAsUnread(message) && (first === null || message.seq < first))
+    const position = typeof readSeq === "number" ? readSeq : readSeq(message);
+    if (
+      message.seq > position &&
+      countsAsUnread(message) &&
+      (first === null || message.seq < first)
+    )
       first = message.seq;
   }
   return first;
+}
+
+/** A message's read position as the server counts it: its request's tab, else the group's. */
+export function assistantGroupAllReadSeq(
+  state: AssistantGroupChatState,
+  chat: Pick<AssistantTeamChat, "readSeq" | "scopes">,
+): (message: AssistantGroupMessage) => number {
+  return (message) => {
+    if (message.requestId === undefined) return chat.readSeq;
+    const projectId = assistantGroupRequestProject(state, message.requestId);
+    return chat.scopes?.find((scope) => scope.projectId === projectId)?.readSeq ?? chat.readSeq;
+  };
 }
 
 /**

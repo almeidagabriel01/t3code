@@ -10,6 +10,7 @@ import {
   assistantGroupInScope,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
+  assistantGroupAllReadSeq,
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
@@ -1060,7 +1061,11 @@ function GroupFeed(props: {
   const [readAtOpen, setReadAtOpen] = useState<number | null>(null);
   if (newSeq === undefined && chat !== null) {
     // A server without counters sends none: there is no position to draw a line from.
-    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, readSeq));
+    setNewSeq(
+      team.chat === undefined
+        ? null
+        : assistantGroupNewSeq(chat, all ? assistantGroupAllReadSeq(chat, team.chat) : readSeq),
+    );
     setReadAtOpen(team.chat === undefined ? null : readSeq);
   }
   useGroupReadMarker({

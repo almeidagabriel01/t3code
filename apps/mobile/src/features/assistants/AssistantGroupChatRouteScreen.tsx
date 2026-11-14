@@ -12,6 +12,7 @@ import {
   assistantGroupBoundaryLabel,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
+  assistantGroupAllReadSeq,
   assistantGroupRunningCount,
   assistantGroupTabs,
   assistantGroupTabsPending,
@@ -951,7 +952,11 @@ function GroupFeed({
   const readSeq = tab?.readSeq ?? team.chat?.readSeq ?? 0;
   if (newSeq === undefined && chat !== null) {
     // A server without counters sends none: there is no position to draw a line from.
-    setNewSeq(team.chat === undefined ? null : assistantGroupNewSeq(chat, readSeq));
+    setNewSeq(
+      team.chat === undefined
+        ? null
+        : assistantGroupNewSeq(chat, isAll ? assistantGroupAllReadSeq(chat, team.chat) : readSeq),
+    );
     setOpenReadSeq(readSeq);
   }
 
