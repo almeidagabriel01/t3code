@@ -9,6 +9,7 @@ import {
   assistantGroupRequestExpanded,
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
+  assistantGroupMentionHref,
   assistantGroupBoundaryLabel,
   assistantGroupLatestSeq,
   assistantGroupNewSeq,
@@ -176,7 +177,7 @@ function GroupMarkdown(props: {
     useAssistantFaceImages(props.members),
   );
   const links = useMarkdownLinks(props.linkHost, props.context);
-  const isMention = (href: string) => href.startsWith("t3-mention:");
+  const isMention = (href: string) => assistantGroupMentionHref(href) !== null;
   const linkHandlers: MarkdownLinkHandlers = {
     ...links.linkHandlers,
     // A mention is a highlight only.
