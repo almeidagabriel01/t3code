@@ -1319,10 +1319,11 @@ export function AssistantGroupChatRouteScreen({
       setProjectPick(undefined);
       feed.current?.scrollToEnd();
       // A request that lands in another project's tab would vanish from this one: follow it.
+      // One with no project yet may still get one from the lead: only All is sure to hold it.
       const landed = replyTo?.projectId ?? projectId ?? null;
-      const landedKey = landed === null ? "general" : `project:${landed}`;
-      if (tabs !== null && tab !== null && tab.key !== "all" && tab.key !== landedKey) {
-        selectTab(tabs.find((candidate) => candidate.key === landedKey) ?? tabs[0]!);
+      if (tabs !== null && tab !== null && tab.key !== "all") {
+        const target = tabs.find((candidate) => candidate.scope?.projectId === landed);
+        if (target?.key !== tab.key) selectTab((landed === null ? null : target) ?? tabs[0]!);
       }
       return { ok: true };
     }

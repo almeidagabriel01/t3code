@@ -1855,6 +1855,11 @@ describe("requests", () => {
     await click("Project:Lead decides");
     await type("anyone");
     await click("Send");
+    // No project yet: the lead may still move it, and only All is sure to hold it.
+    expect(selected(TAB.all)).toBe("true");
+    await click(TAB.general);
+    await type("anyone else");
+    await click("Send");
     expect(selected(TAB.general)).toBe("true");
     await click(TAB.all);
     await click("Project:Alpha");

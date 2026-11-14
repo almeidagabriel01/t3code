@@ -1496,9 +1496,10 @@ export function AssistantGroupChat(props: {
       setReplyTo(null);
       // A send that lands in another tab's project takes the user there, so it never vanishes.
       if (tabs !== null && tab !== null && tab.key !== "all") {
+        // One with no project yet may still get one from the lead: only All is sure to hold it.
         const landed = replyTo?.projectId ?? groupComposerProject;
         const target = tabs.find((entry) => entry.scope?.projectId === landed);
-        if (target?.key !== tab.key) setSavedTab(target?.key ?? "all");
+        if (target?.key !== tab.key) setSavedTab(landed === null ? "all" : (target?.key ?? "all"));
       }
       return { ok: true };
     }
