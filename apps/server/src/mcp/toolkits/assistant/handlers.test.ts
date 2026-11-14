@@ -74,7 +74,12 @@ const assistantsMock = () => {
         },
       ],
     }),
-    assistant("eng", { role: "Engineer", toolAccess: "read-only" }),
+    assistant("eng", {
+      role: "Engineer",
+      toolAccess: "read-only",
+      scope: "project",
+      projectIds: ["p1"] as never,
+    }),
     assistant("gone", { archivedAt: "2026-01-01T00:00:00.000Z" }),
   ];
   const teams: Array<AssistantTeam> = [
@@ -83,6 +88,8 @@ const assistantsMock = () => {
       name: "Core",
       memberIds: ["ceo", "eng"],
       leadId: "ceo",
+      archivedAt: null,
+      projectIds: [],
     } as never,
   ];
   const writes: Array<unknown> = [];
@@ -158,6 +165,8 @@ const assistantsMock = () => {
           ...input,
           id: options?.id ?? "t",
           leadId: input.leadId ?? null,
+          archivedAt: null,
+          projectIds: [],
         } as never;
         writes.push({ createTeam: input });
         teams.push(team);
@@ -167,7 +176,13 @@ const assistantsMock = () => {
       Effect.sync(() => {
         writes.push({ updateTeam: input });
         const index = teams.findIndex((team) => team.id === input.teamId);
-        teams[index] = { ...teams[index]!, ...input } as never;
+        const { addProjectIds = [], removeProjectIds = [], ...rest } = input;
+        const base = [...(input.projectIds ?? teams[index]!.projectIds), ...addProjectIds];
+        teams[index] = {
+          ...teams[index]!,
+          ...rest,
+          projectIds: [...new Set(base)].filter((id) => !removeProjectIds.includes(id)),
+        } as never;
         return teams[index]!;
       }),
   });
@@ -655,6 +670,37 @@ it.effect("a group change leaves one chat line per change, and a repeat leaves n
   }),
 );
 
+it.effect("group_update gives and takes a group's projects; read shows where each one works", () =>
+  Effect.gen(function* () {
+    const { call, writes, announced } = yield* harness("approval-required");
+    const given = yield* call({ action: "group_update", group: "Core", addProjects: ["p2", "p3"] });
+    expect(given.group.projectIds).toEqual(["p2", "p3"]);
+    expect(writes.at(-1)).toEqual({
+      updateTeam: expect.objectContaining({ teamId: "t1", addProjectIds: ["p2", "p3"] }),
+    });
+    const eng = yield* call({ action: "read", handle: "eng" });
+    expect(eng).toMatchObject({
+      projectIds: ["p1"],
+      effectiveProjectIds: ["p1", "p2", "p3"],
+      teams: [{ name: "Core", projectIds: ["p2", "p3"] }],
+    });
+    // Everywhere already: an assistant of scope "all" lists none.
+    expect((yield* call({ action: "read", handle: "ceo" })).effectiveProjectIds).toEqual([]);
+    yield* call({ action: "group_update", group: "Core", removeProjects: ["p2"] });
+    yield* call({ action: "group_update", group: "Core", projectIds: ["p4"] });
+    expect((yield* call({ action: "read", handle: "eng" })).effectiveProjectIds).toEqual([
+      "p1",
+      "p4",
+    ]);
+    expect(announced.map((line) => line.text)).toEqual([
+      "gave the group p2, p3",
+      "took p2 from the group",
+      "gave the group p4",
+      "took p3 from the group",
+    ]);
+  }),
+);
+
 it.effect("a group change is refused unless the turn came from the user", () =>
   Effect.gen(function* () {
     const refusals = [
@@ -716,8 +762,26 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
       code: "capability_denied",
       message: expect.stringContaining("this turn came from a scheduled task"),
     });
+    // Nor may it give an assistant, itself included, more projects.
+    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+      expect(yield* fromRoutine.call({ action: "update", handle: "eng", ...change })).toMatchObject(
+        {
+          code: "capability_denied",
+          message: expect.stringContaining("this turn came from a scheduled task"),
+        },
+      );
+    }
+    // Making a new assistant with projects is the same escalation.
+    const made = { action: "create", name: "Fresh", toolAccess: "read-only" } as const;
+    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+      expect(yield* fromRoutine.call({ ...made, ...change })).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringContaining("this turn came from a scheduled task"),
+      });
+    }
     expect(fromRoutine.writes).toEqual([]);
     // Other changes from that turn need no user.
+    expect(yield* fromRoutine.call(made)).toMatchObject({ status: "created" });
     expect(
       yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
     ).toMatchObject({
@@ -740,6 +804,12 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
       },
     ]);
     expect((yield* call({ action: "read", handle: "ceo" })).notifications).toBe("reply-only");
+    expect(yield* call({ action: "update", handle: "eng", projectIds: ["p-other"] })).toMatchObject(
+      { status: "updated" },
+    );
+    expect(
+      yield* call({ ...made, projectIds: ["p-other"], clientRequestId: "fresh-user" }),
+    ).toMatchObject({ status: "created" });
   }),
 );
 

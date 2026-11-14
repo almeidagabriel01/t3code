@@ -28,8 +28,21 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 ## Project assistants
 
 An assistant set to **All projects** works across all your projects. One set to real projects is a
-project assistant. T3 Code refuses its launches, delegated tasks and messages to agent conversations
-in any project outside its list, and tells it why. It can still message other assistants.
+project assistant. It works in its own projects plus those of its groups (see
+[Group projects](#group-projects)). T3 Code refuses its launches, delegated tasks and messages to
+agent conversations in any other project, and tells it why. It can still message other assistants.
+
+A project assistant with more than one project never falls back to its first one. It has to name
+the project when it starts work, and asks you when your request does not make it clear. Its
+delegated tasks would run in its own conversation's project, so it starts a thread in the right
+project instead. Editing an assistant shows the projects it gets from its groups apart from its own.
+
+Only you can change which projects an assistant works in. An assistant may do it for you in a
+conversation you started, but not from another assistant's message, a schedule or a group task.
+
+A scheduled task that a project assistant makes stays inside its projects. If the assistant later
+loses the task's project, or is deleted, the task stops starting work and its last run says why.
+Tasks made before this check existed don't know which assistant made them, so they keep running.
 
 ## Tool access
 
@@ -192,6 +205,22 @@ Home list your groups under the assistants.
   asks one.
 - Deleting an assistant removes it from its groups, which stay even when they end up empty. Archived
   members stay in the group and come back when unarchived.
+
+### Group projects
+
+A group can have projects of its own, and every member may work in them on top of its own projects.
+Give a new project to a whole team in one step:
+
+- From the group: open its settings and tick the projects under **Projects**. The settings show how
+  many members gain access.
+- From the project: under **Settings > Projects**, open the project and use **Assistants with
+  access** to tick groups, or single assistants. After you add a project, T3 Code offers the same
+  choice.
+
+Someone who joins the group later gets its projects too. Taking a project away from the group keeps
+it for any member that has it on its own list. Archived projects stay in the list, marked as
+archived. Each member's instructions list its groups' projects by name, so you do not have to write
+them in by hand.
 
 ### Group chat
 
@@ -393,6 +422,10 @@ same time, so use one bot per T3 Code server.
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory
 apart, give it its own project. See [Memory](./memory.md).
+
+An assistant with several projects names the project a fact belongs to when it saves it, or saves it
+for you everywhere when it holds for all of them. When it looks something up, it searches all of its
+projects.
 
 ## Reset, restore, archive and delete
 

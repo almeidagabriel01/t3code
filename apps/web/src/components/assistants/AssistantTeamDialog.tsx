@@ -33,6 +33,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantGroupRoutinesHost } from "./AssistantGroupRoutinesDialog";
 import { AssistantGroupSettingsHost } from "./AssistantGroupSettingsDialog";
+import { ProjectAssistantAccessHost } from "./ProjectAssistantAccessDialog";
 import { assistantTeamDialogAtom, type AssistantTeamDialogTarget } from "./assistantTeamState";
 
 const NO_LEAD_VALUE = "__nobody__";
@@ -50,6 +51,7 @@ export function AssistantTeamDialogHost() {
       )}
       <AssistantGroupSettingsHost />
       <AssistantGroupRoutinesHost />
+      <ProjectAssistantAccessHost />
     </>
   );
 }

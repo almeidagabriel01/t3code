@@ -1628,13 +1628,21 @@ export type MemoryUpsertInput = typeof MemoryUpsertInput.Type;
 export const MemoryRememberInput = struct({
   text,
   scope: Schema.optionalKey(Schema.Literals(["user", "project"])),
+  /** scope project, for an assistant that works in several projects: the one the fact is about. */
+  projectId: Schema.optionalKey(ProjectId),
   /** Replaces this memory's text; a replacement keeps the memory's scope. */
   memoryId: Schema.optionalKey(MemoryId),
-}).check(
-  Schema.makeFilter((v) => v.scope !== undefined || v.memoryId !== undefined, {
-    expected: "scope, or memoryId to replace a memory",
-  }),
-);
+})
+  .check(
+    Schema.makeFilter((v) => v.scope !== undefined || v.memoryId !== undefined, {
+      expected: "scope, or memoryId to replace a memory",
+    }),
+  )
+  .check(
+    Schema.makeFilter((v) => v.projectId === undefined || v.scope === "project", {
+      expected: "projectId only with scope project",
+    }),
+  );
 export type MemoryRememberInput = typeof MemoryRememberInput.Type;
 
 export const MemoryRecallInput = struct({

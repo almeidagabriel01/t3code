@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { readProjects, useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import {
   selectedProjectGroupsOf,
@@ -167,6 +167,7 @@ export function useSettingsEnvironmentFilter() {
       toggleProject,
       selectAllProjects,
       getSelectedProjectKeys,
+      readProjectGroups: () => settingsProjectGroups(readProjects(), groupingMode),
       selectAll: () => setSelectedIds(null),
       toggleEnvironment: (environmentId: EnvironmentId) =>
         setSelectedIds((current) =>
@@ -178,6 +179,7 @@ export function useSettingsEnvironmentFilter() {
       selectedTargets,
       selectedIds,
       projectGroups,
+      groupingMode,
       selectableProjectGroups,
       selectedProjectKeys,
       selectedProjectGroups,

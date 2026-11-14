@@ -93,7 +93,14 @@ vi.mock("../../components/ui/ListRowLayout", () => ({
     </>
   ),
 }));
-vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
+vi.mock("../../components/ui/ListSection", () => ({
+  ListSection: (props: { title?: string; children?: ReactNode }) => (
+    <>
+      {props.title}
+      {props.children}
+    </>
+  ),
+}));
 vi.mock("../../components/ui/Menu", () => ({
   Menu: (props: {
     actions: Array<{ id: string; title: string }>;
@@ -161,6 +168,13 @@ vi.mock("../../state/assistants", () => ({
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => [
+    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
+    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
+  ],
+}));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
 }));
@@ -718,5 +732,28 @@ describe("assistant team", () => {
     type("Role", " Chief ");
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ role: "Chief" });
+  });
+});
+
+describe("projects inherited from groups", () => {
+  it("lists them read-only with the group, and saving sends only the own projects", async () => {
+    mocks.teams = [
+      {
+        environmentId: "hub",
+        team: {
+          id: "t1",
+          name: "Growth",
+          memberIds: ["a1"],
+          projectIds: ["p2"],
+          archivedAt: null,
+        },
+      },
+    ];
+    render({ ...assistant(), scope: "project", projectIds: ["p1"] } as unknown as Assistant);
+    expect(container.textContent).toContain("From groups");
+    expect(container.textContent).toContain("via Growth");
+    pick("Beta");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].projectIds).toEqual(["p1", "p2"]);
   });
 });

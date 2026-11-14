@@ -122,6 +122,7 @@ const team = (overrides: Partial<AssistantTeam> = {}): AssistantTeam => ({
   memberIds: ["ada", "bo", "jarvis"] as AssistantId[],
   leadId: "jarvis" as AssistantId,
   archivedAt: null,
+  projectIds: [],
   createdAt: WHEN,
   updatedAt: WHEN,
   ...overrides,

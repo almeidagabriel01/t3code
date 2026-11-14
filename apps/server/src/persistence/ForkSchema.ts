@@ -1,5 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  backfillTeamProjects,
+  forgetDeletedProjects,
+} from "../assistants/AssistantTeamProjects.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -476,11 +480,16 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   const requestColumns = yield* sql<{
     readonly name: string;
   }>`PRAGMA table_info(assistant_requests)`;
+  // group_id marks the whole step done, so it must not exist without the rest.
   if (!requestColumns.some((column) => column.name === "group_id")) {
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN group_id TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN reply_text TEXT`;
-    yield* sql`ALTER TABLE assistant_requests ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`;
-    yield* sql`UPDATE assistant_requests SET group_id = request_id`;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN group_id TEXT`;
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN reply_text TEXT`;
+        yield* sql`ALTER TABLE assistant_requests ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`;
+        yield* sql`UPDATE assistant_requests SET group_id = request_id`;
+      }),
+    );
   }
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
@@ -506,6 +515,17 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   if (!teamColumns.some((column) => column.name === "archived_at")) {
     yield* sql`ALTER TABLE assistant_teams ADD COLUMN archived_at TEXT`;
   }
+  // Projects a group gives its members, on top of their own.
+  // The column is the "backfilled" marker, so it must not outlive a failed backfill.
+  if (!teamColumns.some((column) => column.name === "project_ids_json")) {
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`ALTER TABLE assistant_teams ADD COLUMN project_ids_json TEXT NOT NULL DEFAULT '[]'`;
+        yield* backfillTeamProjects(sql);
+      }),
+    );
+  }
+  yield* forgetDeletedProjects(sql);
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_messages (
       message_id TEXT PRIMARY KEY,
@@ -634,6 +654,12 @@ export const ensureForkSchema = Effect.fn("ForkSchema.ensure")(function* () {
   ) {
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN missed_run_policy TEXT NOT NULL DEFAULT 'skip'`;
     yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN max_runs INTEGER`;
+  }
+  if (
+    scheduledColumns.length > 0 &&
+    !scheduledColumns.some((column) => column.name === "owner_assistant_id")
+  ) {
+    yield* sql.withTransaction(sql`ALTER TABLE scheduled_tasks ADD COLUMN owner_assistant_id TEXT`);
   }
 
   // The memory continuation scan asks for a thread's newest `run.updated`, first `message.updated`
