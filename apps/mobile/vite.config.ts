@@ -47,6 +47,7 @@ const reactTests = [
   "src/features/threads/useThreadMenu.test.tsx",
   "src/features/threads/thread-list-v2-items.test.tsx",
   "src/features/kanban/KanbanCardRouteScreen.test.tsx",
+  "src/features/kanban/KanbanCardTile.test.tsx",
   "src/features/notes/NotesRouteScreen.test.tsx",
   "src/features/settings/SettingsMacPermissionsRouteScreen.test.tsx",
   "src/features/settings/SettingsDevicesRouteScreen.test.tsx",

@@ -18,6 +18,7 @@ import type {
   OrchestrationMessageContext,
   ProjectId,
 } from "@t3tools/contracts";
+import { PROBLEM_KIND_TITLES } from "@t3tools/contracts";
 import { selectKanbanBoardByProject, type KanbanBoardState, type KanbanState } from "./kanban.ts";
 
 export const KANBAN_PRIORITIES: ReadonlyArray<KanbanPriority> = [
@@ -606,6 +607,24 @@ export function problemCardLines(problem: KanbanCardProblem): ReadonlyArray<stri
     ...(problem.count > 1 ? [`Seen ${problem.count} times`] : []),
     ...(problem.ownerName === null ? [] : [`Handled by ${problem.ownerName}`]),
   ];
+}
+
+/**
+ * The board card's problem chip. `text` shows only once the cause repeats; `iconLabel` names the
+ * icon when the text doesn't already say it. Null on ordinary cards.
+ */
+export function problemBadge(problem: KanbanCardProblem | null) {
+  if (problem === null) return null;
+  const text = problem.count > 1 ? `Seen ${problem.count} times` : null;
+  return {
+    ignored: problem.ignored,
+    text,
+    iconLabel: problem.ignored
+      ? "Ignored"
+      : text === null
+        ? PROBLEM_KIND_TITLES[problem.kind]
+        : null,
+  };
 }
 
 export const problemPreviousCardLabel = (number: number) => `Previous card: #${number}`;

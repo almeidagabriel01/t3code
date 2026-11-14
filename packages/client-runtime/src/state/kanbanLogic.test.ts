@@ -13,6 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   kanbanCardPickerRows,
+  problemBadge,
   problemCardLines,
   problemIgnoreLabel,
   problemPreviousCardLabel,
@@ -622,6 +623,19 @@ describe("problem card text", () => {
     [{ ...base, count: 5, ownerName: "Ops" }, ["Seen 5 times", "Handled by Ops"]],
   ] as const)("%j", (problem, lines) => {
     expect(problemCardLines(problem)).toEqual(lines);
+  });
+  it.each([
+    ["not a problem card", null, null],
+    ["count 1", { ...base }, { ignored: false, text: null, iconLabel: "CI" }],
+    ["count 4", { ...base, count: 4 }, { ignored: false, text: "Seen 4 times", iconLabel: null }],
+    ["ignored", { ...base, ignored: true }, { ignored: true, text: null, iconLabel: "Ignored" }],
+    [
+      "ignored and repeated",
+      { ...base, count: 4, ignored: true },
+      { ignored: true, text: "Seen 4 times", iconLabel: "Ignored" },
+    ],
+  ] as const)("badge: %s", (_name, problem, badge) => {
+    expect(problemBadge(problem)).toEqual(badge);
   });
   it("names the previous card and the ignore action for each state", () => {
     expect(problemPreviousCardLabel(12)).toBe("Previous card: #12");

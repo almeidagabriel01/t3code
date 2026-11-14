@@ -38,7 +38,13 @@ import {
 import { formatDueLabel, isDueOverdue } from "./kanbanFormat";
 import type { QuickEditTarget } from "./KanbanQuickEdit";
 import { useKanbanCanEdit } from "./useKanban";
-import { LabelChip, PriorityIcon, ProgressBar, TemplateIcon } from "./kanbanPresentation";
+import {
+  LabelChip,
+  PriorityIcon,
+  ProblemBadge,
+  ProgressBar,
+  TemplateIcon,
+} from "./kanbanPresentation";
 
 const LinkedAgent = memo(function LinkedAgent(props: {
   readonly environmentId: EnvironmentId;
@@ -186,6 +192,7 @@ export const KanbanCardTile = memo(function KanbanCardTile(props: KanbanCardTile
           {card.blockedBy.length > 0 ? (
             <BanIcon aria-label="Blocked" className="size-3.5 text-warning-foreground" />
           ) : null}
+          <ProblemBadge problem={card.problem} />
           <PriorityIcon priority={card.priority} />
         </span>
       </div>

@@ -12,6 +12,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     updateCard: vi.fn(),
     setCardProblemIgnored: vi.fn(),
     navigate: vi.fn(),
+    markdown: vi.fn((_props: { markdown: string; preserveSoftBreaks?: boolean }) => null),
   },
 }));
 
@@ -49,7 +50,9 @@ vi.mock("../../components/ui/Dialog", () => ({
   confirm: vi.fn(),
 }));
 vi.mock("../../components/ui/FilePreviewModal", () => ({ FilePreviewModal: () => null }));
-vi.mock("../../native/SelectableMarkdownText", () => ({ SelectableMarkdownText: () => null }));
+vi.mock("../../native/SelectableMarkdownText", () => ({
+  SelectableMarkdownText: mocks.markdown,
+}));
 vi.mock("../threads/ThreadMarkdownImage", () => ({ ThreadMarkdownImage: () => null }));
 vi.mock("../files/FileMarkdownPreview", () => ({
   useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
@@ -114,6 +117,7 @@ beforeEach(() => {
   mocks.updateCard.mockReset();
   mocks.setCardProblemIgnored.mockReset();
   mocks.navigate.mockReset();
+  mocks.markdown.mockClear();
   mocks.states = [
     {
       environmentId,
@@ -163,6 +167,21 @@ describe("KanbanCardRouteScreen due date", () => {
     });
     await act(async () => mocks.prompt.mock.calls[0]![0].onConfirm(""));
     expect(mocks.updateCard).toHaveBeenLastCalledWith({ cardId: "c1", dueAt: null });
+  });
+});
+
+describe("KanbanCardRouteScreen description", () => {
+  it("keeps single-newline lines apart", async () => {
+    const board = (
+      mocks.states[0] as { state: { boards: Map<string, { cards: Map<string, unknown> }> } }
+    ).state.boards.get("b0")!;
+    const description = "Command: pnpm install\nError: ERR_PNPM_FETCH_404\nWhere: Linux";
+    board.cards = new Map([["c1", { ...card, description }]]);
+    await mount();
+    expect(mocks.markdown).toHaveBeenLastCalledWith(
+      expect.objectContaining({ markdown: description, preserveSoftBreaks: true }),
+      undefined,
+    );
   });
 });
 

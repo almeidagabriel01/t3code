@@ -548,6 +548,7 @@ function KanbanCardDetail(props: {
               textStyle={markdownStyles.nativeTextStyle}
               onLinkPress={(href) => void Linking.openURL(href)}
               renderImage={renderDescriptionImage}
+              preserveSoftBreaks
             />
             {disabled ? null : (
               <Button
@@ -699,7 +700,7 @@ function KanbanCardDetail(props: {
             {disabled ? null : (
               <Button
                 label={problemIgnoreLabel(card.problem.ignored)}
-                icon={card.problem.ignored ? "bell.badge" : "eye.slash"}
+                icon={card.problem.ignored ? "bell.badge" : "bell.slash"}
                 tone="secondary"
                 onPress={() =>
                   void actions.setCardProblemIgnored({
