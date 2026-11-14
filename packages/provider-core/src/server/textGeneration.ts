@@ -120,12 +120,26 @@ export interface AssistantGroupRoutingInput {
   }>;
   readonly recentMessages: ReadonlyArray<{ readonly from: string; readonly text: string }>;
   readonly request: string;
+  /** What was said in the request since it was posted (a question about it, the answer). */
+  readonly followUps?: ReadonlyArray<{ readonly from: string; readonly text: string }>;
+  /** The group's compacted summary of earlier chat, when it has one. */
+  readonly summary?: string | null;
+  /** The projects to pick from; empty when the request's project is already set. */
+  readonly projects?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  /** The message starts a request: name it. */
+  readonly newRequest?: boolean;
 }
 
 export interface AssistantGroupRoutingResult {
   readonly assistantIds: ReadonlyArray<string>;
   /** The message asks for nothing (thanks, an acknowledgement): with no ids, nobody is given a task. */
   readonly noReply?: boolean;
+  /** One of the listed projects; empty when none was listed or it is unclear which. */
+  readonly projectId?: string;
+  /** When the project is unclear: a short question for the user naming the options. */
+  readonly question?: string;
+  /** A new request's short title; empty otherwise. */
+  readonly title?: string;
 }
 
 export interface AssistantGroupSummaryInput {

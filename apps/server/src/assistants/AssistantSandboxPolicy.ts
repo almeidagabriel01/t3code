@@ -1,6 +1,7 @@
 import {
   type Assistant,
   assistantEffectiveProjectIds,
+  type AssistantTeam,
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
@@ -53,6 +54,26 @@ export function sandboxNoteLine(environmentId: string | null): string {
     ? "Your workspace is the sandbox container, which is not linked yet: you cannot run commands or edit files until the user starts it in Settings → Assistants. On this Mac you only read."
     : `Your workspace is the sandbox container (environmentId ${environmentId}). On this Mac you only read: shell commands that change anything, and file edits, are blocked here. For any request to change files, run commands, install, build or test, start that work in the sandbox with t3_thread_launch (environmentId ${environmentId}) or delegate_task (target.environmentId ${environmentId}), then report its result.`;
 }
+
+/**
+ * The projects a member may work in for one group's request: its own and that group's, or "all"
+ * when its scope is not limited. Every request permission check goes through it, never the union
+ * of the members' projects.
+ */
+export const assistantProjects = (
+  assistant: Pick<Assistant, "id" | "scope" | "projectIds">,
+  team: Pick<AssistantTeam, "memberIds" | "archivedAt" | "projectIds">,
+): ReadonlyArray<ProjectId> | "all" =>
+  assistant.scope === "project" ? assistantEffectiveProjectIds(assistant, [team]) : "all";
+
+export const assistantWorksIn = (
+  assistant: Pick<Assistant, "id" | "scope" | "projectIds">,
+  team: Pick<AssistantTeam, "memberIds" | "archivedAt" | "projectIds">,
+  projectId: ProjectId,
+): boolean => {
+  const projects = assistantProjects(assistant, team);
+  return projects === "all" || projects.includes(projectId);
+};
 
 /**
  * Why `threadId` may not start work there, or none. A project assistant stays inside its effective

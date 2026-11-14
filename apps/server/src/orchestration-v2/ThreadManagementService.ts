@@ -849,7 +849,13 @@ const make = Effect.gen(function* () {
               command.type === "thread.delete" ||
               command.type === "thread.unarchive")
           ) {
-            return refuse("group_thread");
+            // A conversation a cleared chat left the member is the member's to keep or let go.
+            const inGroup = assistantDirectory.value.inGroup?.(threadId) ?? Effect.succeed(true);
+            return inGroup.pipe(
+              Effect.flatMap((linked) =>
+                linked ? refuse("group_thread") : Effect.succeed(command),
+              ),
+            );
           }
           switch (command.type) {
             case "thread.runtime-mode.set":

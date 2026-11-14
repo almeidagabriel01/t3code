@@ -2,7 +2,7 @@ import { assistantPresence } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_STATUS_LABEL,
-  assistantGroupPauseReasonLabel,
+  assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
@@ -14,22 +14,22 @@ import {
 } from "@t3tools/contracts";
 import { MessageSquareIcon } from "lucide-react";
 
+import { cn } from "../../lib/utils";
 import { useThreadShell } from "../../state/entities";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 
-const STATUS_VARIANT = {
-  queued: "outline",
-  running: "info",
-  waiting: "warning",
-  completed: "success",
-  paused: "warning",
-  cancelled: "outline",
-  failed: "error",
+const STATUS_TONE = {
+  queued: "text-muted-foreground",
+  running: "text-info-foreground",
+  waiting: "text-warning-foreground",
+  completed: "text-success-foreground",
+  paused: "text-warning-foreground",
+  cancelled: "text-muted-foreground",
+  failed: "text-destructive-foreground",
 } as const;
 
 const ACTION_LABEL: Record<Exclude<AssistantGroupTaskAction, "reassign">, string> = {
@@ -59,36 +59,35 @@ export function GroupTaskCard(props: {
   const presence = shell === null ? null : assistantPresence(shell);
   const needs = presence?.mood === "needs" ? presence.detail : null;
   const waiting = assistantGroupWaitingReason(task);
+  const reasonLabel = assistantGroupTaskReasonLabel(task);
   return (
     <div
       data-testid="group-task-card"
       data-status={task.status}
-      className="mt-1.5 flex min-w-0 flex-col gap-1.5 rounded-lg border border-foreground/12 px-2.5 py-2 text-xs"
+      className="mt-1.5 flex min-w-0 flex-col gap-1.5 rounded-xl border border-foreground/10 bg-foreground/2 px-3 py-2.5 text-xs"
     >
       <div className="flex min-w-0 items-center gap-2">
         {props.owner === undefined ? null : (
-          <span className="flex shrink-0 items-center gap-1.5 font-medium">
+          <span className="flex min-w-0 shrink items-center gap-1.5 font-medium">
             <AssistantAvatar
               assistant={props.owner}
               environmentId={props.environmentId}
               className="size-4"
             />
-            {props.owner.name}
+            <span className="truncate">{props.owner.name}</span>
           </span>
         )}
-        <Badge variant={STATUS_VARIANT[task.status]} size="sm">
+        <span
+          className={cn("flex shrink-0 items-center gap-1.5 font-medium", STATUS_TONE[task.status])}
+        >
+          <span aria-hidden className="size-1.5 rounded-full bg-current" />
           {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
-        </Badge>
-        <Tooltip>
-          <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-            {task.instruction}
-          </TooltipTrigger>
-          <TooltipPopup side="top">{task.instruction}</TooltipPopup>
-        </Tooltip>
-        <span className="shrink-0 text-muted-foreground tabular-nums">
+        </span>
+        <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">
           <RelativeTime timestamp={task.updatedAt} />
         </span>
       </div>
+      <p className="line-clamp-3 text-sm wrap-anywhere text-foreground">{task.instruction}</p>
       {task.expectedResult === undefined ? null : (
         <p data-testid="group-task-expected" className="truncate text-muted-foreground">
           Expected: {task.expectedResult}
@@ -108,9 +107,7 @@ export function GroupTaskCard(props: {
           {waiting}
         </p>
       )}
-      {task.status === "paused" ? (
-        <p className="text-muted-foreground">{assistantGroupPauseReasonLabel(task.reason)}</p>
-      ) : null}
+      {reasonLabel === null ? null : <p className="text-muted-foreground">{reasonLabel}</p>}
       {needs === null ? null : (
         <p data-testid="group-task-needs" className="font-medium text-warning-foreground">
           {needs} · Open the conversation to answer

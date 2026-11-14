@@ -12,7 +12,6 @@ const base = {
   members,
   replyOwnerId: null,
   stopped: [],
-  open: [],
   fromUser: true,
 };
 
@@ -46,7 +45,7 @@ describe("routeGroupMessage", () => {
   it.each([
     [
       "a mention wins over everything",
-      { text: "@Ana Paula continue", stopped, open: ["ada"] },
+      { text: "@Ana Paula continue", stopped, requestOwnerId: "ada" },
       { kind: "members", ids: ["ana"] },
     ],
     [
@@ -56,7 +55,7 @@ describe("routeGroupMessage", () => {
     ],
     [
       "a reply goes to its owner",
-      { text: "why?", replyOwnerId: "beto", open: ["ada"] },
+      { text: "why?", replyOwnerId: "beto", requestOwnerId: "ada" },
       { kind: "members", ids: ["beto"] },
     ],
     [
@@ -70,31 +69,35 @@ describe("routeGroupMessage", () => {
       { kind: "resume", taskId: "t1" },
     ],
     [
-      "continue with nothing stopped follows the one open task",
-      { text: "continue", open: ["ada"] },
+      "continue with nothing stopped follows the request's one member",
+      { text: "continue", requestOwnerId: "ada" },
       { kind: "members", ids: ["ada"] },
     ],
-    ["continue with nothing stopped or open goes to the lead", { text: "continue" }, null],
+    ["continue with nothing stopped in a new request goes to the lead", { text: "continue" }, null],
     [
       "a reply beats continue",
       { text: "continue", stopped, replyOwnerId: "ada" },
       { kind: "members", ids: ["ada"] },
     ],
     [
-      "one open task takes the follow-up",
-      { text: "and Q3?", open: ["beto"] },
+      "the request's one member takes the follow-up",
+      { text: "and Q3?", requestOwnerId: "beto" },
       { kind: "members", ids: ["beto"] },
     ],
-    ["its owner may have left", { text: "and Q3?", open: ["gone"] }, null],
-    ["two open tasks go to the lead", { text: "and Q3?", open: ["ada", "beto"] }, null],
-    ["no tasks go to the lead", { text: "and Q3?" }, null],
+    ["its member may have left", { text: "and Q3?", requestOwnerId: "gone" }, null],
+    // A message that replies to nothing starts a request, whatever else is open.
+    ["a new request goes to the lead", { text: "and Q3?" }, null],
     [
       "a group of one takes anything",
       { text: "and Q3?", members: [members[0]!] },
       { kind: "members", ids: ["ada"] },
     ],
     ["an agent never resumes", { text: "continue", stopped, fromUser: false }, null],
-    ["an agent never follows up", { text: "any news?", open: ["ada"], fromUser: false }, null],
+    [
+      "an agent never follows up",
+      { text: "any news?", requestOwnerId: "ada", fromUser: false },
+      null,
+    ],
     [
       "an agent can still name a member",
       { text: "@beto look", fromUser: false },

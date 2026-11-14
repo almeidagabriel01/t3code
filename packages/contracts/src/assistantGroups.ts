@@ -1,12 +1,14 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { AssistantId, AssistantTeamId } from "./assistants.ts";
+import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { type Assistant, AssistantId, AssistantTeamId } from "./assistants.ts";
 import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
+import { DecisionId } from "./decisions.ts";
 
 /**
  * A group's shared chat, as in an OpenBot channel. A message there runs no agent itself: it opens
- * one task per recipient, and each member works it in its own hidden thread for that group.
+ * one task per recipient. A message that replies to nothing starts a request; replies continue it.
+ * Each member works a request in its own hidden thread for that request, in the request's project.
  */
 /** The line the server puts before the links to files copied for an assistant. */
 export const ASSISTANT_TRANSFER_HEADING = "Files copied to the shared folder for you:";
@@ -70,6 +72,15 @@ export const AssistantGroupMessageKind = Schema.Literals([
 ]);
 export type AssistantGroupMessageKind = typeof AssistantGroupMessageKind.Type;
 
+export const AssistantGroupWaiting = Schema.Struct({
+  /** The member's conversation for the request; it holds the approval or question. */
+  threadId: ThreadId,
+  /** The open decision it asked through t3_decision, when that is what waits. */
+  decisionId: Schema.optionalKey(DecisionId),
+  resolved: Schema.Boolean,
+});
+export type AssistantGroupWaiting = typeof AssistantGroupWaiting.Type;
+
 export const AssistantGroupMessage = Schema.Struct({
   id: AssistantGroupMessageId,
   teamId: AssistantTeamId,
@@ -87,6 +98,19 @@ export const AssistantGroupMessage = Schema.Struct({
   taskId: Schema.NullOr(AssistantGroupTaskId),
   /** Files and images sent with the message; absent from older servers and when there are none. */
   attachments: Schema.optionalKey(Schema.Array(ChatAttachment)),
+  /** The request it belongs to (its first message); absent for chat-wide lines and older servers. */
+  requestId: Schema.optionalKey(AssistantGroupMessageId),
+  /** On a request's first message: where its work runs, once picked or inferred by the lead. */
+  projectId: Schema.optionalKey(ProjectId),
+  /** On a request's first message: its short title. */
+  title: Schema.optionalKey(Schema.String),
+  /**
+   * On a notice that a member's conversation for the request waits on the user (an approval, a
+   * question, an open decision): where to answer it, and whether it was answered since.
+   */
+  waiting: Schema.optionalKey(AssistantGroupWaiting),
+  /** On the lead's notice asking which project a request is for; absent on every other message. */
+  asksProject: Schema.optionalKey(Schema.Literal(true)),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;
@@ -118,8 +142,10 @@ export const AssistantGroupTask = Schema.Struct({
   status: AssistantGroupTaskStatus,
   /** Why it paused: stopped, no_delivery, handoff_limit, member_removed, group_archived. Unknown ones show as paused. A queued task blocked by a resource says "waiting for <resource> (used by <member>)". */
   reason: Schema.NullOr(Schema.String),
-  /** The owner's hidden thread for this group, where the work happens. */
+  /** The owner's hidden thread for the task's request, where the work happens. */
   threadId: ThreadId,
+  /** The request it belongs to; absent from older servers. */
+  requestId: Schema.optionalKey(AssistantGroupMessageId),
   /** What done looks like, as the assigner wrote it; absent when none was given. */
   expectedResult: Schema.optionalKey(Schema.String),
   /** Chat message numbers the subtask is based on. */
@@ -163,6 +189,8 @@ export const AssistantGroupsEvent = Schema.Union([
     messages: Schema.Array(AssistantGroupMessage),
     tasks: Schema.Array(AssistantGroupTask),
     hasMore: Schema.Boolean,
+    /** First messages of the requests the page shows that lie before it. */
+    requests: Schema.optionalKey(Schema.Array(AssistantGroupMessage)),
   }),
   Schema.Struct({ type: Schema.Literal("message"), message: AssistantGroupMessage }),
   Schema.Struct({ type: Schema.Literal("task"), task: AssistantGroupTask }),
@@ -180,6 +208,8 @@ export const AssistantGroupsHistoryResult = Schema.Struct({
   messages: Schema.Array(AssistantGroupMessage),
   tasks: Schema.Array(AssistantGroupTask),
   hasMore: Schema.Boolean,
+  /** First messages of the requests the page shows that lie before it. */
+  requests: Schema.optionalKey(Schema.Array(AssistantGroupMessage)),
 });
 export type AssistantGroupsHistoryResult = typeof AssistantGroupsHistoryResult.Type;
 
@@ -222,8 +252,10 @@ export type AssistantGroupsConversationResult = typeof AssistantGroupsConversati
 export const AssistantGroupsPostInput = Schema.Struct({
   teamId: AssistantTeamId,
   text: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSISTANT_GROUP_MESSAGE_MAX_CHARS)),
-  /** A member's message this answers: its task's owner gets the follow-up. */
+  /** A message of a request: the post continues that request, and a member's task owner gets it. */
   replyToMessageId: Schema.optional(AssistantGroupMessageId),
+  /** A new request's project, one of the group's; absent lets the lead decide. */
+  projectId: Schema.optional(ProjectId),
   /** A repeat with the same id posts nothing more. */
   clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   /** Pending uploads, as for a thread message; the server keeps them with the message. */
@@ -248,6 +280,24 @@ export const AssistantGroupsTaskActionInput = Schema.Struct({
 export type AssistantGroupsTaskActionInput = typeof AssistantGroupsTaskActionInput.Type;
 
 export const ASSISTANT_GROUP_EVERYONE = "everyone";
+
+/**
+ * The projects a group's requests may run in: the group's own, then in member order each member's
+ * listed projects, or its home project when it may work anywhere.
+ */
+export function assistantGroupProjectIds(
+  members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>,
+  groupProjectIds: ReadonlyArray<ProjectId>,
+): ReadonlyArray<ProjectId> {
+  return [
+    ...new Set([
+      ...groupProjectIds,
+      ...members.flatMap((member) =>
+        member.projectIds.length > 0 ? member.projectIds : [member.projectId],
+      ),
+    ]),
+  ];
+}
 
 /** Lowercase with accents dropped, one UTF-16 unit for one unit, so offsets still index the original. */
 export function foldAssistantGroupText(text: string): string {
@@ -317,6 +367,77 @@ export function assistantGroupMentions<
     }
   }
   return found;
+}
+
+/**
+ * How a `#mention` names a project on its own: its title folded, each run of anything but letters
+ * and digits a hyphen. A title with neither is `project`. Use `assistantGroupProjectSlugs` for a
+ * group's list, where titles may collide.
+ */
+export function assistantGroupProjectSlug(name: string): string {
+  const slug = foldAssistantGroupText(name.normalize("NFC"))
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-|-$/g, "");
+  return slug === "" ? "project" : slug;
+}
+
+/**
+ * Each project's `#slug`, by id. Titles that make the same slug get `-2`, `-3`… in id order,
+ * skipping slugs another title makes, so the same projects in any order get the same slugs.
+ */
+export function assistantGroupProjectSlugs(
+  projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+): ReadonlyMap<string, string> {
+  const sorted = [...projects].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const natural = new Set(sorted.map((project) => assistantGroupProjectSlug(project.name)));
+  const used = new Set<string>();
+  const slugs = new Map<string, string>();
+  for (const project of sorted) {
+    const base = assistantGroupProjectSlug(project.name);
+    let slug = base;
+    for (let n = 2; used.has(slug) || (slug !== base && natural.has(slug)); n += 1) {
+      slug = `${base}-${n}`;
+    }
+    used.add(slug);
+    slugs.set(project.id, slug);
+  }
+  return slugs;
+}
+
+const PROJECT_MENTION = /(?:^|[\s(])#([\p{L}\p{N}][\p{L}\p{N}_./-]*)/gu;
+
+/**
+ * Each `#slug` in the text that names one of the projects, in order, with its offsets. A `#`
+ * inside code or a link, a heading's `# `, and a `#word` that is no project are ignored.
+ */
+export function assistantGroupProjectMentionRanges<
+  P extends { readonly id: string; readonly name: string },
+>(
+  text: string,
+  projects: ReadonlyArray<P>,
+): ReadonlyArray<{ readonly start: number; readonly end: number; readonly project: P }> {
+  if (!text.includes("#")) return [];
+  const blanked = text.replace(UNADDRESSABLE, (match) => " ".repeat(match.length));
+  const slugs = assistantGroupProjectSlugs(projects);
+  const found: Array<{ start: number; end: number; project: P }> = [];
+  for (const match of blanked.matchAll(PROJECT_MENTION)) {
+    const word = match[1]!.replace(/[./-]+$/, "");
+    const token = foldAssistantGroupText(word.normalize("NFC"));
+    const project = projects.find((candidate) => slugs.get(candidate.id) === token);
+    if (project === undefined) continue;
+    const start = match.index + match[0].length - match[1]!.length - 1;
+    found.push({ start, end: start + 1 + word.length, project });
+  }
+  return found;
+}
+
+/** The projects a text names with `#slug`, each once, in order. */
+export function assistantGroupProjectMentions<
+  P extends { readonly id: string; readonly name: string },
+>(text: string, projects: ReadonlyArray<P>): ReadonlyArray<P> {
+  return [
+    ...new Set(assistantGroupProjectMentionRanges(text, projects).map((found) => found.project)),
+  ];
 }
 
 /**

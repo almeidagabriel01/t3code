@@ -17,16 +17,19 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -62,7 +65,7 @@ interface FakeThread {
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
-const harness = () => {
+const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> } = {}) => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
   const inspected: string[] = [];
@@ -196,14 +199,38 @@ const harness = () => {
   const connectorsLayer = AssistantConnectors.layer.pipe(
     Layer.provide(Layer.merge(secretStore, AssistantDirectory.layer)),
   );
+  // With `failEventStream`, the first subscription to the event stream fails and completes it.
+  const failing = options.failEventStream;
+  const eventStore =
+    failing === undefined
+      ? OrchestrationEventStore.layer
+      : Layer.effect(
+          OrchestrationEventStore.OrchestrationEventStore,
+          Effect.gen(function* () {
+            const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+            let subscriptions = 0;
+            return OrchestrationEventStore.OrchestrationEventStore.of({
+              ...store,
+              streamApplicationEvents: (input) =>
+                Stream.suspend(() =>
+                  (subscriptions += 1) === 1
+                    ? Stream.fromEffect(Deferred.succeed(failing, undefined)).pipe(
+                        Stream.flatMap(() =>
+                          Stream.fail(
+                            new PersistenceSqlError({ operation: "stream", detail: "closed" }),
+                          ),
+                        ),
+                      )
+                    : store.streamApplicationEvents(input),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(OrchestrationEventStore.layer));
   const layer = Assistants.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(
-        mocks,
-        connectorsLayer,
-        AssistantTaskLinks.layer,
-        OrchestrationEventStore.layer,
-      ).pipe(Layer.provideMerge(base)),
+      Layer.mergeAll(mocks, connectorsLayer, AssistantTaskLinks.layer, eventStore).pipe(
+        Layer.provideMerge(base),
+      ),
     ),
   );
   return {
@@ -1372,6 +1399,47 @@ it.effect("a deleted project leaves assistant and group lists, and subscribers s
         seen.set("team", event.team.projectIds);
     }
     assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo] });
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a deleted project still leaves the lists after the event stream fails once", () => {
+  const failed = Deferred.makeUnsafe<void>();
+  const { layer } = harness({ failEventStream: failed });
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const gone = ProjectId.make("gone");
+    const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo, gone] }));
+    const changes = yield* assistants.subscribeChanges;
+    yield* Deferred.await(failed);
+    // Deleted while nothing listens: the next subscription picks it up from where it stopped.
+    const now = "2026-01-03T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES (${gone}, 'Gone', '/work/gone', '[]', ${now}, ${now}, ${now})`;
+    const deleted = yield* store.appendProjectEvent({
+      type: "project.deleted",
+      eventId: EventId.make("event:gone:deleted"),
+      aggregateKind: "project",
+      aggregateId: gone,
+      occurredAt: now,
+      commandId: CommandId.make("command:gone:delete"),
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { projectId: gone, deletedAt: now },
+    });
+    yield* store.publishCommitted([deleted]);
+    yield* TestClock.adjust("1 minute");
+    let projectIds: ReadonlyArray<string> = [];
+    while (projectIds.length !== 1) {
+      const event: AssistantsEvent = yield* PubSub.take(changes);
+      if (event.type === "upserted" && event.assistant.id === ana.id) {
+        projectIds = event.assistant.projectIds;
+      }
+    }
+    assert.deepEqual(projectIds, [repo]);
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

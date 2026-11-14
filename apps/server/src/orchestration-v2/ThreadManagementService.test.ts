@@ -902,6 +902,8 @@ const guardThreads = {
   plain: ThreadId.make("thread:guard:plain"),
   /** A member's hidden thread for a group: never archived, deleted or restored by a client. */
   group: ThreadId.make("assistant:helper:g-0123456789abcdef"),
+  /** A member's conversation a cleared group chat left it: no longer the group's. */
+  kept: ThreadId.make("assistant:helper:g-fedcba9876543210"),
   /** A conversation in the project the scoped assistant lives in. */
   sameProject: ThreadId.make("thread:guard:same-project"),
   /** A conversation in the second project on the scoped assistant's list. */
@@ -944,6 +946,7 @@ const layerAssistantGuardTest = (dispatched: Array<unknown>) =>
         teamsOf: () => Effect.succeed([]),
         sandboxEnvironmentId: Effect.succeedSome(EnvironmentId.make("environment-sandbox")),
         taskOwner: () => Effect.succeedNone,
+        inGroup: (threadId) => Effect.succeed(threadId !== guardThreads.kept),
         forThread: (threadId) =>
           Effect.succeed(
             threadId === guardThreads.plain
@@ -1001,6 +1004,9 @@ it.effect.each([
   ["archiving a group thread", "group", { type: "thread.archive" }, "hidden thread for a group"],
   ["deleting a group thread", "group", { type: "thread.delete" }, "hidden thread for a group"],
   ["restoring a group thread", "group", { type: "thread.unarchive" }, "hidden thread for a group"],
+  ["archiving a kept group conversation", "kept", { type: "thread.archive" }, null],
+  ["deleting a kept group conversation", "kept", { type: "thread.delete" }, null],
+  ["restoring a kept group conversation", "kept", { type: "thread.unarchive" }, null],
   [
     "a group thread's other commands",
     "group",

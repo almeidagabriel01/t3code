@@ -1,4 +1,5 @@
 import { applyAssistantGroupsEvent } from "@t3tools/client-runtime/assistantGroupChat";
+import { ASSISTANT_GROUP_MESSAGE_MAX_CHARS } from "@t3tools/contracts";
 import { act, useImperativeHandle, type ReactNode, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -32,16 +33,37 @@ const { mocks, Children } = vi.hoisted(() => ({
     archive: vi.fn(),
     restore: vi.fn(),
     scrollToEnd: vi.fn(),
+    scrollToIndex: vi.fn(),
     pick: vi.fn(),
+    pickMedia: vi.fn(),
+    drafts: new Map<string, string>(),
+    draftListeners: new Set<() => void>(),
+    flush: vi.fn(),
+    editor: null as null | { onSubmit?: (alternate: boolean) => void },
     prepare: vi.fn(),
     release: vi.fn(),
+    converse: vi.fn(),
+    clear: vi.fn(),
+    voiceStart: vi.fn(),
+    voicePhase: "idle",
+    dismissKeyboard: vi.fn(),
+    voiceInput: null as null | {
+      ownerKey: string;
+      readDraftMessage: () => string | null;
+      subscribeToDraftChanges: (onChange: () => void) => () => void;
+      onChangeDraftMessage: (value: string) => void;
+      onChangeSelection: (selection: { start: number; end: number }) => void;
+    },
+    decisions: [] as unknown[],
   },
 }));
 vi.mock("react-native", () => ({
+  Keyboard: { dismiss: () => mocks.dismissKeyboard() },
   View: (props: { children?: ReactNode; testID?: string }) => (
     <div data-testid={props.testID}>{props.children}</div>
   ),
   ScrollView: Children,
+  StyleSheet: { hairlineWidth: 1 },
   Platform: { OS: "ios" },
   AppState: {
     get currentState() {
@@ -62,6 +84,138 @@ vi.mock("react-native", () => ({
 }));
 vi.mock("../../lib/composerImages", () => ({
   pickComposerFiles: (...args: unknown[]) => mocks.pick(...args),
+  pickComposerMedia: (...args: unknown[]) => mocks.pickMedia(...args),
+  convertPastedImagesToAttachments: async () => [],
+}));
+vi.mock("react-native-reanimated", () => {
+  const animation = {
+    duration: () => animation,
+    easing: () => animation,
+    reduceMotion: () => animation,
+  };
+  return {
+    default: {
+      View: (props: { children?: ReactNode; testID?: string }) => (
+        <div data-testid={props.testID}>{props.children}</div>
+      ),
+    },
+    Easing: { out: () => () => 0, cubic: () => 0 },
+    FadeIn: animation,
+    FadeOut: animation,
+    ReduceMotion: { System: "system" },
+    useReducedMotion: () => false,
+    withTiming: (value: number) => value,
+  };
+});
+// The editor hands the composer its text as typed; ComposerEditor.ios.test covers the native side.
+vi.mock("../../components/ComposerEditor", async () => {
+  const { useImperativeHandle } = await import("react");
+  return {
+    ComposerEditor: (props: {
+      ref?: Ref<unknown>;
+      placeholder?: string;
+      editable?: boolean;
+      readOnly?: boolean;
+      value: string;
+      onChangeText: (value: string) => void;
+      onSelectionChange: (selection: { start: number; end: number }) => void;
+      onSubmit?: (alternate: boolean) => void;
+    }) => {
+      mocks.editor = props;
+      useImperativeHandle(props.ref, () => ({ flushPendingInput: mocks.flush }));
+      return (
+        <textarea
+          aria-label="Message the group"
+          placeholder={props.placeholder}
+          disabled={props.editable === false || props.readOnly === true}
+          value={props.value}
+          onChange={(event) => {
+            props.onChangeText(event.target.value);
+            const at = event.target.selectionStart;
+            props.onSelectionChange({ start: at, end: at });
+          }}
+        />
+      );
+    },
+  };
+});
+vi.mock("../../state/use-composer-drafts", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    mocks.draftListeners.add(listener);
+    return () => mocks.draftListeners.delete(listener);
+  };
+  const set = (key: string, text: string) => {
+    mocks.drafts.set(key, text);
+    for (const listener of mocks.draftListeners) listener();
+  };
+  return {
+    composerDraftsAtom: "drafts",
+    useComposerDraft: (key: string) => ({
+      text: useSyncExternalStore(subscribe, () => mocks.drafts.get(key) ?? ""),
+    }),
+    getComposerDraftSnapshot: (key: string) => ({ text: mocks.drafts.get(key) ?? "" }),
+    setComposerDraftText: set,
+    clearComposerDraftContent: (key: string) => set(key, ""),
+  };
+});
+vi.mock("../../state/atom-registry", () => ({
+  appAtomRegistry: {
+    subscribe: (_atom: unknown, listener: () => void) => {
+      mocks.draftListeners.add(listener);
+      return () => mocks.draftListeners.delete(listener);
+    },
+  },
+}));
+vi.mock("../../components/ComposerToolbar", () => ({
+  ComposerActionButton: (props: {
+    accessibilityLabel: string;
+    disabled?: boolean;
+    onPress: () => void;
+  }) => (
+    <button
+      aria-label={props.accessibilityLabel}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    />
+  ),
+}));
+vi.mock("../threads/ComposerAttachmentButton", () => ({
+  ComposerAttachmentButton: (props: {
+    disabled?: boolean;
+    onPickMedia: () => Promise<void>;
+    onPickFiles: () => Promise<void>;
+  }) => (
+    <>
+      <button
+        aria-label="Add attachment:Photo Library"
+        disabled={props.disabled}
+        onClick={() => void props.onPickMedia()}
+      />
+      <button
+        aria-label="Add attachment:Choose Files"
+        disabled={props.disabled}
+        onClick={() => void props.onPickFiles()}
+      />
+    </>
+  ),
+}));
+vi.mock("../threads/ComposerCommandPopover", () => ({ ComposerPopoverSurface: Children }));
+vi.mock("../threads/ThreadComposer", () => ({ ComposerSurface: Children }));
+vi.mock("../threads/ThreadFeed", () => ({
+  useMarkdownStyles: () => ({ user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } }),
+}));
+vi.mock("../settings/appearance/useScaledTextRole", () => ({
+  useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
+}));
+vi.mock("../../lib/composerChipPresentation", () => ({
+  contextChipPresentation: () => ({ accent: "#000000" }),
+}));
+vi.mock("../../lib/contextChipIconSource", () => ({
+  contextChipIconSource: (icon: { name: string }) => icon.name,
+}));
+vi.mock("../../lib/contextChipIcons.generated", () => ({
+  CONTEXT_CHIP_ICON_SOURCES: { folder: 1 },
 }));
 vi.mock("../../lib/attachmentUpload", () => ({
   prepareTurnAttachments: (...args: unknown[]) => mocks.prepare(...args),
@@ -77,6 +231,7 @@ vi.mock("../../components/ui/FilePreviewModal", () => ({
     <div data-testid="preview">{props.source && `${props.source.kind}:${props.source.name}`}</div>
   ),
 }));
+vi.mock("../../native/ChipIconImages", () => ({ useAssistantFaceImages: () => new Map() }));
 vi.mock("../../native/NativeScrollViewMarker", () => ({ NativeScrollView: Children }));
 vi.mock("react-native-keyboard-controller", () => ({ KeyboardAvoidingView: Children }));
 vi.mock("@legendapp/list/react-native", () => ({
@@ -100,6 +255,7 @@ vi.mock("@legendapp/list/react-native", () => ({
   }) => {
     useImperativeHandle(props.ref, () => ({
       scrollToEnd: mocks.scrollToEnd,
+      scrollToIndex: mocks.scrollToIndex,
     }));
     const scroll = (y: number) =>
       props.onScroll({
@@ -136,46 +292,30 @@ vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode; testID?: string }) => (
     <span data-testid={props.testID}>{props.children}</span>
   ),
-  AppTextInput: (props: {
-    accessibilityLabel?: string;
-    placeholder?: string;
-    editable?: boolean;
-    value: string;
-    onChangeText: (value: string) => void;
-    onSelectionChange: (event: { nativeEvent: { selection: { start: number } } }) => void;
-  }) => (
-    <textarea
-      aria-label={props.accessibilityLabel}
-      placeholder={props.placeholder}
-      disabled={props.editable === false}
-      value={props.value}
-      onChange={(event) => {
-        props.onChangeText(event.target.value);
-        props.onSelectionChange({
-          nativeEvent: { selection: { start: event.target.selectionStart } },
-        });
-      }}
-    />
-  ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+type MockMenuItem =
+  | { title: string; disabled?: boolean; onPress: () => void }
+  | { title: string; items: Array<{ title: string; disabled?: boolean; onPress: () => void }> };
 vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
     subtitle?: string;
-    menus?: Array<{ items: Array<{ title: string; disabled?: boolean; onPress: () => void }> }>;
+    menus?: Array<{ items: Array<MockMenuItem> }>;
   }) => (
     <header>
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
-      {props.menus?.[0]?.items.map((item) => (
-        <button
-          key={item.title}
-          aria-label={`header:${item.title}`}
-          disabled={item.disabled}
-          onClick={item.onPress}
-        />
-      ))}
+      {props.menus?.[0]?.items
+        .flatMap((item) => ("items" in item ? item.items : [item]))
+        .map((item) => (
+          <button
+            key={item.title}
+            aria-label={`header:${item.title}`}
+            disabled={item.disabled}
+            onClick={item.onPress}
+          />
+        ))}
     </header>
   ),
 }));
@@ -184,6 +324,43 @@ vi.mock("../../components/ui/Button", () => ({
     <button aria-label={props.label} disabled={props.disabled} onClick={props.onPress}>
       {props.label}
     </button>
+  ),
+}));
+vi.mock("../voice-input/useVoiceInputController", () => ({
+  useVoiceInputController: (input: typeof mocks.voiceInput) => {
+    mocks.voiceInput = input;
+    return {
+      isAvailable: true,
+      state: { phase: mocks.voicePhase, error: null, errorAction: null },
+      audioLevels: [],
+      elapsedSeconds: 0,
+      isBusy: false,
+      freezesEditor: false,
+      blocksSubmission: false,
+      start: mocks.voiceStart,
+      stop: vi.fn(),
+      cancel: vi.fn(),
+    };
+  },
+}));
+vi.mock("../voice-input/ComposerDictationControl", () => ({
+  ComposerDictationStartAction: (props: { onStart: () => void; disabled?: boolean }) => (
+    <button aria-label="Start dictation" disabled={props.disabled} onClick={props.onStart} />
+  ),
+  ComposerDictationError: () => null,
+  ComposerDictationToolbar: (props: { children?: ReactNode }) => (
+    <div data-testid="dictation-toolbar">{props.children}</div>
+  ),
+  ComposerDictationCancelAction: () => null,
+  ComposerDictationStatus: () => null,
+  ComposerDictationPrimaryAction: () => null,
+}));
+vi.mock("../../state/decisions", () => ({
+  useDecisionEntries: () => ({ open: mocks.decisions, settled: [] }),
+}));
+vi.mock("../decisions/DecisionCard", () => ({
+  DecisionCard: (props: { decision: { title: string } }) => (
+    <div data-testid="decision-card">{props.decision.title}</div>
   ),
 }));
 vi.mock("../../components/ui/Dialog", () => ({
@@ -196,7 +373,13 @@ vi.mock("../../components/ui/EmptyState", () => ({
 }));
 vi.mock("../../components/ui/Menu", () => ({
   Menu: (props: {
-    actions: Array<{ id: string; title: string; attributes?: { disabled?: boolean } }>;
+    accessibilityLabel?: string;
+    actions: Array<{
+      id: string;
+      title: string;
+      state?: string;
+      attributes?: { disabled?: boolean };
+    }>;
     onPressAction: (event: { nativeEvent: { event: string } }) => void;
     children?: ReactNode;
   }) => (
@@ -205,7 +388,9 @@ vi.mock("../../components/ui/Menu", () => ({
       {props.actions.map((action) => (
         <button
           key={action.id}
-          aria-label={`menu:${action.title}`}
+          // Scoped by the menu's label so two menus listing the same names stay apart.
+          aria-label={`${props.accessibilityLabel ?? "menu"}:${action.title}`}
+          data-state={action.state}
           disabled={action.attributes?.disabled}
           onClick={() => props.onPressAction({ nativeEvent: { event: action.id } })}
         />
@@ -216,13 +401,15 @@ vi.mock("../../components/ui/Menu", () => ({
 vi.mock("../../native/SelectableMarkdownText", () => ({
   SelectableMarkdownText: (props: { markdown: string }) => <span>{props.markdown}</span>,
 }));
-vi.mock("../files/FileMarkdownPreview", () => ({
-  useMarkdownPreviewStyles: () => ({ nativeTextStyle: {} }),
-}));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
 vi.mock("../../state/entities", () => ({
+  useProjects: () => [
+    { environmentId: "hub", id: "p1", title: "Alpha" },
+    { environmentId: "hub", id: "p2", title: "Beta" },
+    { environmentId: "other", id: "p3", title: "Elsewhere" },
+  ],
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null || !mocks.waiting.has(ref.threadId)
       ? null
@@ -267,6 +454,9 @@ vi.mock("./useAssistantFlows", () => ({
   useAssistantTeamFlows: () => ({
     canAct: true,
     canMarkRead: mocks.canMarkRead,
+    canConverse: true,
+    converse: mocks.converse,
+    clear: mocks.clear,
     archive: mocks.archive,
     restore: mocks.restore,
     markRead: mocks.markReadFlow,
@@ -284,6 +474,8 @@ const member = (id: string, name: string, role: string) => ({
   icon: null,
   avatar: null,
   archivedAt: null,
+  projectId: "p1",
+  projectIds: ["p1", "p2"],
 });
 const members = [
   member("ada", "Ada", "Dev"),
@@ -388,6 +580,8 @@ beforeEach(() => {
     canAct: true,
     canMarkRead: true,
     appState: "active",
+    decisions: [],
+    voicePhase: "idle",
     live: snapshot(FEED, [
       task("t1", "paused", "ada", { reason: "stopped" }),
       task("t22", "running", "beto"),
@@ -404,6 +598,9 @@ beforeEach(() => {
     mocks.archive,
     mocks.restore,
     mocks.scrollToEnd,
+    mocks.scrollToIndex,
+    mocks.pickMedia,
+    mocks.flush,
     mocks.markRead,
     mocks.markUnread,
     mocks.markReadFlow,
@@ -411,8 +608,13 @@ beforeEach(() => {
     mocks.pick,
     mocks.prepare,
     mocks.release,
+    mocks.converse,
+    mocks.clear,
+    mocks.voiceStart,
   ])
     fn.mockReset();
+  mocks.drafts.clear();
+  mocks.draftListeners.clear();
   mocks.release.mockResolvedValue(undefined);
   mocks.markRead.mockResolvedValue({ ok: true, value: undefined });
   mocks.post.mockResolvedValue({ ok: true, value: {} });
@@ -446,7 +648,13 @@ describe("group chat feed", () => {
     );
     expect(container.querySelectorAll('[data-testid="group-answer"]')).toHaveLength(2);
     expect(container.querySelector('[data-testid="group-role"]')?.textContent).toBe("Dev");
-    expect(text()).toContain("In reply to Ada");
+    // Member mentions render as mention links, which the markdown view draws as chips.
+    expect(text()).toContain(
+      "[@ada](t3-mention:mention/ada) build [@everyone](t3-mention:mention/everyone)",
+    );
+    expect(container.querySelector('[data-testid="group-quoted-line"]')?.textContent).toBe(
+      "Ada  Ada says hi",
+    );
     expect(container.querySelector("h1 + p")?.textContent).toMatch(/ · 1 running$/);
     const statuses = Array.from(
       container.querySelectorAll('[data-testid="group-task-status"]'),
@@ -475,7 +683,9 @@ describe("group chat feed", () => {
       "Ada",
     );
     expect(container.querySelectorAll('[data-testid="group-routing"]')).toHaveLength(2);
-    expect(text()).toContain("Reply to Ada");
+    expect(container.querySelector('[data-testid="group-quoted-line"]')?.textContent).toBe(
+      "Ada  done",
+    );
     expect(container.querySelector('[data-testid="group-routing"]')?.textContent).toBe(
       "Jarvis (lead) is choosing who answers…",
     );
@@ -599,6 +809,84 @@ describe("group composer", () => {
     render();
     await type("hello again");
     expect(recipients()).toBe("Waits for a lead");
+  });
+
+  it("offers the group's projects after #, filters them and inserts the slug", async () => {
+    render();
+    await type("ship #");
+    expect(byLabel("Mention project Alpha")).not.toBeNull();
+    expect(byLabel("Mention project Beta")).not.toBeNull();
+    await type("ship #be");
+    expect(byLabel("Mention project Alpha")).toBeNull();
+    await click("Mention project Beta");
+    expect(input().value).toBe("ship #beta ");
+    expect(byLabel("Mention project Beta")).toBeNull();
+  });
+
+  it("sends the text as typed, with mentions, project tags, list markers and code fences", async () => {
+    render();
+    const markdown = "@ada check #alpha\n\n- first\n- second\n\n```ts\nconst a = 1;\n```";
+    await type(markdown);
+    // Return on a hardware keyboard sends, as in the thread composer.
+    await act(async () => mocks.editor!.onSubmit!(false));
+    expect(mocks.flush).toHaveBeenCalledOnce();
+    expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: markdown });
+    expect(input().value).toBe("");
+  });
+
+  it("posts once when Return and Send land while an edit is still flushing", async () => {
+    let finishFlush = () => {};
+    mocks.flush.mockReturnValue(new Promise<void>((resolve) => (finishFlush = resolve)));
+    render();
+    await type("@ada go");
+    await act(async () => {
+      mocks.editor!.onSubmit!(false);
+      byLabel("Send")!.click();
+    });
+    await act(async () => finishFlush());
+    expect(mocks.post).toHaveBeenCalledOnce();
+  });
+
+  it("posts @member and #project as typed, and gives the editor the group's chips", async () => {
+    render();
+    expect(mocks.editor).toMatchObject({
+      groupMentions: {
+        members: expect.arrayContaining([expect.objectContaining({ handle: "ada", name: "Ada" })]),
+        projects: [
+          { id: "p1", name: "Alpha" },
+          { id: "p2", name: "Beta" },
+        ],
+      },
+    });
+    await type("@ada fix #alpha");
+    await click("Send");
+    expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@ada fix #alpha" });
+  });
+
+  it("holds a message over the group's length limit", async () => {
+    render();
+    await type("x".repeat(ASSISTANT_GROUP_MESSAGE_MAX_CHARS + 1));
+    await click("Send");
+    expect(mocks.post).not.toHaveBeenCalled();
+    expect(text()).toContain(`Messages can be up to`);
+  });
+
+  it("jumps from a reply's quoted line to the message it answers and tints it once", async () => {
+    vi.useFakeTimers();
+    try {
+      render();
+      await click("Show the message from Ada");
+      expect(mocks.scrollToIndex).toHaveBeenCalledWith({
+        index: 2,
+        animated: true,
+        viewPosition: 0.4,
+      });
+      expect(container.querySelectorAll('[data-testid="group-jump-highlight"]')).toHaveLength(1);
+      await act(async () => vi.advanceTimersByTime(1200));
+      expect(container.querySelector('[data-testid="group-jump-highlight"]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("offers @everyone and marks the lead in the picker", async () => {
@@ -899,7 +1187,7 @@ describe("group attachments", () => {
       return uploaded(name, name.endsWith(".png") ? "image" : "file");
     });
     render();
-    await click("Attach files");
+    await click("Add attachment:Choose Files");
     expect(chips()).toHaveLength(3);
     expect(text()).toContain("Upload rejected (413)");
 
@@ -945,7 +1233,7 @@ describe("group attachments", () => {
       return uploaded(name);
     });
     render();
-    await click("Attach files");
+    await click("Add attachment:Choose Files");
     expect(text()).toContain("Upload failed for 'b.pdf'.");
     await click("Retry b.pdf");
     expect(text()).not.toContain("Upload failed");
@@ -960,13 +1248,13 @@ describe("group attachments", () => {
       error: "You can attach up to 100 files per message.",
     });
     render();
-    await click("Attach files");
+    await click("Add attachment:Choose Files");
     expect(mocks.alert).toHaveBeenCalledWith(
       "Could not attach",
       "You can attach up to 100 files per message.",
     );
     mocks.pick.mockRejectedValueOnce(new Error("Picker unavailable"));
-    await click("Attach files");
+    await click("Add attachment:Choose Files");
     expect(mocks.alert).toHaveBeenLastCalledWith("Could not attach", "Picker unavailable");
   });
 
@@ -1002,5 +1290,327 @@ describe("group attachments", () => {
     expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe(
       "document:notes.txt",
     );
+  });
+});
+
+describe("requests", () => {
+  const user = { author: "user", assistantId: null };
+  const REQUESTS = [
+    message("r1", 1, {
+      ...user,
+      text: "@ada fix the build",
+      requestId: "r1",
+      projectId: "p1",
+      title: "Fix build",
+    }),
+    message("r1n", 2, {
+      kind: "routing",
+      text: "Jarvis assigned Ada",
+      replyToMessageId: "r1",
+      requestId: "r1",
+    }),
+    message("a1", 3, { text: "Fixed", taskId: "t1", requestId: "r1" }),
+    message("r2", 4, { ...user, text: "ship it", requestId: "r2" }),
+    message("n2", 5, {
+      kind: "notice",
+      assistantId: "jarvis",
+      text: "Which project?",
+      asksProject: true,
+      replyToMessageId: "r2",
+      requestId: "r2",
+    }),
+    message("r3", 6, {
+      ...user,
+      text: "@beto review",
+      requestId: "r3",
+      projectId: "p2",
+      title: "Review",
+    }),
+  ];
+  const TASKS = [
+    task("t1", "completed", "ada", { requestMessageId: "r1", requestId: "r1" }),
+    task("t2", "running", "beto", { requestMessageId: "r3", requestId: "r3" }),
+  ];
+  const read = { latestSeq: 6, readSeq: 6, unreadCount: 0, working: false, preview: null };
+  const all = (id: string) =>
+    [...container.querySelectorAll(`[data-testid="${id}"]`)].map((node) => node.textContent);
+  const setup = (extra: object = {}) => {
+    mocks.live = snapshot(REQUESTS, TASKS);
+    mocks.teams = [team({ chat: read, ...extra })];
+    render();
+  };
+
+  it("quotes the request being answered and opens its folded block to show it", async () => {
+    setup();
+    await click("Reply to request Review");
+    expect(container.querySelector('[data-testid="group-reply-chip"]')?.textContent).toBe(
+      "Replying to Review",
+    );
+    expect(text()).toContain("@beto review");
+    await click("Request Review");
+    expect(text()).not.toContain("(t3-mention:mention/beto) review");
+    await click("Show the message from Review");
+    expect(text()).toContain("[@beto](t3-mention:mention/beto) review");
+    expect(mocks.scrollToIndex).toHaveBeenCalledOnce();
+    await click("Cancel reply");
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+  });
+
+  it("links member and project mentions for the markdown view to draw as their chips", () => {
+    mocks.live = snapshot([message("m1", 1, { ...user, text: "@ada ship #alpha" })]);
+    render();
+    // Each link names its member or project, so the chip can show that one's name.
+    expect(text()).toContain(
+      "[@ada](t3-mention:mention/ada) ship [#alpha](t3-mention:project/alpha)",
+    );
+  });
+
+  it("draws each request with its title, project and status, the latest one last", () => {
+    setup();
+    expect(all("group-request-title")).toEqual(["Fix build", "ship it", "Review"]);
+    expect(all("group-request-project")).toEqual(["Alpha", "Beta"]);
+    expect(all("group-request-status")).toEqual(["Done", "Needs project", "Working"]);
+  });
+
+  it("folds a finished request, and the user's toggle opens and folds it again", async () => {
+    setup();
+    expect(text()).not.toContain("Fixed");
+    expect(text()).toContain("[@beto](t3-mention:mention/beto) review");
+    await click("Request Fix build");
+    expect(text()).toContain("Fixed");
+    await click("Request Fix build");
+    expect(text()).not.toContain("Fixed");
+    await click("Request Review");
+    expect(text()).not.toContain("@beto review");
+  });
+
+  it("keeps a finished request open while it holds unread messages", () => {
+    setup({ chat: { ...read, readSeq: 1, unreadCount: 2 } });
+    expect(text()).toContain("Fixed");
+  });
+
+  it("filters by project, keeps requests waiting for one, and makes it the composer's default", async () => {
+    setup();
+    expect(byLabel("header:All projects")).not.toBeNull();
+    await click("header:Beta");
+    expect(all("group-request-title")).toEqual(["ship it", "Review"]);
+    expect(container.querySelector("header p")?.textContent).toContain("Beta");
+    expect(byLabel("Project: Beta")).not.toBeNull();
+    await type("@beto again");
+    await click("Send");
+    expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@beto again", projectId: "p2" });
+    await click("header:All projects");
+    expect(all("group-request-title")).toHaveLength(3);
+    expect(byLabel("Project: Lead decides")).not.toBeNull();
+  });
+
+  it("hides the filter with fewer than two projects", () => {
+    mocks.live = snapshot(REQUESTS.slice(0, 3), TASKS.slice(0, 1));
+    render();
+    expect(byLabel("header:All projects")).toBeNull();
+  });
+
+  it("sends the picked project on a new request and lets the lead decide by default", async () => {
+    setup();
+    await type("@ada one");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({ teamId: "g1", text: "@ada one" });
+    await click("Project:Alpha");
+    expect(byLabel("Project:Alpha")?.getAttribute("data-state")).toBe("on");
+    await type("@ada two");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({
+      teamId: "g1",
+      text: "@ada two",
+      projectId: "p1",
+    });
+    // The pick is for one message.
+    expect(byLabel("Project: Lead decides")).not.toBeNull();
+  });
+
+  it("replies to a request in its project, locked, and lets one without a project pick", async () => {
+    setup();
+    await click("Reply to request Review");
+    expect(text()).toContain("Replying to Review");
+    await type("more");
+    // A reply to the request itself goes where the request routes, not to a member named "Review".
+    expect(recipients()).toBe("Jarvis (lead) will route it");
+    expect(byLabel("Project: Beta")?.disabled).toBe(true);
+    expect(byLabel("Project:Alpha")).toBeNull();
+    await type("@beto more");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({
+      teamId: "g1",
+      text: "@beto more",
+      replyToMessageId: "r3",
+    });
+    await click("Reply to request ship it");
+    await click("Project:Beta");
+    await type("go");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith({
+      teamId: "g1",
+      text: "go",
+      replyToMessageId: "r2",
+      projectId: "p2",
+    });
+  });
+
+  it("a reply to a member's answer keeps its request's project", async () => {
+    setup({ chat: { ...read, readSeq: 0 } });
+    await click("Reply to Ada");
+    expect(byLabel("Project: Alpha")?.disabled).toBe(true);
+  });
+
+  it("answers the lead's project question from the request's chips", async () => {
+    setup();
+    await click("Use project Beta");
+    expect(mocks.post).toHaveBeenCalledWith({
+      teamId: "g1",
+      text: "Beta",
+      replyToMessageId: "r2",
+      projectId: "p2",
+    });
+    mocks.post.mockResolvedValue({ ok: false, message: "no", reason: null });
+    await click("Use project Alpha");
+    expect(mocks.alert).toHaveBeenCalledWith("Could not set the project", "no");
+    mocks.canPost = false;
+    render();
+    expect(byLabel("Use project Alpha")?.disabled).toBe(true);
+  });
+
+  it("inserts a mention at the caret from the Mention menu", async () => {
+    render();
+    await type("hi");
+    await click("Mention:Ada");
+    expect(input().value).toBe("hi @ada ");
+    await click("Mention:Everyone");
+    expect(input().value).toBe("hi @ada @everyone ");
+  });
+
+  it("starts dictation from the composer", async () => {
+    render();
+    await click("Start dictation");
+    expect(mocks.voiceStart).toHaveBeenCalledOnce();
+    expect(byLabel("Mention a member")).not.toBeNull();
+    const voice = mocks.voiceInput!;
+    expect(voice.ownerKey).toBe("assistant-group:hub:g1");
+    const changed = vi.fn();
+    const unsubscribe = voice.subscribeToDraftChanges(changed);
+    await type("typed");
+    expect(voice.readDraftMessage()).toBe("typed");
+    expect(changed).toHaveBeenCalled();
+    unsubscribe();
+    await act(async () => {
+      mocks.voiceInput!.onChangeDraftMessage("typed spoken");
+      mocks.voiceInput!.onChangeSelection({ start: 12, end: 12 });
+    });
+    expect(input().value).toBe("typed spoken");
+    // While it records, the dictation bar takes the toolbar row's place.
+    mocks.voicePhase = "recording";
+    render();
+    expect(container.querySelector('[data-testid="dictation-toolbar"]')).not.toBeNull();
+    expect(byLabel("Start dictation")).toBeNull();
+    expect(byLabel("Mention a member")).toBeNull();
+  });
+});
+
+describe("waiting notices", () => {
+  const waitingNotice = (waiting: object) =>
+    snapshot([
+      message("r1", 1, {
+        author: "user",
+        assistantId: null,
+        text: "@ada deploy",
+        requestId: "r1",
+      }),
+      message("w1", 2, {
+        kind: "notice",
+        assistantId: "ada",
+        text: "Ada needs your approval to run the deploy.\n\nIt pushes to prod.\n\nOptions: Approve · Deny",
+        requestId: "r1",
+        waiting,
+      }),
+    ]);
+
+  it("names the member, opens the conversation and the decision it waits on", async () => {
+    mocks.decisions = [{ environmentId: "hub", decision: { id: "d1", title: "Deploy to prod?" } }];
+    mocks.live = waitingNotice({
+      threadId: "assistant:ada:g-1",
+      decisionId: "d1",
+      resolved: false,
+    });
+    render();
+    const notice = container.querySelector('[data-testid="group-waiting"]')!;
+    expect(notice.textContent).toContain("Ada is waiting on you");
+    // The server's notice text is the question, its context, then "Options: a · b".
+    expect(notice.textContent).toContain("Ada needs your approval to run the deploy.");
+    expect(notice.textContent).toContain("It pushes to prod.");
+    expect(notice.textContent).not.toContain("Options:");
+    expect(
+      [...container.querySelectorAll('[data-testid="group-waiting-options"] > div')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["Approve", "Deny"]);
+    await click("Open conversation");
+    expect(mocks.selectDetail).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "assistant:ada:g-1" },
+    });
+    await click("Open decision");
+    expect(container.querySelector('[data-testid="decision-card"]')?.textContent).toBe(
+      "Deploy to prod?",
+    );
+  });
+
+  it("offers no decision it cannot find", () => {
+    mocks.live = waitingNotice({
+      threadId: "assistant:ada:g-1",
+      decisionId: "d9",
+      resolved: false,
+    });
+    render();
+    expect(byLabel("Open conversation")).not.toBeNull();
+    expect(byLabel("Open decision")).toBeNull();
+  });
+
+  it("shows a resolved one muted, with no action", () => {
+    mocks.live = waitingNotice({ threadId: "assistant:ada:g-1", resolved: true });
+    render();
+    expect(container.querySelector('[data-testid="group-waiting-resolved"]')?.textContent).toBe(
+      "Resolved",
+    );
+    expect(byLabel("Open conversation")).toBeNull();
+  });
+});
+
+describe("conversation actions in the header", () => {
+  it("starts a new conversation, compacts, and clears after confirming", async () => {
+    render();
+    await click("header:New conversation");
+    expect(mocks.converse).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }), "new");
+    await click("header:Compact context");
+    expect(mocks.converse).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: "g1" }),
+      "compact",
+    );
+    await click("Reply to Ada");
+    await click("header:Clear history");
+    expect(mocks.dismissKeyboard).toHaveBeenCalled();
+    expect(mocks.clear).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "g1" }),
+      expect.any(Function),
+    );
+    await act(async () => mocks.clear.mock.calls[0]![1]());
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+  });
+
+  it("are off while the group is working", () => {
+    mocks.teams = [
+      team({ chat: { latestSeq: 4, readSeq: 4, unreadCount: 0, working: true, preview: null } }),
+    ];
+    render();
+    for (const title of ["New conversation", "Compact context", "Clear history"])
+      expect(byLabel(`header:${title}`)?.disabled).toBe(true);
   });
 });

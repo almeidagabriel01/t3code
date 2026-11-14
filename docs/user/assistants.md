@@ -224,25 +224,52 @@ them in by hand.
 
 ### Group chat
 
-Click a group in the sidebar (or tap it on Home) to open its chat. A message there is a request to
-the members; it does not run an agent by itself.
+Click a group in the sidebar (or tap it on Home) to open its chat. A message that replies to
+nothing starts a new **request**; it does not run an agent by itself.
+
+- The chat shows each request as a block with its project, a short title and its status (Routing,
+  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold away; click the header
+  to open or fold one. With requests in more than one project, **Show** (at the top on the web, in
+  the group's menu on mobile) shows one project's requests (**All projects** shows every one).
+- Each request runs in one project, chosen from the group's projects and its members'. Pick it in the
+  box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
+  or leave **Lead decides**: the lead picks it from the request, and when it could be more than one
+  (or the text names two projects) it asks you in the chat. Answer in words or click a project under
+  the question. When the menu and the text disagree, the menu wins and the lead says so. Only members that may work in the
+  request's project take part: a member you mention who cannot work there is left out, and the chat
+  says so.
+- The message box is the same editor as a project's: lists, code blocks, pasted images and files,
+  dictation, Enter to send and Shift+Enter for a new line. **Reply** on a message (or **Reply to
+  request**) shows what you answer above the box; click it to jump to the original.
+- Every member works a request in its own conversation for that request, in its project, and sees
+  only that request's messages. More work on the same request (a reply, QA handing a fix back to the
+  developer) continues that conversation. When all of a request's tasks are done or cancelled, its
+  conversations are settled (they stay under Settled); replying to it or resuming it makes them
+  active again. Requests from before this change keep their old shared conversation for history.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
-  members. Names with spaces work (`@Ana Paula`). The line under the box says who will get it.
-- With no mention, a short "continue" resumes the group's stopped task, and while exactly one task is
-  open your follow-up goes to its owner. Otherwise the group's **Lead** picks who answers (and may
+  members. Names with spaces work (`@Ana Paula`); **Mention** in the box inserts one. The line under
+  the box says who will get it. The box also takes files and dictation, like a project chat.
+- With no mention, a short "continue" resumes the stopped task (of the request you reply to, else the
+  newest one), and a reply goes to the member working that request. Otherwise the group's **Lead**
+  picks who answers (and may
   decide nothing needs doing, as for "thanks"). Set one in **Edit group**; it only routes and gets no
   extra permissions. A group with one member sends everything to it. Without a lead the message waits,
   and is routed once you set one. Routing needs a lead on Claude, Codex or Antigravity.
-- **Reply** on a member's message sends your follow-up to that member.
+- **Reply** on a message continues its request; on a member's message it goes to that member.
+- When a member's conversation waits on you (a command or file approval, a question, a decision it
+  asked), its request says so with what it asks and the request shows **Needs you**. **Open
+  conversation** or **Open decision** takes you to answer it. Answer anywhere (the chat, Activity,
+  Telegram) and the notice is marked resolved.
 - Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
   continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
-  **Open conversation** shows the member's own thread for this group.
+  **Open conversation** shows the member's conversation for that request.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
   per request). So members cannot pass work around forever, a request stops whole, and the chat
   says why, after 12 hand-offs in which nobody delivers a new result, or after 30 hand-offs since you
-  last acted on it. **Resume**, **Reassign** or "continue" on any of its cards picks it up with its
-  subtasks; that, or any message you send to its members, starts both counts over. At most two tasks
+  last acted on it. The counts are per request: another request keeps running. **Resume**,
+  **Reassign** or "continue" on any of its cards picks it up with its subtasks; that, or any message
+  you send in that request, starts both counts over. At most two tasks
   run at the same time in a group; the rest wait their turn.
 - **Group routines** (group menu) lists the scheduled messages that post in the chat, for example a
   morning status request, with the next run in your local time, the last result, **Run now**, pause
@@ -258,10 +285,13 @@ the members; it does not run an agent by itself.
   last answer's start (web and desktop; the phone shows the count only).
 - **Group settings** (group menu) holds instructions every member gets with each task, a short list
   of group memories, and the conversation actions. **New conversation** and **Compact context**
-  (summarizes first) draw a divider: members read only what comes after it, and the older messages
-  stay above. **Undo divider** removes the latest one while nothing follows it. **Clear history**
-  deletes the chat, its tasks and files after you confirm. These wait until the group stops working.
-- An agent in any conversation can post a request into a group ("ask the Leadership group to…").
+  draw a divider: the lead routes new requests reading only what comes after it, and the older
+  messages stay above. Compact first writes a summary of the chat that only the lead reads; members
+  never get it, since each sees just its own request. **Undo divider** removes the latest one while
+  nothing follows it. **Clear history** deletes the chat, its tasks and files after you
+  confirm; members keep their requests' conversations, settled. These wait until the group stops working.
+- An agent in any conversation can post a request into a group ("ask the Leadership group to…"),
+  naming its project or leaving it to the lead.
 
 ## Agents can create assistants
 

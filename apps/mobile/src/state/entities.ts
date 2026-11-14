@@ -30,7 +30,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
-import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
+import { chipIconImageAtom, projectGlyphKey } from "../native/ChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
 import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
@@ -138,7 +138,7 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
     );
     if (!icon) return null;
     if (icon.kind === "favicon") return icon.uri;
-    return AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
+    return AsyncResult.getOrElse(get(chipIconImageAtom(projectGlyphKey(icon))), () => null);
   }).pipe(Atom.withLabel(`mobile-thread-project-chip-icon:${key}`));
 });
 

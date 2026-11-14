@@ -124,7 +124,10 @@ vi.mock("../state/preferences", async () => {
   return { mobilePreferencesAtom: Atom.make({ _tag: "Initial" }) };
 });
 vi.mock("../lib/composerContextClipboard", () => ({ importComposerContextClipboard: vi.fn() }));
-vi.mock("../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
+// Chips read theme colors, so every role answers with one.
+vi.mock("../lib/useUniwindTheme", () => ({
+  useUniwindTheme: () => new Proxy({}, { get: () => "#000000" }),
+}));
 vi.mock("../lib/nativeComposerTheme", () => ({ createNativeComposerTheme: () => ({}) }));
 vi.mock("../lib/contextChipIconSource", () => ({ contextChipIconUri: () => "" }));
 vi.mock("../features/settings/appearance/useScaledTextRole", () => ({
@@ -182,6 +185,11 @@ it("keeps a sent draft cleared when an autocorrection lands in the same batch as
       </RegistryContext.Provider>,
     ),
   );
+
+  // Group chats parse the draft as sent: mentions, tags, markers and fences reach it verbatim.
+  const markdown = "@ada check #alpha\n\n- first\n- second\n\n```ts\nconst a = 1;\n```";
+  await act(async () => emit(markdown));
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe(markdown);
 
   await act(async () => emit("Hello wrold"));
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Hello wrold");

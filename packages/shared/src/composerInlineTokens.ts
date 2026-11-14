@@ -1,3 +1,9 @@
+import {
+  assistantGroupMentions,
+  assistantGroupProjectMentionRanges,
+  foldAssistantGroupText,
+} from "@t3tools/contracts";
+
 import { markdownMathRanges } from "./markdownMath.ts";
 
 export type ComposerInlineToken =
@@ -14,10 +20,30 @@ export type ComposerInlineToken =
       readonly source: string;
       readonly start: number;
       readonly end: number;
+    }
+  | {
+      /** A group member, `@handle`; value is the handle. */
+      readonly type: "member";
+      readonly value: string;
+      readonly source: string;
+      readonly start: number;
+      readonly end: number;
+    }
+  | {
+      /** A group project, `#slug`; value is the slug. */
+      readonly type: "project";
+      readonly value: string;
+      readonly source: string;
+      readonly start: number;
+      readonly end: number;
     };
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+  /** Group members' handles: an `@handle` naming one is a member, not a file. */
+  readonly memberHandles?: ReadonlyArray<string>;
+  /** Group projects' `#slug`s (see `assistantGroupProjectSlugs`). */
+  readonly projectSlugs?: ReadonlyArray<string>;
 }
 
 const SKILL_MENTION_SOURCE =
@@ -121,7 +147,32 @@ export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
-  const matches = collectMentionTokens(text);
+  // Group tokens come from the server's parser, so a chip shows exactly what the server reads.
+  const handles = options.memberHandles ?? [];
+  const members =
+    handles.length === 0
+      ? []
+      : assistantGroupMentions(
+          text,
+          handles.map((handle) => ({ handle, name: handle })),
+        );
+  const memberStarts = new Set(members.map((mention) => mention.start));
+  const matches = collectMentionTokens(text).filter((match) => !memberStarts.has(match.start));
+  for (const { start, end, member } of members) {
+    // The server reads `@everyone` in any group, listed or not.
+    const value = member === null ? "everyone" : foldAssistantGroupText(member.handle);
+    matches.push({ type: "member", value, source: text.slice(start, end), start, end });
+  }
+  const projects = (options.projectSlugs ?? []).map((slug) => ({ id: slug, name: slug }));
+  for (const { start, end, project } of assistantGroupProjectMentionRanges(text, projects)) {
+    matches.push({
+      type: "project",
+      value: project.id,
+      source: text.slice(start, end),
+      start,
+      end,
+    });
+  }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

@@ -95,6 +95,8 @@ const reactTests = [
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/components/ComposerEditor.ios.test.tsx",
+  "src/native/T3ComposerEditor.groupChips.test.tsx",
+  "src/native/ChipIconImages.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
