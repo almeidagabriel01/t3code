@@ -110,6 +110,8 @@ function ToolbarChip(props: {
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly chevron?: boolean;
+  /** Only the icon, when the row is too full for the label. */
+  readonly iconOnly?: boolean;
   readonly onPress?: () => void;
 }) {
   return (
@@ -121,10 +123,12 @@ function ToolbarChip(props: {
       className="h-8 max-w-44 flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50"
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
-      <Text className="shrink text-xs font-t3-medium text-foreground" numberOfLines={1}>
-        {props.label}
-      </Text>
-      {props.chevron === false ? null : (
+      {props.iconOnly ? null : (
+        <Text className="shrink text-xs font-t3-medium text-foreground" numberOfLines={1}>
+          {props.label}
+        </Text>
+      )}
+      {props.chevron === false || props.iconOnly ? null : (
         <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-subtle" />
       )}
     </Pressable>
@@ -615,6 +619,7 @@ export function GroupComposer(props: {
                   icon="cube"
                   label={projectModel.label}
                   accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
+                  chevron={false}
                   disabled={props.disabled || !projectModel.canWrite}
                   onPress={projectModel.openProjectPicker}
                 />
@@ -639,6 +644,7 @@ export function GroupComposer(props: {
                     label="Mention"
                     accessibilityLabel="Mention a member"
                     chevron={false}
+                    iconOnly={projectModel !== null && runProject !== null}
                     disabled={props.disabled}
                   />
                 </Menu>
