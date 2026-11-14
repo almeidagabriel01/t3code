@@ -1,6 +1,6 @@
 import {
   integrationProviderSupport,
-  loadedNatively,
+  worksNatively,
   type AssistantIntegrations,
   type AssistantWorkspace,
   type DetectedOrigin,
@@ -69,10 +69,33 @@ const ORIGIN_LABELS: Readonly<Record<DetectedOrigin, string>> = {
   t3: "Added in T3",
 };
 
-export const detectedOriginLabel = (server: Pick<DetectedServer, "origin" | "loaded">): string =>
-  server.origin === "claude-ai" && server.loaded === "needs-auth"
-    ? "In claude.ai, not signed in"
-    : ORIGIN_LABELS[server.origin];
+const ORIGIN_PLACES: Readonly<Record<Exclude<DetectedOrigin, "t3">, string>> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "claude-ai": "claude.ai",
+};
+
+type DetectedCopy = Pick<DetectedServer, "origin" | "loaded" | "enabled">;
+
+/** A copy with no reported status works as configured; any status but "connected" does not. */
+const detectedState = (server: DetectedCopy): "connected" | "needs-sign-in" | "not-connected" =>
+  !server.enabled
+    ? "not-connected"
+    : server.loaded === undefined || server.loaded === "connected"
+      ? "connected"
+      : server.loaded === "needs-auth"
+        ? "needs-sign-in"
+        : "not-connected";
+
+const detectedWorks = (server: DetectedCopy): boolean => detectedState(server) === "connected";
+
+export function detectedOriginLabel(server: DetectedCopy): string {
+  if (server.origin === "t3") return ORIGIN_LABELS.t3;
+  const state = detectedState(server);
+  return state === "connected"
+    ? ORIGIN_LABELS[server.origin]
+    : `In ${ORIGIN_PLACES[server.origin]}, ${state === "needs-sign-in" ? "not signed in" : "not connected"}`;
+}
 
 /** Null for T3's own servers, which work wherever T3 injects them. */
 export const worksInLabel = (origin: DetectedOrigin): string | null =>
@@ -124,6 +147,8 @@ export type IntegrationMenuAction =
 export interface IntegrationOriginChip {
   readonly origin: DetectedOrigin;
   readonly label: string;
+  /** False when the label says the copy is not signed in or not connected. */
+  readonly works: boolean;
   readonly detectedId: string;
 }
 
@@ -167,6 +192,7 @@ const byTitle = (
 const originChip = (server: DetectedServer): IntegrationOriginChip => ({
   origin: server.origin,
   label: detectedOriginLabel(server),
+  works: detectedWorks(server),
   detectedId: server.id,
 });
 
@@ -194,7 +220,7 @@ function catalogRow(
   integration: IntegrationView | null,
   detected: ReadonlyArray<DetectedServer>,
 ): IntegrationDirectoryRow {
-  const native = detected.filter((server) => server.enabled);
+  const native = detected.filter(detectedWorks);
   const status = integration?.status ?? "not-connected";
   const nativeOnly = native.length > 0 && (status === "not-connected" || status === "connecting");
   const connect = (label: string): IntegrationPrimaryAction => {
@@ -214,11 +240,11 @@ function catalogRow(
         ? { kind: "open", name: integration.name }
         : status === "not-connected"
           ? connect(
-              native.length === 0
-                ? "Connect"
-                : native.some((server) => server.origin !== "claude-ai")
-                  ? "Connect for other providers"
-                  : "Connect in T3",
+              native.some((server) => server.origin !== "claude-ai")
+                ? "Connect for other providers"
+                : detected.some((server) => server.origin === "claude-ai")
+                  ? "Connect in T3"
+                  : "Connect",
             )
           : {
               kind: "reconnect",
@@ -293,11 +319,15 @@ function otherRow(server: DetectedServer): IntegrationDirectoryRow {
     detected: [server],
     status: null,
     origins: [originChip(server)],
-    note: worksInLabel(server.origin),
+    note: detectedWorks(server) ? worksInLabel(server.origin) : null,
     primary: null,
     menu: copyActions([server]),
   };
 }
+
+/** Connected is read off the row's own chips, so its header never contradicts them. */
+const rowWorks = (row: IntegrationDirectoryRow): boolean =>
+  row.integration?.status === "connected" || row.origins.some((origin) => origin.works);
 
 const matches = (row: IntegrationDirectoryRow, query: string): boolean =>
   query === "" ||
@@ -339,10 +369,7 @@ export function integrationDirectory(
     );
     const row = catalogRow(entry, integration, detected);
     if (!inCategory(row) || !matches(row, query)) continue;
-    const isConnected =
-      (integration !== null && integration.status !== "not-connected") ||
-      detected.some((server) => server.enabled);
-    (isConnected ? connected : available).push(row);
+    (rowWorks(row) ? connected : available).push(row);
   }
   for (const integration of state.integrations) {
     if (integration.catalogId !== null && chosen.get(integration.catalogId) === integration) {
@@ -350,7 +377,7 @@ export function integrationDirectory(
     }
     const row = integrationRow(integration);
     if (!inCategory(row) || !matches(row, query)) continue;
-    (integration.status === "not-connected" ? available : connected).push(row);
+    (rowWorks(row) ? connected : available).push(row);
   }
   for (const server of state.detected) {
     if (server.origin !== "t3" && server.catalogId !== null && catalogIds.has(server.catalogId)) {
@@ -420,7 +447,9 @@ export const sandboxWorkNote = (workspace: AssistantWorkspace): string | null =>
 const nativeNote = (origin: DetectedOrigin): string =>
   origin === "codex"
     ? "Always on for Codex (set up in Codex)"
-    : "Always on for Claude (set up in Claude Code)";
+    : origin === "claude-ai"
+      ? "Always on for Claude (set up in claude.ai)"
+      : "Always on for Claude (set up in Claude Code)";
 
 export interface AssistantIntegrationItem {
   readonly key: string;
@@ -446,15 +475,12 @@ export function assistantIntegrationPicker(input: {
   const { state, selection } = input;
   const supported = integrationProviderSupport(input.driverKind);
   const isSelected = (name: string) => selection.mode === "all" || selection.names.includes(name);
+  // Keyed by catalog entry, so a T3 copy of the same entry reads as always on; others by name.
   const native = new Map<string, DetectedServer>();
   for (const server of state.detected) {
-    if (
-      server.catalogId !== null &&
-      server.instanceId === input.instanceId &&
-      loadedNatively(server)
-    ) {
-      if (!native.has(server.catalogId)) native.set(server.catalogId, server);
-    }
+    if (server.instanceId !== input.instanceId || !worksNatively(server)) continue;
+    const key = server.catalogId ?? `server:${server.name}`;
+    if (!native.has(key)) native.set(key, server);
   }
   const titleOf = (catalogId: string | null, fallback: string) =>
     state.catalog.find((entry) => entry.id === catalogId)?.name ?? fallback;

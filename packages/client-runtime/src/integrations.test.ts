@@ -132,20 +132,45 @@ describe("integrationErrorMessage", () => {
   });
 });
 
+// Every origin in every state a copy can report: absent status, each Claude status, an unknown one, off.
+const COPIES: ReadonlyArray<[DetectedServer, string]> = [
+  [detected("a", "claude-code", null), "Connected in Claude Code"],
+  [detected("a", "claude-code", null, { loaded: "connected" }), "Connected in Claude Code"],
+  [detected("a", "claude-code", null, { loaded: "needs-auth" }), "In Claude Code, not signed in"],
+  [detected("a", "claude-code", null, { loaded: "failed" }), "In Claude Code, not connected"],
+  [detected("a", "claude-code", null, { loaded: "pending" }), "In Claude Code, not connected"],
+  [
+    detected("a", "claude-code", null, { approval: "pending", enabled: false }),
+    "In Claude Code, not connected",
+  ],
+  [detected("a", "codex", null), "Connected in Codex"],
+  [detected("a", "codex", null, { enabled: false }), "In Codex, not connected"],
+  [detected("a", "claude-ai", null, { loaded: "connected" }), "Connected in claude.ai"],
+  [detected("a", "claude-ai", null, { loaded: "needs-auth" }), "In claude.ai, not signed in"],
+  [detected("a", "claude-ai", null, { loaded: "a-future-status" }), "In claude.ai, not connected"],
+  [detected("a", "t3", null), "Added in T3"],
+  [detected("a", "t3", null, { enabled: false }), "Added in T3"],
+];
+
 describe("origin labels", () => {
+  it.each(COPIES)("%o", (server, label) => {
+    const works = server.origin === "t3" ? server.enabled : label.startsWith("Connected in");
+    expect(detectedOriginLabel(server)).toBe(label);
+    const [other] = integrationDirectory(state({ detected: [server] }), {
+      query: "",
+      category: null,
+    }).other;
+    expect(other?.origins.map((origin) => [origin.label, origin.works])).toEqual([[label, works]]);
+    expect(other?.note).toBe(works ? worksInLabel(server.origin) : null);
+  });
+
   it.each([
-    [detected("a", "claude-code", null), "Connected in Claude Code", "Works in Claude assistants"],
-    [detected("a", "codex", null), "Connected in Codex", "Works in Codex assistants"],
-    [detected("a", "claude-ai", null), "Connected in claude.ai", "Works in Claude assistants"],
-    [
-      detected("a", "claude-ai", null, { loaded: "needs-auth" }),
-      "In claude.ai, not signed in",
-      "Works in Claude assistants",
-    ],
-    [detected("a", "t3", null), "Added in T3", null],
-  ])("%o", (server, origin, worksIn) => {
-    expect(detectedOriginLabel(server)).toBe(origin);
-    expect(worksInLabel(server.origin)).toBe(worksIn);
+    ["claude-code", "Works in Claude assistants"],
+    ["claude-ai", "Works in Claude assistants"],
+    ["codex", "Works in Codex assistants"],
+    ["t3", null],
+  ] as const)("%s works in", (origin, worksIn) => {
+    expect(worksInLabel(origin)).toBe(worksIn);
   });
 });
 
@@ -214,16 +239,13 @@ describe("integrationDirectory", () => {
       ],
     });
     expect(sections(input)).toEqual({
-      connected: [
-        "catalog:figma",
-        "catalog:linear",
-        "integration:linear-2",
-        "integration:old-tool",
-      ],
+      connected: ["catalog:figma", "catalog:linear"],
       available: [
         "catalog:github",
         "integration:idle",
+        "integration:linear-2",
         "catalog:notion",
+        "integration:old-tool",
         "catalog:sentry",
         "catalog:stripe",
       ],
@@ -256,10 +278,44 @@ describe("integrationDirectory", () => {
     });
   });
 
+  it.each(
+    COPIES.filter(([copy]) => copy.origin !== "t3").flatMap(([copy]) =>
+      (
+        [
+          null,
+          "connected",
+          "needs-sign-in",
+          "needs-more-access",
+          "error",
+          "not-connected",
+          "connecting",
+        ] as const
+      ).map((status) => [copy, status] as const),
+    ),
+  )("%o with T3 %s sits under the header its chips name", (copy, status) => {
+    const result = integrationDirectory(
+      state({
+        catalog: [linear],
+        integrations: status === null ? [] : [view("linear", "linear", status)],
+        detected: [{ ...copy, catalogId: "linear" }],
+      }),
+      { query: "", category: null },
+    );
+    const [row] = [...result.connected, ...result.available];
+    const chipsSayConnected =
+      row?.status?.label === "Connected" ||
+      (row?.origins ?? []).some((origin) => origin.label.startsWith("Connected in"));
+    expect(result.connected.length === 1).toBe(chipsSayConnected);
+    expect(chipsSayConnected || !row?.note?.startsWith("Works in")).toBe(true);
+  });
+
   it("joins the integration named after the entry, else the first", () => {
     const input = state({
       catalog: [linear],
-      integrations: [view("linear-work", "linear", "connected"), view("linear", "linear", "error")],
+      integrations: [
+        view("linear-work", "linear", "connected"),
+        view("linear", "linear", "connected"),
+      ],
     });
     const result = integrationDirectory(input, { query: "", category: null });
     expect(result.connected.map((row) => [row.key, row.integration?.name])).toEqual([
@@ -464,7 +520,7 @@ describe("integrationDirectory", () => {
       expected: {
         status: null,
         origins: ["In claude.ai, not signed in"],
-        note: "Works in Claude assistants",
+        note: null,
         primary: {
           kind: "connect",
           label: "Connect in T3",
@@ -518,7 +574,7 @@ describe("integrationDirectory", () => {
       }),
     );
     expect(row.origins).toEqual([
-      { origin: "claude-code", label: "Connected in Claude Code", detectedId: "cc" },
+      { origin: "claude-code", label: "Connected in Claude Code", works: true, detectedId: "cc" },
     ]);
     expect(row.menu).toEqual([
       { kind: "make-available", label: "Make available to all providers", detectedId: "cc" },
@@ -594,6 +650,19 @@ describe("assistant integration picker", () => {
         loaded: "connected",
       }),
       detected("cx-linear", "codex", "linear", { instanceId: "codex-main" as never }),
+      detected("context7", "claude-code", null, {
+        instanceId: "claude-main" as never,
+        scope: "user",
+        loaded: "connected",
+      }),
+      detected("claude.ai Claude Docs", "claude-ai", null, {
+        instanceId: "claude-main" as never,
+        loaded: "connected",
+      }),
+      detected("claude.ai Tally", "claude-ai", null, {
+        instanceId: "claude-main" as never,
+        loaded: "needs-auth",
+      }),
       detected("cc-other", "claude-code", "linear", {
         instanceId: "claude-work" as never,
         scope: "user",
@@ -619,11 +688,13 @@ describe("assistant integration picker", () => {
     });
     expect(picker.mode).toBe("selected");
     expect(picker.items.map(brief)).toEqual([
+      ["claude.ai Claude Docs", null, true, true, "Always on for Claude (set up in claude.ai)"],
+      ["context7", null, true, true, "Always on for Claude (set up in Claude Code)"],
       ["docs", null, false, false, "Added in T3"],
       ["Figma", "Connected", true, true, "Always on for Claude (set up in Claude Code)"],
       ["half", "Waiting for sign-in…", false, false, null],
       ["Linear", "Connected", true, false, null],
-      ["Notion", "Needs sign-in", true, true, "Always on for Claude (set up in Claude Code)"],
+      ["Notion", "Needs sign-in", true, true, "Always on for Claude (set up in claude.ai)"],
       ["off", null, false, false, "Added in T3"],
       ["removed", "Not connected", true, false, null],
     ]);

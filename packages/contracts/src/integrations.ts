@@ -206,7 +206,10 @@ export type DetectionSource = typeof DetectionSource.Type;
  * evidence that holds in every project of the instance counts, and only a working connection.
  */
 export const loadedNatively = (server: DetectedServer): boolean =>
-  server.catalogId !== null &&
+  server.catalogId !== null && worksNatively(server);
+
+/** Loaded in every project of its instance and working, catalog match or not. */
+export const worksNatively = (server: DetectedServer): boolean =>
   server.enabled &&
   (server.origin === "codex" ||
     ((server.origin === "claude-ai" ||
