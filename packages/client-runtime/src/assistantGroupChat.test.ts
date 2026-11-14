@@ -19,6 +19,7 @@ import {
   assistantGroupTabView,
   assistantGroupProjectLabel,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProjects,
   assistantGroupComposerProject,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
@@ -1007,6 +1008,7 @@ describe("assistant group tabs", () => {
   const P1 = "p1" as ProjectId;
   const P2 = "p2" as ProjectId;
   const P3 = "p3" as ProjectId;
+  const ONE = [{ id: P1, title: "One" }];
   const projects = [
     { id: P1, title: "One" },
     { id: P2, title: "Two" },
@@ -1271,16 +1273,27 @@ describe("assistant group tabs", () => {
   });
 
   it.each([
-    ["a group project whose title has not loaded", P3, [P3], "Unknown project"],
-    ["a project that left the group, unnamed", P3, [], "Removed project"],
-    ["the second unnamed one that left", P2, [P3], "Removed project"],
-    ["a title known from the chat", P1, [P1], "One"],
-  ])("project label: %s", (_name, id, group, expected) => {
-    const scopes = [P3, P2].map((projectId) => ({ projectId }));
+    ["a group project whose title has not loaded", P3, [P3], [], [P3, P2], "Unknown project"],
+    ["the next one loading, in group order", P2, [P3, P2], [], [P3, P2], "Unknown project 2"],
+    ["a group project the loaded list no longer has", P3, [P3], ONE, [P3], "Removed project"],
+    ["a project that left the group, unnamed", P3, [], ONE, [P3, P2], "Removed project 2"],
+    ["the same one, whatever the tab order", P3, [], ONE, [P2, P3], "Removed project 2"],
+    ["the first unnamed one by id", P2, [P3], ONE, [P3, P2], "Removed project"],
+    ["a saved tab's one the chat does not list", "p9", [], ONE, [P3, P2], "Removed project 3"],
+    ["a title known from the chat", P1, [P1], ONE, [P3, P2], "One"],
+  ] as const)("project label: %s", (_name, id, group, projects, order, expected) => {
+    const scopes = order.map((projectId) => ({ projectId }));
     assert.strictEqual(
-      assistantGroupProjectLabel(id, [{ id: P1, title: "One" }], scopes, group),
+      assistantGroupProjectLabel(id as ProjectId, projects, scopes, group),
       expected,
     );
+  });
+
+  it.each([
+    ["every group project while projects load", [], [P1, P2, P3]],
+    ["only the ones the environment still has", ONE, [P1]],
+  ] as const)("composer projects: %s", (_name, projects, expected) => {
+    assert.deepStrictEqual(assistantGroupComposerProjects([P1, P2, P3], projects), expected);
   });
 
   it.each([

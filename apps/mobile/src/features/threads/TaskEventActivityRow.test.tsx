@@ -16,7 +16,9 @@ vi.mock("react-native", () => ({
   ),
 }));
 vi.mock("../../components/ui/AppText", () => ({
-  AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
+  AppText: (props: { children?: ReactNode; ellipsizeMode?: string }) => (
+    <span data-ellipsize={props.ellipsizeMode}>{props.children}</span>
+  ),
 }));
 vi.mock("../../components/ui/AppSymbol", () => ({
   SymbolView: (props: { name: string }) => <i>{props.name}</i>,
@@ -57,6 +59,11 @@ describe("TaskEventActivityRow", () => {
       />,
     );
     expect(chipped.textContent).toContain("Beta");
+    // A long chip keeps its end ("Removed project 2"), which tells two apart.
+    expect(
+      [...chipped.querySelectorAll("span")].find((span) => span.textContent === "Beta")?.dataset
+        .ellipsize,
+    ).toBe("middle");
     expect(chipped.textContent).toContain("Hide");
     expect(chipped.querySelector("button")!.getAttribute("aria-label")).toBe(
       "Review, Working, Beta. Hide request",

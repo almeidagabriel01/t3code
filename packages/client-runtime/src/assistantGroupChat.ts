@@ -318,10 +318,13 @@ export interface AssistantGroupTab {
   readonly readSeq: number;
 }
 
+/** "Unknown project", "Unknown project 2"…: the first of a kind unnumbered. */
+const numbered = (label: string, index: number) => (index < 1 ? label : `${label} ${index + 1}`);
+
 /**
- * A project's name anywhere in a group chat: its title, else the one the chat last knew. One
- * still in the group (`groupProjectIds`) whose title has not loaded reads "Unknown project"; one
- * that left, known by neither, reads "Removed project", numbered by scope order when several are.
+ * A project's title, else the one the chat last knew. Before the environment's projects load, a
+ * group project reads "Unknown project", numbered in group order; any other nameless one is a
+ * "Removed project", numbered by id among the chat's tabs and this one, whatever their order.
  */
 export function assistantGroupProjectLabel(
   projectId: ProjectId,
@@ -329,20 +332,36 @@ export function assistantGroupProjectLabel(
   scopes: ReadonlyArray<Pick<AssistantTeamChatScope, "projectId" | "title">> | undefined,
   groupProjectIds: ReadonlyArray<ProjectId>,
 ): string {
-  const known = (id: ProjectId | null) =>
+  const known = (id: ProjectId) =>
     projects.find((project) => project.id === id)?.title ??
     scopes?.find((scope) => scope.projectId === id)?.title;
   const title = known(projectId);
   if (title !== undefined) return title;
-  if (groupProjectIds.includes(projectId)) return "Unknown project";
-  const nameless = (scopes ?? []).filter(
-    (scope) =>
-      scope.projectId !== null &&
-      !groupProjectIds.includes(scope.projectId) &&
-      known(scope.projectId) === undefined,
+  const loading = (id: ProjectId) => projects.length === 0 && groupProjectIds.includes(id);
+  if (loading(projectId)) {
+    const unknown = groupProjectIds.filter((id) => known(id) === undefined);
+    return numbered("Unknown project", unknown.indexOf(projectId));
+  }
+  const listed = (scopes ?? []).flatMap((scope) =>
+    scope.projectId === null ? [] : [scope.projectId],
   );
-  const index = nameless.findIndex((scope) => scope.projectId === projectId);
-  return index < 1 ? "Removed project" : `Removed project ${index + 1}`;
+  const removed = [...new Set([...listed, projectId])]
+    .filter((id) => known(id) === undefined && !loading(id))
+    .sort();
+  return numbered("Removed project", removed.indexOf(projectId));
+}
+
+/**
+ * The group projects the composer offers: once the environment's projects load, only those it
+ * still has, since work cannot go to a deleted project or another environment's.
+ */
+export function assistantGroupComposerProjects(
+  groupProjectIds: ReadonlyArray<ProjectId>,
+  projects: ReadonlyArray<{ readonly id: ProjectId }>,
+): ReadonlyArray<ProjectId> {
+  return projects.length === 0
+    ? groupProjectIds
+    : groupProjectIds.filter((id) => projects.some((project) => project.id === id));
 }
 
 /** The user's project pick in the composer, for the tab it was made in. */

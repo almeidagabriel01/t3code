@@ -820,6 +820,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
               UNION SELECT ''
             ) c
             LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
+            -- A stable order, so a client's "Removed project 2" stays the same project.
+            ORDER BY c.scope
           ) x
           WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0)
           AS scopes_json

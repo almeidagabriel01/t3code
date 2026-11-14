@@ -1325,6 +1325,34 @@ it("shows every request in All as one line with its project, opened in place, an
   expect(fakeGroupChat.reads).toEqual([]);
 });
 
+it("keeps the number that tells two removed projects apart when their chips truncate", async () => {
+  const gone = ["gone-a", "gone-b"] as unknown as ReadonlyArray<ProjectId>;
+  publishGroupChat(
+    gone.map((projectId, index) =>
+      message(index + 1, { ...inRequest(index + 1), projectId, title: `Request ${index + 1}` }),
+    ),
+    [],
+  );
+  const chat = scopedChat();
+  const orphans = gone.map((projectId) => ({
+    projectId,
+    unreadCount: 1,
+    waiting: false,
+    readSeq: 0,
+  }));
+  await using _screen = await openChat({
+    people: sitePeople(),
+    team: team({ chat: { ...chat, scopes: [...chat.scopes!, ...orphans] } }),
+  });
+  const chip = blocks().nth(1).getByTestId("group-request-chip");
+  await expect.element(chip).toHaveTextContent("Removed project 2");
+  const tail = chip.getByText("2", { exact: true });
+  await expect.element(tail).toBeVisible();
+  expect(tail.element().getBoundingClientRect().right).toBeLessThanOrEqual(
+    chip.element().getBoundingClientRect().right,
+  );
+});
+
 it("picks a project for a new request and keeps a reply in its request's project", async () => {
   twoRequests();
   await using _screen = await openChat();

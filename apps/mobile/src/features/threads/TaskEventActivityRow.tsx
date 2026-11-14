@@ -46,7 +46,11 @@ export function TaskEventActivityRow(props: {
       </Text>
       {props.chip === undefined ? null : (
         <View className="max-w-28 shrink-0 rounded-full bg-foreground/8 px-1.5 py-px">
-          <Text numberOfLines={1} className="text-2xs text-foreground-secondary">
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="middle"
+            className="text-2xs text-foreground-secondary"
+          >
             {props.chip.label}
           </Text>
         </View>

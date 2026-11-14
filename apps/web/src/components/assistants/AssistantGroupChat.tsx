@@ -16,6 +16,7 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
@@ -802,6 +803,17 @@ function RequestBody(props: {
   );
 }
 
+/** A project label truncated before its number, so "Removed project 2" never reads as the first. */
+function ProjectLabelText(props: { readonly label: string; readonly testId?: string }) {
+  const [, head = props.label, tail] = /^(.*?)( \d+)?$/.exec(props.label) ?? [];
+  return (
+    <span className="flex min-w-0" data-testid={props.testId}>
+      <span className="truncate">{head}</span>
+      {tail === undefined ? null : <span className="shrink-0 whitespace-pre">{tail}</span>}
+    </span>
+  );
+}
+
 /** A request with its messages and cards, folded to its header when the user closes it. */
 function RequestBlock(props: {
   readonly block: AssistantGroupRequestBlock;
@@ -840,7 +852,7 @@ function RequestBlock(props: {
                 className="flex max-w-28 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
               >
                 <FolderIcon aria-hidden className="size-3 shrink-0" />
-                <span className="truncate">{props.allChip}</span>
+                <ProjectLabelText label={props.allChip} />
               </span>
             )
           }
@@ -900,9 +912,7 @@ function RequestBlock(props: {
         {props.projectName === null ? null : (
           <span className="flex max-w-36 min-w-0 shrink items-center gap-1 text-xs text-muted-foreground @max-sm/group-chat:hidden">
             <FolderIcon aria-hidden className="size-3 shrink-0" />
-            <span className="truncate" data-testid="group-request-project">
-              {props.projectName}
-            </span>
+            <ProjectLabelText label={props.projectName} testId="group-request-project" />
           </span>
         )}
         <span
@@ -1453,10 +1463,10 @@ export function AssistantGroupChat(props: {
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(id, projects, team?.chat?.scopes, groupProjectIds);
-  const groupProjects: ReadonlyArray<GroupProjectOption> = groupProjectIds.map((id) => ({
-    id,
-    label: projectName(id),
-  }));
+  const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupComposerProjects(
+    groupProjectIds,
+    projects,
+  ).map((id) => ({ id, label: projectName(id) }));
   const sentByUser =
     live === null
       ? []

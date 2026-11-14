@@ -15,6 +15,7 @@ import {
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
@@ -755,6 +756,7 @@ function RequestHeader(props: {
                 testID="group-request-project"
                 className="shrink text-xs text-foreground-muted"
                 numberOfLines={1}
+                ellipsizeMode="middle"
               >
                 {props.projectName}
               </Text>
@@ -883,17 +885,13 @@ function useGroupPeople(environmentId: EnvironmentId, teamId: AssistantTeamId) {
     return member === undefined || member.archivedAt !== null ? [] : [member];
   });
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
+  const environmentProjects = projects.filter((project) => project.environmentId === environmentId);
   const projectName = (id: ProjectId) =>
-    assistantGroupProjectLabel(
-      id,
-      projects.filter((project) => project.environmentId === environmentId),
-      team?.chat?.scopes,
-      groupProjectIds,
-    );
-  const groupProjects: ReadonlyArray<GroupComposerProject> = groupProjectIds.map((id) => ({
-    id,
-    name: projectName(id),
-  }));
+    assistantGroupProjectLabel(id, environmentProjects, team?.chat?.scopes, groupProjectIds);
+  const groupProjects: ReadonlyArray<GroupComposerProject> = assistantGroupComposerProjects(
+    groupProjectIds,
+    environmentProjects,
+  ).map((id) => ({ id, name: projectName(id) }));
   return { team, everyone, byId, members, groupProjects, projectName };
 }
 
