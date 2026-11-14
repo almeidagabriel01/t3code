@@ -515,6 +515,21 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`UPDATE assistant_requests SET group_id = request_id WHERE group_id IS NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
+  // What the last task event told a conversation about a thread (TaskEventNotices): a run that
+  // changes nothing against it wakes no one.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_task_notices (
+      thread_id TEXT NOT NULL,
+      subject_thread_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      head_sha TEXT,
+      message_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (thread_id, subject_thread_id)
+    )
+  `;
+
   // A thread an assistant launched for real work; its state is the thread's own.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_tasks (

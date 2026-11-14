@@ -15,6 +15,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Reactor from "./AssistantTaskReactor.ts";
 import * as Tasks from "./AssistantTasks.ts";
+import { TaskEventNotices } from "./TaskEventNotices.ts";
 
 const taskThread = ThreadId.make("thread-task");
 
@@ -40,10 +41,16 @@ const harness = (options: { readonly failSend?: boolean } = {}) => {
             Effect.succeed({
               messages: [{ text: "Done: retry added" }, { text: "  " }],
             } as never),
-          sendToThread: (input) =>
+        }),
+        Layer.mock(TaskEventNotices)({
+          send: (notice) =>
             options.failSend === true
-              ? Effect.fail(new Error("send failed") as never)
-              : Effect.sync(() => void sends.push(input as never)).pipe(Effect.as({} as never)),
+              ? Effect.succeed("failed" as const)
+              : Effect.sync(() => {
+                  sends.push(notice as never);
+                  return "sent" as const;
+                }),
+          foldQueued: () => Effect.void,
         }),
       ),
     ),
@@ -69,7 +76,7 @@ const setup = (archived = false) =>
   });
 
 it.effect(
-  "a task run that ends wakes its assistant once, with the thread and its last message",
+  "a task run that ends is offered to its assistant through the notices door, with its last message",
   () => {
     const { sends, layer } = harness();
     return Effect.gen(function* () {
@@ -79,18 +86,19 @@ it.effect(
       yield* reactor.handle(runEvent(taskThread, "completed", "run.created"));
       assert.strictEqual(sends.length, 2);
       const [sent] = sends;
-      // Both events name the same run, so they send the same message and command id.
+      // Both events name the same run, so they offer the same message id; the door tells it once.
       assert.strictEqual(sends[0]?.messageId, sends[1]?.messageId);
       assert.strictEqual(sent?.messageId, "assistant-task:run-completed");
       assert.strictEqual(sent?.threadId, "assistant:jarvis:1");
       // The send targets the assistant's thread, so it names the assistant's project, not the task's.
       assert.strictEqual(sent?.projectId, "assistants-home");
       assert.strictEqual(sent?.senderThreadId, taskThread);
-      assert.strictEqual(sent?.mode, "queue");
+      assert.strictEqual((sent?.run as { id: string } | undefined)?.id, "run-completed");
       const text = String(sent?.text);
       assert.include(text, "finished");
       assert.include(text, "Done: retry added");
       assert.include(text, "t3_thread_send");
+      assert.include(text, "NO_REPLY");
     }).pipe(Effect.provide(layer));
   },
 );

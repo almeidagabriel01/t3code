@@ -42,6 +42,8 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
+import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
 import { containsSecret } from "../channels/channelRedaction.ts";
@@ -177,6 +179,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const spend = yield* AssistantSpend;
+  const notices = yield* TaskEventNotices;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const channelLanguage = yield* ChannelLanguage;
@@ -363,26 +366,40 @@ const make = Effect.gen(function* () {
       diffStat: null,
     });
     const id = `${WAKE_MESSAGE_PREFIX}${wakeKey}`;
-    const sent = yield* threads
-      .sendToThread({
-        projectId: assistant.projectId,
-        commandId: CommandId.make(id),
-        messageId: MessageId.make(id),
+    const giveBack = sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
+    if (signal.run !== undefined) {
+      // A run's end is a task event: told once per change, whichever of a watch or a task reports it.
+      const outcome = yield* notices.send({
         threadId: assistant.threadId as ThreadId,
+        projectId: assistant.projectId,
+        run: signal.run,
+        messageId: id,
         text,
-        attachments: [],
-        mode: "queue",
         createdBy: "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.result);
-    if (sent._tag === "Failure") {
-      // Give the claim back so the next occurrence may try again.
-      yield* sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
-      return yield* Effect.logWarning("autonomy wake could not be sent", {
-        assistantId: assistant.id,
-        cause: sent.failure,
       });
+      if (outcome !== "sent") return yield* giveBack;
+    } else {
+      const sent = yield* threads
+        .sendToThread({
+          projectId: assistant.projectId,
+          commandId: CommandId.make(id),
+          messageId: MessageId.make(id),
+          threadId: assistant.threadId as ThreadId,
+          text,
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      if (sent._tag === "Failure") {
+        // Give the claim back so the next occurrence may try again.
+        yield* giveBack;
+        return yield* Effect.logWarning("autonomy wake could not be sent", {
+          assistantId: assistant.id,
+          cause: sent.failure,
+        });
+      }
     }
     if (isWatch) {
       const watch = candidate.source.watch;
@@ -544,7 +561,8 @@ const make = Effect.gen(function* () {
     if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
     const render = yield* answerOf(run);
-    const text = render("en");
+    // An autonomy wake is an event: a quiet end tells no one, and chat apps get the short version.
+    const text = assistantRunReply(render("en"), "other");
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
     const chat = yield* ownerChat(channels);
@@ -561,7 +579,7 @@ const make = Effect.gen(function* () {
           deliveryId: `autonomy-run:${run.id}`,
           destination: chat,
           senderName: assistant.name,
-          text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
+          text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), "other") ?? text}`,
           markdown: true,
           language,
         });
@@ -662,6 +680,7 @@ const make = Effect.gen(function* () {
             projectId: null,
             prNumber: null,
             summary: `A run ${run.status === "completed" ? "finished" : run.status}.`,
+            run,
           });
           return;
         }

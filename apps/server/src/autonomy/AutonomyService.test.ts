@@ -32,7 +32,9 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TaskEventNotices from "../assistants/TaskEventNotices.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
 import { requestThreadId } from "../assistants/AssistantGroups.ts";
@@ -53,11 +55,13 @@ type Shell = {
   lineage: { relationshipToParent: string | null };
   sideChatOf?: unknown;
   delegatedFrom?: unknown;
+  worktreePath?: string;
 };
 // Real shells omit `sideChatOf` unless the thread is a side chat.
 const plain: Shell = {
   title: "Fix login",
   projectId: "p1",
+  worktreePath: "/repo",
   archivedAt: null,
   lineage: { relationshipToParent: null },
 };
@@ -81,7 +85,9 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     selfHandles: [],
   });
   const dispatched: Array<Record<string, unknown>> = [];
+  let commits = 0;
   const layer = Autonomy.layer.pipe(
+    Layer.provideMerge(TaskEventNotices.layer),
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
@@ -106,8 +112,12 @@ const harness = (language: "en" | "pt-BR" = "en") => {
                   });
                   return {} as never;
                 }),
+          getThreadShell: (threadId) => Effect.succeed((shells.get(threadId) ?? null) as never),
           getThreadRecords: (threadId) =>
             Effect.succeed({
+              checkpointScopes: [],
+              checkpoints: [],
+              runs: [],
               messages: [{ text: answers.get(threadId) ?? "" }],
               turnItems: [...contexts.values()].flatMap((context) =>
                 context.item === undefined ? [] : [context.item],
@@ -139,6 +149,10 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           get: Ref.get(telegram).pipe(Effect.map((value) => value as never)),
         }),
         Layer.mock(KanbanService.KanbanService)({ subscribe: () => Stream.empty }),
+        // Every run lands a new commit here, so each is news; TaskEventNotices tests the quiet ones.
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          resolveCommit: () => Effect.sync(() => ({ commitSha: `sha-${++commits}` }) as never),
+        }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeedSome({ title: "acme/app" } as never),
         }),

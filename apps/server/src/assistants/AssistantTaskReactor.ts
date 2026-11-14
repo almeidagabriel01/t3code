@@ -1,11 +1,10 @@
+import { type OrchestrationV2DomainEvent, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import {
-  CommandId,
-  MessageId,
-  type OrchestrationV2DomainEvent,
-  type ProjectId,
-  type ThreadId,
-} from "@t3tools/contracts";
-import { formatThreadLink } from "@t3tools/shared/threadLinks";
+  QUIET_REPLY,
+  TASK_EVENT_MESSAGE_PREFIX,
+  taskEventHeadline,
+  type TaskEventStatus,
+} from "@t3tools/shared/assistantTaskEvents";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,29 +17,32 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
+import { TaskEventNotices } from "./TaskEventNotices.ts";
 
-const TASK_WAKE_PREFIX = "assistant-task:";
-const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
+const TERMINAL = new Set<string>([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+] satisfies ReadonlyArray<TaskEventStatus>);
 const LAST_MESSAGE_CHARS = 1_500;
 
 export function taskWakeText(input: {
   readonly title: string;
   readonly threadId: ThreadId;
-  readonly status: string;
+  readonly status: TaskEventStatus;
   readonly lastMessage: string | null;
 }): string {
-  const link = formatThreadLink({ environmentId: null, threadId: input.threadId }, input.title);
-  const outcome = input.status === "completed" ? "finished" : input.status;
   const last =
     input.lastMessage === null
       ? ""
       : `\n\nIts last message:\n${input.lastMessage.slice(0, LAST_MESSAGE_CHARS)}`;
-  return `Task ${link} ${outcome}.${last}\n\nCheck its diff and run the tests. Ask a group member to review when that helps, send fixes with t3_thread_send, and only then report to the user.`;
+  return `${taskEventHeadline(input)}${last}\n\nIf this tells the user nothing new, reply with exactly ${QUIET_REPLY} and stop. Otherwise check its diff and run the tests, send any fixes to the task with t3_thread_send (never edit files here), then tell the user what changed in at most 3 short plain lines with the task's link.`;
 }
 
 /**
  * Wakes the assistant when a thread it launched ends a run, so it follows its tasks without
- * waiting on them. The message id derives from the run, so a replayed event wakes once.
+ * waiting on them. `TaskEventNotices` decides whether the run is news and keeps one per run.
  */
 export class AssistantTaskReactor extends Context.Service<
   AssistantTaskReactor,
@@ -55,6 +57,7 @@ const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const tasks = yield* AssistantTasks;
+  const notices = yield* TaskEventNotices;
 
   const handle: AssistantTaskReactor["Service"]["handle"] = Effect.fn(
     "AssistantTaskReactor.handle",
@@ -90,33 +93,21 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => null),
         );
-      const id = `${TASK_WAKE_PREFIX}${run.id}`;
-      const sent = yield* threads
-        .sendToThread({
-          // The thread being written to is the assistant's, so its project, not the task's.
-          projectId: owner[0].project_id as ProjectId,
-          commandId: CommandId.make(id),
-          messageId: MessageId.make(id),
-          threadId: assistantThread as ThreadId,
-          senderThreadId: run.threadId,
-          text: taskWakeText({
-            title: shell?.title ?? task.value.title,
-            threadId: run.threadId,
-            status: run.status,
-            lastMessage,
-          }),
-          attachments: [],
-          mode: "queue",
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(Effect.result);
-      if (sent._tag === "Failure") {
-        yield* Effect.logWarning("assistant task wake could not be sent", {
+      yield* notices.send({
+        threadId: assistantThread as ThreadId,
+        // The thread being written to is the assistant's, so its project, not the task's.
+        projectId: owner[0].project_id as ProjectId,
+        run,
+        messageId: `${TASK_EVENT_MESSAGE_PREFIX}${run.id}`,
+        text: taskWakeText({
+          title: shell?.title ?? task.value.title,
           threadId: run.threadId,
-          cause: sent.failure,
-        });
-      }
+          status: run.status as TaskEventStatus,
+          lastMessage,
+        }),
+        createdBy: "agent",
+        senderThreadId: run.threadId,
+      });
     },
     (effect, event) =>
       effect.pipe(
@@ -126,9 +117,23 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  /** Task events queued before the notices door existed may sit in a backlog; keep the newest. */
+  const foldBacklogs = Effect.gen(function* () {
+    const rows = yield* sql<{ readonly thread_id: string }>`
+      SELECT thread_id FROM assistants WHERE archived_at IS NULL AND thread_id IS NOT NULL`;
+    yield* Effect.forEach(rows, (row) => notices.foldQueued(row.thread_id as ThreadId), {
+      discard: true,
+    });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("assistant task backlog fold failed", { cause }),
+    ),
+  );
+
   const start: AssistantTaskReactor["Service"]["start"] = () =>
     forkParked(
-      Stream.runForEach(engine.streamDomainEvents, handle).pipe(
+      foldBacklogs.pipe(
+        Effect.andThen(Stream.runForEach(engine.streamDomainEvents, handle)),
         Effect.catchCause((cause) =>
           Effect.logWarning("assistant task event stream failed", { cause }),
         ),

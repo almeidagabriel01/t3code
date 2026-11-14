@@ -220,6 +220,7 @@ import * as AssistantGroupReactor from "./assistants/AssistantGroupReactor.ts";
 import * as AssistantRequestReactor from "./assistants/AssistantRequestReactor.ts";
 import * as AssistantTaskReactor from "./assistants/AssistantTaskReactor.ts";
 import * as AssistantTasks from "./assistants/AssistantTasks.ts";
+import * as TaskEventNotices from "./assistants/TaskEventNotices.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
@@ -715,8 +716,12 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// One instance, shared by the task reactor and autonomy, so its lock orders both.
+const layerTaskEventNotices = TaskEventNotices.layer.pipe(Layer.provide(GitVcsDriver.layer));
+
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
 const layerChannels = AutonomyService.layer.pipe(
+  Layer.provide(layerTaskEventNotices),
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -826,6 +831,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(
     Layer.provide(AssistantTaskReactor.layer),
+    Layer.provide(layerTaskEventNotices),
     Layer.provide(AssistantTasks.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
