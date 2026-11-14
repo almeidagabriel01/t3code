@@ -592,8 +592,8 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
       if (filled) {
         yield* sql`UPDATE assistant_group_messages SET request_project_id = ${project} WHERE message_id <> 'm3'`;
       }
-      // A database that already has the column is never swept again, even with rows left NULL.
-      const carried = shape === "scope-column-present" ? null : project;
+      // Rows whose request is repaired on a later start take the request's project too.
+      const carried = project;
 
       yield* ensureForkSchema();
       yield* ensureForkSchema();

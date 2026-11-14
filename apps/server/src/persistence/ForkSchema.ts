@@ -677,6 +677,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
+  // pages its own lines. Filled once below, in the start that adds the column; after that only
+  // the rows the repair gives a request take its project, so General is never swept again.
+  const scoped = yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_message_idx ON assistant_group_tasks(request_message_id)`;
   // Every start, only rows still without a request (an older build could add the columns and stop
   // before filling them): a message that opened root tasks, or a person's message replying to
@@ -687,17 +691,20 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       WHERE r.task_id = assistant_group_tasks.root_id)
     WHERE request_id IS NULL`;
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = message_id
+    UPDATE assistant_group_messages SET request_id = message_id, request_project_id = project_id
     WHERE request_id IS NULL AND (
       EXISTS (SELECT 1 FROM assistant_group_tasks t
         WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
       OR (kind = 'message' AND author <> 'assistant' AND reply_to IS NULL))`;
+  const taskRequest = sql`COALESCE(
+    (SELECT t.request_id FROM assistant_group_tasks t
+      WHERE t.task_id = assistant_group_messages.task_id),
+    (SELECT t.request_id FROM assistant_group_tasks t
+      WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))`;
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = COALESCE(
-      (SELECT t.request_id FROM assistant_group_tasks t
-        WHERE t.task_id = assistant_group_messages.task_id),
-      (SELECT t.request_id FROM assistant_group_tasks t
-        WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
+    UPDATE assistant_group_messages SET request_id = ${taskRequest},
+      request_project_id = (SELECT h.project_id FROM assistant_group_messages h
+        WHERE h.message_id = ${taskRequest})
     WHERE request_id IS NULL AND (kind = 'message' OR task_id IS NOT NULL)`;
   yield* sql`
     WITH RECURSIVE chain(message_id, request_id) AS (
@@ -710,11 +717,14 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       WHERE m.request_id IS NULL
     )
     UPDATE assistant_group_messages SET request_id = (
-      SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id)
+      SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id),
+      request_project_id = (SELECT h.project_id FROM chain c
+        JOIN assistant_group_messages h ON h.message_id = c.request_id
+        WHERE c.message_id = assistant_group_messages.message_id)
     WHERE request_id IS NULL AND reply_to IS NOT NULL`;
   // A person's reply to a message that is gone, or that belongs to no request, starts its own.
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = message_id
+    UPDATE assistant_group_messages SET request_id = message_id, request_project_id = project_id
     WHERE request_id IS NULL AND kind = 'message' AND author <> 'assistant'`;
   // A notice that a member's conversation waits on the user: one per wait (`wait_key`), resolved in
   // place once nothing waits any more.
@@ -731,10 +741,6 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
-  // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
-  // pages its own lines. Filled once, in the start that adds the column (this is one transaction);
-  // from then on every write keeps it, so General's rows are never swept again.
-  const scoped = yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
   if (scoped.length > 0)
     yield* sql`
     UPDATE assistant_group_messages SET request_project_id = (
