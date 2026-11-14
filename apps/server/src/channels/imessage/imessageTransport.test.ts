@@ -85,13 +85,26 @@ it.effect("a retry after a later piece failed sends only the pieces that did not
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("an ambiguous timeout keeps its claim so a resend cannot duplicate it", () =>
+it.effect("a timed-out piece goes again, unless its echo showed Messages sent it", () =>
   Effect.gen(function* () {
-    const { sent, transport } = yield* build(() => ({ outcome: "unknown", code: "timeout" }));
+    let timeouts = 2;
+    const { sql, sent, transport } = yield* build(() =>
+      timeouts-- > 0 ? { outcome: "unknown", code: "timeout" } : undefined,
+    );
     const error = yield* Effect.flip(transport.send(message("hello")));
     assert.deepEqual([error.deliveryOutcome, error.deliveryErrorCode], ["unknown", "timeout"]);
+    yield* Effect.flip(transport.send(message("hello")));
     yield* transport.send(message("hello"));
-    assert.lengthOf(sent, 1);
+    assert.lengthOf(sent, 3);
+    // Its fingerprint stays for echo matching, once.
+    const rows = yield* sql`SELECT id FROM imessage_sent WHERE delivery_id = 'd1'`;
+    assert.lengthOf(rows, 1);
+
+    timeouts = 1;
+    yield* Effect.flip(transport.send(message("seen", "d2")));
+    yield* sql`UPDATE imessage_sent SET consumed = 1 WHERE delivery_id = 'd2'`;
+    yield* transport.send(message("seen", "d2"));
+    assert.lengthOf(sent, 4);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

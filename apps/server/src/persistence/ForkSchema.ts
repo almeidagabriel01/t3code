@@ -379,6 +379,23 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       PRIMARY KEY (delivery_id, chunk_index)
     )
   `;
+  // A piece is confirmed once the chat app answered for it; an unconfirmed one is sent again on
+  // retry. Older builds kept the claim of a piece whose send timed out, which was always the last
+  // piece tried of a delivery left ambiguous: only that one is unconfirmed on upgrade.
+  for (const table of ["telegram_sent", "imessage_sent"] as const) {
+    if ((yield* addColumns(table, [["confirmed", "INTEGER NOT NULL DEFAULT 1"]])).length === 0) {
+      continue;
+    }
+    yield* sql.unsafe(`
+      UPDATE ${table} SET confirmed = 0
+      WHERE (delivery_id, chunk_index) IN (
+        SELECT delivery_id, MAX(chunk_index) FROM ${table}
+        WHERE delivery_id IN (SELECT delivery_id FROM channel_outbox WHERE state = 'ambiguous')
+        GROUP BY delivery_id
+      )`);
+  }
+  // Set once the outbox put a delivery that ran out of tries back in line on its own.
+  yield* addColumns("channel_outbox", [["auto_requeued", "INTEGER NOT NULL DEFAULT 0"]]);
   yield* sql`
     CREATE TABLE IF NOT EXISTS channel_cards (
       decision_id TEXT PRIMARY KEY,
