@@ -102,7 +102,7 @@ describe("HeavyNoticeHost", () => {
         threadId: null,
       }),
     ]);
-    expect(view.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("default");
+    expect(view.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("info");
     await act(async () => view.button("Heavy work")!.click());
     expect(view.navigate).toHaveBeenCalledWith("/settings/maintenance");
     view.unmount();
@@ -113,6 +113,7 @@ describe("HeavyNoticeHost", () => {
       notice({ id: "n-3", tone: "warning", title: "Linux went offline", threadId: null }),
     ]);
     expect(again.host.textContent).toContain("Linux went offline");
+    expect(again.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("warning");
     await act(async () => vi.advanceTimersByTime(15_000));
     expect(again.host.querySelector("[role=alert]")).toBeNull();
     again.unmount();

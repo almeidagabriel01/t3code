@@ -58,7 +58,7 @@ export function HeavyNoticeHost(props: { readonly navigate: (href: string) => vo
           <Toast
             message={current.notice.title}
             description={current.notice.description}
-            tone={current.notice.tone === "error" ? "danger" : "default"}
+            tone={current.notice.tone === "error" ? "danger" : current.notice.tone}
             action={{
               label: current.notice.threadId === null ? "Heavy work" : "Open thread",
               onPress: () => {
