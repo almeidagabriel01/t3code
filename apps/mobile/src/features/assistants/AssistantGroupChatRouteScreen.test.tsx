@@ -1971,9 +1971,11 @@ describe("requests", () => {
       [TAB.general, "Project:Beta"],
       [TAB.beta, "Project:Alpha"],
     ] as const) {
-      await (
-        await sendHeld(opened, pick)
-      )();
+      const sent = await sendHeld(opened, pick);
+      // On its way, it shows only in the tab it left from and in All, beside the project it goes to.
+      expect(input().value).toBe(opened === TAB.all ? "@beto late" : "");
+      if (opened === TAB.all) expect(byLabel("Project")).toBeNull();
+      await sent();
       expect(selected(opened)).toBe("true");
     }
     const settle = await sendHeld(TAB.beta);
@@ -1981,6 +1983,37 @@ describe("requests", () => {
     await settle();
     expect(selected(TAB.beta)).toBe("true");
     expect(text()).toContain("Replying to Review");
+  });
+
+  it("keeps what the user writes in another tab during a send, and a refused one in its own tab", async () => {
+    tabbed("project:p1");
+    const sendHeld = async (message: string) => {
+      await click(TAB.alpha);
+      await type(message);
+      let settle!: (reply: unknown) => void;
+      mocks.post.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+      await click("Send");
+      await click(TAB.beta);
+      expect(input().value).toBe("");
+      await type("meanwhile");
+      return (reply: unknown) => act(async () => settle(reply));
+    };
+    await (
+      await sendHeld("@ada first")
+    )({ ok: true, value: {} });
+    expect(input().value).toBe("meanwhile");
+    await type("");
+    await (
+      await sendHeld("@ada second")
+    )({ ok: false, message: "server down", reason: null });
+    expect(input().value).toBe("meanwhile");
+    expect(text()).not.toContain("server down");
+    await click(TAB.alpha);
+    expect(input().value).toBe("@ada second");
+    expect(text()).toContain("server down");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith(expect.objectContaining({ text: "@ada second" }));
+    expect(input().value).toBe("meanwhile");
   });
 
   it("sends the picked project on a new request and lets the lead decide by default", async () => {

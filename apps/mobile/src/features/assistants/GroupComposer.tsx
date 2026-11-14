@@ -5,7 +5,10 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupShowsOutgoing,
   insertAssistantGroupMention,
+  type AssistantGroupOutgoing,
+  type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
@@ -294,6 +297,8 @@ function ReplyQuote(props: {
 export function GroupComposer(props: {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
+  /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
+  readonly tab: AssistantGroupTabKey | null;
   readonly members: ReadonlyArray<Assistant>;
   readonly leadId: Assistant["id"] | null;
   /** The group's projects, named. */
@@ -318,12 +323,23 @@ export function GroupComposer(props: {
     projectId: ProjectId | undefined,
   ) => Promise<GroupSendResult>;
 }) {
-  const draftKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  // Sent text leaves the draft for its own key, so another tab never shows it beside its project.
+  const outgoingKey = `${groupKey}:outgoing`;
+  const [outgoing, setOutgoing] = useState<
+    | (AssistantGroupOutgoing & {
+        readonly projectId: ProjectId | null;
+        readonly error: string | null;
+      })
+    | null
+  >(null);
+  const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
+  const draftKey = shown === null ? groupKey : outgoingKey;
   const faces = useAssistantFaceImages(props.members);
   const { text } = useComposerDraft(draftKey);
   const [selection, setSelection] = useState(() => ({ start: text.length, end: text.length }));
   const [contentHeight, setContentHeight] = useState(0);
-  const [sending, setSending] = useState(false);
+  const sending = outgoing !== null && !outgoing.failed;
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once.
@@ -331,9 +347,13 @@ export function GroupComposer(props: {
   const bodyText = useScaledTextRole("body");
 
   const write = (value: string, caret?: number) => {
+    // A message on its way is not the user's to change.
+    if (sending && shown !== null) return;
     setComposerDraftText(draftKey, value);
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
+    // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
+    if (shown !== null) setOutgoing(value === "" ? null : { ...shown, error: null });
   };
 
   const voice = useVoiceInputController({
@@ -380,7 +400,10 @@ export function GroupComposer(props: {
 
   const lockedProject = props.replyingTo?.projectId ?? null;
   const chosenProject = props.projectId;
-  const runProject = lockedProject ?? chosenProject;
+  // All shows a message on its way from another tab with the project it goes to, and no model.
+  const elsewhere = shown !== null && shown.tab !== props.tab;
+  const pinned = elsewhere ? shown.projectId : lockedProject;
+  const runProject = elsewhere ? null : (lockedProject ?? chosenProject);
   const { projectModel } = props;
   const projectName = (id: ProjectId | null) =>
     id === null ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL : props.projectName(id);
@@ -434,16 +457,20 @@ export function GroupComposer(props: {
       );
       return;
     }
-    setSending(true);
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
+    const sent = { tab: props.tab, failed: false, projectId: runProject, error: null };
+    setComposerDraftText(outgoingKey, message);
+    if (draftKey === groupKey) clearComposerDraftContent(groupKey);
+    setOutgoing(sent);
+    setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId);
-    setSending(false);
     if (result.ok) {
-      clearComposerDraftContent(draftKey);
-      setSelection({ start: 0, end: 0 });
+      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
+      clearComposerDraftContent(outgoingKey);
+      setOutgoing(null);
       attached.clear();
-    } else setError(result.message);
+    } else setOutgoing({ ...sent, failed: true, error: result.message });
   };
 
   const send = async () => {
@@ -454,7 +481,8 @@ export function GroupComposer(props: {
     });
   };
 
-  const showsProject = lockedProject !== null || props.projects.length > 1;
+  const showsProject = elsewhere || lockedProject !== null || props.projects.length > 1;
+  const shownError = shown?.error ?? error;
   const lineHeight = bodyText.lineHeight;
   const editorHeight =
     Math.min(Math.max(contentHeight, lineHeight), lineHeight * EDITOR_MAX_LINES) + 2 * EDITOR_INSET;
@@ -485,7 +513,7 @@ export function GroupComposer(props: {
             onCancel={props.onClearReply}
           />
         )}
-        {attached.items.length === 0 ? null : (
+        {attached.items.length === 0 || (sending && shown === null) ? null : (
           <View className="px-3 pt-2">
             <GroupAttachmentChips
               items={attached.items}
@@ -504,7 +532,7 @@ export function GroupComposer(props: {
             value={text}
             selection={selection}
             editable={!props.disabled}
-            readOnly={sending || voice.freezesEditor}
+            readOnly={(sending && shown !== null) || voice.freezesEditor}
             placeholder={
               props.disabledReason ??
               (props.projects.length > 0
@@ -517,7 +545,7 @@ export function GroupComposer(props: {
             onChangeText={(value) => write(value)}
             onSelectionChange={setSelection}
             onPasteImages={(uris) => {
-              if (props.disabled || attached.full) return;
+              if (props.disabled || attached.full || sending) return;
               void attached.paste(uris).catch(() => {
                 Dialog.alert("Could not attach", "The pasted image could not be attached.");
               });
@@ -553,16 +581,16 @@ export function GroupComposer(props: {
         ) : (
           <View className="flex-row items-center gap-1 pl-0.5 pr-1">
             <ComposerAttachmentButton
-              disabled={props.disabled || attached.full}
+              disabled={props.disabled || attached.full || sending}
               supportsFiles
               onPickMedia={() => attach("media")}
               onPickFiles={() => attach("files")}
             />
-            {!showsProject ? null : lockedProject !== null ? (
+            {!showsProject ? null : elsewhere || pinned !== null ? (
               <ToolbarChip
                 icon="folder"
-                label={projectName(lockedProject)}
-                accessibilityLabel={`Project: ${projectName(lockedProject)}`}
+                label={projectName(pinned)}
+                accessibilityLabel={`Project: ${projectName(pinned)}`}
                 chevron={false}
                 disabled
               />
@@ -679,13 +707,13 @@ export function GroupComposer(props: {
           </View>
         )}
       </ComposerSurface>
-      {error === null ? (
+      {shownError === null ? (
         <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
           {preview}
         </Text>
       ) : (
         <Text accessibilityRole="alert" className="min-h-4 px-3 text-xs text-danger-foreground">
-          {error}
+          {shownError}
         </Text>
       )}
     </View>

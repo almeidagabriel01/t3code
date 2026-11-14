@@ -1296,7 +1296,11 @@ it("narrows the feed to a project tab, keeps the draft, sets the composer's proj
     ["General", "render"],
     ["render", "site"],
   ] as const) {
-    (await sendHeld(opened, pick))();
+    const sent = await sendHeld(opened, pick);
+    // On its way, it shows only in the tab it left from and in All, beside the project it goes to.
+    await expectComposer(opened === "All" ? "@bo late" : "");
+    if (opened === "All") await expect.element(composerProject()).not.toBeInTheDocument();
+    sent();
     await eventually(() => expect(composerText()).toBe(""));
     await expect.element(tab(opened)).toHaveAttribute("aria-pressed", "true");
   }
@@ -1307,6 +1311,45 @@ it("narrows the feed to a project tab, keeps the draft, sets the composer's proj
   expect(fakeGroupChat.posts).toHaveLength(posts + 4);
   await expect.element(tab("render")).toHaveAttribute("aria-pressed", "true");
   await expect.element(main().getByTestId("group-reply-chip")).toBeVisible();
+});
+
+it("keeps what the user writes in another tab during a send, and a refused one in its own tab", async () => {
+  twoRequests(SITE_PROJECT);
+  await using _screen = await openChat({
+    people: sitePeople(),
+    team: team({ chat: scopedChat() }),
+  });
+  const submit = page.getByRole("button", { name: "Submit message" });
+  const sendHeld = async (text: string) => {
+    let open!: () => void;
+    fakeGroupChat.postGate = new Promise((resolve) => (open = resolve));
+    await userEvent.click(tab("site"));
+    await userEvent.type(composer(), `${text}{Enter}`);
+    await eventually(() => expect(fakeGroupChat.posts.at(-1)?.text).toBe(text));
+    await userEvent.click(tab("render"));
+    await expectComposer("");
+    await userEvent.type(composer(), "meanwhile");
+    return open;
+  };
+  (await sendHeld("@bo first"))();
+  await expect.element(submit).toBeEnabled();
+  await expectComposer("meanwhile");
+  await userEvent.clear(composer());
+  fakeGroupChat.postRefusal = { reason: "archived", message: "no" };
+  (await sendHeld("@bo second"))();
+  await expect.element(submit).toBeEnabled();
+  await expectComposer("meanwhile");
+  await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  await userEvent.click(tab("site"));
+  await expectComposer("@bo second");
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("This group is archived. Restore it to write here.");
+  fakeGroupChat.postRefusal = null;
+  fakeGroupChat.postGate = null;
+  await userEvent.click(submit);
+  await eventually(() => expect(fakeGroupChat.posts.at(-1)?.text).toBe("@bo second"));
+  await expectComposer("meanwhile");
 });
 
 it("shows every request in All as one line with its project, opened in place, and marks nothing read", async () => {

@@ -606,6 +606,24 @@ export function assistantGroupTabAfterSend(
   return landed === null ? "all" : (target?.key ?? "all");
 }
 
+/** A message the composer let go of: on its way, or refused and kept for the user to fix. */
+export interface AssistantGroupOutgoing {
+  /** The tab it was sent from. */
+  readonly tab: AssistantGroupTabKey | null;
+  readonly failed: boolean;
+}
+
+/**
+ * Whether the open tab's composer shows `outgoing` instead of its draft: the tab it left from, and
+ * All while it is on its way. Any other tab would show it beside a project it is not going to.
+ */
+export function assistantGroupShowsOutgoing(
+  outgoing: AssistantGroupOutgoing | null,
+  tab: AssistantGroupTabKey | null,
+): boolean {
+  return outgoing !== null && (tab === outgoing.tab || (!outgoing.failed && tab === "all"));
+}
+
 /** False for a request whose project no longer matches the scope. */
 export function assistantGroupInScope(
   block: Pick<AssistantGroupRequestBlock, "projectId">,

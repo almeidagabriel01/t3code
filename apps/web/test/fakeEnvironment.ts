@@ -742,13 +742,16 @@ handlers[WS_METHODS.assistantGroupsHistory] = (input: Record<string, unknown>) =
 handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
   fakeGroupChat.posts.push(input);
   const refusal = fakeGroupChat.postRefusal;
-  if (refusal !== null) return Effect.fail(new AssistantError(refusal));
+  const gate = fakeGroupChat.postGate;
+  if (refusal !== null) {
+    const refused = Effect.fail(new AssistantError(refusal));
+    return gate === null ? refused : Effect.promise(() => gate).pipe(Effect.andThen(refused));
+  }
   const message = {
     ...fakeGroupChat.messages.at(-1)!,
     id: `posted-${fakeGroupChat.posts.length}`,
     text: String(input.text),
   } as AssistantGroupMessage;
-  const gate = fakeGroupChat.postGate;
   const reply = { message, tasks: [] };
   return gate === null ? Effect.succeed(reply) : Effect.promise(() => gate).pipe(Effect.as(reply));
 };

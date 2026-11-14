@@ -1605,6 +1605,7 @@ export function AssistantGroupChatRouteScreen({
       <GroupComposer
         environmentId={environmentId}
         teamId={team.id}
+        tab={tabKey}
         members={members}
         leadId={team.leadId}
         projects={groupProjects}

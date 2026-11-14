@@ -20,6 +20,7 @@ import {
   assistantGroupTabView,
   assistantGroupProjectLabel,
   assistantGroupTabAfterSend,
+  assistantGroupShowsOutgoing,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -1457,6 +1458,21 @@ describe("assistant group tabs", () => {
   ] as const)("after a send: %s", (_name, sent, saved, landed, expected) => {
     const result = tabs([P1, P2], [scope(P1), scope(P2), scope(null)])!;
     assert.strictEqual(assistantGroupTabAfterSend(result, sent, saved, landed), expected);
+  });
+
+  it.each([
+    ["nothing outgoing", null, "project:p1", false],
+    ["on its way, in its tab", { tab: "project:p1", failed: false }, "project:p1", true],
+    ["on its way, in All", { tab: "project:p1", failed: false }, "all", true],
+    ["on its way, in another project", { tab: "project:p1", failed: false }, "project:p2", false],
+    ["on its way, in General", { tab: "project:p1", failed: false }, "general", false],
+    ["sent from All, in a project", { tab: "all", failed: false }, "project:p1", false],
+    ["sent with no tabs", { tab: null, failed: false }, null, true],
+    ["refused, in its tab", { tab: "project:p1", failed: true }, "project:p1", true],
+    ["refused, in All", { tab: "project:p1", failed: true }, "all", false],
+    ["refused, in another project", { tab: "project:p1", failed: true }, "project:p2", false],
+  ] as const)("composer shows the outgoing message: %s", (_name, outgoing, tab, expected) => {
+    assert.strictEqual(assistantGroupShowsOutgoing(outgoing, tab), expected);
   });
 
   it.each([

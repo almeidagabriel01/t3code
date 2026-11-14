@@ -7,6 +7,9 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupShowsOutgoing,
+  type AssistantGroupOutgoing,
+  type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -241,8 +244,19 @@ function ReplyQuote(props: {
  * The group's message box: the thread composer's editor, where `@` picks members and `#` picks a
  * project as chips, Enter sends, and a line says who will get it.
  */
+type PromptState = { readonly value: string; readonly cursor: number; readonly expanded: number };
+
+/** A sent message the composer holds apart from the draft, with what its tab showed. */
+interface Outgoing extends AssistantGroupOutgoing {
+  readonly prompt: PromptState;
+  readonly projectLabel: string;
+  readonly error: string | null;
+}
+
 export function GroupComposer(props: {
   readonly draftKey: string;
+  /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
+  readonly tab: AssistantGroupTabKey | null;
   readonly environmentId: EnvironmentId;
   readonly members: ReadonlyArray<Assistant>;
   readonly leadId: Assistant["id"] | null;
@@ -275,7 +289,7 @@ export function GroupComposer(props: {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
-  const [prompt, setPromptState] = useState(() => {
+  const [draft, setDraftState] = useState<PromptState>(() => {
     const value = drafts.get(props.draftKey) ?? "";
     return {
       value,
@@ -283,17 +297,28 @@ export function GroupComposer(props: {
       expanded: value.length,
     };
   });
-  const setPrompt = (value: string, cursor: number, expanded: number) => {
+  const setDraft = (value: string, cursor: number, expanded: number) => {
     if (value === "") drafts.delete(props.draftKey);
     else drafts.set(props.draftKey, value);
-    setPromptState({ value, cursor, expanded });
+    setDraftState({ value, cursor, expanded });
+  };
+  // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
+  const [outgoing, setOutgoing] = useState<Outgoing | null>(null);
+  const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
+  const sending = outgoing !== null && !outgoing.failed;
+  const prompt = shown?.prompt ?? draft;
+  const setPrompt = (value: string, cursor: number, expanded: number) => {
+    if (shown === null) return setDraft(value, cursor, expanded);
+    // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
+    setOutgoing(
+      value === "" ? null : { ...shown, prompt: { value, cursor, expanded }, error: null },
+    );
   };
   // The caret sits beside a chip, where `@` and `#` start nothing.
   const [besideChip, setBesideChip] = useState(false);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const recalled = useRef<ComposerPromptHistoryPosition | null>(null);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -371,7 +396,10 @@ export function GroupComposer(props: {
           : null);
   const hasContent = prompt.value.trim() !== "" || speech.blocksSubmission;
   const canSend = !props.disabled && !sending && sendDisabledReason === null && hasContent;
-  const lockedProject = props.replyingTo?.projectLabel ?? null;
+  // All shows a message on its way from another tab with the project it goes to.
+  const elsewhere = shown !== null && shown.tab !== props.tab;
+  const shownError = shown?.error ?? error;
+  const lockedProject = elsewhere ? shown.projectLabel : (props.replyingTo?.projectLabel ?? null);
 
   const pick = (index: number) => {
     if (memberAt !== null) {
@@ -402,15 +430,34 @@ export function GroupComposer(props: {
 
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
-    setSending(true);
+    const sent: Outgoing = {
+      tab: props.tab,
+      failed: false,
+      prompt: {
+        value,
+        cursor: collapseExpandedComposerCursor(value, value.length),
+        expanded: value.length,
+      },
+      projectLabel:
+        lockedProject ??
+        projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
+        ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+      error: null,
+    };
+    if (shown === null) setDraft("", 0, 0);
+    setOutgoing(sent);
     setError(null);
     const result = await props.onSend(value.trim(), attached.ready);
-    setSending(false);
     if (result.ok) {
-      setPrompt("", 0, 0);
+      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
+      setOutgoing(null);
       recalled.current = null;
       attached.clear();
-    } else setError(result.message);
+    } else setOutgoing({ ...sent, failed: true, error: result.message });
+    // The editor is read-only while its text is on its way; the user types on once it settles.
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === document.body) editorRef.current?.focusAtEnd();
+    });
   };
   const submit = () => speech.submitAfterDictation((value) => void send(value));
 
@@ -558,7 +605,7 @@ export function GroupComposer(props: {
     );
 
   // The project the message runs in: a reply's request project, else the picker's.
-  const modelProjectId = props.replyingTo?.projectId ?? props.projectId;
+  const modelProjectId = elsewhere ? null : (props.replyingTo?.projectId ?? props.projectId);
   const modelProjectLabel =
     props.replyingTo?.projectLabel ??
     props.projects.find((project) => project.id === modelProjectId)?.label ??
@@ -622,7 +669,7 @@ export function GroupComposer(props: {
                       </ComposerCommandMenuLayer>
                     ) : null}
                     <GroupAttachmentChips
-                      items={attached.items}
+                      items={sending && shown === null ? [] : attached.items}
                       onRemove={attached.remove}
                       onRetry={attached.retry}
                     />
@@ -641,7 +688,9 @@ export function GroupComposer(props: {
                       cursor={prompt.cursor}
                       contextRecords={NO_CONTEXT_RECORDS}
                       skills={NO_SKILLS}
-                      disabled={props.disabled || speech.freezesEditor}
+                      disabled={
+                        props.disabled || speech.freezesEditor || (sending && shown !== null)
+                      }
                       placeholder={
                         props.disabledReason ??
                         "Message the group. @ picks who gets it, # picks a project."
@@ -679,7 +728,7 @@ export function GroupComposer(props: {
                         return false;
                       }}
                       focusComposer={() => editorRef.current?.focus()}
-                      disabled={props.disabled || attached.full}
+                      disabled={props.disabled || attached.full || sending}
                     />
                     {projectPicker}
                     {modelProjectId === null ? null : (
@@ -756,7 +805,7 @@ export function GroupComposer(props: {
           </div>
         </ComposerSurface.Host>
       </ComposerSurface.Shell>
-      {error === null ? (
+      {shownError === null ? (
         <p
           data-testid="group-recipients"
           className="min-h-4 px-1 text-xs text-muted-foreground"
@@ -770,7 +819,7 @@ export function GroupComposer(props: {
           data-testid="group-composer-alert"
           className="min-h-4 px-1 text-xs text-destructive-foreground"
         >
-          {error}
+          {shownError}
         </p>
       )}
     </div>

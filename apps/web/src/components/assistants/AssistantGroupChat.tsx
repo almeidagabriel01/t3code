@@ -1623,6 +1623,7 @@ export function AssistantGroupChat(props: {
         <GroupComposer
           key={`${environmentId}:${team.id}`}
           draftKey={`${environmentId}:${team.id}`}
+          tab={tabKey}
           environmentId={environmentId}
           members={members}
           leadId={team.leadId}
