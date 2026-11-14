@@ -2225,7 +2225,11 @@ const ServerSettingsPatchFields = Schema.Struct({
   fallbackModelSelections: Schema.optionalKey(
     Schema.Array(ModelSelection).check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS)),
   ),
-  /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
+  /**
+   * Replaces each project's override set; null removes it. Omitted providerInstances and
+   * assistantModelSelections keep their stored value; assistantModelSelections merges per
+   * assistant, where null removes that assistant.
+   */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
       ProjectId,
@@ -2234,6 +2238,9 @@ const ServerSettingsPatchFields = Schema.Struct({
           Schema.Struct({
             ...ProjectSettingsOverrides.fields,
             sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+            assistantModelSelections: Schema.optionalKey(
+              Schema.Record(AssistantId, Schema.NullOr(ModelSelection)),
+            ),
           }),
         ),
       ),
