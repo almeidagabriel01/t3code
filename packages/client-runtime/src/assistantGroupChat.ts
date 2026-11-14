@@ -3,6 +3,7 @@ import {
   ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   assistantGroupAddress,
+  assistantGroupInstructionBody,
   assistantGroupMentions,
   assistantGroupProjectMentionRanges,
   assistantGroupProjectSlugs,
@@ -618,11 +619,18 @@ const ACTIVITY_LABEL: Record<AssistantGroupTaskStatus | AssistantGroupRequestSta
   ...ASSISTANT_GROUP_STATUS_LABEL,
 };
 
-/** A task or request status as the thread's task activity line shows it: its icon and its words. */
+/**
+ * A task or request as the thread's task activity line shows it. The title is the member thread's,
+ * else the instruction's gist without its routing line; empty with neither.
+ */
 export function assistantGroupActivity(
   status: AssistantGroupTaskStatus | AssistantGroupRequestStatus,
-): { readonly status: TaskEventStatus | null; readonly label: string } {
+  source: { readonly threadTitle?: string | null | undefined; readonly instruction?: string } = {},
+): { readonly title: string; readonly status: TaskEventStatus | null; readonly label: string } {
   return {
+    title:
+      source.threadTitle?.trim() ||
+      assistantGroupMessageExcerpt(assistantGroupInstructionBody(source.instruction ?? "")),
     status: ACTIVITY_STATUS[status] ?? null,
     label: ACTIVITY_LABEL[status],
   };

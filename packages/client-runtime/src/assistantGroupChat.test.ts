@@ -473,7 +473,34 @@ it.each([
   ["routing", null, "Routing"],
   ["needs-project", null, "Needs project"],
 ] as const)("assistantGroupActivity(%s)", (status, expected, label) => {
-  assert.deepStrictEqual(assistantGroupActivity(status), { status: expected, label });
+  assert.deepStrictEqual(assistantGroupActivity(status), { title: "", status: expected, label });
+});
+
+it.each([
+  [
+    {
+      threadTitle: " Weekly report ",
+      instruction: "Request from Jarvis (an agent, not the user):\nx",
+    },
+    "Weekly report",
+  ],
+  [
+    {
+      threadTitle: "  ",
+      instruction: "Request from Jarvis (an agent, not the user):\nProjeto: t3code. Análise",
+    },
+    "Projeto: t3code. Análise",
+  ],
+  [
+    {
+      threadTitle: null,
+      instruction: "Scheduled request Monday report:\n- Summarize **the** week",
+    },
+    "Summarize the week",
+  ],
+  [{ instruction: "Plain ask" }, "Plain ask"],
+] as const)("assistantGroupActivity title %j", (source, title) => {
+  assert.strictEqual(assistantGroupActivity("completed", source).title, title);
 });
 
 describe("assistantGroupAwaitingRoute", () => {

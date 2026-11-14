@@ -30,6 +30,7 @@ import {
   type AssistantTeam,
   type AssistantTeamId,
   assistantGroupAddress,
+  assistantGroupInstruction,
   assistantGroupProjectIds,
   assistantGroupProjectMentions,
   assistantIdFromThreadId,
@@ -1362,13 +1363,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const instructionFor = (author: GroupAuthor, text: string) =>
-    author.kind === "agent"
-      ? `Request from ${author.label} (an agent, not the user):\n${text}`
-      : author.kind === "routine"
-        ? `Scheduled request ${author.label}:\n${text}`
-        : text;
-
   /** The model the lead would route on: its own conversation's, else the project's default. */
   const leadSelection = Effect.fn("AssistantGroups.leadSelection")(function* (lead: AssistantRow) {
     const current =
@@ -1738,7 +1732,7 @@ const make = Effect.gen(function* () {
               : message.author === "routine"
                 ? { kind: "routine", label: message.author_label ?? "" }
                 : { kind: "user" };
-          const instruction = instructionFor(author, message.text);
+          const instruction = assistantGroupInstruction(author, message.text);
           if (ids.length === 0) {
             yield* insertTask({
               teamId,
@@ -2108,7 +2102,12 @@ const make = Effect.gen(function* () {
               }
               if (allowed.length > 0) {
                 if (author.kind === "user") yield* userReached(message.request_id!);
-                yield* openRoots(team, message, allowed, instructionFor(author, input.text));
+                yield* openRoots(
+                  team,
+                  message,
+                  allowed,
+                  assistantGroupInstruction(author, input.text),
+                );
               }
             }
             yield* pump(team.id);

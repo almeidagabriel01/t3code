@@ -13,6 +13,25 @@ import { DecisionId } from "./decisions.ts";
 /** The line the server puts before the links to files copied for an assistant. */
 export const ASSISTANT_TRANSFER_HEADING = "Files copied to the shared folder for you:";
 
+const REQUEST_PREFIX = /^(?:Request from .* \(an agent, not the user\)|Scheduled request .*):\n/;
+
+/** The instruction a member receives: an agent's or routine's request names who asked. */
+export function assistantGroupInstruction(
+  author: { readonly kind: AssistantGroupAuthor; readonly label?: string },
+  text: string,
+): string {
+  return author.kind === "agent"
+    ? `Request from ${author.label} (an agent, not the user):\n${text}`
+    : author.kind === "routine"
+      ? `Scheduled request ${author.label}:\n${text}`
+      : text;
+}
+
+/** An instruction without the line `assistantGroupInstruction` put before it. */
+export function assistantGroupInstructionBody(instruction: string): string {
+  return instruction.replace(REQUEST_PREFIX, "");
+}
+
 /** A message's own text, and the markdown list of files copied with it (null when none). */
 export function splitAssistantTransferText(text: string): {
   readonly body: string;

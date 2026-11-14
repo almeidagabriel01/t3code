@@ -48,6 +48,7 @@ import {
   CornerUpLeftIcon,
   EllipsisIcon,
   FolderIcon,
+  HashIcon,
   MessageCircleQuestionMarkIcon,
   MailIcon,
   MailOpenIcon,
@@ -68,9 +69,10 @@ import {
   useAssistantGroupActions,
   useAssistantGroupChat,
 } from "../../state/assistants";
-import { useProjects } from "../../state/entities";
+import { useProjects, useQuietThreadShell } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { CollapsibleMessageBody } from "../chat/CollapsibleMessageBody";
 import {
   isTimelineMinimapRowVisible,
@@ -127,6 +129,23 @@ function failed(title: string, message: string) {
   toastManager.add({ type: "error", title, description: message });
 }
 
+function GroupTaskLine(props: {
+  readonly task: AssistantGroupTask;
+  readonly environmentId: EnvironmentId;
+  readonly onOpen: () => void;
+}) {
+  const shell = useQuietThreadShell(scopeThreadRef(props.environmentId, props.task.threadId));
+  return (
+    <TaskEventActivityRow
+      {...assistantGroupActivity(props.task.status, {
+        threadTitle: shell?.title,
+        instruction: props.task.instruction,
+      })}
+      onOpen={props.onOpen}
+    />
+  );
+}
+
 function GroupHeader(props: {
   readonly environmentId: EnvironmentId;
   readonly team: AssistantTeam;
@@ -139,6 +158,10 @@ function GroupHeader(props: {
   const navigate = useNavigate();
   const archived = team.archivedAt !== null;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
+  const homeProjectId = props.members[0]?.projectId;
+  const homeProject = useProjects().find(
+    (project) => project.environmentId === environmentId && project.id === homeProjectId,
+  );
   return (
     <WorkspacePageHeader electron={isElectron} className="relative bg-background" data-glass-layer>
       <div className="@container/header flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
@@ -150,8 +173,9 @@ function GroupHeader(props: {
             <button
               type="button"
               onClick={() => void navigate({ to: "/assistants" })}
-              className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
+              {homeProject ? <ProjectFavicon project={homeProject} className="size-3.5" /> : null}
               <WorkspaceBreadcrumbText>Assistants</WorkspaceBreadcrumbText>
             </button>
           </WorkspaceBreadcrumbItem>
@@ -159,6 +183,7 @@ function GroupHeader(props: {
             <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
           </WorkspaceBreadcrumbSeparator>
           <WorkspaceBreadcrumbItem current className="min-w-10 flex-1 gap-1.5">
+            <HashIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
             <h1 className="min-w-0 truncate">
               <WorkspaceBreadcrumbText>{team.name}</WorkspaceBreadcrumbText>
             </h1>
@@ -453,10 +478,10 @@ function FeedRow(props: {
   // A finished task is one activity line, as in a thread; an open one keeps its card and actions.
   const cards = props.row.tasks.map((task) =>
     task.status === "completed" || task.status === "cancelled" ? (
-      <TaskEventActivityRow
+      <GroupTaskLine
         key={task.id}
-        title={assistantGroupMessageExcerpt(task.instruction)}
-        {...assistantGroupActivity(task.status)}
+        task={task}
+        environmentId={props.environmentId}
         onOpen={() => props.onOpenConversation(task)}
       />
     ) : (
