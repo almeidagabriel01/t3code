@@ -2031,7 +2031,11 @@ describe("requests", () => {
     await pickOpus();
     expect(byLabel("Model for this message: name:opus")).not.toBeNull();
     // Always in view, not only in its menu: the pick is for this message.
-    expect(byLabel("Model for this message: name:opus")?.textContent).toContain("This message");
+    expect(
+      byLabel("Model for this message: name:opus")?.querySelector(
+        '[data-testid="toolbar-chip-mark"]',
+      ),
+    ).not.toBeNull();
     await click("Model for this message:Back to name:gpt-5.5");
     expect(mocks.modelPick).toBeNull();
     expect(byLabel("Model for Alpha: name:gpt-5.5")).not.toBeNull();
@@ -2094,7 +2098,11 @@ describe("requests", () => {
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
     // With no default at all, a pick still shows as this message's model.
     await pickOpus();
-    expect(byLabel("Model for this message: name:opus")?.textContent).toContain("This message");
+    expect(
+      byLabel("Model for this message: name:opus")?.querySelector(
+        '[data-testid="toolbar-chip-mark"]',
+      ),
+    ).not.toBeNull();
     await setPick(null);
     setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
     expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();

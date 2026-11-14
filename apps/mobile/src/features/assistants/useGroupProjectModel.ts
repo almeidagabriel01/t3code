@@ -67,8 +67,16 @@ export function useGroupProjectModel(
   ]);
   const target = targets[0];
   if (target === undefined) return null;
-  const nameOf = (selection: ModelSelection) =>
-    modelDisplayName(buildModelOptions(config, selection, undefined, projectId), selection);
+  const optionsFor = (selection: ModelSelection) =>
+    buildModelOptions(config, selection, undefined, projectId);
+  const nameOf = (selection: ModelSelection) => modelDisplayName(optionsFor(selection), selection);
+  // The composer chip's name ("Sonnet 5.5"), as the web composer shows it.
+  const shortNameOf = (selection: ModelSelection) =>
+    optionsFor(selection).find(
+      (option) =>
+        option.selection.instanceId === selection.instanceId &&
+        option.selection.model === selection.model,
+    )?.shortName ?? nameOf(selection);
   const selection = target.settings.defaultModelSelection;
   const members = [{ environmentId, projectId }];
   const settings = target.environment.serverConfig.settings;
@@ -92,13 +100,12 @@ export function useGroupProjectModel(
           available: { settings, projectId, providers: config?.providers ?? [] },
         });
   };
-  const labelOf = (resolved: ReturnType<typeof shown>) =>
-    resolved === null || resolved.layer === "global"
-      ? "Members' models"
-      : nameOf(resolved.selection);
+  const labelOf = (resolved: ReturnType<typeof shown>, name = nameOf) =>
+    resolved === null || resolved.layer === "global" ? "Members' models" : name(resolved.selection);
   const current = shown(pick);
   return {
     label: labelOf(current),
+    shortLabel: labelOf(current, shortNameOf),
     /** The chip shows the message's own pick, not a default. */
     forMessage: current?.forMessage ?? false,
     /** What the next send carries: the pick, never a default. */

@@ -95,10 +95,10 @@ function ToolbarChip(props: {
   readonly chevron?: boolean;
   /** Only the icon, when the row is too full for the label. */
   readonly iconOnly?: boolean;
-  /** A longer label (a model and its provider) that takes the room a wide screen has. */
+  /** A longer label (a model) that takes all the room the row has. */
   readonly wide?: boolean;
-  /** A short tag after the label, always in view. */
-  readonly tag?: string;
+  /** A dot after the label, always in view; the accessibility label says what it marks. */
+  readonly marked?: boolean;
   readonly onPress?: () => void;
 }) {
   return (
@@ -107,7 +107,7 @@ function ToolbarChip(props: {
       accessibilityLabel={props.accessibilityLabel}
       disabled={props.disabled}
       onPress={props.onPress}
-      className={`h-8 ${props.wide ? "max-w-72" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
+      className={`h-8 ${props.wide ? "" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
       {props.iconOnly ? null : (
@@ -115,13 +115,9 @@ function ToolbarChip(props: {
           {props.label}
         </Text>
       )}
-      {props.tag === undefined || props.iconOnly ? null : (
-        <View className="shrink-0 rounded-full bg-primary/14 px-1.5 py-px">
-          <Text numberOfLines={1} className="text-2xs font-t3-medium text-primary">
-            {props.tag}
-          </Text>
-        </View>
-      )}
+      {props.marked && !props.iconOnly ? (
+        <View testID="toolbar-chip-mark" className="size-1.5 shrink-0 rounded-full bg-primary" />
+      ) : null}
       {props.chevron === false || props.iconOnly ? null : (
         <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-subtle" />
       )}
@@ -621,8 +617,8 @@ export function GroupComposer(props: {
                 >
                   <ToolbarChip
                     icon="cube"
-                    label={projectModel.label}
-                    tag="This message"
+                    label={projectModel.shortLabel}
+                    marked
                     wide
                     accessibilityLabel={`Model for this message: ${projectModel.label}`}
                     disabled={props.disabled}
@@ -633,7 +629,7 @@ export function GroupComposer(props: {
               <MenuSlot>
                 <ToolbarChip
                   icon="cube"
-                  label={projectModel.label}
+                  label={projectModel.shortLabel}
                   wide
                   accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
                   chevron={false}
@@ -643,7 +639,7 @@ export function GroupComposer(props: {
               </MenuSlot>
             )}
             {props.members.length === 0 ? null : (
-              <MenuSlot>
+              <MenuSlot keep={projectModel !== null && runProject !== null}>
                 <Menu
                   accessibilityLabel="Mention"
                   actions={[
