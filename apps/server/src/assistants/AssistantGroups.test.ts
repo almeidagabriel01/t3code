@@ -17,6 +17,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -70,6 +71,9 @@ interface FakeRun {
   id: string;
   userMessageId: string;
   status: string;
+  ordinal?: number;
+  completedAt?: DateTime.Utc;
+  usageLimitContinuationOfRunId?: string;
 }
 
 interface Options {
@@ -93,6 +97,8 @@ const harness = (options: Options = {}) => {
   const fakeThreads = new Map<string, FakeThread>();
   const runs = new Map<string, FakeRun[]>();
   const answers = new Map<string, string>();
+  /** Runs that failed on a usage limit, with the limit's reset time. */
+  const limits = new Map<string, string>();
   const sent: Array<{
     projectId: string;
     commandId: string;
@@ -151,7 +157,20 @@ const harness = (options: Options = {}) => {
       getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const statuses = filter?.runStatuses as ReadonlyArray<string> | undefined;
         const runIds = filter?.messageRunIds as ReadonlyArray<string> | undefined;
+        const errorRunIds = filter?.turnItemRunIds as ReadonlyArray<string> | undefined;
         return Effect.succeed({
+          turnItems: (errorRunIds ?? []).flatMap((runId) =>
+            limits.has(runId)
+              ? [
+                  {
+                    type: "error",
+                    status: "failed",
+                    runId,
+                    failure: { class: "usage_limit", resetAt: limits.get(runId) },
+                  },
+                ]
+              : [],
+          ),
           runs: (runs.get(threadId) ?? []).filter(
             (run) => statuses === undefined || statuses.includes(run.status),
           ),
@@ -367,6 +386,7 @@ const harness = (options: Options = {}) => {
     launched,
     fakeThreads,
     runs,
+    limits,
     live,
     deletedTeams,
     refreshed,
@@ -1003,6 +1023,64 @@ it.effect.each(outcomeTable)("run outcome: %s", ([, runStatus, answer, result, s
       assert.equal(row!.reply_to, (yield* h.messages)[0]!.message_id);
     }
     if (runStatus === "interrupted") assert.equal(task!.reason, "stopped");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a usage limit holds the task until its thread continues it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    const resetAt = "2026-01-01T12:00:00.000Z";
+    const [limitedRun] = h.runs.get(adaThread)!;
+    Object.assign(limitedRun!, { ordinal: 1, completedAt: DateTime.makeUnsafe(0) });
+    h.limits.set(limitedRun!.id, resetAt);
+    yield* h.finish(0, "failed");
+    const page = () =>
+      groups
+        .history({ teamId: TEAM })
+        .pipe(
+          Effect.map(({ tasks }) => tasks.map((task) => [task.status, task.resetAt, task.reason])),
+        );
+    assert.deepEqual(yield* page(), [["usage_limited", resetAt, null]]);
+    assert.lengthOf(
+      (yield* h.messages).filter((row) => row.author === "assistant"),
+      0,
+    );
+
+    // The thread continues the limited run at the reset, on its own message.
+    const continuation = {
+      id: "run:continuation",
+      threadId: adaThread,
+      userMessageId: "limit-resume:x",
+      usageLimitContinuationOfRunId: limitedRun!.id,
+      ordinal: 2,
+      status: "running",
+    };
+    h.runs.get(adaThread)!.push(continuation);
+    const update = () =>
+      groups.handleRunEvent({ type: "run.updated", payload: continuation } as never);
+    yield* update();
+    assert.deepEqual(yield* page(), [["running", undefined, null]]);
+    continuation.status = "completed";
+    yield* update();
+    assert.deepEqual(statusesOf(yield* h.tasks), ["ada:completed"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("Stop on a usage-limited task stops its thread so the reset does not resume it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const groups = yield* h.setup;
+    const posted = yield* groups.post({ teamId: TEAM, text: "@ada go" }, h.user);
+    h.limits.set(h.runs.get(adaThread)![0]!.id, "2026-01-01T12:00:00.000Z");
+    yield* h.finish(0, "failed");
+    const stopped = yield* groups.taskAction({ taskId: posted.tasks[0]!.id, action: "stop" });
+    assert.equal(stopped.status, "paused");
+    assert.deepEqual(
+      h.dispatched.filter((command) => command.type === "thread.stop").map((c) => c.threadId),
+      [adaThread],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 

@@ -38,6 +38,7 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   type ProjectId,
   type RunId,
   runtimeModeForToolAccess,
@@ -74,6 +75,10 @@ import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
@@ -139,8 +144,13 @@ const CANCEL_REASON_CHARS = 300;
 const STOPPED_LISTED = 5;
 const STOPPED_INSTRUCTION_CHARS = 120;
 
-/** Waiting for a slot or a run, or running: work the owner is still on. */
-const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ["queued", "running", "waiting"];
+/** Waiting for a slot, a run or a provider limit, or running: work the owner is still on. */
+const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = [
+  "queued",
+  "running",
+  "waiting",
+  "usage_limited",
+];
 const isActive = (task: { readonly status: string }) =>
   ACTIVE.includes(task.status as AssistantGroupTaskStatus);
 /** Everything the user can still act on. */
@@ -164,6 +174,13 @@ const nextGroupThreadId = (assistantId: string, teamId: string, dead: string) =>
 
 export const taskMessageId = (taskId: string, revision: number) =>
   `group-task:${taskId}:${revision}`;
+
+/** A run that continues a usage-limited one: at the reset, or after a provider switch. */
+const isLimitContinuation = (
+  run: Pick<OrchestrationV2Run, "userMessageId" | "usageLimitContinuationOfRunId">,
+) =>
+  run.usageLimitContinuationOfRunId !== undefined ||
+  run.userMessageId.startsWith("limit-continuation:");
 
 const parseTaskMessageId = (messageId: string) => {
   if (!messageId.startsWith("group-task:")) return null;
@@ -263,7 +280,10 @@ const toTask = (row: TaskRow, threadId: ThreadId): AssistantGroupTask => ({
   ownerId: row.owner_id as AssistantId,
   instruction: row.instruction,
   status: row.status as AssistantGroupTaskStatus,
-  reason: row.reason,
+  // A usage-limited task keeps its limit's reset time in `reason`.
+  ...(row.status === "usage_limited"
+    ? { reason: null, ...(row.reason === null ? {} : { resetAt: row.reason }) }
+    : { reason: row.reason }),
   threadId,
   ...(row.expected_result === null ? {} : { expectedResult: row.expected_result }),
   ...(sourceSeqsOf(row).length === 0 ? {} : { sourceSeqs: sourceSeqsOf(row) }),
@@ -734,13 +754,35 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** Ends a task's live run, or disarms the continuation a usage-limited one waits for. */
+  const haltTask = Effect.fn("AssistantGroups.haltTask")(function* (task: TaskRow) {
+    if (task.status === "running") return yield* stopRun(task);
+    if (task.status !== "usage_limited") return;
+    const threadId = (yield* wireTasks([task]))[0]!.threadId;
+    yield* engine
+      .dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`group-stop:${task.task_id}:${task.revision}`),
+        threadId,
+        reason: "Stopped from the group",
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("assistant groups: could not stop a limited thread", {
+            taskId: task.task_id,
+            cause,
+          }),
+        ),
+      );
+  });
+
   /** Pauses a task that is in flight, ending its run first. */
   const pauseTask = Effect.fn("AssistantGroups.pauseTask")(function* (
     task: TaskRow,
     reason: string,
   ) {
     if (!ACTIVE.includes(task.status as AssistantGroupTaskStatus)) return task;
-    if (task.status === "running") yield* stopRun(task);
+    yield* haltTask(task);
     return yield* patchTask(task, { status: "paused", reason });
   });
 
@@ -1068,7 +1110,7 @@ const make = Effect.gen(function* () {
     const live = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
       JOIN assistant_group_tasks r ON r.task_id = t.root_id
-      WHERE t.team_id = ${teamId} AND (t.status = 'running'
+      WHERE t.team_id = ${teamId} AND (t.status IN ('running', 'usage_limited')
         OR (t.status = 'queued' AND r.status NOT IN ${sql.in(STOPPED_ROOT)}))
       ORDER BY t.updated_at ASC, t.rowid ASC`;
     let running = 0;
@@ -1076,9 +1118,10 @@ const make = Effect.gen(function* () {
     const hold = (task: TaskRow, who: string) => {
       for (const resource of resourcesOf(task)) if (!held.has(resource)) held.set(resource, who);
     };
+    // A usage-limited task resumes mid-work, so it keeps its resources but frees its slot.
     for (const task of live) {
-      if (task.status !== "running") continue;
-      running += 1;
+      if (task.status !== "running" && task.status !== "usage_limited") continue;
+      if (task.status === "running") running += 1;
       if (resourcesOf(task).length > 0) hold(task, yield* nameOf(task.owner_id));
     }
     for (const task of live) {
@@ -1670,20 +1713,73 @@ const make = Effect.gen(function* () {
     return repeated.length === 0;
   });
 
-  const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (
-    event: Extract<OrchestrationV2DomainEvent, { readonly type: "run.created" | "run.updated" }>,
-  ) {
-    const run = event.payload;
+  /**
+   * The task a run carries: its own, or for a usage-limit continuation (at the reset or on a
+   * provider switch) the task of the run it continues, which ran just before it.
+   */
+  const taskOfRun = Effect.fn("AssistantGroups.taskOfRun")(function* (run: OrchestrationV2Run) {
     const key = parseTaskMessageId(run.userMessageId);
-    if (key === null || !ENDED_RUN.has(run.status)) return;
-    const task = yield* getTask(key.taskId);
-    // A newer revision, or a task already stopped, moved on: this run's ending changes nothing.
-    if (task === undefined || task.revision !== key.revision || task.status !== "running") return;
+    if (key !== null) {
+      const task = yield* getTask(key.taskId);
+      return task?.revision === key.revision ? task : undefined;
+    }
+    if (!isLimitContinuation(run)) return undefined;
+    const { runs } = yield* engine
+      .getThreadRecords(run.threadId, ["runs"])
+      .pipe(Effect.orElseSucceed(() => ({ runs: [] as ReadonlyArray<OrchestrationV2Run> })));
+    let current = run;
+    for (let step = 0; step < runs.length; step += 1) {
+      const previous = latestExecutedRun(
+        runs.filter((candidate) => candidate.ordinal < current.ordinal),
+      );
+      if (previous === null) return undefined;
+      const previousKey = parseTaskMessageId(previous.userMessageId);
+      if (previousKey !== null) {
+        const task = yield* getTask(previousKey.taskId);
+        return task?.revision === previousKey.revision &&
+          (task.status === "usage_limited" || task.status === "running")
+          ? task
+          : undefined;
+      }
+      if (!isLimitContinuation(previous)) return undefined;
+      current = previous;
+    }
+    return undefined;
+  });
+
+  const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (run: OrchestrationV2Run) {
+    const task = yield* taskOfRun(run);
+    if (task === undefined) return;
+    if (!ENDED_RUN.has(run.status)) {
+      if (task.status === "usage_limited" && run.status !== "queued" && isLimitContinuation(run)) {
+        yield* patchTask(task, { status: "running", reason: null });
+      }
+      return;
+    }
+    // A task already stopped or moved on: this run's ending changes nothing. A continuation whose
+    // start was not seen still ends the task it continues.
+    if (task.status !== "running" && !(task.status === "usage_limited" && isLimitContinuation(run)))
+      return;
     const exec = yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_threads WHERE thread_id = ${run.threadId}`;
     const runner = exec[0]?.assistant_id;
+    const failure =
+      run.status === "failed"
+        ? latestRootProviderFailure(
+            run,
+            (yield* engine
+              .getThreadRecords(run.threadId, ["turnItems"], {
+                turnItemTypes: ["error"],
+                turnItemRunIds: [run.id],
+              })
+              .pipe(Effect.orElseSucceed(() => ({ turnItems: [] })))).turnItems,
+          )
+        : null;
     if (run.status === "interrupted") {
       yield* patchTask(task, { status: "paused", reason: "stopped" });
+    } else if (failure?.class === "usage_limit") {
+      // Not settled: the thread continues it at the reset or on a provider switch.
+      yield* patchTask(task, { status: "usage_limited", reason: failure.resetAt ?? null });
     } else if (run.status !== "completed") {
       yield* patchTask(task, { status: "failed", reason: run.status });
       yield* resumeParent({ ...task, status: "failed" });
@@ -1728,10 +1824,14 @@ const make = Effect.gen(function* () {
     function* (event) {
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) return;
-      if (parseTaskMessageId(event.payload.userMessageId) === null) return;
+      if (
+        parseTaskMessageId(event.payload.userMessageId) === null &&
+        !isLimitContinuation(event.payload)
+      )
+        return;
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          yield* finishRun(event);
+          yield* finishRun(event.payload);
           const owner = yield* sql<ThreadRow>`
             SELECT * FROM assistant_group_threads WHERE thread_id = ${event.payload.threadId}`;
           if (owner[0] !== undefined) yield* pump(owner[0].team_id);
@@ -1791,7 +1891,7 @@ const make = Effect.gen(function* () {
               WHERE root_id = ${task.root_id} AND status IN ${sql.in(OPEN)}`;
               let cancelled = task;
               for (const row of open) {
-                if (row.status === "running") yield* stopRun(row);
+                yield* haltTask(row);
                 const done = yield* patchTask(row, { status: "cancelled", reason: null });
                 if (row.task_id === task.task_id) cancelled = done;
               }
@@ -2080,7 +2180,7 @@ const make = Effect.gen(function* () {
           );
           let cancelled = target;
           for (const row of open) {
-            if (row.status === "running") yield* stopRun(row);
+            yield* haltTask(row);
             const done = yield* patchTask(row, {
               status: "cancelled",
               reason: row === target && reason !== "" ? reason : null,
