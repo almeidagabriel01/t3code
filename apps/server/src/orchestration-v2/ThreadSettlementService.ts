@@ -45,6 +45,7 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const RUN_ENDS_BY_CWD_CAPACITY = 2_048;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -313,7 +314,17 @@ export const make = Effect.gen(function* () {
   // Branch lookups reuse their last result until git changes on disk; a finished run in the cwd
   // bumps its count, so the next lookup there reads git and the host again.
   const runEndedThreads = new Set<ThreadId>();
+  // Values come from one counter, so a cwd evicted and bumped again never reuses an old key.
   const runEndsByCwd = new Map<string, number>();
+  let runEndCount = 0;
+  const bumpRunEnds = (cwd: string) => {
+    runEndsByCwd.delete(cwd);
+    if (runEndsByCwd.size >= RUN_ENDS_BY_CWD_CAPACITY) {
+      const oldest = runEndsByCwd.keys().next().value;
+      if (oldest !== undefined) runEndsByCwd.delete(oldest);
+    }
+    runEndsByCwd.set(cwd, ++runEndCount);
+  };
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
@@ -325,9 +336,19 @@ export const make = Effect.gen(function* () {
   ) {
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
+      // Nothing reads these marks while settlement is off.
+      runEndedThreads.clear();
+      shellClosedThreads.clear();
       return;
     }
     const threads = yield* projections.getSettlementCandidates(threadId);
+    // A thread this sweep no longer covers never reads its marks again.
+    const covered = new Set(threads.map((thread) => thread.id));
+    for (const marks of [runEndedThreads, shellClosedThreads]) {
+      for (const id of threadId === undefined ? [...marks] : [threadId]) {
+        if (!covered.has(id)) marks.delete(id);
+      }
+    }
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
@@ -418,7 +439,7 @@ export const make = Effect.gen(function* () {
       (thread) =>
         lookupCwd(thread).pipe(
           Effect.map((cwd) => {
-            if (cwd !== undefined) runEndsByCwd.set(cwd, (runEndsByCwd.get(cwd) ?? 0) + 1);
+            if (cwd !== undefined) bumpRunEnds(cwd);
           }),
         ),
       { concurrency: 8, discard: true },

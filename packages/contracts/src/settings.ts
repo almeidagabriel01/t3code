@@ -182,7 +182,8 @@ export const ToolOutputHistoryDays = Schema.Number.check(
   }),
 );
 export type ToolOutputHistoryDays = typeof ToolOutputHistoryDays.Type;
-const DEFAULT_TOOL_OUTPUT_HISTORY_DAYS: ToolOutputHistoryDays = 30;
+/** Offered when the user turns the summary on; it stays off until then because it cannot be undone. */
+export const SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS: ToolOutputHistoryDays = 30;
 
 export const MIN_PROVIDER_IDLE_TIMEOUT_MINUTES = 1;
 export const MAX_PROVIDER_IDLE_TIMEOUT_MINUTES = 240;
@@ -1773,7 +1774,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   toolOutputHistoryDays: Schema.NullOr(ToolOutputHistoryDays).pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TOOL_OUTPUT_HISTORY_DAYS)),
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   providerIdleTimeoutMinutes: ProviderIdleTimeoutMinutes.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES)),

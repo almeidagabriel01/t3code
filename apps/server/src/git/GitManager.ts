@@ -2873,9 +2873,12 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit, key) => {
         if (Exit.isSuccess(exit)) {
           prLookupFailureStreakByKey.delete(key);
-          // An open or missing PR can be merged on GitHub without touching the disk.
+          // GitHub changes touch no file here: an open or missing PR can be merged, and a reused
+          // branch can get a new PR after a closed one.
           const state = exit.value?.state;
-          return state === "closed" || state === "merged" ? Duration.infinity : PR_LOOKUP_CACHE_TTL;
+          return state === "closed" || state === "merged"
+            ? SETTLED_PR_LOOKUP_RECHECK_INTERVAL
+            : PR_LOOKUP_CACHE_TTL;
         }
         return nextPrLookupFailureTtl(key);
       },

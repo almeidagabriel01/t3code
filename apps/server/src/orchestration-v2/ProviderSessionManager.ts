@@ -472,8 +472,10 @@ export const layerWithOptions = (
       }) => `${input.providerSessionId}\u0000${input.threadId}`;
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       // Only Claude follows the setting: only its resume after an idle release is proven.
+      const followsIdleSetting = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
+        options.idleTimeoutMs === undefined && runtime.driver === "claudeAgent";
       const idleTimeoutFor = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
-        options.idleTimeoutMs !== undefined || runtime.driver !== "claudeAgent"
+        !followsIdleSetting(runtime)
           ? Effect.succeed(idleTimeoutMs)
           : (Option.isNone(serverSettings)
               ? Effect.succeed(DEFAULT_SERVER_SETTINGS)
@@ -481,8 +483,8 @@ export const layerWithOptions = (
                   Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
                 )
             ).pipe(Effect.map((settings) => settings.providerIdleTimeoutMinutes * 60_000));
-      // ponytail: wakes at least once a minute so a lowered setting applies to sessions already idle;
-      // a settings-change subscription could replace it if idle sessions ever number in the thousands.
+      // ponytail: a setting-driven wait wakes once a minute so a lowered setting applies to sessions
+      // already idle; a settings-change subscription could replace it if idle sessions number in the thousands.
       const waitIdleTimeout = Effect.fnUntraced(function* (
         runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
       ) {
@@ -491,7 +493,11 @@ export const layerWithOptions = (
           const remainingMs =
             idleSinceMs + (yield* idleTimeoutFor(runtime)) - (yield* Clock.currentTimeMillis);
           if (remainingMs <= 0) return;
-          yield* Effect.sleep(Duration.millis(Math.min(remainingMs, 60_000)));
+          yield* Effect.sleep(
+            Duration.millis(
+              followsIdleSetting(runtime) ? Math.min(remainingMs, 60_000) : remainingMs,
+            ),
+          );
         }
       });
       /** Projection work tied to this live process: a pending live request, and optionally its background roster. */

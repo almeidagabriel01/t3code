@@ -1,7 +1,7 @@
 import {
-  DEFAULT_UNIFIED_SETTINGS,
   MAX_TOOL_OUTPUT_HISTORY_DAYS,
   MIN_TOOL_OUTPUT_HISTORY_DAYS,
+  SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS,
 } from "@t3tools/contracts/settings";
 import type {
   StorageCleanupReport,
@@ -843,7 +843,7 @@ export function StorageCleanupSections() {
                 value={scopedSettings.toolOutputHistoryDays}
                 minimum={MIN_TOOL_OUTPUT_HISTORY_DAYS}
                 maximum={MAX_TOOL_OUTPUT_HISTORY_DAYS}
-                enabledValue={DEFAULT_UNIFIED_SETTINGS.toolOutputHistoryDays ?? 30}
+                enabledValue={SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS}
                 onChange={(toolOutputHistoryDays) => updateSettings({ toolOutputHistoryDays })}
               />
             }
