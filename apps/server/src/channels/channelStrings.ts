@@ -167,8 +167,7 @@ const ptBR: ChannelStrings = {
         : reason === "routing_failed"
           ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
           : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
-  usageLimitBack: (time) =>
-    time === null ? "Volta quando o limite renovar." : `Volta às ${time}.`,
+  usageLimitBack: (time) => (time === null ? "Volta quando o limite renovar." : `Volta: ${time}.`),
   decision: {
     approve: "Aprovar",
     deny: "Negar",
