@@ -54,6 +54,7 @@ import { useVoiceInputController } from "../voice-input/useVoiceInputController"
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
+import type { GroupProjectModel } from "./useGroupProjectModel";
 
 export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
 
@@ -84,6 +85,23 @@ export type GroupReplyTarget = {
   readonly projectId: ProjectId | null;
   readonly excerpt: string;
 };
+
+/**
+ * The project picked in the composer: undefined when the user picked nothing, so the default
+ * applies; null when the lead decides.
+ */
+export type GroupProjectPick = ProjectId | null | undefined;
+
+/** Where the next message runs: a reply's request project, else the picked or default one. */
+export function groupComposerProjects(
+  replyingTo: GroupReplyTarget | null,
+  pick: GroupProjectPick,
+  defaultProjectId: ProjectId | null,
+) {
+  const locked = replyingTo?.projectId ?? null;
+  const chosen = pick !== undefined ? pick : replyingTo === null ? defaultProjectId : null;
+  return { locked, chosen, run: locked ?? chosen };
+}
 
 /** A labelled menu trigger in the composer's toolbar row. */
 function ToolbarChip(props: {
@@ -290,6 +308,10 @@ export function GroupComposer(props: {
   readonly projects: ReadonlyArray<GroupComposerProject>;
   /** The project a new request gets unless the user picks another (the chat's filter). */
   readonly defaultProjectId: ProjectId | null;
+  readonly projectPick: GroupProjectPick;
+  readonly onProjectPick: (pick: GroupProjectPick) => void;
+  /** The model of the project the next message runs in; null hides its chip. */
+  readonly projectModel: GroupProjectModel | null;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
@@ -310,8 +332,6 @@ export function GroupComposer(props: {
   const [contentHeight, setContentHeight] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // undefined: the user picked nothing, so the default applies; null: the lead decides.
-  const [picked, setPicked] = useState<ProjectId | null | undefined>(undefined);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once.
   const inFlight = useRef(false);
@@ -365,9 +385,12 @@ export function GroupComposer(props: {
     !attached.unsettled &&
     !voice.blocksSubmission;
 
-  const lockedProject = props.replyingTo?.projectId ?? null;
-  const chosenProject =
-    picked !== undefined ? picked : props.replyingTo === null ? props.defaultProjectId : null;
+  const {
+    locked: lockedProject,
+    chosen: chosenProject,
+    run: runProject,
+  } = groupComposerProjects(props.replyingTo, props.projectPick, props.defaultProjectId);
+  const { projectModel } = props;
   const projectName = (id: ProjectId | null) =>
     id === null
       ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL
@@ -430,7 +453,7 @@ export function GroupComposer(props: {
     if (result.ok) {
       clearComposerDraftContent(draftKey);
       setSelection({ start: 0, end: 0 });
-      setPicked(undefined);
+      props.onProjectPick(undefined);
       attached.clear();
     } else setError(result.message);
   };
@@ -572,7 +595,7 @@ export function GroupComposer(props: {
                     })),
                   ]}
                   onPressAction={({ nativeEvent }) =>
-                    setPicked(
+                    props.onProjectPick(
                       nativeEvent.event === LEAD_DECIDES ? null : (nativeEvent.event as ProjectId),
                     )
                   }
@@ -584,6 +607,17 @@ export function GroupComposer(props: {
                     disabled={props.disabled}
                   />
                 </Menu>
+              </MenuSlot>
+            )}
+            {projectModel === null || runProject === null ? null : (
+              <MenuSlot>
+                <ToolbarChip
+                  icon="cube"
+                  label={projectModel.label}
+                  accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
+                  disabled={props.disabled || !projectModel.canWrite}
+                  onPress={projectModel.openProjectPicker}
+                />
               </MenuSlot>
             )}
             {props.members.length === 0 ? null : (

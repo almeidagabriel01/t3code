@@ -1,5 +1,5 @@
 import { applyAssistantGroupsEvent } from "@t3tools/client-runtime/assistantGroupChat";
-import { ASSISTANT_GROUP_MESSAGE_MAX_CHARS } from "@t3tools/contracts";
+import { ASSISTANT_GROUP_MESSAGE_MAX_CHARS, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { act, useImperativeHandle, type ReactNode, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -55,6 +55,11 @@ const { mocks, Children } = vi.hoisted(() => ({
       onChangeSelection: (selection: { start: number; end: number }) => void;
     },
     decisions: [] as unknown[],
+    navigate: vi.fn(),
+    writeSettings: vi.fn(),
+    canWriteSettings: true,
+    /** Members' own models in project p1, by assistant id. */
+    exceptions: {} as Record<string, unknown>,
   },
 }));
 vi.mock("react-native", () => ({
@@ -285,7 +290,11 @@ vi.mock("@legendapp/list/react-native", () => ({
   },
 }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ goBack: mocks.goBack, dispatch: mocks.dispatch }),
+  useNavigation: () => ({
+    goBack: mocks.goBack,
+    dispatch: mocks.dispatch,
+    navigate: mocks.navigate,
+  }),
   StackActions: { push: (name: string, params: unknown) => ({ name, params }) },
 }));
 vi.mock("../../components/ui/AppText", () => ({
@@ -296,7 +305,10 @@ vi.mock("../../components/ui/AppText", () => ({
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 type MockMenuItem =
   | { title: string; disabled?: boolean; onPress: () => void }
-  | { title: string; items: Array<{ title: string; disabled?: boolean; onPress: () => void }> };
+  | { title: string; items: Array<MockMenuItem> };
+type MockMenuAction = Extract<MockMenuItem, { onPress: () => void }>;
+const flattenMenu = (items: Array<MockMenuItem>): Array<MockMenuAction> =>
+  items.flatMap((item) => ("items" in item ? flattenMenu(item.items) : [item]));
 vi.mock("../../components/ui/AppBar", () => ({
   AppBar: (props: {
     title: string;
@@ -306,16 +318,33 @@ vi.mock("../../components/ui/AppBar", () => ({
     <header>
       <h1>{props.title}</h1>
       <p>{props.subtitle}</p>
-      {props.menus?.[0]?.items
-        .flatMap((item) => ("items" in item ? item.items : [item]))
-        .map((item) => (
-          <button
-            key={item.title}
-            aria-label={`header:${item.title}`}
-            disabled={item.disabled}
-            onClick={item.onPress}
-          />
-        ))}
+      {/* Submenu titles, so a test can see what a nested entry is called. */}
+      {props.menus?.[0]?.items.flatMap((item) =>
+        "items" in item
+          ? [
+              <span key={item.title} data-testid="header-submenu">
+                {item.title}
+              </span>,
+              ...item.items.flatMap((child) =>
+                "items" in child
+                  ? [
+                      <span key={child.title} data-testid="header-submenu">
+                        {child.title}
+                      </span>,
+                    ]
+                  : [],
+              ),
+            ]
+          : [],
+      )}
+      {flattenMenu(props.menus?.[0]?.items ?? []).map((item) => (
+        <button
+          key={item.title}
+          aria-label={`header:${item.title}`}
+          disabled={item.disabled}
+          onClick={item.onPress}
+        />
+      ))}
     </header>
   ),
 }));
@@ -404,7 +433,41 @@ vi.mock("../../native/SelectableMarkdownText", () => ({
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => mocks.selectDetail,
 }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({
+    environments: [
+      {
+        environmentId: "hub",
+        label: "Hub",
+        serverConfig: {
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            projectSettingsOverrides: {
+              p1: {
+                defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" },
+                assistantModelSelections: mocks.exceptions,
+              },
+            },
+          },
+        },
+      },
+    ],
+  }),
+}));
+vi.mock("../../state/session", () => ({
+  useEnvironmentsWithScope: (environments: Array<{ environmentId: string }>) =>
+    new Set(mocks.canWriteSettings ? environments.map((entry) => entry.environmentId) : []),
+}));
+vi.mock("../settings/settings-environment-filter", () => ({
+  connectedSettingsTargets: (environments: unknown[]) => environments,
+}));
+vi.mock("../settings/useSettingsWriter", () => ({ useSettingsWriter: () => mocks.writeSettings }));
+vi.mock("../settings/components/SettingsModelPicker", () => ({
+  modelDisplayName: (_options: unknown, selection: { model: string }) => `name:${selection.model}`,
+}));
+vi.mock("../../lib/modelOptions", () => ({ buildModelOptions: () => [] }));
 vi.mock("../../state/entities", () => ({
+  useEnvironmentServerConfig: () => null,
   useProjects: () => [
     { environmentId: "hub", id: "p1", title: "Alpha" },
     { environmentId: "hub", id: "p2", title: "Beta" },
@@ -615,8 +678,12 @@ beforeEach(() => {
     mocks.converse,
     mocks.clear,
     mocks.voiceStart,
+    mocks.navigate,
+    mocks.writeSettings,
   ])
     fn.mockReset();
+  mocks.canWriteSettings = true;
+  mocks.exceptions = {};
   mocks.drafts.clear();
   mocks.draftListeners.clear();
   mocks.release.mockResolvedValue(undefined);
@@ -1434,6 +1501,53 @@ describe("requests", () => {
     });
     // The pick is for one message.
     expect(byLabel("Project: Lead decides")).not.toBeNull();
+  });
+
+  it("shows the picked project's model beside it and opens that project's picker", async () => {
+    setup();
+    // The lead decides the project, so there is no project model to show.
+    expect(container.querySelector('[aria-label^="Model for"]')).toBeNull();
+    expect(text()).not.toContain("Model in");
+    await click("Project:Alpha");
+    await click("Model for Alpha: name:gpt-5.5");
+    expect(mocks.navigate).toHaveBeenCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+    });
+    mocks.canWriteSettings = false;
+    render();
+    expect(byLabel("Model for Alpha: name:gpt-5.5")?.disabled).toBe(true);
+  });
+
+  it("sets a member's own model in the picked project from the header menu, and removes it", async () => {
+    mocks.exceptions = { ada: { instanceId: "codex", model: "gpt-5.4" } };
+    setup();
+    await click("Project:Alpha");
+    const submenus = () =>
+      [...container.querySelectorAll('[data-testid="header-submenu"]')].map(
+        (node) => node.textContent,
+      );
+    expect(submenus()).toEqual(["Show", "Model in Alpha", "Ada · name:gpt-5.4"]);
+    await click("header:Beto");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+      assistantId: "beto",
+    });
+    await click("header:Change model");
+    expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
+      members: [{ environmentId: "hub", projectId: "p1" }],
+      assistantId: "ada",
+    });
+    await click("header:Remove exception");
+    expect(mocks.writeSettings).toHaveBeenCalledWith(expect.any(Array), [
+      {
+        environmentId: "hub",
+        patch: {
+          projectSettingsOverrides: {
+            p1: expect.objectContaining({ assistantModelSelections: { ada: null } }),
+          },
+        },
+      },
+    ]);
   });
 
   it("replies to a request in its project, locked, and lets one without a project pick", async () => {
