@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 
 import {
+  assistantGroupActivity,
   applyAssistantGroupHistory,
   applyAssistantGroupsEvent,
   assistantGroupAuthorName,
@@ -456,6 +457,23 @@ it.each([
     assistantGroupAuthorName(message as never, (id) => (id === "ada" ? "Ada" : undefined)),
     expected,
   );
+});
+
+it.each([
+  ["completed", "completed", "Completed"],
+  ["failed", "failed", "Failed"],
+  ["cancelled", "cancelled", "Cancelled"],
+  ["paused", "interrupted", "Paused"],
+  ["queued", null, "Queued"],
+  ["running", null, "Running"],
+  ["waiting", null, "Waiting"],
+  ["done", "completed", "Done"],
+  ["needs-you", "interrupted", "Needs you"],
+  ["working", null, "Working"],
+  ["routing", null, "Routing"],
+  ["needs-project", null, "Needs project"],
+] as const)("assistantGroupActivity(%s)", (status, expected, label) => {
+  assert.deepStrictEqual(assistantGroupActivity(status), { status: expected, label });
 });
 
 describe("assistantGroupAwaitingRoute", () => {

@@ -18,6 +18,7 @@ import {
   type AssistantGroupsHistoryResult,
   type ProjectId,
 } from "@t3tools/contracts";
+import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
 
 export interface AssistantGroupChatState {
   readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage>;
@@ -600,6 +601,32 @@ export const ASSISTANT_GROUP_STATUS_LABEL: Record<AssistantGroupTaskStatus, stri
   cancelled: "Cancelled",
   failed: "Failed",
 };
+
+const ACTIVITY_STATUS: Partial<
+  Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, TaskEventStatus>
+> = {
+  completed: "completed",
+  done: "completed",
+  failed: "failed",
+  cancelled: "cancelled",
+  paused: "interrupted",
+  "needs-you": "interrupted",
+};
+
+const ACTIVITY_LABEL: Record<AssistantGroupTaskStatus | AssistantGroupRequestStatus, string> = {
+  ...ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
+  ...ASSISTANT_GROUP_STATUS_LABEL,
+};
+
+/** A task or request status as the thread's task activity line shows it: its icon and its words. */
+export function assistantGroupActivity(
+  status: AssistantGroupTaskStatus | AssistantGroupRequestStatus,
+): { readonly status: TaskEventStatus | null; readonly label: string } {
+  return {
+    status: ACTIVITY_STATUS[status] ?? null,
+    label: ACTIVITY_LABEL[status],
+  };
+}
 
 const PAUSE_REASON_LABEL: Record<string, string> = {
   stopped: "Stopped",

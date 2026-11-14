@@ -228,9 +228,10 @@ Click a group in the sidebar (or tap it on Home) to open its chat. A message tha
 nothing starts a new **request**; it does not run an agent by itself.
 
 - The chat shows each request as a block with its project, a short title and its status (Routing,
-  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold away; click the header
-  to open or fold one. With requests in more than one project, **Show** (at the top on the web, in
-  the group's menu on mobile) shows one project's requests (**All projects** shows every one).
+  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold to one line; click it
+  to open the request, and its header to fold it again. With requests in more than one project,
+  **Show** (at the top on the web, in the group's menu on mobile) shows one project's requests
+  (**All projects** shows every one).
 - Each request runs in one project, chosen from the group's projects and its members'. Pick it in the
   box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
   or leave **Lead decides**: the lead picks it from the request, and when it could be more than one
@@ -261,8 +262,9 @@ nothing starts a new **request**; it does not run an agent by itself.
   asked), its request says so with what it asks and the request shows **Needs you**. **Open
   conversation** or **Open decision** takes you to answer it. Answer anywhere (the chat, Activity,
   Telegram) and the notice is marked resolved.
-- Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
-  continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
+- Each open task shows as a card with its owner and status; a finished one is a single line that
+  opens the member's conversation. **Stop** pauses running work, **Resume** continues it,
+  **Reassign** gives it to another member and **Cancel** ends the whole request.
   **Open conversation** shows the member's conversation for that request.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
   per request). So members cannot pass work around forever, a request stops whole, and the chat

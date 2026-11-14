@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   applyAssistantGroupHistory,
+  assistantGroupActivity,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
   assistantGroupMarkdownMentions,
@@ -35,6 +36,8 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { assistantGroupProjectIds, splitAssistantTransferText } from "@t3tools/contracts";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -57,6 +60,8 @@ import {
 import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { isElectron } from "../../env";
+import { useClientSettings } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
 import {
   useAssistantEntries,
@@ -66,7 +71,27 @@ import {
 import { useProjects } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import ChatMarkdown from "../ChatMarkdown";
-import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
+import { CollapsibleMessageBody } from "../chat/CollapsibleMessageBody";
+import {
+  isTimelineMinimapRowVisible,
+  resolveTimelineMinimapCurrentIndex,
+  resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHitStripWidth,
+  resolveTimelineMinimapVisibleRange,
+  TIMELINE_MINIMAP_MIN_ITEMS,
+} from "../chat/MessagesTimeline.logic";
+import { TaskEventActivityRow } from "../chat/TaskEventActivityRow";
+import { TimelineMinimap } from "../chat/TimelineMinimap";
+import type { TimelineMinimapItem } from "../chat/timelineMinimapItems";
+import { forwardWheelToTimeline } from "../chat/timelineMinimapWheel";
+import { MESSAGE_HEADING_LEVEL } from "../chat/TimelineRowParts";
+import { WorkedForFold } from "../chat/WorkedForFold";
+import {
+  WorkspaceBreadcrumb,
+  WorkspaceBreadcrumbItem,
+  WorkspaceBreadcrumbSeparator,
+  WorkspaceBreadcrumbText,
+} from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -111,33 +136,56 @@ function GroupHeader(props: {
 }) {
   const { environmentId, team } = props;
   const flows = useAssistantTeamFlows(environmentId);
+  const navigate = useNavigate();
   const archived = team.archivedAt !== null;
   const shown = props.members.slice(0, MAX_STACKED_AVATARS);
   return (
     <WorkspacePageHeader electron={isElectron} className="relative bg-background" data-glass-layer>
-      <WorkspaceBreadcrumb ariaLabel="Group chat" className="flex-1">
-        <li className="flex min-w-0 items-center gap-2">
-          <span className="flex shrink-0 items-center" data-testid="group-avatars">
-            {shown.map((member) => (
-              <AssistantAvatar
-                key={member.id}
-                assistant={member}
-                environmentId={environmentId}
-                className="-ms-1.5 size-5 first:ms-0"
-              />
-            ))}
-          </span>
-          <h1 className="min-w-0 truncate font-medium">{team.name}</h1>
-          <span className="truncate text-xs font-normal text-muted-foreground @max-lg/group-chat:hidden">
-            · {teamSummary(team, props.allAssistants)}
-          </span>
-          {props.running > 0 ? (
-            <Badge variant="info" size="sm" data-testid="group-running">
-              {props.running} running
-            </Badge>
-          ) : null}
-        </li>
-      </WorkspaceBreadcrumb>
+      <div className="@container/header flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+        <WorkspaceBreadcrumb
+          ariaLabel="Group chat"
+          className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+        >
+          <WorkspaceBreadcrumbItem>
+            <button
+              type="button"
+              onClick={() => void navigate({ to: "/assistants" })}
+              className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              <WorkspaceBreadcrumbText>Assistants</WorkspaceBreadcrumbText>
+            </button>
+          </WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbSeparator>
+            <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
+          </WorkspaceBreadcrumbSeparator>
+          <WorkspaceBreadcrumbItem current className="min-w-10 flex-1 gap-1.5">
+            <h1 className="min-w-0 truncate">
+              <WorkspaceBreadcrumbText>{team.name}</WorkspaceBreadcrumbText>
+            </h1>
+            <WorkspaceBreadcrumbText className="text-xs font-normal text-muted-foreground @max-xl/header:hidden">
+              · {teamSummary(team, props.allAssistants)}
+            </WorkspaceBreadcrumbText>
+          </WorkspaceBreadcrumbItem>
+        </WorkspaceBreadcrumb>
+        <span
+          className="flex shrink-0 items-center @max-md/header:hidden"
+          data-testid="group-avatars"
+        >
+          {shown.map((member) => (
+            <AssistantAvatar
+              key={member.id}
+              assistant={member}
+              environmentId={environmentId}
+              className="-ms-1.5 size-5 first:ms-0"
+            />
+          ))}
+        </span>
+        {props.running > 0 ? (
+          <Badge variant="info" size="sm" className="shrink-0" data-testid="group-running">
+            {props.running} running
+          </Badge>
+        ) : null}
+      </div>
       <Menu>
         <Tooltip>
           <TooltipTrigger
@@ -347,6 +395,9 @@ function FeedRow(props: {
   readonly assistants: ReadonlyMap<string, Assistant>;
   readonly members: ReadonlyArray<Assistant>;
   readonly projects: ReadonlyArray<GroupMentionProject>;
+  /** The request project's root, for file links. */
+  readonly cwd: string | undefined;
+  readonly timestampFormat: TimestampFormat;
   readonly lead: Assistant | undefined;
   readonly canAct: boolean;
   readonly archived: boolean;
@@ -362,14 +413,20 @@ function FeedRow(props: {
   readonly onOpenDecision: () => void;
 }) {
   const { message } = props.row;
+  const [workedOpen, setWorkedOpen] = useState(false);
   const author =
     message.assistantId === null ? undefined : props.assistants.get(message.assistantId);
+  const answered = message.taskId === null ? undefined : props.chat.tasks.get(message.taskId);
   const markdown = (text: string) => (
     <ChatMarkdown
       text={assistantGroupMarkdownMentions(text, props.members, props.projects)}
-      cwd={undefined}
+      cwd={props.cwd}
+      threadRef={
+        answered === undefined ? undefined : scopeThreadRef(props.environmentId, answered.threadId)
+      }
       environmentId={props.environmentId}
-      className="wrap-anywhere"
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
+      lineBreaks={shouldPreserveAssistantLineBreaks(text)}
       renderMention={(href, text) => (
         <GroupMentionChip
           kind={assistantGroupMentionHref(href)?.kind ?? "member"}
@@ -393,18 +450,28 @@ function FeedRow(props: {
         onJump={props.onJump}
       />
     );
-  const cards = props.row.tasks.map((task) => (
-    <GroupTaskCard
-      key={task.id}
-      task={task}
-      environmentId={props.environmentId}
-      owner={props.row.role === "answer" ? undefined : props.assistants.get(task.ownerId)}
-      reassignTo={props.members.filter((member) => member.id !== task.ownerId)}
-      canAct={props.canAct}
-      onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
-      onOpenConversation={() => props.onOpenConversation(task)}
-    />
-  ));
+  // A finished task is one activity line, as in a thread; an open one keeps its card and actions.
+  const cards = props.row.tasks.map((task) =>
+    task.status === "completed" || task.status === "cancelled" ? (
+      <TaskEventActivityRow
+        key={task.id}
+        title={assistantGroupMessageExcerpt(task.instruction)}
+        {...assistantGroupActivity(task.status)}
+        onOpen={() => props.onOpenConversation(task)}
+      />
+    ) : (
+      <GroupTaskCard
+        key={task.id}
+        task={task}
+        environmentId={props.environmentId}
+        owner={props.row.role === "answer" ? undefined : props.assistants.get(task.ownerId)}
+        reassignTo={props.members.filter((member) => member.id !== task.ownerId)}
+        canAct={props.canAct}
+        onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
+        onOpenConversation={() => props.onOpenConversation(task)}
+      />
+    ),
+  );
   if (props.row.role === "boundary") {
     return (
       <div
@@ -459,7 +526,7 @@ function FeedRow(props: {
         {replyLine}
         <div
           className={cn(
-            "min-w-0 max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm text-message-foreground @xl/group-chat:max-w-[75%]",
+            "min-w-0 max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm wrap-anywhere text-message-foreground @xl/group-chat:max-w-[75%]",
             fromUser ? "bg-message" : "bg-foreground/6",
             BUBBLE_CHIP_INK,
           )}
@@ -469,7 +536,7 @@ function FeedRow(props: {
             <div data-testid="group-request-files" className="mt-1.5">
               <ChatMarkdown
                 text={parts.files}
-                cwd={undefined}
+                cwd={props.cwd}
                 environmentId={props.environmentId}
                 className="wrap-anywhere"
               />
@@ -511,7 +578,30 @@ function FeedRow(props: {
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Who member={author} fallback={name} createdAt={message.createdAt} />
         {replyLine === null ? null : <div className="-ms-1.5">{replyLine}</div>}
-        <div className="text-sm leading-relaxed">{markdown(message.text)}</div>
+        {answered === undefined ? null : (
+          // ponytail: plain "Worked" until answers carry how long the member worked.
+          <WorkedForFold
+            label="Worked"
+            expanded={workedOpen}
+            loading={false}
+            error={null}
+            onToggle={() => setWorkedOpen((open) => !open)}
+            createdAt={message.createdAt}
+            timestampFormat={props.timestampFormat}
+          >
+            {workedOpen ? (
+              <p
+                data-testid="group-worked-instruction"
+                className="px-1 pt-1 text-sm whitespace-pre-wrap wrap-anywhere text-muted-foreground"
+              >
+                {answered.instruction}
+              </p>
+            ) : null}
+          </WorkedForFold>
+        )}
+        <CollapsibleMessageBody text={message.text}>
+          {markdown(message.text)}
+        </CollapsibleMessageBody>
         <div className="-ms-1.5">
           <Button
             size="micro"
@@ -552,9 +642,30 @@ function RequestBlock(props: {
   readonly children: ReactNode;
 }) {
   const { block } = props;
+  if (!props.expanded) {
+    const activity = assistantGroupActivity(block.status);
+    return (
+      <section
+        data-testid="group-request-block"
+        data-request-id={block.requestId}
+        aria-label={block.title}
+        className="min-w-0"
+      >
+        <TaskEventActivityRow
+          title={block.title}
+          status={activity.status}
+          label={
+            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
+          }
+          onOpen={props.onToggle}
+        />
+      </section>
+    );
+  }
   return (
     <section
       data-testid="group-request-block"
+      data-request-id={block.requestId}
       aria-label={block.title}
       className="flex min-w-0 flex-col rounded-xl border border-foreground/10"
     >
@@ -567,10 +678,7 @@ function RequestBlock(props: {
       >
         <ChevronRightIcon
           aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none",
-            props.expanded && "rotate-90",
-          )}
+          className="size-3.5 shrink-0 rotate-90 text-muted-foreground"
         />
         <span
           className="min-w-0 flex-1 truncate text-sm font-semibold"
@@ -597,45 +705,43 @@ function RequestBlock(props: {
           {ASSISTANT_GROUP_REQUEST_STATUS_LABEL[block.status]}
         </span>
       </button>
-      {props.expanded ? (
-        <div className="flex min-w-0 flex-col gap-3 border-t border-foreground/10 px-3 py-3">
-          {props.children}
-          {block.status === "needs-project" && props.projects.length > 0 ? (
-            <div
-              role="group"
-              aria-label="Pick a project"
-              data-testid="group-request-projects"
-              className="flex flex-wrap items-center gap-1.5"
-            >
-              <span className="me-0.5 text-xs text-muted-foreground">Run it in</span>
-              {props.projects.map((project) => (
-                <Button
-                  key={project.id}
-                  size="xs"
-                  variant="outline"
-                  disabled={!props.canPick}
-                  onClick={() => props.onPickProject(project)}
-                >
-                  <FolderIcon />
-                  {project.label}
-                </Button>
-              ))}
-            </div>
-          ) : null}
-          <div className="-ms-1.5">
-            <Button
-              size="micro"
-              variant="ghost-muted"
-              disabled={!props.canPick}
-              aria-label={`Reply to request ${block.title}`}
-              onClick={props.onReply}
-            >
-              <ReplyIcon />
-              Reply to request
-            </Button>
+      <div className="flex min-w-0 flex-col gap-3 border-t border-foreground/10 px-3 py-3">
+        {props.children}
+        {block.status === "needs-project" && props.projects.length > 0 ? (
+          <div
+            role="group"
+            aria-label="Pick a project"
+            data-testid="group-request-projects"
+            className="flex flex-wrap items-center gap-1.5"
+          >
+            <span className="me-0.5 text-xs text-muted-foreground">Run it in</span>
+            {props.projects.map((project) => (
+              <Button
+                key={project.id}
+                size="xs"
+                variant="outline"
+                disabled={!props.canPick}
+                onClick={() => props.onPickProject(project)}
+              >
+                <FolderIcon />
+                {project.label}
+              </Button>
+            ))}
           </div>
+        ) : null}
+        <div className="-ms-1.5">
+          <Button
+            size="micro"
+            variant="ghost-muted"
+            disabled={!props.canPick}
+            aria-label={`Reply to request ${block.title}`}
+            onClick={props.onReply}
+          >
+            <ReplyIcon />
+            Reply to request
+          </Button>
         </div>
-      ) : null}
+      </div>
     </section>
   );
 }
@@ -666,6 +772,7 @@ export function AssistantGroupChat(props: {
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const anchor = useRef<{ readonly height: number; readonly top: number } | null>(null);
+  const pinnedSize = useRef("");
   const [atBottom, setAtBottom] = useState(true);
   // Where the "New" line goes, fixed when the chat first shows: it stays until the user leaves.
   const [newSeq, setNewSeq] = useState<number | null | undefined>(undefined);
@@ -673,6 +780,14 @@ export function AssistantGroupChat(props: {
   // A message to bring into view and flash once the render that shows it lands.
   const jumpTarget = useRef<string | null>(null);
   const [, setJumps] = useState(0);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const [minimapStrips] = useState(() => new Map<string, HTMLSpanElement>());
+  const [minimap, setMinimap] = useState({
+    persistentGutter: false,
+    hitStripWidth: 0,
+    currentIndex: null as number | null,
+    atEnd: true,
+  });
 
   const team = entries.teams.find(
     (entry) => entry.environmentId === environmentId && entry.team.id === teamId,
@@ -699,6 +814,14 @@ export function AssistantGroupChat(props: {
     projectFilter !== null && feedProjects.includes(projectFilter) ? projectFilter : null;
   const items = filterAssistantGroupFeed(feed, activeFilter);
   const newestRequest = items.findLast((item) => item.kind === "request");
+  const requestBlocks = items.flatMap((item) => (item.kind === "request" ? [item.block] : []));
+  const minimapItems: ReadonlyArray<TimelineMinimapItem> = requestBlocks.map((block, index) => ({
+    id: block.requestId,
+    rowIndex: index,
+    userText: block.title,
+    assistantText: block.rows.findLast((row) => row.role === "answer")?.message.text ?? null,
+    assistantId: null,
+  }));
   const groupProjects: ReadonlyArray<GroupProjectOption> = assistantGroupProjectIds(
     members,
     team?.projectIds ?? [],
@@ -734,6 +857,62 @@ export function AssistantGroupChat(props: {
     markRead: (readSeq) => void actions.markRead(teamId, { readSeq }),
   });
 
+  /** Marks the requests on screen and where the reader is, as the thread's minimap does. */
+  const refreshMinimap = (element: HTMLDivElement) => {
+    if (minimapItems.length < TIMELINE_MINIMAP_MIN_ITEMS) return;
+    const top = element.getBoundingClientRect().top - element.scrollTop;
+    // The blocks render in the same order as the minimap's items.
+    const boxes = [...element.querySelectorAll("[data-request-id]")].map((block) =>
+      block.getBoundingClientRect(),
+    );
+    const range = resolveTimelineMinimapVisibleRange({
+      startBuffered: 0,
+      endBuffered: boxes.length - 1,
+      scroll: element.scrollTop,
+      scrollLength: element.clientHeight,
+      positionAtIndex: (index) => (boxes[index] === undefined ? undefined : boxes[index].top - top),
+      sizeAtIndex: (index) => boxes[index]?.height,
+    });
+    for (const item of minimapItems) {
+      const next = isTimelineMinimapRowVisible(item.rowIndex, range.start, range.end)
+        ? "true"
+        : "false";
+      const strip = minimapStrips.get(item.id);
+      if (strip && strip.dataset.inView !== next) strip.dataset.inView = next;
+    }
+    const currentIndex = resolveTimelineMinimapCurrentIndex({
+      visibleStart: range.start,
+      visibleEnd: range.end,
+      rowIndices: minimapItems.map((item) => item.rowIndex),
+    });
+    const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+    setMinimap((current) =>
+      current.currentIndex === currentIndex && current.atEnd === atEnd
+        ? current
+        : { ...current, currentIndex, atEnd },
+    );
+  };
+
+  const observeGutter = (element: HTMLDivElement | null) => {
+    if (element === null) return;
+    // The lane changes width with the chat-width setting too, not only with the window.
+    const lane = element.querySelector("[data-timeline-root]");
+    return observeResize(lane === null ? element : [element, lane], () => {
+      const viewportWidth = element.getBoundingClientRect().width;
+      const contentWidth = lane?.getBoundingClientRect().width ?? viewportWidth;
+      const persistentGutter = resolveTimelineMinimapHasPersistentGutter(
+        viewportWidth,
+        contentWidth,
+      );
+      const hitStripWidth = resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth);
+      setMinimap((current) =>
+        current.persistentGutter === persistentGutter && current.hitStripWidth === hitStripWidth
+          ? current
+          : { ...current, persistentGutter, hitStripWidth },
+      );
+    });
+  };
+
   // The feed follows new messages only while the user is at its end, and holds still while
   // an older page is added above, so what they were reading does not jump.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scroll position is DOM state
@@ -744,7 +923,10 @@ export function AssistantGroupChat(props: {
       element.scrollTop = element.scrollHeight - anchor.current.height + anchor.current.top;
       anchor.current = null;
     } else if (stickToBottom.current) {
-      element.scrollTop = element.scrollHeight;
+      // Only a size change re-pins: a render during a smooth jump must not snap it back.
+      const size = `${element.scrollHeight}:${element.clientHeight}`;
+      if (size !== pinnedSize.current) element.scrollTop = element.scrollHeight;
+      pinnedSize.current = size;
     }
     if (jumpTarget.current !== null) {
       const target = element.querySelector(`[data-message-id="${CSS.escape(jumpTarget.current)}"]`);
@@ -761,6 +943,7 @@ export function AssistantGroupChat(props: {
         );
       }
     }
+    refreshMinimap(element);
     // Open on the first unread message when it is above the fold, else stay at the end.
     const divider = element.querySelector("[data-testid=group-new-divider]");
     if (divider !== null && !scrolledToNew.current) {
@@ -875,6 +1058,16 @@ export function AssistantGroupChat(props: {
       );
     }
     const lead = members.find((member) => member.id === team.leadId);
+    const requestRoot = (state: AssistantGroupChatState, message: AssistantGroupMessage) => {
+      const requestId = message.requestId;
+      const projectId =
+        requestId === undefined
+          ? undefined
+          : (state.messages.get(requestId) ?? state.requests.get(requestId))?.projectId;
+      return projects.find(
+        (project) => project.environmentId === environmentId && project.id === projectId,
+      )?.workspaceRoot;
+    };
     const feedRow = (state: AssistantGroupChatState, row: AssistantGroupFeedRow) => (
       <Fragment key={row.message.id}>
         {row.message.seq === newSeq ? <NewDivider /> : null}
@@ -885,6 +1078,8 @@ export function AssistantGroupChat(props: {
           assistants={byId}
           members={members}
           projects={mentionProjects}
+          cwd={requestRoot(state, row.message)}
+          timestampFormat={timestampFormat}
           lead={lead}
           canAct={actions.canAct}
           archived={archived}
@@ -969,85 +1164,117 @@ export function AssistantGroupChat(props: {
             </Select>
           </div>
         )}
-        <div
-          ref={scroller}
-          data-testid="group-feed"
-          className="min-h-0 flex-1 overflow-y-auto overscroll-y-none"
-          onScroll={(event) => {
-            const element = event.currentTarget;
-            stickToBottom.current =
-              element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-            setAtBottom(stickToBottom.current);
-            if (element.scrollTop < 48) void loadOlder();
-          }}
-        >
-          <div className="flex min-h-full flex-col justify-end gap-3 px-3 py-4 @xl/group-chat:px-6">
-            {chat?.hasMore ? (
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                className="self-center"
-                disabled={loadingOlder}
-                onClick={() => void loadOlder()}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={(element) => {
+              scroller.current = element;
+              return observeGutter(element);
+            }}
+            data-testid="group-feed"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-y-none px-3 @xl/group-chat:px-6"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              stickToBottom.current =
+                element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+              setAtBottom(stickToBottom.current);
+              refreshMinimap(element);
+              if (element.scrollTop < 48) void loadOlder();
+            }}
+          >
+            <div className="messages-timeline-row-frame flex min-h-full flex-col justify-end py-4">
+              <div
+                className="chat-content-lane flex flex-col gap-3 overflow-x-clip"
+                data-timeline-root
               >
-                Load earlier messages
-              </Button>
-            ) : null}
-            {chat !== null && feed.length === 0 ? (
-              <Empty>
-                <EmptyHeader>
-                  <EmptyTitle>No messages yet</EmptyTitle>
-                  <EmptyDescription>
-                    {members.length === 0
-                      ? "Add assistants to this group in Edit group, then write here."
-                      : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`}
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : null}
-            {chat === null
-              ? null
-              : items.map((item) => {
-                  if (item.kind === "row") return feedRow(chat, item.row);
-                  const { block } = item;
-                  const expanded =
-                    toggled.get(block.requestId) ??
-                    assistantGroupRequestExpanded(
-                      block,
-                      readAtOpen ?? Number.MAX_SAFE_INTEGER,
-                      item === newestRequest,
-                    );
-                  return (
-                    <RequestBlock
-                      key={block.requestId}
-                      block={block}
-                      projectName={block.projectId === null ? null : projectName(block.projectId)}
-                      expanded={expanded}
-                      onToggle={() =>
-                        setToggled((current) => new Map(current).set(block.requestId, !expanded))
-                      }
-                      projects={groupProjects}
-                      canPick={!archived && actions.canPost}
-                      onPickProject={(project) => void pickProject(block, project)}
-                      onReply={() =>
-                        setReplyTo({
-                          id: block.requestId,
-                          projectId: block.projectId,
-                          quote: {
-                            label: `Replying to request: ${block.title}`,
-                            excerpt: "",
-                            to: null,
-                            projectLabel:
-                              block.projectId === null ? null : projectName(block.projectId),
-                          },
-                        })
-                      }
-                    >
-                      {block.rows.map((row) => feedRow(chat, row))}
-                    </RequestBlock>
-                  );
-                })}
+                {chat?.hasMore ? (
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    className="self-center"
+                    disabled={loadingOlder}
+                    onClick={() => void loadOlder()}
+                  >
+                    Load earlier messages
+                  </Button>
+                ) : null}
+                {chat !== null && feed.length === 0 ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>No messages yet</EmptyTitle>
+                      <EmptyDescription>
+                        {members.length === 0
+                          ? "Add assistants to this group in Edit group, then write here."
+                          : `${members.map((member) => member.name).join(", ")} ${members.length === 1 ? "is" : "are"} in this group. Start with @${members[0]!.handle} to give one a task, @everyone for all of them${lead === undefined ? "" : `, or write without @ and ${lead.name} routes it`}.`}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : null}
+                {chat === null
+                  ? null
+                  : items.map((item) => {
+                      if (item.kind === "row") return feedRow(chat, item.row);
+                      const { block } = item;
+                      const expanded =
+                        toggled.get(block.requestId) ??
+                        assistantGroupRequestExpanded(
+                          block,
+                          readAtOpen ?? Number.MAX_SAFE_INTEGER,
+                          item === newestRequest,
+                        );
+                      return (
+                        <RequestBlock
+                          key={block.requestId}
+                          block={block}
+                          projectName={
+                            block.projectId === null ? null : projectName(block.projectId)
+                          }
+                          expanded={expanded}
+                          onToggle={() =>
+                            setToggled((current) =>
+                              new Map(current).set(block.requestId, !expanded),
+                            )
+                          }
+                          projects={groupProjects}
+                          canPick={!archived && actions.canPost}
+                          onPickProject={(project) => void pickProject(block, project)}
+                          onReply={() =>
+                            setReplyTo({
+                              id: block.requestId,
+                              projectId: block.projectId,
+                              quote: {
+                                label: `Replying to request: ${block.title}`,
+                                excerpt: "",
+                                to: null,
+                                projectLabel:
+                                  block.projectId === null ? null : projectName(block.projectId),
+                              },
+                            })
+                          }
+                        >
+                          {block.rows.map((row) => feedRow(chat, row))}
+                        </RequestBlock>
+                      );
+                    })}
+              </div>
+            </div>
           </div>
+          <TimelineMinimap
+            items={minimapItems}
+            hasPersistentGutter={minimap.persistentGutter}
+            hitStripWidth={minimap.hitStripWidth}
+            currentIndex={minimap.currentIndex}
+            atEnd={minimap.atEnd}
+            stripMap={minimapStrips}
+            onWheel={(event) => {
+              if (scroller.current !== null) forwardWheelToTimeline(event, scroller.current);
+            }}
+            onSelect={(item) => {
+              const block = requestBlocks.find((entry) => entry.requestId === item.id);
+              // The request's first message may be unloaded; its first loaded row is always drawn.
+              const first = block?.rows[0];
+              if (first !== undefined) jumpTo(first.message.id);
+            }}
+          />
         </div>
         <GroupComposer
           key={`${environmentId}:${team.id}`}

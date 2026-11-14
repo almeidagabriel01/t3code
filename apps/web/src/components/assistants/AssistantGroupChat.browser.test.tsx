@@ -248,17 +248,25 @@ it("shows requests, each member's answer, routing notes and the tasks between", 
       task("done", 1, { ownerId: "bo" as AssistantId, status: "completed" }),
     ],
   );
-  await using _screen = await openChat();
-  await expect.element(main().getByText("Leadership")).toBeVisible();
+  await using screen = await openChat();
+  const crumbs = main().getByRole("navigation", { name: "Group chat" });
+  await expect.element(crumbs).toMatchTextContent(/^Assistants\/Leadership·/);
   await expect.element(main().getByText("· 3 members · lead Jarvis")).toBeVisible();
   await expect.element(main().getByTestId("group-running")).toHaveTextContent("1 running");
   await expect.element(main().getByText("Ada and Bo each got a task")).toBeVisible();
   await expect.element(main().getByText("Three options compared.")).toBeVisible();
   await expect.element(main().getByText("Weekly review")).toBeVisible();
+  // An open task keeps its card; a finished one is the thread's one activity line.
   const cards = main().getByTestId("group-task-card");
   await expect.element(cards.first()).toHaveAttribute("data-status", "running");
   await expect.element(main().getByText("Monthly cost and risk")).toBeVisible();
-  await expect.element(cards.nth(1)).toHaveAttribute("data-status", "completed");
+  await expect.element(cards.nth(1)).not.toBeInTheDocument();
+  const answer = main().getByTestId("group-answer");
+  await expect
+    .element(answer.getByRole("button", { name: "Open task instruction of done" }))
+    .toHaveAttribute("data-task-event-activity", "completed");
+  await userEvent.click(crumbs.getByRole("button", { name: "Assistants" }));
+  await eventually(() => expect(screen.router.state.location.pathname).toBe("/assistants"));
 });
 
 it("explains an empty chat by naming the members and how @ works", async () => {
@@ -985,27 +993,86 @@ const twoRequests = () =>
   );
 const blocks = () => main().getByTestId("group-request-block");
 
-it("shows each request as a block with its project, title and status, and folds it", async () => {
+it("folds a finished request to one activity line and shows each answer as the thread does", async () => {
   twoRequests();
   await using _screen = await openChat();
   const done = blocks().first();
-  await expect.element(done.getByTestId("group-request-project")).toHaveTextContent("render");
-  await expect.element(done.getByTestId("group-request-title")).toHaveTextContent("Budget review");
-  await expect.element(done.getByTestId("group-request-status")).toHaveTextContent("Done");
-  await expect
-    .element(blocks().nth(1).getByTestId("group-request-status"))
-    .toHaveTextContent("Working");
-  // A finished request folds away; the newest one stays open.
-  const header = done.getByTestId("group-request-header");
-  await expect.element(header).toHaveAttribute("aria-expanded", "false");
+  // A finished request folds away to one line; the newest one stays open.
+  const line = done.getByRole("button", { name: "Open task Budget review" });
+  await expect.element(line).toHaveAttribute("data-task-event-activity", "completed");
+  await expect.element(line).toMatchTextContent("· Done · render");
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
+  const open = blocks().nth(1);
+  await expect.element(open.getByTestId("group-request-title")).toHaveTextContent("Ship the app");
+  await expect.element(open.getByTestId("group-request-status")).toHaveTextContent("Working");
   await expect
-    .element(blocks().nth(1).getByTestId("group-request-header"))
+    .element(open.getByTestId("group-request-header"))
     .toHaveAttribute("aria-expanded", "true");
-  await userEvent.click(header);
+  // A running task keeps its card and actions.
+  await expect
+    .element(open.getByTestId("group-task-card"))
+    .toHaveAttribute("data-status", "running");
+
+  await userEvent.click(line);
   await expect.element(main().getByText("Budget answered")).toBeVisible();
-  await userEvent.click(header);
+  const answer = done.getByTestId("group-answer");
+  await expect.element(done.getByTestId("group-task-card")).not.toBeInTheDocument();
+  await expect
+    .element(answer.getByRole("button", { name: "Open task instruction of t-1" }))
+    .toHaveAttribute("data-task-event-activity", "completed");
+  // The Worked fold holds the task's instruction.
+  const worked = answer.getByRole("button", { name: "Worked" });
+  await expect.element(worked).toHaveAttribute("aria-expanded", "false");
+  await expect.element(answer.getByTestId("group-worked-instruction")).not.toBeInTheDocument();
+  await userEvent.click(worked);
+  await expect.element(worked).toHaveAttribute("aria-expanded", "true");
+  await expect
+    .element(answer.getByTestId("group-worked-instruction"))
+    .toHaveTextContent("instruction of t-1");
+  await userEvent.click(worked);
+  await expect.element(answer.getByTestId("group-worked-instruction")).not.toBeInTheDocument();
+
+  await userEvent.click(done.getByTestId("group-request-header"));
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
+});
+
+it("folds a long answer behind Show more", async () => {
+  publishGroupChat(
+    [
+      message(1, inRequest(1)),
+      message(2, {
+        ...inRequest(1),
+        author: "assistant",
+        assistantId: "ada" as AssistantId,
+        taskId: "t-1" as never,
+        text: Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n\n"),
+      }),
+    ],
+    [task("t-1", 1, { status: "completed", requestId: "m1" as never })],
+  );
+  await using _screen = await openChat();
+  await expect.element(main().getByText("line 0")).toBeVisible();
+  const body = document.querySelector<HTMLElement>(
+    '[data-testid="group-answer"] [data-user-message-collapsible]',
+  )!;
+  await expect.element(body).toHaveAttribute("data-user-message-collapsible", "true");
+  await expect.element(body).toHaveAttribute("data-user-message-collapsed", "true");
+  await userEvent.click(main().getByRole("button", { name: "Show more" }));
+  await expect.element(body).toHaveAttribute("data-user-message-collapsed", "false");
+});
+
+it("marks each request on the minimap and opens the one picked", async () => {
+  twoRequests();
+  await using _screen = await openChat();
+  await expect.element(main().getByTestId("timeline-minimap")).toBeInTheDocument();
+  await eventually(() => expect(document.querySelectorAll("[data-minimap-strip]")).toHaveLength(2));
+  await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
+  const rail = main().getByRole("button", { name: /^Jump to message/ });
+  (rail.element() as HTMLElement).focus();
+  await userEvent.keyboard("{Home}{Enter}");
+  await expect
+    .element(main().getByTestId("group-answer").getByText("Budget answered"))
+    .toBeInViewport();
 });
 
 it("narrows the feed to one project and sends new requests there", async () => {
@@ -1049,7 +1116,7 @@ it("picks a project for a new request and keeps a reply in its request's project
       { teamId: "t1", text: "@ada new work", projectId: PROJECT_ID },
     ]),
   );
-  await userEvent.click(blocks().first().getByTestId("group-request-header"));
+  await userEvent.click(blocks().first().getByRole("button", { name: "Open task Budget review" }));
   await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
   await expect.element(main().getByTestId("group-project-locked")).toHaveTextContent("render");
   await expect.element(main().getByRole("combobox", { name: "Project" })).not.toBeInTheDocument();
