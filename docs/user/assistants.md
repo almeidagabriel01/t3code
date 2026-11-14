@@ -258,13 +258,15 @@ nothing starts a new **request**; it does not run an agent by itself.
 - Each member's conversation for a request starts on the request's project model (see [model
   order](project-settings.md#defaults-and-inheritance)); the group's **Default model** (in **Group settings**) applies in the group's projects when the
   project sets none. The model next to **Project** in the box is for the message you send next: pick
-  another and only that message's work, hand-offs included, runs on it, marked **This message**,
-  and nothing is saved. A model that is off or unknown there runs the project's instead. After
+  another and that message's work, hand-offs and questions between members included, runs on it,
+  marked **This message**, and nothing is saved. Picked for a new request, it holds for the whole
+  request, whatever later changes to the project's model. A model that is off or unknown there runs the project's instead. After
   you send, or once another tab opens, it shows the project's model again; the button beside it (on mobile,
   the chip's menu) goes back sooner. **Model in <project>** in the group's menu sets **Project's
   model** and gives one member its own model there. A change moves the open requests' conversations
   that still follow the old value, after their current turn, and a finished request's conversations
-  when work on it comes back; one you switched by hand keeps its model, and goes back to it after a message's own model. While you write in a member's conversation, the group's next task for it waits for that turn
+  when work on it comes back; one you switched by hand keeps its model, and goes back to it after a message's own model; a
+  switch you make during that message's work stays. While you write in a member's conversation, the group's next task for it waits for that turn
   to end.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all

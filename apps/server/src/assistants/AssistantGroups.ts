@@ -1074,8 +1074,9 @@ const make = Effect.gen(function* () {
       return yield* invalid(`${member.name} cannot work in this request's project.`);
     }
     let followed: ModelSelection | null = null;
+    let aimed: ModelSelection | null = null;
     if (thread === undefined) {
-      const { selection: modelSelection } = yield* modelSelections
+      const { selection: modelSelection, layer } = yield* modelSelections
         .resolveForNewThread({
           projectId,
           assistantId: member.assistant_id as AssistantId,
@@ -1111,17 +1112,19 @@ const make = Effect.gen(function* () {
           ),
         );
       followed = modelSelection;
+      if (layer === "message") aimed = modelSelection;
     }
     // A new thread has seen none of the request.
     yield* sql`
       INSERT INTO assistant_group_request_threads
-        (request_id, assistant_id, team_id, thread_id, seen_seq, followed_model_selection)
+        (request_id, assistant_id, team_id, thread_id, seen_seq, followed_model_selection,
+          aimed_model_selection)
       VALUES (${request.message_id}, ${member.assistant_id}, ${team.id}, ${threadId}, 0,
-        ${encodeModelSelectionJson(followed)})
+        ${encodeModelSelectionJson(followed)}, ${encodeModelSelectionJson(aimed)})
       ON CONFLICT (request_id, assistant_id) DO UPDATE
       SET thread_id = excluded.thread_id, seen_seq = 0,
         followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL,
-        restore_model_selection = NULL, aimed_model_selection = NULL
+        restore_model_selection = NULL, aimed_model_selection = excluded.aimed_model_selection
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
     // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
@@ -1169,9 +1172,14 @@ const make = Effect.gen(function* () {
     target: ModelSelection,
     /** A request that ended keeps its threads as they are: the move waits for work to come back. */
     ended = false,
-    /** A message's own model moves the thread even off a model set in it. */
-    force = false,
+    /**
+     * `pick`: a message's model, which moves the thread even off a model set in it. `task`: a task
+     * start without one, which moves it off another message's model. `follow`: a change of the
+     * defaults, which leaves a thread on a message's model to that work.
+     */
+    mode: "follow" | "task" | "pick" = "follow",
   ) {
+    const force = mode === "pick";
     const followed = decodeModelSelectionJson(row.followed_model_selection);
     const thread = yield* inspectThread(row.thread_id as ThreadId);
     const following =
@@ -1186,6 +1194,11 @@ const make = Effect.gen(function* () {
     const aimed = decodeModelSelectionJson(row.aimed_model_selection);
     // Off the model a message's switch applied, the user changed the thread: their model stays.
     const changedByUser = aimed !== null && !modelSelectionsEqual(thread.modelSelection, aimed);
+    if (mode === "follow" && aimed !== null && !changedByUser) {
+      yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
+        WHERE thread_id = ${row.thread_id}`;
+      return;
+    }
     if (force && changedByUser && modelSelectionsEqual(target, aimed)) {
       yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL,
           restore_model_selection = NULL, aimed_model_selection = NULL
@@ -1281,7 +1294,7 @@ const make = Effect.gen(function* () {
       row,
       resolved.success.selection,
       false,
-      resolved.success.layer === "message",
+      resolved.success.layer === "message" ? "pick" : "task",
     );
   });
 

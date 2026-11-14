@@ -1949,6 +1949,57 @@ it.effect("a message's model leaves a model picked in the thread for the next ta
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect.each([
+  ["the request", true],
+  ["a reply in it", false],
+] as const)(
+  "a model picked on %s holds there when the project's model changes",
+  ([, onRequest]) => {
+    const h = harness({
+      settings: {
+        projectSettingsOverrides: {
+          [p1]: { defaultModelSelection: selection(claude, "p1-model") },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const opus = selection(claude, "opus");
+      const request = yield* groups.post(
+        { teamId: TEAM, text: "@ada one", ...(onRequest ? { modelSelection: opus } : {}) },
+        h.user,
+      );
+      const ada = requestThreadId("ada", TEAM, request.message.id);
+      if (!onRequest) {
+        yield* h.finish(0, "completed", "done");
+        yield* groups.post(
+          {
+            teamId: TEAM,
+            text: "@ada more",
+            replyToMessageId: request.message.id,
+            modelSelection: opus,
+          },
+          h.user,
+        );
+      }
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // The same provider switches at once, even mid-turn: the pick must still hold.
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(claude, "p1-new") } },
+      });
+      yield* groups.followProjectModels([p1]);
+      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, opus);
+      // A request with no pick takes the new model.
+      const other = yield* groups.post({ teamId: TEAM, text: "@ada two" }, h.user);
+      assert.deepEqual(
+        h.fakeThreads.get(requestThreadId("ada", TEAM, other.message.id))!.modelSelection,
+        selection(claude, "p1-new"),
+      );
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("a continue with a model resumes the stopped work on it", () => {
   const h = harness();
   return Effect.gen(function* () {

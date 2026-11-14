@@ -178,7 +178,9 @@ function ProjectModelPicker(props: {
         <TooltipTrigger render={<Badge variant="info" size="sm" className="shrink-0" />}>
           This message
         </TooltipTrigger>
-        <TooltipPopup>Only the message you send next runs on this model</TooltipPopup>
+        <TooltipPopup>
+          The work of the message you send next runs on this model, for a new request all of it
+        </TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger

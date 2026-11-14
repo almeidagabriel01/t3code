@@ -156,16 +156,19 @@ group's own files go when the group is removed. Agent posts (`t3_assistant group
 `paths`, which land as links in the text.
 
 A message's composer model is `assistant_group_messages.model_selection`, never a default. A task
-reaches it through `request_message_id` (subtasks inherit it), so lead routing, `routePending` and
-hand-offs need not carry it; "continue" and the answer to a request not yet routed copy it onto the
-message that owns that work. Each task start, after the busy gate, resolves its thread's model with
-it as the `message` layer (`aimModel`): moving earlier would switch another message's live turn, and
-the next message's task brings the thread back to its defaults' model. A switch deferred by a
-still-running (stopping) turn makes the task wait rather than start on the old model. A pick the
-resolver cannot use (a provider it does not know or the project turns off, a model its provider
-does not list) falls to the next layer; `post` never refuses one. Over a model picked in the thread
-by hand, the switch records that model in `restore_model_selection` instead of following the pick,
-and the next task without a pick switches back to it, so a hand pick outlives message picks.
+runs on the pick of the message that opened its task tree (`root_id` → `request_message_id`), else
+on the request's (`request_id`), so hand-offs, questions between members and later messages in the
+request share it; "continue" and the answer to a request not yet routed copy it onto the message
+that owns that work. Each task start, after the busy gate, resolves its thread's model with it as
+the `message` layer (`aimModel`): moving earlier would switch another message's live turn. A switch
+deferred by a still-running (stopping) turn makes the task wait rather than start on the old model.
+A pick the resolver cannot use (a provider it does not know or the project turns off, a model its
+provider does not list) falls to the next layer; `post` never refuses one.
+
+The switch records the model it applied in `aimed_model_selection`. A thread on it stays there when
+the project's or group's model changes; a thread off it was changed by the user, whose model then
+wins over that pick. Over a model picked in the thread by hand, the switch also records that model
+in `restore_model_selection`, and the next task without a pick switches back to it.
 
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
