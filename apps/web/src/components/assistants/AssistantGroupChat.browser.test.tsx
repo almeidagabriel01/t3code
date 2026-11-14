@@ -1175,6 +1175,21 @@ it("shows a tab per project with its unread count and waiting dot, only when the
   expect(fakeGroupChat.subscriptions.filter((input) => "scope" in input)).toEqual([]);
 });
 
+it("reads nothing, and shows no untabbed feed, while a member of a tabbed group is still loading", async () => {
+  twoRequests(SITE_PROJECT);
+  const loaded = sitePeople();
+  await using _screen = await openChat({
+    people: loaded.filter((person) => person.id !== "bo"),
+    team: team({ chat: scopedChat() }),
+  });
+  await expect.element(composer()).toBeVisible();
+  await expect.element(main().getByText("Ship the app")).not.toBeInTheDocument();
+  publishAssistants(loaded, [team({ chat: scopedChat() })]);
+  await expect.element(tab("All")).toHaveAttribute("aria-pressed", "true");
+  await expect.element(main().getByText("Ship the app")).toBeVisible();
+  expect(fakeGroupChat.reads).toEqual([]);
+});
+
 it("narrows the feed to a project tab, keeps the draft, sets the composer's project and remembers the tab", async () => {
   twoRequests(SITE_PROJECT);
   await using screen = await openChat({ people: sitePeople(), team: team({ chat: scopedChat() }) });

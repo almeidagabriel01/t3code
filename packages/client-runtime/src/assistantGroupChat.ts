@@ -366,6 +366,26 @@ export function assistantGroupTabs(input: {
   ];
 }
 
+/**
+ * True while a tab-less view may only be data still loading: the server sent scopes, yet a member
+ * is not in the assistant list, or no project has arrived while the group names two or more. A
+ * member's deleted home project stays listed but projects are loaded, so that group is not pending.
+ */
+export function assistantGroupTabsPending(input: {
+  readonly team: Pick<AssistantTeam, "projectIds" | "memberIds" | "chat">;
+  readonly members: ReadonlyArray<Pick<Assistant, "projectId" | "projectIds">>;
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId }>;
+  /** Every assistant the client has loaded for the environment, archived included. */
+  readonly assistants: { readonly has: (id: string) => boolean };
+}): boolean {
+  if (input.team.chat?.scopes === undefined) return false;
+  if (input.team.memberIds.some((id) => !input.assistants.has(id))) return true;
+  return (
+    input.projects.length === 0 &&
+    assistantGroupProjectIds(input.members, input.team.projectIds).length >= 2
+  );
+}
+
 /** The saved key's tab, else All. */
 export function resolveAssistantGroupTab(
   saved: string | null | undefined,

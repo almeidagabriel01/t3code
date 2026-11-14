@@ -14,6 +14,7 @@ import {
   assistantGroupNewSeq,
   assistantGroupRunningCount,
   assistantGroupTabs,
+  assistantGroupTabsPending,
   resolveAssistantGroupTab,
   type AssistantGroupChatState,
   type AssistantGroupTab,
@@ -1253,6 +1254,16 @@ export function AssistantGroupChatRouteScreen({
           projects: projects.filter((project) => project.environmentId === environmentId),
         });
   const tab = tabs === null ? null : resolveAssistantGroupTab(savedTab.saved, tabs);
+  // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
+  const pending =
+    team !== undefined &&
+    tabs === null &&
+    assistantGroupTabsPending({
+      team,
+      members,
+      projects: projects.filter((project) => project.environmentId === environmentId),
+      assistants: people.byId,
+    });
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const feed = useRef<GroupFeedHandle>(null);
   const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
@@ -1493,18 +1504,22 @@ export function AssistantGroupChatRouteScreen({
         ]}
       />
       {Platform.OS === "ios" ? null : tabRow}
-      <GroupFeed
-        key={`${tab?.key ?? "chat"}:${clears}`}
-        ref={feed}
-        environmentId={environmentId}
-        team={team}
-        people={people}
-        actions={actions}
-        tab={tab}
-        live={live}
-        topInset={tabRow !== null && Platform.OS === "ios" ? tabsHeight : undefined}
-        onReply={setReplyTo}
-      />
+      {pending ? (
+        <View className="flex-1" />
+      ) : (
+        <GroupFeed
+          key={`${tab?.key ?? "chat"}:${clears}`}
+          ref={feed}
+          environmentId={environmentId}
+          team={team}
+          people={people}
+          actions={actions}
+          tab={tab}
+          live={live}
+          topInset={tabRow !== null && Platform.OS === "ios" ? tabsHeight : undefined}
+          onReply={setReplyTo}
+        />
+      )}
       {Platform.OS === "ios" ? tabRow : null}
       {archived ? (
         <View

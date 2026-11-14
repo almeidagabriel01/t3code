@@ -14,6 +14,7 @@ import {
   assistantGroupActivity,
   assistantGroupInScope,
   assistantGroupTabs,
+  assistantGroupTabsPending,
   resolveAssistantGroupTab,
   assistantGroupWorkedLabel,
   assistantGroupAnswerRoot,
@@ -955,6 +956,36 @@ describe("assistant group tabs", () => {
   ];
   it.each(rows)("%s", (_name, members, scopes, expected, teamProjects) => {
     assert.deepStrictEqual(keys(tabs(members, scopes, teamProjects)), expected);
+  });
+
+  const pending = (
+    memberIds: string[],
+    loaded: string[],
+    members: ProjectId[],
+    loadedProjects: typeof projects,
+    scopes: ReturnType<typeof scope>[] | null = [scope(P1), scope(P2)],
+  ) =>
+    assistantGroupTabsPending({
+      team: {
+        projectIds: [],
+        memberIds,
+        chat: { unreadCount: 5, readSeq: 1, ...(scopes ? { scopes } : {}) },
+      } as never,
+      members: members.map(member),
+      projects: loadedProjects,
+      assistants: new Set(loaded),
+    });
+
+  const pendingRows: [string, boolean, boolean][] = [
+    ["projects not loaded yet", pending(["a", "b"], ["a", "b"], [P1, P2], []), true],
+    ["a member not loaded yet", pending(["a", "b"], ["a"], [P1], projects), true],
+    ["loaded, two projects", pending(["a", "b"], ["a", "b"], [P1, P2], projects), false],
+    ["loaded, one project gone", pending(["a", "b"], ["a", "b"], [P1, P3], [projects[0]!]), false],
+    ["one project, none loaded", pending(["a"], ["a"], [P1], []), false],
+    ["older server", pending(["a", "b"], [], [P1, P2], [], null), false],
+  ].map(([name, got, want]) => [name as string, got as boolean, want as boolean]);
+  it.each(pendingRows)("pending: %s", (_name, got, want) => {
+    assert.strictEqual(got, want);
   });
 
   it("labels, counts and read positions", () => {

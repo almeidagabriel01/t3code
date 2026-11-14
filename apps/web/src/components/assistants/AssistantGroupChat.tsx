@@ -15,6 +15,7 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupTabs,
+  assistantGroupTabsPending,
   ASSISTANT_GROUP_REQUEST_STATUS_LABEL,
   resolveAssistantGroupTab,
   type AssistantGroupChatState,
@@ -1432,6 +1433,11 @@ export function AssistantGroupChat(props: {
   });
   const tabs = team === undefined ? null : assistantGroupTabs({ team, members, projects });
   const tab = tabs === null ? null : resolveAssistantGroupTab(savedTab, tabs);
+  // Until members and projects arrive, tabs may only be missing: no feed, so nothing reads unscoped.
+  const pending =
+    team !== undefined &&
+    tabs === null &&
+    assistantGroupTabsPending({ team, members, projects, assistants: byId });
   const tabKey = tab?.key ?? null;
   const live = useAssistantGroupChat(environmentId, teamId, tab?.scope);
   const projectName = (id: ProjectId) =>
@@ -1542,20 +1548,24 @@ export function AssistantGroupChat(props: {
             }}
           />
         )}
-        <GroupFeed
-          key={tabKey ?? "chat"}
-          handle={feedHandle}
-          environmentId={environmentId}
-          team={team}
-          tab={tab}
-          live={live}
-          members={members}
-          byId={byId}
-          projects={projects}
-          groupProjects={groupProjects}
-          archived={archived}
-          onReply={setReplyTo}
-        />
+        {pending ? (
+          <div className="min-h-0 flex-1" />
+        ) : (
+          <GroupFeed
+            key={tabKey ?? "chat"}
+            handle={feedHandle}
+            environmentId={environmentId}
+            team={team}
+            tab={tab}
+            live={live}
+            members={members}
+            byId={byId}
+            projects={projects}
+            groupProjects={groupProjects}
+            archived={archived}
+            onReply={setReplyTo}
+          />
+        )}
         <GroupComposer
           key={`${environmentId}:${team.id}`}
           draftKey={`${environmentId}:${team.id}`}

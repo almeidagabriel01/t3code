@@ -1698,6 +1698,18 @@ describe("requests", () => {
     expect(subscribed()).toEqual(["hub", "g1", undefined]);
   });
 
+  it("draws no feed and marks nothing read while a member of a tabbed group has not loaded", async () => {
+    vi.useFakeTimers();
+    mocks.teams = [
+      team({ memberIds: ["ghost"], chat: { ...read, unreadCount: 3, scopes: SCOPES } }),
+    ];
+    render();
+    expect(container.querySelector('[data-testid="list"]')).toBeNull();
+    vi.advanceTimersByTime(1000);
+    expect(mocks.markRead).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("names each tab with its unread count and a waiting dot, and opens on All without a saved tab", () => {
     tabbed("project:gone");
     const row = container.querySelector('[data-testid="group-tabs"]')!;
