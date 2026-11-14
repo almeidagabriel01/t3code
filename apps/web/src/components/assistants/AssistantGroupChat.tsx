@@ -37,7 +37,11 @@ import type {
   EnvironmentId,
   ProjectId,
 } from "@t3tools/contracts";
-import { assistantGroupProjectIds, splitAssistantTransferText } from "@t3tools/contracts";
+import {
+  assistantGroupInstructionBody,
+  assistantGroupProjectIds,
+  splitAssistantTransferText,
+} from "@t3tools/contracts";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { useNavigate } from "@tanstack/react-router";
@@ -638,7 +642,7 @@ function FeedRow(props: {
                 data-testid="group-worked-instruction"
                 className="px-1 pt-1 text-sm whitespace-pre-wrap wrap-anywhere text-muted-foreground"
               >
-                {answered.instruction}
+                {assistantGroupInstructionBody(answered.instruction)}
               </p>
             ) : null}
           </WorkedForFold>

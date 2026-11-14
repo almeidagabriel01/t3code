@@ -1001,7 +1001,11 @@ const twoRequests = () =>
       message(3, { ...inRequest(3), projectId: OTHER_PROJECT, title: "Ship the app" }),
     ],
     [
-      task("t-1", 1, { status: "completed", requestId: "m1" as never }),
+      task("t-1", 1, {
+        status: "completed",
+        requestId: "m1" as never,
+        instruction: "Request from Bo (an agent, not the user):\ninstruction of t-1",
+      }),
       task("t-3", 3, { requestId: "m3" as never }),
     ],
   );
@@ -1043,6 +1047,10 @@ it("folds a finished request to one activity line and shows each answer as the t
   await expect
     .element(answer.getByTestId("group-worked-instruction"))
     .toHaveTextContent("instruction of t-1");
+  // Without the line naming who asked: the request above already shows that.
+  await expect
+    .element(answer.getByTestId("group-worked-instruction"))
+    .not.toHaveTextContent("Request from");
   await userEvent.click(worked);
   await expect.element(answer.getByTestId("group-worked-instruction")).not.toBeInTheDocument();
 
