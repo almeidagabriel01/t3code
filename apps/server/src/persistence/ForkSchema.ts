@@ -508,6 +508,23 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       created_at TEXT NOT NULL
     )
   `;
+  // One row per provider instance, account and usage window: whether its low-limit alert is armed,
+  // and the episode it last sent, so a restart or a repeated reading never tells the user twice.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS usage_limit_alert_state (
+      instance_id TEXT NOT NULL,
+      account_key TEXT NOT NULL,
+      window_id TEXT NOT NULL,
+      resets_at TEXT,
+      armed INTEGER NOT NULL,
+      episode INTEGER NOT NULL,
+      fired_threshold INTEGER,
+      fired_key TEXT,
+      pending INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (instance_id, account_key, window_id)
+    )
+  `;
   // One row per thing that waited on the user and was told about: a request, a decision or a
   // paused group task. It is what keeps each from being told twice.
   yield* sql`

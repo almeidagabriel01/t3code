@@ -2487,6 +2487,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("keeps every other setting when usage limit alerts hold hand-edited garbage", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providerInstances: { claude_work: { driver: "claudeAgent", displayName: "Work" } },
+          usageLimitAlerts: {
+            claude_work: { windows: { seven_day: 0, five_hour: 20 } },
+            broken: "x",
+          },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(
+        settings.providerInstances[ProviderInstanceId.make("claude_work")]?.displayName,
+        "Work",
+      );
+      assert.isTrue(settings.continueThreadsAfterServerUpdate);
+      assert.deepEqual(
+        settings.usageLimitAlerts[ProviderInstanceId.make("claude_work")]?.windows.five_hour,
+        20,
+      );
+      assert.isUndefined(
+        settings.usageLimitAlerts[ProviderInstanceId.make("claude_work")]?.windows.seven_day,
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -2532,17 +2564,20 @@ it("drops a removed instance's budget but keeps it when a default instance is re
       [builtin]: { driver: ProviderDriverKind.make("claudeAgent") },
     },
     providerBudgets: { [custom]: budget, [builtin]: budget },
+    usageLimitAlerts: { [custom]: { windows: { seven_day: 20 } }, [builtin]: { windows: {} } },
   };
   const afterCustom = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: custom,
   });
   assert.deepStrictEqual(Object.keys(afterCustom.providerBudgets), [builtin]);
+  assert.deepStrictEqual(Object.keys(afterCustom.usageLimitAlerts), [builtin]);
   const afterReset = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: builtin,
   });
   assert.deepStrictEqual(Object.keys(afterReset.providerBudgets).sort(), [builtin, custom].sort());
+  assert.deepStrictEqual(Object.keys(afterReset.usageLimitAlerts).sort(), [builtin, custom].sort());
 });
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "server settings under a managed policy",
