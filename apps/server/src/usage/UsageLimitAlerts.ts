@@ -222,7 +222,13 @@ const make = Effect.gen(function* () {
   ) {
     const identity = accountIdentity(provider);
     if (identity !== null) {
-      lastAccount.set(provider.instanceId, identity);
+      if (lastAccount.get(provider.instanceId) !== identity) {
+        // A slot kept before the probe reported any account belongs to the first one it reports.
+        yield* sql`
+          UPDATE OR IGNORE usage_limit_alert_state SET account_key = ${identity}
+          WHERE instance_id = ${provider.instanceId} AND account_key = ''`;
+        lastAccount.set(provider.instanceId, identity);
+      }
       return identity;
     }
     const known = lastAccount.get(provider.instanceId);
@@ -292,7 +298,7 @@ const make = Effect.gen(function* () {
         if (decision.fire || retry) {
           assistantId ??= yield* defaultAssistant;
           // No one to send it: keep the slot armed so the next reading can tell the user.
-          if (assistantId === null) return;
+          if (assistantId === null) continue;
         }
         const next: AlertSlot = decision.fire
           ? {

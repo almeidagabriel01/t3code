@@ -523,6 +523,34 @@ describe("UsageLimitAlerts", () => {
     ),
   );
 
+  it.effect("keeps a slot read before the probe reported the account with that account", () =>
+    withService(({ harness, evaluate }) =>
+      Effect.gen(function* () {
+        yield* evaluate([
+          provider("claudeAgent", [weekly(90)], { auth: { status: "authenticated" } }),
+        ]);
+        yield* evaluate([provider("claudeAgent", [weekly(91)])]);
+        assert.equal((yield* Ref.get(harness.delivered)).length, 1);
+      }),
+    ),
+  );
+
+  it.effect("keeps reading the other windows while no assistant can send", () =>
+    withService(({ harness, evaluate }) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* harness.setSettings({ usageLimitAlerts: {} });
+        yield* evaluate([provider("claude_b", [weekly(90)])]);
+        yield* sql`UPDATE assistants SET archived_at = 't'`;
+        // claude_a would send first; claude_b's climb back over the margin must still count.
+        yield* evaluate([provider("claude_a", [weekly(90)]), provider("claude_b", [weekly(70)])]);
+        yield* sql`UPDATE assistants SET archived_at = NULL`;
+        yield* evaluate([provider("claude_b", [weekly(90)])]);
+        assert.equal((yield* Ref.get(harness.delivered)).length, 2);
+      }),
+    ),
+  );
+
   it.effect("stays quiet while an alert is off, Autonomy is paused or no assistant can send", () =>
     withService(({ harness, evaluate }) =>
       Effect.gen(function* () {
