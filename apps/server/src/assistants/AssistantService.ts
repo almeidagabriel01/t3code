@@ -1213,14 +1213,13 @@ const make = Effect.gen(function* () {
     function* () {
       const changed = yield* lock.withPermits(1)(forgetDeletedProjects(sql));
       yield* Effect.forEach(changed.assistantIds, publish, { discard: true });
+      // Every group, not just those whose list changed: one open to all projects may still hold
+      // work in the deleted one, and its reconcile cancels it.
+      const teams = yield* sql<AssistantTeamRow>`
+        SELECT * FROM assistant_team_state WHERE archived_at IS NULL ORDER BY created_at, team_id`;
       yield* Effect.forEach(
-        changed.teamIds,
-        (teamId) =>
-          findTeamRow(teamId).pipe(
-            Effect.flatMap((row) =>
-              PubSub.publish(events, { type: "teamUpserted", team: toAssistantTeam(row) }),
-            ),
-          ),
+        teams,
+        (row) => PubSub.publish(events, { type: "teamUpserted", team: toAssistantTeam(row) }),
         { discard: true },
       );
     },

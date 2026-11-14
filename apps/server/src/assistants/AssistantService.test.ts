@@ -1531,6 +1531,8 @@ it.effect("a deleted project leaves assistant and group lists, and subscribers s
     const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo, gone] }));
     const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
     yield* sql`UPDATE assistant_teams SET project_ids_json = '["gone","repo"]' WHERE team_id = ${team.id}`;
+    // A group open to every project names none, yet its work may still sit in the deleted one.
+    const open = yield* assistants.createTeam({ name: "Open", memberIds: [ana.id] });
     const changes = yield* assistants.subscribeChanges;
     const now = "2026-01-03T00:00:00.000Z";
     yield* sql`
@@ -1551,14 +1553,16 @@ it.effect("a deleted project leaves assistant and group lists, and subscribers s
     yield* store.publishCommitted([deleted]);
 
     const seen = new Map<string, ReadonlyArray<string>>();
-    while (seen.size < 2) {
+    while (seen.size < 3) {
       const event: AssistantsEvent = yield* PubSub.take(changes);
       if (event.type === "upserted" && event.assistant.id === ana.id)
         seen.set("assistant", event.assistant.projectIds);
       if (event.type === "teamUpserted" && event.team.id === team.id)
         seen.set("team", event.team.projectIds);
+      if (event.type === "teamUpserted" && event.team.id === open.id)
+        seen.set("open", event.team.projectIds);
     }
-    assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo] });
+    assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo], open: [] });
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

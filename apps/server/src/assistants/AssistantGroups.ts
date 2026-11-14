@@ -1577,6 +1577,8 @@ const make = Effect.gen(function* () {
   const pump = Effect.fn("AssistantGroups.pump")(function* (teamId: string) {
     const team = yield* loadTeam(teamId).pipe(Effect.orElseSucceed(() => undefined));
     if (team === undefined || team.archivedAt !== null) return;
+    // A reply in a request whose project was deleted queues work that must never start there.
+    yield* cancelOutsideProject(team);
     // Queued work of a request whose root is stopped waits until the user picks it up again.
     const live = yield* sql<TaskRow>`
       SELECT t.* FROM assistant_group_tasks t
@@ -3239,9 +3241,9 @@ const make = Effect.gen(function* () {
   }, storage);
 
   /**
-   * Work in a project its member no longer reaches (taken from the group or from the member): a
-   * running turn ends on its own, and nothing else starts there. Runs again as each run ends, as a
-   * turn that ran into a usage limit would continue in that project.
+   * Work in a project its member no longer reaches (taken from the group or from the member, or
+   * deleted): a running turn ends on its own, and nothing else starts there. Runs again as each
+   * run ends, as a turn that ran into a usage limit would continue in that project.
    */
   const cancelOutsideProject = Effect.fn("AssistantGroups.cancelOutsideProject")(function* (
     team: AssistantTeam,
@@ -3251,6 +3253,12 @@ const make = Effect.gen(function* () {
       WHERE team_id = ${team.id} AND status IN ${sql.in(OPEN.filter((status) => status !== "running"))}`;
     if (waiting.length === 0) return;
     const members = yield* activeMembers(team);
+    const deleted = new Set(
+      (yield* sql<{ readonly project_id: string }>`
+        SELECT project_id FROM projection_projects WHERE deleted_at IS NOT NULL`).map(
+        (row) => row.project_id,
+      ),
+    );
     let cancelled = false;
     for (const task of waiting) {
       const owner = members.find((member) => member.assistant_id === task.owner_id);
@@ -3266,7 +3274,7 @@ const make = Effect.gen(function* () {
         thread !== undefined && thread.deletedAt === null
           ? thread.projectId
           : ((yield* getMessage(requestId))?.project_id ?? owner.project_id);
-      if (worksIn(owner, team, projectId)) continue;
+      if (worksIn(owner, team, projectId) && !deleted.has(projectId ?? "")) continue;
       yield* haltTask(task);
       yield* patchTask(task, { status: "cancelled", reason: "outside_project" });
       cancelled = true;

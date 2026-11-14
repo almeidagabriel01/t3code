@@ -4867,16 +4867,24 @@ it.effect(
   },
 );
 
-it.effect(
-  "a project taken from the group lets running turns end and cancels the work still to start there",
-  () => {
-    const h = harness({ projects: { ada: ["p1"], beto: ["p1"], cy: ["p1"] } });
+it.effect.each([
+  { way: "taken from the group", deleted: false },
+  // Members open to every project: only the deletion itself keeps work out of it.
+  { way: "deleted", deleted: true },
+])(
+  "a project $way lets running turns end and cancels the work still to start there",
+  ({ deleted }) => {
+    const h = deleted
+      ? harness()
+      : harness({ projects: { ada: ["p1"], beto: ["p1"], cy: ["p1"] } });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE assistant_teams SET project_ids_json = '["p2"]' WHERE team_id = ${TEAM}`;
+      if (!deleted) {
+        yield* sql`UPDATE assistant_teams SET project_ids_json = '["p2"]' WHERE team_id = ${TEAM}`;
+      }
       const request = yield* groups.post(
-        { teamId: TEAM, text: "@ada @beto @cy fix the app", projectId: p2 },
+        { teamId: TEAM, text: "@ada @beto @cy fix the app", projectId: deleted ? p1 : p2 },
         h.user,
       );
       const beto = requestThreadId("beto", TEAM, request.message.id);
@@ -4888,7 +4896,9 @@ it.effect(
         h.tasks.pipe(Effect.map((rows) => rows.map((row) => `${row.owner_id}:${row.status}`)));
       assert.deepEqual(yield* statuses(), ["ada:running", "beto:usage_limited", "cy:queued"]);
 
-      yield* sql`UPDATE assistant_teams SET project_ids_json = '[]' WHERE team_id = ${TEAM}`;
+      yield* deleted
+        ? sql`UPDATE projection_projects SET deleted_at = '2026-02-01' WHERE project_id = 'p1'`
+        : sql`UPDATE assistant_teams SET project_ids_json = '[]' WHERE team_id = ${TEAM}`;
       const team = {
         id: TEAM,
         name: `Team ${TEAM}`,
