@@ -77,7 +77,7 @@ export const AssistantParameters = Schema.Struct({
   /** group_post: the complete request. container_task: the complete task. notify_user: the message. */
   text: Schema.optional(Text(20_000)),
   /** task_dismiss, task_restore: the task's thread. notify_user: the thread to link. */
-  threadId: Schema.optional(Text(128)),
+  threadId: Schema.optional(Text(4_096)),
   /** group_post: files to share with the group (absolute paths, copied when sent). */
   paths: Schema.optional(Schema.Array(Text(1024)).check(Schema.isMaxLength(10))),
 });
