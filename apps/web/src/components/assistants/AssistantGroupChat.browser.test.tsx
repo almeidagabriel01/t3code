@@ -74,7 +74,11 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
 }));
 // Dictation as the composer drives it: the stub button types what was "heard" through the hook.
 const speech = vi.hoisted(() => ({
-  input: null as null | { readonly text: string; readonly onTextChange: (text: string) => void },
+  input: null as null | {
+    readonly text: string;
+    readonly onTextChange: (text: string) => void;
+    readonly offerSetup?: boolean | undefined;
+  },
 }));
 vi.mock("~/speech/useTextFieldSpeech", () => ({
   TextFieldSpeechControls: () => (
@@ -1139,6 +1143,7 @@ it("inserts a mention from the Mention menu and dictates into the field", async 
   await expectComposer("@bo ");
   await userEvent.click(main().getByRole("button", { name: "Dictate" }));
   await expectComposer("@bo dictated words");
+  expect(speech.input?.offerSetup).toBe(true);
   await userEvent.click(main().getByRole("button", { name: "Submit message" }));
   await eventually(() =>
     expect(fakeGroupChat.posts).toEqual([{ teamId: "t1", text: "@bo dictated words" }]),
@@ -1296,8 +1301,8 @@ it("scrolls the feed when the wheel turns over the minimap", async () => {
     .closest<HTMLElement>(".overflow-y-auto")!;
   const before = scroller.scrollTop;
   const minimap = document.querySelector<HTMLElement>('[data-testid="timeline-minimap"]')!;
-  minimap.dispatchEvent(
-    new WheelEvent("wheel", { cancelable: true, deltaY: -40, wheelDeltaY: 40 }),
-  );
+  // Chromium's legacy wheelDeltaY marks a trackpad delta; WheelEventInit does not declare it.
+  const init = { cancelable: true, deltaY: -40, wheelDeltaY: 40 };
+  minimap.dispatchEvent(new WheelEvent("wheel", init));
   await eventually(() => expect(scroller.scrollTop).toBeLessThan(before));
 });

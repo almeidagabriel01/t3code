@@ -352,6 +352,7 @@ export function GroupComposer(props: {
     },
     onTextChange: (text) => replace(text, text.length),
     disabled: props.disabled || sending,
+    offerSetup: true,
   });
   const tooLong = prompt.value.length > ASSISTANT_GROUP_MESSAGE_MAX_CHARS;
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
