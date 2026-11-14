@@ -1,6 +1,11 @@
 import type { AssistantTask } from "@t3tools/contracts";
 
 import {
+  isQuietReply,
+  parseTaskEvent,
+  type TaskEventStatus,
+} from "@t3tools/shared/assistantTaskEvents";
+import {
   assistantTaskStatusOf,
   type AssistantTaskStatus,
 } from "@t3tools/shared/assistantTaskStatus";
@@ -90,3 +95,40 @@ export function assistantTaskRows<S extends TaskShell>(
         left.task.threadId.localeCompare(right.task.threadId),
     );
 }
+
+const TASK_EVENT_STATUS_LABEL: Record<TaskEventStatus, string> = {
+  completed: "Finished",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  interrupted: "Stopped",
+};
+
+/** One compact activity line for a task event: what ended, how, and where to open it. */
+export interface TaskEventActivity {
+  readonly threadId: string;
+  readonly title: string;
+  readonly status: TaskEventStatus | null;
+  /** The state as the event told it, not the task's live state, which may have moved on. */
+  readonly label: string;
+}
+
+/**
+ * The activity line for a queued task-event message, or null for any other message. `taskTitle`
+ * is the task thread's current title, used when the event's own headline has none.
+ */
+export function taskEventActivity(
+  message: Parameters<typeof parseTaskEvent>[0],
+  taskTitle?: string | null,
+): TaskEventActivity | null {
+  const event = parseTaskEvent(message);
+  if (event === null) return null;
+  return {
+    threadId: event.threadId,
+    title: event.title ?? taskTitle ?? "Task",
+    status: event.status,
+    label: event.status === null ? "Updated" : TASK_EVENT_STATUS_LABEL[event.status],
+  };
+}
+
+/** An assistant's reply to an event with nothing new; clients do not show it. */
+export const isQuietAssistantReply = isQuietReply;

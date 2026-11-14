@@ -23,7 +23,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger } from "../ui/tooltip";
 import { AgentElapsed } from "./AgentElapsed";
 import { findRevealRef } from "./markdownFindContext";
-import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { isLongMessage } from "@t3tools/client-runtime/messageFold";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { EnvironmentSubagentAvatar } from "./V2LifecycleRow";
 
@@ -204,7 +204,7 @@ function WorkflowMemberRow(props: {
 function WorkflowScript(props: { readonly script: string }) {
   const [expanded, setExpanded] = useState(false);
   const revealRef = findRevealRef(() => setExpanded(true));
-  const canFold = shouldCollapseUserMessage(props.script);
+  const canFold = isLongMessage(props.script);
   const folded = canFold && !expanded;
   return (
     <div>

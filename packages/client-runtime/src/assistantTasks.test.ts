@@ -7,6 +7,7 @@ import {
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { taskEventHeadline } from "@t3tools/shared/assistantTaskEvents";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -15,6 +16,7 @@ import {
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
+  taskEventActivity,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
@@ -113,5 +115,29 @@ describe("assistantTaskRows", () => {
 
   it("lists nothing for no tasks", () => {
     expect(assistantTaskRows([], () => undefined)).toEqual([]);
+  });
+});
+
+describe("taskEventActivity", () => {
+  const task = "mcp:launch:task" as ThreadId;
+
+  it("reads a task event into one line with the state the event told", () => {
+    const text = `${taskEventHeadline({ title: "Add retry", threadId: task, status: "failed" })}\n\nIts last message:\nTests fail.`;
+    expect(taskEventActivity({ id: "assistant-task:r1", text, senderThreadId: task })).toEqual({
+      threadId: task,
+      title: "Add retry",
+      status: "failed",
+      label: "Failed",
+    });
+  });
+
+  it("falls back to the task thread's title when the headline is not T3's", () => {
+    expect(
+      taskEventActivity({ id: "assistant-task:r1", text: "?", senderThreadId: task }, "Live title"),
+    ).toEqual({ threadId: task, title: "Live title", status: null, label: "Updated" });
+  });
+
+  it("leaves every other message alone", () => {
+    expect(taskEventActivity({ id: "m1", text: "hi", senderThreadId: task })).toBeNull();
   });
 });
