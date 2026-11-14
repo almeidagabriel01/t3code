@@ -1273,18 +1273,33 @@ describe("assistant group tabs", () => {
   });
 
   it.each([
-    ["a group project whose title has not loaded", P3, [P3], [], [P3, P2], "Unknown project"],
-    ["the next one loading, in group order", P2, [P3, P2], [], [P3, P2], "Unknown project 2"],
-    ["a group project the loaded list no longer has", P3, [P3], ONE, [P3], "Removed project"],
-    ["a project that left the group, unnamed", P3, [], ONE, [P3, P2], "Removed project 2"],
-    ["the same one, whatever the tab order", P3, [], ONE, [P2, P3], "Removed project 2"],
-    ["the first unnamed one by id", P2, [P3], ONE, [P3, P2], "Removed project"],
-    ["a saved tab's one the chat does not list", "p9", [], ONE, [P3, P2], "Removed project 3"],
-    ["a title known from the chat", P1, [P1], ONE, [P3, P2], "One"],
-  ] as const)("project label: %s", (_name, id, group, projects, order, expected) => {
+    ["a group project whose title has not loaded", P3, [P3], [], [P3, P2], "Unknown project", []],
+    ["the next one loading, in group order", P2, [P3, P2], [], [P3, P2], "Unknown project 2", []],
+    ["a group project the loaded list no longer has", P3, [P3], ONE, [P3], "Removed project", []],
+    ["a project that left the group, unnamed", P3, [], ONE, [P3, P2], "Removed project 2", []],
+    ["the same one, whatever the tab order", P3, [], ONE, [P2, P3], "Removed project 2", []],
+    ["the first unnamed one by id", P2, [P3], ONE, [P3, P2], "Removed project", []],
+    ["a saved tab's one the chat does not list", "p9", [], ONE, [P3, P2], "Removed project 3", []],
+    ["a title known from the chat", P1, [P1], ONE, [P3, P2], "One", []],
+    [
+      "two orphans only the feed shows, by id",
+      "p9",
+      [],
+      ONE,
+      [],
+      "Removed project 2",
+      ["p9", "p8"],
+    ],
+  ] as const)("project label: %s", (_name, id, group, projects, order, expected, seen) => {
     const scopes = order.map((projectId) => ({ projectId }));
     assert.strictEqual(
-      assistantGroupProjectLabel(id as ProjectId, projects, scopes, group),
+      assistantGroupProjectLabel(
+        id as ProjectId,
+        projects,
+        scopes,
+        group,
+        seen.map((id) => id as ProjectId),
+      ),
       expected,
     );
   });

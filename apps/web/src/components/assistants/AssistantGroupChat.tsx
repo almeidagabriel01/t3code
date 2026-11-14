@@ -1049,12 +1049,16 @@ function GroupFeed(props: {
       ? null
       : pages.reduce((state, page) => applyAssistantGroupHistory(state, page), props.live);
   const feed = chat === null ? [] : assistantGroupRequestFeed(chat);
+  const requestProjects = feed.flatMap((item) =>
+    item.kind === "request" && item.block.projectId !== null ? [item.block.projectId] : [],
+  );
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(
       id,
       projects,
       team.chat?.scopes,
       groupProjects.map((project) => project.id),
+      requestProjects,
     );
   // A request that left this tab's project since it was sent no longer belongs here.
   const items = feed.filter(
