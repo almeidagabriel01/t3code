@@ -1026,6 +1026,33 @@ it.effect(
   },
 );
 
+it.effect("a card the chat app refused or may not have shown is told again later", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* pendingRequest(h, { id: "r2", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [first, second] = yield* outboxRows;
+    yield* sql`UPDATE channel_outbox SET state = 'failed' WHERE delivery_id = ${first!.delivery_id}`;
+    yield* sql`UPDATE channel_outbox SET state = 'ambiguous' WHERE delivery_id = ${second!.delivery_id}`;
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["failed", "ambiguous"],
+    );
+    yield* TestClock.adjust(31 * MIN);
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["pending", "pending"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
   const h = harness();
   return Effect.gen(function* () {

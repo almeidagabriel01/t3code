@@ -86,6 +86,8 @@ const MIN_WAKE_INTERVAL_MS = 5 * MINUTE_MS;
 const SWEEP_INTERVAL = "1 minute";
 /** The waiting notice is checked more often than the wake rules, so its grace stays short. */
 const NEEDS_YOU_INTERVAL = "15 seconds";
+/** How long a card the chat app refused waits before it is told again; a permanent failure stays rare. */
+const RETELL_AFTER_MS = 30 * 60_000;
 const SCHEDULED_MESSAGE_PREFIX = "scheduled-task-message:";
 const USER_MESSAGE_MAX_LENGTH = 2_000;
 const WORKING = new Set(["starting", "running"]);
@@ -844,6 +846,34 @@ const make = Effect.gen(function* () {
     sql`
       INSERT OR IGNORE INTO autonomy_needs_you (subject_key, decision_id, created_at)
       VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
+  /**
+   * A card the chat app failed to show, or may not have shown, is no longer told: dropping its
+   * delivery lets the next cycle enqueue it again. An ambiguous part already claimed stays deduplicated.
+   */
+  const retellUndelivered = Effect.fn("AutonomyService.retellUndelivered")(function* (
+    nowMs: number,
+  ) {
+    const undelivered = yield* sql<{
+      readonly subject_key: string;
+      readonly delivery_id: string;
+    }>`
+        SELECT n.subject_key, o.delivery_id FROM autonomy_needs_you n
+        JOIN channel_outbox o ON o.delivery_id = 'needs-you:' || n.decision_id
+        WHERE o.state IN ('failed', 'ambiguous')
+          AND o.next_attempt_at <= ${iso(nowMs - RETELL_AFTER_MS)}`;
+    for (const row of undelivered) {
+      yield* sql.withTransaction(
+        Effect.all(
+          [
+            sql`DELETE FROM autonomy_needs_you WHERE subject_key = ${row.subject_key}`,
+            sql`DELETE FROM channel_cards WHERE delivery_id = ${row.delivery_id}`,
+            sql`DELETE FROM channel_outbox WHERE delivery_id = ${row.delivery_id}`,
+          ],
+          { discard: true },
+        ),
+      );
+    }
+  });
 
   /**
    * The card in the user's chat; Activity already shows the decision itself. False while a chat app
@@ -1066,6 +1096,7 @@ const make = Effect.gen(function* () {
         if (!config.enabled || !config.notifyWaiting) return;
         const nowMs = yield* Clock.currentTimeMillis;
         const baseline = yield* waitingBaseline(nowMs);
+        yield* retellUndelivered(nowMs);
         const due = (createdAt: string) => {
           const at = Date.parse(createdAt);
           return at >= baseline && at + config.notifyWaitingAfterMinutes * MINUTE_MS <= nowMs;
