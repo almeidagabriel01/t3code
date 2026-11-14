@@ -47,11 +47,13 @@ import { AssistantAvatar } from "./assistantPresentation";
 import { AssistantTaskRows } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 const MOOD_TEXT = {
   idle: "text-muted-foreground",
   working: "text-info-foreground",
   needs: "text-warning-foreground",
+  limited: "text-warning-foreground",
   failed: "text-destructive-foreground",
 } as const;
 
@@ -68,9 +70,11 @@ function AssistantCard(props: {
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId);
   const thread = useThreadShell(threadRef);
   const shells = useQuietThreadShells();
+  const limitLabel = useUsageLimitLabel();
   const presence = assistantPresence(
     thread,
     assistantGroupThreadsOf(shells, props.entry.environmentId, props.entry.assistant.id),
+    limitLabel,
   );
   const since = presence.since === null ? "" : formatRelativeTimeLabel(presence.since, props.nowMs);
   return (

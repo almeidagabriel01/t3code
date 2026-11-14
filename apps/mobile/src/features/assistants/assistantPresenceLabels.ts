@@ -39,6 +39,7 @@ export function moodTextClass(mood: AssistantMood, sidebar = false): string {
     case "working":
       return "text-adaptive-sky-600-400";
     case "needs":
+    case "limited":
       return "text-warning-foreground";
     case "failed":
       return "text-danger-foreground";

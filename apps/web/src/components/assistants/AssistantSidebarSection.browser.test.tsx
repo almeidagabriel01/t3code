@@ -317,6 +317,7 @@ describe("AssistantSidebarSection", () => {
           [threadOf("Ada")]: "needs",
           [threadOf("Jarvis")]: "working",
           [threadOf("Aprovador")]: "failed",
+          [threadOf("Pesquisador")]: "limited",
         },
         updated: { [threadOf("Pedro")]: "2021-01-01T00:00:00.000Z" },
       },
@@ -336,12 +337,15 @@ describe("AssistantSidebarSection", () => {
     expect(status(screen.container, "ada")?.getAttribute("data-mood")).toBe("needs");
     expect(status(screen.container, "jarvis")?.textContent).toBe("Working");
     expect(status(screen.container, "aprovador")?.textContent).toBe("Last run failed");
+    expect(status(screen.container, "pesquisador")?.textContent).toBe(
+      `Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, "24-hour")}`,
+    );
+    expect(status(screen.container, "pesquisador")?.getAttribute("data-mood")).toBe("limited");
     // An active assistant shows its status instead of the project; an idle project one shows the pill.
     expect(pill(screen.container, "ada")).toBeNull();
     expect(pill(screen.container, "revisor")?.getAttribute("aria-label")).toBe("Project: ProOps");
     expect(pill(screen.container, "pedro")?.getAttribute("aria-label")).toBe("Project: Project");
     expect(pill(screen.container, "pesquisador")).toBeNull();
-    expect(status(screen.container, "pesquisador")).toBeNull();
     expect(screen.container.querySelectorAll('[data-testid="assistant-role"]')).toHaveLength(2);
     expect(screen.container.querySelectorAll('[data-testid="assistant-status-dot"]')).toHaveLength(
       2,

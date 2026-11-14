@@ -51,6 +51,7 @@ describe("assistantRobotSpec", () => {
     ["working", "focused"],
     ["needs", "alert"],
     ["failed", "crossed"],
+    ["limited", "alert"],
     ["reading", "open"],
     ["waiting", "alert"],
     ["done", "happy"],
@@ -179,7 +180,7 @@ describe("assistantPresence", () => {
     [
       "a usage limit",
       shell({ latestRunId: RunId.make("run-1"), status: "failed", lastErrorClass: "usage_limit" }),
-      { mood: "failed", detail: "Hit a usage limit", since: null },
+      { mood: "limited", detail: "Usage limit", since: null },
     ],
     [
       "a finished reply",
@@ -188,6 +189,22 @@ describe("assistantPresence", () => {
     ],
   ] as const)("%s", (_name, thread, expected) => {
     expect(assistantPresence(thread)).toMatchObject(expected);
+  });
+
+  it("says until when a usage limit holds it, in the platform's format", () => {
+    const thread = shell({
+      latestRunId: RunId.make("run-1"),
+      status: "failed",
+      lastErrorClass: "usage_limit",
+      usageLimitResetAt: "2026-11-14T15:30:00.000Z" as never,
+    });
+    const limitLabel = (resetAt: string | null | undefined) =>
+      resetAt == null ? null : `Limit until <${resetAt}>`;
+    expect(assistantPresence(thread, [], limitLabel)).toMatchObject({
+      mood: "limited",
+      detail: "Limit until <2026-11-14T15:30:00.000Z>",
+    });
+    expect(assistantPresence(thread, [], () => null).detail).toBe("Usage limit");
   });
 });
 
