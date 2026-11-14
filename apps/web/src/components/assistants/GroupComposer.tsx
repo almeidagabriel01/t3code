@@ -670,7 +670,8 @@ export function GroupComposer(props: {
                   </div>
                   <div
                     data-testid="group-composer-controls"
-                    className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2"
+                    // A narrow composer keeps effort and Mention as icons, so the row never takes a third line.
+                    className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden"
                   >
                     <ComposerAttachButton
                       addComposerAttachments={async (files) => {
@@ -693,13 +694,20 @@ export function GroupComposer(props: {
                       />
                     )}
                     <Menu>
-                      <MenuTrigger
-                        disabled={props.disabled || props.members.length === 0}
-                        render={<ComposerControl size="xs" aria-label="Mention" />}
-                      >
-                        <AtSignIcon className="size-3" />
-                        <span data-composer-label>Mention</span>
-                      </MenuTrigger>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <MenuTrigger
+                              disabled={props.disabled || props.members.length === 0}
+                              render={<ComposerControl size="xs" aria-label="Mention" />}
+                            />
+                          }
+                        >
+                          <AtSignIcon className="size-3" />
+                          <span data-composer-control-label>Mention</span>
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Mention a member</TooltipPopup>
+                      </Tooltip>
                       <MenuPopup align="start" side="top">
                         <MenuGroup>
                           <MenuGroupLabel>Mention</MenuGroupLabel>
