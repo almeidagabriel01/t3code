@@ -232,7 +232,9 @@ work queue, and each section says what the two do together.
   **Move all to Linux** and **Move all to this Mac**, on each machine's header
   in the Resource Manager (on mobile too, and for agents through the heavy-work
   tool), move every waiting job there at once. Running jobs, jobs that must stay
-  on this Mac and jobs queued for this Mac by hand stay where they are.
+  on this Mac and jobs queued for this Mac by hand stay where they are. Each
+  shows only when at least one job would move, so Move all to Linux is hidden
+  while Linux is offline.
 - **Status.** The Resource Manager shows whether Linux is online, its jobs, load
   and free memory, and on each job where it runs and whether it is syncing,
   installing dependencies or running.

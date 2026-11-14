@@ -4,7 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { HEAVY_QUEUE_DEFAULTS, HeavyQueueError, type HeavyQueueEntry } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  HeavyQueueError,
+  type HeavyQueueEntry,
+  type HeavyRunnerLinux,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -311,6 +316,7 @@ const probed: Array<readonly [string, string]> = [];
 
 const movedAll: Array<"mac" | "linux"> = [];
 let nextMoved: ReadonlyArray<string> = ["w"];
+let queueLinux: HeavyRunnerLinux | null = null;
 
 const callTool = (
   params: {
@@ -356,7 +362,7 @@ const callTool = (
             deviceIdleMinutes: 20,
             machine: null,
             hold: null,
-            linux: null,
+            linux: queueLinux,
             routes: {},
             macOnly: [],
             ...HEAVY_QUEUE_DEFAULTS,
@@ -493,15 +499,26 @@ describe("t3_heavy", () => {
       expect(noTarget.at(-1)!.encodedResult).toMatchObject({ code: "invalid_request" });
       yield* callTool({ action: "move_all", to: "mac" }, "read-only");
       expect(movedAll).toEqual(["linux"]);
-      // Nothing movable says why: Linux not online (this mock's Runner is off), or no job can go.
+      // Nothing movable says why: the Runner off, Linux not online, or no job that can go.
       nextMoved = [];
-      for (const [to, note] of [
-        ["linux", "Nothing moved: Linux is unavailable."],
-        ["mac", "Nothing moved: no waiting job can move to this Mac."],
+      const linux = { host: "pc", slots: 2, running: 0, load1: null, cpuCount: null };
+      const memory = { availableMemoryBytes: null, totalMemoryBytes: null };
+      for (const [to, state, note] of [
+        ["linux", null, "Nothing moved: the Runner is off."],
+        ["linux", { ...linux, ...memory, online: false }, "Nothing moved: Linux is unavailable."],
+        ["linux", { ...linux, ...memory, online: null }, "Nothing moved: Linux is unavailable."],
+        [
+          "linux",
+          { ...linux, ...memory, online: true },
+          "Nothing moved: no waiting job can move to Linux.",
+        ],
+        ["mac", null, "Nothing moved: no waiting job can move to this Mac."],
       ] as const) {
+        queueLinux = state;
         const none = yield* callTool({ action: "move_all", to });
         expect(none.at(-1)!.result).toMatchObject({ moved: [], note });
       }
+      queueLinux = null;
       nextMoved = ["w"];
       // Status alone moves nothing and says nothing about moves.
       expect((yield* callTool({ action: "status" })).at(-1)!.result).not.toHaveProperty("moved");
