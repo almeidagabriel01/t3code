@@ -19,6 +19,7 @@ import {
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   clearProjectSettingsOverrides,
+  projectOverrideForWrite,
   matchFolderModelDefault,
   resolveProjectSettings,
   resolveWorktreeCleanup,
@@ -216,7 +217,11 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const entry = update(
+      projectOverrideForWrite(settings.projectSettingsOverrides[member.id]),
+      settings,
+      member.id,
+    );
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -376,7 +381,7 @@ export function planProjectAssistantModel(
             members: scope.members.filter((member) => member.environmentId === environmentId),
           },
           environments,
-          ({ assistantModelSelections: _others, ...current }) => ({
+          (current) => ({
             ...current,
             assistantModelSelections: { [assistantId]: selection },
           }),

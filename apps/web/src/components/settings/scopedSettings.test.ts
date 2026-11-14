@@ -347,9 +347,17 @@ describe("scoped settings writes", () => {
   });
 
   it("writes project overrides into each member's entry on its environment", () => {
+    const ada = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    // The assistant models stay out: the server merges them per key, so a stale copy would
+    // bring back one another client removed.
     const withExisting = environment("Server", {
       settings: {
-        projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } },
+        projectSettingsOverrides: {
+          [projectId]: {
+            enableAgentBrowserAccess: false,
+            assistantModelSelections: { ada } as Record<AssistantId, typeof ada>,
+          },
+        },
       },
     });
     const plan = planScopedSettingsPatch(project, [laptop, withExisting], {

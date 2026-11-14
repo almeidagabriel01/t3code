@@ -233,6 +233,17 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+/**
+ * A stored project override as a client writes it back: without its assistant models, which the
+ * server merges per assistant, so a stale copy would bring back one another client removed.
+ */
+export function projectOverrideForWrite(
+  entry: ProjectSettingsOverrides | undefined,
+): ProjectSettingsOverrides {
+  const { assistantModelSelections: _mergedPerAssistant, ...rest } = entry ?? {};
+  return rest;
+}
+
 export function clearProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectId: ProjectId,
@@ -240,9 +251,12 @@ export function clearProjectSettingsOverrides(
 ): ProjectSettingsOverrides | null {
   const current = settings.projectSettingsOverrides[projectId];
   if (current === undefined) return null;
-  const next = { ...current };
+  const next = projectOverrideForWrite(current);
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  // Null deletes the whole entry on the server, assistant models included.
+  return Object.keys(next).length > 0 || current.assistantModelSelections !== undefined
+    ? next
+    : null;
 }
 
 export function resolveWorktreeCleanup(
