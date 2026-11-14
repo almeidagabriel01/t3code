@@ -4,10 +4,11 @@ import {
   RUNNER_FAILED_POLICY_LABEL,
   RUNNER_POLICY_LABEL,
   RUNNER_SETTING_COPY,
-  RUNNER_WHERE_DESCRIPTION,
   RUNNER_WHERE_LABEL,
+  runnerEverythingOn,
   runnerFieldIdle,
   runnerModeFieldApplies,
+  runnerWhereLine,
   type RunnerChoices,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
@@ -254,16 +255,18 @@ export function RunnerSection(props: {
     runnerUnavailable: choice("runnerUnavailable"),
     runnerDropped: choice("runnerDropped"),
   };
+  const everything = props.mixed("runnerLinuxEverything") ? null : settings.runnerLinuxEverything;
   const shown = (...keys: ReadonlyArray<RunnerKey>) =>
     keys.some(
       (key) =>
-        runnerFieldIdle(key, choices) === null && runnerModeFieldApplies(key, choices.runnerWhere),
+        runnerFieldIdle(key, choices) === null &&
+        runnerModeFieldApplies(key, choices.runnerWhere, everything),
     );
   const scoped = (key: RunnerKey, text: string) => {
     if (!projectSelected) return text;
     if (!isProjectKey(key))
-      return `${text} Environment-wide setting. Select All projects to change it.`;
-    return `${text} ${props.overridden(key) ? "Set for this project." : "Inherited from the environment."}`;
+      return `${text} Environment-wide setting. Select All projects to change it.`.trim();
+    return `${text} ${props.overridden(key) ? "Set for this project." : "Inherited from the environment."}`.trim();
   };
   const resetRow = (key: RunnerProjectKey) =>
     projectSelected && props.overridden(key) ? (
@@ -345,7 +348,15 @@ export function RunnerSection(props: {
       <SettingsSwitchRow
         icon={icon}
         label={RUNNER_SETTING_COPY[key].title}
-        subtitle={scoped(key, RUNNER_SETTING_COPY[key].description)}
+        subtitle={
+          scoped(
+            key,
+            // With Everything on, the Where line already says what it does.
+            key === "runnerLinuxEverything" && runnerEverythingOn(choices.runnerWhere, everything)
+              ? ""
+              : RUNNER_SETTING_COPY[key].description,
+          ) || undefined
+        }
         value={props.mixed(key) ? null : settings[key]}
         disabled={props.disabledFor(key)}
         onValueChange={(value) => props.write(patchOf(key, value))}
@@ -384,12 +395,7 @@ export function RunnerSection(props: {
               onSelect={(value) => props.write({ runnerWhere: value })}
             />
             <Text className="text-sm text-foreground-muted">
-              {scoped(
-                "runnerWhere",
-                where === null
-                  ? RUNNER_SETTING_COPY.runnerWhere.description
-                  : RUNNER_WHERE_DESCRIPTION[where],
-              )}
+              {scoped("runnerWhere", runnerWhereLine(where, everything))}
             </Text>
           </View>
           {resetRow("runnerWhere")}

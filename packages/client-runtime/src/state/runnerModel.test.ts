@@ -11,6 +11,7 @@ import {
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
   runnerModeFieldApplies,
+  runnerWhereLine,
   runnerBadge,
   runnerFieldIdle,
   type RunnerChoices,
@@ -243,15 +244,29 @@ describe("Runner copy and mode fields", () => {
   });
 
   it.each([
-    ["runnerMacFirstAfter", "macFirst", true],
-    ["runnerMacFirstAfter", null, true],
-    ["runnerMacFirstAfter", "linux", false],
-    ["runnerLinuxEverything", "linux", true],
-    ["runnerLinuxEverything", null, true],
-    ["runnerLinuxEverything", "macFirst", false],
-    ["runnerBringBack", "mac", true],
-  ] as const)("%s under %s: %s", (key, where, applies) => {
-    expect(runnerModeFieldApplies(key, where)).toBe(applies);
+    ["runnerMacFirstAfter", "macFirst", false, true],
+    ["runnerMacFirstAfter", null, false, true],
+    ["runnerMacFirstAfter", "linux", false, false],
+    ["runnerLinuxEverything", "linux", true, true],
+    ["runnerLinuxEverything", null, false, true],
+    ["runnerLinuxEverything", "macFirst", false, false],
+    ["runnerBringBack", "mac", false, true],
+    ["runnerLinuxCommands", "linux", false, true],
+    ["runnerLinuxCommands", "linux", true, false],
+    ["runnerLinuxCommands", "linux", null, true],
+    ["runnerLinuxCommands", "automatic", true, true],
+  ] as const)("%s under %s, Everything %s: %s", (key, where, everything, applies) => {
+    expect(runnerModeFieldApplies(key, where, everything)).toBe(applies);
+  });
+
+  it.each([
+    ["linux", true, RUNNER_SETTING_COPY.runnerLinuxEverything.description],
+    ["linux", false, RUNNER_WHERE_DESCRIPTION.linux],
+    ["linux", null, RUNNER_WHERE_DESCRIPTION.linux],
+    ["automatic", true, RUNNER_WHERE_DESCRIPTION.automatic],
+    [null, true, RUNNER_SETTING_COPY.runnerWhere.description],
+  ] as const)("the Where line under %s, Everything %s", (where, everything, line) => {
+    expect(runnerWhereLine(where, everything)).toBe(line);
   });
 });
 

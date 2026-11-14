@@ -312,10 +312,23 @@ export function moveAllActions(
   return actions;
 }
 
-/** Whether a mode-specific field belongs to the picked mode; null (targets disagree) counts as applying. */
-export function runnerModeFieldApplies(key: RunnerKey, where: RunnerWhere | null): boolean {
+/** Linux mode with Everything on: every heavy command may go, so the Linux list does nothing. */
+export function runnerEverythingOn(where: RunnerWhere | null, everything: boolean | null): boolean {
+  return where === "linux" && everything === true;
+}
+
+/**
+ * Whether a mode-specific field belongs to the picked mode, and the Linux list to Linux mode only
+ * while Everything is off. Null (targets disagree) counts as applying.
+ */
+export function runnerModeFieldApplies(
+  key: RunnerKey,
+  where: RunnerWhere | null,
+  everything: boolean | null,
+): boolean {
   if (key === "runnerMacFirstAfter") return where === null || where === "macFirst";
   if (key === "runnerLinuxEverything") return where === null || where === "linux";
+  if (key === "runnerLinuxCommands") return !runnerEverythingOn(where, everything);
   return true;
 }
 
@@ -360,6 +373,14 @@ export const RUNNER_WHERE_DESCRIPTION: Record<RunnerWhere, string> = {
     "Each job goes to the machine with the shorter queue. Neither starts a job past its own limits.",
   linux: "Listed commands always run on Linux. Everything else stays on this Mac.",
 };
+
+/** The line under "Where heavy work runs"; with Everything on it says what Everything does. */
+export function runnerWhereLine(where: RunnerWhere | null, everything: boolean | null): string {
+  if (where === null) return RUNNER_SETTING_COPY.runnerWhere.description;
+  return runnerEverythingOn(where, everything)
+    ? RUNNER_SETTING_COPY.runnerLinuxEverything.description
+    : RUNNER_WHERE_DESCRIPTION[where];
+}
 
 export interface HeavyLimitChoices {
   readonly queueEnabled: boolean;
