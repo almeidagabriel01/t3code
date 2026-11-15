@@ -1624,6 +1624,7 @@ export function AssistantGroupChatRouteScreen({
             : () => feed.current?.jump(replyTo.id)
         }
         onClearReply={() => setReplyTo(null)}
+        messages={live?.messages}
         onSend={send}
       />
     </KeyboardAvoidingView>

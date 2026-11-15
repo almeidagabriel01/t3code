@@ -16,14 +16,20 @@ import {
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
+  assistantGroupLandedSend,
+  assistantGroupResendRequestId,
+} from "@t3tools/client-runtime/state/assistants";
+import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
   type AssistantTeamId,
   type ChatAttachment,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -68,8 +74,10 @@ const outgoings = createAssistantGroupOutgoingStore<
   AssistantGroupOutgoing & {
     readonly projectId: ProjectId | null;
     readonly error: string | null;
-    /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
-    readonly requestId: string | null;
+    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+    readonly requestId: string;
+    /** The text it sent, trimmed; its draft key holds what the composer shows now. */
+    readonly text: string;
   }
 >();
 const EVERYONE = "everyone";
@@ -328,6 +336,8 @@ export function GroupComposer(props: {
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
+  /** The chat as loaded: a failed send whose post shows here landed. */
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -364,15 +374,7 @@ export function GroupComposer(props: {
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
-    if (shown !== null) {
-      setOutgoing(
-        shown.tab,
-        value === ""
-          ? null
-          : // Changed text is another message: its send gets its own id.
-            { ...shown, error: null, requestId: value === text ? shown.requestId : null },
-      );
-    }
+    if (shown !== null) setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
   };
 
   const voice = useVoiceInputController({
@@ -468,6 +470,23 @@ export function GroupComposer(props: {
     insertMember({ start, end: start, query: "" }, option, base);
   };
 
+  /** A post the server took: only its text and files go, so what was written meanwhile stays. */
+  const settle = (sent: (typeof outgoing)[number]) => {
+    clearComposerDraftContent(outgoingKey(sent.tab));
+    setOutgoing(sent.tab, null);
+    attached.clear(sent.attachmentIds);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost; the outgoing store is outside React
+  useLayoutEffect(() => {
+    if (props.messages === undefined) return;
+    for (const entry of outgoing) {
+      const live = getComposerDraftSnapshot(outgoingKey(entry.tab)).text;
+      const landed = assistantGroupLandedSend(entry, live, props.messages.values());
+      if (landed === "settle") settle(entry);
+      else if (landed === "clear-warning") setOutgoing(entry.tab, { ...entry, error: null });
+    }
+  });
+
   const post = async () => {
     // An edit iOS has not delivered yet (an accepted autocorrection) belongs to this message.
     await editor.current?.flushPendingInput();
@@ -481,13 +500,14 @@ export function GroupComposer(props: {
     }
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
-    // A refused or unconfirmed message goes again under its first id.
-    const requestId = (shown?.failed === true ? shown.requestId : null) ?? uuidv4();
+    const attachmentIds = attached.items.map((item) => item.id);
+    const requestId = assistantGroupResendRequestId(shown, message, attachmentIds) ?? uuidv4();
     const sent = {
       tab: props.tab,
       failed: false,
       requestId,
-      attachmentIds: attached.items.map((item) => item.id),
+      text: message,
+      attachmentIds,
       projectId: runProject,
       error: null,
     };
@@ -497,12 +517,8 @@ export function GroupComposer(props: {
     setOutgoing(sent.tab, sent);
     setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId, requestId);
-    if (result.ok) {
-      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      clearComposerDraftContent(sentKey);
-      setOutgoing(sent.tab, null);
-      attached.clear(sent.attachmentIds);
-    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    if (result.ok) settle(sent);
+    else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
   };
 
   const send = async () => {
