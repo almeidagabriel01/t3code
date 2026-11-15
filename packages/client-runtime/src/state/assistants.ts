@@ -8,6 +8,7 @@ import {
   type AssistantTask,
   type AssistantTeam,
   type AssistantSandboxStatus,
+  type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantTeamId,
   type ThreadId,
@@ -18,8 +19,8 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { applyAssistantGroupsEvent, type AssistantGroupChatState } from "../assistantGroupChat.ts";
-import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { subscribe } from "../rpc/client.ts";
+import { EnvironmentNotRegisteredError, type EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentRpcUnavailableError, subscribe } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
@@ -272,14 +273,21 @@ export function assistantErrorMessage(error: unknown): string {
 
 const isAssistantError = Schema.is(AssistantError);
 const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+const neverLeft = Schema.is(
+  Schema.Union([EnvironmentRpcUnavailableError, EnvironmentNotRegisteredError]),
+);
 
 /** What a group post that got no answer says: it may have landed, and a resend never doubles it. */
 export const ASSISTANT_GROUP_POST_UNCONFIRMED =
   "Couldn't confirm the send. Send it again: it won't post twice.";
 
+/** What a group post that never left the client says. */
+export const ASSISTANT_GROUP_POST_NOT_SENT = "Not sent: this connection is offline. Try again.";
+
 /**
  * A failed group post as the composer tells it. Only a typed error is the server's answer; an
  * interruption or a lost connection may come after the server took the post, so it is unconfirmed.
+ * With no connection or no environment to send on, it never left.
  */
 export function assistantGroupPostFailure(cause: Cause.Cause<unknown>): {
   readonly message: string;
@@ -290,7 +298,54 @@ export function assistantGroupPostFailure(cause: Cause.Cause<unknown>): {
   if (isAuthorizationError(error)) {
     return { message: assistantErrorMessage(error), reason: null };
   }
+  if (neverLeft(error)) return { message: ASSISTANT_GROUP_POST_NOT_SENT, reason: "not-sent" };
   return { message: ASSISTANT_GROUP_POST_UNCONFIRMED, reason: "unconfirmed" };
+}
+
+/** A group send the composer holds: the id it went under and what it carried. */
+export interface AssistantGroupHeldSend {
+  readonly failed: boolean;
+  readonly requestId: string;
+  /** The text it sent, trimmed. */
+  readonly text: string;
+  readonly attachmentIds: ReadonlyArray<string>;
+  readonly error: string | null;
+}
+
+/**
+ * The id a resend of a failed send goes under, or null for a new one. It holds while the text and
+ * files are what it sent, however the failure read: the server may hold an unconfirmed post, a
+ * resend that never left may follow one, and an id the server never stored posts as new.
+ */
+export function assistantGroupResendRequestId(
+  held: AssistantGroupHeldSend | null,
+  text: string,
+  attachmentIds: ReadonlyArray<string>,
+): string | null {
+  if (held === null || !held.failed || held.text !== text.trim()) return null;
+  const same =
+    held.attachmentIds.length === attachmentIds.length &&
+    held.attachmentIds.every((id, index) => id === attachmentIds[index]);
+  return same ? held.requestId : null;
+}
+
+/**
+ * What a failed send does once the chat holds its post, which then landed and only lost its reply:
+ * settle as a sent one, or, when the user edited it since, keep their text and drop the warning.
+ * Null while it has not landed. A send on its way settles from its own reply.
+ */
+export function assistantGroupLandedSend(
+  held: AssistantGroupHeldSend,
+  liveText: string,
+  messages: Iterable<Pick<AssistantGroupMessage, "clientRequestId">>,
+): "settle" | "clear-warning" | null {
+  if (!held.failed) return null;
+  const edited = liveText.trim() !== held.text;
+  if (edited && held.error === null) return null;
+  for (const message of messages) {
+    if (message.clientRequestId === held.requestId) return edited ? "clear-warning" : "settle";
+  }
+  return null;
 }
 
 /** A group chat read before its tab is known: nothing yet, and no subscription. */

@@ -1,8 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
-import { AssistantError, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import { AssistantError, EnvironmentAuthorizationError, EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type {
   Assistant,
+  AssistantGroupMessage,
   AssistantId,
   AssistantTeam,
   AssistantTeamId,
@@ -11,10 +12,15 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { EnvironmentNotRegisteredError } from "../connection/registry.ts";
+import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import {
+  ASSISTANT_GROUP_POST_NOT_SENT,
   ASSISTANT_GROUP_POST_UNCONFIRMED,
   applyAssistantsEvent,
+  assistantGroupLandedSend,
   assistantGroupPostFailure,
+  assistantGroupResendRequestId,
   assistantForTaskThread,
   assistantForThread,
   selectAssistantTasks,
@@ -298,7 +304,81 @@ describe("assistantGroupPostFailure", () => {
       "unconfirmed",
     ],
     ["a defect", Cause.die("boom"), ASSISTANT_GROUP_POST_UNCONFIRMED, "unconfirmed"],
+    [
+      "that never left: no connection",
+      Cause.fail(
+        new EnvironmentRpcUnavailableError({
+          environmentId: "e",
+          message: "Mac is not connected.",
+        }),
+      ),
+      ASSISTANT_GROUP_POST_NOT_SENT,
+      "not-sent",
+    ],
+    [
+      "that never left: the environment is gone",
+      Cause.fail(new EnvironmentNotRegisteredError({ environmentId: EnvironmentId.make("e") })),
+      ASSISTANT_GROUP_POST_NOT_SENT,
+      "not-sent",
+    ],
   ] as const)("a post %s", (_name, cause, message, reason) => {
     assert.deepStrictEqual(assistantGroupPostFailure(cause), { message, reason });
+  });
+});
+
+describe("a group send held after it failed", () => {
+  const held = (overrides: Partial<Parameters<typeof assistantGroupLandedSend>[0]> = {}) => ({
+    failed: true,
+    requestId: "A",
+    text: "@ada hi",
+    attachmentIds: ["f1"],
+    error: ASSISTANT_GROUP_POST_UNCONFIRMED,
+    ...overrides,
+  });
+  it.each([
+    ["nothing held", null, "@ada hi", ["f1"], null],
+    ["one still on its way", held({ failed: false }), "@ada hi", ["f1"], null],
+    ["the same text and files", held(), "@ada hi", ["f1"], "A"],
+    ["typed and deleted back to the same text", held({ error: null }), "@ada hi", ["f1"], "A"],
+    ["the same text with spaces around it", held(), "  @ada hi\n", ["f1"], "A"],
+    [
+      "resent once more after a resend that never left",
+      held({ error: ASSISTANT_GROUP_POST_NOT_SENT }),
+      "@ada hi",
+      ["f1"],
+      "A",
+    ],
+    ["changed text", held(), "@ada hi!", ["f1"], null],
+    ["a file removed", held(), "@ada hi", [], null],
+    ["a file added", held(), "@ada hi", ["f1", "f2"], null],
+  ] as const)("resends %s under its id", (_name, sent, text, files, expected) => {
+    assert.strictEqual(assistantGroupResendRequestId(sent, text, files), expected);
+  });
+
+  const message = (clientRequestId?: string) =>
+    (clientRequestId === undefined ? {} : { clientRequestId }) as Pick<
+      AssistantGroupMessage,
+      "clientRequestId"
+    >;
+  it.each([
+    ["not in the chat", held(), "@ada hi", [message(), message("B")], null],
+    ["in the chat, its text as sent", held(), "@ada hi", [message(), message("A")], "settle"],
+    ["in the chat, its text edited since", held(), "@ada hi!", [message("A")], "clear-warning"],
+    [
+      "in the chat, edited and warned no more",
+      held({ error: null }),
+      "@ada hi!",
+      [message("A")],
+      null,
+    ],
+    [
+      "in the chat while its reply is on its way",
+      held({ failed: false }),
+      "@ada hi",
+      [message("A")],
+      null,
+    ],
+  ] as const)("a failed send %s", (_name, sent, text, messages, expected) => {
+    assert.strictEqual(assistantGroupLandedSend(sent, text, messages), expected);
   });
 });
