@@ -69,15 +69,17 @@ it("a second press while a resend runs joins it instead of sending again", async
   const { registry, resend } = setup();
   const scheduler = createAtomCommandScheduler();
   let sends = 0;
-  let finish = (_: AtomCommandResult<number, never>) => {};
+  type Finish = (result: AtomCommandResult<number, never>) => void;
+  // Settles once the scheduler actually runs the send, with the function that answers it.
+  const started = Promise.withResolvers<Finish>();
   const execute = () => {
     sends += 1;
-    return new Promise<AtomCommandResult<number, never>>((resolve) => (finish = resolve));
+    return new Promise<AtomCommandResult<number, never>>((resolve) => started.resolve(resolve));
   };
   const target = { environmentId: hub, input: {} };
   const first = scheduler.schedule(registry, resend.command.concurrency, target, execute);
   const second = scheduler.schedule(registry, resend.command.concurrency, target, execute);
-  finish(AsyncResult.success(2));
+  (await started.promise)(AsyncResult.success(2));
   expect([await first, await second]).toEqual([AsyncResult.success(2), AsyncResult.success(2)]);
   expect(sends).toBe(1);
 });
