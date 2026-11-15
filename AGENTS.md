@@ -276,6 +276,7 @@ This checkout is a personal fork that adds features (notes, kanban, memory, dest
 - Never allowlist fields of external or user-edited data (frontmatter, provider memory files, CLI output). Parse tolerantly, ignore unknown keys and preserve them on write; only reject what is truly unusable.
 - One bad item never hides the others. Process per item, report skipped items with an enumerable reason, and keep the UI able to tell "nothing found" from "failed".
 - Compare versions as semver, not as strings. Validate every item before mutating any of them.
+- `serverEnvironment.updateSettings.permissionAtom` is always true: its scope depends on the patch, so `server.updateSettings` is not in `CLIENT_GUARDED_RPC_SCOPES`. Gate a settings write with `useEnvironmentScope(environmentId, AuthSettingsWriteScope)`.
 - Anything an agent can call is retry-safe. When the caller sends no request id, derive one from the state it acts on so a repeat lands on the same result.
 - Assistant threads (`assistant:` ids) never appear in project lists or the first-thread check; filter them wherever you list project threads. See [Assistants](docs/internals/assistants.md).
 - Do not patch the single case the developer reported. Find the class of input that fails and fix the class, with a table-driven test.
