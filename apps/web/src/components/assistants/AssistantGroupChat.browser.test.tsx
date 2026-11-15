@@ -487,6 +487,16 @@ it("keeps the draft and says what to do when the request names no one", async ()
   expect(fakeGroupChat.postRequestIds[4]).not.toBe(ids[0]);
   await userEvent.type(composer(), "!");
   await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  // A cut-off post the chat then shows did land: the warning and the sent text go.
+  fakeGroupChat.postCut = true;
+  await userEvent.type(composer(), "{Enter}");
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Couldn't confirm the send. Send it again: it won't post twice.");
+  const landed = fakeGroupChat.postRequestIds[5] as string;
+  publishGroupChat([message(1), message(2, { text: "!", clientRequestId: landed })]);
+  await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  await expectComposer("");
 });
 
 it("says the lead is choosing while a request has no task yet", async () => {

@@ -17,8 +17,14 @@ import {
   type AssistantGroupMentionOption,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
+  assistantGroupLandedSend,
+  assistantGroupResendRequestId,
+} from "@t3tools/client-runtime/state/assistants";
+import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
+  type AssistantGroupMessage,
+  type AssistantGroupMessageId,
   type ChatAttachment,
   type EnvironmentId,
   type ModelSelection,
@@ -27,6 +33,7 @@ import {
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
 import {
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -263,8 +270,10 @@ interface Outgoing extends AssistantGroupOutgoing {
   readonly prompt: PromptState;
   readonly projectLabel: string;
   readonly error: string | null;
-  /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
-  readonly requestId: string | null;
+  /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+  readonly requestId: string;
+  /** The text it sent, trimmed; `prompt` is what the composer shows now. */
+  readonly text: string;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
@@ -291,6 +300,8 @@ export function GroupComposer(props: {
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
   readonly history: ReadonlyArray<{ readonly id: string; readonly text: string }>;
+  /** The chat as loaded: a failed send whose post shows here landed. */
+  readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -338,8 +349,6 @@ export function GroupComposer(props: {
             ...shown,
             prompt: { value, cursor, expanded },
             error: null,
-            // Changed text is another message: its send gets its own id.
-            requestId: value === shown.prompt.value ? shown.requestId : null,
           },
     );
   };
@@ -461,10 +470,26 @@ export function GroupComposer(props: {
     replace(next.text, next.caret);
   };
 
+  /** A post the server took: only its text and files go, so what was written meanwhile stays. */
+  const settle = (sent: Outgoing) => {
+    setOutgoing(sent.tab, null);
+    recalled.current = null;
+    attached.clear(sent.attachmentIds);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost; the outgoing store is outside React
+  useLayoutEffect(() => {
+    if (props.messages === undefined) return;
+    for (const entry of outgoing) {
+      const landed = assistantGroupLandedSend(entry, entry.prompt.value, props.messages.values());
+      if (landed === "settle") settle(entry);
+      else if (landed === "clear-warning") setOutgoing(entry.tab, { ...entry, error: null });
+    }
+  });
+
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
-    // A refused or unconfirmed message goes again under its first id.
-    const requestId = (shown?.failed === true ? shown.requestId : null) ?? randomUUID();
+    const attachmentIds = attached.items.map((item) => item.id);
+    const requestId = assistantGroupResendRequestId(shown, value, attachmentIds) ?? randomUUID();
     const sent: Outgoing = {
       tab: props.tab,
       failed: false,
@@ -473,24 +498,21 @@ export function GroupComposer(props: {
         cursor: collapseExpandedComposerCursor(value, value.length),
         expanded: value.length,
       },
-      attachmentIds: attached.items.map((item) => item.id),
+      attachmentIds,
       projectLabel:
         lockedProject ??
         projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
         ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
       error: null,
       requestId,
+      text: value.trim(),
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);
     setError(null);
     const result = await props.onSend(value.trim(), attached.ready, requestId);
-    if (result.ok) {
-      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      setOutgoing(sent.tab, null);
-      recalled.current = null;
-      attached.clear(sent.attachmentIds);
-    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    if (result.ok) settle(sent);
+    else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
     // The editor is read-only while its text is on its way; the user types on once it settles.
     window.requestAnimationFrame(() => {
       if (document.activeElement === document.body) editorRef.current?.focusAtEnd();

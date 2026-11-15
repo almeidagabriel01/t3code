@@ -1645,6 +1645,7 @@ export function AssistantGroupChat(props: {
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
           history={sentByUser}
+          messages={live?.messages}
           onSend={send}
         />
       </>
