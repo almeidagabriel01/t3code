@@ -742,63 +742,71 @@ export function GroupComposer(props: {
                   </div>
                   <div
                     data-testid="group-composer-controls"
-                    // A narrow composer keeps effort and Mention as icons, so the row never takes a third line.
-                    className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden"
+                    // A narrow composer keeps its labels as icons, and voice and send hold the right
+                    // edge outside the wrap, so the controls never take a third line.
+                    className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
                   >
-                    <ComposerAttachButton
-                      addComposerAttachments={async (files) => {
-                        attached.add(files);
-                        return false;
-                      }}
-                      focusComposer={() => editorRef.current?.focus()}
-                      disabled={props.disabled || attached.full || sending}
-                    />
-                    {projectPicker}
-                    {modelProjectId === null ? null : (
-                      <GroupProjectModelPicker
-                        environmentId={props.environmentId}
-                        projectId={modelProjectId}
-                        projectLabel={modelProjectLabel}
-                        teamDefault={props.teamDefault}
-                        disabled={props.disabled}
-                        onError={setError}
-                        message={props.messageModel}
-                      />
-                    )}
-                    <Menu>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <MenuTrigger
-                              disabled={props.disabled || props.members.length === 0}
-                              render={<ComposerControl size="xs" aria-label="Mention" />}
-                            />
-                          }
-                        >
-                          <AtSignIcon className="size-3" />
-                          <span data-composer-control-label>Mention</span>
-                        </TooltipTrigger>
-                        <TooltipPopup side="top">Mention a member</TooltipPopup>
-                      </Tooltip>
-                      <MenuPopup align="start" side="top">
-                        <MenuGroup>
-                          <MenuGroupLabel>Mention</MenuGroupLabel>
-                          {assistantGroupMentionOptions("", props.members).map((option) => (
-                            <MenuItem
-                              key={option.kind === "everyone" ? "everyone" : option.member.id}
-                              onClick={() => insertFromMenu(option)}
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                      {/* A long project name shrinks beside attach instead of taking a line alone. */}
+                      <div className="flex min-w-0 items-center gap-1">
+                        <ComposerAttachButton
+                          addComposerAttachments={async (files) => {
+                            attached.add(files);
+                            return false;
+                          }}
+                          focusComposer={() => editorRef.current?.focus()}
+                          disabled={props.disabled || attached.full || sending}
+                        />
+                        {projectPicker}
+                      </div>
+                      <div className="flex min-w-0 items-center gap-1">
+                        {modelProjectId === null ? null : (
+                          <GroupProjectModelPicker
+                            environmentId={props.environmentId}
+                            projectId={modelProjectId}
+                            projectLabel={modelProjectLabel}
+                            teamDefault={props.teamDefault}
+                            disabled={props.disabled}
+                            onError={setError}
+                            message={props.messageModel}
+                          />
+                        )}
+                        <Menu>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <MenuTrigger
+                                  disabled={props.disabled || props.members.length === 0}
+                                  render={<ComposerControl size="xs" aria-label="Mention" />}
+                                />
+                              }
                             >
-                              <MentionOptionLabel
-                                option={option}
-                                environmentId={props.environmentId}
-                                leadId={props.leadId}
-                              />
-                            </MenuItem>
-                          ))}
-                        </MenuGroup>
-                      </MenuPopup>
-                    </Menu>
-                    <div className="ms-auto flex min-w-0 items-center gap-1">
+                              <AtSignIcon className="size-3" />
+                              <span data-composer-control-label>Mention</span>
+                            </TooltipTrigger>
+                            <TooltipPopup side="top">Mention a member</TooltipPopup>
+                          </Tooltip>
+                          <MenuPopup align="start" side="top">
+                            <MenuGroup>
+                              <MenuGroupLabel>Mention</MenuGroupLabel>
+                              {assistantGroupMentionOptions("", props.members).map((option) => (
+                                <MenuItem
+                                  key={option.kind === "everyone" ? "everyone" : option.member.id}
+                                  onClick={() => insertFromMenu(option)}
+                                >
+                                  <MentionOptionLabel
+                                    option={option}
+                                    environmentId={props.environmentId}
+                                    leadId={props.leadId}
+                                  />
+                                </MenuItem>
+                              ))}
+                            </MenuGroup>
+                          </MenuPopup>
+                        </Menu>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
                       <ComposerPrimaryActions
                         compact={false}
                         canOperateThread={!props.disabled}

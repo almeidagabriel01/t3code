@@ -213,7 +213,12 @@ function ProjectModelPicker(props: {
       {picker}
       <Tooltip>
         <TooltipTrigger render={<Badge variant="info" size="sm" className="shrink-0" />}>
-          This message
+          <span
+            data-composer-control-mark
+            aria-hidden
+            className="hidden size-1.5 rounded-full bg-current"
+          />
+          <span data-composer-control-label>This message</span>
         </TooltipTrigger>
         <TooltipPopup>
           The work of the message you send next runs on this model, for a new request all of it
