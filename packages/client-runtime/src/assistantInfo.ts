@@ -58,3 +58,7 @@ export function assistantGroupMembers<A extends { readonly id: string }>(
 /** Group info's hero line, from the same members and running tasks its rows list. */
 export const assistantGroupInfoSummary = (members: number, running: number) =>
   `${members} members · ${running} running`;
+
+/** The Access section's "Asks before acting" value, shown whichever way it is set. */
+export const assistantAskBeforeActingLabel = (askBeforeActing: boolean) =>
+  askBeforeActing ? "On" : "Off";

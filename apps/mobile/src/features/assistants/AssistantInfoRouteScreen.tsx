@@ -4,6 +4,7 @@ import {
   assistantGroupRunningTasks,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
+  assistantAskBeforeActingLabel,
   assistantGroupInfoSummary,
   assistantGroupMembers,
   assistantInfoGroups,
@@ -241,7 +242,10 @@ function AssistantInfoBody(props: { readonly entry: AssistantEntry }) {
       )}
       <ListSection title="Access">
         <Field label="Tool access" value={toolAccessLabel(assistant.toolAccess)} />
-        {assistant.askBeforeActing ? <Field label="Asks before acting" /> : null}
+        <Field
+          label="Asks before acting"
+          value={assistantAskBeforeActingLabel(assistant.askBeforeActing)}
+        />
         {thread ? (
           <Field label="Model" value={formatModelSlugName(thread.modelSelection.model)} />
         ) : null}
