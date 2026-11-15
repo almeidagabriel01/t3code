@@ -641,6 +641,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   };
 
   const serverSettings = ServerSettings.ServerSettingsService.of({
+    modifySettings: () => Effect.die("Unexpected settings modification"),
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.update(settingsReadCount, (count) => count + 1).pipe(

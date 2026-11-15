@@ -392,20 +392,22 @@ export const make = Effect.gen(function* () {
   });
 
   // Clients read and clear the project's model in its settings override; the record copy only
-  // feeds settings that were never folded.
+  // feeds settings that were never folded. It runs after the commit on every call, a replayed
+  // receipt included, so a failed write fails the call and repeating it converges.
   const writeProjectModel = Effect.fn("ProjectService.writeProjectModel")(
     function* (projectId: ProjectId, selection: ProjectUpdatePayload["defaultModelSelection"]) {
       if (selection === undefined) return;
-      const settings = yield* serverSettings.getSettings;
-      const stored = settings.projectSettingsOverrides[projectId];
-      if (selection === null && stored === undefined) return;
-      yield* serverSettings.updateSettings({
-        projectSettingsOverrides: {
-          [projectId]:
-            selection === null
-              ? clearProjectSettingKeys(settings, projectId, ["defaultModelSelection"])
-              : { ...projectOverrideForWrite(stored), defaultModelSelection: selection },
-        },
+      yield* serverSettings.modifySettings((settings) => {
+        const stored = settings.projectSettingsOverrides[projectId];
+        if (selection === null && stored === undefined) return {};
+        return {
+          projectSettingsOverrides: {
+            [projectId]:
+              selection === null
+                ? clearProjectSettingKeys(settings, projectId, ["defaultModelSelection"])
+                : { ...projectOverrideForWrite(stored), defaultModelSelection: selection },
+          },
+        };
       });
     },
     (effect, projectId) =>

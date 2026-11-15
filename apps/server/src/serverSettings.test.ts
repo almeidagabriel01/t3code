@@ -2713,10 +2713,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           })
           .pipe(Effect.flip);
         assert.equal(projectRejected.managedSetting, "enableAgentDeviceAccess");
+        // A patch worked out from the settings it lands on is vetted the same way.
+        const modifyRejected = yield* service
+          .modifySettings(() => ({
+            projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+          }))
+          .pipe(Effect.flip);
+        assert.equal(modifyRejected.managedSetting, "enableAgentDeviceAccess");
 
         // Unrelated writes, and writes that keep the locked value, go through.
         yield* service.updateSettings({ enableAgentDeviceAccess: false, defaultAutoPull: true });
         assert.isTrue((yield* service.getSettings).defaultAutoPull);
+        yield* service.modifySettings((current) => ({ defaultAutoPull: !current.defaultAutoPull }));
+        assert.isFalse((yield* service.getSettings).defaultAutoPull);
 
         // The user's own value stays on disk, ready for when the policy is removed.
         const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
