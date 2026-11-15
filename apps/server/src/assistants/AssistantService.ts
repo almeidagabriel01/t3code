@@ -20,11 +20,9 @@ import {
   assistantThreadIdFor,
   CommandId,
   DEFAULT_ASSISTANT_ID,
-  DEFAULT_MODEL,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ProjectId,
-  ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
   runtimeModeForToolAccess,
   type ThreadId,
@@ -35,7 +33,7 @@ import {
 } from "@t3tools/shared/assistantTaskStatus";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { assistantHomeModel } from "@t3tools/shared/modelSelectionPrecedence";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -51,10 +49,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import {
-  firstUsableProviderModel,
-  ProjectModelSelectionService,
-} from "../orchestration-v2/ProjectModelSelectionService.ts";
+import { ProjectModelSelectionService } from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -287,20 +282,10 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => assistantError("storage", "Could not read the server settings.")),
     );
     const project = yield* projects.getById(projectId).pipe(Effect.orElseSucceed(Option.none));
-    const configured = resolveProjectSettings(settings, projectId, Option.getOrNull(project))
-      .settings.defaultModelSelection;
-    if (configured) return configured;
     const providers = Option.isSome(providerRegistry)
       ? yield* providerRegistry.value.getProviders
       : [];
-    // ponytail: no usage-limit fallback chain here, the user picks the model on the thread.
-    return (
-      firstUsableProviderModel(providers) ??
-      ({
-        instanceId: ProviderInstanceId.make("codex"),
-        model: DEFAULT_MODEL,
-      } satisfies ModelSelection)
-    );
+    return assistantHomeModel(settings, projectId, Option.getOrNull(project), providers);
   });
 
   /** A changed default must name an instance that exists and is enabled; an unchanged one stays. */

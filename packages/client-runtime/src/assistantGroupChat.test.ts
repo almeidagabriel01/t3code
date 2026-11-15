@@ -1,5 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import type {
   AssistantGroupMessage,
   AssistantGroupTask,
@@ -59,6 +64,7 @@ import {
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
   assistantGroupTaskReasonLabel,
+  assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
   insertAssistantGroupMention,
@@ -574,17 +580,68 @@ describe("assistantGroupAwaitingRoute", () => {
 
 describe("composer helpers", () => {
   it.each([
-    ["", jarvis, null],
-    ["hello", jarvis, "Jarvis (lead) will route it"],
-    ["hello", null, "Waits for a lead"],
-    ["thanks @ada", jarvis, "To Ada"],
-    ["@ada do it", jarvis, "To Ada"],
-    ["@ada @betosilva do it", jarvis, "To Ada and Beto Silva"],
-    ["@everyone go", null, "To everyone"],
-    ["@ada @beto @jarvis go", null, "To everyone"],
-    ["@nobody go", null, "Waits for a lead"],
-  ] as const)("previews %j", (text, lead, expected) => {
-    assert.strictEqual(assistantGroupRecipientsPreview(text, [ada, beto, jarvis], lead), expected);
+    ["", jarvis, undefined, null],
+    ["hello", jarvis, undefined, "Jarvis (lead) will route it"],
+    ["hello", jarvis, true, "Jarvis (lead) will route it"],
+    ["hello", jarvis, false, "Jarvis (lead) can't route: mention someone with @"],
+    ["hello", null, undefined, "Waits for a lead"],
+    ["thanks @ada", jarvis, undefined, "To Ada"],
+    ["@ada do it", jarvis, false, "To Ada"],
+    ["@ada @betosilva do it", jarvis, undefined, "To Ada and Beto Silva"],
+    ["@everyone go", null, undefined, "To everyone"],
+    ["@everyone go", jarvis, false, "To everyone"],
+    ["@ada @beto @jarvis go", null, undefined, "To everyone"],
+    ["@nobody go", null, undefined, "Waits for a lead"],
+    ["@nobody go", jarvis, false, "Jarvis (lead) can't route: mention someone with @"],
+  ] as const)("previews %j", (text, lead, leadCanRoute, expected) => {
+    assert.strictEqual(
+      assistantGroupRecipientsPreview(text, [ada, beto, jarvis], lead, null, leadCanRoute),
+      expected,
+    );
+  });
+
+  const provider = (instanceId: string, routes: boolean | undefined) =>
+    ({
+      instanceId,
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [{ slug: `${instanceId}-model`, isDefault: true, isCustom: false }],
+      ...(routes === undefined ? {} : { supportsAssistantGroupRouting: routes }),
+    }) as unknown as ServerProvider;
+  const settingsWith = (projectModel: string | null): ServerSettings =>
+    ({
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: null,
+      projectSettingsOverrides:
+        projectModel === null
+          ? {}
+          : { home: { defaultModelSelection: { instanceId: projectModel, model: "m" } } },
+    }) as unknown as ServerSettings;
+  const pick = (instanceId: string) => ({ instanceId, model: "m" }) as ModelSelection;
+  it.each([
+    ["its conversation's model routes", "t1", pick("claude"), "replay", true],
+    ["its conversation's model cannot", "t1", pick("replay"), "claude", false],
+    ["its conversation is not loaded", "t1", undefined, "claude", undefined],
+    ["no conversation: its home project's model", null, undefined, "replay", false],
+    ["no conversation, no project model: the first usable provider", null, undefined, null, false],
+    ["an instance the server does not list", "t1", pick("gone"), null, false],
+    ["an older server that does not say", "t1", pick("old"), null, undefined],
+  ] as const)("the lead can route: %s", (_name, threadId, threadModel, projectModel, expected) => {
+    assert.strictEqual(
+      assistantGroupLeadCanRoute({
+        lead: { threadId: threadId as ThreadId | null, projectId: "home" as ProjectId },
+        threadModel,
+        settings: settingsWith(projectModel),
+        providers: [
+          provider("replay", false),
+          provider("claude", true),
+          provider("old", undefined),
+        ],
+        project: null,
+      }),
+      expected,
+    );
   });
 
   it("previews a reply to its member and a one-member group to that member", () => {

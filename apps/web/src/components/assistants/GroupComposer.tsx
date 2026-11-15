@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupMentionTargets,
@@ -47,6 +49,8 @@ import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { useProject, useQuietThreadShell, useServerConfigs } from "~/state/entities";
+import { useEnvironmentProviders } from "~/state/environments";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import {
@@ -271,6 +275,24 @@ interface Outgoing extends AssistantGroupOutgoing {
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
 
+/** Whether the lead can route a message nobody is mentioned in; undefined while unknown. */
+function useLeadCanRoute(environmentId: EnvironmentId, lead: Assistant | null) {
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  const settings = useServerConfigs().get(environmentId)?.settings;
+  const providers = useEnvironmentProviders().get(environmentId);
+  if (lead === null || settings === undefined || providers === undefined) return undefined;
+  return assistantGroupLeadCanRoute({
+    lead,
+    threadModel: thread?.modelSelection,
+    settings,
+    providers,
+    project,
+  });
+}
+
 export function GroupComposer(props: {
   readonly draftKey: string;
   /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
@@ -380,6 +402,7 @@ export function GroupComposer(props: {
     props.members,
     lead,
     props.replyingTo?.to ?? null,
+    useLeadCanRoute(props.environmentId, lead),
   );
   const attached = useGroupAttachments(
     props.environmentId,

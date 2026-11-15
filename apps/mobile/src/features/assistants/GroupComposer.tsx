@@ -1,5 +1,7 @@
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupProjectOptions,
@@ -38,6 +40,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useEnvironmentServerConfig, useProject, useQuietThreadShell } from "../../state/entities";
 import {
   clearComposerDraftContent,
   composerDraftsAtom,
@@ -307,6 +310,23 @@ function ReplyQuote(props: {
  * The group's message box, built on the thread composer's editor: `@` picks members, `#` names a
  * project, a line says who will get the message, and a new request can name its project.
  */
+/** Whether the lead can route a message nobody is mentioned in; undefined while unknown. */
+function useLeadCanRoute(environmentId: EnvironmentId, lead: Assistant | null) {
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  const config = useEnvironmentServerConfig(environmentId);
+  if (lead === null || config === null) return undefined;
+  return assistantGroupLeadCanRoute({
+    lead,
+    threadModel: thread?.modelSelection,
+    settings: config.settings,
+    providers: config.providers,
+    project,
+  });
+}
+
 export function GroupComposer(props: {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
@@ -403,6 +423,7 @@ export function GroupComposer(props: {
     props.members,
     lead,
     props.replyingTo?.to ?? null,
+    useLeadCanRoute(props.environmentId, lead),
   );
   const attached = useGroupAttachments(
     props.environmentId,

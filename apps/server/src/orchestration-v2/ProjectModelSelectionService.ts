@@ -2,14 +2,13 @@ import {
   type AssistantId,
   type AssistantTeamId,
   DEFAULT_MODEL,
-  isProviderAvailable,
   type ModelSelection,
   type ProjectId,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  firstUsableProviderModel,
   isPickedModelUsable,
   type ModelSelectionLayer,
   projectModelLayer,
@@ -41,25 +40,6 @@ export class ProjectModelSelectionError extends Schema.TaggedError<ProjectModelS
   override get message(): string {
     return "Could not work out the model for a new thread.";
   }
-}
-
-/** Like a new thread with no configured default: the first usable provider and its default model. */
-export function firstUsableProviderModel(
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null {
-  const provider = providers.find(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.auth.status !== "unauthenticated" &&
-      isProviderAvailable(entry),
-  );
-  if (provider === undefined) return null;
-  const model =
-    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
-    provider.models.find((entry) => !entry.isCustom) ??
-    provider.models[0];
-  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
 }
 
 export class ProjectModelSelectionService extends Context.Service<

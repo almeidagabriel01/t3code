@@ -343,7 +343,11 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  return Effect.succeed(
+    source.supportsAssistantGroupRouting === undefined
+      ? snapshot
+      : { ...snapshot, supportsAssistantGroupRouting: source.supportsAssistantGroupRouting },
+  );
 };
 
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
@@ -357,6 +361,8 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
+  // The same check as `AssistantGroups.canRoute`.
+  supportsAssistantGroupRouting: instance.textGeneration.routeAssistantGroup !== undefined,
 });
 
 export const layer = Layer.effect(
@@ -899,10 +905,17 @@ export const layer = Layer.effect(
             }).pipe(Effect.ignoreCause({ log: true })),
           { concurrency: "unbounded", discard: true },
         );
-        yield* upsertProviders(unavailableProviders, {
-          persist: false,
-          replace: true,
-        });
+        // No instance means nothing to route on.
+        yield* upsertProviders(
+          unavailableProviders.map((provider) => ({
+            ...provider,
+            supportsAssistantGroupRouting: false,
+          })),
+          {
+            persist: false,
+            replace: true,
+          },
+        );
 
         const nextSubs = new Map(carriedOver);
         for (const [instanceId, instance] of newlyAdded) {

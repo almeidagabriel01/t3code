@@ -27,15 +27,19 @@ import {
   type AssistantGroupsHistoryResult,
   type ModelSelection,
   type ProjectId,
+  type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
 import {
+  assistantHomeModel,
   isPickedModelUsable,
   type ModelSelectionLayers,
   type ProviderModelListing,
   resolveModelSelection,
 } from "@t3tools/shared/modelSelectionPrecedence";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
@@ -738,6 +742,8 @@ export function assistantGroupRecipientsPreview(
   members: ReadonlyArray<Recipient>,
   lead: Recipient | null,
   replyTo: string | null = null,
+  /** From `assistantGroupLeadCanRoute`; only `false` changes what the line promises. */
+  leadCanRoute?: boolean,
 ): string | null {
   if (text.trim() === "") return null;
   const picked = assistantGroupAddress(text, members);
@@ -748,7 +754,34 @@ export function assistantGroupRecipientsPreview(
   }
   if (replyTo !== null) return `To ${replyTo}`;
   if (members.length === 1) return `To ${members[0]!.name}`;
-  return lead === null ? "Waits for a lead" : `${lead.name} (lead) will route it`;
+  if (lead === null) return "Waits for a lead";
+  return leadCanRoute === false
+    ? `${lead.name} (lead) can't route: mention someone with @`
+    : `${lead.name} (lead) will route it`;
+}
+
+/**
+ * Whether the server would let the lead route, on the model it routes on (`AssistantGroups`
+ * `leadSelection`): its conversation's, else its home project's default. Undefined when the
+ * client cannot tell: its conversation is not loaded yet, or the server predates the flag.
+ */
+export function assistantGroupLeadCanRoute(input: {
+  readonly lead: Pick<Assistant, "threadId" | "projectId">;
+  /** The lead conversation's model; undefined while its thread is not loaded. */
+  readonly threadModel: ModelSelection | undefined;
+  readonly settings: ServerSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** The lead's home project, for its folder rule. */
+  readonly project: LegacyProjectSettingsFields | null;
+}): boolean | undefined {
+  if (input.lead.threadId !== null && input.threadModel === undefined) return undefined;
+  const selection =
+    input.threadModel ??
+    assistantHomeModel(input.settings, input.lead.projectId, input.project, input.providers);
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  // The server has no instance to route on either.
+  if (provider === undefined) return false;
+  return provider.supportsAssistantGroupRouting;
 }
 
 export type AssistantGroupMentionOption<M extends Recipient> =
