@@ -5014,7 +5014,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           WHERE thread_id = ${threadId}
                             AND run_id IS NULL
                             AND kind = 'root_turn'
-                            AND status IN ('pending', 'running', 'waiting')
+                            AND status IN ('pending', 'starting', 'running', 'waiting')
                         )
                     )
                   )

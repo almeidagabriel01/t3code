@@ -12005,10 +12005,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       )
       .pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
         ),
       );
+    if (projection === null) return;
     const sessionProviderThreadIds = new Set(
       projection.providerThreads.flatMap((providerThread) =>
         providerThread.providerSessionId === command.providerSessionId ? [providerThread.id] : [],
@@ -12020,7 +12022,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }).filter((item) => {
       const run = projection.runs.find((candidate) => candidate.id === item.runId);
       // A running run's consumer ends its own work when the session fails it.
-      if (run !== undefined && ["preparing", "starting", "running"].includes(run.status)) {
+      if (run !== undefined && isLiveRun(run)) {
         return false;
       }
       const providerThreadId = item.providerThreadId ?? run?.providerThreadId ?? null;
