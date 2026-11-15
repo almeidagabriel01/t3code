@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ChannelOutbox from "../ChannelOutbox.ts";
+import { projectsLayer } from "../channelBridgeTestSupport.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./ImessageChannelRuntime.ts";
 import * as Settings from "./ImessageChannelSettings.ts";
@@ -40,6 +41,7 @@ const harness = (platform: NodeJS.Platform = "darwin") => {
       ChannelOutbox.layer.pipe(
         Layer.provideMerge(ChannelTransport.layer),
         Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provideMerge(projectsLayer()),
       ),
     ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),
