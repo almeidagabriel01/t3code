@@ -1067,6 +1067,7 @@ it.effect("Stop holds a provider wake that queues before the stopped turn ends",
 const releaseSessionWithNativeWork = (input: {
   readonly reason: ProviderSessionManager.ProviderSessionReleaseReason;
   readonly via: "release" | "detach";
+  readonly nativeWorkEndsWithProcess: boolean;
   readonly backgroundTasksEndWithProcess: boolean;
   readonly endsWork: boolean;
 }) =>
@@ -1108,6 +1109,9 @@ const releaseSessionWithNativeWork = (input: {
                 lastError: null,
               },
               events: Stream.fromQueue(events),
+              ...(input.nativeWorkEndsWithProcess
+                ? { nativeWorkEndsWithProcess: true as const }
+                : {}),
               ...(input.backgroundTasksEndWithProcess
                 ? { backgroundTasksEndWithProcess: true as const }
                 : {}),
@@ -1444,31 +1448,28 @@ const releaseSessionWithNativeWork = (input: {
     }),
   );
 
-it.effect.each([
-  { reason: "manual_shutdown", via: "detach", backgroundTasksEndWithProcess: true, endsWork: true },
-  {
-    reason: "manual_shutdown",
-    via: "release",
-    backgroundTasksEndWithProcess: true,
-    endsWork: true,
-  },
-  { reason: "runtime_error", via: "release", backgroundTasksEndWithProcess: true, endsWork: true },
-  { reason: "idle_timeout", via: "release", backgroundTasksEndWithProcess: true, endsWork: true },
+// Claude and Muse declare both flags; Codex, ACP agents, Cursor and Pi only the native one.
+const releasedNativeWorkCases = [
+  { reason: "manual_shutdown", via: "detach", native: true, background: true, endsWork: true },
+  { reason: "manual_shutdown", via: "release", native: true, background: true, endsWork: true },
+  { reason: "runtime_error", via: "release", native: true, background: true, endsWork: true },
+  { reason: "idle_timeout", via: "release", native: true, background: true, endsWork: true },
+  { reason: "manual_shutdown", via: "detach", native: true, background: false, endsWork: true },
+  { reason: "idle_timeout", via: "release", native: true, background: false, endsWork: true },
   // Restart recovery settles what a shutdown leaves, and can continue it.
-  {
-    reason: "server_shutdown",
-    via: "release",
-    backgroundTasksEndWithProcess: true,
-    endsWork: false,
-  },
+  { reason: "server_shutdown", via: "release", native: true, background: true, endsWork: false },
+  // Only the native flag ends native work; the background one drives Waiting.
+  { reason: "manual_shutdown", via: "release", native: false, background: true, endsWork: false },
   // The work may outlive this session, as with a shared OpenCode server.
-  {
-    reason: "manual_shutdown",
-    via: "release",
-    backgroundTasksEndWithProcess: false,
-    endsWork: false,
-  },
-] as const)(
-  "a $reason $via with backgroundTasksEndWithProcess=$backgroundTasksEndWithProcess ends native subagent work: $endsWork",
-  releaseSessionWithNativeWork,
+  { reason: "manual_shutdown", via: "release", native: false, background: false, endsWork: false },
+] as const;
+
+it.effect.each(releasedNativeWorkCases)(
+  "a $reason $via with nativeWorkEndsWithProcess=$native, backgroundTasksEndWithProcess=$background ends native subagent work: $endsWork",
+  ({ native, background, ...input }) =>
+    releaseSessionWithNativeWork({
+      ...input,
+      nativeWorkEndsWithProcess: native,
+      backgroundTasksEndWithProcess: background,
+    }),
 );

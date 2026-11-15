@@ -2696,6 +2696,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         instanceId: options.instanceId,
         driver: PI_PROVIDER,
         providerSessionId: input.providerSessionId,
+        // Subagents are a tool inside the session's own Pi process.
+        nativeWorkEndsWithProcess: true,
         get providerSession() {
           return sessionEntity;
         },

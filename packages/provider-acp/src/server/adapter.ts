@@ -8684,6 +8684,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           providerSession,
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          // Every flavor spawns its agent in this session's scope (AcpSessionRuntime).
+          nativeWorkEndsWithProcess: true,
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {

@@ -937,7 +937,7 @@ export const layerWithOptions = (
         // Restart recovery settles a shutdown, and work that outlives its session stays open.
         if (
           input.reason === "server_shutdown" ||
-          input.entry.runtime.backgroundTasksEndWithProcess !== true
+          input.entry.runtime.nativeWorkEndsWithProcess !== true
         ) {
           return;
         }
