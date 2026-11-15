@@ -916,8 +916,9 @@ export function assistantGroupRecipientsPreview(input: {
 
 /**
  * Whether the server would let the lead route, on the model it routes on (`AssistantGroups`
- * `leadSelection`): its conversation's, else its home project's default. Undefined when the
- * client cannot tell: its conversation is not loaded yet, or the server predates the flag.
+ * `leadSelection`): its conversation's, else its home project's default. Undefined while its
+ * conversation's shell is missing (shells may omit threads, so missing is not gone) or the server
+ * predates the flag.
  */
 export function assistantGroupLeadCanRoute(input: {
   readonly lead: Pick<Assistant, "threadId" | "projectId">;
