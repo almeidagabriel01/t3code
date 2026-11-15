@@ -30,6 +30,7 @@ import {
   assistantGroupWorkedLabel,
   assistantGroupActivity,
   assistantGroupAnswerRoot,
+  assistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isLongMessage } from "@t3tools/client-runtime/messageFold";
@@ -1617,6 +1618,7 @@ export function AssistantGroupChatRouteScreen({
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}
+        sendContext={assistantGroupSendContext(live, replyTo?.id ?? null, members)}
         onJumpToReply={
           replyTo === null || live?.messages.get(replyTo.id) === undefined
             ? null

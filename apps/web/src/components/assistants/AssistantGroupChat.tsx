@@ -33,6 +33,7 @@ import {
   assistantGroupMentionHref,
   assistantGroupMessageExcerpt,
   assistantGroupWorkedLabel,
+  assistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -1641,6 +1642,7 @@ export function AssistantGroupChat(props: {
               setModelPick(selection === null ? null : { tab: tabKey, value: selection }),
           }}
           replyingTo={replyTo?.quote ?? null}
+          sendContext={assistantGroupSendContext(live, replyTo?.id ?? null, members)}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
           history={sentByUser}

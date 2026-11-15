@@ -101,7 +101,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
 import { normalizeTeamRead } from "./groupChatSql.ts";
-import { routeGroupMessage } from "./AssistantGroupRouting.ts";
+import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {

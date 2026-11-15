@@ -14,6 +14,7 @@ import {
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendContext,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
@@ -311,6 +312,8 @@ export function GroupComposer(props: {
   /** The model the next message runs on, picked here only for it. */
   readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
+  /** What the server reads besides the draft to route it, from the chat. */
+  readonly sendContext: AssistantGroupSendContext;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
@@ -397,13 +400,15 @@ export function GroupComposer(props: {
         }));
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
-  const preview = assistantGroupRecipientsPreview(
-    prompt.value,
-    props.members,
+  const preview = assistantGroupRecipientsPreview({
+    text: prompt.value,
+    members: props.members,
     lead,
-    props.replyingTo?.to ?? null,
-    useLeadCanRoute(props.environmentId, lead),
-  );
+    leadCanRoute: useLeadCanRoute(props.environmentId, lead),
+    projects: projectRefs,
+    projectId: props.projectId,
+    context: props.sendContext,
+  });
   const attached = useGroupAttachments(
     props.environmentId,
     props.disabled,

@@ -503,7 +503,13 @@ it("says the lead is choosing while a request has no task yet", async () => {
 it("labels a reply with the member it answers and previews it going to that member", async () => {
   publishGroupChat(
     [
-      message(1, { author: "assistant", assistantId: "ada" as AssistantId, text: "done" }),
+      // A member's answer carries its task, which is how the server finds who it answers.
+      message(1, {
+        author: "assistant",
+        assistantId: "ada" as AssistantId,
+        text: "done",
+        taskId: "t-1" as never,
+      }),
       message(2, { text: "why?", replyToMessageId: "m1" as never }),
     ],
     [task("t-1", 2)],

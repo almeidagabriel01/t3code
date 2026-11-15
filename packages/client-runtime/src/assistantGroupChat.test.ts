@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import type {
   AssistantGroupMessage,
+  AssistantGroupMessageId,
   AssistantGroupTask,
   AssistantGroupsEvent,
   AssistantId,
@@ -67,6 +68,7 @@ import {
   assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
+  assistantGroupSendContext,
   insertAssistantGroupMention,
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
@@ -579,25 +581,179 @@ describe("assistantGroupAwaitingRoute", () => {
 });
 
 describe("composer helpers", () => {
-  it.each([
-    ["", jarvis, undefined, null],
-    ["hello", jarvis, undefined, "Jarvis (lead) will route it"],
-    ["hello", jarvis, true, "Jarvis (lead) will route it"],
-    ["hello", jarvis, false, "Jarvis (lead) can't route: mention someone with @"],
-    ["hello", null, undefined, "Waits for a lead"],
-    ["thanks @ada", jarvis, undefined, "To Ada"],
-    ["@ada do it", jarvis, false, "To Ada"],
-    ["@ada @betosilva do it", jarvis, undefined, "To Ada and Beto Silva"],
-    ["@everyone go", null, undefined, "To everyone"],
-    ["@everyone go", jarvis, false, "To everyone"],
-    ["@ada @beto @jarvis go", null, undefined, "To everyone"],
-    ["@nobody go", null, undefined, "Waits for a lead"],
-    ["@nobody go", jarvis, false, "Jarvis (lead) can't route: mention someone with @"],
-  ] as const)("previews %j", (text, lead, leadCanRoute, expected) => {
+  const ALPHA = { id: "p1" as ProjectId, name: "Alpha" };
+  const BETA = { id: "p2" as ProjectId, name: "Beta" };
+  const none = { replyOwnerId: null, request: null, stopped: [] };
+  const started = (ownerId: string | null) => ({
+    ...none,
+    request: { projectId: ALPHA.id, started: true, ownerId: ownerId as AssistantId | null },
+  });
+  type Row = {
+    readonly text: string;
+    readonly lead?: typeof jarvis | null;
+    readonly routes?: boolean;
+    readonly projects?: ReadonlyArray<typeof ALPHA>;
+    readonly picked?: ProjectId;
+    readonly context?: Parameters<typeof assistantGroupRecipientsPreview>[0]["context"];
+    readonly members?: ReadonlyArray<typeof ada>;
+  };
+  it.each<[string, Row, string | null]>([
+    ["an empty draft", { text: " " }, null],
+    ["the lead routes", { text: "hello" }, "Jarvis (lead) will route it"],
+    // mention_required: "Jarvis is the lead, but its model's provider can't route messages. …"
+    [
+      "the lead can't route",
+      { text: "hello", routes: false },
+      "Jarvis (lead) can't route: mention someone with @",
+    ],
+    ["no lead: it waits", { text: "hello", lead: null }, "Waits for a lead"],
+    ["a mention", { text: "@ada do it", routes: false }, "To Ada"],
+    ["two mentions", { text: "@ada @betosilva do it" }, "To Ada and Beto Silva"],
+    ["everyone", { text: "@everyone go", routes: false }, "To everyone"],
+    ["a mention of nobody", { text: "@nobody go", lead: null }, "Waits for a lead"],
+    ["a group of one", { text: "hi", lead: null, members: [ada] }, "To Ada"],
+    // With several projects and none picked, the lead picks one, even for a mention.
+    [
+      "no project: the lead picks it",
+      { text: "@ada do it", projects: [ALPHA, BETA] },
+      "Jarvis (lead) will pick the project",
+    ],
+    // "Pick the project for this request. Jarvis is the lead, but its model's provider can't …"
+    [
+      "no project, and the lead can't route",
+      { text: "@ada do it", projects: [ALPHA, BETA], routes: false },
+      "Pick a project first: Jarvis (lead) can't choose one",
+    ],
+    [
+      "no project, and the lead can't route an unaddressed draft either",
+      { text: "hello", projects: [ALPHA, BETA], routes: false },
+      "Pick a project first: Jarvis (lead) can't choose one",
+    ],
+    // "Pick the project for this request: the group has no lead that can choose it."
+    [
+      "no project, and no lead",
+      { text: "@ada do it", projects: [ALPHA, BETA], lead: null },
+      "Pick a project first: the group has no lead to choose one",
+    ],
+    [
+      "a picked project",
+      { text: "@ada do it", projects: [ALPHA, BETA], picked: BETA.id, routes: false },
+      "To Ada",
+    ],
+    [
+      "a #project in the text",
+      { text: "@ada fix #beta", projects: [ALPHA, BETA], routes: false },
+      "To Ada",
+    ],
+    [
+      "a reply to a member",
+      { text: "why?", routes: false, context: { ...started("beto"), replyOwnerId: beto.id } },
+      "To Beto Silva",
+    ],
+    [
+      "a mention wins over the reply",
+      { text: "@ada why?", context: { ...started("beto"), replyOwnerId: beto.id } },
+      "To Ada",
+    ],
+    [
+      "a reply to a request one member works",
+      { text: "more please", routes: false, context: started("ada") },
+      "To Ada",
+    ],
+    [
+      "a reply to a request the lead has not routed",
+      {
+        text: "use alpha",
+        projects: [ALPHA, BETA],
+        context: { ...none, request: { projectId: null, started: false, ownerId: null } },
+      },
+      "Jarvis (lead) will pick the project",
+    ],
+    // A mention does not help: an answer in a request not started goes through the lead.
+    [
+      "a reply to a request not started, and the lead can't route",
+      {
+        text: "@ada go",
+        routes: false,
+        context: { ...none, request: { projectId: ALPHA.id, started: false, ownerId: null } },
+      },
+      "Jarvis (lead) can't route this request: switch its model",
+    ],
+    [
+      "continue resumes the stopped work",
+      {
+        text: "continue",
+        routes: false,
+        context: { ...none, stopped: [{ taskId: "k", ownerId: ada.id }] },
+      },
+      "Resumes Ada's work",
+    ],
+    [
+      "continue with no stopped work of a member",
+      { text: "continue", context: { ...none, stopped: [{ taskId: "k", ownerId: "gone" }] } },
+      "Jarvis (lead) will route it",
+    ],
+  ])("previews %s", (_name, row, expected) => {
     assert.strictEqual(
-      assistantGroupRecipientsPreview(text, [ada, beto, jarvis], lead, null, leadCanRoute),
+      assistantGroupRecipientsPreview({
+        text: row.text,
+        members: row.members ?? [ada, beto, jarvis],
+        lead: row.lead === undefined ? jarvis : row.lead,
+        leadCanRoute: row.routes,
+        projects: row.projects ?? [ALPHA],
+        projectId: row.picked ?? null,
+        context: row.context ?? none,
+      }),
       expected,
     );
+  });
+
+  it("reads what routes a draft from the chat: the reply's request and the stopped work", () => {
+    const state = start(
+      snapshot(
+        [
+          message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
+          message(2, {
+            author: "assistant",
+            assistantId: "beto" as AssistantId,
+            taskId: "k" as AssistantGroupTask["id"],
+            requestId: "m1" as AssistantGroupMessageId,
+          }),
+          message(3, { requestId: "m3" as AssistantGroupMessageId }),
+        ],
+        [
+          task("k", 1, {
+            ownerId: "beto" as AssistantId,
+            status: "failed",
+            updatedAt: "2026-11-01T00:00:09.000Z",
+          }),
+        ],
+      ),
+    );
+    const members = [ada, beto];
+    assert.deepEqual<unknown>(
+      assistantGroupSendContext(state, "m2" as AssistantGroupMessageId, members),
+      {
+        replyOwnerId: "beto",
+        request: { projectId: "p1", started: true, ownerId: "beto" },
+        stopped: [{ taskId: "k", ownerId: "beto" }],
+      },
+    );
+    // A request the lead has not routed yet: no task, no project, nothing of it stopped.
+    assert.deepEqual<unknown>(
+      assistantGroupSendContext(state, "m3" as AssistantGroupMessageId, members),
+      {
+        replyOwnerId: null,
+        request: { projectId: null, started: false, ownerId: null },
+        stopped: [],
+      },
+    );
+    // No reply: the group's stopped work, newest first.
+    assert.deepEqual<unknown>(assistantGroupSendContext(state, null, members), {
+      replyOwnerId: null,
+      request: null,
+      stopped: [{ taskId: "k", ownerId: "beto" }],
+    });
   });
 
   const provider = (instanceId: string, routes: boolean | undefined) =>
@@ -642,19 +798,6 @@ describe("composer helpers", () => {
       }),
       expected,
     );
-  });
-
-  it("previews a reply to its member and a one-member group to that member", () => {
-    assert.strictEqual(
-      assistantGroupRecipientsPreview("why?", [ada, beto], jarvis, "Beto"),
-      "To Beto",
-    );
-    // A leading mention still wins over the reply.
-    assert.strictEqual(
-      assistantGroupRecipientsPreview("@ada why?", [ada, beto], null, "Beto"),
-      "To Ada",
-    );
-    assert.strictEqual(assistantGroupRecipientsPreview("hi", [ada], null), "To Ada");
   });
 
   it.each([

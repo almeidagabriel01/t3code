@@ -13,6 +13,7 @@ import {
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendContext,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -347,6 +348,8 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** What the server reads besides the draft to route it, from the chat. */
+  readonly sendContext: AssistantGroupSendContext;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
@@ -418,13 +421,15 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
-  const preview = assistantGroupRecipientsPreview(
+  const preview = assistantGroupRecipientsPreview({
     text,
-    props.members,
+    members: props.members,
     lead,
-    props.replyingTo?.to ?? null,
-    useLeadCanRoute(props.environmentId, lead),
-  );
+    leadCanRoute: useLeadCanRoute(props.environmentId, lead),
+    projects: props.projects,
+    projectId: props.projectId,
+    context: props.sendContext,
+  });
   const attached = useGroupAttachments(
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),

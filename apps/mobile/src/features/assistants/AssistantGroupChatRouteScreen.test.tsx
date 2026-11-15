@@ -1115,7 +1115,8 @@ describe("group composer", () => {
     expect(input().value).toBe("@ada ");
     expect(byLabel("Mention Ada")).toBeNull();
     await type("@ada do it");
-    expect(recipients()).toBe("To Ada");
+    // Two projects and none picked: the server hands even a mention to the lead to pick one.
+    expect(recipients()).toBe("Jarvis (lead) will pick the project");
     await click("Send");
     expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@ada do it" });
     expect(input().value).toBe("");
@@ -1124,14 +1125,19 @@ describe("group composer", () => {
 
   it("previews everyone, the lead's routing and the missing mention", async () => {
     render();
-    await type("@everyone ship");
+    await type("@everyone ship #alpha");
     expect(recipients()).toBe("To everyone");
     await type("hello");
+    expect(recipients()).toBe("Jarvis (lead) will pick the project");
+    await type("hello #alpha");
     expect(recipients()).toBe("Jarvis (lead) will route it");
     mocks.teams = [team({ leadId: null })];
     render();
-    await type("hello again");
+    await type("hello again #alpha");
     expect(recipients()).toBe("Waits for a lead");
+    // Without a lead nobody can pick the project, so the server refuses it.
+    await type("hello again");
+    expect(recipients()).toBe("Pick a project first: the group has no lead to choose one");
   });
 
   it("offers the group's projects after #, filters them and inserts the slug", async () => {
@@ -2242,8 +2248,8 @@ describe("requests", () => {
     await click("Reply to request Review");
     expect(text()).toContain("Replying to Review");
     await type("more");
-    // A reply to the request itself goes where the request routes, not to a member named "Review".
-    expect(recipients()).toBe("Jarvis (lead) will route it");
+    // A reply to the request itself goes to the one member working it, not to one named "Review".
+    expect(recipients()).toBe("To Beto");
     expect(byLabel("Project: Beta")?.disabled).toBe(true);
     expect(byLabel("Project:Alpha")).toBeNull();
     await type("@beto more");
