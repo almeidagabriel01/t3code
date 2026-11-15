@@ -642,6 +642,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
+    case "provider-session.work.settle":
     case "thread.interrupt.unresponsive":
     case "thread.stop":
     case "provider.switch":
@@ -11151,75 +11152,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
-  const settleBackgroundWork = Effect.fn("Orchestrator.settleBackgroundWork")(function* (input: {
-    readonly command: Extract<
-      OrchestrationV2ServerCommand,
-      { readonly type: "run.interrupt" | "thread.background-work.settle" }
-    >;
+  // A dead process cannot end these items. A native subagent died with it too: end its
+  // record, its own thread's runless root turn, and the subagents it started there,
+  // which a provider can record on that thread rather than this one.
+  const endBackgroundItems = Effect.fn("Orchestrator.endBackgroundItems")(function* (input: {
+    readonly command: Extract<OrchestrationV2ServerCommand, { readonly threadId: ThreadId }>;
     readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
     readonly projection: Pick<
       OrchestrationV2ThreadProjection,
-      "runs" | "nodes" | "subagents" | "turnItems" | "providerThreads"
+      "runs" | "nodes" | "subagents" | "turnItems"
     >;
-    readonly stoppedProviderThreadId: OrchestrationV2ProviderThread["id"] | null;
-    readonly throughRunOrdinal: number;
+    readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly now: DateTime.Utc;
   }) {
     const emitEvent = emit(input.events, input.command);
-    const runOrdinals = new Map(input.projection.runs.map((run) => [run.id, run.ordinal]));
     const allocateEventId = () =>
       idAllocator.allocate.event({
         threadId: input.command.threadId,
         commandId: input.command.commandId,
       });
     const childThreadIds = new Set<ThreadId>();
-    const liveness = new Map<string, boolean>();
-    const hasLiveSession = Effect.fn("Orchestrator.hasLiveSession")(function* (
-      providerThreadId: OrchestrationV2ProviderThread["id"],
-    ) {
-      const known = liveness.get(providerThreadId);
-      if (known !== undefined) return known;
-      const sessionId = input.projection.providerThreads.find(
-        (candidate) => candidate.id === providerThreadId,
-      )?.providerSessionId;
-      const live =
-        sessionId !== null &&
-        sessionId !== undefined &&
-        Option.isSome(
-          yield* providerSessions.get(sessionId).pipe(Effect.orElseSucceed(() => Option.none())),
-        );
-      liveness.set(providerThreadId, live);
-      return live;
-    });
-    const stillReportsBackgroundWork = Effect.fnUntraced(function* (
-      providerThread: OrchestrationV2ProviderThread,
-    ) {
-      if (providerThread.providerSessionId == null) return false;
-      const session = yield* providerSessions
-        .get(providerThread.providerSessionId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isNone(session) || session.value.hasPendingBackgroundWorkForThread === undefined) {
-        return false;
-      }
-      return yield* session.value
-        .hasPendingBackgroundWorkForThread(providerThread)
-        // A failed probe cannot confirm that the work ended.
-        .pipe(Effect.catchCause(() => Effect.succeed(true)));
-    });
-    for (const item of pendingBackgroundTurnItems({
-      turnItems: input.projection.turnItems,
-      runs: input.projection.runs,
-    })) {
-      const itemRunOrdinal = item.runId === null ? undefined : runOrdinals.get(item.runId);
-      if (itemRunOrdinal !== undefined && itemRunOrdinal > input.throughRunOrdinal) continue;
-      const providerThreadId = item.providerThreadId ?? null;
-      if (
-        providerThreadId !== null &&
-        providerThreadId !== input.stoppedProviderThreadId &&
-        (yield* hasLiveSession(providerThreadId))
-      ) {
-        continue;
-      }
+    for (const item of input.items) {
       const run = input.projection.runs.find((candidate) => candidate.id === item.runId);
       yield* emitEvent({
         type: "turn-item.updated",
@@ -11236,9 +11189,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       });
       if (item.type !== "subagent") continue;
-      // A native subagent died with the process too: end its record, its own
-      // thread's runless root turn, and the subagents it started there, which
-      // a provider can record on that thread rather than this one.
       const dying: Array<{
         readonly projection: Pick<
           OrchestrationV2ThreadProjection,
@@ -11307,6 +11257,81 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
     }
+  });
+
+  const settleBackgroundWork = Effect.fn("Orchestrator.settleBackgroundWork")(function* (input: {
+    readonly command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "thread.background-work.settle" }
+    >;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "runs" | "nodes" | "subagents" | "turnItems" | "providerThreads"
+    >;
+    readonly stoppedProviderThreadId: OrchestrationV2ProviderThread["id"] | null;
+    readonly throughRunOrdinal: number;
+    readonly now: DateTime.Utc;
+  }) {
+    const emitEvent = emit(input.events, input.command);
+    const runOrdinals = new Map(input.projection.runs.map((run) => [run.id, run.ordinal]));
+    const liveness = new Map<string, boolean>();
+    const hasLiveSession = Effect.fn("Orchestrator.hasLiveSession")(function* (
+      providerThreadId: OrchestrationV2ProviderThread["id"],
+    ) {
+      const known = liveness.get(providerThreadId);
+      if (known !== undefined) return known;
+      const sessionId = input.projection.providerThreads.find(
+        (candidate) => candidate.id === providerThreadId,
+      )?.providerSessionId;
+      const live =
+        sessionId !== null &&
+        sessionId !== undefined &&
+        Option.isSome(
+          yield* providerSessions.get(sessionId).pipe(Effect.orElseSucceed(() => Option.none())),
+        );
+      liveness.set(providerThreadId, live);
+      return live;
+    });
+    const stillReportsBackgroundWork = Effect.fnUntraced(function* (
+      providerThread: OrchestrationV2ProviderThread,
+    ) {
+      if (providerThread.providerSessionId == null) return false;
+      const session = yield* providerSessions
+        .get(providerThread.providerSessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(session) || session.value.hasPendingBackgroundWorkForThread === undefined) {
+        return false;
+      }
+      return yield* session.value
+        .hasPendingBackgroundWorkForThread(providerThread)
+        // A failed probe cannot confirm that the work ended.
+        .pipe(Effect.catchCause(() => Effect.succeed(true)));
+    });
+    const ended: Array<OrchestrationV2TurnItem> = [];
+    for (const item of pendingBackgroundTurnItems({
+      turnItems: input.projection.turnItems,
+      runs: input.projection.runs,
+    })) {
+      const itemRunOrdinal = item.runId === null ? undefined : runOrdinals.get(item.runId);
+      if (itemRunOrdinal !== undefined && itemRunOrdinal > input.throughRunOrdinal) continue;
+      const providerThreadId = item.providerThreadId ?? null;
+      if (
+        providerThreadId !== null &&
+        providerThreadId !== input.stoppedProviderThreadId &&
+        (yield* hasLiveSession(providerThreadId))
+      ) {
+        continue;
+      }
+      ended.push(item);
+    }
+    yield* endBackgroundItems({
+      command: input.command,
+      events: input.events,
+      projection: input.projection,
+      items: ended,
+      now: input.now,
+    });
     for (const providerThread of input.projection.providerThreads) {
       if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) continue;
       if (providerThread.id === input.stoppedProviderThreadId) {
@@ -11956,6 +11981,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+
+  // Released by a switch, an idle timeout or a crash: the session's process is gone and
+  // the work it ran outside an active run can never report an end.
+  const dispatchProviderSessionWorkSettle = Effect.fn(
+    "Orchestrator.dispatchProviderSessionWorkSettle",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "provider-session.work.settle" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    // A session opened again under the same id now owns this work.
+    if (yield* providerSessions.isLive(command.providerSessionId)) return;
+    const projection = yield* projectionStore
+      .getThreadRecords(
+        command.threadId,
+        ["runs", "nodes", "subagents", "turnItems", "providerThreads"],
+        {
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    const sessionProviderThreadIds = new Set(
+      projection.providerThreads.flatMap((providerThread) =>
+        providerThread.providerSessionId === command.providerSessionId ? [providerThread.id] : [],
+      ),
+    );
+    const items = pendingBackgroundTurnItems({
+      turnItems: projection.turnItems,
+      runs: projection.runs,
+    }).filter((item) => {
+      const run = projection.runs.find((candidate) => candidate.id === item.runId);
+      // A running run's consumer ends its own work when the session fails it.
+      if (run !== undefined && ["preparing", "starting", "running"].includes(run.status)) {
+        return false;
+      }
+      const providerThreadId = item.providerThreadId ?? run?.providerThreadId ?? null;
+      return providerThreadId !== null && sessionProviderThreadIds.has(providerThreadId);
+    });
+    yield* endBackgroundItems({ command, events, projection, items, now: yield* DateTime.now });
+  });
 
   const dispatchSubagentStop = Effect.fn("Orchestrator.dispatchSubagentStop")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "subagent.stop" }>,
@@ -14136,6 +14208,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.background-work.settle":
         yield* dispatchBackgroundWorkSettle(command, events, effects);
         break;
+      case "provider-session.work.settle":
+        yield* dispatchProviderSessionWorkSettle(command, events);
+        break;
       case "thread.interrupt.unresponsive":
         yield* dispatchInterruptUnresponsive(command, events);
         break;
@@ -14288,6 +14363,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planned.events.length > 0 ||
           isUnobservedAcknowledgement(command) ||
           command.type === "thread.background-work.settle" ||
+          command.type === "provider-session.work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||

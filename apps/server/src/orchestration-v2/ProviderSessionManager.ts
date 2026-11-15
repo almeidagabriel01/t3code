@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   isOrchestrationV2WorkActive,
   type MemoryTaskGrantCeiling,
@@ -924,6 +925,39 @@ export const layerWithOptions = (
         }
       });
 
+      // The orchestrator decides which of each thread's open work this session ran.
+      const writeReleasedNativeWorkEffects = Effect.fn(
+        "ProviderSessionManager.writeReleasedNativeWorkEffects",
+      )(function* (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
+      }) {
+        // Restart recovery settles a shutdown, and work that outlives its session stays open.
+        if (
+          input.reason === "server_shutdown" ||
+          input.entry.runtime.backgroundTasksEndWithProcess !== true
+        ) {
+          return;
+        }
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const releasedAt = DateTime.toEpochMillis(input.releasedAt);
+        const commandId = CommandId.make(
+          `command:provider-session.released:${providerSessionId}:${releasedAt}`,
+        );
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [...releasedThreadIds(input)].map((threadId) => ({
+            id: `effect:provider-session.work.settle:${providerSessionId}:${threadId}:${releasedAt}`,
+            commandId,
+            threadId,
+            request: { type: "provider-session.work.settle", providerSessionId },
+          })),
+        });
+      });
+
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
       // Keep OpenCode's roster: its background subagents share a server and can outlive the session.
       const readReleasedBackgroundTasks = Effect.fn(
@@ -1045,6 +1079,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedNativeWorkEffects(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));

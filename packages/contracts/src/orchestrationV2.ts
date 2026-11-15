@@ -3583,6 +3583,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
   }),
+  /** A provider session whose background work ends with its process was released. */
+  Schema.Struct({
+    type: Schema.Literal("provider-session.work.settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    providerSessionId: ProviderSessionId,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
     commandId: CommandId,
