@@ -1203,9 +1203,10 @@ const make = Effect.gen(function* () {
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
+    // `aimed` stays, so every later task on that model still finds the user's switch.
     if (force && changedByUser && modelSelectionsEqual(target, aimed)) {
       yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL,
-          restore_model_selection = NULL, aimed_model_selection = NULL
+          restore_model_selection = NULL
         WHERE thread_id = ${row.thread_id}`;
       return;
     }

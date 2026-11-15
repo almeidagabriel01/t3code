@@ -1896,12 +1896,67 @@ it.effect("a message's model the request's project turns off falls back to the p
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect.each([
-  ["a message without a model", false],
-  ["another message's model, then one without", true],
-] as const)(
+const opusModel = selection(claude, "opus");
+const sonnetModel = selection(claude, "sonnet");
+const mineModel = selection(claude, "mine");
+type SwitchStep =
+  | { readonly ask: ModelSelection | undefined; readonly expect: ModelSelection }
+  | { readonly handOff: ModelSelection; readonly answerBack: ModelSelection };
+
+it.effect.each<readonly [string, ModelSelection | undefined, ReadonlyArray<SwitchStep>]>([
+  ["a message without a model", undefined, [{ ask: undefined, expect: mineModel }]],
+  [
+    "another message's model, then one without",
+    undefined,
+    [
+      { ask: sonnetModel, expect: sonnetModel },
+      { ask: undefined, expect: mineModel },
+    ],
+  ],
+  [
+    "the same message model, again and again",
+    undefined,
+    [
+      { ask: opusModel, expect: mineModel },
+      { ask: opusModel, expect: mineModel },
+    ],
+  ],
+  [
+    "follow-ups without a model on the request's",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { ask: undefined, expect: mineModel },
+      { ask: undefined, expect: mineModel },
+    ],
+  ],
+  [
+    "follow-ups that pick the request's model again",
+    opusModel,
+    [
+      { ask: opusModel, expect: mineModel },
+      { ask: opusModel, expect: mineModel },
+    ],
+  ],
+  [
+    "a hand-off and a question back in the same work",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { handOff: opusModel, answerBack: mineModel },
+    ],
+  ],
+  [
+    "a pick of another model still moves it",
+    opusModel,
+    [
+      { ask: undefined, expect: mineModel },
+      { ask: sonnetModel, expect: sonnetModel },
+    ],
+  ],
+])(
   "a model the user picks in the thread during a message's work outlives it: %s",
-  ([, another]) => {
+  ([, requestModel, steps]) => {
     const h = harness({
       settings: {
         projectSettingsOverrides: { [p1]: { defaultModelSelection: selection(codex, "p1-model") } },
@@ -1909,27 +1964,62 @@ it.effect.each([
     });
     return Effect.gen(function* () {
       const groups = yield* h.setup;
-      const request = yield* groups.post({ teamId: TEAM, text: "@ada one" }, h.user);
+      const request = yield* groups.post(
+        {
+          teamId: TEAM,
+          text: "@ada one",
+          ...(requestModel ? { modelSelection: requestModel } : {}),
+        },
+        h.user,
+      );
       const ada = requestThreadId("ada", TEAM, request.message.id);
-      yield* h.finish(0, "completed", "done");
-      h.fakeThreads.get(ada)!.modelSelection = selection(codex, "ada-pick");
+      const model = () => h.fakeThreads.get(ada)!.modelSelection;
       const ask = (more: Partial<AssistantGroupsPostInput>) =>
         groups.post(
           { teamId: TEAM, text: "@ada more", replyToMessageId: request.message.id, ...more },
           h.user,
         );
-      yield* ask({ modelSelection: selection(claude, "opus") });
-      // The user switches the thread while the message's work runs.
-      const mine = selection(claude, "mine");
-      h.fakeThreads.get(ada)!.modelSelection = mine;
-      yield* h.finish(h.sent.length - 1, "completed", "done");
-      if (another) {
-        yield* ask({ modelSelection: selection(claude, "sonnet") });
-        assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, selection(claude, "sonnet"));
-        yield* h.finish(h.sent.length - 1, "completed", "done");
+      if (requestModel === undefined) {
+        yield* h.finish(0, "completed", "done");
+        h.fakeThreads.get(ada)!.modelSelection = selection(codex, "ada-pick");
+        yield* ask({ modelSelection: opusModel });
       }
-      yield* ask({});
-      assert.deepEqual(h.fakeThreads.get(ada)!.modelSelection, mine);
+      // The user switches the thread while the message's work runs.
+      h.fakeThreads.get(ada)!.modelSelection = mineModel;
+      yield* h.finish(h.sent.length - 1, "completed", "done");
+      const seen: Array<string> = [];
+      const wanted: Array<string> = [];
+      for (const step of steps) {
+        if ("ask" in step) {
+          yield* ask(step.ask === undefined ? {} : { modelSelection: step.ask });
+          seen.push(model().model);
+          wanted.push(step.expect.model);
+          yield* h.finish(h.sent.length - 1, "completed", "done");
+          continue;
+        }
+        yield* ask({});
+        const turn = h.sent.length - 1;
+        const child = yield* groups.member.assign({
+          callerThreadId: ada,
+          member: "cy",
+          instruction: "Check the build",
+        });
+        const cy = requestThreadId("cy", TEAM, request.message.id);
+        seen.push(h.fakeThreads.get(cy)!.modelSelection.model);
+        wanted.push(step.handOff.model);
+        yield* h.finish(turn, "completed", "Ada's notes");
+        const answer = (yield* h.messages).findLast((row) => row.assistant_id === "ada")!;
+        yield* groups.member.reply({
+          callerThreadId: cy,
+          messageId: answer.message_id,
+          text: "Which build?",
+        });
+        assert.equal(h.sent.at(-1)!.threadId, ada);
+        seen.push(model().model);
+        wanted.push(step.answerBack.model);
+        yield* h.finishTask(child.taskId, "completed", "Build is green.");
+      }
+      assert.deepEqual(seen, wanted);
     }).pipe(Effect.provide(h.layer));
   },
 );
