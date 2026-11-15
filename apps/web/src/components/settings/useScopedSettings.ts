@@ -1,9 +1,6 @@
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
-import {
-  requiredScopesForServerSettingsPatch,
-  EnvironmentAuthorizationError,
-} from "@t3tools/contracts";
+import { EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -69,9 +66,9 @@ function useRunScopedPlan() {
     void persistScopedSettingsPatch(
       plan,
       async (request) => {
-        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-          (scope) => !readEnvironmentScope(request.environmentId, scope),
-        );
+        const missing = serverEnvironment.updateSettings
+          .requiredScopes(request.input)
+          .find((scope) => !readEnvironmentScope(request.environmentId, scope));
         if (missing)
           return AsyncResult.failure(
             Cause.fail(

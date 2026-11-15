@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { clientRpcRequiredScopes, CLIENT_GUARDED_RPC_SCOPES } from "./clientRpcPermissions.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 describe("memory client guards", () => {
@@ -185,4 +186,35 @@ describe("file explorer client guards", () => {
       "filesystem:write",
     ]);
   });
+});
+
+describe("settings client guards", () => {
+  const remove = {
+    operation: "remove",
+    instanceId: ProviderInstanceId.make("codex_work"),
+  } as const;
+  it.each([
+    ["no payload", undefined, ["settings:write"]],
+    ["an empty patch", { patch: {} }, ["settings:write"]],
+    ["a settings field", { patch: { defaultRuntimeMode: "full-access" } }, ["settings:write"]],
+    ["a provider field", { patch: { providerInstances: {} } }, ["providers:manage"]],
+    [
+      "both",
+      { patch: { defaultRuntimeMode: "full-access", providerInstances: {} } },
+      ["settings:write", "providers:manage"],
+    ],
+    [
+      "a removed secret provider",
+      { patch: { secretProviders: { personal: null } } },
+      ["settings:write", "providers:manage"],
+    ],
+    ["a provider mutation", { patch: {}, providerInstanceMutation: remove }, ["providers:manage"]],
+    [
+      "a mutation and a settings field",
+      { patch: { defaultRuntimeMode: "full-access" }, providerInstanceMutation: remove },
+      ["settings:write", "providers:manage"],
+    ],
+  ])("server.updateSettings with %s", (_case, input, scopes) =>
+    expect(clientRpcRequiredScopes(WS_METHODS.serverUpdateSettings, input)).toEqual(scopes),
+  );
 });

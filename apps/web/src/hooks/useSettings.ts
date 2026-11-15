@@ -4,7 +4,6 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
   AuthSettingsWriteScope,
-  requiredScopesForServerSettingsPatch,
   type EnvironmentId,
   type ProviderInstanceMutation,
   type ProviderInstanceId,
@@ -629,9 +628,9 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
 
     const canWriteServerPatch =
       environmentId === null ||
-      requiredScopesForServerSettingsPatch(serverPatch).every((scope) =>
-        readEnvironmentScope(environmentId, scope),
-      );
+      serverEnvironment.updateSettings
+        .requiredScopes({ patch: serverPatch })
+        .every((scope) => readEnvironmentScope(environmentId, scope));
     if (Object.keys(serverPatch).length > 0 && !canWriteServerPatch) {
       options?.onFailed?.();
       toastManager.add({
@@ -684,9 +683,9 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const session = appAtomRegistry.get(environmentSession.sessionStateAtom(targetId));
           if (
             session._tag !== "Initial" &&
-            !requiredScopesForServerSettingsPatch(sharedPatch).every((scope) =>
-              readEnvironmentScope(targetId, scope),
-            )
+            !serverEnvironment.updateSettings
+              .requiredScopes({ patch: sharedPatch })
+              .every((scope) => readEnvironmentScope(targetId, scope))
           ) {
             deniedLabels.push(target?.label ?? targetId);
             continue;

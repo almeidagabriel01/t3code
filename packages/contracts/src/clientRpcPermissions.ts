@@ -18,6 +18,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import { requiredScopesForServerSettingsUpdate, ServerSettingsUpdateInput } from "./settings.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -63,6 +64,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Restarts the server, as an update does.
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  // The minimum; the patch can trade it for or add providers:manage.
+  [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.
   [WS_METHODS.serverListTextGeneratorModels]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
@@ -197,6 +200,8 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+// The server's middleware receives the payload already decoded, as clients hold it.
+const decodeSettingsUpdate = Schema.decodeUnknownSync(Schema.toType(ServerSettingsUpdateInput));
 
 export function clientRpcRequiredScopes(
   method: string,
@@ -215,6 +220,8 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  if (method === WS_METHODS.serverUpdateSettings && input !== undefined)
+    return requiredScopesForServerSettingsUpdate(decodeSettingsUpdate(input));
   // Source reads need explicit transcript access; the memory scope alone is not enough.
   if (method === WS_METHODS.memoryReadSource)
     return [AuthMemoryReadScope, AuthOrchestrationReadScope];
