@@ -213,9 +213,11 @@ function ProjectModelPicker(props: {
       {picker}
       <Tooltip>
         <TooltipTrigger render={<Badge variant="info" size="sm" className="shrink-0" />}>
+          {/* A narrow row shows the dot in place of the label, so the dot carries its name. */}
           <span
             data-composer-control-mark
-            aria-hidden
+            role="img"
+            aria-label="This message"
             className="hidden size-1.5 rounded-full bg-current"
           />
           <span data-composer-control-label>This message</span>
