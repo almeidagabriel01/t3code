@@ -1,6 +1,9 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import {
+  continuesAssistantSender,
+  messageAssistantId,
+} from "@t3tools/client-runtime/assistantPresence";
 import { assistantReplyText, taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -607,6 +610,8 @@ type MessagesTimelineRowContent =
       continuesSteer?: boolean;
       /** The first message of an assistant in this thread; a "joined" divider leads it. */
       assistantJoined?: boolean;
+      /** A lone teammate message right after another from the same teammate. */
+      continuesSender?: boolean;
     }
   | {
       kind: "assistant-meta";
@@ -2310,9 +2315,17 @@ export function deriveMessagesTimelineRows(input: {
     if (row.kind === "message" && row.message.role === "user") {
       const assistantId = messageAssistantId(row.message);
       if (assistantId !== null) {
-        if (joinedAssistantIds.has(assistantId)) return row;
-        joinedAssistantIds.add(assistantId);
-        return { ...row, assistantJoined: true };
+        if (!joinedAssistantIds.has(assistantId)) {
+          joinedAssistantIds.add(assistantId);
+          return { ...row, assistantJoined: true };
+        }
+        const previous = result[index - 1];
+        return continuesAssistantSender(
+          row.message,
+          previous?.kind === "message" ? previous.message : undefined,
+        )
+          ? { ...row, continuesSender: true }
+          : row;
       }
     }
     if (timelineRowIsTaskEvent(row)) {
@@ -2722,7 +2735,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
         a.continuesSteer === bm.continuesSteer &&
-        a.assistantJoined === bm.assistantJoined
+        a.assistantJoined === bm.assistantJoined &&
+        a.continuesSender === bm.continuesSender
       );
     }
   }
