@@ -280,6 +280,7 @@ it.effect("the chat with yourself never reads the transport's own replies back",
 });
 
 it.effect.each([
+  ["within the mirror window", 2],
   ["soon after", 10],
   ["long after", 20 * 60],
 ] as const)("a timed-out reply sent again %s echoes as ours both times", ([, gapSeconds]) => {
@@ -327,8 +328,11 @@ it.effect.each([
     );
     yield* runtime.pollOnce;
     assert.deepEqual(ingested, []);
-    const [piece] = yield* sql<{ readonly consumed: number }>`SELECT consumed FROM imessage_sent`;
-    assert.equal(piece!.consumed, 1);
+    const [piece] = yield* sql<{
+      readonly consumed: number;
+      readonly echoes_due: number;
+    }>`SELECT consumed, echoes_due FROM imessage_sent`;
+    assert.deepEqual(piece, { consumed: 1, echoes_due: 0 });
   }).pipe(Effect.provide(layer));
 });
 

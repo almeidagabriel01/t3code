@@ -66,6 +66,12 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
       )`;
     yield* sql`INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms,
       consumed) VALUES ('echoed', 0, 'c', 'h', 1, 1), ('waiting', 0, 'c', 'h', 1, 0)`;
+    yield* sql`
+      CREATE TABLE imessage_seen (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_guid TEXT NOT NULL, text_hash TEXT NOT NULL,
+        date_ms INTEGER NOT NULL
+      )`;
+    yield* sql`INSERT INTO imessage_seen (chat_guid, text_hash, date_ms) VALUES ('c', 'h', 1)`;
 
     yield* ensureForkSchema();
     yield* ensureForkSchema();
@@ -77,6 +83,9 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
         { delivery_id: "waiting", echoes_due: 1, first_sent_at_ms: null },
       ],
     );
+    assert.deepStrictEqual(yield* sql`SELECT text_hash, from_me FROM imessage_seen`, [
+      { text_hash: "h", from_me: null },
+    ]);
 
     assert.deepStrictEqual(
       yield* sql`SELECT task_id, hops, undelivered_hops, expected_result FROM assistant_group_tasks`,

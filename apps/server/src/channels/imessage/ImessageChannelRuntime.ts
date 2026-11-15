@@ -189,7 +189,8 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
       readonly chat_guid: string;
       readonly text_hash: string;
       readonly date_ms: number;
-    }>`SELECT chat_guid, text_hash, date_ms FROM imessage_seen`;
+      readonly from_me: number | null;
+    }>`SELECT chat_guid, text_hash, date_ms, from_me FROM imessage_seen`;
     return {
       sent: sent.map((row) => ({
         id: row.id,
@@ -202,6 +203,7 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
         chatGuid: row.chat_guid,
         textHash: row.text_hash,
         dateMs: row.date_ms,
+        fromMe: row.from_me === null ? null : row.from_me !== 0,
       })),
     } satisfies ImessageAdmissionMemory;
   }, orDieSql);
@@ -210,15 +212,15 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
     admission: ImessageAdmission,
   ) {
     if (admission.type === "pending_join" || admission.remember === undefined) return;
-    const { chatGuid, textHash, dateMs } = admission.remember;
+    const { chatGuid, textHash, dateMs, fromMe } = admission.remember;
     if (admission.type === "skip" && admission.consumeSentId !== undefined) {
       yield* sql`
           UPDATE imessage_sent SET consumed = 1, echoes_due = MAX(echoes_due - 1, 0)
           WHERE id = ${admission.consumeSentId}`;
     }
     yield* sql`
-          INSERT INTO imessage_seen (chat_guid, text_hash, date_ms)
-          VALUES (${chatGuid}, ${textHash}, ${dateMs})`;
+          INSERT INTO imessage_seen (chat_guid, text_hash, date_ms, from_me)
+          VALUES (${chatGuid}, ${textHash}, ${dateMs}, ${fromMe === null ? null : Number(fromMe)})`;
     yield* sql`
           DELETE FROM imessage_seen
           WHERE id <= (SELECT MAX(id) FROM imessage_seen) - ${SEEN_KEEP}`;

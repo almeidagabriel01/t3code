@@ -91,17 +91,15 @@ export interface ImessageAdmissionMemory {
     readonly firstSentAtMs: number;
     readonly sentAtMs: number;
   }>;
-  readonly seen: ReadonlyArray<{
-    readonly chatGuid: string;
-    readonly textHash: string;
-    readonly dateMs: number;
-  }>;
+  readonly seen: ReadonlyArray<ImessageSeenEntry>;
 }
 
 export interface ImessageSeenEntry {
   readonly chatGuid: string;
   readonly textHash: string;
   readonly dateMs: number;
+  /** Which side of the self chat stored it; null for entries from before this was kept. */
+  readonly fromMe: boolean | null;
 }
 
 interface SelfChatEffects {
@@ -182,11 +180,15 @@ export function admitImessageRow(
   if (row.message_service !== "iMessage") return skip("service");
   const dateMs = appleDateToEpochMs(row.date) ?? 0;
   const textHash = fingerprintText(text);
-  const remember = { chatGuid: row.chat_guid, textHash, dateMs };
-  // The twin is checked first, so it never spends the echo a later send of the same reply is owed.
+  const remember = { chatGuid: row.chat_guid, textHash, dateMs, fromMe };
+  // A twin is the same message stored on the other side of the self chat; another send of the
+  // same reply lands on the same side again, so it is never taken for a twin and spends its echo.
   if (
     memory.seen.some(
-      (seen) => seen.textHash === textHash && Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
+      (seen) =>
+        seen.textHash === textHash &&
+        seen.fromMe !== fromMe &&
+        Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
     )
   ) {
     return skip("mirrored");
