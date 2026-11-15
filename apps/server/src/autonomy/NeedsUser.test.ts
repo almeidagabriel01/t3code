@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as AssistantTasks from "../assistants/AssistantTasks.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -45,6 +46,7 @@ const decision = (id: string, status: string, extra: Record<string, unknown> = {
 
 const layer = (open: { readonly decision: boolean; readonly request: boolean }) =>
   NeedsUser.layer.pipe(
+    Layer.provideMerge(AssistantTasks.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
@@ -174,6 +176,7 @@ it.effect("a source that fails resubscribes, and replays what opened while it wa
     }),
   );
   const flaky = NeedsUser.layer.pipe(
+    Layer.provideMerge(AssistantTasks.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
@@ -205,3 +208,24 @@ it.effect("a source that fails resubscribes, and replays what opened while it wa
     assert.strictEqual(keys.filter((key) => key === "opened request:r8").length, 1);
   }).pipe(Effect.provide(flaky));
 });
+
+it.effect(
+  "the default assistant is told through its live conversation, never an archived one",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const needsUser = yield* NeedsUser.NeedsUser;
+      assert.isTrue(Option.isNone(yield* needsUser.defaultAssistant));
+      yield* sql`
+      INSERT INTO assistants
+        (assistant_id, handle, name, project_id, tool_access, thread_id, created_at, updated_at)
+      VALUES ('jarvis', 'jarvis', 'Jarvis', 'home', 'full', 'assistant:jarvis:2', '2026-01-01', '2026-01-01')`;
+      assert.deepStrictEqual(Option.getOrThrow(yield* needsUser.defaultAssistant), {
+        name: "Jarvis",
+        threadId: ThreadId.make("assistant:jarvis:2"),
+        projectId: "home",
+      });
+      yield* sql`UPDATE assistants SET archived_at = 'now' WHERE assistant_id = 'jarvis'`;
+      assert.isTrue(Option.isNone(yield* needsUser.defaultAssistant));
+    }).pipe(Effect.provide(layer({ decision: true, request: true }))),
+);

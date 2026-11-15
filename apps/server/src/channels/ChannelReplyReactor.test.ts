@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
+import { waitWakeId } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -77,11 +78,11 @@ const speak = (
       VALUES (${assistant}, ${encodeReplyAddress(address)}, '+15550000000')`;
   });
 
-const runEvent = (status: string, id = "run-1", threadId = thread) =>
+const runEvent = (status: string, id = "run-1", threadId = thread, userMessageId = "m1") =>
   ({
     type: "run.updated",
     threadId,
-    payload: { id, threadId, status },
+    payload: { id, threadId, status, userMessageId },
   }) as unknown as OrchestrationV2DomainEvent;
 
 const messageEvent = (patch: Record<string, unknown>) =>
@@ -120,6 +121,19 @@ it.effect("a finished run posts its last assistant message once, however often i
       language: "en",
     });
     assert.lengthOf(reads, 1);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a run a wait woke stays in T3: the chat app already has the wait's card", () => {
+  const { layer, records } = harness();
+  return Effect.gen(function* () {
+    const reactor = yield* Reactor.ChannelReplyReactor;
+    yield* speak();
+    records.set("run-wake", { messages: [{ text: "The tests wait on you." }], turnItems: [] });
+    yield* reactor.handle(
+      runEvent("completed", "run-wake", thread, waitWakeId(thread as never, "decision:d1")),
+    );
+    assert.lengthOf(yield* outboxRows, 0);
   }).pipe(Effect.provide(layer));
 });
 

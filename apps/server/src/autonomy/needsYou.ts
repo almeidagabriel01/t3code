@@ -6,6 +6,7 @@ import {
   type DecisionOption,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import { redactChannelText } from "../channels/channelRedaction.ts";
@@ -20,6 +21,15 @@ const WANTS: Readonly<Record<string, string>> = {
   "file-change": DECISION_PHRASES.wantsFileChange,
   "file-read": DECISION_PHRASES.wantsFileRead,
 };
+
+/**
+ * The message that tells `targetThreadId` (an assistant's conversation) about a wait. One id per
+ * conversation and wait: a repeat replays its command receipt, so the owner's wake and the default
+ * assistant's notice are one message when both go to the same conversation.
+ */
+export const WAIT_WAKE_PREFIX = "assistant-task-waits:";
+export const waitWakeId = (targetThreadId: ThreadId, key: string) =>
+  `${WAIT_WAKE_PREFIX}${targetThreadId}:${key}`;
 
 /** Kinds T3 answers itself; every other pending request waits on the user. */
 export const MACHINE_REQUEST_KINDS = ["dynamic_tool_call", "auth_refresh"] as const;
@@ -173,4 +183,23 @@ export function needsYouText(
     card.link === null ? "" : `${t.openInT3} ${card.link}`,
   ];
   return { text: lines.filter((line) => line !== "").join("\n\n"), answerable };
+}
+
+/**
+ * The default assistant's short notice of a wait (title, origin and thread link), so it knows what
+ * waits on the user. The user's chat app already got the card, so it only keeps it in mind.
+ */
+export function defaultNoticeText(input: {
+  readonly title: string;
+  readonly origin: string;
+  /** The waiting thread as a chat link. */
+  readonly link: string;
+  readonly source: "request" | "decision";
+}): string {
+  const where = input.source === "decision" ? "in Activity" : "in that thread";
+  return [
+    `Waiting on the user: ${input.title}`,
+    `From ${input.origin} in ${input.link}. They answer it ${where}.`,
+    "Their chat app already has it: keep it for when they ask what waits on them, never answer it for them, and reply in one line at most.",
+  ].join("\n");
 }

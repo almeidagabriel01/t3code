@@ -14,8 +14,10 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NeedsUser from "../autonomy/NeedsUser.ts";
-import { requestDecision } from "../autonomy/needsYou.ts";
+import * as DecisionService from "../decisions/DecisionService.ts";
+import { requestDecision, waitWakeId } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Reactor from "./AssistantTaskReactor.ts";
@@ -123,7 +125,51 @@ const harness = (
   const onSend: { current: (input: unknown) => Effect.Effect<void> } = {
     current: () => Effect.void,
   };
+  const records = (threadId: string) =>
+    Effect.succeed({
+      thread: THREADS[threadId] ?? plainThread,
+      messages: [{ text: "Done: retry added" }, { text: "  " }],
+      runs: options.runs ?? [],
+    } as never);
+  // The real owner chain, default lookup and withdrawal; only what waits is scripted.
+  const needsUser = Layer.effect(
+    NeedsUser.NeedsUser,
+    Effect.gen(function* () {
+      const real = yield* NeedsUser.NeedsUser;
+      return NeedsUser.NeedsUser.of({
+        ...real,
+        changes: Stream.fromIterable(options.changes ?? []),
+        describe: (wait, agent) =>
+          Effect.succeed(
+            options.settled?.includes(wait.key) === true
+              ? Option.none()
+              : wait.source === "decision"
+                ? Option.some({
+                    title: wait.decision.title,
+                    context: wait.decision.context,
+                    options: wait.decision.options,
+                    answerable: true,
+                  })
+                : Option.some(
+                    requestDecision(
+                      agent,
+                      {
+                        kind: wait.requestKind,
+                        responseCapability: { type: "live", providerSessionId: "s1" },
+                      } as never,
+                      ITEMS[wait.requestKind] as never,
+                    ),
+                  ),
+          ),
+      });
+    }),
+  ).pipe(
+    Layer.provide(NeedsUser.layer),
+    Layer.provide(Layer.mock(DecisionService.DecisionService)({})),
+    Layer.provide(Layer.mock(ProjectionStore.ProjectionStoreV2)({})),
+  );
   const layer = Reactor.layer.pipe(
+    Layer.provideMerge(needsUser),
     Layer.provideMerge(Tasks.layer),
     Layer.provideMerge(
       Layer.mergeAll(
@@ -136,41 +182,12 @@ const harness = (
               archivedAt: null,
               pendingBackgroundTasks: options.pendingBackgroundTasks ?? [],
             } as never),
+          getThreadRecords: records,
           dispatch: (command) =>
             Effect.sync(() => void dispatched.push(command as never)).pipe(Effect.as({} as never)),
         }),
-        Layer.mock(NeedsUser.NeedsUser)({
-          changes: Stream.fromIterable(options.changes ?? []),
-          describe: (wait, agent) =>
-            Effect.succeed(
-              options.settled?.includes(wait.key) === true
-                ? Option.none()
-                : wait.source === "decision"
-                  ? Option.some({
-                      title: wait.decision.title,
-                      context: wait.decision.context,
-                      options: wait.decision.options,
-                      answerable: true,
-                    })
-                  : Option.some(
-                      requestDecision(
-                        agent,
-                        {
-                          kind: wait.requestKind,
-                          responseCapability: { type: "live", providerSessionId: "s1" },
-                        } as never,
-                        ITEMS[wait.requestKind] as never,
-                      ),
-                    ),
-            ),
-        }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            Effect.succeed({
-              thread: THREADS[threadId] ?? plainThread,
-              messages: [{ text: "Done: retry added" }, { text: "  " }],
-              runs: options.runs ?? [],
-            } as never),
+          getThreadRecords: records,
           sendToThread: (input) =>
             options.failSend === true
               ? Effect.fail(new Error("send failed") as never)
@@ -309,7 +326,7 @@ it.effect("a task that waits on an approval wakes its assistant once, with the o
     assert.strictEqual(sends.length, 2);
     assert.strictEqual(sends[0]?.commandId, sends[1]?.commandId);
     const [sent] = sends;
-    assert.strictEqual(sent?.messageId, `assistant-task-waits:${taskThread}:request:req-command`);
+    assert.strictEqual(sent?.messageId, `assistant-task-waits:assistant:ada:1:request:req-command`);
     assert.strictEqual(sent?.threadId, "assistant:ada:1");
     assert.strictEqual(sent?.projectId, "assistants-home");
     assert.strictEqual(sent?.senderThreadId, taskThread);
@@ -333,7 +350,7 @@ it.effect("a question wakes with its options and a decision points to Activity",
     assert.include(question, "Which name?");
     assert.include(question, "Options: Ada / Bo");
     const decision = String(sends[1]?.text);
-    assert.strictEqual(sends[1]?.messageId, `assistant-task-waits:${taskThread}:decision:dec-1`);
+    assert.strictEqual(sends[1]?.messageId, "assistant-task-waits:assistant:ada:1:decision:dec-1");
     assert.include(decision, "Names in the group chat UI");
     assert.include(decision, "Options: Per request / Per member");
     assert.include(decision, "in Activity");
@@ -393,7 +410,7 @@ it.effect("no wake for an archived owner, an assistant thread, or a wait already
 });
 
 it.effect("a wait settled while its wake is queued takes the wake back", () => {
-  const id = `assistant-task-waits:${taskThread}:request:req-command`;
+  const id = "assistant-task-waits:assistant:ada:1:request:req-command";
   const { sends, dispatched, layer } = harness({
     runs: [
       { id: "run-other", status: "queued", userMessageId: "m-other" },
@@ -416,6 +433,48 @@ it.effect("a wait settled while its wake is queued takes the wake back", () => {
     ]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("a settled wait also takes back the default assistant's queued notice", () => {
+  const ada = "assistant-task-waits:assistant:ada:1:decision:dec-1";
+  const jarvis = "assistant-task-waits:assistant:jarvis:1:decision:dec-1";
+  const { sends, dispatched, layer } = harness({
+    runs: [
+      { id: "run-ada", status: "queued", userMessageId: ada },
+      { id: "run-jarvis", status: "queued", userMessageId: jarvis },
+    ],
+  });
+  return Effect.gen(function* () {
+    yield* setupAda();
+    yield* insertAssistant("jarvis");
+    yield* (yield* Reactor.AssistantTaskReactor).handleWait(decisionChange("answered")!);
+    assert.strictEqual(sends.length, 0);
+    assert.deepStrictEqual(
+      dispatched.map((command) => [command.threadId, command.runId]),
+      [
+        ["assistant:ada:1", "run-ada"],
+        ["assistant:jarvis:1", "run-jarvis"],
+      ],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "the default's own task wakes it under the id its notice uses, so it is told once",
+  () => {
+    const { sends, layer } = harness();
+    return Effect.gen(function* () {
+      yield* setup();
+      yield* (yield* Reactor.AssistantTaskReactor).handleWait(
+        requestChange(taskThread, "command")!,
+      );
+      assert.strictEqual(sends[0]?.threadId, "assistant:jarvis:1");
+      assert.strictEqual(
+        sends[0]?.messageId,
+        waitWakeId(ThreadId.make("assistant:jarvis:1"), "request:req-command"),
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it("machine requests, notices and approval mirrors never count as waiting on the user", () => {
   assert.isNull(requestChange(taskThread, "dynamic_tool_call"));
@@ -498,8 +557,8 @@ it.effect("start wakes for what already waits, and a second start repeats the sa
     const ids = h.sends.map((input) => String(input.commandId));
     assert.deepStrictEqual(new Set(ids), new Set(ids.slice(0, 2)));
     assert.deepStrictEqual(ids.slice(0, 2).toSorted(), [
-      `assistant-task-waits:${taskThread}:decision:dec-1`,
-      `assistant-task-waits:${taskThread}:request:req-command`,
+      "assistant-task-waits:assistant:ada:1:decision:dec-1",
+      "assistant-task-waits:assistant:ada:1:request:req-command",
     ]);
   }).pipe(Effect.provide(h.layer));
 });

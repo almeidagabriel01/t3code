@@ -16,7 +16,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
-import { cardContext } from "../autonomy/needsYou.ts";
+import { cardContext, WAIT_WAKE_PREFIX } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -92,6 +92,8 @@ const make = Effect.gen(function* () {
   const postRun = Effect.fn("ChannelReplyReactor.postRun")(function* (
     run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }>["payload"],
   ) {
+    // A wait's card already reached the chat app (AutonomyService), so the wake's answer stays here.
+    if (run.userMessageId.startsWith(WAIT_WAKE_PREFIX)) return;
     const target = yield* targetFor(run.threadId);
     const deliveryId = `channel-run:${run.id}`;
     if (target === undefined || Option.isSome(yield* outbox.find(deliveryId))) return;

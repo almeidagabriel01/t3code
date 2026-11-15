@@ -1,8 +1,5 @@
 import {
-  assistantIdFromThreadId,
   CommandId,
-  isAssistantThreadId,
-  isProviderNativeSubagentThread,
   MessageId,
   type OrchestrationV2DomainEvent,
   type ProjectId,
@@ -27,17 +24,14 @@ import {
   type UserWait,
   type UserWaitChange,
 } from "../autonomy/NeedsUser.ts";
-import type { RequestDecision } from "../autonomy/needsYou.ts";
+import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
 
 const TASK_WAKE_PREFIX = "assistant-task:";
-const WAIT_WAKE_PREFIX = "assistant-task-waits:";
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
-/** Subagent chains are shallow; the cap only guards a malformed lineage loop. */
-const MAX_CHAIN_DEPTH = 8;
 const LIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const LAST_MESSAGE_CHARS = 1_500;
 
@@ -193,67 +187,29 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  /**
-   * The assistant following a thread: the launcher of it or of an ancestor (`AssistantTasks`), or
-   * the assistant whose conversation started its delegate_task chain. `delegated` says the thread
-   * itself is a delegate_task child, whose questions go to its parent agent first.
-   */
-  const waitOwner = Effect.fnUntraced(function* (threadId: ThreadId) {
-    let current = threadId;
-    let delegated = false;
-    for (let depth = 0; depth < MAX_CHAIN_DEPTH; depth += 1) {
-      // An assistant's own conversation, and a group member's, is not a task it follows.
-      if (isAssistantThreadId(current)) return Option.none();
-      const task = yield* tasks.forThread(current);
-      if (Option.isSome(task)) {
-        const owner = yield* liveOwner(task.value.assistantId);
-        return Option.map(owner, (value) => ({ ...value, delegated, title: task.value.title }));
-      }
-      const { thread } = yield* threads.getThreadRecords(current, []);
-      const parent = thread.lineage.parentThreadId;
-      if (thread.lineage.relationshipToParent !== "subagent" || parent === null) {
-        return Option.none();
-      }
-      const native = isProviderNativeSubagentThread(thread);
-      if (depth === 0) delegated = !native;
-      if (isAssistantThreadId(parent)) {
-        // A native subagent is part of the assistant's own turn.
-        if (native) return Option.none();
-        const group = yield* sql`SELECT 1 FROM assistant_group_threads WHERE thread_id = ${parent}`;
-        const assistantId = assistantIdFromThreadId(parent);
-        if (group.length > 0 || assistantId === null) return Option.none();
-        const owner = yield* liveOwner(assistantId);
-        return Option.map(owner, (value) => ({ ...value, delegated, title: thread.title }));
-      }
-      current = parent;
-    }
-    return Option.none();
-  });
-
   const handleWait: AssistantTaskReactor["Service"]["handleWait"] = Effect.fn(
     "AssistantTaskReactor.handleWait",
   )(
     function* ({ type, wait }) {
-      const owner = yield* waitOwner(wait.threadId);
+      if (type === "resolved") {
+        // Answered before the assistants got to it: take back the wakes still queued.
+        const targets = [
+          // A thread gone since is followed by no one; the default still takes its wake back.
+          yield* needsUser.owner(wait.threadId).pipe(Effect.orElseSucceed(() => Option.none())),
+          yield* needsUser.defaultAssistant,
+        ].flatMap((target) => (Option.isSome(target) ? [target.value.threadId] : []));
+        for (const threadId of new Set(targets)) {
+          yield* needsUser.withdrawWake(threadId, wait.key);
+        }
+        return;
+      }
+      const owner = yield* needsUser.owner(wait.threadId);
       if (Option.isNone(owner)) return;
       // DelegatedTaskQuestionReactor already brings a delegated task's question to its parent.
       if (owner.value.delegated && wait.source === "request" && wait.requestKind === "user_input") {
         return;
       }
-      const id = `${WAIT_WAKE_PREFIX}${wait.threadId}:${wait.key}`;
-      if (type === "resolved") {
-        // Answered before the assistant got to it: take the queued wake back.
-        const { runs } = yield* threads.getThreadRecords(owner.value.threadId, ["runs"]);
-        const queued = runs.find((run) => run.status === "queued" && run.userMessageId === id);
-        if (queued === undefined) return;
-        yield* engine.dispatch({
-          type: "queued-run.cancel",
-          commandId: CommandId.make(`${id}:cancel`),
-          threadId: owner.value.threadId,
-          runId: queued.id,
-        });
-        return;
-      }
+      const id = waitWakeId(owner.value.threadId, wait.key);
       const shell = yield* engine
         .getThreadShell(wait.threadId)
         .pipe(Effect.orElseSucceed(() => null));
