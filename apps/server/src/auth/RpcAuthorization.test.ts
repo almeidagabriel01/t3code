@@ -164,16 +164,19 @@ describe("RPC authorization scopes", () => {
   });
 });
 
+const listing = [AuthOrchestrationReadScope];
+const changing = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 it.each([
-  [{}, AuthOrchestrationReadScope],
-  [{ inspectOnly: true }, AuthOrchestrationReadScope],
+  [{}, listing],
+  [{ inspectOnly: true }, listing],
   // Inspecting never runs the retry, so it stays a read.
-  [{ inspectOnly: true, retryHostId: "remote-host" }, AuthOrchestrationReadScope],
-  [{ retryHostId: "remote-host" }, AuthOrchestrationOperateScope],
-  [{ updateTool: "agent", inspectOnly: true }, AuthOrchestrationOperateScope],
-  [{ updateTool: "hub" }, AuthOrchestrationOperateScope],
-] as const)("device.list with %j requires %s", (input, scope) => {
-  expect(rpcRequiredScopes(WS_METHODS.deviceList, input)).toEqual([scope]);
+  [{ inspectOnly: true, retryHostId: "remote-host" }, listing],
+  // Retrying or updating also lists devices, so it still needs the read grant.
+  [{ retryHostId: "remote-host" }, changing],
+  [{ updateTool: "agent", inspectOnly: true }, changing],
+  [{ updateTool: "hub" }, changing],
+] as const)("device.list with %j requires %j", (input, scopes) => {
+  expect(rpcRequiredScopes(WS_METHODS.deviceList, input)).toEqual(scopes);
 });
 
 describe("middleware and the table clients read", () => {

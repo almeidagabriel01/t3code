@@ -288,7 +288,11 @@ describe("command permissions", () => {
       undefined,
       ["environment:maintain", "diagnostics:read"],
     ],
-    [WS_METHODS.deviceList, { retryHostId: "remote-host" }, ["orchestration:operate"]],
+    [
+      WS_METHODS.deviceList,
+      { retryHostId: "remote-host" },
+      ["orchestration:read", "orchestration:operate"],
+    ],
     [WS_METHODS.deviceList, { inspectOnly: true }, ["orchestration:read"]],
     [WS_METHODS.serverUpdateSettings, undefined, ["settings:write"]],
     [

@@ -474,7 +474,7 @@ export function rpcRequiredScopes(
     // Mirrors the handler: updating a tool or retrying a host can install or restart tools.
     const input = payload as DeviceListInput;
     return input.updateTool || (input.retryHostId && !input.inspectOnly)
-      ? [AuthOrchestrationOperateScope]
+      ? [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]
       : [AuthOrchestrationReadScope];
   }
   if (method === WS_METHODS.gitPreparePullRequestThread) {
