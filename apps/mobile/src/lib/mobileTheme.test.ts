@@ -173,6 +173,12 @@ describe("mobile themes", () => {
           contrastRatio(group, sheet),
           `${platform} ${appearance}: grouped surface on sheet`,
         ).toBeGreaterThanOrEqual(1.025);
+        if (appearance === "dark") {
+          expect(
+            contrastRatio(flattenThemeColor(variables["--color-border-subtle"], group), group),
+            `${platform}: row divider on dark grouped surface`,
+          ).toBeGreaterThanOrEqual(1.2);
+        }
         for (const role of [
           "--color-foreground",
           "--color-foreground-secondary",

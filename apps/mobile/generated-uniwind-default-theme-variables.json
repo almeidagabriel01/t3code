@@ -113,7 +113,7 @@
     "--color-foreground-tertiary": "#818181",
     "--color-border": "#191919",
     "--color-focus": "#346bf1",
-    "--color-border-subtle": "rgba(25, 25, 25, 0.7)",
+    "--color-border-subtle": "rgba(245, 245, 245, 0.12)",
     "--color-separator": "rgba(25, 25, 25, 0.55)",
     "--color-subtle": "#111111",
     "--color-subtle-strong": "#111111",

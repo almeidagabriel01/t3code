@@ -372,7 +372,9 @@ export function createMobileThemeVariables(
     "--color-foreground-tertiary": c.secondaryLabel,
     "--color-border": c.border,
     "--color-focus": c.focus,
-    "--color-border-subtle": withAlpha(c.border, 0.7),
+    // Dark borders sit within a shade of the cards, so row dividers derive from the text instead.
+    "--color-border-subtle":
+      appearance === "dark" ? withAlpha(c.text, 0.12) : withAlpha(c.border, 0.7),
     "--color-separator": withAlpha(c.border, 0.55),
     "--color-subtle": c.muted,
     "--color-subtle-strong": c.secondary,

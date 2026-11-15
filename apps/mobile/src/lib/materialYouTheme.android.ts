@@ -54,7 +54,9 @@ export function materialYouPaletteToMobileThemeVariables(
     "--color-foreground-tertiary": withAlpha(palette.onSurfaceVariant, 0.58),
     "--color-border": withAlpha(palette.outlineVariant, dark ? 0.5 : 0.65),
     "--color-focus": palette.primary,
-    "--color-border-subtle": withAlpha(palette.outlineVariant, dark ? 0.34 : 0.46),
+    "--color-border-subtle": dark
+      ? withAlpha(palette.onSurface, 0.12)
+      : withAlpha(palette.outlineVariant, 0.46),
     "--color-separator": withAlpha(palette.outlineVariant, dark ? 0.24 : 0.34),
     "--color-subtle": withAlpha(palette.onSurface, 0.05),
     "--color-subtle-strong": withAlpha(palette.onSurface, 0.1),
