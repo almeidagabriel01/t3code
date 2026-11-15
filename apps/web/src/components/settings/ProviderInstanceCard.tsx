@@ -1394,7 +1394,6 @@ export function ProviderInstanceCard({
           environmentId={environmentId}
           instanceId={instanceId}
           provider={liveProvider}
-          readOnly={readOnly || !canWriteSettings}
         />
       ) : null}
       {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (

@@ -1,7 +1,11 @@
 import {
+  rpcRequiredScopes,
   USAGE_LIMIT_ALERT_CHOICES,
+  WS_METHODS,
+  type AuthEnvironmentScope,
   type ServerProvider,
   type ServerProviderUsageWindow,
+  type ServerSettingsUpdateInput,
   type UsageLimitAlertConfig,
   type UsageLimitAlerts,
   type UsageLimitAlertsPatch,
@@ -98,6 +102,14 @@ export function usageLimitAlertRows(input: {
       config: input.config,
     }),
   }));
+}
+
+// Shaped like what the alert controls send, so the scopes follow the server's rule for it.
+const ALERTS_UPDATE: ServerSettingsUpdateInput = { patch: { usageLimitAlerts: { instances: {} } } };
+
+/** True when the session lacks a scope the server needs to save an alert: lock the controls and say why. */
+export function usageLimitAlertsLocked(granted: (scope: AuthEnvironmentScope) => boolean): boolean {
+  return !rpcRequiredScopes(WS_METHODS.serverUpdateSettings, ALERTS_UPDATE).every(granted);
 }
 
 /** True when paused Autonomy holds back an alert that is on, so one note above the providers says so. */

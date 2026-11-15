@@ -1,3 +1,4 @@
+import { AuthProvidersManageScope, AuthSettingsWriteScope } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +7,7 @@ import {
   usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
+  usageLimitAlertsLocked,
   usageLimitAlertsPaused,
   usageLimitAlertThreshold,
 } from "./usageLimitAlerts.ts";
@@ -134,5 +136,18 @@ describe("usageLimitAlertsPaused", () => {
         providers: providers as never,
       }),
     ).toBe(paused);
+  });
+});
+
+describe("usageLimitAlertsLocked", () => {
+  // Locked controls and the "Limited permissions" banner both read this one answer.
+  it.each([
+    ["settings:write alone", [AuthSettingsWriteScope], false],
+    ["providers:manage alone", [AuthProvidersManageScope], true],
+    ["both", [AuthSettingsWriteScope, AuthProvidersManageScope], false],
+    ["neither", [], true],
+  ] as const)("%s", (_name, granted, locked) => {
+    const scopes = new Set<string>(granted);
+    expect(usageLimitAlertsLocked((scope) => scopes.has(scope))).toBe(locked);
   });
 });

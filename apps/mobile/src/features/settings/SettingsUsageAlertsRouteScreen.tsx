@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
-import { usageLimitAlertLabel, usageLimitAlertsPaused } from "@t3tools/shared/usageLimitAlerts";
+import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  usageLimitAlertLabel,
+  usageLimitAlertsLocked,
+  usageLimitAlertsPaused,
+} from "@t3tools/shared/usageLimitAlerts";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -15,7 +19,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
-import { useEnvironmentScope } from "../../state/session";
+import { environmentSession, sessionHasScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -83,8 +87,10 @@ function EnvironmentAlerts(props: {
     environmentId,
   );
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  // A usageLimitAlerts patch needs settings:write; the command's permissionAtom does not check it.
-  const allowed = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const allowed = useAtomValue(
+    environmentSession.sessionStateAtom(environmentId),
+    (result) => !usageLimitAlertsLocked((scope) => sessionHasScope(result, scope)),
+  );
   const update = useAtomCommand(serverEnvironment.updateSettings, {
     label: "usage limit alert update",
     reportFailure: true,

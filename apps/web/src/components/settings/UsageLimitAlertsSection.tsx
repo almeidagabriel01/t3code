@@ -10,6 +10,7 @@ import {
   usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
+  usageLimitAlertsLocked,
   usageLimitAlertsPaused,
 } from "@t3tools/shared/usageLimitAlerts";
 import { Link } from "@tanstack/react-router";
@@ -17,6 +18,7 @@ import { CirclePauseIcon } from "lucide-react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
+import { environmentSession, sessionHasScope } from "../../state/session";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -29,17 +31,23 @@ const choiceLabel = (value: string) => (
   <span className="tabular-nums">{usageLimitAlertLabel(value === OFF ? null : Number(value))}</span>
 );
 
+/** Whether this session can't save alerts; the cards lock and the banner above them shows. */
+export function useUsageLimitAlertsLocked(environmentId: EnvironmentId): boolean {
+  return useAtomValue(environmentSession.sessionStateAtom(environmentId), (result) =>
+    usageLimitAlertsLocked((scope) => sessionHasScope(result, scope)),
+  );
+}
+
 export function UsageLimitAlertsSection({
   environmentId,
   instanceId,
   provider,
-  readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
-  readonly readOnly: boolean;
 }) {
+  const locked = useUsageLimitAlertsLocked(environmentId);
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const supported = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
@@ -74,9 +82,9 @@ export function UsageLimitAlertsSection({
     <SettingsSection
       {...searchableSetting("usage-limit-alerts")}
       description="Your assistant messages you once when this much is left."
-      inert={readOnly}
-      aria-disabled={readOnly || undefined}
-      className={readOnly ? "opacity-50 select-none" : undefined}
+      inert={locked}
+      aria-disabled={locked || undefined}
+      className={locked ? "opacity-50 select-none" : undefined}
     >
       {rows.map((row) => {
         const value = row.threshold === null ? OFF : String(row.threshold);

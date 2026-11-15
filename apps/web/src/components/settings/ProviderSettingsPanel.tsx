@@ -98,7 +98,7 @@ import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
-import { UsageLimitAlertsPausedNotice } from "./UsageLimitAlertsSection";
+import { UsageLimitAlertsPausedNotice, useUsageLimitAlertsLocked } from "./UsageLimitAlertsSection";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -564,6 +564,7 @@ export function EnvironmentProviderSettings({
     !readOnly && managedPolicy?.limits?.providers?.allowedDrivers?.length !== 0;
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  const alertsLocked = useUsageLimitAlertsLocked(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
   const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
@@ -983,12 +984,18 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      {readOnly ? (
+      {readOnly || alertsLocked ? (
         <Alert variant="info">
           <LockIcon aria-hidden />
           <AlertTitle>Limited permissions</AlertTitle>
           <AlertDescription>
-            This session can view {environmentLabel}'s providers but can't change their settings.
+            This session can view {environmentLabel}'s providers but can't change{" "}
+            {!readOnly
+              ? "their limit alerts"
+              : alertsLocked
+                ? "their settings"
+                : "their settings, except limit alerts"}
+            .
           </AlertDescription>
         </Alert>
       ) : null}

@@ -19,26 +19,28 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: { key: string }) =>
-    atom.key === "providers"
-      ? new Map([
-          [
-            env,
+  useAtomValue: (atom: { key: string }, select?: (value: unknown) => unknown) =>
+    atom.key === "session"
+      ? select?.(null)
+      : atom.key === "providers"
+        ? new Map([
             [
-              {
-                instanceId: "claude",
-                driver: "claudeAgent",
-                displayName: "Claude",
-                enabled: mocks.enabled,
-                usageLimits: { windows: mocks.windows },
-              },
+              env,
+              [
+                {
+                  instanceId: "claude",
+                  driver: "claudeAgent",
+                  displayName: "Claude",
+                  enabled: mocks.enabled,
+                  usageLimits: { windows: mocks.windows },
+                },
+              ],
             ],
-          ],
-        ])
-      : {
-          autonomy: { enabled: mocks.autonomy },
-          usageLimitAlerts: { ignoreAutonomyPause: mocks.ignorePause, instances: mocks.alerts },
-        },
+          ])
+        : {
+            autonomy: { enabled: mocks.autonomy },
+            usageLimitAlerts: { ignoreAutonomyPause: mocks.ignorePause, instances: mocks.alerts },
+          },
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
@@ -77,7 +79,10 @@ vi.mock("../../state/server", () => ({
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.allowed }));
+vi.mock("../../state/session", () => ({
+  environmentSession: { sessionStateAtom: () => ({ key: "session" }) },
+  sessionHasScope: () => mocks.allowed,
+}));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (p: { children?: ReactNode }) => <span>{p.children}</span>,
 }));
