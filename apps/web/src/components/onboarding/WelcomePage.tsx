@@ -94,7 +94,10 @@ import {
   useEnvironmentsScopeAccess,
   useEnvironmentsWithScope,
 } from "../../state/session";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
@@ -1470,7 +1473,9 @@ function useProjectImport({
       ? ""
       : scans.some((scan) => importAccess.get(scan.environmentId) === "unknown")
         ? ""
-        : IMPORT_PERMISSION_MESSAGE;
+        : scans.some((scan) => importAccess.get(scan.environmentId) === "missing")
+          ? IMPORT_PERMISSION_MESSAGE
+          : SCOPE_ACCESS_UNAVAILABLE_MESSAGE;
 
   const importedThreadTotal = () =>
     lastImportSelectionRef.current.reduce(

@@ -78,6 +78,7 @@ import {
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -1327,10 +1328,14 @@ export function KeybindingsSettingsPanel() {
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writableIds.has(target.environmentId));
   const writeAccess = useEnvironmentsScopeAccess(connectedEnvironments, AuthSettingsWriteScope);
+  const writeAccesses = connectedEnvironments.map((target) =>
+    writeAccess.get(target.environmentId),
+  );
+  const accessSettled = !canWriteSettings && !writeAccesses.includes("unknown");
   const showsPermissionNote =
-    connectedEnvironments.length === 0 ||
-    (!canWriteSettings &&
-      connectedEnvironments.every((target) => writeAccess.get(target.environmentId) !== "unknown"));
+    connectedEnvironments.length === 0 || (accessSettled && writeAccesses.includes("missing"));
+  const showsUnavailableNote =
+    accessSettled && !writeAccesses.includes("missing") && writeAccesses.includes("unavailable");
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
@@ -1518,6 +1523,8 @@ export function KeybindingsSettingsPanel() {
             ? "Connect an environment to change keybindings."
             : "This connection can view keybindings but cannot change them."}
         </p>
+      ) : showsUnavailableNote ? (
+        <p className="text-xs text-muted-foreground">{SCOPE_ACCESS_UNAVAILABLE_MESSAGE}</p>
       ) : null}
       <div inert={!canWriteSettings} className="flex flex-col gap-8">
         {isAddingBinding ? (

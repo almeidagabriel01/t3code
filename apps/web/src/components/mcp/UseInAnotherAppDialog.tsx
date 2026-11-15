@@ -43,7 +43,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { relayEnvironmentDiscovery } from "~/state/relay";
 import {
   scopeAccessLocked,
-  scopeAccessShowsBanner,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessMessage,
 } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScopeAccess, useEnvironmentSessionState } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -224,9 +225,10 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
       const reason =
         remoteDenial ??
         (scopeAccessLocked(mintAccess)
-          ? scopeAccessShowsBanner(mintAccess)
-            ? `This device needs the Manage access permission on ${environment.label}.`
-            : "Checking access…"
+          ? (scopeAccessMessage(
+              mintAccess,
+              `This device needs the Manage access permission on ${environment.label}.`,
+            ) ?? undefined)
           : session === null ||
               !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
             ? `This device cannot grant this on ${environment.label}.`
@@ -272,9 +274,11 @@ function useGate(environment: EnvironmentPresentation) {
       serverConfig === null
         ? undefined
         : serverConfig.environment.capabilities.mcpApprovalCodes === true,
-    canReadRelay: relayAccess === "unknown" ? undefined : relayAccess === "granted",
+    // An unavailable check proves no missing grant: let the gate reach its error step.
+    canReadRelay: relayAccess === "unknown" ? undefined : relayAccess !== "missing",
     linkState,
-    linkStateError: controller.linkState.error,
+    linkStateError:
+      relayAccess === "unavailable" ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE : controller.linkState.error,
     thisMachine,
     relay:
       !discovery.refreshing && (discovery.offline || Option.isSome(discovery.error))

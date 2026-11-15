@@ -21,6 +21,8 @@ import { PencilIcon, SearchIcon, Settings2Icon, XIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -58,6 +60,10 @@ const SCOPE_MESSAGE: Record<
     title: "Memory write access needed",
     detail: "Finding this project's memories needs memory write permission on this server.",
   },
+  unavailable: {
+    title: "Access unavailable",
+    detail: SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  },
   "no-key": {
     title: "This project has no shared memory",
     detail: "Give it a repository or a shared memory key in Settings, Memory.",
@@ -91,8 +97,10 @@ export function ProjectMemoryPanel(props: {
         title="Memory read access needed"
         detail="This connection cannot read memory on this server."
       />
+    ) : readAccess === "unavailable" ? (
+      <RightPanelMessage title="Access unavailable" detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
     ) : (
-      <RightPanelLoading label="Checking access…" />
+      <RightPanelLoading label={SCOPE_ACCESS_CHECKING_MESSAGE} />
     )
   ) : space === null ? (
     <RightPanelMessage

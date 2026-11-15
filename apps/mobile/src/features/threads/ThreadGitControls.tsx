@@ -17,10 +17,7 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
-import {
-  scopeAccessLocked,
-  scopeAccessShowsBanner,
-} from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -163,9 +160,10 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       ? {
           ...action,
           disabled: true,
-          hint: scopeAccessShowsBanner(sourceControlAccess)
-            ? "This connection cannot change source control."
-            : "Checking access…",
+          hint: scopeAccessMessage(
+            sourceControlAccess,
+            "This connection cannot change source control.",
+          ),
         }
       : action;
   })();

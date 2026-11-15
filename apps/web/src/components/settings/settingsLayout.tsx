@@ -1,4 +1,8 @@
 import { SettingsGroup } from "./SettingsGroup";
+import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
 import {
@@ -362,11 +366,14 @@ export function SettingsRow({
     context?.connectedEnvironments ?? [],
     AuthSettingsWriteScope,
   );
-  const checkingWriteAccess = context
-    ? context.connectedEnvironments.some(
-        (target) => writeAccess.get(target.environmentId) === "unknown",
-      )
-    : primaryAccess === "unknown";
+  const targetAccesses = context
+    ? context.connectedEnvironments.map((target) => writeAccess.get(target.environmentId))
+    : [primaryAccess];
+  const writeAccessNotice = targetAccesses.includes("unknown")
+    ? SCOPE_ACCESS_CHECKING_MESSAGE
+    : !targetAccesses.includes("missing") && targetAccesses.includes("unavailable")
+      ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+      : null;
   const canWriteSettings = context
     ? context.connectedEnvironments.length > 0 &&
       context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
@@ -456,16 +463,15 @@ export function SettingsRow({
         : unavailable && control
           ? inertControl(
               !canWriteSettings
-                ? checkingWriteAccess
-                  ? "Checking access…"
-                  : `This connection lacks permission to change settings on ${
+                ? (writeAccessNotice ??
+                    `This connection lacks permission to change settings on ${
                       context
                         ? context.connectedEnvironments
                             .filter((target) => !writableIds.has(target.environmentId))
                             .map((target) => target.label)
                             .join(", ") || "the selected environment"
                         : (primaryEnvironment?.label ?? "the primary environment")
-                    }.`
+                    }.`)
                 : context
                   ? "Reconnect the selected environment to change this setting."
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,

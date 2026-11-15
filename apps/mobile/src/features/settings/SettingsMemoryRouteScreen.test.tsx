@@ -2,6 +2,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   WS_METHODS,
+  type AuthSessionState,
   MemoryItem,
   MemoryMutationReceipt,
   type MemoryForgetInput,
@@ -23,10 +24,15 @@ import {
   type NativeMemoryHarness,
 } from "../../testing/memoryNativeHarness";
 import * as Option from "effect/Option";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/reactivity";
 import * as Schema from "effect/Schema";
-import { SettingsMemoryRouteScreen, MemoryEnvironmentEntry } from "./SettingsMemoryRouteScreen";
+import {
+  SettingsMemoryRouteScreen,
+  MemoryEnvironmentEntry,
+  memoryAccessNotice,
+} from "./SettingsMemoryRouteScreen";
 import { LearnedRuleNotice } from "../threads/LearnedRuleNotice";
 import { LEARNED_RULE_VISIBLE_MS } from "@t3tools/client-runtime/memory-browsing";
 
@@ -54,6 +60,8 @@ let view: ReturnType<typeof renderNative>;
 afterEach(async () => {
   await view?.unmount();
   h?.dispose();
+  view = undefined as never;
+  h = undefined as never;
   vi.restoreAllMocks();
 });
 async function mount(
@@ -379,6 +387,39 @@ describe("native Memory with shared factory", () => {
     await act(async () => h.revoke());
     expect(view.container.textContent).not.toContain("Synthetic new fact");
     expect(view.container.textContent).toContain("does not have permission");
+  });
+  it.each([
+    ["unknown", AsyncResult.initial<AuthSessionState, never>(), "Checking access…"],
+    [
+      "unavailable",
+      AsyncResult.failure<AuthSessionState, never>(Cause.die("offline")),
+      "Couldn't check this connection's access.",
+    ],
+  ])("renders a notice, never nothing, while access is %s", async (_name, session, text) => {
+    h = createNativeMemoryHarness();
+    h.registry.set(h.grants(nativeEnv), session);
+    view = renderNative(
+      h,
+      <SettingsMemoryRouteScreen
+        route={{ params: { environmentId: nativeEnv, memorySpaceId: nativeSpace } }}
+      />,
+    );
+    await view.render();
+    expect(view.container.textContent).toContain(text);
+    expect(view.container.textContent).not.toContain("does not have permission");
+  });
+  it.each([
+    [["unknown", "unknown", "unknown"], "Checking access…"],
+    [["unavailable", "unavailable", "unavailable"], "Couldn't check this connection's access."],
+    [
+      ["missing", "missing", "missing"],
+      "This connection does not have permission to manage memory.",
+    ],
+    [["missing", "unknown", "missing"], "Checking access…"],
+    [["missing", "unavailable", "missing"], "Couldn't check this connection's access."],
+    [["unknown", "unavailable", "missing"], "Couldn't check this connection's access."],
+  ] as const)("memoryAccessNotice %j", (accesses, text) => {
+    expect(memoryAccessNotice(accesses)).toBe(text);
   });
   it("lists a rule apart from memories and saves a new rule with the prefix", async () => {
     await mount();

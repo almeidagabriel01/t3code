@@ -29,6 +29,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import {
   scopeAccessLocked,
+  scopeAccessMessage,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
 import { readEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
@@ -315,9 +316,9 @@ export function ResetCredits(props: {
           ) : null}
         </View>
       ))}
-      {scopeAccessShowsBanner(access) ? (
+      {scopeAccessShowsBanner(access) || access === "unavailable" ? (
         <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
+          {scopeAccessMessage(access, "This connection cannot manage provider accounts.")}
         </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}

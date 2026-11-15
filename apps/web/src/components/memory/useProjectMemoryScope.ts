@@ -47,6 +47,8 @@ export type ProjectMemoryScope =
   | { readonly status: "ready"; readonly scope: MemoryScope }
   /** The lookup needs memory write permission. */
   | { readonly status: "no-permission" }
+  /** The session check failed, so the permission is neither proven nor missing. */
+  | { readonly status: "unavailable" }
   /** No repository and no explicit shared key, so the project has no memory of its own. */
   | { readonly status: "no-key" }
   | { readonly status: "failed" };
@@ -103,6 +105,14 @@ export function useProjectMemoryScope(
     };
   }, [environmentId, getBinding, key, projectId, repositoryIdentity, space, wanted]);
   if (environmentId === undefined || projectId === null) return null;
-  if (!canBind) return { status: scopeAccessShowsBanner(bindAccess) ? "no-permission" : "loading" };
+  if (!canBind) {
+    return {
+      status: scopeAccessShowsBanner(bindAccess)
+        ? "no-permission"
+        : bindAccess === "unavailable"
+          ? "unavailable"
+          : "loading",
+    };
+  }
   return resolved?.key === key ? resolved.scope : { status: "loading" };
 }

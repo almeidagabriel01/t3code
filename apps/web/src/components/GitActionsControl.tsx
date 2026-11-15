@@ -93,6 +93,7 @@ import {
 } from "../state/sourceControlActions";
 import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -1129,9 +1130,11 @@ export default function GitActionsControl({
   );
   const quickActionDisabledReason = scopeAccessShowsBanner(sourceControlAccess)
     ? "This connection cannot change source control."
-    : quickAction.disabled
-      ? (quickAction.hint ?? "This action is currently unavailable.")
-      : null;
+    : sourceControlAccess === "unavailable"
+      ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+      : quickAction.disabled
+        ? (quickAction.hint ?? "This action is currently unavailable.")
+        : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   // A fresh draft or a thread with no turns hides commit, push, and diff rows until there is work.
   const quietEmptyDraft =

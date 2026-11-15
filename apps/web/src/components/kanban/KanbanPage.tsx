@@ -14,7 +14,10 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Spinner } from "../ui/spinner";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { useKanbanReadPending } from "../../state/kanban";
 import {
   boardScopeKey,
@@ -98,6 +101,8 @@ function ProjectBoard(props: {
               title="No board yet"
               description="This project has no board, and you cannot create one here."
             />
+          ) : state !== null && editAccess === "unavailable" ? (
+            <Message title="No board yet" description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <Spinner />

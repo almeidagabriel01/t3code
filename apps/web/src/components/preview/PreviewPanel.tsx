@@ -7,10 +7,7 @@ import {
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentScopeAccess } from "~/state/session";
-import {
-  scopeAccessLocked,
-  scopeAccessShowsBanner,
-} from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
@@ -47,9 +44,12 @@ export function PreviewPanel({
           <p className="max-w-sm text-sm text-muted-foreground">
             {canOperatePreview
               ? "Preview is only available in the T3 Code desktop app."
-              : scopeAccessShowsBanner(previewAccess)
-                ? "Pair this client again with preview access to control browser previews."
-                : null}
+              : previewAccess === "unknown"
+                ? null
+                : scopeAccessMessage(
+                    previewAccess,
+                    "Pair this client again with preview access to control browser previews.",
+                  )}
           </p>
         </div>
       </PreviewPanelShell>

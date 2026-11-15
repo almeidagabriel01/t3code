@@ -22,10 +22,7 @@ import { PencilIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  scopeAccessLocked,
-  scopeAccessShowsBanner,
-} from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { memoryEnvironment } from "../../state/memory";
 import { useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemoryScope";
@@ -91,9 +88,14 @@ export function AssistantWorkMemory(props: {
   const failed = [user, project, thread].some((query) => query.error !== null);
 
   if (!canRead) {
-    return scopeAccessShowsBanner(readAccess) ? (
-      <Note>Memory read permission is required to see what it remembers.</Note>
-    ) : null;
+    const message =
+      readAccess === "unknown"
+        ? null
+        : scopeAccessMessage(
+            readAccess,
+            "Memory read permission is required to see what it remembers.",
+          );
+    return message === null ? null : <Note>{message}</Note>;
   }
   if (space === null) {
     return <Note>Memory is off or still getting ready on this server.</Note>;

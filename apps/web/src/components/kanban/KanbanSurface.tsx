@@ -11,7 +11,10 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, Maximize2Icon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { useKanbanReadPending } from "../../state/kanban";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
@@ -133,13 +136,15 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
     if (state === null) return <RightPanelLoading label="Loading board…" />;
     if (board === undefined) {
       if (createsOnView) {
-        return !scopeAccessShowsBanner(editAccess) ? (
-          <RightPanelLoading label="Setting up the board…" />
-        ) : (
+        return scopeAccessShowsBanner(editAccess) ? (
           <RightPanelMessage
             title="No board yet"
             detail="This project has no board, and you cannot create one here."
           />
+        ) : editAccess === "unavailable" ? (
+          <RightPanelMessage title="No board yet" detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+        ) : (
+          <RightPanelLoading label="Setting up the board…" />
         );
       }
       return (

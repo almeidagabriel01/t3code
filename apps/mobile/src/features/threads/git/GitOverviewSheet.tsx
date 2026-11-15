@@ -9,7 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import {
   CommonActions,
   StackActions,
@@ -87,7 +87,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, sourceControlAccess, canChangeThreadBranch } = gitActions;
-  const lacksSourceControl = scopeAccessShowsBanner(sourceControlAccess);
+  const sourceControlNotice = scopeAccessMessage(
+    sourceControlAccess,
+    "This connection cannot change source control.",
+  );
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -123,9 +126,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     },
     disabledReason:
       !canWriteSourceControl && item.kind !== "open_pr"
-        ? lacksSourceControl
-          ? "This connection cannot change source control."
-          : undefined
+        ? (sourceControlNotice ?? undefined)
         : getGitActionDisabledReason({
             item,
             gitStatus: gitStatus.data,
@@ -279,9 +280,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             icon="arrow.down.circle"
             label="Pull latest"
             description={
-              lacksSourceControl
-                ? "This connection cannot change source control."
-                : `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
+              sourceControlNotice ??
+              `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
             }
             disabled={!canWriteSourceControl || busy || !isRepo}
             onPress={() => void gitActions.onPullSelectedThreadBranch()}

@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import type { PullRequestLabelCandidate } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -40,9 +40,10 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
       : !connected
         ? "Reconnect to change labels."
         : !canWrite
-          ? scopeAccessShowsBanner(writeAccess)
-            ? "This device isn't allowed to change source control on this environment."
-            : null
+          ? scopeAccessMessage(
+              writeAccess,
+              "This device isn't allowed to change source control on this environment.",
+            )
           : pr.capabilities.labels !== true
             ? "This provider doesn't support changing labels."
             : "Changing labels needs triage access on this repository.";

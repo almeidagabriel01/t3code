@@ -148,7 +148,10 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import {
   readEnvironmentScope,
   useEnvironmentScope,
@@ -3242,7 +3245,10 @@ function OpenCommandPaletteDialog(props: {
       ? "This connection needs permission to write source control and add projects."
       : scopeAccessShowsBanner(createProjectAccess)
         ? "This connection cannot add projects."
-        : `${submitActionLabel} (${addShortcutLabel})`;
+        : createProjectAccess === "unavailable" ||
+            (isCloneDestinationStep && cloneAccess === "unavailable")
+          ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+          : `${submitActionLabel} (${addShortcutLabel})`;
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton

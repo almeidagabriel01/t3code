@@ -7,6 +7,7 @@ import {
   USAGE_LIMIT_ALERTS_SCOPES,
 } from "@t3tools/shared/usageLimitAlerts";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -116,6 +117,10 @@ function EnvironmentAlerts(props: {
             description={`This session can view ${props.environment.label}'s providers but can't change their settings.`}
           />
         </View>
+      ) : access === "unavailable" ? (
+        <Text className="px-2 text-sm text-foreground-muted">
+          {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+        </Text>
       ) : null}
       {paused ? (
         <View className="overflow-hidden rounded-2xl">

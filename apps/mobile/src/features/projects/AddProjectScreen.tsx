@@ -81,7 +81,9 @@ import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
+  scopeAccessMessage,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
 import {
@@ -640,9 +642,8 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
             <ListRow
               title="Local folder"
               subtitle={
-                scopeAccessShowsBanner(createAccess)
-                  ? "This connection cannot add projects."
-                  : "Browse a folder on disk"
+                scopeAccessMessage(createAccess, "This connection cannot add projects.") ??
+                "Browse a folder on disk"
               }
               icon={
                 <SymbolView
@@ -670,13 +671,12 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                   selectedEnvironmentId={selectedEnvironment.environmentId}
                   ready={canCloneProject && readiness(candidate).ready}
                   hint={
-                    scopeAccessShowsBanner(cloneAccess)
-                      ? "This connection cannot clone projects."
-                      : !canCloneProject
-                        ? ""
-                        : readiness(candidate).ready
-                          ? addProjectRemoteSourcePathHint(candidate)
-                          : (readiness(candidate).hint ?? "")
+                    scopeAccessMessage(cloneAccess, "This connection cannot clone projects.") ??
+                    (!canCloneProject
+                      ? ""
+                      : readiness(candidate).ready
+                        ? addProjectRemoteSourcePathHint(candidate)
+                        : (readiness(candidate).hint ?? ""))
                   }
                   isFirst={false}
                 />
@@ -1359,6 +1359,10 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
         <>
           {scopeAccessShowsBanner(createAccess) ? (
             <ErrorBanner message="This connection cannot add projects." />
+          ) : createAccess === "unavailable" ? (
+            <Text className="text-sm text-foreground-muted">
+              {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+            </Text>
           ) : null}
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
@@ -1512,9 +1516,9 @@ export function AddProjectDestinationScreen(props: {
             onPress={submitPath}
             loading={isSubmitting}
           />
-          {scopeAccessShowsBanner(cloneAccess) ? (
+          {scopeAccessShowsBanner(cloneAccess) || cloneAccess === "unavailable" ? (
             <Text className="text-sm text-foreground-muted">
-              This connection cannot clone projects.
+              {scopeAccessMessage(cloneAccess, "This connection cannot clone projects.")}
             </Text>
           ) : null}
           <FolderBrowser

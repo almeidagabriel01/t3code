@@ -242,7 +242,7 @@ import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScope, useEnvironmentScopeAccess } from "~/state/session";
 import {
   primaryServerAvailableEditorsAtom,
@@ -3796,9 +3796,10 @@ export default function ChatView(props: ChatViewProps) {
                                     isRevertingCheckpoint={isRevertingCheckpoint}
                                     sendDisabledReason={
                                       !canOperateThread
-                                        ? scopeAccessShowsBanner(threadAccess)
-                                          ? "This connection cannot change threads."
-                                          : "Checking access…"
+                                        ? scopeAccessMessage(
+                                            threadAccess,
+                                            "This connection cannot change threads.",
+                                          )
                                         : isEnvironmentChanging
                                           ? "Preparing machine"
                                           : isRevertingCheckpoint

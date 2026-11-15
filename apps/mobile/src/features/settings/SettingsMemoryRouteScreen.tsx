@@ -38,7 +38,9 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   scopeAccessLocked,
+  scopeAccessMessage,
   scopeAccessShowsBanner,
+  type SessionScopeAccess,
 } from "@t3tools/client-runtime/state/sessionScope";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
 import {
@@ -293,6 +295,18 @@ function MemoryChooser() {
   );
 }
 
+/** Unproven access never claims a missing permission: any unavailable check outranks a pending one. */
+export function memoryAccessNotice(accesses: ReadonlyArray<SessionScopeAccess>): string {
+  const access = accesses.includes("unavailable")
+    ? "unavailable"
+    : accesses.includes("unknown")
+      ? "unknown"
+      : "missing";
+  return (
+    scopeAccessMessage(access, "This connection does not have permission to manage memory.") ?? ""
+  );
+}
+
 function MemoryEnvironment({
   params,
 }: {
@@ -327,11 +341,7 @@ function MemoryEnvironment({
       />
     );
   if (!readAllowed && !adminAllowed && !writeAllowed)
-    return scopeAccessShowsBanner(readAccess) &&
-      scopeAccessShowsBanner(adminAccess) &&
-      scopeAccessShowsBanner(writeAccess) ? (
-      <Copy>This connection does not have permission to manage memory.</Copy>
-    ) : null;
+    return <Copy>{memoryAccessNotice([readAccess, adminAccess, writeAccess])}</Copy>;
   return (
     <MemoryConnected
       key={`${connectionVersion.version}:${readAllowed}:${adminAllowed}:${writeAllowed}`}

@@ -115,8 +115,5 @@ export function classifyProviderEnvironmentAccess(input: {
   if (input.operateAccess === "unknown") {
     return { kind: "loading", reason: "permissions" };
   }
-  if (input.operateAccess === "missing") {
-    return { kind: "read-only" };
-  }
-  return { kind: "editable" };
+  return input.operateAccess === "granted" ? { kind: "editable" } : { kind: "read-only" };
 }

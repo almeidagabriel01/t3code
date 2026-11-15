@@ -9,6 +9,7 @@ const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
     canRead: true,
+    access: null as string | null,
     space: "space-1" as string | null,
     scope: { status: "ready", scope: { kind: "project", projectKey: "k" } } as unknown,
     page: (_query: Query): unknown => ({ data: null, error: null }),
@@ -72,7 +73,7 @@ vi.mock("../../components/ui/SearchField", () => ({
   ),
 }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScopeAccess: () => (mocks.canRead ? "granted" : "missing"),
+  useEnvironmentScopeAccess: () => mocks.access ?? (mocks.canRead ? "granted" : "missing"),
 }));
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("../../state/memory", () => ({
@@ -124,6 +125,7 @@ async function mount() {
 
 afterEach(() => {
   mocks.canRead = true;
+  mocks.access = null;
   mocks.space = "space-1";
   mocks.scope = { status: "ready", scope: { kind: "project", projectKey: "k" } };
   mocks.page = () => ({ data: null, error: null });
@@ -134,6 +136,12 @@ afterEach(() => {
 describe("ProjectMemoryView", () => {
   it.each([
     ["no read access", () => (mocks.canRead = false), "Memory read access needed"],
+    ["an unresolved session", () => (mocks.access = "unknown"), "Loading project memory…"],
+    [
+      "an unavailable access check",
+      () => (mocks.access = "unavailable"),
+      "Couldn't check this connection's access.",
+    ],
     ["no memory space", () => (mocks.space = null), "Memory is not ready"],
     ["the scope lookup", () => (mocks.scope = { status: "loading" }), "Loading project memory…"],
     [
@@ -159,6 +167,10 @@ describe("ProjectMemoryView", () => {
       arrange();
       const view = await mount();
       expect(view.host.textContent).toContain(text);
+      if (mocks.access === "unavailable") {
+        expect(view.host.textContent).not.toContain("Memory read access needed");
+        expect(view.host.textContent).not.toContain("Loading");
+      }
       expect(view.host.querySelector("input") !== null).toBe(
         (mocks.scope as { status: string }).status === "ready",
       );

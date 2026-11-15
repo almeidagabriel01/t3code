@@ -26,6 +26,7 @@ import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentsScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListRow } from "../../components/ui/ListRow";
@@ -58,7 +59,11 @@ export function SettingsProviderAccountsRouteScreen() {
             const access = accessByEnvironment.get(environment.environmentId);
             return (
               <SettingsSection key={environment.environmentId} title={environment.label}>
-                {access === "unknown" ? null : access === "missing" ? (
+                {access === "unknown" ? null : access === "unavailable" ? (
+                  <Text className="p-4 text-sm text-foreground-muted">
+                    {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+                  </Text>
+                ) : access === "missing" ? (
                   <View className="gap-1 p-4">
                     <Text className="text-base text-foreground">Limited permissions</Text>
                     <Text className="text-sm text-foreground-muted">

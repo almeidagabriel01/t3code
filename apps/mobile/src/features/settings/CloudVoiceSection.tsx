@@ -38,10 +38,7 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { Chip } from "../../components/ui/Chip";
 import { ListSection } from "../../components/ui/ListSection";
 import type { EnvironmentPresentation } from "../../state/environments";
-import {
-  scopeAccessLocked,
-  scopeAccessShowsBanner,
-} from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import {
   chooseVoiceDestination,
@@ -241,7 +238,6 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
   const reload = useAtomRefresh(cloudVoiceKeysAtom(id));
   const access = useEnvironmentScopeAccess(id, SETTINGS_WRITE_SCOPES);
   const canManage = !scopeAccessLocked(access);
-  const lacksPermission = scopeAccessShowsBanner(access);
   const [editing, setEditing] = useState<{
     provider: CloudSpeechProvider;
     enable: boolean;
@@ -387,9 +383,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                               : "API key saved"
                             : canManage
                               ? "Add an API key to use this provider"
-                              : lacksPermission
-                                ? "Ask an environment administrator to add an API key"
-                                : "Checking access…"
+                              : (scopeAccessMessage(
+                                  access,
+                                  "Ask an environment administrator to add an API key",
+                                ) ?? "")
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
@@ -555,9 +552,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
             {routed && !key && !canManage ? (
               <ListActionRow
                 label={
-                  lacksPermission
-                    ? "Ask an administrator to add an OpenRouter key"
-                    : "Checking access…"
+                  scopeAccessMessage(access, "Ask an administrator to add an OpenRouter key") ?? ""
                 }
                 disabled
                 onPress={() => {}}

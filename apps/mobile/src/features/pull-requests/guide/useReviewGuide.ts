@@ -25,9 +25,9 @@ export function useReviewGuide(params: PullRequestParams, visible = true) {
   const permitted = useAtomValue(
     composerPullRequests.generateReviewGuide.permissionAtom(target.environmentId),
   );
-  const accessUnknown =
-    useAtomValue(composerPullRequests.generateReviewGuide.accessAtom(target.environmentId)) ===
-    "unknown";
+  const access = useAtomValue(
+    composerPullRequests.generateReviewGuide.accessAtom(target.environmentId),
+  );
   const canWrite = connected && permitted;
   const generate = useAtomCommand(composerPullRequests.generateReviewGuide, {
     reportFailure: false,
@@ -57,5 +57,5 @@ export function useReviewGuide(params: PullRequestParams, visible = true) {
       setError(cause instanceof Error ? cause.message : "Could not start the review guide.");
     }
   };
-  return { ...query, enabled, canWrite, accessUnknown, running, write, startError: error };
+  return { ...query, enabled, canWrite, access, running, write, startError: error };
 }

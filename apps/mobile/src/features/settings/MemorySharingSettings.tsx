@@ -15,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/memory-presentation";
 import {
   scopeAccessLocked,
+  scopeAccessMessage,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
 import { memoryDeviceFlow } from "@t3tools/client-runtime/memory-device-flow";
@@ -522,9 +523,10 @@ export function MemoryAdministration({
               const reason = !connected
                 ? "Connect this device in Settings → Connections to replace its key."
                 : !writable(id)
-                  ? lacksWrite(id)
-                    ? "Settings write permission is required to replace this key."
-                    : "Checking access…"
+                  ? scopeAccessMessage(
+                      registry.get(memory.hubSettingsUpdate.accessAtom(id)),
+                      "Settings write permission is required to replace this key.",
+                    )
                   : null;
               return (
                 <View key={id}>

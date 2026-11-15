@@ -30,6 +30,7 @@ import { memoryEnvironment as memory } from "../../state/memory";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -81,6 +82,8 @@ export function ProjectMemoryView(props: {
   const body =
     readAccess === "unknown" ? (
       <ProjectViewMessage title="Loading project memory…" />
+    ) : readAccess === "unavailable" ? (
+      <ProjectViewMessage title={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
     ) : scopeAccessShowsBanner(readAccess) ? (
       <ProjectViewMessage
         title="Memory read access needed"

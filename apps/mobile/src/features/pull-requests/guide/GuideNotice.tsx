@@ -4,6 +4,7 @@ import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { PR_ROW_EXIT, PR_ROW_LAYOUT } from "../pullRequestAnimations";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { guideNoticeState } from "./reviewGuideState";
 import type { useReviewGuide } from "./useReviewGuide";
 
@@ -48,11 +49,13 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
             onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
             loading={busy}
           />
-        ) : state.accessUnknown ? null : (
+        ) : state.access === "unknown" ? null : (
           <Text className="text-xs text-foreground-muted">
-            {notice.kind === "failed"
-              ? "Reconnect or ask someone with write access to retry."
-              : "Writing a guide requires a connection and write access."}
+            {state.access === "unavailable"
+              ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+              : notice.kind === "failed"
+                ? "Reconnect or ask someone with write access to retry."
+                : "Writing a guide requires a connection and write access."}
           </Text>
         )}
         {notice.kind === "writing" && state.data?.run?._tag === "Running" ? (

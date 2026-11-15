@@ -23,7 +23,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { useProjects } from "../../state/entities";
 import { memoryEnvironment as memory } from "../../state/memory";
 import { useEnvironmentQuery } from "../../state/query";
-import { scopeAccessLocked } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useForgetMemory, useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemory";
@@ -91,7 +91,10 @@ export function AssistantWorkMemorySection(props: {
       </View>
       {readAccess === "unknown" ? null : !canRead ? (
         <Text textRole="footnote" className="px-2 text-foreground-muted">
-          Memory read permission is required to see what it remembers.
+          {scopeAccessMessage(
+            readAccess,
+            "Memory read permission is required to see what it remembers.",
+          )}
         </Text>
       ) : space === null ? (
         <Text textRole="footnote" className="px-2 text-foreground-muted">

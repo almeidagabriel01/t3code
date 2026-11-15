@@ -24,7 +24,7 @@ import { useStartingSideChats, type SideChatParentPanel } from "../../lib/sideCh
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
 import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
@@ -98,9 +98,7 @@ export default function SideChatPane(props: {
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
-    ? scopeAccessShowsBanner(operateAccess)
-      ? "This connection cannot change threads."
-      : "Checking access…"
+    ? scopeAccessMessage(operateAccess, "This connection cannot change threads.")
     : threadRuntimeIsActive(parent?.runtime)
       ? "Available when the main thread is idle."
       : mergeRun === null

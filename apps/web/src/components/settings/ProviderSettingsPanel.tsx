@@ -6,6 +6,7 @@ import {
   AuthOrchestrationReadScope,
 } from "@t3tools/contracts";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessShowsBanner,
   type SessionScopeAccess,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -537,6 +538,7 @@ function AccessGatedProviderSettings({
       environmentId={environment.environmentId}
       environmentLabel={environment.label}
       readOnly={access.kind === "read-only"}
+      operateAccess={operateAccess}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
       projectIds={projectIds}
@@ -551,6 +553,7 @@ export function EnvironmentProviderSettings({
   environmentId,
   environmentLabel,
   readOnly = false,
+  operateAccess = readOnly ? "missing" : "granted",
   deviceTabs,
   targetInstanceId,
   projectIds = NO_PROJECT_IDS,
@@ -561,6 +564,7 @@ export function EnvironmentProviderSettings({
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   readonly projectIds?: readonly ProjectId[];
   readonly readOnly?: boolean;
+  readonly operateAccess?: SessionScopeAccess;
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const managedPolicy = useManagedPolicy(environmentId);
@@ -571,6 +575,7 @@ export function EnvironmentProviderSettings({
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const alertsAccess = useEnvironmentScopeAccess(environmentId, USAGE_LIMIT_ALERTS_SCOPES);
   const alertsMissing = scopeAccessShowsBanner(alertsAccess);
+  const accessUnavailable = operateAccess === "unavailable" || alertsAccess === "unavailable";
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
   const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
@@ -990,7 +995,7 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      {readOnly || alertsMissing ? (
+      {(readOnly && operateAccess !== "unavailable") || alertsMissing ? (
         <Alert variant="info">
           <LockIcon aria-hidden />
           <AlertTitle>Limited permissions</AlertTitle>
@@ -1003,6 +1008,11 @@ export function EnvironmentProviderSettings({
                 : "their settings"}
             .
           </AlertDescription>
+        </Alert>
+      ) : accessUnavailable ? (
+        <Alert variant="info">
+          <LockIcon aria-hidden />
+          <AlertDescription>{SCOPE_ACCESS_UNAVAILABLE_MESSAGE}</AlertDescription>
         </Alert>
       ) : null}
       <UsageLimitAlertsPausedNotice environmentId={environmentId} providers={serverProviders} />

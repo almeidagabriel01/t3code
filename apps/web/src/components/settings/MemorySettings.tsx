@@ -70,6 +70,7 @@ import {
 } from "../../state/session";
 import {
   type SessionScopeAccess,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessLocked,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
@@ -294,6 +295,10 @@ function MemoryDestinationContent({
             description="Settings write permission is required to manage sharing."
           />
         </SettingsSection>
+      ) : adminAccess === "unavailable" ? (
+        <SettingsSection title="Sharing">
+          <SettingsRow title="Sharing unavailable" description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+        </SettingsSection>
       ) : null}
       {syncError ? (
         <SettingsSection title="Memory status">
@@ -343,6 +348,13 @@ function MemoryDestinationContent({
           <SettingsRow
             title="Memory read permission required"
             description="Memory read permission is required to view records. Write permission does not grant read access."
+          />
+        </SettingsSection>
+      ) : readAccess === "unavailable" ? (
+        <SettingsSection title="Memories">
+          <SettingsRow
+            title="Memories unavailable"
+            description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
           />
         </SettingsSection>
       ) : null}
@@ -434,6 +446,8 @@ function MemoryRecords({
               "Loading project memory scope"
             ) : scopeAccessShowsBanner(bindingAccess) && projects.length > 0 ? (
               "Project scope requires memory write permission to look up its shared key."
+            ) : bindingAccess === "unavailable" && projects.length > 0 ? (
+              SCOPE_ACCESS_UNAVAILABLE_MESSAGE
             ) : undefined
           }
           control={

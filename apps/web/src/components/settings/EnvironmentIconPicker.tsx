@@ -8,6 +8,10 @@ import {
 } from "@t3tools/contracts";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
@@ -24,13 +28,16 @@ const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
 
 export function resolveEnvironmentIconPickerLock(input: {
   readonly serverConfig: Pick<ServerConfig, "environment"> | null;
-  readonly operateAccess: "granted" | "denied" | "pending";
+  readonly operateAccess: "granted" | "denied" | "pending" | "unavailable";
 }): string | null {
   if (input.serverConfig === null) {
     return "Connect to this environment to change its icon.";
   }
   if (input.operateAccess === "pending") {
-    return "Checking access…";
+    return SCOPE_ACCESS_CHECKING_MESSAGE;
+  }
+  if (input.operateAccess === "unavailable") {
+    return SCOPE_ACCESS_UNAVAILABLE_MESSAGE;
   }
   if (input.operateAccess !== "granted") {
     return "Your session on this environment cannot change its settings.";
@@ -48,7 +55,11 @@ export function EnvironmentIconMenu({
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const settingsAccess = useEnvironmentScopeAccess(environmentId, SETTINGS_WRITE_SCOPES);
   const operateAccess =
-    settingsAccess === "unknown" ? "pending" : settingsAccess === "granted" ? "granted" : "denied";
+    settingsAccess === "unknown"
+      ? "pending"
+      : settingsAccess === "missing"
+        ? "denied"
+        : settingsAccess;
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
   const detected = serverConfig?.environment.platform.machine ?? "server";
   const resolved = resolveEnvironmentMachineKind(serverConfig);

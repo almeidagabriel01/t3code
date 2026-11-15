@@ -4,7 +4,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestComment } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -77,9 +77,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
       : !permissions.connected
         ? "Reconnect to save changes."
         : !canWrite
-          ? scopeAccessShowsBanner(writeAccess)
-            ? "This device isn't allowed to change source control on this environment."
-            : null
+          ? scopeAccessMessage(
+              writeAccess,
+              "This device isn't allowed to change source control on this environment.",
+            )
           : params.field === "comment"
             ? "You can't edit this comment."
             : `You can't edit this ${singular}.`;
