@@ -53,6 +53,16 @@ export function splitAssistantTransferText(text: string): {
   return { body: text.slice(0, at).trimEnd(), files: text.slice(at + marker.length) };
 }
 
+/** The markdown list of copied files, each a link the clients open in the file viewer. */
+export function assistantTransferList(paths: ReadonlyArray<string>): string {
+  return paths.map((path) => `- [${path.split(/[\\/]/).pop() || path}](<${path}>)`).join("\n");
+}
+
+/** The paths of an {@link assistantTransferList}. */
+export function assistantTransferPaths(list: string): ReadonlyArray<string> {
+  return [...list.matchAll(/^- \[[^\n]*\]\(<([^>\n]+)>\)$/gm)].map((match) => match[1]!);
+}
+
 export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;
 /**
  * Hand-offs a request may make while none of its tasks delivers a new, non-empty answer: stops

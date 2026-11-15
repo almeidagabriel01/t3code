@@ -13,6 +13,8 @@ import {
   assistantGroupProjectSlug,
   assistantGroupProjectSlugs,
   assistantGroupTaskActions,
+  assistantTransferList,
+  assistantTransferPaths,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
 } from "./assistantGroups.ts";
@@ -173,6 +175,22 @@ it.each([
   ],
 ])("splitAssistantTransferText(%s)", (text, expected) => {
   expect(splitAssistantTransferText(text)).toEqual(expected);
+});
+
+it.each([
+  [[], ""],
+  [["/s/a.csv"], "- [a.csv](</s/a.csv>)"],
+  [
+    ["/s/x/report final.md", "C:\\s\\b.png"],
+    "- [report final.md](</s/x/report final.md>)\n- [b.png](<C:\\s\\b.png>)",
+  ],
+])("assistantTransferList(%j) round-trips through assistantTransferPaths", (paths, list) => {
+  expect(assistantTransferList(paths)).toBe(list);
+  expect(assistantTransferPaths(list)).toEqual(paths);
+});
+
+it("assistantTransferPaths ignores lines that are not file links", () => {
+  expect(assistantTransferPaths("- [a](</s/a>)\nsee [b](</s/b>)\n- plain")).toEqual(["/s/a"]);
 });
 
 describe("group message attachments", () => {

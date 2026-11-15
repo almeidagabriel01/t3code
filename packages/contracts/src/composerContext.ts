@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   GuestMessageId,
   GuestShareId,
   NonNegativeInt,
@@ -303,10 +304,50 @@ export const GuestMessageAttribution = Schema.Struct({
 });
 export type GuestMessageAttribution = typeof GuestMessageAttribution.Type;
 
+/** How a teammate's reply says its request went; the asker's instructions name these. */
+export const TeammateReplyStatus = Schema.Literals(["done", "partial", "blocked"]);
+export type TeammateReplyStatus = typeof TeammateReplyStatus.Type;
+
+/** One teammate's part of a message: a request it sent, or its reply to one. */
+export const TeammateMessageEntry = Schema.Struct({
+  kind: Schema.Literals(["request", "reply"]),
+  name: TrimmedNonEmptyString,
+  handle: Schema.String,
+  threadId: ThreadId,
+  /** A request's own id, or the request a reply answers. */
+  requestId: Schema.String,
+  expectsReply: Schema.optional(Schema.Boolean),
+  status: ForwardCompatibleOptional(TeammateReplyStatus),
+  /** Shared-folder copies sent with it, as absolute paths. */
+  files: Schema.Array(Schema.String),
+  text: Schema.String,
+});
+export type TeammateMessageEntry = typeof TeammateMessageEntry.Type;
+
+/**
+ * Marks a user message as one or more teammates' (one entry, or one per reply of a group). The
+ * message `text` keeps the envelope the agent reads; clients show the entries. Only the server
+ * sets it, on agent sends.
+ */
+export const TeammateMessageAttribution = Schema.Struct({
+  entries: Schema.Array(TeammateMessageEntry).check(Schema.isMinLength(1)),
+});
+export type TeammateMessageAttribution = typeof TeammateMessageAttribution.Type;
+
+const STATUS_LINE = /^[\s>*_-]*status[\s*_]*:[\s*_]*(done|partial|blocked)\b/i;
+
+/** The status a reply opens with ("Status: partial", "**Status:** done"), if any. */
+export function teammateReplyStatus(text: string): TeammateReplyStatus | undefined {
+  const first = text.trimStart().split("\n", 1)[0] ?? "";
+  return STATUS_LINE.exec(first)?.[1]?.toLowerCase() as TeammateReplyStatus | undefined;
+}
+
 /** Structured context riding on a user message. Undecodable records are dropped, not fatal. */
 export const OrchestrationMessageContext = Schema.Struct({
   version: Schema.Literal(1),
   guest: Schema.optional(GuestMessageAttribution),
+  /** An unknown future shape decodes to absent, so clients fall back to the text. */
+  teammate: ForwardCompatibleOptional(TeammateMessageAttribution),
   records: Schema.Array(Schema.Unknown)
     .check(
       Schema.isMaxLength(COMPOSER_CONTEXT_MAX_RECORDS),

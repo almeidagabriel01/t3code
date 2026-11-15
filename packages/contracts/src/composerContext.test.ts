@@ -6,6 +6,7 @@ import {
   COMPOSER_CONTEXT_KINDS,
   ComposerContextRecord,
   OrchestrationMessageContext,
+  teammateReplyStatus,
 } from "./composerContext.ts";
 
 const decodeRecord = Schema.decodeUnknownOption(ComposerContextRecord);
@@ -246,5 +247,59 @@ describe("OrchestrationMessageContext", () => {
         records: [knownRecords.skill, { ...knownRecords.terminal, contextId: " ctx_1 " }],
       }),
     ).toThrow();
+  });
+
+  const teammateEntry = {
+    kind: "reply",
+    name: "Ada",
+    handle: "ada",
+    threadId: "assistant:ada:1",
+    requestId: "message:1",
+    status: "partial",
+    files: [],
+    text: "Status: partial",
+  };
+
+  it("keeps a teammate entry and drops only a status it does not know", () => {
+    const known = decodeContext({
+      version: 1,
+      records: [],
+      teammate: { entries: [teammateEntry] },
+    });
+    expect(known.teammate?.entries[0]?.status).toBe("partial");
+    const future = decodeContext({
+      version: 1,
+      records: [],
+      teammate: { entries: [{ ...teammateEntry, status: "waiting" }] },
+    });
+    expect(future.teammate?.entries[0]?.status).toBeUndefined();
+    expect(future.teammate?.entries[0]?.text).toBe("Status: partial");
+  });
+
+  it("decodes an unknown teammate shape as absent instead of failing the message", () => {
+    const context = decodeContext({
+      version: 1,
+      records: [],
+      teammate: { entries: [{ ...teammateEntry, kind: "forward" }] },
+    });
+    expect(context.teammate).toBeUndefined();
+    expect(decodeContext({ version: 1, records: [], teammate: { entries: [] } }).teammate).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("teammateReplyStatus", () => {
+  it.each([
+    ["Status: done\nResult: shipped", "done"],
+    ["Status: partial. O item está em execução", "partial"],
+    ["**Status:** Blocked\nUnblock: sign in", "blocked"],
+    ["  \n- Status: done", "done"],
+    ["Result: done\nStatus: done", undefined],
+    ["Status: finished", undefined],
+    ["The status: done part is prose", undefined],
+    ["", undefined],
+  ])("reads %j as %j", (text, status) => {
+    expect(teammateReplyStatus(text)).toBe(status);
   });
 });
