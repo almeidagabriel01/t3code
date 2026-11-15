@@ -2205,6 +2205,7 @@ describe("requests", () => {
     await click("header:Project's model");
     expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
       members: [{ environmentId: "hub", projectId: "p1" }],
+      clearLabel: "Members' models",
     });
     await click("header:Beto");
     expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {

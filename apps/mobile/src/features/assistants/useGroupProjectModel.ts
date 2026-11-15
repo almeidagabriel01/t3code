@@ -126,7 +126,8 @@ export function useGroupProjectModel(
     exceptions: (target.environment.serverConfig.settings.projectSettingsOverrides[projectId]
       ?.assistantModelSelections ?? {}) as Readonly<Record<string, ModelSelection>>,
     nameOf,
-    openProjectPicker: () => navigation.navigate("SettingsProjectModel", { members }),
+    openProjectPicker: () =>
+      navigation.navigate("SettingsProjectModel", { members, clearLabel: "Members' models" }),
     openMemberPicker: (assistantId: AssistantId) =>
       navigation.navigate("SettingsProjectModel", { members, assistantId }),
     removeException: (assistantId: AssistantId) =>

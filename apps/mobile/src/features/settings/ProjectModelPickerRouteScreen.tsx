@@ -14,6 +14,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { connectedSettingsTargets } from "./settings-environment-filter";
 import {
   planMobileProjectAssistantModel,
+  planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
 } from "./settings-scoped-server";
@@ -27,13 +28,15 @@ export type ProjectModelPickerParams = {
   }>;
   /** Picks this assistant's model in the project instead of the project's own. */
   readonly assistantId?: AssistantId;
+  /** What clearing the project's own model goes back to, as the opening screen names it. */
+  readonly clearLabel?: string;
 };
 
 /** Picks a project's model for new threads, or one assistant's model in it; each choice saves. */
 export function ProjectModelPickerRouteScreen({
   route,
 }: StaticScreenProps<ProjectModelPickerParams>) {
-  const { members, assistantId } = route.params;
+  const { members, assistantId, clearLabel = "Use the environment's model" } = route.params;
   const navigation = useNavigation();
   const { environments } = useEnvironments();
   const writeSettings = useSettingsWriter();
@@ -51,28 +54,47 @@ export function ProjectModelPickerRouteScreen({
       </SettingsScreen>
     );
   }
-  const projectDefault = first.settings.defaultModelSelection;
-  // Without an exception the assistant runs on the project's own model; failing that, on a group's
-  // or its own default this screen cannot see, so nothing is marked.
+  // A project without its own model runs on one this screen cannot see (the environment's, a
+  // group's or an assistant's own), so nothing is marked.
+  const projectDefault =
+    first.sources.defaultModelSelection === "environment"
+      ? null
+      : first.settings.defaultModelSelection;
   const selected =
     assistantId === undefined
       ? projectDefault
       : (first.environment.serverConfig.settings.projectSettingsOverrides[first.projectId]
-          ?.assistantModelSelections?.[assistantId] ??
-        (first.sources.defaultModelSelection === "environment" ? null : projectDefault));
+          ?.assistantModelSelections?.[assistantId] ?? projectDefault);
+  const canWrite = () =>
+    targets.every((target) =>
+      readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
+    );
+  const ownModel =
+    assistantId === undefined &&
+    targets.some((target) => target.sources.defaultModelSelection === "project");
   return (
     <SettingsModelPicker
       title={assistantId === undefined ? "Project model" : "Assistant model"}
       environmentId={first.environment.environmentId}
       projectId={first.projectId}
       selected={selected}
+      {...(ownModel
+        ? {
+            clear: {
+              label: clearLabel,
+              onPress: () => {
+                if (!canWrite()) return;
+                void writeSettings(
+                  targets,
+                  planMobileScopedSettingsClear(targets, ["defaultModelSelection"]),
+                );
+                navigation.goBack();
+              },
+            },
+          }
+        : {})}
       onPick={(selection) => {
-        if (
-          !targets.every((target) =>
-            readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
-          )
-        )
-          return;
+        if (!canWrite()) return;
         void writeSettings(
           targets,
           assistantId === undefined

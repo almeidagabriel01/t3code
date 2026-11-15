@@ -44,6 +44,7 @@ import {
   installFakeEnvironment,
   publishAssistants,
   publishGroupChat,
+  pushFakeServerSettings,
   setFakeServerSettings,
   threadWithHistory,
   type FakeDriver,
@@ -1569,6 +1570,41 @@ it("saves the project's model from the group menu", async () => {
       },
     }),
   );
+});
+
+it("clears the project's model from its dialog, back to the members' models", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings({
+    projectSettingsOverrides: {
+      [PROJECT_ID]: { defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" } },
+    },
+  } as never);
+  appAtomRegistry.reset();
+  await using _screen = await openChat();
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Project's model" }));
+  const dialog = page.getByRole("dialog", { name: "Model in render" });
+  const picker = () => dialog.getByRole("button", { name: /^Model for render/ });
+  await expect.element(picker()).toHaveTextContent("GPT-5.5");
+  await userEvent.click(picker());
+  await userEvent.click(page.getByRole("button", { name: "Members' models" }));
+  await eventually(() =>
+    expect(fakeSettings.patches.at(-1)).toEqual({
+      projectSettingsOverrides: { [PROJECT_ID]: null },
+    }),
+  );
+  pushFakeServerSettings(null);
+  await expect.element(picker()).toHaveTextContent("Members' models");
+  // With no project model there is nothing to clear.
+  await userEvent.click(picker());
+  await expect
+    .element(page.getByRole("button", { name: "Members' models" }))
+    .not.toBeInTheDocument();
+  setFakeServerSettings(null);
 });
 
 it("shows the group's default for a project without its own", async () => {

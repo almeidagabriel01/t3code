@@ -133,9 +133,9 @@ export function useUpdateProjectAssistantModel() {
 export function useClearScopedSettings() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return (keys: readonly ProjectScopedServerSettingKey[]) => {
+  return (keys: readonly ProjectScopedServerSettingKey[], onFailed?: (message: string) => void) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    run(planScopedSettingsClear(context.scope, context.environments, keys), onFailed);
   };
 }
 

@@ -61,6 +61,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ServerConfigStreamEvent,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import type {
@@ -393,6 +394,17 @@ let settingsOverride: Partial<ServerSettings> | null = null;
 export function setFakeServerSettings(settings: Partial<ServerSettings> | null): void {
   settingsOverride = settings;
 }
+const configSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
+/** Sets the settings and pushes them to open config streams, as the server does after a write. */
+export function pushFakeServerSettings(settings: Partial<ServerSettings> | null): void {
+  settingsOverride = settings;
+  const event: ServerConfigStreamEvent = {
+    version: 1,
+    type: "settingsUpdated",
+    payload: { settings: currentServerConfig().settings },
+  };
+  for (const queue of configSubscribers) Effect.runSync(Queue.offer(queue, event));
+}
 const currentServerConfig = (): ServerConfig => {
   const config = serverConfig();
   return Object.keys(extraCapabilities).length === 0 &&
@@ -523,7 +535,13 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
 };
 
 class FakeCommandRejected extends Schema.TaggedError<FakeCommandRejected>()("FakeCommandRejected", {
@@ -1162,7 +1180,13 @@ const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(currentServerConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
