@@ -1,4 +1,6 @@
 import {
+  AssistantError,
+  EnvironmentAuthorizationError,
   WS_METHODS,
   type Assistant,
   type AssistantId,
@@ -10,6 +12,8 @@ import {
   type AssistantTeamId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -264,6 +268,29 @@ export function assistantErrorMessage(error: unknown): string {
     error.message
     ? error.message
     : "The assistant request failed. Try again.";
+}
+
+const isAssistantError = Schema.is(AssistantError);
+const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+
+/** What a group post that got no answer says: it may have landed, and a resend never doubles it. */
+export const ASSISTANT_GROUP_POST_UNCONFIRMED =
+  "Couldn't confirm the send. Send it again: it won't post twice.";
+
+/**
+ * A failed group post as the composer tells it. Only a typed error is the server's answer; an
+ * interruption or a lost connection may come after the server took the post, so it is unconfirmed.
+ */
+export function assistantGroupPostFailure(cause: Cause.Cause<unknown>): {
+  readonly message: string;
+  readonly reason: string | null;
+} {
+  const error = Cause.squash(cause);
+  if (isAssistantError(error)) return { message: error.message, reason: error.reason };
+  if (isAuthorizationError(error)) {
+    return { message: assistantErrorMessage(error), reason: null };
+  }
+  return { message: ASSISTANT_GROUP_POST_UNCONFIRMED, reason: "unconfirmed" };
 }
 
 /** A group chat read before its tab is known: nothing yet, and no subscription. */

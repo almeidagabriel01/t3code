@@ -699,7 +699,11 @@ export const fakeGroupChat = {
   } | null,
   /** Holds each post's reply until it settles. */
   postGate: null as Promise<void> | null,
+  /** Cuts the next post off unanswered, as a connection lost on the way does. */
+  postCut: false,
   posts: [] as Array<Record<string, unknown>>,
+  /** Each post's `clientRequestId`, apart, so the posts' own expectations stay as they are. */
+  postRequestIds: [] as unknown[],
   taskActions: [] as Array<Record<string, unknown>>,
   reads: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
@@ -739,8 +743,13 @@ handlers[WS_METHODS.assistantGroupsHistory] = (input: Record<string, unknown>) =
   fakeGroupChat.histories.push(input);
   return Effect.succeed(fakeGroupChat.older ?? { messages: [], tasks: [], hasMore: false });
 };
-handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
+handlers[WS_METHODS.assistantGroupsPost] = ({
+  clientRequestId,
+  ...input
+}: Record<string, unknown>) => {
+  fakeGroupChat.postRequestIds.push(clientRequestId);
   fakeGroupChat.posts.push(input);
+  if (fakeGroupChat.postCut) return Effect.interrupt;
   const refusal = fakeGroupChat.postRefusal;
   const gate = fakeGroupChat.postGate;
   if (refusal !== null) {

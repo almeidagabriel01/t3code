@@ -230,6 +230,7 @@ async function openChat(
   appAtomRegistry.set(assistantGroupSettingsAtom, null);
   Object.assign(fakeGroupChat, {
     posts: [],
+    postRequestIds: [],
     taskActions: [],
     reads: [],
     conversations: [],
@@ -237,6 +238,7 @@ async function openChat(
     subscriptions: [],
     postRefusal: null,
     postGate: null,
+    postCut: false,
     older: null,
   });
   fakeTeamEdits.updates = [];
@@ -466,7 +468,23 @@ it("keeps the draft and says what to do when the request names no one", async ()
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent("This group is archived. Restore it to write here.");
+  // A post cut off unanswered may have landed: the user reads why, and its resend never doubles.
   fakeGroupChat.postRefusal = null;
+  fakeGroupChat.postCut = true;
+  await userEvent.click(page.getByRole("button", { name: "Submit message" }));
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Couldn't confirm the send. Send it again: it won't post twice.");
+  await expectComposer("who does this?");
+  fakeGroupChat.postCut = false;
+  await userEvent.click(page.getByRole("button", { name: "Submit message" }));
+  await eventually(() => expect(fakeGroupChat.posts).toHaveLength(4));
+  const ids = [...fakeGroupChat.postRequestIds];
+  expect(new Set(ids).size === 1 && typeof ids[0] === "string").toBe(true);
+  // Changed text is another message, with its own id.
+  await userEvent.type(composer(), "who now?{Enter}");
+  await eventually(() => expect(fakeGroupChat.posts).toHaveLength(5));
+  expect(fakeGroupChat.postRequestIds[4]).not.toBe(ids[0]);
   await userEvent.type(composer(), "!");
   await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
 });

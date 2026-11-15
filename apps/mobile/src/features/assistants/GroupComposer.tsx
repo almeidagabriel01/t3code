@@ -33,6 +33,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
+import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -64,7 +65,12 @@ import type { GroupProjectModel } from "./useGroupProjectModel";
 const LEAD_DECIDES = "lead-decides";
 /** Its text waits in the draft store under its tab's `:outgoing:` key. */
 const outgoings = createAssistantGroupOutgoingStore<
-  AssistantGroupOutgoing & { readonly projectId: ProjectId | null; readonly error: string | null }
+  AssistantGroupOutgoing & {
+    readonly projectId: ProjectId | null;
+    readonly error: string | null;
+    /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
+    readonly requestId: string | null;
+  }
 >();
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
@@ -326,6 +332,7 @@ export function GroupComposer(props: {
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
     projectId: ProjectId | undefined,
+    requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
   const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
@@ -357,7 +364,15 @@ export function GroupComposer(props: {
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
-    if (shown !== null) setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
+    if (shown !== null) {
+      setOutgoing(
+        shown.tab,
+        value === ""
+          ? null
+          : // Changed text is another message: its send gets its own id.
+            { ...shown, error: null, requestId: value === text ? shown.requestId : null },
+      );
+    }
   };
 
   const voice = useVoiceInputController({
@@ -466,9 +481,12 @@ export function GroupComposer(props: {
     }
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
+    // A refused or unconfirmed message goes again under its first id.
+    const requestId = (shown?.failed === true ? shown.requestId : null) ?? uuidv4();
     const sent = {
       tab: props.tab,
       failed: false,
+      requestId,
       attachmentIds: attached.items.map((item) => item.id),
       projectId: runProject,
       error: null,
@@ -478,7 +496,7 @@ export function GroupComposer(props: {
     if (draftKey === groupKey) clearComposerDraftContent(groupKey);
     setOutgoing(sent.tab, sent);
     setSelection({ start: 0, end: 0 });
-    const result = await props.onSend(message, attached.ready, projectId);
+    const result = await props.onSend(message, attached.ready, projectId, requestId);
     if (result.ok) {
       // Only the sent text goes: what the user wrote meanwhile in another tab stays.
       clearComposerDraftContent(sentKey);

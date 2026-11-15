@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   assistantErrorMessage,
+  assistantGroupPostFailure,
   assistantForTaskThread,
   assistantForThread,
   ASSISTANT_GROUP_CHAT_IDLE,
@@ -413,12 +414,7 @@ export function useAssistantGroupActions(environmentId: EnvironmentId) {
     post: async (input: AssistantGroupsPostInput): Promise<AssistantGroupPostReply> => {
       const result = await post({ environmentId, input });
       if (result._tag === "Success") return { ok: true, value: result.value };
-      const error = squashAtomCommandFailure(result);
-      const reason =
-        typeof error === "object" && error !== null && "reason" in error
-          ? String(error.reason)
-          : null;
-      return { ok: false, message: assistantErrorMessage(error), reason };
+      return { ok: false, ...assistantGroupPostFailure(result.cause) };
     },
     taskAction: async (
       input: AssistantGroupsTaskActionInput,

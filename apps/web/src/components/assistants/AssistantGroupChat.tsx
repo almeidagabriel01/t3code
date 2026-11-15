@@ -1522,10 +1522,12 @@ export function AssistantGroupChat(props: {
   const send = async (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
+    requestId: string,
   ): Promise<GroupSendResult> => {
     const reply = await actions.post({
       teamId,
       text,
+      clientRequestId: requestId,
       ...(attachments.length === 0 ? {} : { attachments }),
       ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
       // A reply stays in its request's project; only a request with none can be given one.
