@@ -150,7 +150,9 @@ const en: ChannelStrings = {
             : `"${notice.label}" limit`;
     const scope = notice.scope === null ? "" : ` (${notice.scope})`;
     const resets = notice.resets === null ? "" : ` Resets ${notice.resets}.`;
-    return `${noticeSubject(notice)}: ${notice.remaining}% of the ${limit}${scope} left.${resets}`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: the ${limit}${scope} ran out.${resets}`
+      : `${noticeSubject(notice)}: ${notice.remaining}% of the ${limit}${scope} left.${resets}`;
   },
   decision: {
     approve: "Approve",
@@ -234,7 +236,9 @@ const ptBR: ChannelStrings = {
             : `limite "${notice.label}"`;
     const scope = notice.scope === null ? "" : ` (${notice.scope})`;
     const resets = notice.resets === null ? "" : ` Renova ${notice.resets}.`;
-    return `${noticeSubject(notice)}: restam ${notice.remaining}% do ${limit}${scope}.${resets}`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: o ${limit}${scope} acabou.${resets}`
+      : `${noticeSubject(notice)}: restam ${notice.remaining}% do ${limit}${scope}.${resets}`;
   },
   decision: {
     approve: "Aprovar",

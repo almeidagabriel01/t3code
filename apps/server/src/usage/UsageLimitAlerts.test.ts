@@ -91,18 +91,34 @@ describe("decideUsageLimitAlert", () => {
       [0, 4],
     ],
     [
-      "a jump to zero sends once and lower readings stay quiet",
+      "a jump straight to 0% sends once",
       [
         [40, DAY],
         [0, DAY],
-        [14, DAY],
-        [10, DAY],
-        [5, DAY],
       ],
       [1],
     ],
     [
-      // Reaching 0% is the limit itself: AutonomyService's usage-limit notice tells that one.
+      "climbing back from 0% in the same window stays quiet",
+      [
+        [40, DAY],
+        [0, DAY],
+        [3, DAY],
+        [14, DAY],
+        [10, DAY],
+      ],
+      [1],
+    ],
+    [
+      "a new window after 0% rearms",
+      [
+        [40, DAY],
+        [0, DAY],
+        [10, DAY + 7 * DAY],
+      ],
+      [1, 2],
+    ],
+    [
       "falling from the threshold to 0% sends no second threshold alert",
       [
         [15, DAY],
@@ -253,6 +269,18 @@ describe("usageLimitAlertText", () => {
     assert.equal(
       text({ language: "pt-BR", timeZone: "America/Sao_Paulo" }),
       "Claude Max: restam 15% do limite semanal. Renova sex., 12:30.",
+    );
+  });
+
+  it("says the limit ran out at 0% instead of 0% left", () => {
+    const spent = weekly(100, "1970-01-02T15:30:00.000Z");
+    assert.equal(
+      text({ window: spent }),
+      "Claude Max: the weekly limit ran out. Resets Fri 15:30.",
+    );
+    assert.equal(
+      text({ window: spent, language: "pt-BR", timeZone: "America/Sao_Paulo" }),
+      "Claude Max: o limite semanal acabou. Renova sex., 12:30.",
     );
   });
 

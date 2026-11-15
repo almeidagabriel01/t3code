@@ -188,7 +188,8 @@ open **Settings → Limit alerts**. Each window takes its own share, or **Off**.
   the limits your turns report. Accounts that are signed out or fail to report are checked less
   often until they recover.
 - Each window alerts once. It alerts again after it resets, or after the share left climbs five
-  points above your pick and drops back.
+  points above your pick and drops back. A window that hits 0% before it alerts, even outside T3
+  Code, alerts that the limit ran out and when it resets.
 - The reset time is shown in the time zone of the device that last changed the alert, or the
   server's time zone until you change one.
 
