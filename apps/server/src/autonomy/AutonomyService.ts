@@ -43,6 +43,7 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
 import { containsSecret } from "../channels/channelRedaction.ts";
@@ -212,6 +213,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const spend = yield* AssistantSpend;
+  const budgetGate = yield* ProviderBudgetGate;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const channelLanguage = yield* ChannelLanguage;
@@ -222,6 +224,16 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const needsUser = yield* NeedsUser;
   const lock = yield* Semaphore.make(1);
+
+  /** A wake is a model turn: refused past its provider instance's budget or the assistant's own. */
+  const overBudget = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const refusal =
+      shell === null
+        ? yield* spend.budgetRefusal(threadId)
+        : yield* budgetGate(shell.providerInstanceId, threadId);
+    return Option.isSome(refusal);
+  });
 
   // What the time-based rules need; rebuilt from events after a restart, so a run that was already
   // stuck at shutdown is judged again from its next event.
@@ -373,7 +385,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_id = ${assistant.id} AND source <> 'notify'
         AND created_at > ${iso(nowMs - DAY_MS)}`;
     if ((today[0]?.n ?? 0) >= config.maxWakesPerDay) return;
-    if (Option.isSome(yield* spend.budgetRefusal(assistant.threadId as ThreadId))) return;
+    if (yield* overBudget(assistant.threadId as ThreadId)) return;
 
     const label = sourceLabel(candidate.source);
     yield* sql`
@@ -923,7 +935,7 @@ const make = Effect.gen(function* () {
     // Its own conversation, or its own turn's subagents: it is already there.
     if (wait.threadId === threadId || input.rootThreadId === threadId) return;
     // A notice is a model turn; past the budget the card in Activity and the chat app still asks.
-    if (Option.isSome(yield* spend.budgetRefusal(threadId))) return;
+    if (yield* overBudget(threadId)) return;
     const id = waitWakeId(threadId, wait.key);
     const commandId = CommandId.make(id);
     // Sent before, then maybe taken out of the queue by the user: told either way.

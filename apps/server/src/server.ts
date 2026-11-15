@@ -719,6 +719,7 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
 const layerChannels = AutonomyService.layer.pipe(
+  Layer.provide(AssistantSpend.layerBudgetGate),
   Layer.provide(NeedsUser.layer),
   Layer.provide(AssistantTasks.layer),
   Layer.provide(ProjectionStoreV2.layer),

@@ -20,6 +20,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import { AssistantTasks, layer as assistantTasksLayer } from "../assistants/AssistantTasks.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
 import * as ImessageChannelSettings from "../channels/imessage/ImessageChannelSettings.ts";
@@ -75,6 +76,8 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   const shells = new Map<string, Shell | null>();
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
+  /** The provider instance past its own budget, whoever runs on it. */
+  const instanceRefused: { current: string | null } = { current: null };
   const sendFails = { current: false };
   /** What every send fails with while set: a default that can never take it. */
   const sendError: { current: unknown } = { current: null };
@@ -194,6 +197,13 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
         }),
+        Layer.succeed(ProviderBudgetGate, (instanceId) =>
+          Effect.succeed(
+            refusal.current || instanceRefused.current === instanceId
+              ? Option.some({} as never)
+              : Option.none(),
+          ),
+        ),
         Layer.mock(AssistantSpend)({
           budgetRefusal: () =>
             Effect.succeed(refusal.current ? Option.some({} as never) : Option.none()),
@@ -214,6 +224,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     shells,
     sent,
     refusal,
+    instanceRefused,
     sendFails,
     sendError,
     attempts,
@@ -412,6 +423,22 @@ it.effect("a blocking budget, a failed send and a missing assistant wake nobody"
     // The failed send gave its claim back, so the same occurrence may wake later.
     h.sendFails.current = false;
     yield* service.handleEvent(run("failed", "r2"));
+    assert.lengthOf(h.sent, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("past its provider instance's budget a rule wakes nobody", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* addAssistant();
+    h.shells.set("t1", plain);
+    h.shells.set("assistant:jarvis:1", { ...plain, providerInstanceId: "codex-work" });
+    h.instanceRefused.current = "codex-work";
+    yield* service.handleEvent(run("failed", "r1"));
+    assert.lengthOf(h.sent, 0);
+    h.instanceRefused.current = "codex-personal";
+    yield* service.handleEvent(run("failed", "r1"));
     assert.lengthOf(h.sent, 1);
   }).pipe(Effect.provide(h.layer));
 });
@@ -1571,6 +1598,21 @@ it.effect("past its budget the default gets no notice, and the card still goes",
     const { task } = yield* otherOrigins(h);
     yield* askFrom(task, "Over budget?");
     h.refusal.current = true;
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 0);
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("past its provider instance's budget the default gets no notice", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    h.shells.set(JARVIS, { ...plain, title: "Jarvis", providerInstanceId: "codex-work" });
+    h.instanceRefused.current = "codex-work";
+    yield* askFrom(task, "Over the instance budget?");
     yield* TestClock.adjust(MIN);
     yield* service.notifyWaiting;
     assert.lengthOf(toJarvis(h), 0);
