@@ -69,6 +69,7 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
   assistantGroupSendContext,
+  assistantGroupSendContextEqual,
   insertAssistantGroupMention,
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
@@ -813,6 +814,20 @@ describe("composer helpers", () => {
           : { id: replyTo as AssistantGroupMessageId, to: "Beto Silva", projectId: ALPHA.id },
       ),
       expected,
+    );
+  });
+
+  it("keeps the send context equal through events that do not change it", () => {
+    const reply = { id: "m2" as AssistantGroupMessageId, to: "Beto Silva", projectId: ALPHA.id };
+    const before = assistantGroupSendContext(chat, reply);
+    const other = applyAssistantGroupsEvent(chat, { type: "message", message: message(6) })!;
+    assert.isTrue(assistantGroupSendContextEqual(before, assistantGroupSendContext(other, reply)));
+    const resumed = applyAssistantGroupsEvent(chat, {
+      type: "task",
+      task: { ...chat.tasks.get("k" as AssistantGroupTask["id"])!, status: "running" },
+    })!;
+    assert.isFalse(
+      assistantGroupSendContextEqual(before, assistantGroupSendContext(resumed, reply)),
     );
   });
 

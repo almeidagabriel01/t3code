@@ -649,35 +649,40 @@ vi.mock("../../state/entities", () => ({
 }));
 // The store hands out the same entries until they change.
 let entries: { teams: unknown; environmentIds: unknown; active: unknown; archived: [] } | undefined;
-vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => {
-    if (entries?.teams !== mocks.teams || entries.environmentIds !== mocks.environmentIds) {
-      entries = {
-        teams: mocks.teams,
-        environmentIds: mocks.environmentIds,
-        active: members.map((assistant) => ({ environmentId: "hub", assistant })),
-        archived: [],
-      };
-    }
-    return entries;
-  },
-  useAssistantGroupChat: (...args: unknown[]) => {
-    mocks.subscribe(...args);
-    return mocks.live;
-  },
-  useAssistantGroupActions: () => ({
-    canPost: mocks.canPost,
-    canAct: mocks.canAct,
-    canMarkRead: mocks.canMarkRead,
-    markRead: mocks.markRead,
-    post: ({ clientRequestId, ...input }: { readonly clientRequestId?: string }) => {
-      mocks.requestIds.push(clientRequestId);
-      return mocks.post(input);
+vi.mock("../../state/assistants", async () => {
+  const { assistantGroupSendContext } = await import("@t3tools/client-runtime/assistantGroupChat");
+  return {
+    useAssistantGroupSendContext: (_environmentId: unknown, chat: { readonly reply: never }) =>
+      assistantGroupSendContext(mocks.live as never, chat.reply),
+    useAssistantEntries: () => {
+      if (entries?.teams !== mocks.teams || entries.environmentIds !== mocks.environmentIds) {
+        entries = {
+          teams: mocks.teams,
+          environmentIds: mocks.environmentIds,
+          active: members.map((assistant) => ({ environmentId: "hub", assistant })),
+          archived: [],
+        };
+      }
+      return entries;
     },
-    taskAction: mocks.taskAction,
-    olderThan: mocks.olderThan,
-  }),
-}));
+    useAssistantGroupChat: (...args: unknown[]) => {
+      mocks.subscribe(...args);
+      return mocks.live;
+    },
+    useAssistantGroupActions: () => ({
+      canPost: mocks.canPost,
+      canAct: mocks.canAct,
+      canMarkRead: mocks.canMarkRead,
+      markRead: mocks.markRead,
+      post: ({ clientRequestId, ...input }: { readonly clientRequestId?: string }) => {
+        mocks.requestIds.push(clientRequestId);
+        return mocks.post(input);
+      },
+      taskAction: mocks.taskAction,
+      olderThan: mocks.olderThan,
+    }),
+  };
+});
 vi.mock("../../components/ui/useBarInset", () => ({ useBarInset: () => 100 }));
 vi.mock("../../components/ui/GlassSurface", async () => ({
   GlassSurface: (await import("react-native")).View,

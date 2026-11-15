@@ -10,14 +10,22 @@ import {
   type AssistantSandboxStatus,
   type AssistantGroupScope,
   type AssistantTeamId,
+  type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 
-import { applyAssistantGroupsEvent, type AssistantGroupChatState } from "../assistantGroupChat.ts";
+import {
+  applyAssistantGroupsEvent,
+  assistantGroupSendContext,
+  assistantGroupSendContextEqual,
+  type AssistantGroupChatState,
+  type AssistantGroupReplyRef,
+} from "../assistantGroupChat.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe } from "../rpc/client.ts";
 import {
@@ -340,6 +348,45 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     });
+  const groupChat = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:assistants:group-chat",
+    subscribe: (input: {
+      readonly teamId: AssistantTeamId;
+      readonly scope?: AssistantGroupScope;
+    }) =>
+      subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
+        Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
+        Stream.filter((state): state is AssistantGroupChatState => state !== null),
+      ),
+  });
+  const groupSendContextFamily = Atom.family((key: string) => {
+    const [environmentId, teamId, scope, reply] = JSON.parse(key) as [
+      EnvironmentId,
+      AssistantTeamId,
+      AssistantGroupScope | null | "all",
+      AssistantGroupReplyRef | null,
+    ];
+    return Atom.make((get) =>
+      assistantGroupSendContext(
+        scope === null
+          ? null
+          : Option.getOrNull(
+              AsyncResult.value(
+                get(
+                  groupChat({
+                    environmentId,
+                    input: { teamId, ...(scope === "all" ? {} : { scope }) },
+                  }),
+                ),
+              ),
+            ),
+        reply,
+      ),
+    ).pipe(
+      Atom.withEquality(assistantGroupSendContextEqual),
+      Atom.withLabel(`environment-data:assistants:group-send-context:${key}`),
+    );
+  });
   return {
     live: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:assistants:live",
@@ -356,17 +403,27 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
     deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),
     /** One group's chat, live: the newest page first, then each change. */
-    groupChat: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:assistants:group-chat",
-      subscribe: (input: {
-        readonly teamId: AssistantTeamId;
-        readonly scope?: AssistantGroupScope;
-      }) =>
-        subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
-          Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
-          Stream.filter((state): state is AssistantGroupChatState => state !== null),
-        ),
-    }),
+    groupChat,
+    /**
+     * What routes a draft besides its text, from the same chat as `groupChat` (scope as there).
+     * It notifies only when the context changes, not on every chat event.
+     */
+    groupSendContext: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly teamId: AssistantTeamId;
+      readonly scope: AssistantGroupScope | null | undefined;
+      readonly reply: AssistantGroupReplyRef | null;
+    }) =>
+      groupSendContextFamily(
+        JSON.stringify([
+          input.environmentId,
+          input.teamId,
+          input.scope === undefined ? "all" : input.scope,
+          input.reply === null
+            ? null
+            : { id: input.reply.id, to: input.reply.to, projectId: input.reply.projectId },
+        ]),
+      ),
     groupHistory: command(WS_METHODS.assistantGroupsHistory, "groupHistory"),
     markGroupRead: command(WS_METHODS.assistantGroupsMarkRead, "markGroupRead"),
     groupConversation: command(WS_METHODS.assistantGroupsConversation, "groupConversation"),

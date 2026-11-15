@@ -13,7 +13,6 @@ import {
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
-  type AssistantGroupSendContext,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -40,6 +39,7 @@ import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "../../state/assistants";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useEnvironmentServerConfig, useProject, useQuietThreadShell } from "../../state/entities";
 import {
@@ -313,15 +313,20 @@ function ReplyQuote(props: {
  */
 type RecipientsLineProps = Omit<
   Parameters<typeof assistantGroupRecipientsPreview>[0],
-  "lead" | "leadCanRoute"
-> & { readonly environmentId: EnvironmentId; readonly lead: Assistant | null };
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
 
 /**
  * Who a draft reaches, under the composer. Only this line reads the lead's model and the
  * server config, so a provider update does not re-render the composer.
  */
-function GroupRecipientsLine(props: RecipientsLineProps) {
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
   const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
   const thread = useQuietThreadShell(
     lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
   );
@@ -339,7 +344,7 @@ function GroupRecipientsLine(props: RecipientsLineProps) {
         });
   return (
     <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
-      {assistantGroupRecipientsPreview({ ...props, leadCanRoute })}
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
     </Text>
   );
 }
@@ -364,8 +369,8 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
-  /** What the server reads besides the draft to route it, from the chat. */
-  readonly sendContext: AssistantGroupSendContext;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
@@ -784,7 +789,7 @@ export function GroupComposer(props: {
           lead={lead}
           projects={props.projects}
           projectId={props.projectId}
-          context={props.sendContext}
+          chat={props.chat}
         />
       ) : (
         <Text accessibilityRole="alert" className="min-h-4 px-3 text-xs text-danger-foreground">

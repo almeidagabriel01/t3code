@@ -819,6 +819,29 @@ export function assistantGroupSendContext(
   };
 }
 
+const replyOwnerKey = (owner: AssistantGroupSendContext["replyOwner"]) =>
+  owner === null ? null : "id" in owner ? `id:${owner.id}` : `name:${owner.name}`;
+
+/** Equal contexts route a draft alike, so the recipients line keeps the one it has. */
+export function assistantGroupSendContextEqual(
+  left: AssistantGroupSendContext,
+  right: AssistantGroupSendContext,
+): boolean {
+  const [a, b] = [left.request, right.request];
+  return (
+    replyOwnerKey(left.replyOwner) === replyOwnerKey(right.replyOwner) &&
+    (a === null || b === null
+      ? a === b
+      : a.projectId === b.projectId && a.started === b.started && a.ownerId === b.ownerId) &&
+    left.stopped.length === right.stopped.length &&
+    left.stopped.every(
+      (task, index) =>
+        task.taskId === right.stopped[index]!.taskId &&
+        task.ownerId === right.stopped[index]!.ownerId,
+    )
+  );
+}
+
 /**
  * The line under the composer: who a draft reaches, or why the server would refuse it, worked out
  * as `AssistantGroups.post` does before routing. The server still decides.

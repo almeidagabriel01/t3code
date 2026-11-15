@@ -14,7 +14,6 @@ import {
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
-  type AssistantGroupSendContext,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
@@ -50,6 +49,7 @@ import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
 import { useProject, useQuietThreadShell, useServerConfigs } from "~/state/entities";
 import { useEnvironmentProviders } from "~/state/environments";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -278,15 +278,20 @@ const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
 
 type RecipientsLineProps = Omit<
   Parameters<typeof assistantGroupRecipientsPreview>[0],
-  "lead" | "leadCanRoute"
-> & { readonly environmentId: EnvironmentId; readonly lead: Assistant | null };
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
 
 /**
  * Who a draft reaches, under the composer. Only this line reads the lead's model and the
  * providers, so a provider update does not re-render the composer.
  */
-function GroupRecipientsLine(props: RecipientsLineProps) {
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
   const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
   const thread = useQuietThreadShell(
     lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
   );
@@ -309,7 +314,7 @@ function GroupRecipientsLine(props: RecipientsLineProps) {
       className="min-h-4 px-1 text-xs text-muted-foreground"
       aria-live="polite"
     >
-      {assistantGroupRecipientsPreview({ ...props, leadCanRoute })}
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
     </p>
   );
 }
@@ -332,8 +337,8 @@ export function GroupComposer(props: {
   /** The model the next message runs on, picked here only for it. */
   readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
-  /** What the server reads besides the draft to route it, from the chat. */
-  readonly sendContext: AssistantGroupSendContext;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
@@ -903,7 +908,7 @@ export function GroupComposer(props: {
           lead={lead}
           projects={projectRefs}
           projectId={props.projectId}
-          context={props.sendContext}
+          chat={props.chat}
         />
       ) : (
         <p
