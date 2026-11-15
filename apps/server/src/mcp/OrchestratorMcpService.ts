@@ -106,6 +106,7 @@ import {
 import { copyTransfer, removeTransfer, transferText } from "../assistants/AssistantTransfers.ts";
 import { ServerConfig } from "../config.ts";
 import { projectScopeRefusal, sandboxRefusal } from "../assistants/AssistantSandboxPolicy.ts";
+import { NeedsUser } from "../autonomy/NeedsUser.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectModelSelectionService from "../orchestration-v2/ProjectModelSelectionService.ts";
 import {
@@ -827,10 +828,23 @@ function threadPullRequests(
   }));
 }
 
+/** Runs that go on by themselves; a thread with none and a wait on the user waits on them. */
+const LIVE_THREAD_STATUSES = new Set(["queued", "preparing", "starting", "running"]);
+
+/** An open decision or pending request makes a thread with no live run wait on the user. */
+const listedThreadStatus = (
+  shell: OrchestrationV2ThreadShell,
+  waitingOnUser: ReadonlySet<string>,
+): OrchestratorMcpThreadListItem["status"] => {
+  const status = shell.activityRunStatus ?? shell.status;
+  return waitingOnUser.has(shell.id) && !LIVE_THREAD_STATUSES.has(status) ? "waiting" : status;
+};
+
 function listItemFromShell(
   scope: McpInvocationScope,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
+  waitingOnUser: ReadonlySet<string>,
 ): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
@@ -839,7 +853,7 @@ function listItemFromShell(
     link: threadLinkFor(scope, shell.id, shell.title),
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
-    status: shell.activityRunStatus ?? shell.status,
+    status: listedThreadStatus(shell, waitingOnUser),
     latestRunId: shell.latestRunId,
     providerInstanceId: shell.modelSelection.instanceId,
     model: shell.modelSelection.model,
@@ -1073,6 +1087,8 @@ const make = Effect.gen(function* () {
   const assistantDirectory = yield* Effect.serviceOption(AssistantDirectory);
   const assistantRequests = yield* Effect.serviceOption(AssistantRequests);
   const serverConfig = yield* Effect.serviceOption(ServerConfig);
+  // Without it, thread statuses come from runs alone.
+  const needsUser = yield* Effect.serviceOption(NeedsUser);
 
   /** A sandboxed assistant starts work only in its sandbox: anything else is refused with the id to use. */
   const refuseOutsideSandbox = (scope: McpInvocationScope, target: EnvironmentId | undefined) =>
@@ -3159,6 +3175,13 @@ const make = Effect.gen(function* () {
           ),
         );
       const nowMs = yield* Clock.currentTimeMillis;
+      const waitingOnUser = new Set<string>(
+        Option.isNone(needsUser)
+          ? []
+          : (yield* needsUser.value.pending.pipe(Effect.orElseSucceed(() => []))).map(
+              (wait) => wait.threadId,
+            ),
+      );
       // An empty list is no filter: clients that fill every optional field send `[]`.
       const statuses =
         input.statuses === undefined || input.statuses.length === 0
@@ -3167,7 +3190,7 @@ const make = Effect.gen(function* () {
       const titleContains = input.titleContains?.toLocaleLowerCase();
       const filtered = projectThreads
         .filter(
-          (thread) => statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
+          (thread) => statuses === null || statuses.has(listedThreadStatus(thread, waitingOnUser)),
         )
         .filter(
           (thread) =>
@@ -3187,7 +3210,7 @@ const make = Effect.gen(function* () {
       return {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
-        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
+        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs, waitingOnUser)),
         nextCursor,
         total: filtered.length,
       } satisfies OrchestratorMcpThreadListResult;

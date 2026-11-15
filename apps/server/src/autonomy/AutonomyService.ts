@@ -46,6 +46,7 @@ import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { assistantRunReply } from "../assistants/assistantRunReply.ts";
 import type { TurnOrigin } from "../mcp/turnOrigin.ts";
 import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
 import { containsSecret } from "../channels/channelRedaction.ts";
@@ -67,7 +68,6 @@ import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as KanbanService from "../kanban/KanbanService.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -81,7 +81,8 @@ import {
   type AutonomyCandidate,
   type AutonomySignal,
 } from "./autonomyRules.ts";
-import { MACHINE_REQUEST_KINDS, needsYouText, requestDecision } from "./needsYou.ts";
+import { NeedsUser, type UserWait } from "./NeedsUser.ts";
+import { defaultNoticeText, needsYouText, waitWakeId } from "./needsYou.ts";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -216,16 +217,27 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const spend = yield* AssistantSpend;
   const notices = yield* TaskEventNotices;
+  const budgetGate = yield* ProviderBudgetGate;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const channelLanguage = yield* ChannelLanguage;
   const telegram = yield* TelegramChannelSettings.TelegramChannelSettings;
   const kanban = yield* KanbanService.KanbanService;
   const projects = yield* ProjectService.ProjectService;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const imessage = yield* ImessageChannelSettings.ImessageChannelSettings;
   const environment = yield* ServerEnvironment;
+  const needsUser = yield* NeedsUser;
   const lock = yield* Semaphore.make(1);
+
+  /** A wake is a model turn: refused past its provider instance's budget or the assistant's own. */
+  const overBudget = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const refusal =
+      shell === null
+        ? yield* spend.budgetRefusal(threadId)
+        : yield* budgetGate(shell.providerInstanceId, threadId);
+    return Option.isSome(refusal);
+  });
 
   // What the time-based rules need; rebuilt from events after a restart, so a run that was already
   // stuck at shutdown is judged again from its next event.
@@ -377,7 +389,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_id = ${assistant.id} AND source <> 'notify'
         AND created_at > ${iso(nowMs - DAY_MS)}`;
     if ((today[0]?.n ?? 0) >= config.maxWakesPerDay) return;
-    if (Option.isSome(yield* spend.budgetRefusal(assistant.threadId as ThreadId))) return;
+    if (yield* overBudget(assistant.threadId as ThreadId)) return;
 
     const label = sourceLabel(candidate.source);
     yield* sql`
@@ -889,6 +901,111 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Who asks, as the user knows them: the assistant following the thread, else the thread's own
+   * agent, with its group when it is a group member's conversation.
+   */
+  const waitOrigin = Effect.fn("AutonomyService.waitOrigin")(function* (
+    threadId: ThreadId,
+    providerInstanceId: string | undefined,
+  ) {
+    const owner = yield* needsUser.owner(threadId).pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(owner)) return owner.value.name;
+    const agent = yield* agentName(threadId, providerInstanceId);
+    const teams = yield* sql<{ readonly name: string }>`
+      SELECT tm.name FROM assistant_teams tm
+      WHERE tm.team_id IN (
+        SELECT team_id FROM assistant_group_threads WHERE thread_id = ${threadId}
+        UNION SELECT team_id FROM assistant_group_request_threads WHERE thread_id = ${threadId})
+      LIMIT 1`;
+    return teams[0] === undefined ? agent : `${agent} (${teams[0].name})`;
+  });
+
+  /** A default that cannot be told for now keeps the wait untold, so the next sweep tries again. */
+  const keepTelling = <E>(self: Effect.Effect<void, E>) =>
+    self.pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("autonomy: the default assistant could not be told", { cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+
+  /**
+   * Tells the default assistant, the user's point of contact, about a wait from anywhere. The id is
+   * the owner wake's when the default follows the thread itself, so it is told once; a wait
+   * answered meanwhile takes the notice back.
+   */
+  const tellDefault = Effect.fn("AutonomyService.tellDefault")(function* (input: {
+    readonly wait: UserWait;
+    readonly title: string;
+    readonly origin: string;
+    readonly threadTitle: string;
+    readonly rootThreadId: ThreadId | undefined;
+  }) {
+    const { wait } = input;
+    const target = yield* needsUser.defaultAssistant;
+    if (Option.isNone(target)) return;
+    const { threadId } = target.value;
+    // Its own conversation, or its own turn's subagents: it is already there.
+    if (wait.threadId === threadId || input.rootThreadId === threadId) return;
+    // A notice is a model turn; past the budget the card in Activity and the chat app still asks.
+    if (yield* overBudget(threadId)) return;
+    const id = waitWakeId(threadId, wait.key);
+    const commandId = CommandId.make(id);
+    // Sent before, then maybe taken out of the queue by the user: told either way.
+    if (yield* threads.hasReceipt(commandId)) return;
+    const giveUp = (error: { readonly _tag: string }) =>
+      Effect.logWarning("autonomy: the default assistant cannot take this notice", {
+        threadId,
+        key: wait.key,
+        error: error._tag,
+      }).pipe(Effect.as(false));
+    const sent = yield* threads
+      .sendToThread({
+        projectId: target.value.projectId,
+        commandId,
+        messageId: MessageId.make(id),
+        threadId,
+        senderThreadId: wait.threadId,
+        text: defaultNoticeText({
+          title: input.title,
+          origin: input.origin,
+          link: formatThreadLink(
+            { environmentId: null, threadId: wait.threadId },
+            input.threadTitle,
+          ),
+          source: wait.source,
+        }),
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(
+        Effect.as(true),
+        // Failures a later try meets again until the user acts, most with no receipt to stop them:
+        // the wait counts as told, as past a budget. I/O and loading failures still retry.
+        Effect.catchTags({
+          ThreadManagementThreadArchivedError: giveUp,
+          ThreadManagementThreadNotFoundError: giveUp,
+          ThreadManagementDurableRunProjectionError: giveUp,
+          ThreadManagementProviderInstanceDisabledError: giveUp,
+          OrchestratorCommandIdConflictError: giveUp,
+          OrchestratorCommandPreviouslyRejectedError: giveUp,
+          OrchestratorCommandRejectedError: giveUp,
+          OrchestratorSubagentThreadReadOnlyError: giveUp,
+          OrchestratorThreadAboveModeLimitError: giveUp,
+          OrchestratorRuntimeModeAboveCeilingError: giveUp,
+        }),
+      );
+    if (!sent) return;
+    if (Option.isNone(yield* needsUser.describe(wait, input.origin))) {
+      yield* needsUser.withdrawWake(threadId, wait);
+    }
+  });
+
   const alreadyTold = (subject: string) =>
     sql`SELECT 1 FROM autonomy_needs_you WHERE subject_key = ${subject}`.pipe(
       Effect.map((rows) => rows.length > 0),
@@ -899,7 +1016,7 @@ const make = Effect.gen(function* () {
       VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
   /**
    * A card the chat app failed to show, or may not have shown, is no longer told: dropping its
-   * delivery lets the next cycle enqueue it again. An ambiguous part already claimed stays deduplicated.
+   * delivery lets the next cycle enqueue it again. A part the chat app confirmed is not sent twice.
    */
   const retellUndelivered = Effect.fn("AutonomyService.retellUndelivered")(function* (
     nowMs: number,
@@ -982,22 +1099,19 @@ const make = Effect.gen(function* () {
   });
 
   const notifyRequest = Effect.fn("AutonomyService.notifyRequest")(function* (
-    threadId: ThreadId,
-    requestId: string,
+    wait: Extract<UserWait, { readonly source: "request" }>,
     config: AutonomySettings,
     nowMs: number,
   ) {
-    const subject = `request:${requestId}`;
+    const { threadId, requestId } = wait;
+    const subject = wait.key;
     if (yield* alreadyTold(subject)) return;
-    const { request, item } = yield* projections.getRuntimeResponseContext(
-      threadId,
-      requestId as never,
-    );
-    if (request === undefined || request.status !== "pending") return;
     const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
     if (shell === null || shell.archivedAt !== null) return;
-    const agent = yield* agentName(threadId, shell.providerInstanceId);
-    const built = requestDecision(agent, request, item);
+    const agent = yield* waitOrigin(threadId, shell.providerInstanceId);
+    const described = yield* needsUser.describe(wait, agent);
+    if (Option.isNone(described)) return;
+    const built = described.value;
     const decision = yield* decisions.request({
       fromThreadId: threadId,
       projectId: shell.projectId,
@@ -1005,7 +1119,7 @@ const make = Effect.gen(function* () {
       // The same ids the assistant approval mirror uses, so an assistant's request is one decision.
       clientRequestId: !built.answerable
         ? `${DecisionService.NOTICE_REQUEST_PREFIX}needs-you:${requestId}`
-        : request.kind === "user_input"
+        : wait.requestKind === "user_input"
           ? `question:${requestId}`
           : `approval:${requestId}`,
       title: built.title,
@@ -1014,8 +1128,15 @@ const make = Effect.gen(function* () {
       ...(built.answerable ? { approvalRequestId: requestId } : {}),
     });
     if (decision.status !== "open") return yield* markTold(subject, decision.id, nowMs);
+    const toldDefault = yield* tellDefault({
+      wait,
+      title: built.title,
+      origin: agent,
+      threadTitle: shell.title,
+      rootThreadId: shell.lineage.rootThreadId,
+    }).pipe(keepTelling);
     if (
-      yield* sendNeedsYou({
+      (yield* sendNeedsYou({
         decision,
         agent,
         threadId,
@@ -1023,7 +1144,8 @@ const make = Effect.gen(function* () {
         threadTitle: shell.title,
         answerable: built.answerable,
         config,
-      })
+      })) &&
+      toldDefault
     )
       yield* markTold(subject, decision.id, nowMs);
   });
@@ -1086,25 +1208,35 @@ const make = Effect.gen(function* () {
   });
 
   const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
-    decision: Decision,
+    wait: Extract<UserWait, { readonly source: "decision" }>,
     config: AutonomySettings,
     nowMs: number,
   ) {
-    const subject = `decision:${decision.id}`;
+    const { decision } = wait;
+    const subject = wait.key;
     if (yield* alreadyTold(subject)) return;
     const shell = yield* engine
       .getThreadShell(decision.fromThreadId)
       .pipe(Effect.orElseSucceed(() => null));
+    const agent = yield* waitOrigin(decision.fromThreadId, shell?.providerInstanceId);
+    const toldDefault = yield* tellDefault({
+      wait,
+      title: decision.title,
+      origin: agent,
+      threadTitle: shell?.title ?? decision.threadTitle,
+      rootThreadId: shell?.lineage.rootThreadId,
+    }).pipe(keepTelling);
     if (
-      yield* sendNeedsYou({
+      (yield* sendNeedsYou({
         decision,
-        agent: yield* agentName(decision.fromThreadId, shell?.providerInstanceId),
+        agent,
         threadId: decision.fromThreadId,
         projectId: shell?.projectId ?? null,
         threadTitle: decision.threadTitle,
         answerable: true,
         config,
-      })
+      })) &&
+      toldDefault
     )
       yield* markTold(subject, decision.id, nowMs);
   });
@@ -1217,39 +1349,19 @@ const make = Effect.gen(function* () {
           return at >= baseline && at + config.notifyWaitingAfterMinutes * MINUTE_MS <= nowMs;
         };
 
-        const requests = yield* sql<{
-          readonly runtime_request_id: string;
-          readonly thread_id: string;
-          readonly created_at: string;
-        }>`
-          SELECT runtime_request_id, thread_id, created_at
-          FROM orchestration_v2_projection_runtime_requests
-          WHERE status = 'pending' AND kind NOT IN ${sql.in(MACHINE_REQUEST_KINDS)}`;
         // One bad item never keeps the others from being told.
-        for (const row of requests) {
-          if (!due(row.created_at)) continue;
-          yield* notifyRequest(
-            row.thread_id as ThreadId,
-            row.runtime_request_id,
-            config,
-            nowMs,
-          ).pipe(isolate("autonomy: a waiting request could not be told"));
-        }
-
-        const open = yield* decisions.list({}).pipe(Effect.orElseSucceed(() => []));
-        for (const decision of open) {
-          // Notices only inform, and a request's mirror is told about through its request.
-          if (
-            decision.status !== "open" ||
-            decision.notice === true ||
-            decision.approvalRequestId !== undefined ||
-            !due(decision.createdAt)
-          ) {
-            continue;
+        const waits = yield* needsUser.pending;
+        for (const wait of waits) {
+          if (!due(wait.createdAt)) continue;
+          if (wait.source === "request") {
+            yield* notifyRequest(wait, config, nowMs).pipe(
+              isolate("autonomy: a waiting request could not be told"),
+            );
+          } else {
+            yield* notifyDecision(wait, config, nowMs).pipe(
+              isolate("autonomy: an open decision could not be told"),
+            );
           }
-          yield* notifyDecision(decision, config, nowMs).pipe(
-            isolate("autonomy: an open decision could not be told"),
-          );
         }
 
         // Stopping a task or archiving its group is the user's own doing; the rest wait on them.

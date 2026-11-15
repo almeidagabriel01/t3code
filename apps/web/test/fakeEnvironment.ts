@@ -1005,6 +1005,7 @@ export const fakeImessage = {
   failConfigure: null as ImessageChannelSettingsErrorReason | null,
   configures: [] as unknown[],
   accessChecks: 0,
+  resends: 0,
 };
 /** Starts an iMessage scenario from a clean server. */
 export function resetFakeImessage(
@@ -1017,6 +1018,7 @@ export function resetFakeImessage(
   fakeImessage.failConfigure = null;
   fakeImessage.configures = [];
   fakeImessage.accessChecks = 0;
+  fakeImessage.resends = 0;
 }
 const imessageStatusSubscribers = new Set<Queue.Queue<ImessageChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
@@ -1024,6 +1026,14 @@ export function publishImessageStatus(event: ImessageChannelStatusEvent): void {
   for (const queue of imessageStatusSubscribers) Effect.runSync(Queue.offer(queue, event));
 }
 handlers[WS_METHODS.imessageChannelGetSettings] = () => Effect.sync(() => fakeImessage.settings);
+handlers[WS_METHODS.imessageChannelResendUndelivered] = () =>
+  Effect.sync(() => {
+    fakeImessage.resends += 1;
+    const { undeliveredCount: requeued = 0, ...rest } = fakeImessage.settings;
+    fakeImessage.settings = rest;
+    publishImessageStatus({ status: rest.status });
+    return { requeued };
+  });
 handlers[WS_METHODS.imessageChannelCheckAccess] = () =>
   Effect.sync(() => {
     fakeImessage.accessChecks += 1;
@@ -1066,12 +1076,19 @@ export const fakeTelegram = {
   settings: TELEGRAM_DEFAULTS,
   failConfigure: null as TelegramChannelSettingsErrorReason | null,
   configures: [] as TelegramChannelConfigureInput[],
+  resends: 0,
+  /** Holds each resend until it settles; `quietResend` answers without a status event. */
+  resendHeld: null as Promise<void> | null,
+  quietResend: false,
 };
 /** Starts a Telegram scenario from a clean server. */
 export function resetFakeTelegram(settings: Partial<TelegramChannelSettings> = {}): void {
   fakeTelegram.settings = { ...TELEGRAM_DEFAULTS, ...settings };
   fakeTelegram.failConfigure = null;
   fakeTelegram.configures = [];
+  fakeTelegram.resends = 0;
+  fakeTelegram.resendHeld = null;
+  fakeTelegram.quietResend = false;
 }
 const telegramStatusSubscribers = new Set<Queue.Queue<TelegramChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
@@ -1084,6 +1101,16 @@ handlers[WS_METHODS.telegramChannelSubscribeStatus] = () =>
     telegramStatusSubscribers.add(queue);
     return () => telegramStatusSubscribers.delete(queue);
   });
+handlers[WS_METHODS.telegramChannelResendUndelivered] = () =>
+  Effect.sync(() => void (fakeTelegram.resends += 1)).pipe(
+    Effect.andThen(Effect.promise(() => fakeTelegram.resendHeld ?? Promise.resolve())),
+    Effect.andThen(() => {
+      const { undeliveredCount: requeued = 0, ...rest } = fakeTelegram.settings;
+      fakeTelegram.settings = rest;
+      if (!fakeTelegram.quietResend) publishTelegramStatus({ status: rest.status });
+      return Effect.succeed({ requeued });
+    }),
+  );
 handlers[WS_METHODS.telegramChannelConfigure] = (input: TelegramChannelConfigureInput) => {
   fakeTelegram.configures.push(input);
   if (fakeTelegram.failConfigure !== null) {

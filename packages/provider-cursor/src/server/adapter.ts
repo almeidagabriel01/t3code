@@ -2701,6 +2701,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           driver: CursorAgentSdk.CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          // The SDK agent runs in this process, and a resume cancels a run left running.
+          nativeWorkEndsWithProcess: true,
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
               ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])

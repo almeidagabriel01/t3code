@@ -10,9 +10,21 @@ import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
+
 import * as AssistantService from "../../assistants/AssistantService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ServerConfig from "../../config.ts";
+import * as DocumentText from "../../provider/DocumentText.ts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as DecisionService from "../../decisions/DecisionService.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ChannelBridge from "../ChannelBridge.ts";
 import { ChannelGateway } from "../ChannelGateway.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import { ChannelLanguage } from "../ChannelLanguage.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./TelegramChannelRuntime.ts";
@@ -33,6 +45,11 @@ const privateMessage = (updateId: number, from = 111, text = `message ${updateId
     from: { id: from, first_name: "Ana", ...(from === 111 ? {} : { username: "stranger" }) },
   },
 });
+
+const attachmentLayer = DocumentText.layer.pipe(
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-telegram-attachments-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const harness = (language: "en" | "pt-BR" = "en") => {
   const backlog: unknown[] = [];
@@ -56,7 +73,16 @@ const harness = (language: "en" | "pt-BR" = "en") => {
       if (commandsSet().length >= count) return resolve();
       commandWaiter = { count, resolve };
     });
+  const files = new Map<string, Uint8Array>();
   const fetch: typeof globalThis.fetch = async (url, init) => {
+    const fileMatch = /\/file\/bot[^/]+\/f\/(.+)$/.exec(String(url));
+    if (fileMatch) {
+      state.calls.push({ method: "download", body: {} });
+      const bytes = files.get(fileMatch[1]!);
+      return bytes === undefined
+        ? new Response(`missing ${String(url)}`, { status: 404 })
+        : new Response(bytes, { status: 200 });
+    }
     const method = String(url).split("/").at(-1) ?? "";
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
     state.calls.push({ method, body });
@@ -75,6 +101,9 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     }
     if (method === "getMe") return json({ ok: true, result: { username: "my_bot" } });
     if (method === "sendMessage") return json({ ok: true, result: { message_id: 9 } });
+    if (method === "getFile") {
+      return json({ ok: true, result: { file_path: `f/${String(body.file_id)}` } });
+    }
     const offset = Number(body.offset);
     const pending = backlog.filter(
       (item) => (item as { update_id: number }).update_id >= (offset < 0 ? 0 : offset),
@@ -106,11 +135,14 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     ChannelTransport.layer,
     ChannelLanguage.layerFixed(language),
     FetchHttpClient.layer,
+    NodeCrypto.layer,
+    attachmentLayer,
   ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
   const withFetch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
   return {
     backlog,
+    files,
     state,
     ingested,
     layer,
@@ -408,4 +440,266 @@ it.effect("sets the bot's / menu after getMe and again when the assistants chang
       assert.deepStrictEqual(yield* runtime.pollOnce, Duration.zero);
     }),
   ).pipe(Effect.provide(layer));
+});
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9]);
+
+const mediaMessage = (updateId: number, content: Record<string, unknown>) => ({
+  update_id: updateId,
+  message: {
+    message_id: updateId,
+    date: 1_800_000_000,
+    chat: { id: 111, type: "private" },
+    from: { id: 111, first_name: "Ana" },
+    ...content,
+  },
+});
+const photoOf = (fileId: string) => [
+  { file_id: `${fileId}-thumb`, width: 90, height: 90 },
+  { file_id: fileId, width: 1280, height: 1280 },
+];
+
+/** Starts the runtime past its first-enable skip, so the next poll reads the backlog. */
+const started = Effect.gen(function* () {
+  const runtime = yield* Runtime.make({ autoPoll: false });
+  yield* runtime.apply(config);
+  yield* runtime.pollOnce;
+  return runtime;
+});
+
+const storedFile = (attachmentId: string, extension: string) =>
+  Effect.gen(function* () {
+    const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    return yield* (yield* FileSystem.FileSystem).readFile(
+      path.join(attachmentsDir, `${attachmentId}${extension}`),
+    );
+  });
+
+it.effect("hands on a photo, with or without a caption, saved as a pending upload", () => {
+  const { backlog, files, ingested, layer, withFetch } = harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      files.set("big", JPEG);
+      backlog.push(
+        mediaMessage(1, { caption: "what is this?", photo: photoOf("big") }),
+        mediaMessage(2, { photo: photoOf("big") }),
+      );
+      assert.deepStrictEqual(yield* runtime.pollOnce, Duration.zero);
+      assert.deepStrictEqual(
+        ingested.map((message) => [message.idempotencyKey, message.text]),
+        [
+          ["telegram:1", "what is this?"],
+          ["telegram:2", ""],
+        ],
+      );
+      const [attachment] = ingested[0]?.attachments ?? [];
+      assert.deepInclude(attachment, {
+        type: "image",
+        name: "photo.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: JPEG.byteLength,
+      });
+      assert.match(attachment!.id, /^pending-/);
+      assert.deepStrictEqual([...(yield* storedFile(attachment!.id, ".jpg"))], [...JPEG]);
+      assert.deepStrictEqual(yield* offsetRow, ["123456", 3]);
+    }),
+  ).pipe(Effect.provide(layer));
+});
+
+it.effect("types an image sent as a file by its bytes, and answers one that is not", () => {
+  const { backlog, files, ingested, layer, withFetch } = harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      files.set("png", PNG);
+      files.set("fake", new TextEncoder().encode("<html>not an image</html>"));
+      files.set(
+        "heic",
+        new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63]),
+      );
+      backlog.push(
+        mediaMessage(1, {
+          caption: "scan",
+          document: { file_id: "png", file_name: "../../etc/scan.jpg", mime_type: "image/jpeg" },
+        }),
+        mediaMessage(2, {
+          document: { file_id: "fake", file_name: "x.png", mime_type: "image/png" },
+        }),
+        mediaMessage(3, {
+          document: { file_id: "heic", file_name: "x.heic", mime_type: "image/heic" },
+        }),
+        mediaMessage(4, { sticker: { file_id: "s" } }),
+        mediaMessage(5, { voice: { file_id: "v" } }),
+      );
+      yield* runtime.pollOnce;
+      const [scan, ...rest] = ingested;
+      const [attachment] = scan?.attachments ?? [];
+      assert.deepInclude(attachment, { mimeType: "image/png", name: "scan.jpg" });
+      assert.deepStrictEqual([...(yield* storedFile(attachment!.id, ".png"))], [...PNG]);
+      assert.deepStrictEqual(
+        rest.map((message) => [message.attachmentProblem, message.attachments ?? []]),
+        [
+          ["unsupported", []],
+          ["unsupported", []],
+          ["unsupported", []],
+          ["unsupported", []],
+        ],
+      );
+      // Nothing left to redeliver.
+      assert.deepStrictEqual(yield* offsetRow, ["123456", 6]);
+    }),
+  ).pipe(Effect.provide(layer));
+});
+
+it.effect("never downloads a file larger than an image attachment may be", () => {
+  const { backlog, state, ingested, layer, withFetch } = harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      backlog.push(
+        mediaMessage(1, {
+          document: { file_id: "huge", file_name: "x.png", file_size: 10 * 1024 * 1024 + 1 },
+        }),
+      );
+      yield* runtime.pollOnce;
+      assert.strictEqual(ingested[0]?.attachmentProblem, "unsupported");
+      assert.isFalse(state.calls.some((call) => call.method === "getFile"));
+    }),
+  ).pipe(Effect.provide(layer));
+});
+
+it.effect("answers a failed download and keeps the token out of every log", () => {
+  const { backlog, ingested, layer, withFetch } = harness();
+  const logs: string[] = [];
+  const logger = Logger.make((options) => {
+    logs.push(JSON.stringify(options.message), String(options.cause));
+  });
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      backlog.push(mediaMessage(1, { caption: "see", photo: photoOf("gone") }));
+      yield* runtime.pollOnce;
+      assert.deepInclude(ingested[0], { text: "see", attachmentProblem: "download_failed" });
+      assert.isAbove(logs.length, 0);
+      assert.notInclude(logs.join("\n"), "secret");
+      assert.deepStrictEqual(yield* offsetRow, ["123456", 2]);
+    }),
+  ).pipe(Effect.provide(Layer.merge(layer, Logger.layer([logger], { mergeWithExisting: false }))));
+});
+
+it.effect("waits for the rest of an album, then hands it on as one message", () => {
+  const { backlog, files, ingested, layer, withFetch } = harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      files.set("a", JPEG);
+      files.set("b", PNG);
+      files.set("c", JPEG);
+      backlog.push(
+        privateMessage(1),
+        mediaMessage(2, { media_group_id: "g", photo: photoOf("a") }),
+        mediaMessage(3, { media_group_id: "g", caption: "trip", photo: photoOf("b") }),
+      );
+      // The batch ends inside an album: what came before goes on, the album waits.
+      assert.deepStrictEqual(yield* runtime.pollOnce, Runtime.ALBUM_WAIT);
+      assert.deepStrictEqual(
+        ingested.map((message) => message.idempotencyKey),
+        ["telegram:1"],
+      );
+      assert.deepStrictEqual(yield* offsetRow, ["123456", 2]);
+      backlog.push(mediaMessage(4, { media_group_id: "g", photo: photoOf("c") }));
+      assert.deepStrictEqual(yield* runtime.pollOnce, Runtime.ALBUM_WAIT);
+      assert.lengthOf(ingested, 1);
+      // Nothing new arrived: the album is complete.
+      assert.deepStrictEqual(yield* runtime.pollOnce, Duration.zero);
+      const album = ingested[1];
+      assert.deepInclude(album, { idempotencyKey: "telegram:2", text: "trip" });
+      assert.deepStrictEqual(
+        album?.attachments?.map((attachment) => attachment.mimeType),
+        ["image/jpeg", "image/png", "image/jpeg"],
+      );
+      assert.deepStrictEqual(yield* offsetRow, ["123456", 5]);
+    }),
+  ).pipe(Effect.provide(layer));
+});
+
+it.effect("an album the batch already closed goes on at once", () => {
+  const { backlog, files, ingested, layer, withFetch } = harness();
+  return withFetch(
+    Effect.gen(function* () {
+      const runtime = yield* started;
+      files.set("a", JPEG);
+      backlog.push(
+        mediaMessage(1, { media_group_id: "g", photo: photoOf("a") }),
+        mediaMessage(2, { media_group_id: "g", sticker: { file_id: "s" } }),
+        privateMessage(3),
+      );
+      assert.deepStrictEqual(yield* runtime.pollOnce, Duration.zero);
+      // One answer per album: the image goes on, the part it could not read is named once.
+      assert.deepStrictEqual(
+        ingested.map((message) => [
+          message.idempotencyKey,
+          message.attachments?.length ?? 0,
+          message.attachmentProblem,
+        ]),
+        [
+          ["telegram:1", 1, "unsupported"],
+          ["telegram:3", 0, undefined],
+        ],
+      );
+    }),
+  ).pipe(Effect.provide(layer));
+});
+
+it.effect("a photo from Telegram reaches the assistant's thread with the image saved there", () => {
+  const { backlog, files, fetch } = harness();
+  const sends: Array<ThreadManagement.ThreadManagementSendInput> = [];
+  const jarvis = {
+    id: "jarvis",
+    name: "Jarvis",
+    handle: "jarvis",
+    projectId: "scratch",
+    isDefault: true,
+    threadId: "assistant:jarvis:1",
+    archivedAt: null,
+  };
+  const layer = ChannelBridge.layer.pipe(
+    Layer.provideMerge(ChannelOutbox.layer),
+    Layer.provideMerge(DecisionService.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        ChannelTransport.layer,
+        ChannelLanguage.layerFixed("en"),
+        FetchHttpClient.layer,
+        NodeCrypto.layer,
+        attachmentLayer,
+        Layer.mock(AssistantService.AssistantService)({
+          list: Effect.succeed([jarvis]) as never,
+          subscribe: Stream.never,
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          sendToThread: (input) => {
+            sends.push(input);
+            return Effect.succeed({ message: { attachments: input.attachments } } as never);
+          },
+        }),
+      ),
+    ),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
+  );
+  return Effect.gen(function* () {
+    const runtime = yield* started;
+    files.set("p", JPEG);
+    backlog.push(mediaMessage(1, { caption: "@jarvis look", photo: photoOf("p") }));
+    yield* runtime.pollOnce;
+    const [sent] = sends;
+    assert.deepStrictEqual([sent?.threadId, sent?.text], ["assistant:jarvis:1", "look"]);
+    const [attachment] = sent?.attachments ?? [];
+    // Claimed for the thread: the id names the thread, and the bytes are there.
+    assert.match(attachment!.id, /^assistant-jarvis-1-/);
+    assert.deepStrictEqual([...(yield* storedFile(attachment!.id, ".jpg"))], [...JPEG]);
+  }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch), Effect.provide(layer));
 });

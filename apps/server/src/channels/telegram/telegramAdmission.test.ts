@@ -30,7 +30,6 @@ it("hears only allowed people writing to the bot in a private chat", () => {
   assert.strictEqual(skipReason(update({ chat: { id: -5, type: "supergroup" } })), "chat");
   assert.strictEqual(skipReason(update({ from: undefined })), "sender");
   assert.strictEqual(skipReason(update({ from: { id: 111, is_bot: true } })), "sender");
-  assert.strictEqual(skipReason(update({ text: undefined })), "text");
   assert.strictEqual(skipReason(update({ text: "   " })), "text");
   assert.strictEqual(skipReason(update({})), "message");
 });
@@ -83,4 +82,105 @@ it("reads /start as a request for the roster, and clamps an impossible date", ()
   );
   assert.strictEqual(far.type === "message" && far.inbound.receivedAt, "2100-01-01T00:00:00.000Z");
   assert.isUndefined(far.type === "message" ? far.inbound.actor.displayName : "x");
+});
+
+const media = (input: TelegramUpdate) => {
+  const admission = admitTelegramUpdate(input, ALLOWED, "telegram");
+  if (admission.type !== "message") throw new Error(`expected a message, got ${admission.type}`);
+  return {
+    text: admission.inbound.text,
+    problem: admission.inbound.attachmentProblem,
+    media: admission.media,
+    group: admission.mediaGroupId,
+  };
+};
+
+const photo = (fileId: string, width: number, fileSize?: number) => ({
+  file_id: fileId,
+  width,
+  height: width,
+  ...(fileSize === undefined ? {} : { file_size: fileSize }),
+});
+
+it("hands on a photo's largest size with its caption as the text", () => {
+  const sizes = [photo("small", 90, 900), photo("large", 1280, 90_000), photo("mid", 320, 9000)];
+  assert.deepStrictEqual(media(update({ text: undefined, caption: " look ", photo: sizes })), {
+    text: "look",
+    problem: undefined,
+    media: [{ fileId: "large", name: "photo.jpg" }],
+    group: undefined,
+  });
+  assert.deepStrictEqual(media(update({ text: undefined, photo: sizes })).text, "");
+  // A caption is never read as /start.
+  assert.strictEqual(
+    media(update({ text: undefined, caption: "/start", photo: sizes })).text,
+    "/start",
+  );
+});
+
+it("hands on an image sent as a file and keys album members by their group", () => {
+  assert.deepStrictEqual(
+    media(
+      update({
+        text: undefined,
+        media_group_id: "album-1",
+        document: { file_id: "doc", file_name: "scan.PNG", mime_type: "image/png", file_size: 10 },
+      }),
+    ),
+    {
+      text: "",
+      problem: undefined,
+      media: [{ fileId: "doc", name: "scan.PNG" }],
+      group: "album-1",
+    },
+  );
+  // The name is a hint; the bytes decide later.
+  assert.lengthOf(
+    media(update({ text: undefined, document: { file_id: "d", file_name: "x.webp" } })).media,
+    1,
+  );
+});
+
+it("answers whatever it cannot read instead of dropping it", () => {
+  const cases: ReadonlyArray<Partial<TelegramMessage>> = [
+    { text: undefined },
+    { text: undefined, caption: "a clip" },
+    {
+      text: undefined,
+      document: { file_id: "d", file_name: "notes.pdf", mime_type: "application/pdf" },
+    },
+    // Larger than an image attachment may be; never downloaded.
+    {
+      text: undefined,
+      document: {
+        file_id: "d",
+        file_name: "big.png",
+        mime_type: "image/png",
+        file_size: 10 * 1024 * 1024 + 1,
+      },
+    },
+    { text: undefined, photo: [photo("huge", 4000, 10 * 1024 * 1024 + 1)] },
+  ];
+  for (const patch of cases) {
+    const read = media(update(patch));
+    assert.strictEqual(read.problem, "unsupported");
+    assert.lengthOf(read.media, 0);
+  }
+  // The allowlist still comes first: a stranger's sticker is reported, a group's is ignored.
+  assert.strictEqual(
+    admitTelegramUpdate(update({ text: undefined, from: { id: 222 } }), ALLOWED, "t").type,
+    "unknown_sender",
+  );
+  assert.strictEqual(
+    skipReason(
+      update({ text: undefined, photo: [photo("p", 9)], chat: { id: -5, type: "group" } }),
+    ),
+    "chat",
+  );
+  assert.strictEqual(
+    skipReason(
+      update({ text: undefined, photo: [photo("p", 9)], from: { id: 111, is_bot: true } }),
+    ),
+    "sender",
+  );
 });

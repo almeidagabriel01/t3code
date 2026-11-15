@@ -16,6 +16,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
+import { createUndeliveredResend } from "./channelUndelivered.ts";
 
 /** Lays a live status event over the stored settings; the event replaces status and errors. */
 export function applyTelegramStatusEvent(
@@ -27,6 +28,7 @@ export function applyTelegramStatusEvent(
     lastDeliveryError: _lastDeliveryError,
     botUsername: _botUsername,
     pendingSenders: _pendingSenders,
+    undeliveredCount: _undeliveredCount,
     ...rest
   } = settings;
   const botUsername = event.botUsername ?? settings.botUsername;
@@ -39,6 +41,7 @@ export function applyTelegramStatusEvent(
       : { lastDeliveryError: event.lastDeliveryError }),
     ...(botUsername === undefined ? {} : { botUsername }),
     ...(event.pendingSenders === undefined ? {} : { pendingSenders: event.pendingSenders }),
+    ...(event.undeliveredCount === undefined ? {} : { undeliveredCount: event.undeliveredCount }),
   };
 }
 
@@ -47,16 +50,22 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
 ) {
   // One lane per environment keeps edits applied in the order they were made.
   const scheduler = createAtomCommandScheduler();
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:telegram-channel:status",
+    subscribe: (_input: null) => subscribe(WS_METHODS.telegramChannelSubscribeStatus, {}),
+  });
+  const settings = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:telegram-channel:settings",
+    tag: WS_METHODS.telegramChannelGetSettings,
+    staleTimeMs: 30_000,
+  });
+  const resend = createUndeliveredResend(
+    (environmentId) => status({ environmentId, input: null }),
+    (environmentId) => settings({ environmentId, input: {} }),
+  );
   return {
-    settings: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:telegram-channel:settings",
-      tag: WS_METHODS.telegramChannelGetSettings,
-      staleTimeMs: 30_000,
-    }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:telegram-channel:status",
-      subscribe: (_input: null) => subscribe(WS_METHODS.telegramChannelSubscribeStatus, {}),
-    }),
+    settings,
+    status,
     configure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:telegram-channel:configure",
       tag: WS_METHODS.telegramChannelConfigure,
@@ -66,8 +75,27 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
         key: ({ environmentId }: { environmentId: string }) => environmentId,
       },
     }),
+    resendUndelivered: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:telegram-channel:resend-undelivered",
+      tag: WS_METHODS.telegramChannelResendUndelivered,
+      scheduler,
+      ...resend.command,
+    }),
+    /** What the last resend answered; `applyUndeliveredResend` lays it over the settings. */
+    undeliveredResend: resend.answers,
   };
 }
+
+/** The notice beside the resend action; null when every reply arrived. */
+export const telegramUndeliveredLabel = (
+  settings: Pick<TelegramChannelSettings, "undeliveredCount">,
+): string | null => {
+  const count = settings.undeliveredCount ?? 0;
+  if (count === 0) return null;
+  return count === 1
+    ? "1 reply did not reach Telegram."
+    : `${count} replies did not reach Telegram.`;
+};
 
 /** What a person types for a Telegram user id: digits only, as the server stores it. */
 export const compactTelegramUserId = (value: string) => value.replace(/\D/g, "");

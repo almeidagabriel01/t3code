@@ -224,6 +224,7 @@ import * as AssistantTasks from "./assistants/AssistantTasks.ts";
 import * as TaskEventNotices from "./assistants/TaskEventNotices.ts";
 import * as AssistantRequests from "./assistants/AssistantRequests.ts";
 import * as AutonomyService from "./autonomy/AutonomyService.ts";
+import * as NeedsUser from "./autonomy/NeedsUser.ts";
 import * as ChannelLanguage from "./channels/ChannelLanguage.ts";
 import * as AssistantSandbox from "./assistants/AssistantSandbox.ts";
 import * as AssistantSandboxControl from "./assistants/AssistantSandboxControl.ts";
@@ -723,6 +724,9 @@ const layerTaskEventNotices = TaskEventNotices.layer.pipe(Layer.provide(GitVcsDr
 // One transport registry: each channel runtime registers into the same one the outbox resolves from.
 const layerChannels = AutonomyService.layer.pipe(
   Layer.provide(layerTaskEventNotices),
+  Layer.provide(AssistantSpend.layerBudgetGate),
+  Layer.provide(NeedsUser.layer),
+  Layer.provide(AssistantTasks.layer),
   Layer.provide(ProjectionStoreV2.layer),
   Layer.provideMerge(
     Layer.mergeAll(
@@ -833,6 +837,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provide(AssistantTaskReactor.layer),
     Layer.provide(layerTaskEventNotices),
+    Layer.provide(NeedsUser.layer),
     Layer.provide(AssistantTasks.layer),
     Layer.provide(ProjectionStoreV2.layer),
   ),
@@ -1016,6 +1021,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(AssistantDirectory.layer),
     // A reply to an assistant's request is recorded here; without it assistants only send.
     Layer.provide(AssistantRequests.layer),
+    // t3_thread_list reads what waits on the user here; without it statuses come from runs alone.
+    Layer.provide(NeedsUser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
     // A thread an assistant launches is linked to it here.
     Layer.provide(AssistantTasks.layer),
   ),
