@@ -95,7 +95,6 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -262,7 +261,6 @@ import { ProviderMemoryImportRuntime } from "./memory/imports/MemoryImportTypes.
 import * as MemoryHubService from "./memory/MemoryHubService.ts";
 import * as MemoryService from "./memory/MemoryService.ts";
 import * as MemorySyncService from "./memory/MemorySyncService.ts";
-import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import { RpcInstrumentation, rpcInstrumentationLayer } from "./observability/RpcInstrumentation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
@@ -1670,14 +1668,6 @@ export const layerWsRpc = (
           // An unreadable setting leaves the label omitted, which clients show as unknown.
           Effect.orElseSucceed(() => result),
         );
-      const authorizeEffect = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
-        effect: Effect.Effect<A, E, R>,
-      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? effect
-          : Effect.fail(rpcAuthorizationError(requiredScope));
-
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
       ) {
@@ -3700,17 +3690,15 @@ export const layerWsRpc = (
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
+        // rpcRequiredScopes asks operate scope for the update and retry branches.
         [WS_METHODS.deviceList]: (input) =>
           input.inspectOnly && !input.updateTool
             ? deviceService.inspect
-            : authorizeEffect(
-                requiredScopeForDeviceList(input),
-                input.updateTool
-                  ? deviceService.updateTool(input.updateTool)
-                  : input.retryHostId
-                    ? deviceService.retryHost(input.retryHostId)
-                    : deviceService.list,
-              ),
+            : input.updateTool
+              ? deviceService.updateTool(input.updateTool)
+              : input.retryHostId
+                ? deviceService.retryHost(input.retryHostId)
+                : deviceService.list,
         [WS_METHODS.deviceOpen]: (input) =>
           threadWorkspaceRoot(input.threadId).pipe(
             Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),

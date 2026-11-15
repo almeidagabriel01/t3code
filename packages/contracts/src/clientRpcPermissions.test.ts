@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { clientRpcRequiredScopes, CLIENT_GUARDED_RPC_SCOPES } from "./clientRpcPermissions.ts";
+import {
+  clientRpcRequiredScopes,
+  CLIENT_GUARDED_RPC_SCOPES,
+  RPC_REQUIRED_SCOPES,
+  rpcRequiredScopes,
+} from "./clientRpcPermissions.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { WS_METHODS } from "./rpc.ts";
 
 describe("memory client guards", () => {
@@ -184,5 +190,135 @@ describe("file explorer client guards", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.projectsChangeEntry, {})).toEqual([
       "filesystem:write",
     ]);
+  });
+});
+
+describe("settings client guards", () => {
+  const remove = {
+    operation: "remove",
+    instanceId: ProviderInstanceId.make("codex_work"),
+  } as const;
+  it.each([
+    ["no payload", undefined, ["settings:write"]],
+    ["an empty patch", { patch: {} }, ["settings:write"]],
+    // A spread optional field can arrive as an explicit undefined; it changes nothing.
+    ["an undefined field", { patch: { defaultRuntimeMode: undefined } }, ["settings:write"]],
+    ["a settings field", { patch: { defaultRuntimeMode: "full-access" } }, ["settings:write"]],
+    ["a provider field", { patch: { providerInstances: {} } }, ["providers:manage"]],
+    [
+      "both",
+      { patch: { defaultRuntimeMode: "full-access", providerInstances: {} } },
+      ["settings:write", "providers:manage"],
+    ],
+    [
+      "a removed secret provider",
+      { patch: { secretProviders: { personal: null } } },
+      ["settings:write", "providers:manage"],
+    ],
+    ["a provider mutation", { patch: {}, providerInstanceMutation: remove }, ["providers:manage"]],
+    [
+      "a mutation and a settings field",
+      { patch: { defaultRuntimeMode: "full-access" }, providerInstanceMutation: remove },
+      ["settings:write", "providers:manage"],
+    ],
+  ])("server.updateSettings with %s", (_case, input, scopes) =>
+    expect(clientRpcRequiredScopes(WS_METHODS.serverUpdateSettings, input)).toEqual(scopes),
+  );
+});
+
+describe("payload branches", () => {
+  const remove = { operation: "remove", instanceId: "codex_work" };
+  const thread = "thread-1";
+  const branches: ReadonlyArray<readonly [method: string, label: string, payload: unknown]> = [
+    ...Object.keys(RPC_REQUIRED_SCOPES).map((method) => [method, "no payload", undefined] as const),
+    [WS_METHODS.serverUpdateSettings, "settings field", { patch: { defaultRuntimeMode: "x" } }],
+    [WS_METHODS.serverUpdateSettings, "provider field", { patch: { providerInstances: {} } }],
+    [
+      WS_METHODS.serverUpdateSettings,
+      "removed secret provider",
+      { patch: { secretProviders: { a: null } } },
+    ],
+    [
+      WS_METHODS.serverUpdateSettings,
+      "mutation alone",
+      { patch: {}, providerInstanceMutation: remove },
+    ],
+    [
+      WS_METHODS.serverUpdateSettings,
+      "mutation and settings field",
+      { patch: { defaultRuntimeMode: "x" }, providerInstanceMutation: remove },
+    ],
+    [WS_METHODS.projectsMutate, "delete", { type: "project.delete" }],
+    [WS_METHODS.projectsMutate, "update with scripts", { type: "project.update", scripts: [] }],
+    [WS_METHODS.assetsCreateUrl, "workspace file", { resource: { _tag: "workspace-file" } }],
+    [WS_METHODS.assetsCreateUrl, "media file", { resource: { _tag: "media-file" } }],
+    [
+      WS_METHODS.assetsCreateUrl,
+      "draft workspace file",
+      { resource: { _tag: "draft-workspace-file" } },
+    ],
+    [
+      WS_METHODS.assetsCreateUrl,
+      "app icon by path",
+      { resource: { _tag: "native-app-icon", app: { _tag: "app-path" } } },
+    ],
+    [
+      WS_METHODS.assetsCreateUrl,
+      "app icon by tool",
+      { resource: { _tag: "native-app-icon", app: { _tag: "tool" } } },
+    ],
+    [WS_METHODS.assetsCreateUrl, "attachment", { resource: { _tag: "attachment" } }],
+    [WS_METHODS.deviceList, "list", {}],
+    [WS_METHODS.deviceList, "inspect", { inspectOnly: true }],
+    [WS_METHODS.deviceList, "inspect with a retry host", { inspectOnly: true, retryHostId: "h" }],
+    [WS_METHODS.deviceList, "retry", { retryHostId: "h" }],
+    [WS_METHODS.deviceList, "update", { updateTool: "hub" }],
+    [WS_METHODS.deviceList, "inspect and update", { inspectOnly: true, updateTool: "agent" }],
+    [
+      WS_METHODS.gitPreparePullRequestThread,
+      "worktree for a thread",
+      { mode: "worktree", threadId: thread },
+    ],
+    [WS_METHODS.gitPreparePullRequestThread, "local", { mode: "local" }],
+    [
+      WS_METHODS.gitRunStackedAction,
+      "pull request for a thread",
+      { action: "create_pr", threadId: thread },
+    ],
+    [WS_METHODS.gitRunStackedAction, "commit", { action: "commit" }],
+  ];
+  // Branches that replace the base scope, as the server's authorization always has.
+  const replacesBase = new Map<string, string>([
+    [
+      `${WS_METHODS.serverUpdateSettings} provider field`,
+      "provider settings need providers:manage, not settings:write",
+    ],
+    [
+      `${WS_METHODS.serverUpdateSettings} mutation alone`,
+      "a provider instance change alone needs only providers:manage",
+    ],
+    [
+      `${WS_METHODS.assetsCreateUrl} workspace file`,
+      "file assets need filesystem:read, not transcript access",
+    ],
+    [
+      `${WS_METHODS.assetsCreateUrl} media file`,
+      "file assets need filesystem:read, not transcript access",
+    ],
+    [
+      `${WS_METHODS.assetsCreateUrl} draft workspace file`,
+      "file assets need filesystem:read, not transcript access",
+    ],
+    [
+      `${WS_METHODS.assetsCreateUrl} app icon by path`,
+      "reading an app bundle is a filesystem read",
+    ],
+  ]);
+
+  it.each(branches)("%s with %s keeps the base scope", (method, label, payload) => {
+    const base = RPC_REQUIRED_SCOPES[method as keyof typeof RPC_REQUIRED_SCOPES];
+    const scopes = rpcRequiredScopes(method, payload);
+    if (replacesBase.has(`${method} ${label}`)) expect(scopes).not.toContain(base);
+    else expect(scopes).toContain(base);
   });
 });
