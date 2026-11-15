@@ -35,6 +35,7 @@ vi.mock(import("./useKanban"), async (importOriginal) => ({
   ...(await importOriginal()),
   useKanbanStates: (() => state.entries) as never,
   useKanbanCanEdit: () => state.canEdit,
+  useKanbanEditAccess: () => (state.canEdit ? "granted" : "missing"),
   useKanbanActions: (() => state.actions) as never,
 }));
 vi.mock(import("../../state/entities"), async (importOriginal) => ({

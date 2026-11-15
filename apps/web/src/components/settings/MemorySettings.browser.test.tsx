@@ -71,18 +71,20 @@ function notifyFixture() {
   state.version += 1;
   for (const listener of state.listeners) listener();
 }
-function fixtureAtomValue(atom: { label: string }) {
-  return atom.label === "syncChanges"
-    ? state.exposure
-    : ["forget", "upsert", "projectBindingGet"].includes(atom.label)
-      ? state.write
-      : state.allowed;
+function fixtureAtomValue(atom: { label: string; access?: true }) {
+  const value =
+    atom.label === "syncChanges"
+      ? state.exposure
+      : ["forget", "upsert", "projectBindingGet"].includes(atom.label)
+        ? state.write
+        : state.allowed;
+  return atom.access ? (value ? "granted" : "missing") : value;
 }
 vi.mock("@effect/atom-react", async (original) => {
   const { useEffect } = await import("react");
   return {
     ...(await original<typeof import("@effect/atom-react")>()),
-    useAtomValue: (atom: { label: string }) => {
+    useAtomValue: (atom: { label: string; access?: true }) => {
       useFixtureVersion();
       return fixtureAtomValue(atom);
     },
@@ -155,7 +157,10 @@ vi.mock("../../state/memory", async () => {
           "hubSettingsUpdate",
           "ownerSourceReadPolicyGet",
           "ownerSourceReadPolicyUpdate",
-        ].map((label) => [label, { label, permissionAtom: () => ({ label }) }]),
+        ].map((label) => [
+          label,
+          { label, permissionAtom: () => ({ label }), accessAtom: () => ({ label, access: true }) },
+        ]),
       ),
       ...Object.fromEntries(
         ["list", "search", "read", "history", "readSource"].map((label) => [
@@ -254,6 +259,10 @@ vi.mock("../../state/session", async (original) => ({
   useEnvironmentScope: () => {
     useFixtureVersion();
     return state.allowed;
+  },
+  useEnvironmentScopeAccess: () => {
+    useFixtureVersion();
+    return state.allowed ? "granted" : "missing";
   },
 }));
 vi.mock("@legendapp/list/react", () => ({

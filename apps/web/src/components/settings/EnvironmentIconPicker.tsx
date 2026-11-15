@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import {
   MenuItem,
@@ -20,12 +20,17 @@ import {
   MenuSubTrigger,
 } from "../ui/menu";
 
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
+
 export function resolveEnvironmentIconPickerLock(input: {
   readonly serverConfig: Pick<ServerConfig, "environment"> | null;
   readonly operateAccess: "granted" | "denied" | "pending";
 }): string | null {
   if (input.serverConfig === null) {
     return "Connect to this environment to change its icon.";
+  }
+  if (input.operateAccess === "pending") {
+    return "Checking access…";
   }
   if (input.operateAccess !== "granted") {
     return "Your session on this environment cannot change its settings.";
@@ -41,9 +46,9 @@ export function EnvironmentIconMenu({
   readonly serverConfig: Pick<ServerConfig, "environment"> | null;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
-    ? "granted"
-    : "denied";
+  const settingsAccess = useEnvironmentScopeAccess(environmentId, SETTINGS_WRITE_SCOPES);
+  const operateAccess =
+    settingsAccess === "unknown" ? "pending" : settingsAccess === "granted" ? "granted" : "denied";
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
   const detected = serverConfig?.environment.platform.machine ?? "server";
   const resolved = resolveEnvironmentMachineKind(serverConfig);

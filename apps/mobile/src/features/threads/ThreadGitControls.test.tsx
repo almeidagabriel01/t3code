@@ -17,7 +17,7 @@ vi.mock("../../state/use-thread-selection", () => ({
 vi.mock("../../state/use-selected-thread-worktree", () => ({
   useSelectedThreadWorktree: () => ({ selectedThreadWorktreePath: mocks.worktreePath }),
 }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/session", () => ({ useEnvironmentScopeAccess: () => "granted" }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({}) }));
 vi.mock("./ThreadWorkspaceNotice", () => ({
   useThreadWorkspaceCleaned: (...args: unknown[]) => {

@@ -22,7 +22,11 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRow } from "../../components/ui/ListRow";
 import { Progress } from "../../components/ui/Progress";
 import { formatBytes } from "../../lib/formatBytes";
-import { useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import {
   runSpeech,
   voiceConnectionAtom,
@@ -33,6 +37,8 @@ import {
 const isDownloading = (model: EnvironmentSpeechModel) =>
   model.state === "downloading" || model.state === "verifying";
 
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
+
 export function useVoiceModels(environmentId: EnvironmentId, label: string) {
   const connection = useAtomValue(voiceConnectionAtom(environmentId));
   const statusAtom = voiceSpeechStatusAtom(environmentId);
@@ -41,7 +47,9 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
   const modelsResult = useAtomValue(modelsAtom);
   const refreshStatus = useAtomRefresh(statusAtom);
   const refreshModels = useAtomRefresh(modelsAtom);
-  const canManage = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const access = useEnvironmentScopeAccess(environmentId, SETTINGS_WRITE_SCOPES);
+  const canManage = !scopeAccessLocked(access);
+  const lacksPermission = scopeAccessShowsBanner(access);
   const [requested, setRequested] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -75,6 +83,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     models,
     loading: modelsResult._tag === "Initial",
     canManage,
+    lacksPermission,
     requested,
     busy,
     downloading,
@@ -314,9 +323,9 @@ export function LocalModelChoice(props: {
             : `Downloading ${pending.name} · ${Math.round((progress ?? 0) * 100)}%`
           : active
             ? `Local model · ${formatBytes(active.size)}`
-            : voice.canManage
-              ? "No model installed · Choose one to download"
-              : `No model installed · Add one using T3 Code on ${props.label}`
+            : voice.lacksPermission
+              ? `No model installed · Add one using T3 Code on ${props.label}`
+              : "No model installed · Choose one to download"
       }
       selected={props.selected}
       onPress={() => {

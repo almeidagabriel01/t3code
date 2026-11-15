@@ -50,6 +50,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );
+  const accessUnknown =
+    useAtomValue(composerPullRequests.requestReviewers.accessAtom(target.environmentId)) ===
+    "unknown";
   const connected = usePullRequestConnected(route.params.environmentId);
   const allowed =
     connected &&
@@ -165,7 +168,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               <Text className="text-xs text-foreground-muted">
                 Tap someone to request a review. Tap a requested reviewer to remove the request.
               </Text>
-              {!allowed ? (
+              {!allowed && !accessUnknown ? (
                 <Text className="text-xs text-foreground-muted">
                   Requesting reviews requires write access and an open {singular}.
                 </Text>

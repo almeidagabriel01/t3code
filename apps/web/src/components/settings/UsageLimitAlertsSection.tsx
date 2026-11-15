@@ -10,15 +10,16 @@ import {
   usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
-  usageLimitAlertsLocked,
   usageLimitAlertsPaused,
+  USAGE_LIMIT_ALERTS_SCOPES,
 } from "@t3tools/shared/usageLimitAlerts";
+import { scopeAccessLocked } from "@t3tools/client-runtime/state/sessionScope";
 import { Link } from "@tanstack/react-router";
 import { CirclePauseIcon } from "lucide-react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
-import { environmentSession, sessionHasScope } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -31,13 +32,6 @@ const choiceLabel = (value: string) => (
   <span className="tabular-nums">{usageLimitAlertLabel(value === OFF ? null : Number(value))}</span>
 );
 
-/** Whether this session can't save alerts; the cards lock and the banner above them shows. */
-export function useUsageLimitAlertsLocked(environmentId: EnvironmentId): boolean {
-  return useAtomValue(environmentSession.sessionStateAtom(environmentId), (result) =>
-    usageLimitAlertsLocked((scope) => sessionHasScope(result, scope)),
-  );
-}
-
 export function UsageLimitAlertsSection({
   environmentId,
   instanceId,
@@ -47,7 +41,10 @@ export function UsageLimitAlertsSection({
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
 }) {
-  const locked = useUsageLimitAlertsLocked(environmentId);
+  // The "Limited permissions" banner above the cards reads the same access.
+  const locked = scopeAccessLocked(
+    useEnvironmentScopeAccess(environmentId, USAGE_LIMIT_ALERTS_SCOPES),
+  );
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const supported = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),

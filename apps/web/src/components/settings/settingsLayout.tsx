@@ -1,7 +1,12 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
-import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  useEnvironmentsScopeAccess,
+  useEnvironmentsWithScope,
+} from "../../state/session";
 import { useServerConfigs } from "../../state/entities";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import {
@@ -39,6 +44,7 @@ import {
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 const EMPTY_MANAGED_PATHS: readonly string[] = [];
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -351,6 +357,16 @@ export function SettingsRow({
     context?.connectedEnvironments ?? [],
     AuthSettingsWriteScope,
   );
+  const primaryAccess = useEnvironmentScopeAccess(primaryEnvironmentId, SETTINGS_WRITE_SCOPES);
+  const writeAccess = useEnvironmentsScopeAccess(
+    context?.connectedEnvironments ?? [],
+    AuthSettingsWriteScope,
+  );
+  const checkingWriteAccess = context
+    ? context.connectedEnvironments.some(
+        (target) => writeAccess.get(target.environmentId) === "unknown",
+      )
+    : primaryAccess === "unknown";
   const canWriteSettings = context
     ? context.connectedEnvironments.length > 0 &&
       context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
@@ -440,14 +456,16 @@ export function SettingsRow({
         : unavailable && control
           ? inertControl(
               !canWriteSettings
-                ? `This connection lacks permission to change settings on ${
-                    context
-                      ? context.connectedEnvironments
-                          .filter((target) => !writableIds.has(target.environmentId))
-                          .map((target) => target.label)
-                          .join(", ") || "the selected environment"
-                      : (primaryEnvironment?.label ?? "the primary environment")
-                  }.`
+                ? checkingWriteAccess
+                  ? "Checking access…"
+                  : `This connection lacks permission to change settings on ${
+                      context
+                        ? context.connectedEnvironments
+                            .filter((target) => !writableIds.has(target.environmentId))
+                            .map((target) => target.label)
+                            .join(", ") || "the selected environment"
+                        : (primaryEnvironment?.label ?? "the primary environment")
+                    }.`
                 : context
                   ? "Reconnect the selected environment to change this setting."
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,

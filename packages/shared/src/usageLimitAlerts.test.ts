@@ -7,9 +7,9 @@ import {
   usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
-  usageLimitAlertsLocked,
   usageLimitAlertsPaused,
   usageLimitAlertThreshold,
+  USAGE_LIMIT_ALERTS_SCOPES,
 } from "./usageLimitAlerts.ts";
 
 describe("usageLimitAlertThreshold", () => {
@@ -139,15 +139,14 @@ describe("usageLimitAlertsPaused", () => {
   });
 });
 
-describe("usageLimitAlertsLocked", () => {
-  // Locked controls and the "Limited permissions" banner both read this one answer.
+describe("USAGE_LIMIT_ALERTS_SCOPES", () => {
   it.each([
-    ["settings:write alone", [AuthSettingsWriteScope], false],
-    ["providers:manage alone", [AuthProvidersManageScope], true],
-    ["both", [AuthSettingsWriteScope, AuthProvidersManageScope], false],
-    ["neither", [], true],
-  ] as const)("%s", (_name, granted, locked) => {
+    ["settings:write alone", [AuthSettingsWriteScope], true],
+    ["providers:manage alone", [AuthProvidersManageScope], false],
+    ["both", [AuthSettingsWriteScope, AuthProvidersManageScope], true],
+    ["neither", [], false],
+  ] as const)("%s", (_name, granted, saves) => {
     const scopes = new Set<string>(granted);
-    expect(usageLimitAlertsLocked((scope) => scopes.has(scope))).toBe(locked);
+    expect(USAGE_LIMIT_ALERTS_SCOPES.every((scope) => scopes.has(scope))).toBe(saves);
   });
 });

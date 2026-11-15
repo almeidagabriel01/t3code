@@ -4,6 +4,7 @@ import { memoryLocalSpace } from "@t3tools/client-runtime/memory-presentation";
 import type { EnvironmentId, MemoryScope, MemorySpaceId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 import { useProjects } from "../../state/entities";
 import { memoryEnvironment } from "../../state/memory";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -66,6 +67,9 @@ export function useProjectMemoryScope(
   const canBind = useAtomValue(
     memoryEnvironment.projectBindingGet.permissionAtom(environmentId ?? null),
   );
+  const bindAccess = useAtomValue(
+    memoryEnvironment.projectBindingGet.accessAtom(environmentId ?? null),
+  );
   const getBinding = useAtomCommand(memoryEnvironment.projectBindingGet, { reportFailure: false });
   const [resolved, setResolved] = useState<Resolved | null>(null);
   const repositoryIdentity = projects.find(
@@ -99,6 +103,6 @@ export function useProjectMemoryScope(
     };
   }, [environmentId, getBinding, key, projectId, repositoryIdentity, space, wanted]);
   if (environmentId === undefined || projectId === null) return null;
-  if (!canBind) return { status: "no-permission" };
+  if (!canBind) return { status: scopeAccessShowsBanner(bindAccess) ? "no-permission" : "loading" };
   return resolved?.key === key ? resolved.scope : { status: "loading" };
 }

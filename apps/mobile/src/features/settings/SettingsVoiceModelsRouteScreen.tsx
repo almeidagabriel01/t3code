@@ -65,11 +65,11 @@ export function SettingsVoiceModelsRouteScreen({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            voice.canManage ? undefined : (
+            voice.lacksPermission ? (
               <Text className="pb-3 text-xs text-foreground-muted">
                 This connection can’t change settings on {label}.
               </Text>
-            )
+            ) : undefined
           }
           renderItem={({ item, index }) => (
             <View

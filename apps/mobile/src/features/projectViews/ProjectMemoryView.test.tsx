@@ -71,7 +71,9 @@ vi.mock("../../components/ui/SearchField", () => ({
     />
   ),
 }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.canRead }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScopeAccess: () => (mocks.canRead ? "granted" : "missing"),
+}));
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: string) => value }));
 vi.mock("../../state/memory", () => ({
   memoryEnvironment: {

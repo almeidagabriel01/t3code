@@ -121,6 +121,9 @@ export function ProjectBoardView(props: {
     }
     if (board === undefined) {
       if (createsOnView) {
+        if (actions.editAccess === "unknown") {
+          return <ProjectViewMessage title="Loading board…" detail="Connecting to the board." />;
+        }
         return actions.canEdit ? (
           <ProjectViewMessage title="Setting up the board…" detail="One moment." />
         ) : (

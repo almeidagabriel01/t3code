@@ -11,6 +11,8 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, Maximize2Icon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import { useKanbanReadPending } from "../../state/kanban";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { useProject, useProjects } from "../../state/entities";
@@ -22,7 +24,12 @@ import { RightPanelLoading, RightPanelMessage } from "../chat/RightPanelStates";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanPanelSections } from "./KanbanPanelSections";
 import { useKanbanPanelStore } from "./kanbanPanelStore";
-import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
+import {
+  useKanbanActions,
+  useKanbanCanEdit,
+  useKanbanEditAccess,
+  useKanbanStates,
+} from "./useKanban";
 import { useEnsureKanbanBoard } from "./useKanbanBoardCommands";
 
 /** Which column a new card goes to: a section's own, or the server's default (`null`). */
@@ -37,6 +44,8 @@ export interface KanbanSurfaceProps {
 export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) {
   const navigate = useNavigate();
   const canEdit = useKanbanCanEdit(environmentId);
+  const editAccess = useKanbanEditAccess(environmentId);
+  const readPending = useKanbanReadPending();
   const actions = useKanbanActions(environmentId);
   const { openScratchProject } = useScratchProject();
   const groups = useSidebarProjectGroups();
@@ -111,6 +120,7 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
 
   const body = (() => {
     if (entry === undefined) {
+      if (readPending) return <RightPanelLoading label="Loading board…" />;
       return (
         <RightPanelMessage
           title="Boards are not available"
@@ -123,7 +133,7 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
     if (state === null) return <RightPanelLoading label="Loading board…" />;
     if (board === undefined) {
       if (createsOnView) {
-        return canEdit ? (
+        return !scopeAccessShowsBanner(editAccess) ? (
           <RightPanelLoading label="Setting up the board…" />
         ) : (
           <RightPanelMessage

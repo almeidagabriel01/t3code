@@ -19,7 +19,7 @@ import { environmentAtomList } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { environmentPresentations } from "./presentation";
-import { useEnvironmentsWithScope } from "./session";
+import { useEnvironmentsScopeAccess, useEnvironmentsWithScope } from "./session";
 
 export const kanbanEnvironment = createKanbanEnvironmentAtoms(connectionAtomRuntime);
 
@@ -46,6 +46,16 @@ export function useKanbanEnvironmentIds(): ReadonlyArray<EnvironmentId> {
     AuthOrchestrationReadScope,
   );
   return supported.filter((id) => readable.has(id));
+}
+
+/** True while a board-capable environment's session has not resolved, so "no boards" is premature. */
+export function useKanbanReadPending(): boolean {
+  const supported = useAtomValue(kanbanEnvironmentIdsAtom);
+  const access = useEnvironmentsScopeAccess(
+    supported.map((environmentId) => ({ environmentId })),
+    AuthOrchestrationReadScope,
+  );
+  return supported.some((id) => access.get(id) === "unknown");
 }
 
 const providerEntriesAtom = Atom.make((get) => {

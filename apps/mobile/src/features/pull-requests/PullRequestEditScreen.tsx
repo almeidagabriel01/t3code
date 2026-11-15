@@ -4,6 +4,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestComment } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -65,12 +66,10 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     params.field === "comment"
       ? permissions.canEditComment(params.comment)
       : permissions.canEditChangeRequest;
-  const canWrite = useAtomValue(
-    (params.field === "comment"
-      ? composerPullRequests.updateComment
-      : composerPullRequests.update
-    ).permissionAtom(target.environmentId),
-  );
+  const writeCommand =
+    params.field === "comment" ? composerPullRequests.updateComment : composerPullRequests.update;
+  const canWrite = useAtomValue(writeCommand.permissionAtom(target.environmentId));
+  const writeAccess = useAtomValue(writeCommand.accessAtom(target.environmentId));
   // Name the first thing in the way, so the notice says what would actually fix it.
   const readOnlyReason =
     !pr || allowed
@@ -78,7 +77,9 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
       : !permissions.connected
         ? "Reconnect to save changes."
         : !canWrite
-          ? "This device isn't allowed to change source control on this environment."
+          ? scopeAccessShowsBanner(writeAccess)
+            ? "This device isn't allowed to change source control on this environment."
+            : null
           : params.field === "comment"
             ? "You can't edit this comment."
             : `You can't edit this ${singular}.`;

@@ -23,10 +23,12 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { useProjects } from "../../state/entities";
 import { memoryEnvironment as memory } from "../../state/memory";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentScope } from "../../state/session";
+import { scopeAccessLocked } from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useForgetMemory, useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemory";
 
+const MEMORY_READ_SCOPES = [AuthMemoryReadScope];
 const NO_ITEMS: ReadonlyArray<never> = [];
 
 /** What the assistant's conversations taught the memory: open one in Memory to edit, or forget it. */
@@ -38,7 +40,8 @@ export function AssistantWorkMemorySection(props: {
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const projects = useProjects();
-  const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
+  const readAccess = useEnvironmentScopeAccess(environmentId, MEMORY_READ_SCOPES);
+  const canRead = !scopeAccessLocked(readAccess);
   const space = useMemorySpace(environmentId, canRead);
   const projectMemory = useProjectMemoryScope(
     environmentId,
@@ -86,7 +89,7 @@ export function AssistantWorkMemorySection(props: {
           What its conversations taught the memory. Tap one to edit it in Memory.
         </Text>
       </View>
-      {!canRead ? (
+      {readAccess === "unknown" ? null : !canRead ? (
         <Text textRole="footnote" className="px-2 text-foreground-muted">
           Memory read permission is required to see what it remembers.
         </Text>

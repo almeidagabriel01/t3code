@@ -41,7 +41,11 @@ import { mintMcpApprovalCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { relayEnvironmentDiscovery } from "~/state/relay";
-import { useEnvironmentScope, useEnvironmentSessionState } from "~/state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess, useEnvironmentSessionState } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { CommandBlock } from "../CommandBlock";
@@ -205,10 +209,13 @@ const DEFAULT_LEVELS: readonly AuthMcpClientAccess[] = [
 ];
 
 /** Why each level cannot be granted on this environment; absent when it can. */
+const ACCESS_WRITE_SCOPES = [AuthAccessWriteScope];
+const RELAY_READ_SCOPES = [AuthRelayReadScope];
+
 function useGrantableLevels(environment: EnvironmentPresentation) {
   const environmentId = environment.environmentId;
   const session = useEnvironmentSessionState(environmentId).data;
-  const canMint = useEnvironmentScope(environmentId, AuthAccessWriteScope);
+  const mintAccess = useEnvironmentScopeAccess(environmentId, ACCESS_WRITE_SCOPES);
   const policy = useManagedPolicy(environmentId);
   // The server refuses codes for any level when its policy keeps remote clients out.
   const remoteDenial = managedCapabilityDenial(policy, "remoteClients");
@@ -216,8 +223,10 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
     AuthMcpClientAccess.literals.flatMap((level) => {
       const reason =
         remoteDenial ??
-        (!canMint
-          ? `This device needs the Manage access permission on ${environment.label}.`
+        (scopeAccessLocked(mintAccess)
+          ? scopeAccessShowsBanner(mintAccess)
+            ? `This device needs the Manage access permission on ${environment.label}.`
+            : "Checking access…"
           : session === null ||
               !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
             ? `This device cannot grant this on ${environment.label}.`
@@ -233,7 +242,7 @@ function useGate(environment: EnvironmentPresentation) {
   const environmentId = environment.environmentId;
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const controller = useCloudLinkController(environmentId);
-  const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
+  const relayAccess = useEnvironmentScopeAccess(environmentId, RELAY_READ_SCOPES);
   const thisMachine =
     environmentId === usePrimaryEnvironmentId() ||
     isDesktopLocalConnectionTarget(environment.entry.target);
@@ -263,7 +272,7 @@ function useGate(environment: EnvironmentPresentation) {
       serverConfig === null
         ? undefined
         : serverConfig.environment.capabilities.mcpApprovalCodes === true,
-    canReadRelay,
+    canReadRelay: relayAccess === "unknown" ? undefined : relayAccess === "granted",
     linkState,
     linkStateError: controller.linkState.error,
     thisMachine,

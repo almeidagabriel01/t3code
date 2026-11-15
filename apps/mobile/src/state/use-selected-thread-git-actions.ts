@@ -26,7 +26,8 @@ import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { readEnvironmentScope, useEnvironmentScope } from "./session";
+import { scopeAccessLocked } from "@t3tools/client-runtime/state/sessionScope";
+import { readEnvironmentScope, useEnvironmentScope, useEnvironmentScopeAccess } from "./session";
 import {
   environmentConnectedAtom,
   setPendingConnectionError,
@@ -43,6 +44,8 @@ function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
 
 // Selecting a thread or reconnecting its environment refreshes the checkout's
 // status once, shared by every sheet that shows it.
+const SOURCE_CONTROL_WRITE_SCOPES = [AuthSourceControlWriteScope];
+
 const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
   refreshStatus: vcsEnvironment.refreshStatus,
   connected: environmentConnectedAtom,
@@ -63,10 +66,11 @@ export function useSelectedThreadGitActions() {
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const canWriteSourceControl = useEnvironmentScope(
+  const sourceControlAccess = useEnvironmentScopeAccess(
     selectedThread?.environmentId ?? null,
-    AuthSourceControlWriteScope,
+    SOURCE_CONTROL_WRITE_SCOPES,
   );
+  const canWriteSourceControl = !scopeAccessLocked(sourceControlAccess);
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -405,6 +409,7 @@ export function useSelectedThreadGitActions() {
 
   return {
     canWriteSourceControl,
+    sourceControlAccess,
     canChangeThreadBranch,
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,

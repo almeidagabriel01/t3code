@@ -22,7 +22,10 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
 }));
 
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.canRead }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScope: () => mocks.canRead,
+  useEnvironmentScopeAccess: () => (mocks.canRead ? "granted" : "missing"),
+}));
 vi.mock("../memory/useProjectMemoryScope", () => ({
   useMemorySpace: () => mocks.space,
   useProjectMemoryScope: () => mocks.scope,

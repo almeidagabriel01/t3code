@@ -48,7 +48,7 @@ export function GuideNotice({ state }: { readonly state: ReturnType<typeof useRe
             onPress={() => (notice.kind === "unavailable" ? state.refresh() : void state.write())}
             loading={busy}
           />
-        ) : (
+        ) : state.accessUnknown ? null : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"
               ? "Reconnect or ask someone with write access to retry."

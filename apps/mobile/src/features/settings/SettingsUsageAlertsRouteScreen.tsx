@@ -3,9 +3,13 @@ import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   usageLimitAlertLabel,
-  usageLimitAlertsLocked,
   usageLimitAlertsPaused,
+  USAGE_LIMIT_ALERTS_SCOPES,
 } from "@t3tools/shared/usageLimitAlerts";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -19,7 +23,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
-import { environmentSession, sessionHasScope } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -87,10 +91,8 @@ function EnvironmentAlerts(props: {
     environmentId,
   );
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const allowed = useAtomValue(
-    environmentSession.sessionStateAtom(environmentId),
-    (result) => !usageLimitAlertsLocked((scope) => sessionHasScope(result, scope)),
-  );
+  const access = useEnvironmentScopeAccess(environmentId, USAGE_LIMIT_ALERTS_SCOPES);
+  const allowed = !scopeAccessLocked(access);
   const update = useAtomCommand(serverEnvironment.updateSettings, {
     label: "usage limit alert update",
     reportFailure: true,
@@ -106,7 +108,7 @@ function EnvironmentAlerts(props: {
   const suffix = props.showEnvironment ? ` · ${props.environment.label}` : "";
   return (
     <>
-      {allowed ? null : (
+      {scopeAccessShowsBanner(access) ? (
         <View className="overflow-hidden rounded-2xl bg-grouped-card">
           <ListRowLayout
             icon={{ ios: "lock", android: "lock" }}
@@ -114,7 +116,7 @@ function EnvironmentAlerts(props: {
             description={`This session can view ${props.environment.label}'s providers but can't change their settings.`}
           />
         </View>
-      )}
+      ) : null}
       {paused ? (
         <View className="overflow-hidden rounded-2xl">
           <ListRow

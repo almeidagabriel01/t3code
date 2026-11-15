@@ -1,13 +1,12 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { SessionScopeAccess } from "@t3tools/client-runtime/state/sessionScope";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
   type ProjectId,
   type ProjectSettingsOverrides,
   type ProviderInstanceId,
-  sessionGrantsScope,
   type ServerSettings,
-  type SessionGrantInput,
 } from "@t3tools/contracts";
 
 export interface ProviderEnvironmentOptionLike {
@@ -70,18 +69,6 @@ export type ProviderEnvironmentAccess =
   | { readonly kind: "unavailable" }
   | { readonly kind: "error" };
 
-export type ProviderOperateAccess = "granted" | "denied" | "pending";
-
-export function resolveRemoteOperateAccess(input: {
-  readonly session: SessionGrantInput | null;
-  readonly isPending: boolean;
-  readonly hasError: boolean;
-}): ProviderOperateAccess {
-  if (input.hasError) return "denied";
-  if (input.session === null) return input.isPending ? "pending" : "denied";
-  return sessionGrantsScope(input.session, AuthProvidersManageScope) ? "granted" : "denied";
-}
-
 /** Send providerInstances even when empty; omission preserves the stored map for older clients. */
 
 export function buildProviderInstanceOverridePatch(
@@ -108,10 +95,13 @@ export function buildProviderInstanceOverridePatch(
   return patch;
 }
 
+/** The grant provider settings, secret providers included, need on the server. */
+export const PROVIDER_SETTINGS_SCOPES = [AuthProvidersManageScope];
+
 export function classifyProviderEnvironmentAccess(input: {
   readonly connectionPhase: EnvironmentConnectionPhase;
   readonly hasServerConfig: boolean;
-  readonly operateAccess: ProviderOperateAccess;
+  readonly operateAccess: SessionScopeAccess;
 }): ProviderEnvironmentAccess {
   if (input.connectionPhase === "error") {
     return { kind: "error" };
@@ -122,10 +112,10 @@ export function classifyProviderEnvironmentAccess(input: {
   if (!input.hasServerConfig) {
     return { kind: "loading", reason: "config" };
   }
-  if (input.operateAccess === "pending") {
+  if (input.operateAccess === "unknown") {
     return { kind: "loading", reason: "permissions" };
   }
-  if (input.operateAccess === "denied") {
+  if (input.operateAccess === "missing") {
     return { kind: "read-only" };
   }
   return { kind: "editable" };

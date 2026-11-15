@@ -17,7 +17,11 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
-import { useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useThreadWorkspaceCleaned } from "./ThreadWorkspaceNotice";
@@ -108,14 +112,17 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
 };
 
+const SOURCE_CONTROL_WRITE_SCOPES = [AuthSourceControlWriteScope];
+
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
-  const canWriteSourceControl = useEnvironmentScope(
+  const sourceControlAccess = useEnvironmentScopeAccess(
     environmentId ? EnvironmentId.make(String(environmentId)) : null,
-    AuthSourceControlWriteScope,
+    SOURCE_CONTROL_WRITE_SCOPES,
   );
+  const canWriteSourceControl = !scopeAccessLocked(sourceControlAccess);
   const threadId = props.threadId;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
@@ -156,7 +163,9 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
       ? {
           ...action,
           disabled: true,
-          hint: "This connection cannot change source control.",
+          hint: scopeAccessShowsBanner(sourceControlAccess)
+            ? "This connection cannot change source control."
+            : "Checking access…",
         }
       : action;
   })();

@@ -1,5 +1,9 @@
 import { useEnvironmentScope } from "../../state/session";
-import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
+import {
+  useEnvironmentsWithScope,
+  useEnvironmentsScopeAccess,
+  readEnvironmentScope,
+} from "../../state/session";
 import {
   ChevronDownIcon,
   CircleXIcon,
@@ -1322,6 +1326,11 @@ export function KeybindingsSettingsPanel() {
   const canWriteSettings =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writableIds.has(target.environmentId));
+  const writeAccess = useEnvironmentsScopeAccess(connectedEnvironments, AuthSettingsWriteScope);
+  const showsPermissionNote =
+    connectedEnvironments.length === 0 ||
+    (!canWriteSettings &&
+      connectedEnvironments.every((target) => writeAccess.get(target.environmentId) !== "unknown"));
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
@@ -1503,7 +1512,7 @@ export function KeybindingsSettingsPanel() {
         </div>
       </SettingsSection>
 
-      {!canWriteSettings ? (
+      {showsPermissionNote ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
             ? "Connect an environment to change keybindings."

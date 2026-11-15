@@ -12,12 +12,18 @@ import { useEffect, useState } from "react";
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
+
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
 
 export function VoiceInputSetup(props: {
   environmentId: EnvironmentId | null;
@@ -37,7 +43,8 @@ export function VoiceInputSetup(props: {
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
-  const canManage = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
+  const manageAccess = useEnvironmentScopeAccess(props.environmentId, SETTINGS_WRITE_SCOPES);
+  const canManage = !scopeAccessLocked(manageAccess);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
@@ -237,9 +244,9 @@ export function VoiceInputSetup(props: {
                     ? "Downloading…"
                     : props.error
                       ? "Try again"
-                      : canManage
-                        ? "Download model"
-                        : "Ask an environment admin to download"}
+                      : scopeAccessShowsBanner(manageAccess)
+                        ? "Ask an environment admin to download"
+                        : "Download model"}
                 </Button>
               ) : null}
             </>

@@ -5,7 +5,16 @@ import {
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
 } from "@t3tools/contracts";
-import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessShowsBanner,
+  type SessionScopeAccess,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { USAGE_LIMIT_ALERTS_SCOPES } from "@t3tools/shared/usageLimitAlerts";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  readEnvironmentScope,
+} from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
@@ -62,7 +71,6 @@ import {
   providersIgnoringCheckedAtAtom,
   serverEnvironment,
 } from "../../state/server";
-import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
@@ -98,7 +106,7 @@ import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
-import { UsageLimitAlertsPausedNotice, useUsageLimitAlertsLocked } from "./UsageLimitAlertsSection";
+import { UsageLimitAlertsPausedNotice } from "./UsageLimitAlertsSection";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -127,10 +135,9 @@ import {
   buildProviderEnvironmentOptions,
   buildProviderInstanceOverridePatch,
   classifyProviderEnvironmentAccess,
+  PROVIDER_SETTINGS_SCOPES,
   isProviderSettingsEnvironmentAvailable,
   type ProviderEnvironmentAccess,
-  type ProviderOperateAccess,
-  resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 
@@ -483,12 +490,10 @@ function RemoteSessionGatedProviderSettings({
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   readonly projectIds: readonly ProjectId[];
 }) {
-  const sessionState = useEnvironmentSessionState(environment.environmentId);
-  const operateAccess = resolveRemoteOperateAccess({
-    session: sessionState.data,
-    isPending: sessionState.isPending,
-    hasError: sessionState.hasError,
-  });
+  const operateAccess = useEnvironmentScopeAccess(
+    environment.environmentId,
+    PROVIDER_SETTINGS_SCOPES,
+  );
   return (
     <AccessGatedProviderSettings
       environment={environment}
@@ -508,7 +513,7 @@ function AccessGatedProviderSettings({
   projectIds,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly operateAccess: ProviderOperateAccess;
+  readonly operateAccess: SessionScopeAccess;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   readonly projectIds: readonly ProjectId[];
@@ -564,7 +569,8 @@ export function EnvironmentProviderSettings({
     !readOnly && managedPolicy?.limits?.providers?.allowedDrivers?.length !== 0;
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
-  const alertsLocked = useUsageLimitAlertsLocked(environmentId);
+  const alertsAccess = useEnvironmentScopeAccess(environmentId, USAGE_LIMIT_ALERTS_SCOPES);
+  const alertsMissing = scopeAccessShowsBanner(alertsAccess);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
   const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
@@ -984,7 +990,7 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
-      {readOnly || alertsLocked ? (
+      {readOnly || alertsMissing ? (
         <Alert variant="info">
           <LockIcon aria-hidden />
           <AlertTitle>Limited permissions</AlertTitle>
@@ -992,9 +998,9 @@ export function EnvironmentProviderSettings({
             This session can view {environmentLabel}'s providers but can't change{" "}
             {!readOnly
               ? "their limit alerts"
-              : alertsLocked
-                ? "their settings"
-                : "their settings, except limit alerts"}
+              : alertsAccess === "granted"
+                ? "their settings, except limit alerts"
+                : "their settings"}
             .
           </AlertDescription>
         </Alert>

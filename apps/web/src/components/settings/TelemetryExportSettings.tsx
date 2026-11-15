@@ -12,6 +12,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings } from "./useScopedSettings";
 import { SettingsSection } from "./settingsLayout";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 
 const SIGNALS = [
   {
@@ -95,6 +96,9 @@ function TelemetryExportForm() {
   const canEdit = useAtomValue(
     serverEnvironment.checkOtlpEndpoint.permissionAtom(environmentId ?? null),
   );
+  const editAccess = useAtomValue(
+    serverEnvironment.checkOtlpEndpoint.accessAtom(environmentId ?? null),
+  );
   const canCheck =
     canEdit && environment?.serverConfig?.environment.capabilities.otlpEndpointCheck === true;
   const running = environment?.serverConfig?.observability;
@@ -172,7 +176,7 @@ function TelemetryExportForm() {
           Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply.
           Environment variables override these settings.
         </p>
-        {!canEdit && (
+        {scopeAccessShowsBanner(editAccess) && (
           <p className="text-xs text-muted-foreground">
             This connection lacks permission to change settings on{" "}
             {environment?.label ?? "the selected environment"}.

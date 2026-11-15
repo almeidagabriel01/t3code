@@ -13,6 +13,10 @@ import {
   presentMemoryOwnerPolicy,
   presentMemorySync,
 } from "@t3tools/client-runtime/memory-presentation";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { memoryDeviceFlow } from "@t3tools/client-runtime/memory-device-flow";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
@@ -92,7 +96,8 @@ export function MemoryAdministration({
     reportFailure: false,
   });
   const canHub = useAtomValue(memory.hubSettingsUpdate.permissionAtom(environmentId));
-  const canOwner = useAtomValue(memory.ownerSourceReadPolicyUpdate.permissionAtom(environmentId));
+  const ownerAccess = useAtomValue(memory.ownerSourceReadPolicyUpdate.accessAtom(environmentId));
+  const canOwner = !scopeAccessLocked(ownerAccess);
   const [hub, setHub] = useState<MemoryHubSettingsView | null>(null);
   const [owner, setOwner] = useState<MemoryOwnerSourceReadPolicyView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +166,8 @@ export function MemoryAdministration({
   const live = () =>
     mounted.current && connection !== null && readPreparedConnection(environmentId) === connection;
   const writable = (id: EnvironmentId) => registry.get(memory.hubSettingsUpdate.permissionAtom(id));
+  const lacksWrite = (id: EnvironmentId) =>
+    scopeAccessShowsBanner(registry.get(memory.hubSettingsUpdate.accessAtom(id)));
   const candidates = environments.filter(
     (e) =>
       e.environmentId !== environmentId &&
@@ -515,7 +522,9 @@ export function MemoryAdministration({
               const reason = !connected
                 ? "Connect this device in Settings → Connections to replace its key."
                 : !writable(id)
-                  ? "Settings write permission is required to replace this key."
+                  ? lacksWrite(id)
+                    ? "Settings write permission is required to replace this key."
+                    : "Checking access…"
                   : null;
               return (
                 <View key={id}>
@@ -581,7 +590,7 @@ export function MemoryAdministration({
                   ? "Localhost points to the device itself. Enter a hub address reachable from the other device."
                   : "Address the device uses to reach this hub. Check that the device can reach it; saving an address does not verify connectivity."}
               </Copy>
-              {!writable(device) ? (
+              {lacksWrite(device) ? (
                 <Copy>Settings write permission is required on this device.</Copy>
               ) : null}
               <Action
@@ -672,7 +681,9 @@ export function MemoryAdministration({
                 onPress={() => void saveOwner(e.environmentId)}
               />
             ))}
-          {!canOwner ? <Copy>Settings write permission is required.</Copy> : null}
+          {scopeAccessShowsBanner(ownerAccess) ? (
+            <Copy>Settings write permission is required.</Copy>
+          ) : null}
         </SettingsSection>
       ) : null}
     </>

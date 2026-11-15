@@ -29,12 +29,17 @@ vi.mock("../../state/notes", async (importOriginal) => {
   const { Atom } = await import("effect/reactivity");
   const allowed = Atom.make(true);
   const denied = Atom.make(false);
+  const granted = Atom.make("granted");
+  const missing = Atom.make("missing");
   const command = () => ({ permissionAtom: () => allowed });
   return {
     ...(await importOriginal<object>()),
     notesEnvironment: {
       note: ({ input }: { input: { path: string } }) => input.path,
-      write: { permissionAtom: () => (mocks.canWrite ? allowed : denied) },
+      write: {
+        permissionAtom: () => (mocks.canWrite ? allowed : denied),
+        accessAtom: () => (mocks.canWrite ? granted : missing),
+      },
       move: command(),
       read: command(),
       update: command(),

@@ -148,7 +148,12 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+} from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -310,6 +315,8 @@ import { readThreadTabsProjectKey } from "./chat/threadTabsProject";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+const ORCHESTRATION_OPERATE_SCOPES = [AuthOrchestrationOperateScope];
+const CLONE_PROJECT_SCOPES = [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
 
@@ -680,6 +687,10 @@ function OpenCommandPaletteDialog(props: {
     }) ?? null;
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
   const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
+  const createProjectAccess = useEnvironmentScopeAccess(
+    browseEnvironmentId,
+    ORCHESTRATION_OPERATE_SCOPES,
+  );
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   const browseEnvironmentIsDesktopLocal =
@@ -2862,6 +2873,10 @@ function OpenCommandPaletteDialog(props: {
     addProjectCloneFlow?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
+  const cloneAccess = useEnvironmentScopeAccess(
+    addProjectCloneFlow?.environmentId ?? null,
+    CLONE_PROJECT_SCOPES,
+  );
   const canCloneProject = canWriteSourceControl && canCreateClonedProject;
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
@@ -3223,11 +3238,11 @@ function OpenCommandPaletteDialog(props: {
 
   const submitButtonId = useId();
   const browseSubmitLabel =
-    isCloneDestinationStep && !canCloneProject
+    isCloneDestinationStep && scopeAccessShowsBanner(cloneAccess)
       ? "This connection needs permission to write source control and add projects."
-      : canCreateProject
-        ? `${submitActionLabel} (${addShortcutLabel})`
-        : "This connection cannot add projects.";
+      : scopeAccessShowsBanner(createProjectAccess)
+        ? "This connection cannot add projects."
+        : `${submitActionLabel} (${addShortcutLabel})`;
   const inputAccessory =
     newProjectFlow !== null ? (
       <CommandPaletteSubmitButton
