@@ -12,11 +12,18 @@ type Shown = { readonly status?: string; readonly undeliveredCount?: number };
 const setup = () => {
   const registry = AtomRegistry.make();
   const status = Atom.make<AsyncResult.AsyncResult<unknown, unknown>>(AsyncResult.initial());
-  const resend = createUndeliveredResend(() => status);
+  const stored = Atom.make<AsyncResult.AsyncResult<unknown, unknown>>(AsyncResult.initial());
+  const resend = createUndeliveredResend(
+    () => status,
+    () => stored,
+  );
   const answer = () => registry.get(resend.answers(hub));
-  /** A resend that put `requeued` back in line, with `event` showing when it started. */
-  const run = (event: unknown, requeued: number) => {
-    registry.set(status, event === null ? AsyncResult.initial() : AsyncResult.success(event));
+  const known = (value: unknown) =>
+    value === null ? AsyncResult.initial() : AsyncResult.success(value);
+  /** A resend that put `requeued` back in line, with `event` and `settings` shown when it started. */
+  const run = (event: unknown, requeued: number, settings: unknown = null) => {
+    registry.set(status, known(event));
+    registry.set(stored, known(settings));
     const target = { environmentId: hub };
     const against = resend.command.onStart(target, registry);
     return resend.command.onSuccess(target, registry, { requeued }, against);
@@ -27,15 +34,18 @@ const setup = () => {
 describe("applyUndeliveredResend", () => {
   const stale: Shown = { status: "running", undeliveredCount: 3 };
   const caughtUp: Shown = { status: "running" };
-  // [case, event when the resend started, settings shown now, event now, count shown]
+  const fetched: Shown = { undeliveredCount: 3 };
+  const refetched: Shown = { undeliveredCount: 2 };
+  // [case, event and settings when the resend started, settings shown now, event now, count shown]
   it.effect.each([
-    ["the stream has not reported since", stale, stale, stale, 0],
-    ["no stream, over stored or saved settings", null, { undeliveredCount: 3 } as Shown, null, 0],
-    ["the stream already moved on", stale, caughtUp, caughtUp, undefined],
-  ] as const)("%s", ([, startedAgainst, shown, event, expected]) =>
+    ["the stream has not reported since", stale, fetched, stale, stale, 0],
+    ["no stream, over the same settings", null, fetched, fetched, null, 0],
+    ["the stream already moved on", stale, fetched, caughtUp, caughtUp, undefined],
+    ["no stream, and the settings were fetched again", null, fetched, refetched, null, 2],
+  ] as const)("%s", ([, startedEvent, startedSettings, shown, event, expected]) =>
     Effect.gen(function* () {
       const { answer, run } = setup();
-      yield* run(startedAgainst, 3);
+      yield* run(startedEvent, 3, startedSettings);
       expect(applyUndeliveredResend(shown, answer(), event).undeliveredCount).toBe(expected);
     }),
   );

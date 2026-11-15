@@ -54,13 +54,17 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
     label: "environment-data:telegram-channel:status",
     subscribe: (_input: null) => subscribe(WS_METHODS.telegramChannelSubscribeStatus, {}),
   });
-  const resend = createUndeliveredResend((environmentId) => status({ environmentId, input: null }));
+  const settings = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:telegram-channel:settings",
+    tag: WS_METHODS.telegramChannelGetSettings,
+    staleTimeMs: 30_000,
+  });
+  const resend = createUndeliveredResend(
+    (environmentId) => status({ environmentId, input: null }),
+    (environmentId) => settings({ environmentId, input: {} }),
+  );
   return {
-    settings: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:telegram-channel:settings",
-      tag: WS_METHODS.telegramChannelGetSettings,
-      staleTimeMs: 30_000,
-    }),
+    settings,
     status,
     configure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:telegram-channel:configure",

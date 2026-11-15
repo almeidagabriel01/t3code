@@ -131,8 +131,20 @@ describe("useImessageChannel", () => {
 
   it("resends what never arrived and reports a refusal", async () => {
     const root = mount();
-    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 1 } });
-    expect(await latest().resendUndelivered()).toEqual({ ok: true });
+    const saveWithTwoUndelivered = async () => {
+      mocks.command.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { enabled: true, allowedHandles: [], selfHandles: [], undeliveredCount: 2 },
+      });
+      await act(async () => void (await latest().configure({})));
+    };
+    // With no live status, the resend's answer lowers the settings a change saved, and only those.
+    await saveWithTwoUndelivered();
+    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
+    await act(async () => expect(await latest().resendUndelivered()).toEqual({ ok: true }));
+    expect(latest().settings?.undeliveredCount).toBe(0);
+    await saveWithTwoUndelivered();
+    expect(latest().settings?.undeliveredCount).toBe(2);
     mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
     mocks.failure = "boom";
     expect(await latest().resendUndelivered()).toEqual({

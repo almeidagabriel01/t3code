@@ -164,19 +164,23 @@ describe("useTelegramChannel", () => {
   });
 
   it("resends what never arrived and reports a refusal", async () => {
-    // The resend's answer also lowers the count of settings a change saved, with no live status.
-    mocks.resent = { against: null, requeued: 2 };
     const root = mount();
     expect(latest().canResend).toBe(false);
-    mocks.command.mockResolvedValueOnce({
-      _tag: "Success",
-      value: { ...(mocks.stored as object), undeliveredCount: 2 },
-    });
-    await act(async () => void (await latest().configure({})));
-    expect(latest().settings?.undeliveredCount).toBe(0);
+    const saveWithTwoUndelivered = async () => {
+      mocks.command.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { ...(mocks.stored as object), undeliveredCount: 2 },
+      });
+      await act(async () => void (await latest().configure({})));
+    };
+    // With no live status, the resend's answer lowers the settings a change saved, and only those.
+    await saveWithTwoUndelivered();
     mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
-    expect(await latest().resendUndelivered()).toEqual({ ok: true });
+    await act(async () => expect(await latest().resendUndelivered()).toEqual({ ok: true }));
     expect(mocks.command).toHaveBeenLastCalledWith({ environmentId: "hub", input: {} });
+    expect(latest().settings?.undeliveredCount).toBe(0);
+    await saveWithTwoUndelivered();
+    expect(latest().settings?.undeliveredCount).toBe(2);
     mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
     mocks.failure = new Error("Not allowed.");
     expect(await latest().resendUndelivered()).toEqual({ ok: false, message: "Not allowed." });

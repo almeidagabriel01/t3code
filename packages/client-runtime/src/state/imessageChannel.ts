@@ -46,13 +46,17 @@ export function createImessageChannelEnvironmentAtoms<R, E>(
     label: "environment-data:imessage-channel:status",
     subscribe: (_input: null) => subscribe(WS_METHODS.imessageChannelSubscribeStatus, {}),
   });
-  const resend = createUndeliveredResend((environmentId) => status({ environmentId, input: null }));
+  const settings = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:imessage-channel:settings",
+    tag: WS_METHODS.imessageChannelGetSettings,
+    staleTimeMs: 30_000,
+  });
+  const resend = createUndeliveredResend(
+    (environmentId) => status({ environmentId, input: null }),
+    (environmentId) => settings({ environmentId, input: {} }),
+  );
   return {
-    settings: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:imessage-channel:settings",
-      tag: WS_METHODS.imessageChannelGetSettings,
-      staleTimeMs: 30_000,
-    }),
+    settings,
     status,
     /** The permission state before enabling; read again after the user grants access. */
     access: createEnvironmentRpcQueryAtomFamily(runtime, {

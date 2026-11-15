@@ -3,7 +3,10 @@ import {
   applyTelegramStatusEvent,
   createTelegramChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/telegramChannel";
-import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
+import {
+  applyUndeliveredResend,
+  lowerUndelivered,
+} from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   TelegramChannelSettingsError,
@@ -86,8 +89,13 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
       return failed(result);
     },
     resendUndelivered: async (): Promise<TelegramReply> => {
+      const pressed = saved;
       const result = await resend({ environmentId, input: {} });
-      return result._tag === "Success" ? { ok: true } : failed(result);
+      if (result._tag !== "Success") return failed(result);
+      // The answer cannot follow `saved` from the shared runtime, so it lowers it here.
+      const { requeued } = result.value;
+      setSaved((now) => (now && now === pressed ? lowerUndelivered(now, requeued) : now));
+      return { ok: true };
     },
   };
 }
