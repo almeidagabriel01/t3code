@@ -12,7 +12,7 @@ import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 // The project gives way first, then the title; the status and action never truncate. A chip
-// (the All tab's only sign of the project) gives way after the title, which keeps a floor.
+// (the All tab's only sign of the project) never shrinks below its own cap; the title truncates.
 const SEGMENT_CLASS = {
   title: "min-w-0 truncate font-medium text-foreground/90",
   label: "shrink-0",

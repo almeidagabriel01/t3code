@@ -5,7 +5,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 
 // The project gives way first, then the title; the status and action never truncate. A chip
-// (the All tab's only sign of the project) gives way after the title, which keeps a floor.
+// (the All tab's only sign of the project) never shrinks below its own cap; the title truncates.
 const SEGMENT_CLASS = {
   title: "min-w-0 shrink text-xs text-foreground-muted",
   label: "shrink-0 text-xs text-foreground-muted",
@@ -65,7 +65,7 @@ export function TaskEventActivityRow(props: {
         </Text>
       ))}
       {props.chip === undefined ? null : (
-        <View className="max-w-28 min-w-0 shrink-[0.01] rounded-full bg-foreground/8 px-1.5 py-px">
+        <View className="max-w-28 min-w-0 shrink-0 rounded-full bg-foreground/8 px-1.5 py-px">
           <Text
             numberOfLines={1}
             ellipsizeMode="middle"
