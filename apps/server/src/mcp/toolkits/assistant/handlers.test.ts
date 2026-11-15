@@ -30,6 +30,7 @@ import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
+import * as ChannelOutbox from "../../../channels/ChannelOutbox.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as AssistantHandlers from "./handlers.ts";
 import { AssistantToolkit, type AssistantParameters } from "./tools.ts";
@@ -228,6 +229,7 @@ const harness = (
     const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
     const notified: Array<Parameters<AutonomyService.AutonomyService["Service"]["notifyUser"]>[0]> =
       [];
+    const resent: string[] = [];
     const deps = Layer.succeedContext(
       yield* Layer.build(
         Layer.mergeAll(
@@ -329,6 +331,13 @@ const harness = (
                 });
               }),
           }),
+          Layer.mock(ChannelOutbox.ChannelOutbox)({
+            resend: (kind) =>
+              Effect.sync(() => {
+                resent.push(kind);
+                return kind === "telegram" ? 2 : 0;
+              }),
+          }),
           Layer.mock(AssistantGroups.AssistantGroups)({
             member: {} as AssistantGroups.AssistantGroups["Service"]["member"],
             announce: (input) =>
@@ -373,7 +382,7 @@ const harness = (
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts, announced, container, notified };
+    return { call, writes, decisions, posts, announced, container, notified, resent };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -878,6 +887,19 @@ it.effect("notify_user is for an assistant's own turn, and a retry in the turn s
       code: "invalid_request",
       message: "notifications are paused",
     });
+  }),
+);
+
+it.effect("resend_undelivered puts undelivered replies back in line on one channel or both", () =>
+  Effect.gen(function* () {
+    const { call, resent } = yield* harness("full-access");
+    expect(yield* call({ action: "resend_undelivered" })).toEqual({
+      requeued: { telegram: 2, imessage: 0 },
+    });
+    expect(yield* call({ action: "resend_undelivered", channel: "imessage" })).toEqual({
+      requeued: { telegram: 0, imessage: 0 },
+    });
+    expect(resent).toEqual(["telegram", "imessage", "imessage"]);
   }),
 );
 

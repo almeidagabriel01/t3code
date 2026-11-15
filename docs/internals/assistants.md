@@ -209,7 +209,7 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
 project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
 takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
-Three things follow the row, none of them a new mechanism:
+These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not
   flagging threads) lets `assistantNote` prepend a short `<t3_assistant_task>` block with
@@ -218,6 +218,31 @@ Three things follow the row, none of them a new mechanism:
 - `AssistantTaskReactor` queues a message to the owner's current conversation when a run of the task
   thread ends. The message id derives from the run, so a replay wakes once, and it carries the task
   thread as `senderThreadId`, which makes the turn's origin "assistant", never the user.
+  A completed run whose thread goes on by itself does not wake: a newer run is already lined up,
+  or `backgroundWorkHoldsCompletion` holds it (the same rule as the task's parked status), minus
+  pull request watches, which end silently on merge. The run that really ends reports. A failed,
+  cancelled or interrupted run always reports.
+- The same reactor wakes the owner when the task (or a `delegate_task` child of an assistant
+  conversation) starts waiting on the user, from `NeedsUser.changes` (`autonomy/NeedsUser.ts`, the one
+  definition of "waits on the user": pending non-machine requests and open decisions that are neither
+  notices nor approval mirrors). The owner is `NeedsUser.owner`, found up the subagent chain, so a
+  task's own workers count; assistant and group member conversations follow no one. A delegated
+  child's question is left to `DelegatedTaskQuestionReactor`, which already wakes its parent. Each
+  (re)subscription of `NeedsUser.changes` subscribes first and then emits what already waits as
+  `opened` (requests through `subscribeDomainEvents`, which anchors on the event sink's sequence;
+  decisions through the snapshot their service takes after subscribing), so a start, or a wait that
+  opened while a stream was down, still wakes.
+- Every wait, from any thread, also reaches the default assistant (Jarvis), the user's point of
+  contact: `AutonomyService.notifyWaiting` reads `NeedsUser.pending` and, besides the chat-app card,
+  queues a short notice (title, origin, thread link) in its conversation, with the same delay, pause
+  switch and baseline as the card. Its own conversation and its own turn's subagents are skipped.
+  The notice is a model turn, so past its provider instance's budget or the default's own it is
+  skipped for good; the card still goes.
+  A wake's id is `waitWakeId(<conversation>, <wait key>)`: when the default follows the thread itself,
+  the owner wake and the notice are one command, so the orchestrator's receipt sends it once. A
+  resolution cancels both while still queued, and a notice whose wait settled during its send is taken
+  back. The chat app gets each wait once, from the card: while waiting notices are on,
+  `ChannelReplyReactor` does not post a run that a wait wake started.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while

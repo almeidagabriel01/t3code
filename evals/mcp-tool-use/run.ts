@@ -59,6 +59,7 @@ import { AssistantToolkit } from "../../apps/server/src/mcp/toolkits/assistant/t
 import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts";
 import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
+import { defaultNoticeText } from "../../apps/server/src/autonomy/needsYou.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
@@ -386,6 +387,16 @@ export const McpToolUseCase = Schema.Struct({
             }),
           ),
         ),
+      }),
+    ),
+    /** The default assistant's notice of a wait elsewhere, worded as T3 sends it; `prompt` stays empty. */
+    waitNotice: Schema.optional(
+      Schema.Struct({
+        title: Schema.String,
+        origin: Schema.String,
+        threadId: Schema.String,
+        threadTitle: Schema.String,
+        source: Schema.Literals(["request", "decision"]),
       }),
     ),
     /** A task in an assistant group: `prompt` is its instruction, wrapped as T3 sends it. */
@@ -1178,28 +1189,37 @@ export const buildMessages = (sample: Sample) => {
     if (turn.text) push(turn.role, text(turn.text));
   }
   const groupTask = testCase.setup.groupTask;
+  const waitNotice = testCase.setup.waitNotice;
   const userText =
-    groupTask !== undefined
-      ? groupTaskPacket({
-          group: groupTask.group,
-          taskId: "task-1",
-          kind: groupTask.kind ?? "root",
-          self: { ...groupTask.self, isLead: false },
-          members: groupTask.members.map((member) => ({
-            ...member,
-            isLead: member.isLead ?? false,
-          })),
-          news: groupTask.news,
-          request: groupTask.request ?? testCase.id,
-          quoted: groupTask.quoted ?? [],
-          from: groupTask.from,
-          instruction: testCase.prompt,
-          followup: null,
-          ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
+    waitNotice !== undefined
+      ? defaultNoticeText({
+          ...waitNotice,
+          link: formatThreadLink(
+            { environmentId: null, threadId: ThreadId.make(waitNotice.threadId) },
+            waitNotice.threadTitle,
+          ),
         })
-      : testCase.promptContext === undefined
-        ? testCase.prompt
-        : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+      : groupTask !== undefined
+        ? groupTaskPacket({
+            group: groupTask.group,
+            taskId: "task-1",
+            kind: groupTask.kind ?? "root",
+            self: { ...groupTask.self, isLead: false },
+            members: groupTask.members.map((member) => ({
+              ...member,
+              isLead: member.isLead ?? false,
+            })),
+            news: groupTask.news,
+            request: groupTask.request ?? testCase.id,
+            quoted: groupTask.quoted ?? [],
+            from: groupTask.from,
+            instruction: testCase.prompt,
+            followup: null,
+            ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
+          })
+        : testCase.promptContext === undefined
+          ? testCase.prompt
+          : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
   const assistant = testCase.setup.assistant;
   const note =
     assistant === undefined
@@ -1225,7 +1245,7 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
+  if (testCase.prompt !== "" || waitNotice !== undefined)
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {

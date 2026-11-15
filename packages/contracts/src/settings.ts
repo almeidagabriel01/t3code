@@ -87,6 +87,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
+  ProviderInstanceMutation,
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
@@ -2422,6 +2423,23 @@ export function requiredScopesForServerSettingsPatch(
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
   ];
+}
+
+export const ServerSettingsUpdateInput = Schema.Struct({
+  patch: ServerSettingsPatch,
+  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+});
+export type ServerSettingsUpdateInput = typeof ServerSettingsUpdateInput.Type;
+
+export function requiredScopesForServerSettingsUpdate(
+  input: ServerSettingsUpdateInput,
+): ReadonlyArray<AuthEnvironmentScope> {
+  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+  if (input.providerInstanceMutation === undefined) return scopes;
+  // A provider instance change with an empty patch touches nothing settings:write guards.
+  return Object.values(input.patch).every((value) => value === undefined)
+    ? [AuthProvidersManageScope]
+    : [...new Set([...scopes, AuthProvidersManageScope])];
 }
 
 /** Host-executed project scripts require settings-write authority in addition to orchestration:operate. */

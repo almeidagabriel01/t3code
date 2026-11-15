@@ -3,6 +3,7 @@ import {
   formatImessageHandleInput,
   imessageDefaultCallingCode,
   imessageSuggestedSelfHandles,
+  imessageUndeliveredLabel,
 } from "@t3tools/client-runtime/state/imessageChannel";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -40,6 +41,7 @@ import {
 import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { UndeliveredRepliesRow } from "./UndeliveredRepliesRow";
 
 const SECTION_ICON = "size-4 text-muted-foreground";
 // Desktop puts its own en-US first in navigator.languages; the OS locale names the real region.
@@ -267,6 +269,11 @@ function ImessageEnvironment(props: {
               </span>
             ) : undefined
           }
+        />
+        <UndeliveredRepliesRow
+          label={imessageUndeliveredLabel(settings)}
+          canAct={actions.canResend}
+          onResend={actions.resendUndelivered}
         />
         <SettingsRow
           title="Use iMessage"

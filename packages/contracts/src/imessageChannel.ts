@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt } from "./baseSchemas.ts";
 import { ChannelDeliveryErrorCode } from "./channels.ts";
 
 /**
@@ -40,6 +40,8 @@ export const ImessageChannelSettings = Schema.Struct({
   status: ImessageChannelStatus,
   lastError: Schema.optional(ImessageChannelErrorCode),
   lastDeliveryError: Schema.optional(ImessageChannelDeliveryError),
+  /** Messages that ran out of tries and wait for a resend; omitted when there are none. */
+  undeliveredCount: Schema.optional(NonNegativeInt),
 });
 export type ImessageChannelSettings = typeof ImessageChannelSettings.Type;
 
@@ -53,12 +55,21 @@ export type ImessageChannelConfigureInput = typeof ImessageChannelConfigureInput
 
 export const ImessageChannelGetSettingsInput = Schema.Struct({});
 export const ImessageChannelSubscribeStatusInput = Schema.Struct({});
+export const ImessageChannelResendUndeliveredInput = Schema.Struct({});
+export const ImessageChannelResendUndeliveredResult = Schema.Struct({
+  /** How many messages went back in line. */
+  requeued: NonNegativeInt,
+});
+export type ImessageChannelResendUndeliveredResult =
+  typeof ImessageChannelResendUndeliveredResult.Type;
 export const ImessageChannelCheckAccessInput = Schema.Struct({});
 
 export const ImessageChannelStatusEvent = Schema.Struct({
   status: ImessageChannelStatus,
   lastError: Schema.optional(ImessageChannelErrorCode),
   lastDeliveryError: Schema.optional(ImessageChannelDeliveryError),
+  /** Messages that ran out of tries and wait for a resend; omitted when there are none. */
+  undeliveredCount: Schema.optional(NonNegativeInt),
 });
 export type ImessageChannelStatusEvent = typeof ImessageChannelStatusEvent.Type;
 

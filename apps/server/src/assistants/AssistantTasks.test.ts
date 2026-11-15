@@ -148,6 +148,6 @@ it.effect("the note every assistant carries says when to launch work and how to 
       "go",
     );
     assert.include(note, "t3_thread_launch");
-    assert.include(note, "woken when it finishes");
+    assert.include(note, "woken when it finishes or needs the user");
   }).pipe(Effect.provide(layer)),
 );

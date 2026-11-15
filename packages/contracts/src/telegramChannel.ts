@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt } from "./baseSchemas.ts";
 import { ChannelDeliveryErrorCode } from "./channels.ts";
 
 /**
@@ -48,6 +48,8 @@ export const TelegramChannelSettings = Schema.Struct({
   status: TelegramChannelStatus,
   lastError: Schema.optional(TelegramChannelErrorCode),
   lastDeliveryError: Schema.optional(TelegramChannelDeliveryError),
+  /** Messages that ran out of tries and wait for a resend; omitted when there are none. */
+  undeliveredCount: Schema.optional(NonNegativeInt),
   /** Recent unknown senders, newest first; omitted when there are none. */
   pendingSenders: Schema.optional(Schema.Array(TelegramPendingSender)),
 });
@@ -70,11 +72,20 @@ export type TelegramChannelConfigureInput = typeof TelegramChannelConfigureInput
 
 export const TelegramChannelGetSettingsInput = Schema.Struct({});
 export const TelegramChannelSubscribeStatusInput = Schema.Struct({});
+export const TelegramChannelResendUndeliveredInput = Schema.Struct({});
+export const TelegramChannelResendUndeliveredResult = Schema.Struct({
+  /** How many messages went back in line. */
+  requeued: NonNegativeInt,
+});
+export type TelegramChannelResendUndeliveredResult =
+  typeof TelegramChannelResendUndeliveredResult.Type;
 
 export const TelegramChannelStatusEvent = Schema.Struct({
   status: TelegramChannelStatus,
   lastError: Schema.optional(TelegramChannelErrorCode),
   lastDeliveryError: Schema.optional(TelegramChannelDeliveryError),
+  /** Messages that ran out of tries and wait for a resend; omitted when there are none. */
+  undeliveredCount: Schema.optional(NonNegativeInt),
   botUsername: Schema.optional(Schema.String),
   pendingSenders: Schema.optional(Schema.Array(TelegramPendingSender)),
 });

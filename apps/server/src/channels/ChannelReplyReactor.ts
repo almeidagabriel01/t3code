@@ -2,6 +2,7 @@ import {
   assistantIdFromThreadId,
   ChannelOutboundMessage,
   type ChannelReplyAddress,
+  DEFAULT_AUTONOMY_SETTINGS,
   type Decision,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -16,12 +17,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
-import { cardContext } from "../autonomy/needsYou.ts";
+import { cardContext, WAIT_WAKE_PREFIX } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { decodeReplyAddress } from "./ChannelBridge.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
@@ -72,6 +74,7 @@ const make = Effect.gen(function* () {
   const channelLanguage = yield* ChannelLanguage;
   const sql = yield* SqlClient.SqlClient;
   const environment = yield* ServerEnvironment;
+  const settings = yield* ServerSettingsService;
 
   const targetFor = Effect.fn("ChannelReplyReactor.targetFor")(function* (threadId: string) {
     const assistantId = assistantIdFromThreadId(threadId);
@@ -92,6 +95,15 @@ const make = Effect.gen(function* () {
   const postRun = Effect.fn("ChannelReplyReactor.postRun")(function* (
     run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }>["payload"],
   ) {
+    // With waiting notices on, the wait's card reaches the chat app (AutonomyService), so the
+    // wake's answer stays in T3; with them off, the answer is the only word the chat gets.
+    if (run.userMessageId.startsWith(WAIT_WAKE_PREFIX)) {
+      const autonomy = yield* settings.getSettings.pipe(
+        Effect.map((current) => current.autonomy),
+        Effect.orElseSucceed(() => DEFAULT_AUTONOMY_SETTINGS),
+      );
+      if (autonomy.enabled && autonomy.notifyWaiting) return;
+    }
     const target = yield* targetFor(run.threadId);
     const deliveryId = `channel-run:${run.id}`;
     if (target === undefined || Option.isSome(yield* outbox.find(deliveryId))) return;

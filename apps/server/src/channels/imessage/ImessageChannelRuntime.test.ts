@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { ChannelGateway } from "../ChannelGateway.ts";
@@ -16,7 +17,7 @@ import * as ChannelTransport from "../ChannelTransport.ts";
 import { fingerprintText } from "./imessageAdmission.ts";
 import { ImessageDbError, type ImessageChatDb, type ImessageRow } from "./imessageChatDb.ts";
 import * as Runtime from "./ImessageChannelRuntime.ts";
-import type { ImessageSender } from "./imessageSender.ts";
+import type { ImessageSendFailure, ImessageSender } from "./imessageSender.ts";
 
 const FRIEND = "+15550000001";
 const ME = "+15550000002";
@@ -67,7 +68,7 @@ const harness = () => {
   const ingested: ChannelInboundMessage[] = [];
   const sends: Array<{ chatGuid: string; text: string }> = [];
   const sendScript = {
-    failure: undefined as { outcome: "not_sent"; code: "automation_denied" } | undefined,
+    failure: undefined as ImessageSendFailure | undefined,
   };
   const db: ImessageChatDb = {
     maxRowId: Effect.suspend(() =>
@@ -275,6 +276,63 @@ it.effect("the chat with yourself never reads the transport's own replies back",
     const [used] = yield* sql<{ readonly consumed: number }>`SELECT consumed FROM imessage_sent`;
     assert.equal(used!.consumed, 1);
     assert.equal((yield* sql`SELECT * FROM imessage_seen`).length, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect.each([
+  ["within the mirror window", 2],
+  ["soon after", 10],
+  ["long after", 20 * 60],
+] as const)("a timed-out reply sent again %s echoes as ours both times", ([, gapSeconds]) => {
+  const { rows, ingested, sends, sendScript, layer, start } = harness();
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(NOW_MS);
+    const sql = yield* SqlClient.SqlClient;
+    const runtime = yield* start();
+    yield* runtime.apply(config);
+    yield* runtime.pollOnce;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const transport = Option.getOrThrow(yield* registry.resolve("imessage"));
+    const reply = {
+      deliveryId: "d",
+      destination: {
+        kind: "imessage" as const,
+        connectionId: Runtime.IMESSAGE_CONNECTION_ID,
+        chatGuid: `iMessage;-;${ME}`,
+      },
+      senderName: "Jarvis",
+      text: "on it",
+    };
+    sendScript.failure = { outcome: "unknown", code: "timeout" };
+    yield* Effect.flip(transport.send(reply));
+    yield* TestClock.adjust(`${gapSeconds} seconds`);
+    sendScript.failure = undefined;
+    yield* transport.send(reply);
+    assert.lengthOf(sends, 2);
+    // Both sends reached the chat, each stored twice a moment apart, as a self chat does.
+    const at = (seconds: number) => DATE + seconds * 1_000_000_000;
+    const echo = (rowid: number, date: number) => selfRow(rowid, { text: sends[0]!.text, date });
+    const twin = (rowid: number, date: number) =>
+      selfRow(rowid, {
+        is_from_me: 0,
+        sender_handle: ME,
+        sender_service: "iMessage",
+        text: sends[0]!.text,
+        date,
+      });
+    rows.push(
+      echo(1, at(1)),
+      twin(2, at(2)),
+      echo(3, at(gapSeconds + 1)),
+      twin(4, at(gapSeconds + 2)),
+    );
+    yield* runtime.pollOnce;
+    assert.deepEqual(ingested, []);
+    const [piece] = yield* sql<{
+      readonly consumed: number;
+      readonly echoes_due: number;
+    }>`SELECT consumed, echoes_due FROM imessage_sent`;
+    assert.deepEqual(piece, { consumed: 1, echoes_due: 0 });
   }).pipe(Effect.provide(layer));
 });
 

@@ -80,8 +80,15 @@ const sentFor = (text: string, extra: Partial<ImessageAdmissionMemory["sent"][nu
   id: 7,
   chatGuid: CHAT,
   textHash: fingerprintText(text),
+  firstSentAtMs: NOW_MS,
   sentAtMs: NOW_MS,
   ...extra,
+});
+
+const seenFor = (text: string, dateMs: number) => ({
+  chatGuid: CHAT,
+  textHash: fingerprintText(text),
+  dateMs,
 });
 
 const MESSAGE = "message";
@@ -187,6 +194,7 @@ const cases: ReadonlyArray<Case> = [
         chatGuid: CHAT,
         textHash: fingerprintText("hello"),
         dateMs: NOW_MS,
+        fromMe: true,
       });
     },
   },
@@ -223,6 +231,39 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ text: "Jarvis:  hi\n" }),
     memory: { sent: [sentFor("Jarvis: hi")], seen: [] },
     expect: "own_reply",
+  },
+  {
+    name: "self chat: the echo of an earlier send of a reply sent again is still skipped",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi", { firstSentAtMs: NOW_MS, sentAtMs: NOW_MS + 20 * 60_000 })],
+      seen: [],
+    },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: the twin of an echo leaves the fingerprint to the next send's echo",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi")],
+      seen: [{ ...seenFor("Jarvis: hi", NOW_MS - 1_000), fromMe: false }],
+    },
+    expect: "mirrored",
+  },
+  {
+    name: "self chat: a second echo moments after the first spends the echo its send is owed",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi")],
+      seen: [{ ...seenFor("Jarvis: hi", NOW_MS - 1_000), fromMe: true }],
+    },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: a seen entry kept before sides were stored still marks a twin",
+    row: selfRow(),
+    memory: { sent: [], seen: [{ ...seenFor("hello", NOW_MS - 1_000), fromMe: null }] },
+    expect: "mirrored",
   },
   {
     name: "self chat: same text long after sending is the user's",
@@ -267,7 +308,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ is_from_me: 0, sender_handle: ME, sender_service: "iMessage" }),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS + 3_000 }],
+      seen: [{ ...seenFor("hello", NOW_MS + 3_000), fromMe: true }],
     },
     expect: "mirrored",
   },
@@ -276,7 +317,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow(),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS - 60_000 }],
+      seen: [{ ...seenFor("hello", NOW_MS - 60_000), fromMe: false }],
     },
     expect: MESSAGE,
   },
@@ -285,7 +326,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ text: "different" }),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS }],
+      seen: [{ ...seenFor("hello", NOW_MS), fromMe: false }],
     },
     expect: MESSAGE,
   },
