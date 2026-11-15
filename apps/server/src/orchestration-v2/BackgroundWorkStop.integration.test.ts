@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -1345,6 +1346,31 @@ const releaseSessionWithNativeWork = (input: {
                 input: "vp fmt && vp lint",
               },
             },
+            {
+              id: EventId.make("native-pending-command"),
+              type: "turn-item.updated",
+              threadId,
+              runId: turn.runId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:native-pending-command"),
+                threadId,
+                runId: turn.runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 51,
+                status: "pending",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution",
+                input: "vp test run",
+              },
+            },
           ],
         });
 
@@ -1367,6 +1393,7 @@ const releaseSessionWithNativeWork = (input: {
             childRoot: child.nodes.find((candidate) => candidate.id === rootId),
             childTool: child.nodes.find((candidate) => candidate.id === toolId),
             childCommand: child.turnItems.find((item) => item.type === "command_execution"),
+            pendingCommand: parent.turnItems.find((item) => item.type === "command_execution"),
           };
         });
         const statuses = (records: Effect.Success<typeof work>) => ({
@@ -1376,6 +1403,7 @@ const releaseSessionWithNativeWork = (input: {
           childRoot: records.childRoot?.status,
           childTool: records.childTool?.status,
           childCommand: records.childCommand?.status,
+          pendingCommand: records.pendingCommand?.status,
         });
         const expect = (status: "running" | "interrupted") => ({
           run: "completed" as const,
@@ -1384,10 +1412,13 @@ const releaseSessionWithNativeWork = (input: {
           childRoot: status,
           childTool: status,
           childCommand: status,
+          pendingCommand: status === "running" ? ("pending" as const) : status,
         });
-        // A session reopened under the same id owns work started after its release.
-        yield* settle("settle-before-work", DateTime.subtract(now, { seconds: 1 }));
+        // A session reopened under the same id owns work it started at or after the release.
+        yield* settle("settle-at-work-start", now);
         assert.deepEqual(statuses(yield* work), expect("running"));
+
+        yield* TestClock.adjust("1 second");
 
         // Detaching a session's only thread releases it, as a provider switch does.
         yield* input.via === "detach"
@@ -1398,7 +1429,7 @@ const releaseSessionWithNativeWork = (input: {
         assert.deepEqual(statuses(released), expect(input.endsWork ? "interrupted" : "running"));
 
         if (input.endsWork) {
-          yield* settle("settle-again", now);
+          yield* settle("settle-again", yield* DateTime.now);
           assert.deepEqual(yield* work, released);
         }
       }).pipe(

@@ -12023,8 +12023,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (run !== undefined && isLiveRun(run)) {
         return false;
       }
-      // A session reopened under the same id owns the work it started after the release.
-      if (item.startedAt !== null && DateTime.isGreaterThan(item.startedAt, command.releasedAt)) {
+      // A session reopened under the same id owns what it started at or after the release.
+      // Items carry no creation time, and an unstarted one was last written no earlier than that.
+      if (!DateTime.isLessThan(item.startedAt ?? item.updatedAt, command.releasedAt)) {
         return false;
       }
       const providerThreadId = item.providerThreadId ?? run?.providerThreadId ?? null;
