@@ -11993,8 +11993,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    // A session opened again under the same id now owns this work.
-    if (yield* providerSessions.isLive(command.providerSessionId)) return;
     const projection = yield* projectionStore
       .getThreadRecords(
         command.threadId,
@@ -12023,6 +12021,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = projection.runs.find((candidate) => candidate.id === item.runId);
       // A running run's consumer ends its own work when the session fails it.
       if (run !== undefined && isLiveRun(run)) {
+        return false;
+      }
+      // A session reopened under the same id owns the work it started after the release.
+      if (item.startedAt !== null && DateTime.isGreaterThan(item.startedAt, command.releasedAt)) {
         return false;
       }
       const providerThreadId = item.providerThreadId ?? run?.providerThreadId ?? null;

@@ -3589,6 +3589,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     providerSessionId: ProviderSessionId,
+    releasedAt: Schema.DateTimeUtc,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),

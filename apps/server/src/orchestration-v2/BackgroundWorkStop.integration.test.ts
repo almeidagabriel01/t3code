@@ -1065,6 +1065,7 @@ it.effect("Stop holds a provider wake that queues before the stopped turn ends",
 
 const releaseSessionWithNativeWork = (input: {
   readonly reason: ProviderSessionManager.ProviderSessionReleaseReason;
+  readonly via: "release" | "detach";
   readonly backgroundTasksEndWithProcess: boolean;
   readonly endsWork: boolean;
 }) =>
@@ -1073,10 +1074,18 @@ const releaseSessionWithNativeWork = (input: {
       const cwd = yield* checkpointWorkspace("released-native-work");
       const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+      // One app thread per session, as with Claude, so detaching it releases the session.
+      const capabilities = {
+        ...CodexProviderCapabilitiesV2,
+        sessions: {
+          ...CodexProviderCapabilitiesV2.sessions,
+          supportsMultipleProviderThreadsPerSession: false,
+        },
+      };
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
-        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+        getCapabilities: () => Effect.succeed(capabilities),
         planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
         openSession: (session) =>
           Effect.gen(function* () {
@@ -1092,7 +1101,7 @@ const releaseSessionWithNativeWork = (input: {
                 status: "ready",
                 cwd,
                 model: modelSelection.model,
-                capabilities: CodexProviderCapabilitiesV2,
+                capabilities,
                 createdAt: now,
                 updatedAt: now,
                 lastError: null,
@@ -1340,12 +1349,13 @@ const releaseSessionWithNativeWork = (input: {
         });
 
         const providerSessionId = turn.providerThread.providerSessionId!;
-        const settle = (id: string) =>
+        const settle = (id: string, releasedAt: DateTime.Utc) =>
           orchestrator.dispatch({
             type: "provider-session.work.settle",
             commandId: CommandId.make(id),
             threadId,
             providerSessionId,
+            releasedAt,
           });
         const work = Effect.gen(function* () {
           const parent = yield* orchestrator.getThreadProjection(threadId);
@@ -1375,17 +1385,20 @@ const releaseSessionWithNativeWork = (input: {
           childTool: status,
           childCommand: status,
         });
-        // A live session still runs this work.
-        yield* settle("settle-live-session");
+        // A session reopened under the same id owns work started after its release.
+        yield* settle("settle-before-work", DateTime.subtract(now, { seconds: 1 }));
         assert.deepEqual(statuses(yield* work), expect("running"));
 
-        yield* sessions.release({ providerSessionId, reason: input.reason });
+        // Detaching a session's only thread releases it, as a provider switch does.
+        yield* input.via === "detach"
+          ? sessions.detach({ providerSessionId, threadId })
+          : sessions.release({ providerSessionId, reason: input.reason });
         yield* worker.drain();
         const released = yield* work;
         assert.deepEqual(statuses(released), expect(input.endsWork ? "interrupted" : "running"));
 
         if (input.endsWork) {
-          yield* settle("settle-again");
+          yield* settle("settle-again", now);
           assert.deepEqual(yield* work, released);
         }
       }).pipe(
@@ -1401,14 +1414,30 @@ const releaseSessionWithNativeWork = (input: {
   );
 
 it.effect.each([
-  { reason: "manual_shutdown", backgroundTasksEndWithProcess: true, endsWork: true },
-  { reason: "runtime_error", backgroundTasksEndWithProcess: true, endsWork: true },
-  { reason: "idle_timeout", backgroundTasksEndWithProcess: true, endsWork: true },
+  { reason: "manual_shutdown", via: "detach", backgroundTasksEndWithProcess: true, endsWork: true },
+  {
+    reason: "manual_shutdown",
+    via: "release",
+    backgroundTasksEndWithProcess: true,
+    endsWork: true,
+  },
+  { reason: "runtime_error", via: "release", backgroundTasksEndWithProcess: true, endsWork: true },
+  { reason: "idle_timeout", via: "release", backgroundTasksEndWithProcess: true, endsWork: true },
   // Restart recovery settles what a shutdown leaves, and can continue it.
-  { reason: "server_shutdown", backgroundTasksEndWithProcess: true, endsWork: false },
+  {
+    reason: "server_shutdown",
+    via: "release",
+    backgroundTasksEndWithProcess: true,
+    endsWork: false,
+  },
   // The work may outlive this session, as with a shared OpenCode server.
-  { reason: "manual_shutdown", backgroundTasksEndWithProcess: false, endsWork: false },
+  {
+    reason: "manual_shutdown",
+    via: "release",
+    backgroundTasksEndWithProcess: false,
+    endsWork: false,
+  },
 ] as const)(
-  "a $reason release with backgroundTasksEndWithProcess=$backgroundTasksEndWithProcess ends native subagent work: $endsWork",
+  "a $reason $via with backgroundTasksEndWithProcess=$backgroundTasksEndWithProcess ends native subagent work: $endsWork",
   releaseSessionWithNativeWork,
 );

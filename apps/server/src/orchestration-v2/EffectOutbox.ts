@@ -44,6 +44,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-session.work.settle"),
     providerSessionId: ProviderSessionId,
+    releasedAt: Schema.DateTimeUtcFromString,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),

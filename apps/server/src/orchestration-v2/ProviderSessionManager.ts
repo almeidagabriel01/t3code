@@ -953,7 +953,11 @@ export const layerWithOptions = (
             id: `effect:provider-session.work.settle:${providerSessionId}:${threadId}:${releasedAt}`,
             commandId,
             threadId,
-            request: { type: "provider-session.work.settle", providerSessionId },
+            request: {
+              type: "provider-session.work.settle",
+              providerSessionId,
+              releasedAt: input.releasedAt,
+            },
           })),
         });
       });

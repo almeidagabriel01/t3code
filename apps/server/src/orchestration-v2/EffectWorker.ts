@@ -145,6 +145,7 @@ export const layerExecutor: Layer.Layer<
                 commandId: CommandId.make(`${effect.id}:settle`),
                 threadId: effect.threadId,
                 providerSessionId: effect.request.providerSessionId,
+                releasedAt: effect.request.releasedAt,
               })
               .pipe(
                 Effect.asVoid,
