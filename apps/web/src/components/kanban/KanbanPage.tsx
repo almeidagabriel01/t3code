@@ -18,7 +18,7 @@ import {
   SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
-import { useKanbanReadPending } from "../../state/kanban";
+import { useKanbanReadAccess } from "../../state/kanban";
 import {
   boardScopeKey,
   collectGlobalBoards,
@@ -144,7 +144,10 @@ export function KanbanPage() {
   const search = useSearch({ from: "/_chat/kanban" });
   const navigate = useNavigate({ from: "/kanban" });
   const states = useKanbanStates();
-  const readPending = useKanbanReadPending();
+  const readAccess = [...useKanbanReadAccess().values()];
+  // Boards stay hidden until each environment answers; one that cannot answer stops the wait.
+  const readPending = readAccess.includes("unknown");
+  const readUnproven = !readAccess.includes("missing") && readAccess.includes("unavailable");
   const groups = useSidebarProjectGroups();
   const [view, setView] = useState<"board" | "archive">("board");
   const [memberKey, setMemberKey] = useState<string | null>(null);
@@ -233,7 +236,11 @@ export function KanbanPage() {
         ) : states.length === 0 ? (
           <Message
             title="Boards are not available"
-            description="Connect to a T3 Code server that supports boards, with permission to read them."
+            description={
+              readUnproven
+                ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+                : "Connect to a T3 Code server that supports boards, with permission to read them."
+            }
           />
         ) : search.projectKey ? (
           member === undefined ? (

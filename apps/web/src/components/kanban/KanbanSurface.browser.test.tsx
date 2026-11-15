@@ -9,6 +9,7 @@ import {
   type KanbanColumnId,
   type KanbanLabelId,
 } from "@t3tools/contracts";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -18,6 +19,7 @@ const scratchId = ProjectId.make("scratch");
 
 const state = vi.hoisted(() => ({
   entries: [] as Array<{ environmentId: string; state: unknown; error: string | null }>,
+  readAccess: new Map<string, string>(),
   canEdit: true,
   project: null as { id: string; title: string; isScratch?: true } | null,
   projects: [] as Array<{ id: string; environmentId: string; isScratch?: true }>,
@@ -37,6 +39,10 @@ vi.mock(import("./useKanban"), async (importOriginal) => ({
   useKanbanCanEdit: () => state.canEdit,
   useKanbanEditAccess: () => (state.canEdit ? "granted" : "missing"),
   useKanbanActions: (() => state.actions) as never,
+}));
+vi.mock(import("../../state/kanban"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useKanbanReadAccess: (() => state.readAccess) as never,
 }));
 vi.mock(import("../../state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -150,6 +156,7 @@ function setup(
 ) {
   useKanbanPanelStore.setState({ scopeByProject: {}, collapsedByBoard: {} });
   state.canEdit = true;
+  state.readAccess = new Map([[environmentId, "granted"]]);
   state.project = { id: projectId, title: "Website" };
   state.projects = [];
   state.entries =
@@ -348,4 +355,19 @@ it.each([
   state.canEdit = canEdit;
   await using _screen = await render(surface());
   await expect.element(page.getByText(text)).toBeVisible();
+});
+
+it.each([
+  ["while its session is checking", { env: "unknown" }, "Loading board…"],
+  [
+    "while another environment is still checking",
+    { env: "missing", other: "unknown" },
+    "you cannot read them",
+  ],
+  ["when the access check failed", { env: "unavailable" }, SCOPE_ACCESS_UNAVAILABLE_MESSAGE],
+])("reads its own environment's access %s", async (_name, access, text) => {
+  setup({ state: "missing" });
+  state.readAccess = new Map(Object.entries(access));
+  await using _screen = await render(surface());
+  await expect.element(page.getByText(text, { exact: false })).toBeVisible();
 });

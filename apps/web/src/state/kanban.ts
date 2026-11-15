@@ -10,6 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { kanbanCardRecordForThread } from "@t3tools/client-runtime/state/kanbanLogic";
+import type { SessionScopeAccess } from "@t3tools/client-runtime/state/sessionScope";
 import * as Option from "effect/Option";
 import { Atom, AsyncResult } from "effect/reactivity";
 
@@ -48,14 +49,13 @@ export function useKanbanEnvironmentIds(): ReadonlyArray<EnvironmentId> {
   return supported.filter((id) => readable.has(id));
 }
 
-/** True while a board-capable environment's session has not resolved, so "no boards" is premature. */
-export function useKanbanReadPending(): boolean {
+/** Each board-capable environment's read access, so one slow session never holds another's board. */
+export function useKanbanReadAccess(): ReadonlyMap<EnvironmentId, SessionScopeAccess> {
   const supported = useAtomValue(kanbanEnvironmentIdsAtom);
-  const access = useEnvironmentsScopeAccess(
+  return useEnvironmentsScopeAccess(
     supported.map((environmentId) => ({ environmentId })),
     AuthOrchestrationReadScope,
   );
-  return supported.some((id) => access.get(id) === "unknown");
 }
 
 const providerEntriesAtom = Atom.make((get) => {

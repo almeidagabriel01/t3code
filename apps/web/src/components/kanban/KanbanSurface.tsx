@@ -15,7 +15,7 @@ import {
   SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
-import { useKanbanReadPending } from "../../state/kanban";
+import { useKanbanReadAccess } from "../../state/kanban";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { useProject, useProjects } from "../../state/entities";
@@ -48,7 +48,7 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
   const navigate = useNavigate();
   const canEdit = useKanbanCanEdit(environmentId);
   const editAccess = useKanbanEditAccess(environmentId);
-  const readPending = useKanbanReadPending();
+  const readAccess = useKanbanReadAccess().get(environmentId);
   const actions = useKanbanActions(environmentId);
   const { openScratchProject } = useScratchProject();
   const groups = useSidebarProjectGroups();
@@ -123,7 +123,14 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
 
   const body = (() => {
     if (entry === undefined) {
-      if (readPending) return <RightPanelLoading label="Loading board…" />;
+      if (readAccess === "unknown") return <RightPanelLoading label="Loading board…" />;
+      if (readAccess === "unavailable")
+        return (
+          <RightPanelMessage
+            title="Boards are not available"
+            detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+          />
+        );
       return (
         <RightPanelMessage
           title="Boards are not available"

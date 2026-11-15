@@ -1,3 +1,4 @@
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
@@ -29,6 +30,11 @@ const group = (
   ...extra,
 });
 
+const mocks = vi.hoisted(() => ({
+  states: null as unknown[] | null,
+  readAccess: new Map<string, string>(),
+}));
+
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useSearch: () => ({}),
@@ -44,9 +50,14 @@ vi.mock("../../hooks/useSidebarProjectGroups", () => ({
 }));
 vi.mock("./useKanban", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useKanbanStates: () => [{ environmentId, state: { boards: new Map() }, error: null }],
+  useKanbanStates: () =>
+    mocks.states ?? [{ environmentId, state: { boards: new Map() }, error: null }],
   useKanbanCanEdit: () => false,
   useKanbanActions: () => ({}),
+}));
+vi.mock(import("../../state/kanban"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useKanbanReadAccess: (() => mocks.readAccess) as never,
 }));
 vi.mock("./KanbanGlobalBoard", () => ({
   KanbanGlobalBoard: (props: { projects: ReadonlyMap<string, KanbanProjectInfo> }) => (
@@ -58,7 +69,13 @@ vi.mock("./KanbanGlobalBoard", () => ({
   ),
 }));
 
+function setup(states: unknown[] | null = null, readAccess: Record<string, string> = {}) {
+  mocks.states = states;
+  mocks.readAccess = new Map(Object.entries(readAccess));
+}
+
 it("tells projects that share a name apart by folder and names the scratch folder", async () => {
+  setup();
   await using _screen = await render(
     <SidebarProvider>
       <KanbanPage />
@@ -69,4 +86,18 @@ it("tells projects that share a name apart by folder and names the scratch folde
   await expect.element(names.nth(1)).toHaveTextContent("app · b");
   await expect.element(names.nth(2)).toHaveTextContent("Scratch");
   await expect.element(names.nth(3)).toHaveTextContent("Solo");
+});
+
+it.each([
+  ["every check failed", { env: "unavailable" }, SCOPE_ACCESS_UNAVAILABLE_MESSAGE],
+  ["one is denied and one failed", { env: "missing", other: "unavailable" }, "Connect to a T3"],
+  ["every one is denied", { env: "missing" }, "Connect to a T3"],
+])("explains no boards when %s", async (_name, access, text) => {
+  setup([], access);
+  await using _screen = await render(
+    <SidebarProvider>
+      <KanbanPage />
+    </SidebarProvider>,
+  );
+  await expect.element(page.getByText(text, { exact: false })).toBeVisible();
 });
