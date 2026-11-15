@@ -206,10 +206,12 @@ function ProjectModelPicker(props: {
       instanceEntries={entries}
       getModelDisabledReason={modelDisabledReason}
       {...(message !== undefined && layer === "message"
-        ? { footer: <BackRow onClick={() => message.onPick(null)}>Back to {backLabel}</BackRow> }
+        ? {
+            resetRow: <BackRow onClick={() => message.onPick(null)}>Back to {backLabel}</BackRow>,
+          }
         : message === undefined && (source === "project" || source === "mixed") && canWrite
           ? {
-              footer: (
+              resetRow: (
                 <BackRow
                   onClick={() => {
                     props.onError(null);

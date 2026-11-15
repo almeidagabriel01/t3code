@@ -969,7 +969,10 @@ function ThreadSettingsMainContent(props: {
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [
-    ...(clear === undefined ? [] : ([{ kind: "clear", key: "clear" }] as const)),
+    // Over a search or a filter it would sit above the results and be tapped by mistake.
+    ...(clear === undefined || hasActiveCatalogFilter
+      ? []
+      : ([{ kind: "clear", key: "clear" }] as const)),
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;

@@ -1598,6 +1598,13 @@ it("clears the project's model from its dialog, back to the members' models", as
   const picker = () => dialog.getByRole("button", { name: /^Model for render/ });
   await expect.element(picker()).toHaveTextContent("GPT-5.5");
   await userEvent.click(picker());
+  // A search hides the way back, so it cannot sit over the results and be pressed by mistake.
+  const search = page.getByPlaceholder("Search models...");
+  await userEvent.fill(search, "gpt");
+  await expect
+    .element(page.getByRole("button", { name: "Members' models" }))
+    .not.toBeInTheDocument();
+  await userEvent.clear(search);
   await userEvent.click(page.getByRole("button", { name: "Members' models" }));
   await eventually(() =>
     expect(fakeSettings.patches.at(-1)).toEqual({
