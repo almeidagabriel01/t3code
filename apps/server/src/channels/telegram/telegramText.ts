@@ -12,6 +12,7 @@ import {
   type RootContent,
   type Table,
 } from "@t3tools/shared/markdownAst";
+import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 import {
@@ -19,6 +20,7 @@ import {
   type ChannelStrings,
   type ResolvedChannelLanguage,
 } from "../channelStrings.ts";
+import { channelProjectTitle } from "../channelRedaction.ts";
 import { numberedChoices } from "../imessage/imessageText.ts";
 
 /**
@@ -62,6 +64,8 @@ export interface TelegramMessageInput {
   readonly text: string;
   /** Starts the first line of every part; absent for the bot's own notices. */
   readonly senderName?: string | undefined;
+  /** The project the message is about; shown after the sender on every part. */
+  readonly project?: string | undefined;
   /** True when an assistant wrote the text; T3's own phrases are never read as Markdown. */
   readonly markdown?: boolean | undefined;
   readonly choices?: ReadonlyArray<ChannelChoice> | undefined;
@@ -562,6 +566,10 @@ export function formatTelegramMessages(
   }
 }
 
+/** A prefix that still leaves each part room for a summary or a fragment of the reply. */
+const fitsBeside = (prefix: string) =>
+  TELEGRAM_MESSAGE_LIMIT - prefix.length - PART_MARKER_ROOM >= MIN_SUMMARY_ROOM;
+
 function compose(
   input: TelegramMessageInput,
   units: ReadonlyArray<Unit>,
@@ -572,7 +580,12 @@ function compose(
     input.choices !== undefined && input.choices.length > 0
       ? plainUnit(numberedChoices(input.choices, strings.replyWithNumber))
       : undefined;
-  const prefix = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
+  const sender = input.senderName === undefined ? "" : `<b>${escapeHtml(input.senderName)}:</b> `;
+  const project = channelProjectTitle(input.project);
+  const tagged =
+    project === undefined ? sender : sender + escapeHtml(projectNoticePrefix(project, ""));
+  // A name or title that leaves no room for the reply is dropped, the title first.
+  const prefix = [tagged, sender, ""].find((candidate) => fitsBeside(candidate))!;
   const all = choices === undefined ? units : [...units, choices];
   if (all.length === 0) return [];
   const whole = all.map((unit) => unit.html).join("\n\n");

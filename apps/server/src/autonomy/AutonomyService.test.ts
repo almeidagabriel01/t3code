@@ -35,7 +35,10 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as TaskEventNotices from "../assistants/TaskEventNotices.ts";
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
 import * as NeedsUser from "./NeedsUser.ts";
@@ -62,11 +65,13 @@ type Shell = {
   creationSource?: string;
   sideChatOf?: unknown;
   delegatedFrom?: unknown;
+  worktreePath?: string;
 };
 // Real shells omit `sideChatOf` unless the thread is a side chat.
 const plain: Shell = {
   title: "Fix login",
   projectId: "p1",
+  worktreePath: "/repo",
   archivedAt: null,
   lineage: { relationshipToParent: null },
 };
@@ -100,18 +105,21 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     selfHandles: [],
   });
   const dispatched: Array<Record<string, unknown>> = [];
+  let commits = 0;
   /** Runs still queued on a thread, by message id: what a withdrawn wake cancels. */
   const queued = new Map<
     string,
     { id: string; threadId: string; status: string; userMessageId: string }
   >();
   const layer = Autonomy.layer.pipe(
+    Layer.provideMerge(TaskEventNotices.layer),
     Layer.provideMerge(NeedsUser.layer),
     Layer.provideMerge(assistantTasksLayer),
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
       Layer.mergeAll(
+        // No stopped run here awaits a checkpoint capture.
         ChannelTransport.layer,
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
@@ -173,8 +181,12 @@ const harness = (language: "en" | "pt-BR" = "en") => {
               ),
             ),
           hasReceipt: (commandId) => Effect.succeed(receipts.has(commandId)),
+          getThreadShell: (threadId) => Effect.succeed((shells.get(threadId) ?? null) as never),
           getThreadRecords: (threadId) =>
             Effect.succeed({
+              checkpointScopes: [],
+              checkpoints: [],
+              runs: [],
               messages: [{ text: answers.get(threadId) ?? "" }],
               turnItems: [...contexts.values()].flatMap((context) =>
                 context.item === undefined ? [] : [context.item],
@@ -221,6 +233,14 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           get: Ref.get(telegram).pipe(Effect.map((value) => value as never)),
         }),
         Layer.mock(KanbanService.KanbanService)({ subscribe: () => Stream.empty }),
+        // Every run lands a new commit here, so each is news; TaskEventNotices tests the quiet ones.
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          resolveCommit: () => Effect.sync(() => ({ commitSha: `sha-${++commits}` }) as never),
+        }),
+        Layer.mock(ManagedProjectFolders)({
+          namedProjectsRoot: "",
+          isAssistantHomeProject: () => Effect.succeed(false),
+        }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeedSome({ title: "acme/app" } as never),
         }),
@@ -393,6 +413,67 @@ it.effect(
   },
 );
 
+it.effect(
+  "a one-shot watch on a run its assistant was already told about is spent, not sent",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      h.shells.set("t1", plain);
+      yield* (yield* TaskEventNotices.TaskEventNotices).send({
+        threadId: "assistant:jarvis:1" as never,
+        projectId: "p1" as never,
+        run: { id: "r1", threadId: "t1", status: "completed", userMessageId: "m1" } as never,
+        messageId: "assistant-task:r1",
+        text: "Task t1 finished.",
+        createdBy: "agent",
+        senderThreadId: "t1" as never,
+      });
+      yield* service.upsertWatch({
+        assistantId: "jarvis",
+        title: "t1 done",
+        filter: { event: "run_finished", threadId: "t1" as never },
+        instruction: "",
+        oneShot: true,
+        expiresAt: null,
+      });
+      yield* service.handleEvent(run("completed", "r1"));
+      assert.deepEqual(
+        h.sent.map((sent) => sent.messageId),
+        ["assistant-task:r1"],
+      );
+      const [stored] = yield* service.listWatches;
+      assert.equal(stored!.triggerCount, 1);
+      assert.isFalse(stored!.enabled);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a rule on a run its assistant was already told about leaves the interval free", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* addAssistant();
+    h.shells.set("t1", plain);
+    yield* (yield* TaskEventNotices.TaskEventNotices).send({
+      threadId: "assistant:jarvis:1" as never,
+      projectId: "p1" as never,
+      run: { id: "r1", threadId: "t1", status: "failed", userMessageId: "m1" } as never,
+      messageId: "assistant-task:r1",
+      text: "Task t1 failed.",
+      createdBy: "agent",
+      senderThreadId: "t1" as never,
+    });
+    yield* service.handleEvent(run("failed", "r1"));
+    yield* service.handleEvent(run("failed", "r2"));
+    assert.deepEqual(
+      h.sent.map((sent) => sent.messageId.startsWith("autonomy-wake:")),
+      [false, true],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect("rule wakes keep a minimum interval per thread and a daily cap", () => {
   const h = harness();
   return Effect.gen(function* () {
@@ -434,6 +515,16 @@ it.effect("a blocking budget, a failed send and a missing assistant wake nobody"
     h.sendFails.current = false;
     yield* service.handleEvent(run("failed", "r2"));
     assert.lengthOf(h.sent, 1);
+    // The same holds for a wake that is no run's end: a stuck run whose send failed is retried by the next sweep.
+    h.shells.set("t5", plain);
+    yield* service.handleEvent(run("running", "stuck", "t5"));
+    yield* TestClock.adjust(16 * MIN);
+    h.sendFails.current = true;
+    yield* service.sweep;
+    assert.lengthOf(h.sent, 1);
+    h.sendFails.current = false;
+    yield* service.sweep;
+    assert.lengthOf(h.sent, 2);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1006,6 +1097,7 @@ it.effect(
         chatId: "4242",
       });
       assert.equal(first.senderName, "T3 Code");
+      assert.equal(first.project, "acme/app");
       assert.deepEqual(first.choices, [
         { label: "Approve", value: "accept" },
         { label: "Deny", value: "decline" },
@@ -1015,7 +1107,7 @@ it.effect(
         [
           "Claude is waiting for you",
           "Claude wants to run a command",
-          "Project: acme/app · Thread: Fix login",
+          "Thread: Fix login",
           "```sh\nvp test run\n```\n\nReason: Run the tests",
           "Open in T3: https://app.t3.codes/threads/env-1/t1",
         ].join("\n\n"),
@@ -1859,7 +1951,10 @@ it.effect(
       yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
       yield* addScheduledTask("task:remind");
       yield* addScheduledTask("task:group", "team-1");
-      h.answers.set("assistant:jarvis:1", "Time to renew acme.dev.");
+      // A routine is asked for, so its whole answer goes out, tables included.
+      const answer =
+        "Time to renew acme.dev.\n\n| Domain | Expires |\n| --- | --- |\n| acme.dev | Friday |";
+      h.answers.set("assistant:jarvis:1", answer);
       yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
       yield* service.handleEvent(scheduledRun("completed", "s1", "task:remind"));
       yield* service.handleEvent(scheduledRun("completed", "s2", "task:group"));
@@ -1867,7 +1962,7 @@ it.effect(
       yield* service.handleEvent(scheduledRun("completed", "s4", "task:remind", "t1"));
       const rows = yield* outboxRows;
       assert.lengthOf(rows, 1);
-      assert.equal(rows[0]!.message.text, "Routine: Renew the domain\n\nTime to renew acme.dev.");
+      assert.equal(rows[0]!.message.text, `Routine: Renew the domain\n\n${answer}`);
       assert.equal(rows[0]!.message.senderName, "Jarvis");
       yield* Ref.set(h.settings, { ...ON, enabled: false });
       yield* service.handleEvent(scheduledRun("completed", "s5", "task:remind"));

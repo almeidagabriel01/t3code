@@ -3,8 +3,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 
-import { type AssistantRow, savedProjectIdsOf } from "./AssistantDirectory.ts";
+import { assistantGroupProjectIds, type ProjectId } from "@t3tools/contracts";
+
+import { type AssistantRow, savedProjectIdsOf, toAssistant } from "./AssistantDirectory.ts";
 import { encodeMemberIds } from "./AssistantTeams.ts";
+import { cursorRedundantSql } from "./groupChatSql.ts";
 
 const decodeIds = Schema.decodeOption(Schema.fromJsonString(Schema.Array(Schema.String)));
 
@@ -81,6 +84,49 @@ export const forgetDeletedProjects = Effect.fn("AssistantTeams.forgetDeletedProj
     if (list === null) continue;
     yield* sql`UPDATE assistant_teams SET project_ids_json = ${list} WHERE team_id = ${row.id}`;
     changed.teamIds.push(row.id);
+  }
+  return changed;
+});
+
+/**
+ * Drops each group's tab positions for projects the group no longer has, and returns the groups
+ * that changed. A position stays while dropping it would change what that tab counts as unread.
+ */
+export const pruneLeftTabCursors = Effect.fn("AssistantTeams.pruneLeftTabCursors")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  const teams = yield* sql<{
+    readonly team_id: string;
+    readonly member_ids_json: string;
+    readonly project_ids_json: string;
+  }>`
+    SELECT team_id, member_ids_json, project_ids_json FROM assistant_teams t
+    WHERE EXISTS (SELECT 1 FROM assistant_group_read_cursors r
+      WHERE r.team_id = t.team_id AND r.scope <> '')`;
+  if (teams.length === 0) return [];
+  const members = yield* sql<AssistantRow>`SELECT * FROM assistants`;
+  const changed: Array<string> = [];
+  for (const team of teams) {
+    const memberIds = Option.getOrElse(
+      decodeIds(team.member_ids_json),
+      (): ReadonlyArray<string> => [],
+    );
+    const kept = assistantGroupProjectIds(
+      members.filter((row) => memberIds.includes(row.assistant_id)).map(toAssistant),
+      Option.getOrElse(decodeIds(team.project_ids_json), () => []) as ReadonlyArray<ProjectId>,
+    );
+    const dropped = yield* sql`
+      DELETE FROM assistant_group_read_cursors AS r
+      WHERE r.team_id = ${team.team_id} AND r.scope <> ''
+        AND r.scope NOT IN (SELECT value FROM json_each(${encodeMemberIds(kept)}))
+        AND ${sql.literal(
+          cursorRedundantSql(
+            "r",
+            "(SELECT t.read_seq FROM assistant_teams t WHERE t.team_id = r.team_id)",
+          ),
+        )}
+      RETURNING scope`;
+    if (dropped.length > 0) changed.push(team.team_id);
   }
   return changed;
 });

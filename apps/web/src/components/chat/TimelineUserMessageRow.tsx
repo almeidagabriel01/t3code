@@ -11,6 +11,8 @@ import {
 } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { assistantAccent, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
+import { TaskEventActivityRow } from "./TaskEventActivityRow";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -58,7 +60,7 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { formatBytes } from "../../lib/formatBytes";
-import { shouldCollapseUserMessage } from "./MessagesTimeline.logic";
+import { CollapsibleMessageBody } from "./CollapsibleMessageBody";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   asKnownContextRecord,
@@ -273,6 +275,8 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
+  ) : taskEventActivity(row.message) !== null ? (
+    <TaskEventMessageRow row={row} />
   ) : resolveUserMessagePresentation(row.message).attribution === "automation" ? (
     <AutomationMessageRow row={row} />
   ) : resolveUserMessagePresentation(row.message).attribution === "agent" &&
@@ -280,6 +284,24 @@ function UserMessageContent({ row }: { row: Extract<TimelineRow, { kind: "messag
     <AssistantSentMessageRow row={row} assistantId={messageAssistantId(row.message)!} />
   ) : (
     <UserTimelineRow row={row} />
+  );
+}
+
+function TaskEventMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const threadId = taskEventActivity(row.message)!.threadId;
+  const shell = useQuietThreadShell({
+    environmentId: ctx.activeThreadEnvironmentId,
+    threadId: ThreadId.make(threadId),
+  });
+  const activity = taskEventActivity(row.message, shell?.title.trim())!;
+  return (
+    <TaskEventActivityRow
+      title={activity.title}
+      label={activity.label}
+      status={activity.status}
+      onOpen={() => ctx.onOpenThread(ThreadId.make(activity.threadId))}
+    />
   );
 }
 
@@ -343,12 +365,14 @@ function AssistantSentMessageRow({
               borderColor: `color-mix(in srgb, ${accent} 35%, transparent)`,
             }}
           >
-            <CollapsibleUserMessageBody
-              text={plainText}
-              renderContextReference={() => null}
-              skills={ctx.skills}
-              markdownCwd={ctx.markdownCwd}
-            />
+            <CollapsibleMessageBody text={plainText}>
+              <UserMessageBody
+                text={plainText}
+                renderContextReference={() => null}
+                skills={ctx.skills}
+                markdownCwd={ctx.markdownCwd}
+              />
+            </CollapsibleMessageBody>
           </div>
           <div
             className={cn(
@@ -1112,13 +1136,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ) : null}
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
-                <CollapsibleUserMessageBody
-                  text={resolvedContext.text}
-                  renderContextReference={renderContextReference}
-                  skills={ctx.skills}
-                  markdownCwd={ctx.markdownCwd}
-                  collapsible={!folded}
-                />
+                <CollapsibleMessageBody text={resolvedContext.text} collapsible={!folded}>
+                  <UserMessageBody
+                    text={resolvedContext.text}
+                    renderContextReference={renderContextReference}
+                    skills={ctx.skills}
+                    markdownCwd={ctx.markdownCwd}
+                  />
+                </CollapsibleMessageBody>
               </div>
             )}
           </div>
@@ -1214,76 +1239,6 @@ function RevertUserMessageButton({
     </Tooltip>
   );
 }
-
-const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM = 1.75;
-
-const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(100% - ${COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM}rem), transparent)`;
-
-const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
-  text: string;
-  renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<ServerProviderSkill>;
-  markdownCwd: string | undefined;
-  collapsible?: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const revealForFind = () => setExpanded(true);
-  const revealRef = findRevealRef(revealForFind);
-  const hasVisibleBody = props.text.trim().length > 0;
-  const canCollapse =
-    props.collapsible !== false && hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
-  const showCollapseControl = canCollapse;
-
-  return (
-    <div>
-      {hasVisibleBody ? (
-        <div
-          ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
-          data-user-message-body="true"
-          data-thread-find-text="true"
-          data-thread-find-fold={isCollapsed ? "" : undefined}
-          data-user-message-collapsed={isCollapsed ? "true" : "false"}
-          data-user-message-collapsible={canCollapse ? "true" : "false"}
-          data-user-message-fade={isCollapsed ? "true" : "false"}
-          style={
-            isCollapsed
-              ? {
-                  WebkitMaskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                  maskImage: COLLAPSED_USER_MESSAGE_FADE_MASK,
-                }
-              : undefined
-          }
-        >
-          <UserMessageBody
-            text={props.text}
-            renderContextReference={props.renderContextReference}
-            skills={props.skills}
-            markdownCwd={props.markdownCwd}
-          />
-        </div>
-      ) : null}
-      {showCollapseControl ? (
-        <div className="mt-1.5 flex items-center justify-end gap-2" data-user-message-footer="true">
-          {showCollapseControl ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost-muted"
-              aria-expanded={expanded}
-              data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
-              className="-ml-1"
-            >
-              {expanded ? "Show less" : "Show full message"}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-});
 
 const USER_MESSAGE_REMARK_PLUGINS = [remarkEnableOrderedListNumbers];
 

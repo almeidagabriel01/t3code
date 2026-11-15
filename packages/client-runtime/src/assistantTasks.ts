@@ -1,6 +1,13 @@
 import type { AssistantTask } from "@t3tools/contracts";
 
 import {
+  isQuietReply,
+  mayBecomeQuietToken,
+  parseTaskEvent,
+  type TaskEventStatus,
+  withoutQuietToken,
+} from "@t3tools/shared/assistantTaskEvents";
+import {
   assistantTaskStatusOf,
   type AssistantTaskStatus,
 } from "@t3tools/shared/assistantTaskStatus";
@@ -110,4 +117,73 @@ export function assistantTaskRows<S extends TaskShell>(
         right.task.createdAt.localeCompare(left.task.createdAt) ||
         left.task.threadId.localeCompare(right.task.threadId),
     );
+}
+
+export const TASK_EVENT_STATUS_LABEL: Record<TaskEventStatus, string> = {
+  completed: "Finished",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  interrupted: "Stopped",
+};
+
+export interface TaskEventActivitySegment {
+  readonly kind: "title" | "label" | "project";
+  readonly text: string;
+  /** Drawn after a "·": only between two segments that both have text. */
+  readonly separated: boolean;
+}
+
+/** A task line's text in order, empty parts dropped, so no separator dangles at either end. */
+export function taskEventActivitySegments(parts: {
+  readonly title: string;
+  readonly label: string;
+  readonly project?: string | null | undefined;
+}): ReadonlyArray<TaskEventActivitySegment> {
+  const present = (["title", "label", "project"] as const).flatMap((kind) => {
+    const text = parts[kind]?.trim() ?? "";
+    return text === "" ? [] : [{ kind, text }];
+  });
+  return present.map((segment, index) => ({ ...segment, separated: index > 0 }));
+}
+
+/** One compact activity line for a task event: what ended, how, and where to open it. */
+export interface TaskEventActivity {
+  readonly threadId: string;
+  readonly title: string;
+  readonly status: TaskEventStatus | null;
+  /** The state as the event told it, not the task's live state, which may have moved on. */
+  readonly label: string;
+}
+
+/**
+ * The activity line for a queued task-event message, or null for any other message. `taskTitle`
+ * is the task thread's current title, used when the event's own headline has none.
+ */
+export function taskEventActivity(
+  message: Parameters<typeof parseTaskEvent>[0],
+  taskTitle?: string | null,
+): TaskEventActivity | null {
+  const event = parseTaskEvent(message);
+  if (event === null) return null;
+  return {
+    threadId: event.threadId,
+    title: event.title ?? taskTitle ?? "Task",
+    status: event.status,
+    label: event.status === null ? "Updated" : TASK_EVENT_STATUS_LABEL[event.status],
+  };
+}
+
+/**
+ * What an assistant reply shows: null while it is, or may still become, only the quiet token
+ * (`NO_REPLY`), otherwise its text without a trailing token, so the token never flashes by.
+ */
+export function assistantReplyText(text: string, streaming: boolean): string | null {
+  if (text.trim() === "") return text;
+  if (isQuietReply(text)) return null;
+  const lines = text.trimEnd().split("\n");
+  const shown =
+    streaming && mayBecomeQuietToken(lines.at(-1) ?? "")
+      ? lines.slice(0, -1).join("\n").trimEnd()
+      : withoutQuietToken(text);
+  return shown.trim() === "" ? null : shown;
 }

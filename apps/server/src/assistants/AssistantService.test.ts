@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { firstUsableProviderModel } from "@t3tools/shared/modelSelectionPrecedence";
 import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -908,7 +909,7 @@ it.each([
     "claude:built-in",
   ],
 ] as const)("firstUsableProviderModel: %s", (_name, providers, expected) => {
-  const selection = ProjectModelSelection.firstUsableProviderModel(providers);
+  const selection = firstUsableProviderModel(providers);
   assert.strictEqual(
     selection === null ? null : `${selection.instanceId}:${selection.model}`,
     expected,
@@ -1496,11 +1497,15 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       readSeq: 0,
       unreadCount: 0,
       working: false,
+      runningCount: 0,
       preview: null,
+      previewProjectId: null,
+      removedProjectIds: [],
+      scopes: [],
     });
     yield* sql`INSERT INTO assistant_group_messages
-      (message_id, team_id, seq, author, kind, text, created_at)
-      VALUES ('m1', ${team.id}, 1, 'assistant', 'message', 'Done', '2026-01-01')`;
+      (message_id, team_id, seq, author, kind, text, request_id, created_at)
+      VALUES ('m1', ${team.id}, 1, 'assistant', 'message', 'Done', 'm1', '2026-01-01')`;
     yield* PubSub.takeAll(changes);
     // The snapshot arrives after the stream subscribed, so the refresh lands behind it.
     const events = yield* assistants.subscribe.pipe(
@@ -1533,6 +1538,15 @@ it.effect("a deleted project leaves assistant and group lists, and subscribers s
     yield* sql`UPDATE assistant_teams SET project_ids_json = '["gone","repo"]' WHERE team_id = ${team.id}`;
     // A group open to every project names none, yet its work may still sit in the deleted one.
     const open = yield* assistants.createTeam({ name: "Open", memberIds: [ana.id] });
+    // Each group read the project's tab past a reply; only Open's group position is behind it,
+    // so dropping Open's tab position would make that reply unread again.
+    yield* sql`INSERT INTO assistant_group_messages
+      (message_id, team_id, seq, author, kind, text, request_id, request_project_id, created_at)
+      VALUES ('gm:a', ${team.id}, 1, 'assistant', 'message', 'x', 'gm:a', 'gone', 't'),
+        ('gm:b', ${open.id}, 1, 'assistant', 'message', 'x', 'gm:b', 'gone', 't')`;
+    yield* sql`UPDATE assistant_teams SET read_seq = 1 WHERE team_id = ${team.id}`;
+    yield* sql`INSERT INTO assistant_group_read_cursors (team_id, scope, read_seq)
+      VALUES (${team.id}, 'gone', 1), (${open.id}, 'gone', 1), (${open.id}, 'repo', 0)`;
     const changes = yield* assistants.subscribeChanges;
     const now = "2026-01-03T00:00:00.000Z";
     yield* sql`
@@ -1563,6 +1577,13 @@ it.effect("a deleted project leaves assistant and group lists, and subscribers s
         seen.set("open", event.team.projectIds);
     }
     assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo], open: [] });
+    assert.deepEqual(
+      yield* sql`SELECT team_id, scope FROM assistant_group_read_cursors ORDER BY team_id, scope`,
+      [
+        { team_id: open.id, scope: "gone" },
+        { team_id: open.id, scope: "repo" },
+      ],
+    );
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

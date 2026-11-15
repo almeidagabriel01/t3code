@@ -1,7 +1,8 @@
 import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import { taskEventHeadline } from "@t3tools/shared/assistantTaskEvents";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
+import { queuedRowTitle, resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
 
 describe("threadQueueControlPresentation", () => {
   it.each([
@@ -73,5 +74,28 @@ describe("threadQueueControlPresentation", () => {
 
     expect(guest.canEdit).toBe(false);
     expect(guest.canDismiss).toBe(true);
+  });
+});
+
+describe("queuedRowTitle", () => {
+  const task = "mcp:launch:task" as never;
+  const event = {
+    id: "assistant-task:r1",
+    text: taskEventHeadline({ title: "Add retry", threadId: task, status: "failed" }),
+    senderThreadId: task,
+  };
+
+  it.each([
+    {
+      message: event,
+      displayText: "raw headline",
+      hasAttachments: false,
+      expected: "Add retry · Failed",
+    },
+    { message: undefined, displayText: "Hello", hasAttachments: true, expected: "Hello" },
+    { message: undefined, displayText: "", hasAttachments: true, expected: "Attachments" },
+    { message: undefined, displayText: "", hasAttachments: false, expected: "Queued message" },
+  ])("titles $expected", ({ expected, ...input }) => {
+    expect(queuedRowTitle(input)).toBe(expected);
   });
 });

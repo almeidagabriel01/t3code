@@ -23,6 +23,8 @@ const ana = { id: "ana", handle: "ana-p", name: "Ana Paula" };
 const anaMaria = { id: "anam", handle: "anam", name: "Ana Paula Maria" };
 const jose = { id: "jose", handle: "jose", name: "José Álvaro" };
 
+const decodePost = Schema.decodeUnknownSync(AssistantGroupsPostInput);
+
 describe("assistantGroupAddress", () => {
   it.each([
     ["@ada what now?", [ada]],
@@ -216,6 +218,34 @@ describe("group message attachments", () => {
     expect(() =>
       decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
     ).toThrow();
+  });
+
+  const long = "x".repeat(257);
+  it.each([
+    ["a model id over the limit", { instanceId: "claudeAgent", model: long }],
+    [
+      "an option value over the limit",
+      { instanceId: "claudeAgent", model: "opus", options: [{ id: "effort", value: long }] },
+    ],
+    [
+      "too many options",
+      {
+        instanceId: "claudeAgent",
+        model: "opus",
+        options: Array.from({ length: 33 }, (_, i) => ({ id: `o${i}`, value: true })),
+      },
+    ],
+  ])("refuses a post's model with %s", (_name, modelSelection) => {
+    const input: unknown = { teamId: "t1", text: "x", modelSelection };
+    expect(() => decodePost(input)).toThrow();
+  });
+
+  it("keeps a post's model for its work", () => {
+    const decode = Schema.decodeUnknownSync(AssistantGroupsPostInput);
+    const modelSelection = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    expect(decode({ teamId: "t1", text: "@ada look", modelSelection }).modelSelection).toEqual(
+      modelSelection,
+    );
   });
 });
 

@@ -1,11 +1,19 @@
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
+  assistantGroupShownOutgoing,
+  createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
+  type AssistantGroupOutgoing,
+  type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
@@ -18,7 +26,7 @@ import {
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -28,9 +36,12 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
+import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "../../state/assistants";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useEnvironmentServerConfig, useProject, useQuietThreadShell } from "../../state/entities";
 import {
   clearComposerDraftContent,
   composerDraftsAtom,
@@ -56,9 +67,17 @@ import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
-export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
-
 const LEAD_DECIDES = "lead-decides";
+/** Its text waits in the draft store under its tab's `:outgoing:` key. */
+const outgoings = createAssistantGroupOutgoingStore<
+  AssistantGroupOutgoing & {
+    readonly projectId: ProjectId | null;
+    readonly error: string | null;
+    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+    readonly requestId: string;
+    readonly sendKey: string;
+  }
+>();
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
@@ -86,23 +105,6 @@ export type GroupReplyTarget = {
   readonly excerpt: string;
 };
 
-/**
- * The project picked in the composer: undefined when the user picked nothing, so the default
- * applies; null when the lead decides.
- */
-export type GroupProjectPick = ProjectId | null | undefined;
-
-/** Where the next message runs: a reply's request project, else the picked or default one. */
-export function groupComposerProjects(
-  replyingTo: GroupReplyTarget | null,
-  pick: GroupProjectPick,
-  defaultProjectId: ProjectId | null,
-) {
-  const locked = replyingTo?.projectId ?? null;
-  const chosen = pick !== undefined ? pick : replyingTo === null ? defaultProjectId : null;
-  return { locked, chosen, run: locked ?? chosen };
-}
-
 /** A labelled menu trigger in the composer's toolbar row. */
 function ToolbarChip(props: {
   readonly icon: AppSymbolName;
@@ -112,8 +114,8 @@ function ToolbarChip(props: {
   readonly chevron?: boolean;
   /** Only the icon, when the row is too full for the label. */
   readonly iconOnly?: boolean;
-  /** A longer label (a model and its provider) that takes the room a wide screen has. */
-  readonly wide?: boolean;
+  /** A dot after the label, always in view; the accessibility label says what it marks. */
+  readonly marked?: boolean;
   readonly onPress?: () => void;
 }) {
   return (
@@ -122,7 +124,8 @@ function ToolbarChip(props: {
       accessibilityLabel={props.accessibilityLabel}
       disabled={props.disabled}
       onPress={props.onPress}
-      className={`h-8 ${props.wide ? "max-w-72" : "max-w-44"} flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50`}
+      // No cap of its own: a chip truncates only when the row runs out of room (`MenuSlot`).
+      className="h-8 flex-row items-center gap-1.5 rounded-full bg-foreground/6 px-2.5 active:bg-foreground/12 disabled:opacity-50"
     >
       <SymbolView name={props.icon} size={13} tintColorClassName="accent-icon-subtle" />
       {props.iconOnly ? null : (
@@ -130,6 +133,9 @@ function ToolbarChip(props: {
           {props.label}
         </Text>
       )}
+      {props.marked && !props.iconOnly ? (
+        <View testID="toolbar-chip-mark" className="size-1.5 shrink-0 rounded-full bg-primary" />
+      ) : null}
       {props.chevron === false || props.iconOnly ? null : (
         <SymbolView name="chevron.down" size={9} tintColorClassName="accent-icon-subtle" />
       )}
@@ -305,23 +311,66 @@ function ReplyQuote(props: {
  * The group's message box, built on the thread composer's editor: `@` picks members, `#` names a
  * project, a line says who will get the message, and a new request can name its project.
  */
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * server config, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
+  const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  const config = useEnvironmentServerConfig(environmentId);
+  const leadCanRoute =
+    lead === null || config === null
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings: config.settings,
+          providers: config.providers,
+          project,
+        });
+  return (
+    <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
+    </Text>
+  );
+}
+
 export function GroupComposer(props: {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
+  /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
+  readonly tab: AssistantGroupTabKey | null;
   readonly members: ReadonlyArray<Assistant>;
   readonly leadId: Assistant["id"] | null;
   /** The group's projects, named. */
   readonly projects: ReadonlyArray<GroupComposerProject>;
-  /** The project a new request gets unless the user picks another (the chat's filter). */
-  readonly defaultProjectId: ProjectId | null;
-  readonly projectPick: GroupProjectPick;
-  readonly onProjectPick: (pick: GroupProjectPick) => void;
+  /** The project a new request gets; null lets the lead decide. A reply's project overrides it. */
+  readonly projectId: ProjectId | null;
+  readonly onProjectChange: (projectId: ProjectId | null) => void;
+  /** Any project's name in this group, a reply's included. */
+  readonly projectName: (projectId: ProjectId) => string;
   /** The model of the project the next message runs in; null hides its chip. */
   readonly projectModel: GroupProjectModel | null;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
@@ -329,24 +378,41 @@ export function GroupComposer(props: {
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
     projectId: ProjectId | undefined,
+    requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
-  const draftKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
+  // Sent text leaves the draft for its tab's key, so another tab never shows it beside its project.
+  const outgoingKey = (tab: AssistantGroupTabKey | null) => `${groupKey}:outgoing:${tab ?? ""}`;
+  const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(groupKey));
+  const setOutgoing = (
+    tab: AssistantGroupTabKey | null,
+    next: Parameters<typeof outgoings.set>[2],
+  ) => outgoings.set(groupKey, tab, next);
+  const shown = assistantGroupShownOutgoing(outgoing, props.tab);
+  const draftKey = shown === null ? groupKey : outgoingKey(shown.tab);
   const faces = useAssistantFaceImages(props.members);
   const { text } = useComposerDraft(draftKey);
   const [selection, setSelection] = useState(() => ({ start: text.length, end: text.length }));
   const [contentHeight, setContentHeight] = useState(0);
-  const [sending, setSending] = useState(false);
+  // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
+  const sending = shown !== null && !shown.failed;
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
-  // Set before the flush, so Return and a tap in the same moment post once.
-  const inFlight = useRef(false);
+  // Set before the flush, so Return and a tap in the same moment post once from that tab.
+  const inFlight = useRef(new Set<AssistantGroupTabKey | null>());
   const bodyText = useScaledTextRole("body");
 
   const write = (value: string, caret?: number) => {
+    // A message on its way is not the user's to change.
+    if (sending && shown !== null) return;
     setComposerDraftText(draftKey, value);
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
+    // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
+    if (shown !== null) {
+      setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
+    }
   };
 
   const voice = useVoiceInputController({
@@ -376,13 +442,10 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
-  const preview = assistantGroupRecipientsPreview(
-    text,
-    props.members,
-    lead,
-    props.replyingTo?.to ?? null,
+  const attached = useGroupAttachments(
+    props.environmentId,
+    assistantGroupHeldAttachments(outgoing, shown),
   );
-  const attached = useGroupAttachments(props.environmentId);
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
   const canSend =
     !props.disabled &&
@@ -391,16 +454,15 @@ export function GroupComposer(props: {
     !attached.unsettled &&
     !voice.blocksSubmission;
 
-  const {
-    locked: lockedProject,
-    chosen: chosenProject,
-    run: runProject,
-  } = groupComposerProjects(props.replyingTo, props.projectPick, props.defaultProjectId);
+  const lockedProject = props.replyingTo?.projectId ?? null;
+  const chosenProject = props.projectId;
+  // All shows a message on its way from another tab with the project it goes to, and no model.
+  const elsewhere = shown !== null && shown.tab !== props.tab;
+  const pinned = elsewhere ? shown.projectId : lockedProject;
+  const runProject = elsewhere ? null : (lockedProject ?? chosenProject);
   const { projectModel } = props;
   const projectName = (id: ProjectId | null) =>
-    id === null
-      ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL
-      : (props.projects.find((project) => project.id === id)?.name ?? "Project");
+    id === null ? ASSISTANT_GROUP_LEAD_DECIDES_LABEL : props.projectName(id);
 
   const attach = async (from: "files" | "media") => {
     const problem = await (from === "files" ? attached.pick() : attached.pickMedia()).catch(
@@ -451,28 +513,49 @@ export function GroupComposer(props: {
       );
       return;
     }
-    setSending(true);
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
-    const result = await props.onSend(message, attached.ready, projectId);
-    setSending(false);
+    const attachmentIds = attached.items.map((item) => item.id);
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [message, attachmentIds, projectId, props.projectModel?.messageModel, props.replyingTo],
+      uuidv4,
+    );
+    const sent = {
+      tab: props.tab,
+      failed: false,
+      requestId,
+      sendKey,
+      attachmentIds,
+      projectId: runProject,
+      error: null,
+    };
+    const sentKey = outgoingKey(sent.tab);
+    setComposerDraftText(sentKey, message);
+    if (draftKey === groupKey) clearComposerDraftContent(groupKey);
+    setOutgoing(sent.tab, sent);
+    setSelection({ start: 0, end: 0 });
+    const result = await props.onSend(message, attached.ready, projectId, requestId);
     if (result.ok) {
-      clearComposerDraftContent(draftKey);
-      setSelection({ start: 0, end: 0 });
-      props.onProjectPick(undefined);
-      attached.clear();
-    } else setError(result.message);
+      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
+      clearComposerDraftContent(sentKey);
+      setOutgoing(sent.tab, null);
+      attached.clear(sent.attachmentIds);
+    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
   };
 
   const send = async () => {
-    if (!canSend || inFlight.current) return;
-    inFlight.current = true;
+    const tab = props.tab;
+    if (!canSend || inFlight.current.has(tab)) return;
+    inFlight.current.add(tab);
     await post().finally(() => {
-      inFlight.current = false;
+      inFlight.current.delete(tab);
     });
   };
 
-  const showsProject = lockedProject !== null || props.projects.length > 1;
+  const showsProject = elsewhere || lockedProject !== null || props.projects.length > 1;
+  const shownError = shown?.error ?? error;
   const lineHeight = bodyText.lineHeight;
   const editorHeight =
     Math.min(Math.max(contentHeight, lineHeight), lineHeight * EDITOR_MAX_LINES) + 2 * EDITOR_INSET;
@@ -522,7 +605,7 @@ export function GroupComposer(props: {
             value={text}
             selection={selection}
             editable={!props.disabled}
-            readOnly={sending || voice.freezesEditor}
+            readOnly={(sending && shown !== null) || voice.freezesEditor}
             placeholder={
               props.disabledReason ??
               (props.projects.length > 0
@@ -535,7 +618,7 @@ export function GroupComposer(props: {
             onChangeText={(value) => write(value)}
             onSelectionChange={setSelection}
             onPasteImages={(uris) => {
-              if (props.disabled || attached.full) return;
+              if (props.disabled || attached.full || sending) return;
               void attached.paste(uris).catch(() => {
                 Dialog.alert("Could not attach", "The pasted image could not be attached.");
               });
@@ -571,22 +654,24 @@ export function GroupComposer(props: {
         ) : (
           <View className="flex-row items-center gap-1 pl-0.5 pr-1">
             <ComposerAttachmentButton
-              disabled={props.disabled || attached.full}
+              disabled={props.disabled || attached.full || sending}
               supportsFiles
               onPickMedia={() => attach("media")}
               onPickFiles={() => attach("files")}
             />
-            {!showsProject ? null : lockedProject !== null ? (
-              <ToolbarChip
-                icon="folder"
-                label={projectName(lockedProject)}
-                accessibilityLabel={`Project: ${projectName(lockedProject)}`}
-                chevron={false}
-                disabled
-              />
+            {!showsProject ? null : elsewhere || pinned !== null ? (
+              <MenuSlot>
+                <ToolbarChip
+                  icon="folder"
+                  label={projectName(pinned)}
+                  accessibilityLabel={`Project: ${projectName(pinned)}`}
+                  chevron={false}
+                  disabled
+                />
+              </MenuSlot>
             ) : (
-              // The project reads in full; the model beside it is the one cut short.
-              <MenuSlot keep>
+              // A long project name gives way first, so the model's name stays whole.
+              <MenuSlot>
                 <Menu
                   accessibilityLabel="Project"
                   actions={[
@@ -602,7 +687,7 @@ export function GroupComposer(props: {
                     })),
                   ]}
                   onPressAction={({ nativeEvent }) =>
-                    props.onProjectPick(
+                    props.onProjectChange(
                       nativeEvent.event === LEAD_DECIDES ? null : (nativeEvent.event as ProjectId),
                     )
                   }
@@ -616,21 +701,44 @@ export function GroupComposer(props: {
                 </Menu>
               </MenuSlot>
             )}
-            {projectModel === null || runProject === null ? null : (
-              <MenuSlot>
+            {projectModel === null || runProject === null ? null : projectModel.forMessage ? (
+              <MenuSlot keep>
+                <Menu
+                  accessibilityLabel="Model for this message"
+                  title="This message only"
+                  actions={[
+                    { id: "change", title: "Change model" },
+                    { id: "default", title: `Back to ${projectModel.defaultLabel}` },
+                  ]}
+                  onPressAction={({ nativeEvent }) =>
+                    nativeEvent.event === "change"
+                      ? projectModel.openMessagePicker()
+                      : projectModel.clearMessageModel()
+                  }
+                >
+                  <ToolbarChip
+                    icon="cube"
+                    label={projectModel.shortLabel}
+                    marked
+                    accessibilityLabel={`Model for this message: ${projectModel.label}`}
+                    disabled={props.disabled}
+                  />
+                </Menu>
+              </MenuSlot>
+            ) : (
+              <MenuSlot keep>
                 <ToolbarChip
                   icon="cube"
-                  label={projectModel.label}
-                  wide
+                  label={projectModel.shortLabel}
                   accessibilityLabel={`Model for ${projectName(runProject)}: ${projectModel.label}`}
                   chevron={false}
-                  disabled={props.disabled || !projectModel.canWrite}
-                  onPress={projectModel.openProjectPicker}
+                  disabled={props.disabled}
+                  onPress={projectModel.openMessagePicker}
                 />
               </MenuSlot>
             )}
             {props.members.length === 0 ? null : (
-              <MenuSlot>
+              <MenuSlot keep={projectModel !== null && runProject !== null}>
                 <Menu
                   accessibilityLabel="Mention"
                   actions={[
@@ -663,22 +771,29 @@ export function GroupComposer(props: {
               onCancel={voice.cancel}
             />
             <ComposerActionButton
-              accessibilityLabel="Send"
+              accessibilityLabel={sending ? "Sending" : "Send"}
               icon="arrow.up"
               variant="primary"
+              busy={sending}
               disabled={!canSend}
               onPress={() => void send()}
             />
           </View>
         )}
       </ComposerSurface>
-      {error === null ? (
-        <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
-          {preview}
-        </Text>
+      {shownError === null ? (
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={text}
+          members={props.members}
+          lead={lead}
+          projects={props.projects}
+          projectId={props.projectId}
+          chat={props.chat}
+        />
       ) : (
         <Text accessibilityRole="alert" className="min-h-4 px-3 text-xs text-danger-foreground">
-          {error}
+          {shownError}
         </Text>
       )}
     </View>

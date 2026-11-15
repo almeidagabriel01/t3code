@@ -2,6 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   ASSISTANT_GROUP_HANDOFFS_PER_USER_ACTION,
   ASSISTANT_GROUP_HANDOFFS_WITHOUT_DELIVERY,
   ASSISTANT_GROUP_PAGE_SIZE,
@@ -18,6 +20,7 @@ import {
   type AssistantGroupsEvent,
   type AssistantGroupsConversationInput,
   type AssistantGroupsConversationResult,
+  type AssistantGroupScope,
   type AssistantGroupsHistoryInput,
   type AssistantGroupsHistoryResult,
   type AssistantGroupsMarkReadInput,
@@ -30,6 +33,7 @@ import {
   type AssistantTeam,
   type AssistantTeamId,
   assistantGroupAddress,
+  assistantGroupInstruction,
   assistantGroupProjectIds,
   assistantGroupProjectMentions,
   assistantIdFromThreadId,
@@ -42,6 +46,7 @@ import {
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  orchestrationV2RunWorkStartedAt,
   type ProjectId,
   type ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
@@ -51,6 +56,7 @@ import {
   ThreadId,
   type DecisionId,
 } from "@t3tools/contracts";
+import { isQuietReply, withoutQuietToken } from "@t3tools/shared/assistantTaskEvents";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
@@ -84,6 +90,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { routesAssistantGroups } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -94,7 +101,8 @@ import {
 import * as ServerSettings from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { AssistantGroupGate } from "./AssistantGroupGate.ts";
-import { routeGroupMessage } from "./AssistantGroupRouting.ts";
+import { normalizeTeamRead } from "./groupChatSql.ts";
+import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import { threadsWaitingOnUser, type ThreadWait } from "./AssistantGroupWaiting.ts";
 import { firstConflict, normalizeResources } from "./AssistantGroupResources.ts";
 import {
@@ -133,8 +141,13 @@ export interface GroupToolResult {
 export const REPLY_LIMIT_MESSAGE = "Reply limit reached; do not mention this to anyone.";
 const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
-export const MENTION_REQUIRED_MESSAGE = "Mention a member with @, or set a lead that can route.";
+/** A group with a lead whose model cannot route: why, and what the user can do. */
+const leadCannotRoute = (lead: string) =>
+  `${lead} is the lead, but its model's provider can't route messages.`;
+const mentionRequiredMessage = (lead: string) =>
+  `${leadCannotRoute(lead)} Mention a member with @, or switch ${lead} to a model whose provider can.`;
 const NO_ANSWER = "(no answer)";
+const QUIET_NOTE = "Nothing new";
 /** Why a hand-off was refused: what the chat says, and what the member that asked is told. */
 export const HANDOFF_PAUSES = {
   no_delivery: {
@@ -166,15 +179,12 @@ const STOPPED_LISTED = 5;
 const STOPPED_INSTRUCTION_CHARS = 120;
 
 /** Waiting for a slot, a run or a provider limit, or running: work the owner is still on. */
-const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = [
-  "queued",
-  "running",
-  "waiting",
-  "usage_limited",
-];
+const ACTIVE: ReadonlyArray<AssistantGroupTaskStatus> = ASSISTANT_GROUP_WORKING_TASK_STATUSES;
 /** Everything the user can still act on. */
-const OPEN_NOW: ReadonlySet<string> = new Set(ACTIVE);
-const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [...ACTIVE, "paused", "failed"];
+const OPEN: ReadonlyArray<AssistantGroupTaskStatus> = [
+  ...ACTIVE,
+  ...ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+];
 const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelled", "failed"];
 /** A request whose tasks all ended this way is done; a failed one still waits on the user. */
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
@@ -287,8 +297,17 @@ interface MessageRow {
   readonly wait_decision_id: string | null;
   readonly wait_resolved_at: string | null;
   readonly asks_project: number;
+  readonly worked_ms: number | null;
+  readonly request_project_id: string | null;
+  /** The model its work starts on, picked for this message only. */
+  readonly model_selection?: string | null;
   readonly created_at: string;
 }
+
+/** A stream item's tab: a project id, `''` for General, `'*'` for All only. */
+const ALL_SCOPE = "*";
+const scopeKey = (scope: AssistantGroupScope | undefined) =>
+  scope === undefined ? ALL_SCOPE : (scope.projectId ?? "");
 
 interface TaskRow {
   readonly task_id: string;
@@ -325,6 +344,8 @@ interface ThreadRow {
   readonly request_id: string | null;
   readonly followed_model_selection?: string | null;
   readonly pending_model_selection?: string | null;
+  readonly restore_model_selection?: string | null;
+  readonly aimed_model_selection?: string | null;
 }
 
 const EMPTY_MESSAGE = { attachments_json: "[]" } as MessageRow;
@@ -365,8 +386,20 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
         },
       }),
   ...(row.asks_project === 1 ? { asksProject: true } : {}),
+  ...(row.worked_ms === null ? {} : { workedMs: row.worked_ms }),
   createdAt: row.created_at,
 });
+
+const workedMsOf = (
+  run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt" | "completedAt">,
+) =>
+  run.completedAt
+    ? Math.max(
+        0,
+        DateTime.toEpochMillis(run.completedAt) -
+          DateTime.toEpochMillis(orchestrationV2RunWorkStartedAt(run)),
+      )
+    : undefined;
 
 const NumbersJson = Schema.fromJsonString(Schema.Array(Schema.Int));
 const StringsJson = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -437,6 +470,7 @@ export class AssistantGroups extends Context.Service<
     /** The newest page with its tasks, then every change to this group. */
     readonly subscribe: (
       teamId: AssistantTeamId,
+      scope?: AssistantGroupScope,
     ) => Stream.Stream<AssistantGroupsEvent, AssistantError>;
     readonly history: (
       input: AssistantGroupsHistoryInput,
@@ -466,6 +500,8 @@ export class AssistantGroups extends Context.Service<
       readonly clientRequestId?: string;
       /** The request's project, by id or name, among the group's; absent lets the lead decide. */
       readonly project?: string;
+      /** The model this request's work starts on; it saves no default. */
+      readonly modelSelection?: ModelSelection;
     }) => Effect.Effect<AssistantGroupsPostResult, AssistantError>;
     /** The chat line an agent's change to the group leaves: "<who> <text>". A repeat adds none. */
     readonly announce: (input: {
@@ -579,6 +615,8 @@ const make = Effect.gen(function* () {
   const events = yield* PubSub.unbounded<{
     readonly teamId: string;
     readonly event: AssistantGroupsEvent;
+    /** The tabs that see it (`scopeKey`); absent for every tab. */
+    readonly scopes?: ReadonlyArray<string> | undefined;
   }>();
   yield* Effect.addFinalizer(() => PubSub.shutdown(events));
   const routing = yield* FiberSet.make<void, never>();
@@ -744,14 +782,22 @@ const make = Effect.gen(function* () {
     return owned[0];
   });
 
-  /** A page of the chat, oldest first, with the tasks it shows. */
+  /**
+   * A page of the chat, oldest first, with the tasks it shows. A scope reads only its requests'
+   * lines; General (null) never holds chat-wide ones.
+   */
   const readPage = Effect.fn("AssistantGroups.readPage")(function* (
     teamId: string,
     beforeSeq: number | undefined,
+    scope?: AssistantGroupScope,
   ) {
+    const inScope =
+      scope === undefined
+        ? sql.literal("")
+        : sql`AND request_project_id IS ${scope.projectId} AND request_id IS NOT NULL`;
     const rows = yield* sql<MessageRow>`
       SELECT * FROM assistant_group_messages
-      WHERE team_id = ${teamId} AND seq < ${beforeSeq ?? Number.MAX_SAFE_INTEGER}
+      WHERE team_id = ${teamId} ${inScope} AND seq < ${beforeSeq ?? Number.MAX_SAFE_INTEGER}
       ORDER BY seq DESC LIMIT ${ASSISTANT_GROUP_PAGE_SIZE + 1}`;
     const page = rows.slice(0, ASSISTANT_GROUP_PAGE_SIZE).toReversed();
     const shownTasks = page.flatMap((row) => (row.task_id === null ? [] : [row.task_id]));
@@ -759,7 +805,10 @@ const make = Effect.gen(function* () {
     const tasks = yield* sql<TaskRow>`
       SELECT * FROM assistant_group_tasks
       WHERE team_id = ${teamId} AND (
-        status IN ${sql.in(OPEN)}
+        (status IN ${sql.in(OPEN)} AND (${scope === undefined ? 1 : 0} = 1 OR request_id IN (
+          SELECT message_id FROM assistant_group_messages
+          WHERE team_id = ${teamId} AND request_project_id IS ${scope?.projectId ?? null}
+            AND message_id = request_id)))
         OR task_id IN ${sql.in(shownTasks.length === 0 ? [""] : shownTasks)}
         OR request_message_id IN ${sql.in(shownRequests.length === 0 ? [""] : shownRequests)}
       ) ORDER BY rowid ASC`;
@@ -782,17 +831,28 @@ const make = Effect.gen(function* () {
     };
   });
 
-  const publishMessage = (row: MessageRow) =>
+  const publishMessage = (row: MessageRow, scopes?: ReadonlyArray<string>) =>
     PubSub.publish(events, {
       teamId: row.team_id,
       event: { type: "message", message: toMessage(row) },
+      scopes:
+        scopes ??
+        (row.request_id === null ? [ALL_SCOPE] : [row.request_project_id ?? "", ALL_SCOPE]),
     });
-  const publishTask = (row: TaskRow) =>
-    wireTasks([row]).pipe(
-      Effect.flatMap(([task]) =>
-        PubSub.publish(events, { teamId: row.team_id, event: { type: "task", task: task! } }),
-      ),
-    );
+  const publishTask = Effect.fn("AssistantGroups.publishTask")(function* (row: TaskRow) {
+    const [task] = yield* wireTasks([row]);
+    const head =
+      row.request_id === null
+        ? []
+        : yield* sql<{
+            readonly request_project_id: string | null;
+          }>`SELECT request_project_id FROM assistant_group_messages WHERE message_id = ${row.request_id}`;
+    yield* PubSub.publish(events, {
+      teamId: row.team_id,
+      event: { type: "task", task: task! },
+      scopes: head[0] === undefined ? [ALL_SCOPE] : [head[0].request_project_id ?? "", ALL_SCOPE],
+    });
+  });
 
   const insertMessage = Effect.fn("AssistantGroups.insertMessage")(function* (input: {
     readonly teamId: string;
@@ -814,6 +874,9 @@ const make = Effect.gen(function* () {
     readonly wait?: ThreadWait;
     /** The lead's notice asking which project the request is for. */
     readonly asksProject?: boolean;
+    /** A member's answer: how long its run worked. */
+    readonly workedMs?: number | undefined;
+    readonly modelSelection?: ModelSelection | undefined;
   }) {
     const id = yield* newId("gm");
     const requestId = input.requestId === "new" ? id : (input.requestId ?? null);
@@ -822,14 +885,18 @@ const make = Effect.gen(function* () {
       INSERT INTO assistant_group_messages (
         message_id, team_id, seq, author, assistant_id, author_label, kind, text, reply_to,
         task_id, client_request_id, attachments_json, request_id, project_id, title, wait_key,
-        wait_thread_id, wait_decision_id, asks_project, created_at
+        wait_thread_id, wait_decision_id, asks_project, worked_ms, request_project_id,
+        model_selection, created_at
       )
       SELECT ${id}, ${input.teamId}, COALESCE(MAX(seq), 0) + 1, ${input.author},
         ${input.assistantId ?? null}, ${input.authorLabel ?? null}, ${input.kind}, ${input.text},
         ${input.replyTo ?? null}, ${input.taskId ?? null}, ${input.clientRequestId ?? null},
         ${encodeAttachments(input.attachments ?? [])}, ${requestId}, ${input.projectId ?? null},
         ${input.title ?? null}, ${input.wait?.key ?? null}, ${input.wait?.threadId ?? null},
-        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${yield* nowIso}
+        ${input.wait?.decisionId ?? null}, ${input.asksProject === true ? 1 : 0}, ${input.workedMs ?? null},
+        COALESCE((SELECT h.project_id FROM assistant_group_messages h WHERE h.message_id = ${requestId}),
+          ${input.requestId === "new" ? (input.projectId ?? null) : null}),
+        ${encodeModelSelectionJson(input.modelSelection ?? null)}, ${yield* nowIso}
       FROM assistant_group_messages WHERE team_id = ${input.teamId}
       RETURNING *`;
     yield* publishMessage(rows[0]!);
@@ -887,9 +954,8 @@ const make = Effect.gen(function* () {
         followup = ${next.followup}, updated_at = ${yield* nowIso}
       WHERE task_id = ${task.task_id} RETURNING *`;
     yield* publishTask(rows[0]!);
-    if (OPEN_NOW.has(task.status) !== OPEN_NOW.has(next.status)) {
-      yield* assistants.refreshTeamChat(task.team_id);
-    }
+    // Working, running and waiting-on-the-user counters all follow the status.
+    if (task.status !== next.status) yield* assistants.refreshTeamChat(task.team_id);
     const wasOpen = OPEN.includes(task.status as AssistantGroupTaskStatus);
     const isOpen = OPEN.includes(next.status as AssistantGroupTaskStatus);
     const requestId = task.request_id ?? task.request_message_id;
@@ -994,6 +1060,8 @@ const make = Effect.gen(function* () {
     team: AssistantTeam,
     member: AssistantRow,
     request: MessageRow,
+    /** The model the task's message picked; a new thread starts on it. */
+    explicit: ModelSelection | undefined,
   ) {
     const rows = yield* sql<ThreadRow>`
       SELECT * FROM assistant_group_request_threads
@@ -1011,12 +1079,14 @@ const make = Effect.gen(function* () {
       return yield* invalid(`${member.name} cannot work in this request's project.`);
     }
     let followed: ModelSelection | null = null;
+    let aimed: ModelSelection | null = null;
     if (thread === undefined) {
-      const { selection: modelSelection } = yield* modelSelections
+      const { selection: modelSelection, layer } = yield* modelSelections
         .resolveForNewThread({
           projectId,
           assistantId: member.assistant_id as AssistantId,
           teamId: team.id,
+          explicit,
         })
         .pipe(
           Effect.mapError(() =>
@@ -1047,16 +1117,19 @@ const make = Effect.gen(function* () {
           ),
         );
       followed = modelSelection;
+      if (layer === "message") aimed = modelSelection;
     }
     // A new thread has seen none of the request.
     yield* sql`
       INSERT INTO assistant_group_request_threads
-        (request_id, assistant_id, team_id, thread_id, seen_seq, followed_model_selection)
+        (request_id, assistant_id, team_id, thread_id, seen_seq, followed_model_selection,
+          aimed_model_selection)
       VALUES (${request.message_id}, ${member.assistant_id}, ${team.id}, ${threadId}, 0,
-        ${encodeModelSelectionJson(followed)})
+        ${encodeModelSelectionJson(followed)}, ${encodeModelSelectionJson(aimed)})
       ON CONFLICT (request_id, assistant_id) DO UPDATE
       SET thread_id = excluded.thread_id, seen_seq = 0,
-        followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL
+        followed_model_selection = excluded.followed_model_selection, pending_model_selection = NULL,
+        restore_model_selection = NULL, aimed_model_selection = excluded.aimed_model_selection
       WHERE thread_id <> excluded.thread_id OR ${thread === undefined ? 1 : 0}`;
     // A finished request archived it, or the member left and came back.
     if (thread !== undefined && thread.archivedAt !== null) {
@@ -1072,58 +1145,100 @@ const make = Effect.gen(function* () {
   const requestThreads = (requestId: string) =>
     sql<ThreadRow>`SELECT * FROM assistant_group_request_threads WHERE request_id = ${requestId}`;
 
+  /** Switches a thread's model now; "busy" while a turn on another provider is still ending. */
+  const switchModel = Effect.fn("AssistantGroups.switchModel")(function* (
+    threadId: string,
+    target: ModelSelection,
+  ) {
+    const switched = yield* engine
+      .dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(`assistant-group-model:${threadId}:${yield* newId("m")}`),
+        threadId: threadId as ThreadId,
+        modelSelection: target,
+      })
+      .pipe(Effect.result);
+    if (switched._tag === "Success") return "switched" as const;
+    if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") return "busy" as const;
+    yield* Effect.logWarning("assistant groups: request thread kept its model", {
+      threadId,
+      cause: switched.failure,
+    });
+    return "failed" as const;
+  });
+
   /**
-   * Moves a request thread to `target` while it still runs on the model the project gave it; a
-   * change made in the thread wins. A thread mid-turn refuses another provider, so the move waits
-   * for the turn to end (`applyPendingModel`).
+   * Moves a request thread to `target` while it still runs on the model the project gave it;
+   * a change made in the thread wins. A thread mid-turn refuses another provider, so the move
+   * waits for the turn to end (`applyPendingModel`). True when it waits.
    */
   const followModel = Effect.fn("AssistantGroups.followModel")(function* (
     row: ThreadRow,
     target: ModelSelection,
     /** A request that ended keeps its threads as they are: the move waits for work to come back. */
     ended = false,
+    /**
+     * `pick`: a message's model, which moves the thread even off a model set in it. `task`: a task
+     * start without one, which moves it off another message's model. `follow`: a change of the
+     * defaults, which leaves a thread on a message's model to that work.
+     */
+    mode: "follow" | "task" | "pick" = "follow",
   ) {
+    const force = mode === "pick";
     const followed = decodeModelSelectionJson(row.followed_model_selection);
     const thread = yield* inspectThread(row.thread_id as ThreadId);
-    const follows =
+    const following =
       followed !== null &&
       thread !== undefined &&
-      thread.deletedAt === null &&
       modelSelectionsEqual(thread.modelSelection, followed);
-    if (!follows || modelSelectionsEqual(target, followed)) {
+    if (thread === undefined || thread.deletedAt !== null || !(force || following)) {
       yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
-    if (ended) {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET pending_model_selection = ${encodeModelSelectionJson(target)}
+    const aimed = decodeModelSelectionJson(row.aimed_model_selection);
+    // Off the model a message's switch applied, the user changed the thread: their model stays.
+    const changedByUser = aimed !== null && !modelSelectionsEqual(thread.modelSelection, aimed);
+    if (mode === "follow" && aimed !== null && !changedByUser) {
+      yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL
         WHERE thread_id = ${row.thread_id}`;
       return;
     }
-    const switched = yield* engine
-      .dispatch({
-        type: "thread.model-selection.set",
-        commandId: CommandId.make(`assistant-group-model:${row.thread_id}:${yield* newId("m")}`),
-        threadId: row.thread_id as ThreadId,
-        modelSelection: target,
-      })
-      .pipe(Effect.result);
-    if (switched._tag === "Success") {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET followed_model_selection = ${encodeModelSelectionJson(target)},
-          pending_model_selection = NULL
+    // `aimed` stays, so every later task on that model still finds the user's switch.
+    if (force && changedByUser && modelSelectionsEqual(target, aimed)) {
+      yield* sql`UPDATE assistant_group_request_threads SET pending_model_selection = NULL,
+          restore_model_selection = NULL
         WHERE thread_id = ${row.thread_id}`;
-    } else if (switched.failure._tag === "OrchestratorProviderSelectionBusyError") {
-      yield* sql`UPDATE assistant_group_request_threads
-        SET pending_model_selection = ${encodeModelSelectionJson(target)}
-        WHERE thread_id = ${row.thread_id}`;
-    } else {
-      yield* Effect.logWarning("assistant groups: request thread kept its model", {
-        threadId: row.thread_id,
-        cause: switched.failure,
-      });
+      return;
     }
+    // Off a model picked in the thread, the thread is not followed: the next task brings that
+    // pick back (`aimModel`), and a project's new model leaves it. Over another message's model
+    // the pick to bring back stays the one from before it.
+    const restore =
+      aimed !== null && !changedByUser
+        ? row.restore_model_selection
+        : encodeModelSelectionJson(thread.modelSelection);
+    const settle = following
+      ? sql`UPDATE assistant_group_request_threads
+          SET followed_model_selection = ${encodeModelSelectionJson(target)},
+            pending_model_selection = NULL,
+            aimed_model_selection = ${force ? encodeModelSelectionJson(target) : null}
+          WHERE thread_id = ${row.thread_id}`
+      : sql`UPDATE assistant_group_request_threads
+          SET pending_model_selection = NULL, restore_model_selection = ${restore ?? null},
+            aimed_model_selection = ${encodeModelSelectionJson(target)}
+          WHERE thread_id = ${row.thread_id}`;
+    if (modelSelectionsEqual(target, thread.modelSelection)) {
+      yield* settle;
+      return;
+    }
+    const outcome = ended ? "busy" : yield* switchModel(row.thread_id, target);
+    if (outcome === "switched") yield* settle;
+    if (outcome !== "busy") return;
+    yield* sql`UPDATE assistant_group_request_threads
+      SET pending_model_selection = ${encodeModelSelectionJson(target)}
+      WHERE thread_id = ${row.thread_id}`;
+    if (!ended) return true;
   });
 
   /** A move `followModel` deferred while the thread was mid-turn or its request had ended. */
@@ -1137,6 +1252,56 @@ const make = Effect.gen(function* () {
           WHERE t.request_id = r.request_id AND t.status IN ${sql.in(OPEN)})`)[0];
     const pending = decodeModelSelectionJson(row?.pending_model_selection);
     if (row !== undefined && pending !== null) yield* followModel(row, pending);
+  });
+
+  /**
+   * Before a task's turn: the thread moves to its message's model, or back to its defaults' after
+   * another message's. Resolving at each start also lands a move deferred while it was mid-turn.
+   * True when the move waits for a turn still ending.
+   */
+  const aimModel = Effect.fn("AssistantGroups.aimModel")(function* (
+    team: AssistantTeam,
+    owner: AssistantRow,
+    exec: { readonly threadId: ThreadId; readonly projectId: ProjectId },
+    explicit: ModelSelection | undefined,
+  ) {
+    const row = (yield* sql<ThreadRow>`
+      SELECT * FROM assistant_group_request_threads WHERE thread_id = ${exec.threadId}`)[0];
+    const resolved = yield* modelSelections
+      .resolveForNewThread({
+        projectId: exec.projectId,
+        assistantId: owner.assistant_id as AssistantId,
+        teamId: team.id,
+        explicit,
+      })
+      .pipe(Effect.result);
+    if (row === undefined || resolved._tag === "Failure") {
+      yield* applyPendingModel(exec.threadId);
+      return false;
+    }
+    const restore = decodeModelSelectionJson(row.restore_model_selection);
+    if (restore !== null && resolved.success.layer !== "message") {
+      const thread = yield* inspectThread(exec.threadId);
+      const aimed = decodeModelSelectionJson(row.aimed_model_selection);
+      // Changed by the user during the message's work: that model stays, not the one before.
+      const outcome =
+        thread === undefined ||
+        modelSelectionsEqual(thread.modelSelection, restore) ||
+        (aimed !== null && !modelSelectionsEqual(thread.modelSelection, aimed))
+          ? "switched"
+          : yield* switchModel(exec.threadId, restore);
+      if (outcome === "busy") return true;
+      yield* sql`UPDATE assistant_group_request_threads
+        SET restore_model_selection = NULL, aimed_model_selection = NULL
+        WHERE thread_id = ${exec.threadId}`;
+      return false;
+    }
+    return yield* followModel(
+      row,
+      resolved.success.selection,
+      false,
+      resolved.success.layer === "message" ? "pick" : "task",
+    );
   });
 
   const openRequestThreads = sql<ThreadRow>`
@@ -1318,7 +1483,16 @@ const make = Effect.gen(function* () {
     const requestId = task.request_id ?? task.request_message_id;
     const request = yield* getMessage(requestId);
     if (request === undefined) return yield* failed("request_missing");
-    const exec = yield* ensureRequestThread(team, owner, request).pipe(Effect.result);
+    // The model of the message that opened this task's tree, else the request's: hand-offs and
+    // questions between members run on the model the user picked for that work.
+    const root = task.root_id === task.task_id ? task : yield* getTask(task.root_id);
+    const explicit =
+      decodeModelSelectionJson(
+        (yield* getMessage(root?.request_message_id ?? task.request_message_id))?.model_selection,
+      ) ??
+      decodeModelSelectionJson(request.model_selection) ??
+      undefined;
+    const exec = yield* ensureRequestThread(team, owner, request, explicit).pipe(Effect.result);
     if (exec._tag === "Failure") {
       return yield* failed(
         exec.failure.reason === "invalid" ? "outside_project" : "thread_unavailable",
@@ -1338,7 +1512,8 @@ const make = Effect.gen(function* () {
         // Unread, it queues as before rather than holding the task.
         Effect.orElseSucceed(() => false),
       );
-    if (busy) {
+    // Its own stopping revision blocks only a switch to another provider; the turn waits for it.
+    if (busy || (yield* aimModel(team, owner, exec.success, explicit)) === true) {
       yield* setWaitReason(task, "waiting for the conversation's current turn to end");
       return false;
     }
@@ -1432,8 +1607,6 @@ const make = Effect.gen(function* () {
       exec.success.threadId,
       attachmentsOf((yield* getMessage(task.request_message_id)) ?? EMPTY_MESSAGE),
     );
-    // A turn that was no task (the user writing in the thread) may have deferred a move.
-    yield* applyPendingModel(exec.success.threadId);
     const sent = yield* threads
       .sendToThread({
         projectId: exec.success.projectId,
@@ -1672,13 +1845,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const instructionFor = (author: GroupAuthor, text: string) =>
-    author.kind === "agent"
-      ? `Request from ${author.label} (an agent, not the user):\n${text}`
-      : author.kind === "routine"
-        ? `Scheduled request ${author.label}:\n${text}`
-        : text;
-
   /** The model the lead would route on: its own conversation's, else the project's default. */
   const leadSelection = Effect.fn("AssistantGroups.leadSelection")(function* (lead: AssistantRow) {
     const current =
@@ -1691,7 +1857,7 @@ const make = Effect.gen(function* () {
   /** The lead's own provider instance must offer routing: no usage-limit fallback stands in for it. */
   const canRoute = Effect.fn("AssistantGroups.canRoute")(function* (selection: ModelSelection) {
     const instance = yield* registry.getInstance(selection.instanceId);
-    return instance?.textGeneration.routeAssistantGroup !== undefined;
+    return instance !== undefined && routesAssistantGroups(instance);
   });
 
   const openRoots = Effect.fn("AssistantGroups.openRoots")(function* (
@@ -1829,17 +1995,37 @@ const make = Effect.gen(function* () {
       Effect.map((rows) => rows[0]?.title ?? "this project"),
     );
 
-  /** Sets a request's project (and the lead's title) on its first message, for every client. */
+  /**
+   * Sets a request's project (and the lead's title) on its first message, for every client. Only
+   * ever NULL -> X: a request that has a project keeps it, and nothing is published. Callers hold
+   * the group lock.
+   */
   const setRequestProject = Effect.fn("AssistantGroups.setRequestProject")(function* (
     request: MessageRow,
     projectId: string,
     title: string | null,
   ) {
+    // One statement, so no line of the request is ever left on the old project.
     const rows = yield* sql<MessageRow>`
-      UPDATE assistant_group_messages
-      SET project_id = ${projectId}, title = COALESCE(${title}, title)
-      WHERE message_id = ${request.message_id} RETURNING *`;
-    if (rows[0] !== undefined) yield* publishMessage(rows[0]);
+      UPDATE assistant_group_messages SET request_project_id = ${projectId},
+        project_id = IIF(message_id = request_id, ${projectId}, project_id),
+        title = IIF(message_id = request_id, COALESCE(${title}, title), title)
+      WHERE request_id = ${request.message_id} AND (
+        SELECT h.project_id FROM assistant_group_messages h WHERE h.message_id = ${request.message_id}
+      ) IS NULL
+      RETURNING *`;
+    if (rows.length === 0) return;
+    // The new tab gets the whole request; General gets only the head, and drops it by its project.
+    for (const row of rows.toSorted((a, b) => a.seq - b.seq)) {
+      yield* publishMessage(
+        row,
+        row.message_id === request.message_id ? [projectId, "", ALL_SCOPE] : [projectId],
+      );
+    }
+    const tasks = yield* sql<TaskRow>`
+      SELECT * FROM assistant_group_tasks WHERE request_id = ${request.message_id} ORDER BY rowid`;
+    for (const task of tasks) yield* publishTask(task);
+    yield* assistants.refreshTeamChat(request.team_id);
   });
 
   const route = Effect.fn("AssistantGroups.route")(function* (
@@ -2048,7 +2234,7 @@ const make = Effect.gen(function* () {
               : message.author === "routine"
                 ? { kind: "routine", label: message.author_label ?? "" }
                 : { kind: "user" };
-          const instruction = instructionFor(author, message.text);
+          const instruction = assistantGroupInstruction(author, message.text);
           if (ids.length === 0) {
             yield* insertTask({
               teamId,
@@ -2329,13 +2515,18 @@ const make = Effect.gen(function* () {
               const capable = selection === undefined ? false : yield* canRoute(selection);
               if (needsProject && !capable) {
                 return yield* invalid(
-                  "Pick the project for this request: the group has no lead that can choose it.",
+                  row === undefined
+                    ? "Pick the project for this request: the group has no lead that can choose it."
+                    : `Pick the project for this request. ${leadCannotRoute(row.name)}`,
                 );
               }
               // With no lead the message waits; clients show it, and a lead set later routes it.
               if (row !== undefined && selection !== undefined) {
                 if (!capable) {
-                  return yield* assistantError("mention_required", MENTION_REQUIRED_MESSAGE);
+                  return yield* assistantError(
+                    "mention_required",
+                    mentionRequiredMessage(row.name),
+                  );
                 }
                 lead = { row, selection };
               }
@@ -2354,6 +2545,7 @@ const make = Effect.gen(function* () {
               requestId: request?.message_id ?? "new",
               projectId: request === undefined ? projectId : null,
               title: request === undefined ? titleFromText(input.text) : null,
+              modelSelection: input.modelSelection,
             }).pipe(
               Effect.onError(() =>
                 AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
@@ -2361,8 +2553,17 @@ const make = Effect.gen(function* () {
                 ),
               ),
             );
+            // "continue" and an answer to a request not yet routed start an earlier message's work.
+            const workOf =
+              resumed?.request_message_id ??
+              (viaLead && request !== undefined && !started ? request.message_id : undefined);
+            if (input.modelSelection !== undefined && workOf !== undefined) {
+              yield* sql`UPDATE assistant_group_messages
+                SET model_selection = ${encodeModelSelectionJson(input.modelSelection)}
+                WHERE message_id = ${workOf}`;
+            }
             // The project picked while answering a request that has none yet.
-            if (request !== undefined && request.project_id === null && projectId !== null) {
+            if (request !== undefined && projectId !== null) {
               yield* setRequestProject(request, projectId, null);
             }
             const picked = projectList.find((project) => project.id === input.projectId);
@@ -2418,7 +2619,12 @@ const make = Effect.gen(function* () {
               }
               if (allowed.length > 0) {
                 if (author.kind === "user") yield* userReached(message.request_id!);
-                yield* openRoots(team, message, allowed, instructionFor(author, input.text));
+                yield* openRoots(
+                  team,
+                  message,
+                  allowed,
+                  assistantGroupInstruction(author, input.text),
+                );
               }
             }
             yield* pump(team.id);
@@ -2562,9 +2768,11 @@ const make = Effect.gen(function* () {
     } else if ((yield* unsettledChildren(task.task_id)).length > 0) {
       yield* patchTask(task, { status: "waiting", reason: null });
     } else {
-      const answer =
-        task.result_text?.trim() || (yield* answerOf(run.threadId, run.id)) || NO_ANSWER;
-      if (yield* isDelivery(task, answer)) {
+      const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
+      // A member woken by its subtasks may end quiet: a muted line, so the request never reads as waiting.
+      const quiet = said !== undefined && isQuietReply(said);
+      const answer = quiet ? QUIET_NOTE : (said && withoutQuietToken(said)) || NO_ANSWER;
+      if (!quiet && (yield* isDelivery(task, answer))) {
         yield* sql`
           UPDATE assistant_group_tasks SET undelivered_hops = 0 WHERE task_id = ${task.root_id}`;
       }
@@ -2572,11 +2780,12 @@ const make = Effect.gen(function* () {
         teamId: task.team_id,
         author: "assistant",
         assistantId: task.owner_id,
-        kind: "message",
+        kind: quiet ? "change" : "message",
         text: answer,
         replyTo: task.request_message_id,
         taskId: task.task_id,
         requestId: task.request_id,
+        workedMs: workedMsOf(run),
       });
       const done = yield* patchTask(task, {
         status: "completed",
@@ -2641,7 +2850,9 @@ const make = Effect.gen(function* () {
       const resolved = yield* sql<MessageRow>`
         UPDATE assistant_group_messages SET wait_resolved_at = ${yield* nowIso}
         WHERE message_id = ${row.message_id} AND wait_resolved_at IS NULL RETURNING *`;
-      if (resolved[0] !== undefined) yield* publishMessage(resolved[0]);
+      if (resolved[0] === undefined) continue;
+      yield* publishMessage(resolved[0]);
+      yield* assistants.refreshTeamChat(resolved[0].team_id);
     }
   });
 
@@ -3194,6 +3405,7 @@ const make = Effect.gen(function* () {
             ? {}
             : { clientRequestId: input.clientRequestId }),
           ...(projectId === undefined ? {} : { projectId }),
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         },
         { kind: "agent", assistantId: assistantId as AssistantId | null, label },
       );
@@ -3399,6 +3611,7 @@ const make = Effect.gen(function* () {
     yield* sql`DELETE FROM assistant_group_messages WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_tasks WHERE team_id = ${teamId}`;
     yield* sql`DELETE FROM assistant_group_summaries WHERE team_id = ${teamId}`;
+    yield* sql`DELETE FROM assistant_group_read_cursors WHERE team_id = ${teamId}`;
   });
 
   /** The group is gone: its work stops, its threads, chat and schedules go. */
@@ -3550,7 +3763,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const subscribe: AssistantGroups["Service"]["subscribe"] = (teamId) =>
+  const subscribe: AssistantGroups["Service"]["subscribe"] = (teamId, scope) =>
     Stream.unwrap(
       // Subscribe before the snapshot while holding the writers' lock, so no change falls between.
       lock
@@ -3558,11 +3771,16 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* teamRow(teamId);
             const subscription = yield* PubSub.subscribe(events);
-            const page = yield* readPage(teamId, undefined);
+            const page = yield* readPage(teamId, undefined, scope);
+            const key = scopeKey(scope);
             return Stream.concat(
               Stream.succeed<AssistantGroupsEvent>({ type: "snapshot", ...page }),
               Stream.fromSubscription(subscription).pipe(
-                Stream.filter((item) => item.teamId === teamId),
+                Stream.filter(
+                  (item) =>
+                    item.teamId === teamId &&
+                    (item.scopes === undefined || item.scopes.includes(key)),
+                ),
                 Stream.map((item) => item.event),
               ),
             );
@@ -3573,20 +3791,55 @@ const make = Effect.gen(function* () {
 
   const markRead: AssistantGroups["Service"]["markRead"] = Effect.fn("AssistantGroups.markRead")(
     function* (input) {
-      yield* teamRow(input.teamId);
-      const target =
-        input.unread === true
-          ? ((yield* sql<{ readonly seq: number | null }>`
-              SELECT MAX(seq) AS seq FROM assistant_group_messages
-              WHERE team_id = ${input.teamId} AND author != 'user'
-                AND kind NOT IN ('routing', 'boundary', 'change')`)[0]?.seq ?? 1) - 1
-          : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
-      const rows = yield* sql<{ readonly read_seq: number }>`
-        UPDATE assistant_teams SET read_seq = MIN(${target}, COALESCE(
-          (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = assistant_teams.team_id), 0))
-        WHERE team_id = ${input.teamId} RETURNING read_seq`;
+      const team = toAssistantTeam(yield* teamRow(input.teamId));
+      // A tab's own position; without a scope the group's, which every tab then follows.
+      const scope = input.scope;
+      // A tab is General, one of the group's projects, or a project that left but holds lines.
+      if (
+        scope !== undefined &&
+        scope.projectId !== null &&
+        !assistantGroupProjectIds(
+          (yield* assistantRows(team.memberIds)).map(toAssistant),
+          team.projectIds,
+        ).includes(scope.projectId) &&
+        (yield* sql`
+          SELECT 1 FROM assistant_group_messages
+          WHERE team_id = ${input.teamId} AND request_project_id = ${scope.projectId} LIMIT 1`)
+          .length === 0
+      ) {
+        return yield* invalid("That project is not one of the group's tabs.");
+      }
+      const inScope =
+        scope === undefined
+          ? sql.literal("")
+          : sql`AND request_project_id IS ${scope.projectId} AND request_id IS NOT NULL`;
+      const set = Effect.gen(function* () {
+        const target =
+          input.unread === true
+            ? ((yield* sql<{ readonly seq: number | null }>`
+                SELECT MAX(seq) AS seq FROM assistant_group_messages
+                WHERE team_id = ${input.teamId} ${inScope} AND author != 'user'
+                  AND kind NOT IN ('routing', 'boundary', 'change')`)[0]?.seq ?? 1) - 1
+            : (input.readSeq ?? Number.MAX_SAFE_INTEGER);
+        const latest = sql`COALESCE(
+          (SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = ${input.teamId}), 0)`;
+        if (scope === undefined) {
+          yield* sql`DELETE FROM assistant_group_read_cursors WHERE team_id = ${input.teamId}`;
+          return (yield* sql<{ readonly read_seq: number }>`
+            UPDATE assistant_teams SET read_seq = MIN(${target}, ${latest})
+            WHERE team_id = ${input.teamId} RETURNING read_seq`)[0]!.read_seq;
+        }
+        const cursor = (yield* sql<{ readonly read_seq: number }>`
+          INSERT INTO assistant_group_read_cursors (team_id, scope, read_seq)
+          VALUES (${input.teamId}, ${scopeKey(scope)}, MIN(${target}, ${latest}))
+          ON CONFLICT (team_id, scope) DO UPDATE SET read_seq = excluded.read_seq
+          RETURNING read_seq`)[0]!.read_seq;
+        yield* normalizeTeamRead(sql, input.teamId);
+        return cursor;
+      });
+      const readSeq = yield* lock.withPermits(1)(sql.withTransaction(set));
       yield* assistants.refreshTeamChat(input.teamId);
-      return { readSeq: rows[0]!.read_seq };
+      return { readSeq };
     },
     storage,
   );
@@ -3603,9 +3856,12 @@ const make = Effect.gen(function* () {
         return yield* invalid("The group is working. Stop its tasks first.");
       }
     });
-    const publishPage = Effect.gen(function* () {
+    // Undo only drops a chat-wide boundary, which only All shows; a cleared chat is empty in every tab.
+    const publishPage = Effect.fn("AssistantGroups.publishPage")(function* (
+      scopes: ReadonlyArray<string> | undefined,
+    ) {
       const page = yield* readPage(teamId, undefined);
-      yield* PubSub.publish(events, { teamId, event: { type: "snapshot", ...page } });
+      yield* PubSub.publish(events, { teamId, event: { type: "snapshot", ...page }, scopes });
       yield* assistants.refreshTeamChat(teamId);
     });
     yield* teamRow(teamId);
@@ -3660,14 +3916,17 @@ const make = Effect.gen(function* () {
             yield* sql`
               UPDATE assistant_teams SET read_seq = MIN(read_seq, ${latest.seq - 1})
               WHERE team_id = ${teamId}`;
-            return yield* publishPage;
+            yield* sql`
+              UPDATE assistant_group_read_cursors SET read_seq = MIN(read_seq, ${latest.seq - 1})
+              WHERE team_id = ${teamId}`;
+            return yield* publishPage([ALL_SCOPE]);
           }
           case "clear":
             yield* ensureIdle;
             yield* clearChat(teamId);
             yield* sql`UPDATE assistant_group_threads SET seen_seq = 0 WHERE team_id = ${teamId}`;
             yield* sql`UPDATE assistant_teams SET read_seq = 0 WHERE team_id = ${teamId}`;
-            return yield* publishPage;
+            return yield* publishPage(undefined);
         }
       }),
     );
@@ -3677,7 +3936,7 @@ const make = Effect.gen(function* () {
   const history: AssistantGroups["Service"]["history"] = Effect.fn("AssistantGroups.history")(
     function* (input) {
       yield* teamRow(input.teamId);
-      return yield* readPage(input.teamId, input.beforeSeq);
+      return yield* readPage(input.teamId, input.beforeSeq, input.scope);
     },
     storage,
   );

@@ -18,6 +18,7 @@ import * as Secrets from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ChannelOutbox from "../ChannelOutbox.ts";
+import { projectsLayer } from "../channelBridgeTestSupport.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./TelegramChannelRuntime.ts";
 import * as Settings from "./TelegramChannelSettings.ts";
@@ -54,6 +55,7 @@ const harness = () => {
       ChannelOutbox.layer.pipe(
         Layer.provideMerge(ChannelTransport.layer),
         Layer.provideMerge(SqlitePersistence.layerMemory),
+        Layer.provideMerge(projectsLayer()),
       ),
     ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, CryptoLayer.layer)),

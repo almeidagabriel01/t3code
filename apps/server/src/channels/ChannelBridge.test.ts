@@ -19,7 +19,13 @@ import { ChannelGateway } from "./ChannelGateway.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
-import { dmAddress, inbound, otherChatAddress, outboxRows } from "./channelBridgeTestSupport.ts";
+import {
+  dmAddress,
+  inbound,
+  otherChatAddress,
+  outboxRows,
+  projectsLayer,
+} from "./channelBridgeTestSupport.ts";
 
 const assistant = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
   id,
@@ -57,6 +63,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        projectsLayer({ acme: "Acme" }),
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,

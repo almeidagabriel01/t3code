@@ -125,6 +125,13 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantSandboxPairing,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["orchestration:operate"]);
+    // Reading one project tab is still a mutation of the group's read state.
+    expect(
+      clientRpcRequiredScopes(WS_METHODS.assistantGroupsMarkRead, {
+        teamId: "team:1",
+        scope: { projectId: "p1" },
+      }),
+    ).toEqual(["orchestration:operate"]);
     for (const method of [
       WS_METHODS.assistantsSubscribe,
       WS_METHODS.assistantsSpend,

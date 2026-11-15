@@ -1,10 +1,17 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { type Assistant, AssistantId, AssistantTeamId } from "./assistants.ts";
 import { ChatAttachment, PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "./chatAttachment.ts";
 import { DecisionId } from "./decisions.ts";
+import { PickedModelSelection } from "./modelSelection.ts";
 
 /**
  * A group's shared chat, as in an OpenBot channel. A message there runs no agent itself: it opens
@@ -13,6 +20,27 @@ import { DecisionId } from "./decisions.ts";
  */
 /** The line the server puts before the links to files copied for an assistant. */
 export const ASSISTANT_TRANSFER_HEADING = "Files copied to the shared folder for you:";
+
+const REQUEST_PREFIX = /^(?:Request from .* \(an agent, not the user\)|Scheduled request .*):\n/;
+
+/** The instruction a member receives: an agent's or routine's request names who asked. */
+export function assistantGroupInstruction(
+  author:
+    | { readonly kind: "user" | "assistant" }
+    | { readonly kind: "agent" | "routine"; readonly label: string },
+  text: string,
+): string {
+  return author.kind === "agent"
+    ? `Request from ${author.label} (an agent, not the user):\n${text}`
+    : author.kind === "routine"
+      ? `Scheduled request ${author.label}:\n${text}`
+      : text;
+}
+
+/** An instruction without the line `assistantGroupInstruction` put before it. */
+export function assistantGroupInstructionBody(instruction: string): string {
+  return instruction.replace(REQUEST_PREFIX, "");
+}
 
 /** A message's own text, and the markdown list of files copied with it (null when none). */
 export function splitAssistantTransferText(text: string): {
@@ -112,6 +140,8 @@ export const AssistantGroupMessage = Schema.Struct({
   waiting: Schema.optionalKey(AssistantGroupWaiting),
   /** On the lead's notice asking which project a request is for; absent on every other message. */
   asksProject: Schema.optionalKey(Schema.Literal(true)),
+  /** On a member's answer: how long its run worked; absent on older answers and servers. */
+  workedMs: Schema.optionalKey(NonNegativeInt),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;
@@ -127,6 +157,64 @@ export const AssistantGroupTaskStatus = Schema.Literals([
   "failed",
 ]);
 export type AssistantGroupTaskStatus = typeof AssistantGroupTaskStatus.Type;
+
+/** A task its owner is still on: waiting for a slot, a run or a usage limit's reset, or running. */
+export const ASSISTANT_GROUP_WORKING_TASK_STATUSES = [
+  "queued",
+  "running",
+  "waiting",
+  "usage_limited",
+] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
+
+/** A stopped task: its request waits on the user once none of its tasks is still working. */
+export const ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES = [
+  "paused",
+  "failed",
+] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
+
+const isOneOf = (list: ReadonlyArray<string>, value: string) => list.includes(value);
+
+/** A request's tasks are the user's to act on. The server's chat counters mirror this rule. */
+export function assistantGroupTasksNeedUser(
+  statuses: ReadonlyArray<AssistantGroupTaskStatus>,
+): boolean {
+  return (
+    !statuses.some((status) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, status)) &&
+    statuses.some((status) => isOneOf(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES, status))
+  );
+}
+
+/** Lines never unread: the lead naming who answers, conversation boundaries, group changes. */
+export const ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS = [
+  "routing",
+  "boundary",
+  "change",
+] as const satisfies ReadonlyArray<AssistantGroupMessageKind>;
+
+/** The user's own lines are never unread. */
+export const ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR = "user" satisfies AssistantGroupAuthor;
+
+/**
+ * A request's line the user did not write, worth reading, and not already answered: the user wrote
+ * later in its request (`lastUserSeq`, the request's newest user line), wherever that line was
+ * read. The server's counters mirror this.
+ */
+export function assistantGroupCountsAsUnread(
+  message: {
+    readonly author: AssistantGroupAuthor;
+    readonly kind: AssistantGroupMessageKind;
+    readonly seq: number;
+    readonly requestId?: string | undefined;
+  },
+  lastUserSeq: number | undefined,
+): boolean {
+  return (
+    message.requestId !== undefined &&
+    message.author !== ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR &&
+    !isOneOf(ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS, message.kind) &&
+    (lastUserSeq === undefined || lastUserSeq < message.seq)
+  );
+}
 
 /** `child` is an assignment from another member; `reply` is one short answer to a member. */
 export const AssistantGroupTaskKind = Schema.Literals(["root", "child", "reply"]);
@@ -187,7 +275,17 @@ export function assistantGroupTaskActions(
   }
 }
 
-export const AssistantGroupsSubscribeInput = Schema.Struct({ teamId: AssistantTeamId });
+/**
+ * One project tab of a group's chat: the requests of that project, or of none (`null`, General).
+ * Absent means every request and the chat-wide lines; an older server ignores it and sends that.
+ */
+export const AssistantGroupScope = Schema.Struct({ projectId: Schema.NullOr(ProjectId) });
+export type AssistantGroupScope = typeof AssistantGroupScope.Type;
+
+export const AssistantGroupsSubscribeInput = Schema.Struct({
+  teamId: AssistantTeamId,
+  scope: Schema.optional(AssistantGroupScope),
+});
 export type AssistantGroupsSubscribeInput = typeof AssistantGroupsSubscribeInput.Type;
 
 /** The first event is the newest page with its tasks; then each change as it lands. */
@@ -209,6 +307,7 @@ export const AssistantGroupsHistoryInput = Schema.Struct({
   teamId: AssistantTeamId,
   /** Messages before this seq; the newest page when absent. */
   beforeSeq: Schema.optional(Schema.Int),
+  scope: Schema.optional(AssistantGroupScope),
 });
 export type AssistantGroupsHistoryInput = typeof AssistantGroupsHistoryInput.Type;
 
@@ -223,12 +322,14 @@ export type AssistantGroupsHistoryResult = typeof AssistantGroupsHistoryResult.T
 
 /**
  * Sets how far the user has read; lower than before marks the later messages unread again.
- * `unread` instead moves it to just before the newest message the user did not write.
+ * `unread` instead moves it to just before the newest message the user did not write. With a
+ * `scope`, only that tab's position moves; without one, the whole group's does and tabs follow it.
  */
 export const AssistantGroupsMarkReadInput = Schema.Struct({
   teamId: AssistantTeamId,
   readSeq: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   unread: Schema.optional(Schema.Boolean),
+  scope: Schema.optional(AssistantGroupScope),
 });
 export type AssistantGroupsMarkReadInput = typeof AssistantGroupsMarkReadInput.Type;
 
@@ -264,6 +365,8 @@ export const AssistantGroupsPostInput = Schema.Struct({
   replyToMessageId: Schema.optional(AssistantGroupMessageId),
   /** A new request's project, one of the group's; absent lets the lead decide. */
   projectId: Schema.optional(ProjectId),
+  /** The model this message's work starts on, ahead of every default; it saves no default. */
+  modelSelection: Schema.optional(PickedModelSelection),
   /** A repeat with the same id posts nothing more. */
   clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   /** Pending uploads, as for a thread message; the server keeps them with the message. */

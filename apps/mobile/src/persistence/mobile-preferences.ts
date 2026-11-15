@@ -182,6 +182,8 @@ export interface Preferences {
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
+  /** The group chat tab each group last showed on this device, by `environment:team`. */
+  readonly assistantGroupTabs?: Readonly<Record<string, string>>;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -272,6 +274,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
+    assistantGroupTabs?: Preferences["assistantGroupTabs"];
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -440,6 +443,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     "homeAssistantsShowAll",
   ] as const) {
     if (typeof parsed[key] === "boolean") preferences[key] = parsed[key];
+  }
+  if (isRecord(parsed.assistantGroupTabs)) {
+    preferences.assistantGroupTabs = Object.fromEntries(
+      Object.entries(parsed.assistantGroupTabs).flatMap(([group, tab]) =>
+        typeof tab === "string" ? [[group, tab] as const] : [],
+      ),
+    );
   }
   const kanbanPanel = sanitizeKanbanPanel(parsed.kanbanPanel);
   if (kanbanPanel !== undefined) preferences.kanbanPanel = kanbanPanel;

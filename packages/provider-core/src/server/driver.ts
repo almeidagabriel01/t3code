@@ -83,6 +83,10 @@ export interface ProviderInstance {
   };
 }
 
+/** Whether group chat can route through this instance; provider snapshots carry the same answer. */
+export const routesAssistantGroups = (instance: Pick<ProviderInstance, "textGeneration">) =>
+  instance.textGeneration.routeAssistantGroup !== undefined;
+
 export interface ProviderContinuationIdentity {
   readonly driverKind: ProviderDriverKind;
   readonly continuationKey: string;

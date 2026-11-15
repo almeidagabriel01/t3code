@@ -1,12 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupMentionTargets,
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
+  assistantGroupShownOutgoing,
+  createAssistantGroupOutgoingStore,
+  type AssistantGroupOutgoing,
+  type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -20,7 +28,14 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
-import { useId, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ClipboardEvent,
+  type DragEvent,
+} from "react";
 
 import { collapseExpandedComposerCursor, composerSubmissionIntentForKey } from "~/composer-logic";
 import {
@@ -32,9 +47,11 @@ import {
 import { useClientSettings } from "~/hooks/useSettings";
 import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
+import { useProject, useQuietThreadShell } from "~/state/entities";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import {
   ComposerPromptEditorTiptap,
@@ -70,10 +87,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantAvatar } from "./assistantPresentation";
 import { GroupAttachmentChips } from "./GroupAttachments";
 import { GroupMentionChip } from "./GroupMentionChip";
-import { GroupProjectModelPicker } from "./GroupProjectModel";
+import { type GroupMessageModel, GroupProjectModelPicker } from "./GroupProjectModel";
 import { useGroupAttachments } from "./useGroupAttachments";
-
-export const MENTION_REQUIRED_COPY = "Mention a member with @, or set a lead in Edit group.";
 
 export type GroupSendResult =
   | { readonly ok: true }
@@ -105,7 +120,10 @@ const NO_SKILLS: never[] = [];
 const drafts = new Map<string, string>();
 
 /** For tests: each starts with empty drafts. */
-export const clearGroupDrafts = () => drafts.clear();
+export const clearGroupDrafts = () => {
+  drafts.clear();
+  outgoings.clear();
+};
 
 function MentionOptionLabel(props: {
   readonly option: AssistantGroupMentionOption<Assistant>;
@@ -243,8 +261,67 @@ function ReplyQuote(props: {
  * The group's message box: the thread composer's editor, where `@` picks members and `#` picks a
  * project as chips, Enter sends, and a line says who will get it.
  */
+type PromptState = { readonly value: string; readonly cursor: number; readonly expanded: number };
+
+/** A sent message the composer holds apart from the draft, with what its tab showed. */
+interface Outgoing extends AssistantGroupOutgoing {
+  readonly prompt: PromptState;
+  readonly projectLabel: string;
+  readonly error: string | null;
+  /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+  readonly requestId: string;
+  readonly sendKey: string;
+}
+
+const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
+
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * providers, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
+  const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  // This environment's config only: the all-environment maps change with every other one.
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const leadCanRoute =
+    lead === null || config == null
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings: config.settings,
+          providers: config.providers,
+          project,
+        });
+  return (
+    <p
+      data-testid="group-recipients"
+      className="min-h-4 px-1 text-xs text-muted-foreground"
+      aria-live="polite"
+    >
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
+    </p>
+  );
+}
+
 export function GroupComposer(props: {
   readonly draftKey: string;
+  /** The open tab: a message on its way shows only where `assistantGroupShowsOutgoing` says. */
+  readonly tab: AssistantGroupTabKey | null;
   readonly environmentId: EnvironmentId;
   readonly members: ReadonlyArray<Assistant>;
   readonly leadId: Assistant["id"] | null;
@@ -256,7 +333,11 @@ export function GroupComposer(props: {
   readonly projectId: ProjectId | null;
   readonly onProjectChange: (projectId: ProjectId | null) => void;
   readonly teamDefault: ModelSelection | null;
+  /** The model the next message runs on, picked here only for it. */
+  readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
@@ -264,6 +345,7 @@ export function GroupComposer(props: {
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
+    requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
   const richText = useClientSettings((settings) => settings.composerRichTextEnabled);
@@ -275,7 +357,7 @@ export function GroupComposer(props: {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
-  const [prompt, setPromptState] = useState(() => {
+  const [draft, setDraftState] = useState<PromptState>(() => {
     const value = drafts.get(props.draftKey) ?? "";
     return {
       value,
@@ -283,17 +365,38 @@ export function GroupComposer(props: {
       expanded: value.length,
     };
   });
-  const setPrompt = (value: string, cursor: number, expanded: number) => {
+  const setDraft = (value: string, cursor: number, expanded: number) => {
     if (value === "") drafts.delete(props.draftKey);
     else drafts.set(props.draftKey, value);
-    setPromptState({ value, cursor, expanded });
+    setDraftState({ value, cursor, expanded });
+  };
+  // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
+  const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(props.draftKey));
+  const setOutgoing = (tab: AssistantGroupTabKey | null, next: Outgoing | null) =>
+    outgoings.set(props.draftKey, tab, next);
+  const shown = assistantGroupShownOutgoing(outgoing, props.tab);
+  // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
+  const sending = shown !== null && !shown.failed;
+  const prompt = shown?.prompt ?? draft;
+  const setPrompt = (value: string, cursor: number, expanded: number) => {
+    if (shown === null) return setDraft(value, cursor, expanded);
+    // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
+    setOutgoing(
+      shown.tab,
+      value === ""
+        ? null
+        : {
+            ...shown,
+            prompt: { value, cursor, expanded },
+            error: null,
+          },
+    );
   };
   // The caret sits beside a chip, where `@` and `#` start nothing.
   const [besideChip, setBesideChip] = useState(false);
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const recalled = useRef<ComposerPromptHistoryPosition | null>(null);
-  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -321,13 +424,11 @@ export function GroupComposer(props: {
         }));
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
-  const preview = assistantGroupRecipientsPreview(
-    prompt.value,
-    props.members,
-    lead,
-    props.replyingTo?.to ?? null,
+  const attached = useGroupAttachments(
+    props.environmentId,
+    props.disabled,
+    assistantGroupHeldAttachments(outgoing, shown),
   );
-  const attached = useGroupAttachments(props.environmentId, props.disabled);
 
   const replace = (value: string, caret: number) => {
     const cursor = collapseExpandedComposerCursor(value, caret);
@@ -356,6 +457,7 @@ export function GroupComposer(props: {
     },
     onTextChange: (text) => replace(text, text.length),
     disabled: props.disabled || sending,
+    offerSetup: true,
   });
   const tooLong = prompt.value.length > ASSISTANT_GROUP_MESSAGE_MAX_CHARS;
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
@@ -370,7 +472,10 @@ export function GroupComposer(props: {
           : null);
   const hasContent = prompt.value.trim() !== "" || speech.blocksSubmission;
   const canSend = !props.disabled && !sending && sendDisabledReason === null && hasContent;
-  const lockedProject = props.replyingTo?.projectLabel ?? null;
+  // All shows a message on its way from another tab with the project it goes to.
+  const elsewhere = shown !== null && shown.tab !== props.tab;
+  const shownError = shown?.error ?? error;
+  const lockedProject = elsewhere ? shown.projectLabel : (props.replyingTo?.projectLabel ?? null);
 
   const pick = (index: number) => {
     if (memberAt !== null) {
@@ -401,15 +506,44 @@ export function GroupComposer(props: {
 
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
-    setSending(true);
+    const attachmentIds = attached.items.map((item) => item.id);
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [value.trim(), attachmentIds, props.projectId, props.messageModel.pick, props.replyingTo],
+      randomUUID,
+    );
+    const sent: Outgoing = {
+      tab: props.tab,
+      failed: false,
+      prompt: {
+        value,
+        cursor: collapseExpandedComposerCursor(value, value.length),
+        expanded: value.length,
+      },
+      attachmentIds,
+      projectLabel:
+        lockedProject ??
+        projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
+        ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+      error: null,
+      requestId,
+      sendKey,
+    };
+    if (shown === null) setDraft("", 0, 0);
+    setOutgoing(sent.tab, sent);
     setError(null);
-    const result = await props.onSend(value.trim(), attached.ready);
-    setSending(false);
+    const result = await props.onSend(value.trim(), attached.ready, requestId);
     if (result.ok) {
-      setPrompt("", 0, 0);
+      // Only the sent text goes: what the user wrote meanwhile in another tab stays.
+      setOutgoing(sent.tab, null);
       recalled.current = null;
-      attached.clear();
-    } else setError(result.message);
+      attached.clear(sent.attachmentIds);
+    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    // The editor is read-only while its text is on its way; the user types on once it settles.
+    window.requestAnimationFrame(() => {
+      if (document.activeElement === document.body) editorRef.current?.focusAtEnd();
+    });
   };
   const submit = () => speech.submitAfterDictation((value) => void send(value));
 
@@ -557,7 +691,7 @@ export function GroupComposer(props: {
     );
 
   // The project the message runs in: a reply's request project, else the picker's.
-  const modelProjectId = props.replyingTo?.projectId ?? props.projectId;
+  const modelProjectId = elsewhere ? null : (props.replyingTo?.projectId ?? props.projectId);
   const modelProjectLabel =
     props.replyingTo?.projectLabel ??
     props.projects.find((project) => project.id === modelProjectId)?.label ??
@@ -640,7 +774,9 @@ export function GroupComposer(props: {
                       cursor={prompt.cursor}
                       contextRecords={NO_CONTEXT_RECORDS}
                       skills={NO_SKILLS}
-                      disabled={props.disabled || speech.freezesEditor}
+                      disabled={
+                        props.disabled || speech.freezesEditor || (sending && shown !== null)
+                      }
                       placeholder={
                         props.disabledReason ??
                         "Message the group. @ picks who gets it, # picks a project."
@@ -669,54 +805,71 @@ export function GroupComposer(props: {
                   </div>
                   <div
                     data-testid="group-composer-controls"
-                    className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-2"
+                    // A narrow composer keeps its labels as icons, and voice and send hold the right
+                    // edge outside the wrap, so the controls never take a third line.
+                    className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
                   >
-                    <ComposerAttachButton
-                      addComposerAttachments={async (files) => {
-                        attached.add(files);
-                        return false;
-                      }}
-                      focusComposer={() => editorRef.current?.focus()}
-                      disabled={props.disabled || attached.full}
-                    />
-                    {projectPicker}
-                    {modelProjectId === null ? null : (
-                      <GroupProjectModelPicker
-                        environmentId={props.environmentId}
-                        projectId={modelProjectId}
-                        projectLabel={modelProjectLabel}
-                        teamDefault={props.teamDefault}
-                        disabled={props.disabled}
-                        onError={setError}
-                      />
-                    )}
-                    <Menu>
-                      <MenuTrigger
-                        disabled={props.disabled || props.members.length === 0}
-                        render={<ComposerControl size="xs" aria-label="Mention" />}
-                      >
-                        <AtSignIcon className="size-3" />
-                        <span data-composer-label>Mention</span>
-                      </MenuTrigger>
-                      <MenuPopup align="start" side="top">
-                        <MenuGroup>
-                          <MenuGroupLabel>Mention</MenuGroupLabel>
-                          {assistantGroupMentionOptions("", props.members).map((option) => (
-                            <MenuItem
-                              key={option.kind === "everyone" ? "everyone" : option.member.id}
-                              onClick={() => insertFromMenu(option)}
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                      {/* A long project name shrinks beside attach instead of taking a line alone. */}
+                      <div className="flex min-w-0 items-center gap-1">
+                        <ComposerAttachButton
+                          addComposerAttachments={async (files) => {
+                            attached.add(files);
+                            return false;
+                          }}
+                          focusComposer={() => editorRef.current?.focus()}
+                          disabled={props.disabled || attached.full || sending}
+                        />
+                        {projectPicker}
+                      </div>
+                      <div className="flex min-w-0 items-center gap-1">
+                        {modelProjectId === null ? null : (
+                          <GroupProjectModelPicker
+                            environmentId={props.environmentId}
+                            projectId={modelProjectId}
+                            projectLabel={modelProjectLabel}
+                            teamDefault={props.teamDefault}
+                            disabled={props.disabled}
+                            onError={setError}
+                            message={props.messageModel}
+                          />
+                        )}
+                        <Menu>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <MenuTrigger
+                                  disabled={props.disabled || props.members.length === 0}
+                                  render={<ComposerControl size="xs" aria-label="Mention" />}
+                                />
+                              }
                             >
-                              <MentionOptionLabel
-                                option={option}
-                                environmentId={props.environmentId}
-                                leadId={props.leadId}
-                              />
-                            </MenuItem>
-                          ))}
-                        </MenuGroup>
-                      </MenuPopup>
-                    </Menu>
-                    <div className="ms-auto flex min-w-0 items-center gap-1">
+                              <AtSignIcon className="size-3" />
+                              <span data-composer-control-label>Mention</span>
+                            </TooltipTrigger>
+                            <TooltipPopup side="top">Mention a member</TooltipPopup>
+                          </Tooltip>
+                          <MenuPopup align="start" side="top">
+                            <MenuGroup>
+                              <MenuGroupLabel>Mention</MenuGroupLabel>
+                              {assistantGroupMentionOptions("", props.members).map((option) => (
+                                <MenuItem
+                                  key={option.kind === "everyone" ? "everyone" : option.member.id}
+                                  onClick={() => insertFromMenu(option)}
+                                >
+                                  <MentionOptionLabel
+                                    option={option}
+                                    environmentId={props.environmentId}
+                                    leadId={props.leadId}
+                                  />
+                                </MenuItem>
+                              ))}
+                            </MenuGroup>
+                          </MenuPopup>
+                        </Menu>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
                       <ComposerPrimaryActions
                         compact={false}
                         canOperateThread={!props.disabled}
@@ -746,21 +899,23 @@ export function GroupComposer(props: {
           </div>
         </ComposerSurface.Host>
       </ComposerSurface.Shell>
-      {error === null ? (
-        <p
-          data-testid="group-recipients"
-          className="min-h-4 px-1 text-xs text-muted-foreground"
-          aria-live="polite"
-        >
-          {preview}
-        </p>
+      {shownError === null ? (
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={prompt.value}
+          members={props.members}
+          lead={lead}
+          projects={projectRefs}
+          projectId={props.projectId}
+          chat={props.chat}
+        />
       ) : (
         <p
           role="alert"
           data-testid="group-composer-alert"
           className="min-h-4 px-1 text-xs text-destructive-foreground"
         >
-          {error}
+          {shownError}
         </p>
       )}
     </div>

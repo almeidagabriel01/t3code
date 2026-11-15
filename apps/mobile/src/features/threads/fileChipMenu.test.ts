@@ -43,7 +43,12 @@ describe("resolveFileChipTarget", () => {
   it("ignores links that are not files or cannot be opened", () => {
     expect(resolveFileChipTarget("https://example.com/app.ts", "/repo")).toBeNull();
     expect(resolveFileChipTarget("~/report.md", "/repo")).toBeNull();
-    expect(resolveFileChipTarget("../other/file.ts", "/repo")).toBeNull();
+  });
+
+  it("opens a relative link that leaves the workspace like an absolute host link", () => {
+    const target = resolveFileChipTarget("../other-repo/x.ts:3", "/repo");
+    expect(target).toEqual({ fullPath: "/other-repo/x.ts" });
+    expect(target).toEqual(resolveFileChipTarget("/other-repo/x.ts:3", "/repo"));
   });
 });
 

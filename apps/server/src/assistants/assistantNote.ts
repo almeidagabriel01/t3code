@@ -1,4 +1,5 @@
 import type { Assistant, AssistantTeam, ThreadId } from "@t3tools/contracts";
+import { QUIET_REPLY } from "@t3tools/shared/assistantTaskEvents";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -62,6 +63,8 @@ function teamsLines(
 
 const TASKS_FOLLOW =
   "It carries your instructions, model and access. You are woken when it finishes or needs the user, so never wait on it. When it needs the user, tell them what and where to answer, and never answer for them. When it finishes, check its diff, run the tests, ask a teammate to review when that helps, send fixes with t3_thread_send, and only then tell the user. Dismiss a finished task (t3_assistant task_dismiss) only when the user asks to clear it, never on your own and never one whose result you have not told them.";
+/** Event turns reach the user's chat and phone; the detail stays one link away. */
+const TASK_EVENTS = `When a task or watch wakes you: if it brings the user nothing new (a result you already told them, a background check that only finished), reply with exactly ${QUIET_REPLY} and nothing else; it is never shown or sent. Otherwise tell the user what changed in at most 3 short lines (about 300 characters, no headings or bullet lists) with the task's link. Commits, counts, file lists and tables stay in the task thread; never paste them. A "Waiting on you" block, including one the user's own instructions ask for, appears only when the user has something to do now; with nothing pending, leave the block and its heading out, and never write "Waiting on you: nothing".`;
 const TASKS_HOST = `Do quick things yourself, here: a question, a lookup, a small tweak. Real multi-step code work (changing several files, adding tests, running a suite) is never done in this conversation: start a thread for it with t3_thread_launch in the right project, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 const TASKS_SANDBOX = `Any change to files, and any command that changes anything, is work for a thread, never for this conversation: start it with t3_thread_launch in your sandbox, with a full brief of goal, files, constraints and how to verify. ${TASKS_FOLLOW}`;
 
@@ -99,6 +102,7 @@ export function assistantNoteFor(
       ? escapeBody(projectScopeNoteLine(assistant.projectIds ?? [], projectTitles))
       : "",
     assistant.workspace === "sandbox" ? TASKS_SANDBOX : TASKS_HOST,
+    TASK_EVENTS,
     assistant.askBeforeActing === true ? ASK_BEFORE_ACTING_LINE : "",
     escapeBody(assistant.instructions.trim()),
   ]

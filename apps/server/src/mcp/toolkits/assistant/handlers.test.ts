@@ -650,6 +650,10 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         text: " @eng ship it ",
         paths: ["/home/user/a.txt"],
         projectId: "Core",
+        model: {
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        },
       }),
     ).toEqual({
       status: "posted",
@@ -664,6 +668,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         text: "@eng ship it",
         paths: ["/home/user/a.txt"],
         project: "Core",
+        modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
       }),
     ]);
     // A repeat of the same call carries the same request id, so the service posts it once.
@@ -673,8 +678,14 @@ it.effect("group_post posts from the calling conversation and needs a group and 
       text: " @eng ship it ",
       paths: ["/home/user/a.txt"],
       projectId: "Core",
+      model: {
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
     });
     expect(posts[1]!.clientRequestId).toBe(posts[0]!.clientRequestId);
+    yield* call({ action: "group_post", group: "Ops", text: "@eng and this" });
+    expect(posts[2]).not.toHaveProperty("modelSelection");
     expect(yield* call({ action: "group_post", text: "hi" })).toMatchObject({
       code: "invalid_request",
       message: "group_post needs `group`: the group's name or id.",

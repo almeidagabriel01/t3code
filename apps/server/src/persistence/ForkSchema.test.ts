@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
+import { ProjectId } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { toAssistantTeam, type AssistantTeamRow } from "../assistants/AssistantTeams.ts";
 import { ensureForkSchema } from "./ForkSchema.ts";
 
 const database = NodeSqliteClient.layer({ filename: ":memory:" });
@@ -241,6 +243,8 @@ it.effect("gives each existing group the projects all its members list, and no o
 it.effect("adds only the request grouping columns a database lacks, then fills them", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // Dropping a column re-checks the chat view, which reads the migrations' projects projection.
+    yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, deleted_at TEXT)`;
     yield* ensureForkSchema();
     yield* sql`DROP INDEX assistant_requests_group_idx`;
     yield* sql`ALTER TABLE assistant_requests DROP COLUMN group_id`;
@@ -545,6 +549,7 @@ it.effect("gives an older group chat its requests: every message and task joins 
       "wait_thread_id",
       "wait_decision_id",
       "wait_resolved_at",
+      "worked_ms",
     ]) {
       assert.strictEqual(
         (yield* columnsOf("assistant_group_messages")).filter((name) => name === column).length,
@@ -579,17 +584,19 @@ it.effect.each(["new", "old"] as const)(
     }).pipe(Effect.provide(database)),
 );
 
-it.effect.each(["new", "old", "half-migrated"] as const)(
-  "fills request ids and groups in a %s database",
+it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)(
+  "fills request ids, groups and request projects in a %s database",
   (shape) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // "half-migrated": an older build added the columns and stopped before filling them.
       const added =
-        shape === "half-migrated"
+        shape === "half-migrated" || shape === "scope-column-present"
           ? {
               requests: ", group_id TEXT, reply_text TEXT, delivered INTEGER NOT NULL DEFAULT 0",
-              messages: ", request_id TEXT, project_id TEXT, title TEXT",
+              messages: `, request_id TEXT, project_id TEXT, title TEXT${
+                shape === "scope-column-present" ? ", request_project_id TEXT" : ""
+              }`,
               tasks: ", request_id TEXT",
             }
           : { requests: "", messages: "", tasks: "" };
@@ -633,6 +640,16 @@ it.effect.each(["new", "old", "half-migrated"] as const)(
         yield* sql`UPDATE assistant_group_messages SET request_id = 'm1' WHERE message_id <> 'm3'`;
         yield* sql`UPDATE assistant_group_tasks SET request_id = 'm1'`;
       }
+      // Only the head held the project before every row carried it.
+      const project = shape === "old" ? null : "p1";
+      if (project !== null) {
+        yield* sql`UPDATE assistant_group_messages SET project_id = ${project} WHERE message_id = 'm1'`;
+      }
+      if (filled) {
+        yield* sql`UPDATE assistant_group_messages SET request_project_id = ${project} WHERE message_id <> 'm3'`;
+      }
+      // Rows whose request is repaired on a later start take the request's project too.
+      const carried = project;
 
       yield* ensureForkSchema();
       yield* ensureForkSchema();
@@ -641,16 +658,51 @@ it.effect.each(["new", "old", "half-migrated"] as const)(
         { request_id: "q1", group_id: "q1" },
       ]);
       assert.deepStrictEqual(
-        yield* sql`SELECT message_id, request_id FROM assistant_group_messages ORDER BY seq`,
+        yield* sql`SELECT message_id, request_id, request_project_id FROM assistant_group_messages ORDER BY seq`,
         [
-          { message_id: "m1", request_id: "m1" },
-          { message_id: "m2", request_id: "m1" },
-          { message_id: "m3", request_id: null },
+          { message_id: "m1", request_id: "m1", request_project_id: carried },
+          { message_id: "m2", request_id: "m1", request_project_id: carried },
+          { message_id: "m3", request_id: null, request_project_id: null },
         ],
       );
       assert.deepStrictEqual(yield* sql`SELECT task_id, request_id FROM assistant_group_tasks`, [
         { task_id: "t1", request_id: "m1" },
       ]);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM assistant_group_read_cursors`, []);
+      // The team's chat decodes; General is listed only when it holds the request, and the tab
+      // of the request counts its running task.
+      // The migrations own the projects projection; the chat's tabs read their titles from it.
+      yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, title TEXT, deleted_at TEXT)`;
+      yield* sql`INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+        VALUES ('g1', 'Core', '[]', 't', 't')`;
+      const [team] = yield* sql<AssistantTeamRow>`SELECT * FROM assistant_team_state`;
+      assert.deepEqual(toAssistantTeam(team!).chat?.scopes, [
+        {
+          projectId: carried === null ? null : ProjectId.make(carried),
+          unreadCount: 0,
+          waiting: false,
+          readSeq: 0,
+          openTasks: 1,
+          ...(carried === null ? { hasRequests: true } : {}),
+        },
+      ]);
+      // A tab's page walks its scope in seq order, for a project and for General (NULL) alike.
+      for (const scope of ["p1", null]) {
+        const page = yield* sql<{ readonly detail: string }>`
+          EXPLAIN QUERY PLAN SELECT * FROM assistant_group_messages
+          WHERE team_id = 'g1' AND request_project_id IS ${scope} AND request_id IS NOT NULL
+            AND seq < 10 ORDER BY seq DESC LIMIT 51`;
+        assert.isTrue(
+          page.some((row) => row.detail.includes("assistant_group_messages_scope_idx")),
+        );
+        assert.isFalse(page.some((row) => row.detail.includes("TEMP B-TREE")));
+      }
+      const openWaits = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN SELECT 1 FROM assistant_group_messages
+        WHERE team_id = 'g1' AND wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
+      assert.isTrue(
+        openWaits.some((row) => row.detail.includes("assistant_group_messages_open_wait_idx")),
+      );
     }).pipe(Effect.provide(database)),
 );
 

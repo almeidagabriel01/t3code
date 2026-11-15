@@ -37,6 +37,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 
 export interface EditQueuedRunRequest {
@@ -425,6 +426,7 @@ function QueuedMessage(props: {
       ? { environmentId: props.environmentId, threadId: senderThreadId }
       : null,
   );
+  const taskEvent = props.message ? taskEventActivity(props.message) : null;
   const fold =
     attribution === "automation"
       ? {
@@ -436,7 +438,9 @@ function QueuedMessage(props: {
         ? {
             icon: MessagesSquareIcon,
             label: senderShell?.title.trim() || "Agent",
-            summary: props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? "",
+            summary: taskEvent
+              ? `${taskEvent.title} · ${taskEvent.label}`
+              : (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? ""),
           }
         : null;
   const bodyVisible = fold === null || expanded;

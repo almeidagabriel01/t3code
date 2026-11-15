@@ -27,6 +27,7 @@ export function useTextFieldSpeech(input: {
   };
   readonly onTextChange: (text: string) => void;
   readonly disabled?: boolean | undefined;
+  readonly offerSetup?: boolean | undefined;
 }) {
   const latest = useRef(input);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed field callbacks to the asynchronous recording controller
@@ -40,7 +41,7 @@ export function useTextFieldSpeech(input: {
     ownerKey: input.ownerKey,
     draftText: input.text,
     disabled: input.disabled,
-    offerSetup: false,
+    offerSetup: input.offerSetup ?? false,
     readDraft: () => {
       const custom = latest.current.selection;
       if (custom) return { text: latest.current.text, selection: custom.read() };

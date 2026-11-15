@@ -124,10 +124,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
    */
   effortColumn?: ReactNode;
   footer?: ReactNode;
+  /** A way back to a default, above the footer; a search hides it, as mobile's clear row. */
+  resetRow?: ReactNode;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  const [searching, setSearching] = useState(false);
+  const resetRow = searching ? null : props.resetRow;
   const registry = useContext(RegistryContext);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -176,6 +180,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
   const setIsMenuOpen = (open: boolean) => {
+    // The list opens with an empty search.
+    setSearching(false);
     props.onOpenChange?.(open);
     if (props.open === undefined) {
       setUncontrolledIsMenuOpen(open);
@@ -302,6 +308,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           : (props.getModelDisabledReason?.(instanceId, model) ?? null)
       }
       onInstanceModelChange={handleInstanceModelChange}
+      onSearchingChange={setSearching}
       {...(docked
         ? {
             docked,
@@ -473,11 +480,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   {props.effortColumn}
                 </div>
               </div>
+              {resetRow}
               {props.footer}
             </div>
           </DockedPickerContext>
         ) : (
-          picker
+          <>
+            {picker}
+            {resetRow}
+            {props.footer}
+          </>
         )}
         {props.selectedModels === undefined && !docked ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />

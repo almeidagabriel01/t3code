@@ -155,9 +155,25 @@ messages name; sharing the group's ids would delete the group's files with one m
 group's own files go when the group is removed. Agent posts (`t3_assistant group_post`) still pass
 `paths`, which land as links in the text.
 
+A message's composer model is `assistant_group_messages.model_selection`, never a default. A task
+runs on the pick of the message that opened its task tree (`root_id` → `request_message_id`), else
+on the request's (`request_id`), so hand-offs, questions between members and later messages in the
+request share it; "continue" and the answer to a request not yet routed copy it onto the message
+that owns that work. Each task start, after the busy gate, resolves its thread's model with it as
+the `message` layer (`aimModel`): moving earlier would switch another message's live turn. A switch
+deferred by a still-running (stopping) turn makes the task wait rather than start on the old model.
+A pick the resolver cannot use (a provider it does not know or the project turns off, a model its
+provider does not list) falls to the next layer; `post` never refuses one.
+
+The switch records the model it applied in `aimed_model_selection`. A thread on it stays there when
+the project's or group's model changes; a thread off it was changed by the user, whose model then
+wins over that pick. Over a model picked in the thread by hand, the switch also records that model
+in `restore_model_selection`, and the next task without a pick switches back to it.
+
 A task starts by queueing `group-task:<taskId>:<revision>` into the owner's thread; the reactor maps the
 run back by that id and ignores stale revisions, so resume and reassign bump the revision. At most two
-tasks run per group. A finished run posts the `result` tool text or the run's last assistant message;
+tasks run per group. A finished run posts the `result` tool text or the run's last assistant message,
+with the run's work time (`worked_ms`) because clients never load the hidden member thread to measure it;
 a task with unsettled children waits and runs again with their results. Hand-offs (assign, transfer)
 count on the root and the ninth pauses with `handoff_limit`; member replies are a separate limit of two
 per request. A subtask may declare `resources` (`folder:<path>` trees, or ids); `pump` holds them only
@@ -171,15 +187,29 @@ seeds Jarvis) and `reconcile` heals changes made while the server was down. A sc
 assistants in the layer graph.
 
 Read position is `assistant_teams.read_seq` (one per group, not per user: a server has one owner).
-The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`), so team reads
-select from the view, not the table; `ensureForkSchema` recreates it on every start. Counter changes
+A project tab keeps its own cursor in `assistant_group_read_cursors`, falling back to `read_seq`; an
+unscoped mark read (the All tab, older clients) deletes every cursor. Every row copies its request's
+project (`request_project_id`) so a tab is one indexed read, and a request only moves from no project
+to one, so a scoped stream adds it to its new tab and never removes rows from another.
+The `assistant_team_state` view adds the counters clients show (`AssistantTeam.chat`, with per-tab
+`scopes`), so team reads select from the view, not the table; `ensureForkSchema` drops it before the
+migrations and recreates it after them on every start. Counter changes
 go out as `teamUpserted` through `refreshTeamChat`, which reaches the assistants stream but not
 `subscribeChanges`: reconciling the group on every message would be wasted work. Group finished
-notices are client-side (working to idle on that stream), like thread notices.
-The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes the finish
-as a completion of the last speaker's hidden thread, titled with the group and deep-linked to
-`/assistant-groups/<env>/<team>` (the relay takes any `/` path). Members' own completions are silent,
-so the relay worker needs no change.
+notices are client-side, like thread notices, and per tab: each scope carries its `openTasks` and
+`doneTasks` (working and stopped tasks), every task counts in exactly one tab (one with no request
+in General), and `assistantGroupFinishedScopes` reports a tab whose open count went to none while
+its stopped count rose. A request that gets a project mid-work moves its counts without a notice,
+even when another tab ends or opens in the same snapshot, so a tab stays listed while it has
+stopped tasks. General is then listed for its work with no request too, and `hasRequests` tells
+clients it has nothing else to show, so it gets no tab for that alone. Servers without `doneTasks`
+fall back to the group's open total falling.
+The mobile push is the exception: `AgentAwarenessRelay` watches the same stream and publishes each
+tab's finish as a completion of that tab's last speaker's hidden thread, titled with the group and
+deep-linked to `/assistant-groups/<env>/<team>?tab=<tab key>` (the relay takes any `/` path; apps
+older than the tab link reject it and open that thread instead). Tabs that end on one thread before
+its push goes out share that push, which names them and opens All. Members' own completions are
+silent, so the relay worker needs no change.
 
 A group's instructions and memories are columns on `assistant_teams` (`instructions`, `memories_json`)
 edited through `assistantTeams.update`, and every task packet carries them. Group memories are not in
@@ -222,6 +252,18 @@ These follow the row, none of them a new mechanism:
   or `backgroundWorkHoldsCompletion` holds it (the same rule as the task's parked status), minus
   pull request watches, which end silently on merge. The run that really ends reports. A failed,
   cancelled or interrupted run always reports.
+- Every run-end wake, from a task or a watch, goes through `TaskEventNotices`, the one door that
+  remembers what each assistant was told per subject thread (`assistant_task_notices`). A run is
+  judged with every run since the last notice (up to `WINDOW_RUNS`), so a run held by the rule above
+  or a failed send hands its news to the run that does report. With no answer to an agent and no
+  changed files in that window, no new HEAD and the same end state, it wakes no one. A new event
+  drops older queued events about the same task. A stopped run is judged at once; if that finds
+  nothing, its checkpoint can still make it news.
+- An assistant ends an event turn with `NO_REPLY` (`QUIET_REPLY`) when nothing is new.
+  `assistantRunReply` is the one exit for chat apps, group chat and autonomy delivery: a quiet event
+  turn posts nothing and other event turns send `briefReply`, while user and routine turns go out
+  whole. A reply is quiet only when it is the bare token (`isQuietReply`); text before a trailing
+  token goes out and shows without it (`withoutQuietToken`), on the server and in every client.
 - The same reactor wakes the owner when the task (or a `delegate_task` child of an assistant
   conversation) starts waiting on the user, from `NeedsUser.changes` (`autonomy/NeedsUser.ts`, the one
   definition of "waits on the user": pending non-machine requests and open decisions that are neither
@@ -339,7 +381,9 @@ through the same turn path as any message. Three things keep it from feeding its
 - Signals about `assistant:` threads, subagents, delegated children and side chats are dropped
   before any rule or watch is read. An assistant's own run therefore never triggers a rule.
 - A wake is keyed by (run or thread, event, rule or watch, assistant) in `autonomy_wakes`, claimed
-  before the send and given back if the send fails, so a replayed event wakes once.
+  before the send and given back if the send fails, so a replayed event wakes once. A run the
+  assistant was already told about spends a watch's claim but frees a rule's, so the interval below
+  only counts wakes that were sent.
 - Rule wakes also share a minimum interval per thread, and every wake counts against
   `maxWakesPerDay`. Watches are asked for, so only the daily cap limits them.
 

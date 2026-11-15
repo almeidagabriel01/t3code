@@ -1,3 +1,4 @@
+import { assistantGroupChatWaiting } from "@t3tools/client-runtime/assistantGroupChat";
 import { listedProjects } from "@t3tools/client-runtime/assistantSections";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -138,7 +139,12 @@ const AssistantRow = memo(function AssistantRow(props: {
     }
   };
   return (
-    <li className={cn("list-none py-px", props.nested && "ms-3.5 border-s border-foreground/10")}>
+    <li
+      className={cn(
+        "@container/assistant-row list-none py-px",
+        props.nested && "ms-3.5 border-s border-foreground/10",
+      )}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -171,18 +177,22 @@ const AssistantRow = memo(function AssistantRow(props: {
             />
           ) : null}
         </span>
-        <span className="max-w-[55%] shrink-0 truncate">{assistant.name}</span>
-        {assistant.role === "" ? null : (
-          <Badge variant="outline" size="sm" data-testid="assistant-role">
-            <span className="max-w-16 truncate">{assistant.role}</span>
-          </Badge>
-        )}
-        {props.environmentLabel ? (
-          <Badge variant="outline" size="sm">
-            <span className="max-w-24 truncate">{props.environmentLabel}</span>
-          </Badge>
-        ) : null}
-        <span className="flex-1" />
+        <span className="min-w-0 truncate">{assistant.name}</span>
+        {/* Chips get only the width the name leaves: past it they wrap onto a clipped line. */}
+        {/* Its negative margin takes back the row gap, so an empty clip leaves no hole. */}
+        <span className="-ms-2 flex h-5 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-4 overflow-hidden">
+          <span className="h-5 w-0" />
+          {assistant.role === "" ? null : (
+            <Badge variant="outline" size="sm" data-testid="assistant-role">
+              <span className="max-w-16 truncate">{assistant.role}</span>
+            </Badge>
+          )}
+          {props.environmentLabel ? (
+            <Badge variant="outline" size="sm">
+              <span className="max-w-24 truncate">{props.environmentLabel}</span>
+            </Badge>
+          ) : null}
+        </span>
         {meta !== null ? (
           <span
             data-testid="assistant-status"
@@ -201,7 +211,8 @@ const AssistantRow = memo(function AssistantRow(props: {
                 <span
                   data-testid="assistant-project"
                   aria-label={`Project: ${props.projectLabel}`}
-                  className="inline-flex shrink-0 items-center"
+                  // A narrow row keeps the name; Assistant settings in the row menu shows the project.
+                  className="inline-flex shrink-0 items-center @max-[14rem]/assistant-row:hidden"
                 />
               }
             >
@@ -367,30 +378,43 @@ function GroupRow(props: {
           }
         }}
       >
-        <HashIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
-        <span className="min-w-0 truncate">{team.name}</span>
-        {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
-        <span
-          className={cn(
-            "flex shrink-0 items-center ps-0.5",
-            props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
-          )}
-          data-testid="group-avatars"
-        >
-          {shown.map(({ assistant }) => (
-            <AssistantAvatar
-              key={assistant.id}
-              assistant={assistant}
-              className="-ms-1 size-4 shrink-0 first:ms-0"
+        {/* The dot sits on the icon, as on an assistant's face, so it takes no width from the faces. */}
+        <span className="relative inline-flex shrink-0">
+          <HashIcon aria-hidden className="size-4 text-(--sidebar-icon-color)" />
+          {assistantGroupChatWaiting(team.chat) ? (
+            <span
+              role="img"
+              aria-label="Waiting on you"
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-warning ring-2 ring-sidebar"
             />
-          ))}
-          {more > 0 ? (
-            <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
-              +{more}
-            </span>
           ) : null}
         </span>
-        <span className="flex-1" />
+        <span className="min-w-0 truncate">{team.name}</span>
+        {/* A narrow row drops the faces whole, sooner while it runs, so the name stays readable. */}
+        {/* The faces get only the width the name leaves: past it they wrap onto a clipped line. */}
+        <span className="-ms-2 flex h-4 min-w-0 flex-1 flex-wrap gap-y-4 overflow-hidden">
+          <span className="h-4 w-0" />
+          <span
+            className={cn(
+              "flex h-4 shrink-0 items-center ps-2.5",
+              props.running > 0 ? "@max-[19rem]/group-row:hidden" : "@max-[15rem]/group-row:hidden",
+            )}
+            data-testid="group-avatars"
+          >
+            {shown.map(({ assistant }) => (
+              <AssistantAvatar
+                key={assistant.id}
+                assistant={assistant}
+                className="-ms-1 size-4 shrink-0 first:ms-0"
+              />
+            ))}
+            {more > 0 ? (
+              <span className="shrink-0 ps-1 text-2xs font-normal text-muted-foreground tabular-nums">
+                +{more}
+              </span>
+            ) : null}
+          </span>
+        </span>
         {props.running > 0 ? (
           <span
             data-testid="group-status"

@@ -1,10 +1,13 @@
-import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
+import { ProviderInstanceId, type ModelSelection, type ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isPickedModelUsable,
   type ModelSelectionLayer,
   type ModelSelectionLayers,
+  projectModelLayer,
   resolveModelSelection,
+  teamModelLayer,
 } from "./modelSelectionPrecedence.ts";
 
 const pick = (model: string): ModelSelection => ({
@@ -70,5 +73,65 @@ describe("resolveModelSelection", () => {
       selection: pick("global"),
       layer: "global",
     });
+  });
+});
+
+describe("project and team layers", () => {
+  it.each([
+    ["environment", pick("x"), undefined],
+    ["project", pick("x"), pick("x")],
+    ["folder", pick("x"), pick("x")],
+    ["t3.json", null, undefined],
+  ] as const)("a %s default is the project layer: %j", (source, selection, expected) => {
+    expect(projectModelLayer(source, selection)).toEqual(expected);
+  });
+
+  const p = (id: string) => id as ProjectId;
+  const member = { projectId: p("home"), projectIds: [p("a")] };
+  it.each([
+    ["the group's own project", [p("g")], [member], "g", pick("team")],
+    ["a member's project", [p("g")], [member], "a", pick("team")],
+    ["a project outside the group", [p("g")], [member], "elsewhere", undefined],
+    ["any project of a group with none", [], [], "elsewhere", pick("team")],
+  ] as const)("the group's default holds in %s", (_, projectIds, members, projectId, expected) => {
+    expect(
+      teamModelLayer({ defaultModelSelection: pick("team"), projectIds }, members, p(projectId)),
+    ).toEqual(expected);
+    expect(teamModelLayer({ projectIds }, members, p(projectId))).toBeUndefined();
+  });
+});
+
+describe("isPickedModelUsable", () => {
+  const codex = ProviderInstanceId.make("codex");
+  const settings = {
+    providerInstances: {},
+    projectSettingsOverrides: {
+      ["off-here" as ProjectId]: { providerInstances: { [codex]: { enabled: false } } },
+    },
+  };
+  const listing = (...models: string[]) => [
+    { instanceId: codex, models: models.map((slug) => ({ slug })) },
+  ];
+  it.each([
+    [
+      "a model its provider lists, custom ones included",
+      "p",
+      listing("gpt-5", "mine"),
+      "mine",
+      true,
+    ],
+    ["a model its provider does not list", "p", listing("gpt-5"), "gone", false],
+    ["a provider the list lacks", "p", [], "gpt-5", true],
+    ["a provider no list names", "p", [{ instanceId: "other", models: [] }], "gpt-5", false],
+    ["a provider still probing, which lists none yet", "p", listing(), "gpt-5", true],
+    ["no provider list at all", "p", undefined, "gpt-5", true],
+    ["a provider the project turns off", "off-here", listing("gpt-5"), "gpt-5", false],
+  ] as const)("%s", (_name, projectId, providers, model, usable) => {
+    expect(
+      isPickedModelUsable(settings as never, projectId as ProjectId, providers as never, {
+        instanceId: codex,
+        model,
+      }),
+    ).toBe(usable);
   });
 });

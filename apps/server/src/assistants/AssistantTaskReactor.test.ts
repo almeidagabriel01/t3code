@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,6 +23,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Reactor from "./AssistantTaskReactor.ts";
 import * as Tasks from "./AssistantTasks.ts";
+import { TaskEventNotices } from "./TaskEventNotices.ts";
 
 const taskThread = ThreadId.make("thread-task");
 
@@ -119,7 +121,12 @@ const harness = (
     readonly changes?: ReadonlyArray<NeedsUser.UserWaitChange>;
   } = {},
 ) => {
+  /** Wait wakes, sent straight to the conversation. */
   const sends: Array<Record<string, unknown>> = [];
+  /** Run ends, offered to the notices door. */
+  const notices: Array<Record<string, unknown>> = [];
+  const folded: Array<string> = [];
+  const allFolded = Deferred.makeUnsafe<void>();
   const dispatched: Array<Record<string, unknown>> = [];
   /** Lets a test await sends that a forked loop makes. */
   const onSend: { current: (input: unknown) => Effect.Effect<void> } = {
@@ -196,10 +203,24 @@ const harness = (
                   Effect.as({} as never),
                 ),
         }),
+        Layer.mock(TaskEventNotices)({
+          send: (notice) =>
+            options.failSend === true
+              ? Effect.succeed("failed" as const)
+              : Effect.sync(() => {
+                  notices.push(notice as never);
+                  return "sent" as const;
+                }),
+          foldQueued: (threadId) =>
+            Effect.suspend(() => {
+              folded.push(threadId);
+              return folded.length === 2 ? Deferred.succeed(allFolded, undefined) : Effect.void;
+            }),
+        }),
       ),
     ),
   );
-  return { sends, dispatched, onSend, layer };
+  return { sends, notices, folded, allFolded, dispatched, onSend, layer };
 };
 
 const insertAssistant = (id: string, archived = false) =>
@@ -247,9 +268,9 @@ const setup = (archived = false) =>
   });
 
 it.effect(
-  "a task run that ends wakes its assistant once, with the thread and its last message",
+  "a task run that ends is offered to its assistant through the notices door, with its last message",
   () => {
-    const { sends, layer } = harness();
+    const { notices: sends, layer } = harness();
     return Effect.gen(function* () {
       yield* setup();
       const reactor = yield* Reactor.AssistantTaskReactor;
@@ -257,24 +278,25 @@ it.effect(
       yield* reactor.handle(runEvent(taskThread, "completed", "run.created"));
       assert.strictEqual(sends.length, 2);
       const [sent] = sends;
-      // Both events name the same run, so they send the same message and command id.
+      // Both events name the same run, so they offer the same message id; the door tells it once.
       assert.strictEqual(sends[0]?.messageId, sends[1]?.messageId);
       assert.strictEqual(sent?.messageId, "assistant-task:run-completed");
       assert.strictEqual(sent?.threadId, "assistant:jarvis:1");
       // The send targets the assistant's thread, so it names the assistant's project, not the task's.
       assert.strictEqual(sent?.projectId, "assistants-home");
       assert.strictEqual(sent?.senderThreadId, taskThread);
-      assert.strictEqual(sent?.mode, "queue");
+      assert.strictEqual((sent?.run as { id: string } | undefined)?.id, "run-completed");
       const text = String(sent?.text);
       assert.include(text, "finished");
       assert.include(text, "Done: retry added");
       assert.include(text, "t3_thread_send");
+      assert.include(text, "NO_REPLY");
     }).pipe(Effect.provide(layer));
   },
 );
 
 it.effect("a failed run says so", () => {
-  const { sends, layer } = harness();
+  const { notices: sends, layer } = harness();
   return Effect.gen(function* () {
     yield* setup();
     yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "failed"));
@@ -283,7 +305,7 @@ it.effect("a failed run says so", () => {
 });
 
 it.effect("a run still going, another thread, and an archived assistant wake no one", () => {
-  const { sends, layer } = harness();
+  const { notices: sends, layer } = harness();
   return Effect.gen(function* () {
     yield* setup(true);
     const reactor = yield* Reactor.AssistantTaskReactor;
@@ -300,6 +322,17 @@ it.effect("a wake that cannot be sent is logged and does not stop the reactor", 
   return Effect.gen(function* () {
     yield* setup();
     yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("starting folds the backlog of every active assistant thread", () => {
+  const { folded, allFolded, layer } = harness();
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* insertAssistant("second");
+    const reactor = yield* Reactor.AssistantTaskReactor;
+    yield* Effect.scoped(reactor.start().pipe(Effect.andThen(Deferred.await(allFolded))));
+    assert.sameMembers(folded, ["assistant:jarvis:1", "assistant:second:1"]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -335,6 +368,7 @@ it.effect("a task that waits on an approval wakes its assistant once, with the o
     assert.include(text, "pnpm publish");
     assert.include(text, "Options: Approve / Deny");
     assert.include(text, "Never approve");
+    assert.include(text, "reply with exactly NO_REPLY");
   }).pipe(Effect.provide(layer));
 });
 
@@ -516,14 +550,14 @@ it.effect("a run that ends while its thread resumes by itself does not report fi
         yield* setupAda();
         yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
       }).pipe(Effect.provide(h.layer));
-      assert.strictEqual(h.sends.length, 0);
+      assert.strictEqual(h.notices.length, 0);
     }
     // A failure always reports, whatever it left behind.
     yield* Effect.gen(function* () {
       yield* setupAda();
       yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "failed"));
     }).pipe(Effect.provide(failedWithWork.layer));
-    assert.strictEqual(failedWithWork.sends.length, 1);
+    assert.strictEqual(failedWithWork.notices.length, 1);
   });
 });
 
@@ -543,8 +577,8 @@ it.effect(
     return Effect.gen(function* () {
       yield* setupAda();
       yield* (yield* Reactor.AssistantTaskReactor).handle(runEvent(taskThread, "completed"));
-      assert.strictEqual(h.sends.length, 1);
-      assert.include(String(h.sends[0]?.text), "finished");
+      assert.strictEqual(h.notices.length, 1);
+      assert.include(String(h.notices[0]?.text), "finished");
     }).pipe(Effect.provide(h.layer));
   },
 );

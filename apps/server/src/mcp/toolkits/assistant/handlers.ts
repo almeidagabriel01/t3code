@@ -331,6 +331,14 @@ const mutate = Effect.fn("mcp.assistant.mutate")(function* (input: AssistantPara
           text: input.text.trim(),
           ...(input.paths === undefined ? {} : { paths: input.paths }),
           ...(input.projectId === undefined ? {} : { project: input.projectId }),
+          ...(input.model === undefined
+            ? {}
+            : {
+                modelSelection: {
+                  instanceId: input.model.providerInstanceId,
+                  model: input.model.model,
+                },
+              }),
           clientRequestId: key,
         })
         .pipe(Effect.mapError(failure));

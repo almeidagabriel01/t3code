@@ -15,6 +15,7 @@ import {
 import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 
 import { cn } from "../lib/cn";
+import { AppActivityIndicator } from "./ui/AppActivityIndicator";
 import { AppText as Text } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
@@ -279,6 +280,8 @@ export function ComposerActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
+  /** Its action is under way: a spinner in place of the icon, and no press until it ends. */
+  readonly busy?: boolean;
   // Menu injects onLongPress on Android and onTouchStart/onPress on iOS.
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
@@ -289,10 +292,10 @@ export function ComposerActionButton(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled }}
+      accessibilityState={{ disabled: props.disabled || props.busy, busy: props.busy }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
       style={props.size === "large" ? { width: 62 } : undefined}
-      disabled={props.disabled}
+      disabled={props.disabled || props.busy}
       onPress={props.onPress}
       onLongPress={props.onLongPress}
       onTouchStart={props.onTouchStart}
@@ -303,24 +306,28 @@ export function ComposerActionButton(props: {
           "items-center justify-center rounded-full",
           props.variant === "danger"
             ? "bg-danger"
-            : props.disabled
+            : props.disabled && !props.busy
               ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
-        <SymbolView
-          name={props.icon}
-          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
-          weight="semibold"
-          tintColorClassName={
-            props.variant === "danger"
-              ? "accent-danger-foreground"
-              : props.disabled
-                ? "accent-foreground/38"
-                : "accent-primary-foreground"
-          }
-          type="monochrome"
-        />
+        {props.busy ? (
+          <AppActivityIndicator size="small" colorClassName="accent-primary-foreground" />
+        ) : (
+          <SymbolView
+            name={props.icon}
+            size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
+            weight="semibold"
+            tintColorClassName={
+              props.variant === "danger"
+                ? "accent-danger-foreground"
+                : props.disabled
+                  ? "accent-foreground/38"
+                  : "accent-primary-foreground"
+            }
+            type="monochrome"
+          />
+        )}
       </View>
     </Pressable>
   );

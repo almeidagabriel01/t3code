@@ -101,6 +101,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
 import { TimelineMinimap } from "./TimelineMinimap";
+import { WorkedForFold } from "./WorkedForFold";
 import { attachTimelineJump } from "./timelineJump";
 import {
   type TimelineRowSharedState,
@@ -110,7 +111,7 @@ import {
   type WorkGroupViewState,
   type TimelineRow,
 } from "./timelineRowContext";
-import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
+import { ActivityShimmerOverlay } from "./TimelineRowParts";
 import {
   WorkGroupSection,
   WorkingTimelineRow,
@@ -1681,34 +1682,17 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
   );
 
   return (
-    <div className="group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1">
-      <div className="relative flex items-center gap-1">
-        <button
-          type="button"
-          aria-expanded={row.expanded}
-          data-scroll-anchor-ignore
-          onClick={toggle}
-          aria-busy={loading}
-          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        >
-          <span>
-            {row.label}
-            {error ? ` · ${error}` : ""}
-          </span>
-          {row.expanded ? (
-            <ChevronDownIcon className="size-3.5" />
-          ) : (
-            <ChevronRightIcon className="size-3.5" />
-          )}
-        </button>
-        <TimelineRowTimestamp
-          createdAt={row.createdAt}
-          timestampFormat={ctx.timestampFormat}
-          className="ms-auto"
-        />
-      </div>
+    <WorkedForFold
+      label={row.label}
+      expanded={row.expanded}
+      loading={loading}
+      error={error}
+      onToggle={toggle}
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+    >
       {loading ? <WorkHistorySkeleton /> : null}
-    </div>
+    </WorkedForFold>
   );
 }
 

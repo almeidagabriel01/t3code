@@ -49,6 +49,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
@@ -355,6 +356,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
       listShells: unused,
       getById: () => Effect.succeedSome(project),
     }),
+    Effect.provideService(ManagedProjectFolders, {
+      namedProjectsRoot: "",
+      isAssistantHomeProject: (id: string) => Effect.succeed(id === "home-project"),
+    } as never),
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
@@ -640,19 +645,32 @@ describe("AgentAwarenessRelay", () => {
 
   describe("assistant group finish", () => {
     const GROUP_THREAD = ThreadId.make("assistant:lead:g-abc");
-    const team = (working: boolean, archivedAt: string | null = null) =>
+    const DOCS_THREAD = ThreadId.make("assistant:ada:g-def");
+    /** The group's working tasks per tab (`null` = General). */
+    const team = (
+      open: ReadonlyArray<readonly [string | null, number]>,
+      archivedAt: string | null = null,
+    ) =>
       decodeTeam({
         id: "team-1",
         name: "Release crew",
-        memberIds: ["lead"],
+        memberIds: ["lead", "ada"],
         leadId: "lead",
         archivedAt,
         chat: {
           latestSeq: 2,
           readSeq: 0,
           unreadCount: 1,
-          working,
-          preview: "Shipped  the\nrelease",
+          working: open.length > 0,
+          preview: "The group's latest line",
+          previewProjectId: "project-2",
+          scopes: open.map(([projectId, openTasks]) => ({
+            projectId,
+            unreadCount: 0,
+            waiting: false,
+            readSeq: 0,
+            openTasks,
+          })),
         },
         createdAt: NOW,
         updatedAt: NOW,
@@ -664,22 +682,27 @@ describe("AgentAwarenessRelay", () => {
         teamEvents: Stream.fromEffectRepeat(
           Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
         ),
+        readShell: (id) =>
+          Effect.succeed(
+            shell({
+              id,
+              status: "completed",
+              latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
+            }),
+          ),
       });
-      // The member answered in its conversation for the request.
+      // Each member answered in its conversation for its request, one per project.
       yield* made.sql`INSERT INTO assistant_group_request_threads
         (request_id, assistant_id, team_id, thread_id)
-        VALUES ('m0', 'lead', 'team-1', ${GROUP_THREAD})`;
+        VALUES ('m0', 'lead', 'team-1', ${GROUP_THREAD}), ('m5', 'ada', 'team-1', ${DOCS_THREAD})`;
       yield* made.sql`INSERT INTO assistant_group_messages
-        (message_id, team_id, seq, author, assistant_id, kind, text, request_id, created_at)
-        VALUES ('m1', 'team-1', 1, 'assistant', 'lead', 'message', 'Shipped', 'm0', ${NOW})`;
-      yield* Ref.set(
-        made.currentShell,
-        shell({
-          id: GROUP_THREAD,
-          status: "completed",
-          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
-        }),
-      );
+        (message_id, team_id, seq, author, assistant_id, kind, text, request_id,
+          request_project_id, created_at)
+        VALUES
+          ('m1', 'team-1', 1, 'assistant', 'lead', 'message', 'Shipped  the\nrelease', 'm0',
+            'project-1', ${NOW}),
+          ('m6', 'team-1', 2, 'assistant', 'ada', 'message', 'Docs are done', 'm5',
+            'home-project', ${NOW})`;
       yield* made.relay.start();
       yield* Queue.take(pulls);
       const send = Effect.fnUntraced(function* (event: AssistantsEvent) {
@@ -687,37 +710,142 @@ describe("AgentAwarenessRelay", () => {
         yield* Queue.take(pulls);
         yield* made.relay.drain;
       });
-      yield* send({ type: "snapshot", assistants: [], teams: [team(true)], tasks: [] });
+      yield* send({
+        type: "snapshot",
+        assistants: [],
+        teams: [
+          team([
+            ["project-1", 1],
+            ["home-project", 1],
+          ]),
+        ],
+        tasks: [],
+      });
       return { ...made, send };
     });
     const alerts = (
       publications: ReadonlyArray<{ readonly state: RelayAgentActivityState | null }>,
     ) => publications.flatMap((publication) => (publication.state ? [publication.state] : []));
+    const settle = Effect.fnUntraced(function* (
+      relay: AgentAwarenessRelay.AgentAwarenessRelay["Service"],
+    ) {
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+    });
 
-    it.effect("pushes the group once per working to idle, silencing the member's own", () =>
+    it.effect("pushes each project once its own work ends, silencing the member's own", () =>
       Effect.gen(function* () {
         const { relay, publications, send } = yield* setup;
         yield* relay.publishThread(GROUP_THREAD);
-        yield* send({ type: "teamUpserted", team: team(false) });
-        yield* send({ type: "teamUpserted", team: team(false) });
-        yield* TestClock.adjust("5 seconds");
-        yield* relay.drain;
-        const pushed = alerts(publications);
-        assert.equal(pushed.length, 1);
-        assert.equal(pushed[0]?.phase, "completed");
-        assert.equal(pushed[0]?.threadTitle, "Release crew");
-        assert.equal(pushed[0]?.projectTitle, "Shipped the release");
-        assert.equal(pushed[0]?.deepLink, "/assistant-groups/relay-environment/team-1");
+        // Project 1 ends while the home project still runs: it is announced on its own.
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* settle(relay);
+        const first = alerts(publications);
+        assert.deepStrictEqual(
+          first.map((alert) => [alert.threadId, alert.projectTitle, alert.deepLink]),
+          [
+            [
+              GROUP_THREAD,
+              "[Project] Shipped the release",
+              "/assistant-groups/relay-environment/team-1?tab=project%3Aproject-1",
+            ],
+          ],
+        );
+        assert.equal(first[0]?.phase, "completed");
+        assert.equal(first[0]?.threadTitle, "Release crew");
+        // Later the other project ends: a second push, with its own line and tab.
+        yield* send({ type: "teamUpserted", team: team([]) });
+        yield* settle(relay);
+        assert.deepStrictEqual(
+          alerts(publications)
+            .slice(first.length)
+            .map((alert) => [alert.threadId, alert.projectTitle, alert.deepLink]),
+          [
+            [
+              DOCS_THREAD,
+              "Docs are done",
+              "/assistant-groups/relay-environment/team-1?tab=project%3Ahome-project",
+            ],
+          ],
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("pushes nothing while a request only moves its work to a project", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send } = yield* setup;
+        yield* send({
+          type: "teamUpserted",
+          team: team([
+            [null, 1],
+            ["home-project", 1],
+          ]),
+        });
+        yield* settle(relay);
+        assert.equal(alerts(publications).length, 0);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("joins two tabs that end on one thread into a push for All", () =>
+      Effect.gen(function* () {
+        const { relay, publications, send, sql } = yield* setup;
+        // The lead's last General line has no request, so it lives in the lead's group thread.
+        yield* sql`INSERT INTO assistant_group_threads (team_id, assistant_id, thread_id)
+          VALUES ('team-1', 'lead', ${GROUP_THREAD})`;
+        yield* sql`INSERT INTO assistant_group_messages
+          (message_id, team_id, seq, author, assistant_id, kind, text, created_at)
+          VALUES ('m7', 'team-1', 3, 'assistant', 'lead', 'message', 'Noted', ${NOW})`;
+        yield* send({
+          type: "teamUpserted",
+          team: team([
+            ["project-1", 1],
+            ["home-project", 1],
+            [null, 1],
+          ]),
+        });
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* settle(relay);
+        assert.deepStrictEqual(
+          alerts(publications).map((alert) => [alert.threadId, alert.projectTitle, alert.deepLink]),
+          [
+            [
+              GROUP_THREAD,
+              "Work finished: Project, General",
+              "/assistant-groups/relay-environment/team-1?tab=all",
+            ],
+          ],
+        );
+        // Once that push is out, the next end on the thread is its own tab's push again.
+        yield* send({
+          type: "teamUpserted",
+          team: team([
+            ["project-1", 1],
+            ["home-project", 1],
+          ]),
+        });
+        yield* send({ type: "teamUpserted", team: team([["home-project", 1]]) });
+        yield* settle(relay);
+        assert.deepStrictEqual(
+          alerts(publications)
+            .slice(1)
+            .map((alert) => [alert.projectTitle, alert.deepLink]),
+          [
+            [
+              "[Project] Shipped the release",
+              "/assistant-groups/relay-environment/team-1?tab=project%3Aproject-1",
+            ],
+          ],
+        );
       }).pipe(Effect.scoped),
     );
 
     it.effect("pushes nothing for an archived group or a member finishing alone", () =>
       Effect.gen(function* () {
         const { relay, publications, send } = yield* setup;
-        yield* send({ type: "teamUpserted", team: team(false, NOW) });
+        yield* send({ type: "teamUpserted", team: team([], NOW) });
         yield* relay.publishThread(GROUP_THREAD);
-        yield* TestClock.adjust("5 seconds");
-        yield* relay.drain;
+        yield* settle(relay);
         assert.equal(alerts(publications).length, 0);
       }).pipe(Effect.scoped),
     );

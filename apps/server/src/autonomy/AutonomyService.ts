@@ -43,6 +43,9 @@ import type { SqlError } from "effect/sql/SqlError";
 
 import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
+import type { TurnOrigin } from "../mcp/turnOrigin.ts";
+import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
 import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
@@ -229,6 +232,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const spend = yield* AssistantSpend;
+  const notices = yield* TaskEventNotices;
   const budgetGate = yield* ProviderBudgetGate;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
@@ -426,26 +430,42 @@ const make = Effect.gen(function* () {
       diffStat: null,
     });
     const id = `${WAKE_MESSAGE_PREFIX}${wakeKey}`;
-    const sent = yield* threads
-      .sendToThread({
-        projectId: assistant.projectId,
-        commandId: CommandId.make(id),
-        messageId: MessageId.make(id),
+    const giveBack = sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
+    if (signal.run !== undefined) {
+      // A run's end is a task event: told once per change, whichever of a watch or a task reports it.
+      const outcome = yield* notices.send({
         threadId: assistant.threadId as ThreadId,
+        projectId: assistant.projectId,
+        run: signal.run,
+        messageId: id,
         text,
-        attachments: [],
-        mode: "queue",
         createdBy: "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.result);
-    if (sent._tag === "Failure") {
-      // Give the claim back so the next occurrence may try again.
-      yield* sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
-      return yield* Effect.logWarning("autonomy wake could not be sent", {
-        assistantId: assistant.id,
-        cause: sent.failure,
       });
+      // A watch already told about this run is spent; anything else unsent frees its claim,
+      // so a rule's interval and daily cap count only wakes that reached the assistant.
+      if (outcome !== "sent" && !(isWatch && outcome === "unchanged")) return yield* giveBack;
+    } else {
+      const sent = yield* threads
+        .sendToThread({
+          projectId: assistant.projectId,
+          commandId: CommandId.make(id),
+          messageId: MessageId.make(id),
+          threadId: assistant.threadId as ThreadId,
+          text,
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      if (sent._tag === "Failure") {
+        // Give the claim back so the next occurrence may try again.
+        yield* giveBack;
+        return yield* Effect.logWarning("autonomy wake could not be sent", {
+          assistantId: assistant.id,
+          cause: sent.failure,
+        });
+      }
     }
     if (isWatch) {
       const watch = candidate.source.watch;
@@ -582,14 +602,6 @@ const make = Effect.gen(function* () {
       Effect.map((environmentId) => hostedThreadLink({ environmentId, threadId })),
     );
 
-  const projectName = (projectId: string | null) =>
-    projectId === null
-      ? Effect.succeed(null)
-      : projects.getById(projectId as ProjectId).pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (project) => project.title })),
-          Effect.orElseSucceed(() => null),
-        );
-
   type FinishedRun = {
     readonly id: string;
     readonly threadId: ThreadId;
@@ -601,13 +613,15 @@ const make = Effect.gen(function* () {
     run: FinishedRun,
     label: string,
     config: AutonomySettings,
+    origin: TurnOrigin,
   ) {
     const assistantRows = yield* sql<AssistantRow>`
       SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
     if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
     const render = yield* answerOf(run);
-    const text = render("en");
+    // A wake is an event: a quiet end tells no one, and chat apps get the short version.
+    const text = assistantRunReply(render("en"), origin);
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
     const chat = yield* ownerChat(channels);
@@ -623,8 +637,9 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-run:${run.id}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
-          text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
+          text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), origin) ?? text}`,
           markdown: true,
           language,
         });
@@ -654,7 +669,7 @@ const make = Effect.gen(function* () {
     const wakes = yield* sql<{ readonly label: string }>`
       SELECT label FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
     if (wakes[0] === undefined) return;
-    yield* deliverResult(run, wakes[0].label, config);
+    yield* deliverResult(run, wakes[0].label, config, "other");
   });
 
   /** A schedule in an assistant's own conversation ended: its answer reaches the user like a wake's. */
@@ -669,7 +684,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_team_id IS NULL AND substr(${fireKey}, 1, length(task_id) + 1) = task_id || ':'
       ORDER BY length(task_id) DESC LIMIT 1`;
     if (tasks[0] === undefined) return;
-    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config);
+    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config, "routine");
   });
 
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(
@@ -725,6 +740,7 @@ const make = Effect.gen(function* () {
             projectId: null,
             prNumber: null,
             summary: `A run ${run.status === "completed" ? "finished" : run.status}.`,
+            run,
           });
           return;
         }
@@ -1073,7 +1089,6 @@ const make = Effect.gen(function* () {
         agent: input.agent,
         title: shown.title,
         context: input.context?.(language) ?? shown.context,
-        projectName: yield* projectName(input.projectId),
         threadTitle: input.threadTitle,
         link: yield* linkTo(input.threadId),
         answerable: input.answerable,
@@ -1083,6 +1098,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: chat,
+      projectId: input.projectId as ProjectId | null,
       senderName: "T3 Code",
       text: card.text,
       ...(card.answerable
@@ -1534,6 +1550,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-notify:${input.key}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
           text: withLink(language),
           markdown: true,

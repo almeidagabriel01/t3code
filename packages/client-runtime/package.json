@@ -331,6 +331,10 @@
       "types": "./src/assistantTasks.ts",
       "default": "./src/assistantTasks.ts"
     },
+    "./messageFold": {
+      "types": "./src/messageFold.ts",
+      "default": "./src/messageFold.ts"
+    },
     "./scheduledTaskWording": {
       "types": "./src/scheduledTaskWording.ts",
       "default": "./src/scheduledTaskWording.ts"

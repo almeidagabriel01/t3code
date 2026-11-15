@@ -38,7 +38,6 @@ export interface ChannelStrings {
   readonly answered: (chosen: string) => string;
   /** The first line of a notice that something waits on the user. */
   readonly waitingForYou: (agent: string) => string;
-  readonly projectLabel: string;
   readonly threadLabel: string;
   readonly openInT3: string;
   readonly answerInT3: string;
@@ -123,7 +122,6 @@ const en: ChannelStrings = {
   dismissed: "Dismissed",
   answered: (chosen) => `Answered: ${chosen}`,
   waitingForYou: (agent) => `${agent} is waiting for you`,
-  projectLabel: "Project:",
   threadLabel: "Thread:",
   openInT3: "Open in T3:",
   answerInT3: "Answer it in T3.",
@@ -209,7 +207,6 @@ const ptBR: ChannelStrings = {
   dismissed: "Dispensado",
   answered: (chosen) => `Respondido: ${chosen}`,
   waitingForYou: (agent) => `${agent} está esperando você`,
-  projectLabel: "Projeto:",
   threadLabel: "Thread:",
   openInT3: "Abrir no T3:",
   answerInT3: "Responda no T3.",

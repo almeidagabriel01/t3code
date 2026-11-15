@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { createModelSelection, formatModelSlugName } from "@t3tools/shared/model";
 import { PlusIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -30,10 +30,14 @@ export function SelectionPicker(
     readonly label: string;
     readonly disabled: boolean;
     readonly composer?: boolean;
+    /** Draws the model as a dialog's form field: full width, beside its effort. */
+    readonly field?: boolean;
     /** Where the value comes from, for the tooltip and screen readers. */
     readonly detail?: string;
     /** Names the trigger instead of the selection, which then only seeds the menu; hides effort. */
     readonly placeholder?: string;
+    /** Under the model list: a way back to the default, hidden while searching. */
+    readonly resetRow?: ReactNode;
     readonly onChange: (selection: ModelSelection) => void;
   },
 ) {
@@ -44,13 +48,21 @@ export function SelectionPicker(
       className={
         props.composer
           ? "flex min-w-0 items-center gap-1"
-          : "flex min-w-0 flex-wrap items-center gap-1.5"
+          : props.field
+            ? "flex w-full min-w-0 items-center gap-1.5 self-stretch"
+            : "flex min-w-0 flex-wrap items-center gap-1.5"
       }
     >
       <ProviderModelPicker
         {...modelPickerProps(props, props.settings, props.providers, selection)}
         {...(props.composer ? { size: "xs" as const, triggerClassName: "" } : {})}
+        {...(props.field
+          ? {
+              triggerClassName: `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-none flex-1 shrink text-start sm:max-w-none`,
+            }
+          : {})}
         triggerAriaLabel={props.label}
+        resetRow={props.resetRow}
         {...(props.detail === undefined ? {} : { triggerDetail: props.detail })}
         // A provider that is gone or off cannot name its model; the slug still reads cleanly.
         {...(props.placeholder !== undefined

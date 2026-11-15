@@ -8,6 +8,7 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { FoldableContent } from "../../components/FoldableContent";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { useNowMinuteMs } from "../../lib/clock";
@@ -27,7 +28,6 @@ function Context(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const styles = useMarkdownPreviewStyles();
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   // Cards also render outside any screen (the tablet sidebar), so links resolve from the decision.
@@ -42,31 +42,13 @@ function Context(props: {
   const foldable =
     props.markdown.length > CONTEXT_FOLD_LENGTH || props.markdown.split("\n").length > 5;
   return (
-    <View className="items-start gap-1">
-      <View
-        className="w-full overflow-hidden"
-        style={foldable && !expanded ? { maxHeight: CONTEXT_FOLDED_HEIGHT } : undefined}
-      >
-        <SelectableMarkdownText
-          markdown={markdown}
-          textStyle={styles.nativeTextStyle}
-          onLinkPress={(href) => void openLink(href)}
-        />
-      </View>
-      {foldable ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded }}
-          hitSlop={8}
-          onPress={() => setExpanded((value) => !value)}
-          className="active:opacity-70"
-        >
-          <Text className="font-t3-medium text-xs text-foreground-secondary">
-            {expanded ? "Show less" : "Show more"}
-          </Text>
-        </Pressable>
-      ) : null}
-    </View>
+    <FoldableContent foldable={foldable} foldedHeight={CONTEXT_FOLDED_HEIGHT}>
+      <SelectableMarkdownText
+        markdown={markdown}
+        textStyle={styles.nativeTextStyle}
+        onLinkPress={(href) => void openLink(href)}
+      />
+    </FoldableContent>
   );
 }
 
