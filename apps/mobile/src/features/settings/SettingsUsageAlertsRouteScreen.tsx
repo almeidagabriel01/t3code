@@ -113,6 +113,7 @@ function EnvironmentAlerts(props: {
                   accessibilityLabel={`${row.label}, ${value}`}
                   accessibilityState={{ disabled: !allowed }}
                   disabled={!allowed}
+                  className="active:opacity-70"
                 >
                   <ListRowLayout
                     label={row.label}
