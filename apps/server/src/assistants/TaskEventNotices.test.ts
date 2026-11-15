@@ -3,6 +3,7 @@ import { ProjectId, ThreadId, type OrchestrationV2Run } from "@t3tools/contracts
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -139,6 +140,41 @@ const launched = (h: ReturnType<typeof harness>) =>
     h.state.started.set("launch", { id: "launch", senderThreadId: assistantThread });
     h.state.files.set("checkpoint:r1", 4);
     return yield* (yield* TaskEventNotices).send(notice(run("r1", { startedBy: "launch" })));
+  });
+
+/** The task's runs as the projection holds them: what started each, and its checkpoint's files. */
+const projected = (
+  runs: ReadonlyArray<{
+    readonly id: string;
+    readonly ordinal: number;
+    readonly askedBy?: ThreadId;
+    readonly files?: number;
+  }>,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    for (const entry of runs) {
+      const payload = {
+        userMessageId: `message:${entry.id}`,
+        checkpointId: `checkpoint:${entry.id}`,
+      };
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES (${entry.id}, ${taskThread}, ${entry.ordinal}, 'codex', 'completed', '2026-01-01',
+          ${JSON.stringify(payload)})`;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_messages
+          (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+        VALUES (${payload.userMessageId}, ${taskThread}, ${entry.id}, 'user', 0, '2026-01-01',
+          '2026-01-01', ${JSON.stringify(entry.askedBy === undefined ? {} : { senderThreadId: entry.askedBy })})`;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_checkpoints
+          (checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope, status,
+            captured_at, payload_json)
+        VALUES (${payload.checkpointId}, ${taskThread}, 'scope', ${entry.id}, 'node', ${entry.ordinal},
+          'ready', '2026-01-01', ${JSON.stringify({ files: Array.from({ length: entry.files ?? 0 }, () => ({})) })})`;
+    }
   });
 
 it.effect("a run with no diff, no new commit and the same status wakes no one", () => {
@@ -322,5 +358,55 @@ it.effect("unreadable thread facts count as no facts, and a defect in the door s
     assert.deepStrictEqual(h.cancelled, []);
     h.state.dieSend = true;
     assert.strictEqual(yield* notices.send(notice(run("r6", { status: "interrupted" }))), "failed");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a run that resumes a held one carries what the held run did", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* launched(h);
+    // r2 was asked for and changed files, then parked on subagents, so no one was told; r3 resumes
+    // it and ends with nothing of its own.
+    yield* projected([
+      { id: "r1", ordinal: 1, askedBy: assistantThread, files: 4 },
+      { id: "r2", ordinal: 2, askedBy: assistantThread, files: 3 },
+      { id: "r3", ordinal: 3 },
+    ]);
+    assert.strictEqual(yield* (yield* TaskEventNotices).send(notice(run("r3"))), "sent");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a told run closes the window: what came before it is never told again", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* launched(h);
+    const notices = yield* TaskEventNotices;
+    yield* projected([
+      { id: "r1", ordinal: 1, askedBy: assistantThread, files: 4 },
+      { id: "r2", ordinal: 2, askedBy: assistantThread, files: 3 },
+      { id: "r3", ordinal: 3 },
+      { id: "r4", ordinal: 4 },
+    ]);
+    assert.strictEqual(yield* notices.send(notice(run("r3"))), "sent");
+    assert.strictEqual(yield* notices.send(notice(run("r4"))), "unchanged");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a send that fails keeps the window open, so the next run end still tells it", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* launched(h);
+    const notices = yield* TaskEventNotices;
+    yield* projected([
+      { id: "r1", ordinal: 1, askedBy: assistantThread, files: 4 },
+      { id: "r2", ordinal: 2, askedBy: assistantThread, files: 3 },
+      { id: "r3", ordinal: 3 },
+    ]);
+    h.state.started.set("ask", { id: "ask", senderThreadId: assistantThread });
+    h.state.files.set("checkpoint:r2", 3);
+    h.state.failSend = true;
+    assert.strictEqual(yield* notices.send(notice(run("r2", { startedBy: "ask" }))), "failed");
+    h.state.failSend = false;
+    assert.strictEqual(yield* notices.send(notice(run("r3"))), "sent");
   }).pipe(Effect.provide(h.layer));
 });
