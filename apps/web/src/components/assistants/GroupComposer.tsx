@@ -50,9 +50,8 @@ import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
-import { useProject, useQuietThreadShell, useServerConfigs } from "~/state/entities";
-import { useEnvironmentProviders } from "~/state/environments";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useProject, useQuietThreadShell } from "~/state/entities";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import {
   ComposerPromptEditorTiptap,
@@ -296,16 +295,16 @@ function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
     lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
   );
   const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
-  const settings = useServerConfigs().get(environmentId)?.settings;
-  const providers = useEnvironmentProviders().get(environmentId);
+  // This environment's config only: the all-environment maps change with every other one.
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const leadCanRoute =
-    lead === null || settings === undefined || providers === undefined
+    lead === null || config == null
       ? undefined
       : assistantGroupLeadCanRoute({
           lead,
           threadModel: thread?.modelSelection,
-          settings,
-          providers,
+          settings: config.settings,
+          providers: config.providers,
           project,
         });
   return (
