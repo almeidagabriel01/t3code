@@ -102,6 +102,16 @@ describe("decideUsageLimitAlert", () => {
       [1],
     ],
     [
+      // Reaching 0% is the limit itself: AutonomyService's usage-limit notice tells that one.
+      "falling from the threshold to 0% sends no second threshold alert",
+      [
+        [15, DAY],
+        [5, DAY],
+        [0, DAY],
+      ],
+      [0],
+    ],
+    [
       "a reset moving by seconds is the same window",
       [
         [10, DAY],
