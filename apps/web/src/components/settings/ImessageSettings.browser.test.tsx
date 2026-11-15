@@ -114,7 +114,7 @@ it("says how many replies never reached Messages and resends them", async () => 
   await expect.element(page.getByText("3 replies did not reach Messages.")).toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Resend" }));
   await vi.waitFor(() => expect(fakeImessage.resends).toBe(1), { timeout: 10_000 });
-  await expect.element(page.getByText("Undelivered replies")).not.toBeInTheDocument();
+  await expect.element(page.getByText("Resend undelivered replies")).not.toBeInTheDocument();
 });
 
 it("shows live status and the last delivery failure", async () => {

@@ -17,7 +17,9 @@ vi.mock("@effect/atom-react", () => ({
       ? mocks.event
         ? AsyncResult.success(mocks.event)
         : AsyncResult.initial()
-      : true,
+      : atom === "resent"
+        ? null
+        : true,
 }));
 vi.mock("@t3tools/client-runtime/state/imessageChannel", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -26,6 +28,8 @@ vi.mock("@t3tools/client-runtime/state/imessageChannel", async (importOriginal) 
     access: () => "access",
     status: () => "status",
     configure: { permissionAtom: () => "permission" },
+    resendUndelivered: { permissionAtom: () => "permission" },
+    undeliveredResend: () => "resent",
   }),
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({

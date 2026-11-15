@@ -129,9 +129,16 @@ it("says how many replies never reached Telegram and resends them", async () => 
   await expect.element(page.getByText("2 replies did not reach Telegram.")).toBeVisible();
   publishTelegramStatus({ status: "running", undeliveredCount: 1 });
   await expect.element(page.getByText("1 reply did not reach Telegram.")).toBeVisible();
-  await userEvent.click(page.getByRole("button", { name: "Resend" }));
-  await eventually(() => expect(fakeTelegram.resends).toBe(1));
-  await expect.element(page.getByText("Undelivered replies")).not.toBeInTheDocument();
+  // The server answers, but the live status stays quiet: the answer alone clears the row.
+  let release = () => {};
+  fakeTelegram.resendHeld = new Promise((resolve) => (release = resolve));
+  fakeTelegram.quietResend = true;
+  const resend = page.getByRole("button", { name: "Resend" });
+  await userEvent.click(resend);
+  await expect.element(resend).toBeDisabled();
+  release();
+  await expect.element(page.getByText("1 reply did not reach Telegram.")).not.toBeInTheDocument();
+  expect(fakeTelegram.resends).toBe(1);
 });
 
 it("keeps the switch off until a token exists, then turns Telegram on without any user id", async () => {

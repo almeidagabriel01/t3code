@@ -1,3 +1,4 @@
+import { UNDELIVERED_RESEND_TITLE } from "@t3tools/client-runtime/state/channelUndelivered";
 import { useState } from "react";
 
 import { SettingsActionRow } from "./SettingsActionRow";
@@ -22,7 +23,7 @@ export function UndeliveredRepliesRow(props: {
   return (
     <SettingsActionRow
       icon="arrow.clockwise"
-      label="Resend undelivered replies"
+      label={UNDELIVERED_RESEND_TITLE}
       description={props.label}
       disabled={props.disabled}
       loading={busy}

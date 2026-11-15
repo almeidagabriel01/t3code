@@ -3,6 +3,7 @@ import {
   applyImessageStatusEvent,
   createImessageChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/imessageChannel";
+import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   ImessageChannelSettingsError,
@@ -54,8 +55,13 @@ export function useImessageChannel(environmentId: EnvironmentId) {
   const [saved, setSaved] = useState<ImessageChannelSettings | null>(null);
   const stored = saved ?? settingsQuery.data;
   const event = AsyncResult.getOrElse(statusResult, () => null);
-  const settings = stored && event ? applyImessageStatusEvent(stored, event) : stored;
+  const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
+  const live = stored && event ? applyImessageStatusEvent(stored, event) : stored;
+  const settings = live && applyUndeliveredResend(live, resent, event);
   const canConfigure = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    imessageEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
   const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
   const failed = (result: Parameters<typeof squashAtomCommandFailure>[0]): ImessageReply => {
@@ -74,6 +80,7 @@ export function useImessageChannel(environmentId: EnvironmentId) {
     ownHandles: accessQuery.data?.ownHandles ?? [],
     checkAccess: accessQuery.refresh,
     canConfigure,
+    canResend,
     configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {
       const result = await configure({ environmentId, input });
       if (result._tag === "Success") {

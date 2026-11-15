@@ -3,6 +3,7 @@ import {
   applyImessageStatusEvent,
   createImessageChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/imessageChannel";
+import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
 import {
   type AtomCommandResult,
   squashAtomCommandFailure,
@@ -40,8 +41,10 @@ export function useImessageSettings(environmentId: EnvironmentId) {
   const event = Option.getOrNull(
     AsyncResult.value(useAtomValue(imessageEnvironment.status({ environmentId, input: null }))),
   );
+  const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
+  const live = query.data && event ? applyImessageStatusEvent(query.data, event) : query.data;
   return {
-    settings: query.data && event ? applyImessageStatusEvent(query.data, event) : query.data,
+    settings: live && applyUndeliveredResend(live, resent, event),
     error: query.error,
     refresh: query.refresh,
   };
@@ -65,6 +68,9 @@ export type ImessageReply =
 /** Each change settles into a reply, so the form can show the server's refusal where it happened. */
 export function useImessageActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    imessageEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
   const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
   const reply = (result: AtomCommandResult<unknown, unknown>): ImessageReply => {
@@ -80,6 +86,7 @@ export function useImessageActions(environmentId: EnvironmentId) {
   };
   return {
     canAct,
+    canResend,
     configure: async (input: ImessageChannelConfigureInput) =>
       reply(await configure({ environmentId, input })),
     resendUndelivered: async () => reply(await resend({ environmentId, input: {} })),

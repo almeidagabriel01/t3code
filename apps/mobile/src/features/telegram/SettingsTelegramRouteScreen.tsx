@@ -195,7 +195,7 @@ function TelegramEnvironment(props: {
         />
         <UndeliveredRepliesRow
           label={telegramUndeliveredLabel(settings)}
-          disabled={disabled}
+          disabled={!telegram.canResend}
           onResend={telegram.resendUndelivered}
           onError={setError}
         />

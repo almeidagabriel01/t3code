@@ -9,6 +9,7 @@ const { mocks } = vi.hoisted(() => ({
     stored: null as unknown,
     command: vi.fn(),
     failure: null as unknown,
+    resent: null as unknown,
   },
 }));
 vi.mock("@effect/atom-react", () => ({
@@ -17,7 +18,9 @@ vi.mock("@effect/atom-react", () => ({
       ? mocks.event
         ? AsyncResult.success(mocks.event)
         : AsyncResult.initial()
-      : true,
+      : atom === "resent"
+        ? mocks.resent
+        : atom !== "resendPermission",
 }));
 vi.mock("@t3tools/client-runtime/state/telegramChannel", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -25,6 +28,8 @@ vi.mock("@t3tools/client-runtime/state/telegramChannel", async (importOriginal) 
     settings: () => "settings",
     status: () => "status",
     configure: { permissionAtom: () => "permission" },
+    resendUndelivered: { permissionAtom: () => "resendPermission" },
+    undeliveredResend: () => "resent",
   }),
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -110,6 +115,7 @@ describe("useTelegramChannel", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     mocks.event = null;
+    mocks.resent = null;
     mocks.stored = {
       enabled: false,
       tokenConfigured: false,
@@ -158,7 +164,16 @@ describe("useTelegramChannel", () => {
   });
 
   it("resends what never arrived and reports a refusal", async () => {
+    // The resend's answer also lowers the count of settings a change saved, with no live status.
+    mocks.resent = { against: null, requeued: 2 };
     const root = mount();
+    expect(latest().canResend).toBe(false);
+    mocks.command.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { ...(mocks.stored as object), undeliveredCount: 2 },
+    });
+    await act(async () => void (await latest().configure({})));
+    expect(latest().settings?.undeliveredCount).toBe(0);
     mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
     expect(await latest().resendUndelivered()).toEqual({ ok: true });
     expect(mocks.command).toHaveBeenLastCalledWith({ environmentId: "hub", input: {} });

@@ -1039,6 +1039,9 @@ export const fakeTelegram = {
   failConfigure: null as TelegramChannelSettingsErrorReason | null,
   configures: [] as TelegramChannelConfigureInput[],
   resends: 0,
+  /** Holds each resend until it settles; `quietResend` answers without a status event. */
+  resendHeld: null as Promise<void> | null,
+  quietResend: false,
 };
 /** Starts a Telegram scenario from a clean server. */
 export function resetFakeTelegram(settings: Partial<TelegramChannelSettings> = {}): void {
@@ -1046,6 +1049,8 @@ export function resetFakeTelegram(settings: Partial<TelegramChannelSettings> = {
   fakeTelegram.failConfigure = null;
   fakeTelegram.configures = [];
   fakeTelegram.resends = 0;
+  fakeTelegram.resendHeld = null;
+  fakeTelegram.quietResend = false;
 }
 const telegramStatusSubscribers = new Set<Queue.Queue<TelegramChannelStatusEvent>>();
 /** Pushes a live status event to the open subscription. */
@@ -1059,13 +1064,15 @@ handlers[WS_METHODS.telegramChannelSubscribeStatus] = () =>
     return () => telegramStatusSubscribers.delete(queue);
   });
 handlers[WS_METHODS.telegramChannelResendUndelivered] = () =>
-  Effect.sync(() => {
-    fakeTelegram.resends += 1;
-    const { undeliveredCount: requeued = 0, ...rest } = fakeTelegram.settings;
-    fakeTelegram.settings = rest;
-    publishTelegramStatus({ status: rest.status });
-    return { requeued };
-  });
+  Effect.sync(() => void (fakeTelegram.resends += 1)).pipe(
+    Effect.andThen(Effect.promise(() => fakeTelegram.resendHeld ?? Promise.resolve())),
+    Effect.andThen(() => {
+      const { undeliveredCount: requeued = 0, ...rest } = fakeTelegram.settings;
+      fakeTelegram.settings = rest;
+      if (!fakeTelegram.quietResend) publishTelegramStatus({ status: rest.status });
+      return Effect.succeed({ requeued });
+    }),
+  );
 handlers[WS_METHODS.telegramChannelConfigure] = (input: TelegramChannelConfigureInput) => {
   fakeTelegram.configures.push(input);
   if (fakeTelegram.failConfigure !== null) {

@@ -121,6 +121,7 @@ vi.mock("../../state/imessageChannel", () => ({
     ownHandles: mocks.ownHandles,
     checkAccess: mocks.checkAccess,
     canConfigure: mocks.can,
+    canResend: mocks.can,
     configure: mocks.configure,
     resendUndelivered: mocks.resend,
   }),
