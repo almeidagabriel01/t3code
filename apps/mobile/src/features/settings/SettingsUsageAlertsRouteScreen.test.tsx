@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   ignorePause: true,
   alerts: {} as Record<string, unknown>,
   windows: [] as Array<{ id: string; label: string }>,
+  enabled: true,
+  targets: [true] as boolean[],
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -27,7 +29,7 @@ vi.mock("@effect/atom-react", () => ({
                 instanceId: "claude",
                 driver: "claudeAgent",
                 displayName: "Claude",
-                enabled: true,
+                enabled: mocks.enabled,
                 usageLimits: { windows: mocks.windows },
               },
             ],
@@ -46,8 +48,25 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
 vi.mock("react-native", () => ({
   View: (p: { children?: ReactNode }) => <div>{p.children}</div>,
-  Pressable: (p: { children?: ReactNode; disabled?: boolean }) => (
-    <div data-disabled={p.disabled}>{p.children}</div>
+}));
+vi.mock("../../components/ui/RowPressable", () => ({
+  RowPressable: (p: { children?: ReactNode; accessibilityState?: { disabled?: boolean } }) => (
+    <div aria-disabled={p.accessibilityState?.disabled}>{p.children}</div>
+  ),
+}));
+vi.mock("../../components/ui/ListRowLayout", () => ({
+  ListRowLayout: (p: { label: string; detail?: string }) => (
+    <span>
+      {p.label}: {p.detail}
+    </span>
+  ),
+}));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/EmptyState", () => ({
+  EmptyState: (p: { title: string; detail: string }) => (
+    <p data-empty>
+      {p.title}. {p.detail}
+    </p>
   ),
 }));
 vi.mock("../../state/presentation", () => ({
@@ -60,6 +79,7 @@ vi.mock("../../state/server", () => ({
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.allowed }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (p: { children?: ReactNode }) => <span>{p.children}</span>,
 }));
@@ -107,13 +127,11 @@ vi.mock("./components/SettingsSection", () => ({
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    selectedTargets: [
-      {
-        environmentId: env,
-        label: "Mac",
-        serverConfig: { environment: { capabilities: { usageLimitAlerts: true } } },
-      },
-    ],
+    selectedTargets: mocks.targets.map((usageLimitAlerts, index) => ({
+      environmentId: index === 0 ? env : `env-${index}`,
+      label: index === 0 ? "Mac" : `PC ${index}`,
+      serverConfig: { environment: { capabilities: { usageLimitAlerts } } },
+    })),
   }),
 }));
 
@@ -126,6 +144,8 @@ async function mount(input: Partial<typeof mocks> = {}) {
     ignorePause: true,
     alerts: {},
     windows: [],
+    enabled: true,
+    targets: [true],
     ...input,
   });
   mocks.update.mockClear();
@@ -139,29 +159,33 @@ const click = (el: Element | undefined) => act(async () => (el as HTMLElement).c
 const weekly = { id: "seven_day", label: "Weekly" };
 
 describe("SettingsUsageAlertsRouteScreen", () => {
-  it("shows window labels with the default and saved values", async () => {
-    const { host, unmount } = await mount({
-      windows: [weekly, { id: "five_hour", label: "Session" }],
-      alerts: { claude: { windows: { five_hour: 30 } } },
-    });
-    const section = host.querySelector("section[aria-label=Claude]")!;
-    expect(section.textContent).toContain("Weekly");
-    expect(section.textContent).toContain("15%");
-    expect(section.textContent).toContain("Session");
-    expect(section.textContent).toContain("30%");
-    // The shared description shows once for the screen, not on every row.
-    expect(host.textContent?.split("Your assistant messages you once").length).toBe(2);
-    expect(host.querySelector("[data-note]")).toBeNull();
-    await unmount();
-  });
+  it.each([true, false])(
+    "shows window labels with the default and saved values (instance enabled: %s)",
+    async (enabled) => {
+      const { host, unmount } = await mount({
+        enabled,
+        windows: [weekly, { id: "five_hour", label: "Session" }],
+        alerts: { claude: { windows: { five_hour: 30 } } },
+      });
+      const section = host.querySelector("section[aria-label=Claude]")!;
+      expect(section.textContent).toContain("Weekly: 15% left");
+      expect(section.textContent).toContain("Session: 30% left");
+      // The shared description shows once for the screen, not on every row.
+      expect(host.textContent?.split("Your assistant messages you once").length).toBe(2);
+      expect(host.querySelector("[data-note]")).toBeNull();
+      await unmount();
+    },
+  );
 
   it("writes the chosen threshold, off, or a return to the default, per window", async () => {
     const { host, unmount } = await mount({ windows: [weekly] });
     const items = [...host.querySelectorAll("[role=menuitemradio]")];
-    expect(items.find((i) => i.getAttribute("aria-checked") === "true")?.textContent).toBe("15%");
-    await click(items.find((i) => i.textContent === "5%"));
+    expect(items.find((i) => i.getAttribute("aria-checked") === "true")?.textContent).toBe(
+      "15% left",
+    );
+    await click(items.find((i) => i.textContent === "5% left"));
     await click(items.find((i) => i.textContent === "Off"));
-    await click(items.find((i) => i.textContent === "15%"));
+    await click(items.find((i) => i.textContent === "15% left"));
     const sent = (n: number) =>
       mocks.update.mock.calls[n]![0].input.patch.usageLimitAlerts.instances.claude;
     expect(sent(0).windows).toEqual({ seven_day: 5 });
@@ -172,10 +196,10 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     await unmount();
   });
 
-  it("does not write without permission", async () => {
+  it("locks the row without permission: no menu opens and the row reads as disabled", async () => {
     const { host, unmount } = await mount({ windows: [weekly], allowed: false });
-    expect(host.querySelector("[data-disabled=true]")).not.toBeNull();
-    await click(host.querySelector("[role=menuitemradio]")!);
+    expect(host.querySelector("[aria-disabled=true]")?.textContent).toContain("Weekly");
+    expect(host.querySelector("[role=menuitemradio]")).toBeNull();
     expect(mocks.update).not.toHaveBeenCalled();
     await unmount();
   });
@@ -186,6 +210,21 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     expect(through.host.querySelector("[role=switch]")).toBeNull();
     await through.unmount();
 
+    // A disabled instance or an alert set to Off has nothing to hold back.
+    for (const quiet of [
+      { enabled: false },
+      { alerts: { claude: { windows: { seven_day: "off" } } } },
+    ]) {
+      const idle = await mount({
+        windows: [weekly],
+        autonomy: false,
+        ignorePause: false,
+        ...quiet,
+      });
+      expect(idle.host.querySelector("[data-note]")).toBeNull();
+      await idle.unmount();
+    }
+
     const waiting = await mount({ windows: [weekly], autonomy: false, ignorePause: false });
     const note = waiting.host.querySelector("[data-note]")!;
     expect(note.textContent).toContain("Alerts are paused");
@@ -194,4 +233,23 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistants");
     await waiting.unmount();
   });
+
+  it.each([
+    { targets: [], text: "Select a connected environment.", rows: false },
+    {
+      targets: [false],
+      text: "Update this server. Limit alerts need a newer T3 Code server.",
+      rows: false,
+    },
+    { targets: [true, false], text: "PC 1 needs a server update to use limit alerts.", rows: true },
+  ])(
+    "explains what an environment selection of $targets can show",
+    async ({ targets, text, rows }) => {
+      const { host, unmount } = await mount({ windows: [weekly], targets });
+      expect(host.textContent).toContain(text);
+      expect(host.querySelector("section") !== null).toBe(rows);
+      if (targets.length > 0) expect(host.textContent).not.toContain("Select a connected");
+      await unmount();
+    },
+  );
 });

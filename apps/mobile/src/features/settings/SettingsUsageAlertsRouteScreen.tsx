@@ -1,15 +1,21 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { Pressable, View } from "react-native";
+import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import { usageLimitAlertLabel, usageLimitAlertsPaused } from "@t3tools/shared/usageLimitAlerts";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { ListRow } from "../../components/ui/ListRow";
+import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { Menu } from "../../components/ui/Menu";
+import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -19,15 +25,15 @@ import {
   usageAlertMenuActions,
   usageAlertPatch,
   usageAlertSections,
-  usageAlertValueLabel,
 } from "./SettingsUsageAlertsRouteScreen.logic";
 
 export function SettingsUsageAlertsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
-  const targets = selectedTargets.filter(
-    (target) => target.serverConfig.environment.capabilities.usageLimitAlerts === true,
-  );
+  const supported = (target: SettingsTarget) =>
+    target.serverConfig.environment.capabilities.usageLimitAlerts === true;
+  const targets = selectedTargets.filter(supported);
+  const outdated = selectedTargets.filter((target) => !supported(target));
   const insets = useSafeAreaInsets();
   return (
     <SettingsScreen title="Limit alerts" menus={[environmentMenu]}>
@@ -37,8 +43,14 @@ export function SettingsUsageAlertsRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {targets.length === 0 ? (
+        {selectedTargets.length === 0 ? (
           <Text className="text-foreground-muted">Select a connected environment.</Text>
+        ) : targets.length === 0 ? (
+          <EmptyState
+            variant="plain"
+            title={outdated.length === 1 ? "Update this server" : "Update these servers"}
+            detail="Limit alerts need a newer T3 Code server."
+          />
         ) : (
           <Text textRole="footnote" className="px-2 text-foreground-muted">
             Your assistant messages you once when this much is left.
@@ -51,6 +63,11 @@ export function SettingsUsageAlertsRouteScreen() {
             showEnvironment={targets.length > 1}
           />
         ))}
+        {targets.length > 0 && outdated.length > 0 ? (
+          <Text textRole="footnote" className="px-2 text-foreground-muted">
+            {`${outdated.map((target) => target.label).join(", ")} ${outdated.length === 1 ? "needs a server update" : "need server updates"} to use limit alerts.`}
+          </Text>
+        ) : null}
       </ScreenScrollView>
     </SettingsScreen>
   );
@@ -66,13 +83,20 @@ function EnvironmentAlerts(props: {
     environmentId,
   );
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const allowed = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));
+  // A usageLimitAlerts patch needs settings:write; the command's permissionAtom does not check it.
+  const allowed = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, {
     label: "usage limit alert update",
     reportFailure: true,
   });
   const sections = usageAlertSections(providers ?? [], settings?.usageLimitAlerts.instances);
-  const ignorePause = settings?.usageLimitAlerts.ignoreAutonomyPause ?? true;
+  const paused =
+    settings !== null &&
+    usageLimitAlertsPaused({
+      autonomyEnabled: settings.autonomy.enabled,
+      alerts: settings.usageLimitAlerts,
+      providers: providers ?? [],
+    });
   const suffix = props.showEnvironment ? ` · ${props.environment.label}` : "";
   return (
     <>
@@ -81,49 +105,64 @@ function EnvironmentAlerts(props: {
       ) : (
         sections.map((section) => (
           <SettingsSection key={section.instanceId} title={`${section.title}${suffix}`}>
-            {section.rows.map((row, index) => (
-              <View
-                key={row.windowId}
-                className={index > 0 ? "border-t border-border-subtle" : undefined}
-              >
-                <Menu
-                  // Android keeps a mounted menu's old items, so the key carries the chosen value.
-                  key={`${row.windowId}:${row.threshold}`}
-                  title={row.label}
-                  actions={usageAlertMenuActions(row.threshold)}
-                  onPressAction={({ nativeEvent }) => {
-                    const patch = usageAlertPatch({
-                      instanceId: section.instanceId,
-                      driver: section.driver,
-                      windowId: row.windowId,
-                      choiceId: nativeEvent.event,
-                      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-                    });
-                    if (!allowed || patch === null) return;
-                    void update({ environmentId, input: { patch } });
-                  }}
+            {section.rows.map((row, index) => {
+              const value = usageLimitAlertLabel(row.threshold);
+              const content = (
+                <RowPressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${row.label}, ${value}`}
+                  accessibilityState={{ disabled: !allowed }}
+                  disabled={!allowed}
                 >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${row.label}, ${usageAlertValueLabel(row.threshold)}`}
-                    accessibilityState={{ disabled: !allowed }}
+                  <ListRowLayout
+                    label={row.label}
+                    detail={value}
                     disabled={!allowed}
-                    className="min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
-                  >
-                    <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-                      {row.label}
-                    </Text>
-                    <Text textRole="footnote" className="tabular-nums text-foreground-muted">
-                      {usageAlertValueLabel(row.threshold)}
-                    </Text>
-                  </Pressable>
-                </Menu>
-              </View>
-            ))}
+                    accessory={
+                      <SymbolView
+                        name="chevron.down"
+                        size={14}
+                        tintColorClassName="accent-chevron"
+                        type="monochrome"
+                      />
+                    }
+                  />
+                </RowPressable>
+              );
+              return (
+                <View
+                  key={row.windowId}
+                  className={index > 0 ? "border-t border-border-subtle" : undefined}
+                >
+                  {allowed ? (
+                    <Menu
+                      // Android keeps a mounted menu's old items, so the key carries the chosen value.
+                      key={`${row.windowId}:${row.threshold}`}
+                      title={row.label}
+                      actions={usageAlertMenuActions(row.threshold)}
+                      onPressAction={({ nativeEvent }) => {
+                        const patch = usageAlertPatch({
+                          instanceId: section.instanceId,
+                          driver: section.driver,
+                          windowId: row.windowId,
+                          choiceId: nativeEvent.event,
+                          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        });
+                        if (patch !== null) void update({ environmentId, input: { patch } });
+                      }}
+                    >
+                      {content}
+                    </Menu>
+                  ) : (
+                    content
+                  )}
+                </View>
+              );
+            })}
           </SettingsSection>
         ))
       )}
-      {sections.length > 0 && settings?.autonomy.enabled === false && !ignorePause ? (
+      {paused ? (
         <View className="overflow-hidden rounded-2xl">
           <ListRow
             icon="bell.badge"

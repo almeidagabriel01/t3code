@@ -2,6 +2,7 @@ import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts"
 import type { ServerSettings } from "@t3tools/contracts";
 import {
   usageLimitAlertChoices,
+  usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
 } from "@t3tools/shared/usageLimitAlerts";
@@ -13,13 +14,12 @@ export interface UsageAlertSection {
   readonly rows: ReturnType<typeof usageLimitAlertRows>;
 }
 
-/** Enabled provider instances that report at least one alertable window. */
+/** Provider instances with at least one alertable window; disabled ones stay editable, as on the web. */
 export function usageAlertSections(
   providers: ReadonlyArray<ServerProvider>,
   alerts: ServerSettings["usageLimitAlerts"]["instances"] | undefined,
 ): ReadonlyArray<UsageAlertSection> {
   return providers
-    .filter((provider) => provider.enabled)
     .map((provider) => ({
       instanceId: provider.instanceId,
       driver: provider.driver,
@@ -34,17 +34,14 @@ export function usageAlertSections(
     .filter((section) => section.rows.length > 0);
 }
 
-export const usageAlertValueLabel = (threshold: number | null) =>
-  threshold === null ? "Off" : `${threshold}%`;
-
 /** "Off" plus each percent; the chosen one is on. */
 export function usageAlertMenuActions(threshold: number | null) {
   const state = (on: boolean) => (on ? ("on" as const) : ("off" as const));
   return [
-    { id: "off", title: "Off", state: state(threshold === null) },
+    { id: "off", title: usageLimitAlertLabel(null), state: state(threshold === null) },
     ...usageLimitAlertChoices(threshold).map((choice) => ({
       id: String(choice),
-      title: `${choice}%`,
+      title: usageLimitAlertLabel(choice),
       state: state(threshold === choice),
     })),
   ];
