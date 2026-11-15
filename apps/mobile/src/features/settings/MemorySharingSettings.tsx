@@ -27,6 +27,7 @@ import * as Crypto from "expo-crypto";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Cause from "effect/Cause";
+import { Atom } from "effect/reactivity";
 import { memoryEnvironment as memory } from "../../state/memory";
 import { environmentSession } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -63,6 +64,12 @@ const versionConflict = (cause: Cause.Cause<unknown>) => {
   );
 };
 const operationId = () => MemoryOperationId.make(Crypto.randomUUID());
+const hubWriteAccessAtom = Atom.family((idsKey: string) => {
+  const ids = idsKey.split("\n") as EnvironmentId[];
+  return Atom.make(
+    (get) => new Map(ids.map((id) => [id, get(memory.hubSettingsUpdate.accessAtom(id))])),
+  );
+});
 
 export function MemoryAdministration({
   environmentId,
@@ -166,9 +173,24 @@ export function MemoryAdministration({
     environments.find((e) => e.environmentId === id)?.label ?? "Unknown device";
   const live = () =>
     mounted.current && connection !== null && readPreparedConnection(environmentId) === connection;
+  // Handlers re-read after awaits; render reads the subscribed map so notices follow the session.
   const writable = (id: EnvironmentId) => registry.get(memory.hubSettingsUpdate.permissionAtom(id));
-  const lacksWrite = (id: EnvironmentId) =>
-    scopeAccessShowsBanner(registry.get(memory.hubSettingsUpdate.accessAtom(id)));
+  const hubAccess = useAtomValue(
+    hubWriteAccessAtom(
+      [
+        ...new Set([
+          environmentId,
+          ...environments.map((e) => e.environmentId),
+          ...members.map((m) => m.environmentId),
+          ...(device ? [device] : []),
+        ]),
+      ]
+        .sort()
+        .join("\n"),
+    ),
+  );
+  const accessOf = (id: EnvironmentId) => hubAccess.get(id) ?? "unknown";
+  const lacksWrite = (id: EnvironmentId) => scopeAccessShowsBanner(accessOf(id));
   const candidates = environments.filter(
     (e) =>
       e.environmentId !== environmentId &&
@@ -522,12 +544,10 @@ export function MemoryAdministration({
               const connected = candidates.some((c) => c.environmentId === id);
               const reason = !connected
                 ? "Connect this device in Settings → Connections to replace its key."
-                : !writable(id)
-                  ? scopeAccessMessage(
-                      registry.get(memory.hubSettingsUpdate.accessAtom(id)),
-                      "Settings write permission is required to replace this key.",
-                    )
-                  : null;
+                : scopeAccessMessage(
+                    accessOf(id),
+                    "Settings write permission is required to replace this key.",
+                  );
               return (
                 <View key={id}>
                   <Copy>{name(id)}</Copy>
@@ -598,7 +618,9 @@ export function MemoryAdministration({
               <Action
                 icon="checkmark.circle"
                 label="Confirm"
-                disabled={blocked || !writable(device) || loopbackAddress(endpoint)}
+                disabled={
+                  blocked || scopeAccessLocked(accessOf(device)) || loopbackAddress(endpoint)
+                }
                 onPress={() =>
                   void addDevice(
                     confirm === "rotate" ? "rotateMemberCredential" : "provisionMember",

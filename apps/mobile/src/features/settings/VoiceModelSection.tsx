@@ -22,10 +22,8 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRow } from "../../components/ui/ListRow";
 import { Progress } from "../../components/ui/Progress";
 import { formatBytes } from "../../lib/formatBytes";
-import {
-  scopeAccessLocked,
-  scopeAccessShowsBanner,
-} from "@t3tools/client-runtime/state/sessionScope";
+import { scopeAccessLocked } from "@t3tools/client-runtime/state/sessionScope";
+import { noModelHint } from "./VoiceModelSection.logic";
 import { useEnvironmentScopeAccess } from "../../state/session";
 import {
   runSpeech,
@@ -49,7 +47,6 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
   const refreshModels = useAtomRefresh(modelsAtom);
   const access = useEnvironmentScopeAccess(environmentId, SETTINGS_WRITE_SCOPES);
   const canManage = !scopeAccessLocked(access);
-  const lacksPermission = scopeAccessShowsBanner(access);
   const [requested, setRequested] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -83,7 +80,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
     models,
     loading: modelsResult._tag === "Initial",
     canManage,
-    lacksPermission,
+    access,
     requested,
     busy,
     downloading,
@@ -323,9 +320,7 @@ export function LocalModelChoice(props: {
             : `Downloading ${pending.name} · ${Math.round((progress ?? 0) * 100)}%`
           : active
             ? `Local model · ${formatBytes(active.size)}`
-            : voice.lacksPermission
-              ? `No model installed · Add one using T3 Code on ${props.label}`
-              : "No model installed · Choose one to download"
+            : `No model installed · ${noModelHint(voice.access, props.label)}`
       }
       selected={props.selected}
       onPress={() => {

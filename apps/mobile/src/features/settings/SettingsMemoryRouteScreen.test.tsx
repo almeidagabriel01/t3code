@@ -1094,6 +1094,14 @@ describe("native sharing workflow", () => {
     ]);
     expect(view.container.textContent).not.toContain(credential);
   });
+  it("explains a device's missing write permission once its session answers", async () => {
+    await start();
+    await view.click("Add Test device");
+    const notice = "Settings write permission is required on this device.";
+    expect(view.container.textContent).not.toContain(notice);
+    await act(async () => h.grantDevice(["memory:read", "memory:write"]));
+    expect(view.container.textContent).toContain(notice);
+  });
   it("refuses loopback hub addresses before provisioning", async () => {
     await start();
     await view.click("Add Test device");

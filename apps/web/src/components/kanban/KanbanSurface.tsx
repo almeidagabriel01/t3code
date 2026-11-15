@@ -13,6 +13,7 @@ import { useState } from "react";
 
 import {
   SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessMessage,
   scopeAccessShowsBanner,
 } from "@t3tools/client-runtime/state/sessionScope";
 import { useKanbanReadAccess } from "../../state/kanban";
@@ -160,9 +161,8 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
           <RightPanelMessage
             title="No cards without a project"
             detail={
-              canEdit
-                ? "Cards you add here belong to no project."
-                : "Nobody has added cards without a project yet."
+              scopeAccessMessage(editAccess, "Nobody has added cards without a project yet.") ??
+              "Cards you add here belong to no project."
             }
           />
         </>

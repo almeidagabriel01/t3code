@@ -9,7 +9,11 @@ import {
   type KanbanColumnId,
   type KanbanLabelId,
 } from "@t3tools/contracts";
-import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
+import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  type SessionScopeAccess,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -20,7 +24,7 @@ const scratchId = ProjectId.make("scratch");
 const state = vi.hoisted(() => ({
   entries: [] as Array<{ environmentId: string; state: unknown; error: string | null }>,
   readAccess: new Map<string, string>(),
-  canEdit: true,
+  editAccess: "granted" as SessionScopeAccess,
   project: null as { id: string; title: string; isScratch?: true } | null,
   projects: [] as Array<{ id: string; environmentId: string; isScratch?: true }>,
   actions: {
@@ -36,8 +40,8 @@ const state = vi.hoisted(() => ({
 vi.mock(import("./useKanban"), async (importOriginal) => ({
   ...(await importOriginal()),
   useKanbanStates: (() => state.entries) as never,
-  useKanbanCanEdit: () => state.canEdit,
-  useKanbanEditAccess: () => (state.canEdit ? "granted" : "missing"),
+  useKanbanCanEdit: () => state.editAccess === "granted",
+  useKanbanEditAccess: () => state.editAccess,
   useKanbanActions: (() => state.actions) as never,
 }));
 vi.mock(import("../../state/kanban"), async (importOriginal) => ({
@@ -155,7 +159,7 @@ function setup(
   input: { boards?: KanbanBoardState[]; state?: "loading" | "error" | "missing" } = {},
 ) {
   useKanbanPanelStore.setState({ scopeByProject: {}, collapsedByBoard: {} });
-  state.canEdit = true;
+  state.editAccess = "granted";
   state.readAccess = new Map([[environmentId, "granted"]]);
   state.project = { id: projectId, title: "Website" };
   state.projects = [];
@@ -338,6 +342,19 @@ it("does not add a card when the No project board cannot be created", async () =
   expect(state.actions.createCard).not.toHaveBeenCalled();
 });
 
+it.each([
+  ["granted", "Cards you add here belong to no project."],
+  ["missing", "Nobody has added cards without a project yet."],
+  ["unknown", SCOPE_ACCESS_CHECKING_MESSAGE],
+  ["unavailable", SCOPE_ACCESS_UNAVAILABLE_MESSAGE],
+] as const)("describes an empty No project board by %s edit access", async (access, text) => {
+  setup();
+  state.editAccess = access;
+  useKanbanPanelStore.getState().setScope("env:project", "no-project");
+  await using _screen = await render(surface());
+  await expect.element(page.getByText(text)).toBeVisible();
+});
+
 it("sets up a missing project board for an editor", async () => {
   setup({ boards: [] });
   await using _screen = await render(surface());
@@ -346,13 +363,13 @@ it("sets up a missing project board for an editor", async () => {
 });
 
 it.each([
-  ["unavailable", { state: "missing" as const }, true, "Boards are not available"],
-  ["failed", { state: "error" as const }, true, "Could not load the board"],
-  ["loading", { state: "loading" as const }, true, "Loading board…"],
-  ["missing for a viewer", { boards: [] }, false, "No board yet"],
-])("shows the %s state", async (_name, input, canEdit, text) => {
+  ["unavailable", { state: "missing" as const }, "granted" as const, "Boards are not available"],
+  ["failed", { state: "error" as const }, "granted" as const, "Could not load the board"],
+  ["loading", { state: "loading" as const }, "granted" as const, "Loading board…"],
+  ["missing for a viewer", { boards: [] }, "missing" as const, "No board yet"],
+])("shows the %s state", async (_name, input, editAccess, text) => {
   setup(input);
-  state.canEdit = canEdit;
+  state.editAccess = editAccess;
   await using _screen = await render(surface());
   await expect.element(page.getByText(text)).toBeVisible();
 });
