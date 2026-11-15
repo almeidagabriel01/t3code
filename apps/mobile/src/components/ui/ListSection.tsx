@@ -31,7 +31,8 @@ export function ListSection(props: {
       }
     >
       {props.titleIcon}
-      <Text textRole="footnote" className="shrink font-t3-medium text-foreground-muted">
+      {/* Exact width: a content-sized title is pixel-rounded narrower and Android clips its wrapped last word. */}
+      <Text textRole="footnote" className="min-w-0 flex-1 font-t3-medium text-foreground-muted">
         {props.title}
       </Text>
     </View>
