@@ -82,6 +82,7 @@ function ArchivedThreadsHeader(props: {
             {
               id: "environment",
               title: "Environment",
+              icon: "server.rack",
               items: [
                 {
                   id: "environment:all",
@@ -100,6 +101,7 @@ function ArchivedThreadsHeader(props: {
             {
               id: "sort",
               title: "Sort by archived date",
+              icon: "arrow.up.arrow.down",
               items: [
                 {
                   id: "sort:newest",

@@ -307,6 +307,7 @@ function ProviderAccount({
         {
           id: "remove",
           title: "Remove incomplete connection",
+          image: "trash",
           attributes: { disabled: disabled || active || !canRemoveMethod },
           subactions: removableMethods.map((method) => ({
             id: `remove:${method.id}`,

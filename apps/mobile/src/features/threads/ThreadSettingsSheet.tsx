@@ -1224,6 +1224,7 @@ function ThreadSettingsModelsScreen() {
               {
                 id: "provider",
                 title: "Provider",
+                icon: "cube",
                 items: providerFilters.map((filter) => ({
                   id: filter.id,
                   title: filter.title,
@@ -1236,6 +1237,7 @@ function ThreadSettingsModelsScreen() {
                     {
                       id: "show-legacy",
                       title: "Show legacy models",
+                      icon: "eye",
                       selected: session.showLegacy,
                       onPress: () => session.setShowLegacy(!session.showLegacy),
                     },
