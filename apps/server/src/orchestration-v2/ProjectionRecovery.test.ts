@@ -1469,7 +1469,7 @@ it.effect("marks fork descendants unreadable when their source is missing or cor
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("startup ends the provider turn of a native child root it cancels", () =>
+it.effect("startup ends a native child root, its tool calls and provider turn, once", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
@@ -1525,6 +1525,79 @@ it.effect("startup ends the provider turn of a native child root it cancels", ()
       },
     });
 
+    // The stuck shape: a tool call under the root still holds open items.
+    const toolNodeId = NodeId.make(`node:${threadId}:tool`);
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:tool`),
+      type: "node.updated",
+      threadId,
+      nodeId: toolNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: toolNodeId,
+        threadId,
+        runId: null,
+        parentNodeId: rootNodeId,
+        rootNodeId,
+        kind: "tool_call",
+        status: "running",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    const toolItem = {
+      threadId,
+      runId: null,
+      nodeId: toolNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      status: "running",
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    } as const;
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:command`),
+      type: "turn-item.updated",
+      threadId,
+      nodeId: toolNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        ...toolItem,
+        id: TurnItemId.make(`turn-item:${threadId}:command`),
+        ordinal: 1,
+        type: "command_execution",
+        input: "vp fmt && vp lint",
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:reasoning`),
+      type: "turn-item.updated",
+      threadId,
+      nodeId: toolNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        ...toolItem,
+        id: TurnItemId.make(`turn-item:${threadId}:reasoning`),
+        ordinal: 2,
+        type: "reasoning",
+        text: "Checking the lint output",
+        streaming: true,
+      },
+    });
+
     const subagentId = NodeId.make(`node:${parentThreadId}:subagent`);
     yield* projections.apply({
       id: EventId.make(`event:${parentThreadId}:subagent`),
@@ -1557,13 +1630,29 @@ it.effect("startup ends the provider turn of a native child root it cancels", ()
     yield* recovery.reconcile("startup");
 
     const projection = yield* projections.getThreadProjection(threadId);
+    const parent = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(
       {
+        subagent: parent.subagents.find((task) => task.id === subagentId)?.status,
         root: projection.nodes.find((node) => node.id === rootNodeId)?.status,
+        tool: projection.nodes.find((node) => node.id === toolNodeId)?.status,
+        items: projection.turnItems.map((item) => [item.type, item.status]),
         providerTurn: projection.providerTurns.find((turn) => turn.id === providerTurnId)?.status,
       },
-      { root: "cancelled", providerTurn: "cancelled" },
-      "a root startup recovery cancelled left its provider turn running",
+      {
+        subagent: "cancelled",
+        root: "cancelled",
+        tool: "cancelled",
+        items: [
+          ["command_execution", "cancelled"],
+          ["reasoning", "cancelled"],
+        ],
+        providerTurn: "cancelled",
+      },
     );
+
+    yield* recovery.reconcile("startup");
+    assert.deepEqual(yield* projections.getThreadProjection(threadId), projection);
+    assert.deepEqual(yield* projections.getThreadProjection(parentThreadId), parent);
   }).pipe(Effect.provide(layerRecoveryTest)),
 );

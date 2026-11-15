@@ -4798,6 +4798,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND node.status IN ('pending', 'starting', 'running', 'waiting')
                 AND (
                   (node.run_id IS NULL AND node.kind = 'root_turn')
+                  -- Tool calls under a native subagent's runless root.
+                  OR (
+                    node.run_id IS NULL
+                    AND node.root_node_id IN (
+                      SELECT node_id FROM orchestration_v2_projection_nodes
+                      WHERE thread_id = ${threadId}
+                        AND run_id IS NULL
+                        AND kind = 'root_turn'
+                        AND status IN ('pending', 'starting', 'running', 'waiting')
+                    )
+                  )
                   OR node.node_id IN (
                     SELECT node_id FROM orchestration_v2_projection_runtime_requests
                     WHERE thread_id = ${threadId} AND status = 'pending' AND kind = 'user_input'
@@ -4995,11 +5006,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR (
                     item.run_id IS NULL
                     AND item.node_id IN (
-                      SELECT node_id FROM orchestration_v2_projection_nodes
-                      WHERE thread_id = ${threadId}
-                        AND run_id IS NULL
-                        AND kind = 'root_turn'
-                        AND status IN ('pending', 'running', 'waiting')
+                      SELECT node.node_id FROM orchestration_v2_projection_nodes AS node
+                      WHERE node.thread_id = ${threadId}
+                        AND node.run_id IS NULL
+                        AND node.root_node_id IN (
+                          SELECT node_id FROM orchestration_v2_projection_nodes
+                          WHERE thread_id = ${threadId}
+                            AND run_id IS NULL
+                            AND kind = 'root_turn'
+                            AND status IN ('pending', 'running', 'waiting')
+                        )
                     )
                   )
                 )
