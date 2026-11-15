@@ -1014,6 +1014,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(AssistantDirectory.layer),
     // A reply to an assistant's request is recorded here; without it assistants only send.
     Layer.provide(AssistantRequests.layer),
+    // t3_thread_list reads what waits on the user here; without it statuses come from runs alone.
+    Layer.provide(NeedsUser.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
     // A thread an assistant launches is linked to it here.
     Layer.provide(AssistantTasks.layer),
   ),

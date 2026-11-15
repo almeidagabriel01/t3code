@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { NeedsUser } from "../autonomy/NeedsUser.ts";
 import * as ServerConfigService from "../config.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -3957,6 +3958,30 @@ describe("OrchestratorMcpService thread list", () => {
         ],
       );
     }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("a thread whose decision waits on the user is listed as waiting, wherever it is", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      // The status query an assistant runs: another assistant's thread asked a decision and stopped.
+      const listed = yield* mcp.listThreads(client, {
+        allProjects: true,
+        statuses: ["running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => [thread.threadId, thread.status]),
+        [["thread:b-snoozed", "waiting"]],
+      );
+    }).pipe(
+      Effect.provide(service),
+      Effect.provide(
+        Layer.mock(NeedsUser)({
+          pending: Effect.succeed([
+            { source: "decision", key: "decision:d1", threadId: "thread:b-snoozed" } as never,
+          ]),
+        }),
+      ),
+    ),
   );
 });
 
