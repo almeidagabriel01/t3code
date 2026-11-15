@@ -484,3 +484,61 @@ it.effect("ends a runless root turn's items when its node already ended", () =>
     );
   }),
 );
+
+it.effect("ends the tool calls under a runless root turn, even after the root ended", () =>
+  Effect.gen(function* () {
+    const node = (id: string, kind: string, status: string, rootNodeId: string) => ({
+      id: NodeId.make(id),
+      kind,
+      status,
+      runId: null,
+      rootNodeId: NodeId.make(rootNodeId),
+    });
+    const item = (id: string, nodeId: string, status = "running") => ({
+      id,
+      type: "command_execution",
+      nodeId: NodeId.make(nodeId),
+      runId: null,
+      status,
+    });
+    const events = yield* endRunlessRootTurns({
+      threadId: childThreadId,
+      providerInstanceId: parentProviderInstanceId,
+      projection: {
+        nodes: [
+          node("root:live", "root_turn", "running", "root:live"),
+          node("tool:live", "tool_call", "running", "root:live"),
+          node("tool:done", "tool_call", "completed", "root:live"),
+          node("root:ended", "root_turn", "completed", "root:ended"),
+          node("tool:ghost", "tool_call", "running", "root:ended"),
+        ],
+        providerTurns: [],
+        turnItems: [
+          item("turn-item:live", "tool:live"),
+          item("turn-item:done", "tool:done", "completed"),
+          item("turn-item:ghost", "tool:ghost"),
+        ],
+      } as never,
+      status: "interrupted",
+      now: yield* DateTime.now,
+      emitted: [],
+      allocateEventId: () => Effect.succeed(EventId.make("event:runless-tree")),
+    });
+    assert.deepEqual(
+      events
+        .map((event) =>
+          event.type === "node.updated" || event.type === "turn-item.updated"
+            ? `${event.payload.id} ${event.payload.status}`
+            : event.type,
+        )
+        .toSorted(),
+      [
+        "root:live interrupted",
+        "tool:ghost interrupted",
+        "tool:live interrupted",
+        "turn-item:ghost interrupted",
+        "turn-item:live interrupted",
+      ],
+    );
+  }),
+);

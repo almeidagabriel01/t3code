@@ -2987,6 +2987,13 @@ it.effect(
 
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
         assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerSessions.find(
+            (session) => session.id === providerSessionId,
+          )?.status,
+          "stopped",
+        );
       });
 
       yield* effect.pipe(
