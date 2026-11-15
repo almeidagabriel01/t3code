@@ -216,7 +216,10 @@ function ProjectModelPicker(props: {
                     clear(["defaultModelSelection"], props.onError);
                   }}
                 >
-                  Members' models
+                  {/* Without the project's model, the group's default applies where it holds. */}
+                  {layers.team !== undefined && isUsable(layers.team)
+                    ? "Group default"
+                    : "Members' models"}
                 </BackRow>
               ),
             }

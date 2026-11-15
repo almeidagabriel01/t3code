@@ -2185,10 +2185,17 @@ describe("requests", () => {
     await setPick(null);
     setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
     expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
+    // Clearing the project's own model goes back to what then applies.
+    const clearLabel = async () => {
+      await click("header:Project's model");
+      return (mocks.navigate.mock.lastCall![1] as { clearLabel?: string }).clearLabel;
+    };
+    expect(await clearLabel()).toBe("Group default");
     // A provider the project turned off is skipped, as the server does when the request starts.
     mocks.codexOffInBeta = true;
     render();
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    expect(await clearLabel()).toBe("Members' models");
   });
 
   it("sets a member's own model in the picked project from the header menu, and removes it", async () => {
