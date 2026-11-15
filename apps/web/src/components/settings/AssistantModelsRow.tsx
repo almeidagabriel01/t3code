@@ -58,7 +58,7 @@ export function SelectionPicker(
         {...(props.composer ? { size: "xs" as const, triggerClassName: "" } : {})}
         {...(props.field
           ? {
-              triggerClassName: `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-none flex-1 shrink sm:max-w-none`,
+              triggerClassName: `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-none flex-1 shrink text-start sm:max-w-none`,
             }
           : {})}
         triggerAriaLabel={props.label}
