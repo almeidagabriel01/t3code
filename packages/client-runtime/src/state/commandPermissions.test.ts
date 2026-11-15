@@ -274,49 +274,55 @@ describe("command permissions", () => {
     ),
   );
   it.each([
-    [WS_METHODS.terminalWrite, undefined, ["terminal:operate"]],
-    [ORCHESTRATION_V2_WS_METHODS.dispatchCommand, undefined, ["orchestration:operate"]],
-    [WS_METHODS.serverUpdateProvider, undefined, ["providers:manage"]],
-    [WS_METHODS.serverUpsertKeybinding, undefined, ["settings:write"]],
-    [WS_METHODS.serverSignalProcess, undefined, ["environment:maintain"]],
-    [WS_METHODS.projectsWriteFile, undefined, ["filesystem:write"]],
-    [WS_METHODS.previewOpen, undefined, ["preview:operate"]],
-    [WS_METHODS.vcsRefreshStatus, undefined, ["orchestration:read"]],
-    [WS_METHODS.serverRefreshUsageRates, undefined, ["diagnostics:read"]],
-    [
-      WS_METHODS.serverRetryResourceTelemetry,
-      undefined,
-      ["environment:maintain", "diagnostics:read"],
-    ],
-    [
-      WS_METHODS.deviceList,
-      { retryHostId: "remote-host" },
-      ["orchestration:read", "orchestration:operate"],
-    ],
-    [WS_METHODS.deviceList, { inspectOnly: true }, ["orchestration:read"]],
+    [WS_METHODS.heavyQueueCancel, undefined, ["terminal:operate"]],
     [WS_METHODS.serverUpdateSettings, undefined, ["settings:write"]],
     [
       WS_METHODS.serverUpdateSettings,
       { patch: {}, providerInstanceMutation: { operation: "remove", instanceId: "codex_work" } },
       ["providers:manage"],
     ],
-  ] as const)("a %s command reports what the server requires", (method, input, scopes) => {
-    expect(createCommandPermissions(runtime, method).requiredScopes(input)).toEqual(scopes);
-  });
-  it.effect("a reader sees an operator's command as unavailable", () =>
+    [
+      WS_METHODS.gitRunStackedAction,
+      { action: "create_pr", threadId: "thread-1" },
+      ["source-control:write", "orchestration:read"],
+    ],
+    // Unguarded: the server alone decides.
+    [WS_METHODS.terminalWrite, undefined, []],
+    [WS_METHODS.deviceList, { retryHostId: "remote-host" }, []],
+  ] as const)(
+    "a %s command checks what the server requires when guarded",
+    (method, input, scopes) => {
+      expect(createCommandPermissions(runtime, method).requiredScopes(input)).toEqual(scopes);
+    },
+  );
+  it.effect("a reader sees a guarded operator command as unavailable", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const write = createCommandPermissions(runtime, WS_METHODS.terminalWrite);
+        const cancel = createCommandPermissions(runtime, WS_METHODS.heavyQueueCancel);
         const reader = [AuthOrchestrationReadScope, AuthTerminalReadScope];
         registry.set(
           sessions(env),
           AsyncResult.success({ ...grant(false), scopes: reader, permissions: reader }),
         );
-        expect(registry.get(write.permissionAtom(env))).toBe(false);
-        expect((yield* write.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+        expect(registry.get(cancel.permissionAtom(env))).toBe(false);
+        expect((yield* cancel.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
+      }),
+    ),
+  );
+  it.effect("an unguarded command neither waits for the session nor reads as unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const write = createCommandPermissions(runtime, WS_METHODS.terminalWrite);
+        expect(registry.get(write.permissionAtom(env))).toBe(true);
+        const fiber = yield* write
+          .authorize(registry, env)
+          .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        expect(Option.isSome(yield* Fiber.join(fiber))).toBe(true);
       }),
     ),
   );

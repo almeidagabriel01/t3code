@@ -125,7 +125,6 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   });
   const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-  registry.mount(sessions(ENVIRONMENT_ID));
   registry.set(
     sessions(ENVIRONMENT_ID),
     AsyncResult.success({

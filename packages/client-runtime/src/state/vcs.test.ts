@@ -1,7 +1,6 @@
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
-  AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   WS_METHODS,
   VcsProcessExitError,
@@ -802,7 +801,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
+      scopes: [AuthSourceControlWriteScope],
     }),
   ),
 );
