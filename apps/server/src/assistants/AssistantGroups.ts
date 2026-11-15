@@ -142,9 +142,9 @@ const NO_REPLY_NOTE = "No reply needed";
 const UNROUTED_NOTICE = "Nobody got this message. Mention a member with @ to send it again.";
 /** A group with a lead whose model cannot route: why, and what the user can do. */
 const leadCannotRoute = (lead: string) =>
-  `${lead} is the lead, but its model can't route messages; only Claude models can.`;
+  `${lead} is the lead, but its model's provider can't route messages.`;
 const mentionRequiredMessage = (lead: string) =>
-  `${leadCannotRoute(lead)} Mention a member with @, or switch ${lead} to a Claude model.`;
+  `${leadCannotRoute(lead)} Mention a member with @, or switch ${lead} to a model whose provider can.`;
 const NO_ANSWER = "(no answer)";
 const QUIET_NOTE = "Nothing new";
 /** Why a hand-off was refused: what the chat says, and what the member that asked is told. */
