@@ -120,6 +120,10 @@ export function usageLimitAlertsPaused(input: {
   );
 }
 
+/** What every client's picker shows for a threshold and for each of its choices. */
+export const usageLimitAlertLabel = (threshold: number | null) =>
+  threshold === null ? "Off" : `${threshold}% left`;
+
 /** The fixed choices, plus a saved value outside them so the picker can still show it. */
 export function usageLimitAlertChoices(threshold: number | null): ReadonlyArray<number> {
   const choices: ReadonlyArray<number> = USAGE_LIMIT_ALERT_CHOICES;

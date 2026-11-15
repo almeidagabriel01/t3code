@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   mergeUsageLimitAlerts,
   usageLimitAlertChoices,
+  usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
   usageLimitAlertsPaused,
@@ -111,6 +112,7 @@ describe("usageLimitAlertRows", () => {
     expect(usageLimitAlertChoices(15)).toEqual([5, 10, 15, 20, 25, 30, 40, 50]);
     expect(usageLimitAlertChoices(12)).toEqual([5, 10, 12, 15, 20, 25, 30, 40, 50]);
     expect(usageLimitAlertChoices(null)).toEqual([5, 10, 15, 20, 25, 30, 40, 50]);
+    expect([null, 12].map(usageLimitAlertLabel)).toEqual(["Off", "12% left"]);
   });
 });
 

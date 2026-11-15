@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   usageLimitAlertChoices,
+  usageLimitAlertLabel,
   usageLimitAlertOverride,
   usageLimitAlertRows,
   usageLimitAlertsPaused,
@@ -24,7 +25,7 @@ const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const OFF = "off";
 
 const choiceLabel = (value: string) => (
-  <span className="tabular-nums">{value === OFF ? "Off" : `${value}% left`}</span>
+  <span className="tabular-nums">{usageLimitAlertLabel(value === OFF ? null : Number(value))}</span>
 );
 
 export function UsageLimitAlertsSection({
@@ -96,7 +97,7 @@ export function UsageLimitAlertsSection({
                   <SelectValue>{choiceLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value={OFF}>Off</SelectItem>
+                  <SelectItem value={OFF}>{choiceLabel(OFF)}</SelectItem>
                   {usageLimitAlertChoices(row.threshold).map((choice) => (
                     <SelectItem key={choice} value={String(choice)}>
                       {choiceLabel(String(choice))}
