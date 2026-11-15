@@ -183,7 +183,7 @@ const make = Effect.gen(function* () {
           yield* needsUser.defaultAssistant.pipe(Effect.orElseSucceed(() => Option.none())),
         ].flatMap((target) => (Option.isSome(target) ? [target.value.threadId] : []));
         for (const threadId of new Set(targets)) {
-          yield* needsUser.withdrawWake(threadId, wait.key).pipe(
+          yield* needsUser.withdrawWake(threadId, wait).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("assistant wait wake could not be taken back", {
                 threadId,

@@ -981,7 +981,7 @@ const make = Effect.gen(function* () {
       );
     if (!sent) return;
     if (Option.isNone(yield* needsUser.describe(wait, input.origin))) {
-      yield* needsUser.withdrawWake(threadId, wait.key);
+      yield* needsUser.withdrawWake(threadId, wait);
     }
   });
 

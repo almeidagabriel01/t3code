@@ -409,30 +409,42 @@ it.effect("no wake for an archived owner, an assistant thread, or a wait already
   });
 });
 
-it.effect("a wait settled while its wake is queued takes the wake back", () => {
-  const id = "assistant-task-waits:assistant:ada:1:request:req-command";
-  const { sends, dispatched, layer } = harness({
-    runs: [
-      { id: "run-other", status: "queued", userMessageId: "m-other" },
-      { id: "run-wake", status: "queued", userMessageId: id },
-    ],
-  });
-  return Effect.gen(function* () {
-    yield* setupAda();
-    yield* (yield* Reactor.AssistantTaskReactor).handleWait(
-      requestChange(taskThread, "command", "resolved")!,
-    );
-    assert.strictEqual(sends.length, 0);
-    assert.deepStrictEqual(dispatched, [
-      {
-        type: "queued-run.cancel",
-        commandId: `${id}:cancel`,
-        threadId: "assistant:ada:1",
-        runId: "run-wake",
-      },
-    ]);
-  }).pipe(Effect.provide(layer));
-});
+it.effect(
+  "a wait settled while its wake is queued takes the wake back, under its old id too",
+  () => {
+    const id = "assistant-task-waits:assistant:ada:1:request:req-command";
+    // Queued before the id named the conversation woken instead of the thread that waits.
+    const legacy = "assistant-task-waits:thread-task:request:req-command";
+    const { sends, dispatched, layer } = harness({
+      runs: [
+        { id: "run-other", status: "queued", userMessageId: "m-other" },
+        { id: "run-wake", status: "queued", userMessageId: id },
+        { id: "run-legacy", status: "queued", userMessageId: legacy },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* setupAda();
+      yield* (yield* Reactor.AssistantTaskReactor).handleWait(
+        requestChange(taskThread, "command", "resolved")!,
+      );
+      assert.strictEqual(sends.length, 0);
+      assert.deepStrictEqual(dispatched, [
+        {
+          type: "queued-run.cancel",
+          commandId: `${id}:cancel`,
+          threadId: "assistant:ada:1",
+          runId: "run-wake",
+        },
+        {
+          type: "queued-run.cancel",
+          commandId: `${legacy}:cancel`,
+          threadId: "assistant:ada:1",
+          runId: "run-legacy",
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("a settled wait also takes back the default assistant's queued notice", () => {
   const ada = "assistant-task-waits:assistant:ada:1:decision:dec-1";

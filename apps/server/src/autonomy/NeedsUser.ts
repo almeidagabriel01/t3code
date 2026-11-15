@@ -181,7 +181,7 @@ export class NeedsUser extends Context.Service<
     /** Takes back a wake about the wait that `targetThreadId` has not started yet. */
     readonly withdrawWake: (
       targetThreadId: ThreadId,
-      key: string,
+      wait: Pick<UserWait, "threadId" | "key">,
     ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
   }
 >()("t3/autonomy/NeedsUser") {}
@@ -330,17 +330,22 @@ const make = Effect.gen(function* () {
   });
 
   const withdrawWake: NeedsUser["Service"]["withdrawWake"] = Effect.fn("NeedsUser.withdrawWake")(
-    function* (targetThreadId, key) {
-      const id = waitWakeId(targetThreadId, key);
+    function* (targetThreadId, wait) {
+      // Wakes queued before the id named the conversation woken were keyed by the waiting thread.
+      const ids = new Set([
+        waitWakeId(targetThreadId, wait.key),
+        waitWakeId(wait.threadId, wait.key),
+      ]);
       const { runs } = yield* engine.getThreadRecords(targetThreadId, ["runs"]);
-      const queued = runs.find((run) => run.status === "queued" && run.userMessageId === id);
-      if (queued === undefined) return;
-      yield* engine.dispatch({
-        type: "queued-run.cancel",
-        commandId: CommandId.make(`${id}:cancel`),
-        threadId: targetThreadId,
-        runId: queued.id,
-      });
+      for (const run of runs) {
+        if (run.status !== "queued" || !ids.has(run.userMessageId)) continue;
+        yield* engine.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`${run.userMessageId}:cancel`),
+          threadId: targetThreadId,
+          runId: run.id,
+        });
+      }
     },
   );
 
