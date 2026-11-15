@@ -1329,6 +1329,9 @@ it("keeps what the user writes in another tab during a send, and a refused one i
     await userEvent.click(tab("render"));
     await expectComposer("");
     await userEvent.type(composer(), "meanwhile");
+    // This tab's draft is not on its way: its button neither spins nor waits.
+    await expect.element(submit).toBeEnabled();
+    expect(submit.element().querySelector('[aria-label="Loading"]')).toBeNull();
     return open;
   };
   (await sendHeld("@bo first"))();

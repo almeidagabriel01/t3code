@@ -343,11 +343,12 @@ export function GroupComposer(props: {
   const { text } = useComposerDraft(draftKey);
   const [selection, setSelection] = useState(() => ({ start: text.length, end: text.length }));
   const [contentHeight, setContentHeight] = useState(0);
-  const sending = outgoing.some((entry) => !entry.failed);
+  // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
+  const sending = shown !== null && !shown.failed;
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
-  // Set before the flush, so Return and a tap in the same moment post once.
-  const inFlight = useRef(false);
+  // Set before the flush, so Return and a tap in the same moment post once from that tab.
+  const inFlight = useRef(new Set<AssistantGroupTabKey | null>());
   const bodyText = useScaledTextRole("body");
 
   const write = (value: string, caret?: number) => {
@@ -488,10 +489,11 @@ export function GroupComposer(props: {
   };
 
   const send = async () => {
-    if (!canSend || inFlight.current) return;
-    inFlight.current = true;
+    const tab = props.tab;
+    if (!canSend || inFlight.current.has(tab)) return;
+    inFlight.current.add(tab);
     await post().finally(() => {
-      inFlight.current = false;
+      inFlight.current.delete(tab);
     });
   };
 

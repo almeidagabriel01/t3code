@@ -321,7 +321,8 @@ export function GroupComposer(props: {
   const setOutgoing = (tab: AssistantGroupTabKey | null, next: Outgoing | null) =>
     outgoings.set(props.draftKey, tab, next);
   const shown = assistantGroupShownOutgoing(outgoing, props.tab);
-  const sending = outgoing.some((entry) => !entry.failed);
+  // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
+  const sending = shown !== null && !shown.failed;
   const prompt = shown?.prompt ?? draft;
   const setPrompt = (value: string, cursor: number, expanded: number) => {
     if (shown === null) return setDraft(value, cursor, expanded);

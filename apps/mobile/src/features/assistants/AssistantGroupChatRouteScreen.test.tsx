@@ -2015,6 +2015,8 @@ describe("requests", () => {
       await click(TAB.beta);
       expect(input().value).toBe("");
       await type("meanwhile");
+      // This tab's draft is not on its way: its button neither spins nor waits.
+      expect([byLabel("Sending"), byLabel("Send")?.disabled]).toEqual([null, false]);
       return (reply: unknown) => act(async () => settle(reply));
     };
     await (
