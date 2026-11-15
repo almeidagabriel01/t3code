@@ -5,6 +5,7 @@ import {
   integrationErrorMessage,
   integrationLinkTarget,
   type IntegrationDirectoryRow,
+  type IntegrationMenuAction,
 } from "@t3tools/client-runtime/integrations";
 import {
   IntegrationCategory,
@@ -31,7 +32,7 @@ import {
   IntegrationDetailSheet,
   type IntegrationProviderInstance,
 } from "./IntegrationDetailSheet";
-import { IntegrationRow, type IntegrationRowMenuAction } from "./IntegrationRow";
+import { IntegrationRow } from "./IntegrationRow";
 import { MakeAvailableDialog } from "./MakeAvailableDialog";
 
 type Category = typeof IntegrationCategory.Type;
@@ -269,7 +270,7 @@ export function IntegrationsDirectory(props: {
     if (!result.ok) showError(result.reason, title);
   };
 
-  const onMenu = (row: IntegrationDirectoryRow, action: IntegrationRowMenuAction) => {
+  const onMenu = (row: IntegrationDirectoryRow, action: IntegrationMenuAction) => {
     if (action.kind === "make-available") {
       const server = row.detected.find((candidate) => candidate.id === action.detectedId);
       if (server) setOpen({ kind: "make-available", server });
@@ -323,11 +324,7 @@ export function IntegrationsDirectory(props: {
               : null
         }
         action={action}
-        menu={
-          row.entry !== null && ownAppGroup(row.entry) !== null
-            ? [...row.menu, { kind: "own-app", label: "Use your own app" }]
-            : row.menu
-        }
+        menu={row.menu}
         onMenu={(menuAction) => onMenu(row, menuAction)}
         disabled={!actions.canAct}
       />

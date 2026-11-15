@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/integrations";
 import { IntegrationCategory, type EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
-import { ScrollView as HorizontalScroll, View } from "react-native";
+import { ScrollView as HorizontalScroll, useWindowDimensions, View } from "react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -35,15 +35,23 @@ import { connectedNoticeAtom, useIntegrationFlows } from "./useIntegrationFlows"
 type Category = typeof IntegrationCategory.Type;
 type Flows = ReturnType<typeof useIntegrationFlows>;
 
+/** Below this directory width a row's action sits under its text: every phone, never a tablet. */
+const ACTION_BESIDE_MIN_WIDTH = 480;
+
 // Android draws menu images through AppSymbol's map, so each name must be in it.
 const MENU_IMAGES: Readonly<Record<IntegrationMenuAction["kind"], string>> = {
   "make-available": "square.on.square",
   disconnect: "xmark",
   "use-token": "key",
+  "own-app": "square.grid.2x2",
 };
 
-function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly flows: Flows }) {
-  const { row, flows } = props;
+function IntegrationRow(props: {
+  readonly row: IntegrationDirectoryRow;
+  readonly flows: Flows;
+  readonly stacked: boolean;
+}) {
+  const { row, flows, stacked } = props;
   const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
   const primary = row.primary;
@@ -78,13 +86,14 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
         onPress={() => run(() => flows.connect(primary.catalogId))}
       />
     );
-  // The 240dp text floor makes every phone (Pro Max included) wrap the action under the text,
-  // while tablets and wide panes keep it beside. Rows with an action never have onPress.
+  // Rows with an action never have onPress.
   const body = (
     <View className="min-h-14 flex-row items-center gap-3 py-3 ps-4 pe-2">
       <IntegrationIcon icon={row.icon} />
-      <View className="min-w-0 flex-1 flex-row flex-wrap items-center justify-end gap-x-3 gap-y-2">
-        <View className="min-w-0 shrink grow basis-[240px] gap-1">
+      <View
+        className={stacked ? "min-w-0 flex-1 gap-2" : "min-w-0 flex-1 flex-row items-center gap-3"}
+      >
+        <View className={stacked ? "gap-1" : "min-w-0 flex-1 gap-1"}>
           <Text textRole="body" className="text-foreground" numberOfLines={1}>
             {row.title}
           </Text>
@@ -93,8 +102,7 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
               textRole="footnote"
               className="text-foreground-muted"
               // Rows without a catalog entry describe themselves by their URL or command.
-              numberOfLines={row.entry === null ? 1 : 2}
-              ellipsizeMode={row.entry === null ? "head" : "tail"}
+              {...(row.entry === null ? { numberOfLines: 1, ellipsizeMode: "head" as const } : {})}
             >
               {row.description}
             </Text>
@@ -114,7 +122,7 @@ function IntegrationRow(props: { readonly row: IntegrationDirectoryRow; readonly
             </Text>
           )}
         </View>
-        {action === null ? null : <View>{action}</View>}
+        {action === null ? null : <View className={stacked ? "self-start" : ""}>{action}</View>}
       </View>
       {onPress === null ? null : (
         <SymbolView name="chevron.right" size={13} tintColorClassName="accent-chevron" />
@@ -175,6 +183,10 @@ function IntegrationsDirectory(props: {
   const state = useIntegrationsState(props.environmentId);
   const flows = useIntegrationFlows(props.environmentId, state);
   const linked = useRef<string | undefined>(undefined);
+  // The window stands in until the directory is measured, so a tablet does not paint stacked first.
+  const window = useWindowDimensions();
+  const [width, setWidth] = useState<number | null>(null);
+  const stacked = (width ?? window.width) < ACTION_BESIDE_MIN_WIDTH;
   const { entry, onSearch } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a linked entry resolves once this environment's integrations arrive from the server
   useEffect(() => {
@@ -208,12 +220,12 @@ function IntegrationsDirectory(props: {
     rows.length === 0 ? null : (
       <ListSection title={title}>
         {rows.map((row) => (
-          <IntegrationRow key={row.key} row={row} flows={flows} />
+          <IntegrationRow key={row.key} row={row} flows={flows} stacked={stacked} />
         ))}
       </ListSection>
     );
   return (
-    <View className="gap-5">
+    <View className="gap-5" onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
       {props.title === undefined ? null : (
         <Text textRole="headline" className="px-2 text-foreground">
           {props.title}
@@ -237,7 +249,7 @@ function IntegrationsDirectory(props: {
       ) : (
         <ListSection title="Other" trailing={addCustomServer}>
           {directory.other.map((row) => (
-            <IntegrationRow key={row.key} row={row} flows={flows} />
+            <IntegrationRow key={row.key} row={row} flows={flows} stacked={stacked} />
           ))}
         </ListSection>
       )}

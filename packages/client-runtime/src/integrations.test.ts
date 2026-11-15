@@ -205,6 +205,9 @@ describe("integrationDirectory", () => {
     auth: { kind: "token", header: "Authorization", format: "Bearer {token}" },
   } as Partial<IntegrationCatalogEntry>);
   const figma = entry("figma", "Figma", { category: "design" });
+  const outlook = entry("outlook", "Outlook", {
+    auth: { kind: "oauth", registration: "own-app", clientGroup: "microsoft" as never },
+  });
 
   const sections = (input: IntegrationsState, query = "", category: string | null = null) => {
     const result = integrationDirectory(input, {
@@ -412,6 +415,17 @@ describe("integrationDirectory", () => {
       },
     },
     {
+      case: "own app registration",
+      input: state({ catalog: [outlook], integrations: [view("outlook", "outlook", "connected")] }),
+      expected: {
+        status: "Connected",
+        origins: [],
+        note: null,
+        primary: { kind: "open", name: "outlook" },
+        menu: ["Disconnect", "Use your own app"],
+      },
+    },
+    {
       case: "connecting",
       input: state({ catalog: [github], integrations: [view("github", "github", "connecting")] }),
       expected: {
@@ -578,6 +592,13 @@ describe("integrationDirectory", () => {
     ]);
     expect(row.menu).toEqual([
       { kind: "make-available", label: "Make available to all providers", detectedId: "cc" },
+    ]);
+  });
+
+  it("offers an own-app entry's own app from its menu, by catalog id", () => {
+    const row = rowFor(state({ catalog: [outlook] }));
+    expect(row.menu).toEqual([
+      { kind: "own-app", label: "Use your own app", catalogId: "outlook" },
     ]);
   });
 

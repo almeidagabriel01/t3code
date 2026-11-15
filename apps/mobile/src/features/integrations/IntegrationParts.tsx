@@ -19,7 +19,9 @@ export function IntegrationChip(props: { readonly label: string; readonly tone: 
   const tone = TONE_CLASS[props.tone];
   return (
     <View className={cn("max-w-full self-start rounded-md border px-1.5 py-px", tone)}>
-      <Text className={cn("text-2xs", tone)}>{props.label}</Text>
+      <Text className={cn("text-2xs", tone)} numberOfLines={1}>
+        {props.label}
+      </Text>
     </View>
   );
 }
