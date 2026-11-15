@@ -749,8 +749,6 @@ export interface AssistantGroupSendContext {
   readonly stopped: ReadonlyArray<{ readonly taskId: string; readonly ownerId: string }>;
 }
 
-const taskRequestId = (task: AssistantGroupTask) => task.requestId ?? task.requestMessageId;
-
 /** The send context from the loaded chat; tasks of requests not loaded are not seen. */
 export function assistantGroupSendContext(
   state: AssistantGroupChatState | null,
@@ -765,7 +763,9 @@ export function assistantGroupSendContext(
       : (state?.messages.get(requestId) ?? state?.requests.get(requestId));
   const tasks = [...(state?.tasks.values() ?? [])];
   const ofRequest = tasks.filter(
-    (task) => requestId !== undefined && taskRequestId(task) === requestId,
+    // By `request_id` alone, as the server counts them: a task from before requests had ids
+    // neither starts nor stops its request.
+    (task) => requestId !== undefined && task.requestId === requestId,
   );
   const roots = ofRequest.filter((task) => task.kind === "root");
   const owners = [...new Set(roots.map((task) => task.ownerId))];
@@ -790,7 +790,7 @@ export function assistantGroupSendContext(
         (task) =>
           task.kind === "root" &&
           (task.status === "paused" || task.status === "failed") &&
-          (requestId === undefined || taskRequestId(task) === requestId),
+          (requestId === undefined || task.requestId === requestId),
       )
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .map((task) => ({ taskId: task.id, ownerId: task.ownerId })),

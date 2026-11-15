@@ -708,52 +708,84 @@ describe("composer helpers", () => {
     );
   });
 
-  it("reads what routes a draft from the chat: the reply's request and the stopped work", () => {
-    const state = start(
-      snapshot(
-        [
-          message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
-          message(2, {
-            author: "assistant",
-            assistantId: "beto" as AssistantId,
-            taskId: "k" as AssistantGroupTask["id"],
-            requestId: "m1" as AssistantGroupMessageId,
-          }),
-          message(3, { requestId: "m3" as AssistantGroupMessageId }),
-        ],
-        [
-          task("k", 1, {
-            ownerId: "beto" as AssistantId,
-            status: "failed",
-            updatedAt: "2026-11-01T00:00:09.000Z",
-          }),
-        ],
-      ),
-    );
-    const members = [ada, beto];
-    assert.deepEqual<unknown>(
-      assistantGroupSendContext(state, "m2" as AssistantGroupMessageId, members),
+  // `AssistantGroups.post` matches a request's tasks by `request_id` alone, so a task from before
+  // requests had ids (`requestId` unset) neither starts nor stops its request; with no request,
+  // every stopped root of the group counts.
+  const chat = start(
+    snapshot(
+      [
+        message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
+        message(2, {
+          author: "assistant",
+          assistantId: "beto" as AssistantId,
+          taskId: "k" as AssistantGroupTask["id"],
+          requestId: "m1" as AssistantGroupMessageId,
+        }),
+        message(3, { requestId: "m3" as AssistantGroupMessageId }),
+        message(4, { requestId: "m4" as AssistantGroupMessageId }),
+        message(5, {
+          author: "assistant",
+          assistantId: "ada" as AssistantId,
+          taskId: "old" as AssistantGroupTask["id"],
+          requestId: "m4" as AssistantGroupMessageId,
+        }),
+      ],
+      [
+        task("k", 1, {
+          requestId: "m1" as AssistantGroupMessageId,
+          ownerId: "beto" as AssistantId,
+          status: "failed",
+          updatedAt: "2026-11-01T00:00:09.000Z",
+        }),
+        task("old", 4, { status: "paused", updatedAt: "2026-11-01T00:00:05.000Z" }),
+      ],
+    ),
+  );
+  it.each<[string, string | null, unknown]>([
+    [
+      "a member's answer in a started request",
+      "m2",
       {
         replyOwnerId: "beto",
         request: { projectId: "p1", started: true, ownerId: "beto" },
         stopped: [{ taskId: "k", ownerId: "beto" }],
       },
-    );
-    // A request the lead has not routed yet: no task, no project, nothing of it stopped.
-    assert.deepEqual<unknown>(
-      assistantGroupSendContext(state, "m3" as AssistantGroupMessageId, members),
+    ],
+    [
+      "a request the lead has not routed",
+      "m3",
       {
         replyOwnerId: null,
         request: { projectId: null, started: false, ownerId: null },
         stopped: [],
       },
+    ],
+    [
+      "an answer whose task has no request id",
+      "m5",
+      {
+        replyOwnerId: "ada",
+        request: { projectId: null, started: false, ownerId: null },
+        stopped: [],
+      },
+    ],
+    [
+      "no reply: the group's stopped work, newest first",
+      null,
+      {
+        replyOwnerId: null,
+        request: null,
+        stopped: [
+          { taskId: "k", ownerId: "beto" },
+          { taskId: "old", ownerId: "ada" },
+        ],
+      },
+    ],
+  ])("reads the send context of %s", (_name, replyTo, expected) => {
+    assert.deepEqual<unknown>(
+      assistantGroupSendContext(chat, replyTo as AssistantGroupMessageId | null, [ada, beto]),
+      expected,
     );
-    // No reply: the group's stopped work, newest first.
-    assert.deepEqual<unknown>(assistantGroupSendContext(state, null, members), {
-      replyOwnerId: null,
-      request: null,
-      stopped: [{ taskId: "k", ownerId: "beto" }],
-    });
   });
 
   const provider = (instanceId: string, routes: boolean | undefined) =>
