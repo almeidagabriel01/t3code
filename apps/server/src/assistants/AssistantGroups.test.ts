@@ -4368,11 +4368,15 @@ it.effect(
         (message_id, team_id, seq, author, kind, text, created_at)
         VALUES (${`gm:${n}`}, ${TEAM}, ${n}, 'user', 'message', ${`m${n}`}, '2026-01-01')`;
       }
+      yield* sql`UPDATE assistant_group_messages SET client_request_id = 'c1' WHERE message_id = 'gm:1'`;
       const pull = yield* Stream.toPull(groups.subscribe(TEAM));
       // The first chunk is the snapshot, which means the subscription is live for what follows.
       const [snapshot] = yield* pull;
       yield* groups.post({ teamId: OTHER_TEAM, text: "@ada elsewhere" }, h.user);
-      const posted = yield* groups.post({ teamId: TEAM, text: "@ada here" }, h.user);
+      const posted = yield* groups.post(
+        { teamId: TEAM, text: "@ada here", clientRequestId: "c-here" },
+        h.user,
+      );
       const [message, task] = yield* pull;
       assert.equal(snapshot!.type, "snapshot");
       if (snapshot!.type === "snapshot") {
@@ -4381,10 +4385,24 @@ it.effect(
         assert.isTrue(snapshot.hasMore);
       }
       assert.equal(message!.type === "message" ? message.message.id : "", posted.message.id);
+      // The client's id comes back with its post, so a client whose reply was lost sees it landed.
+      assert.deepEqual(
+        [
+          posted.message.clientRequestId,
+          message!.type === "message" && message.message.clientRequestId,
+        ],
+        ["c-here", "c-here"],
+      );
       assert.equal(task?.type === "task" ? task.task.teamId : "", TEAM);
 
       const older = yield* groups.history({ teamId: TEAM, beforeSeq: 6 });
       assert.deepEqual([older.messages.length, older.hasMore], [5, false]);
+      assert.deepEqual(
+        older.messages
+          .slice(0, 2)
+          .map((entry) => "clientRequestId" in entry && entry.clientRequestId),
+        ["c1", false],
+      );
       assert.equal(
         (yield* groups.history({ teamId: AssistantTeamId.make("nope") }).pipe(Effect.flip)).reason,
         "not_found",
