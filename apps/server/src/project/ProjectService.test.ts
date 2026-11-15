@@ -5,7 +5,13 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AssistantId,
+  CommandId,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -261,6 +267,23 @@ it.layer(layerTest)("ProjectService", (it) => {
         (current) => current.projectSettingsOverrides[projectId]?.defaultModelSelection,
       );
       assert.deepEqual(yield* projectModel, modelSelection);
+      // Writing or clearing the model leaves the project's other settings alone.
+      const ada = AssistantId.make("assistant:ada");
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultModelSelection: modelSelection,
+            defaultAutoPull: true,
+            assistantModelSelections: { [ada]: modelSelection },
+          },
+        },
+      });
+      const otherSettings = Effect.map(settings.getSettings, (current) => {
+        const { defaultAutoPull, assistantModelSelections } =
+          current.projectSettingsOverrides[projectId] ?? {};
+        return { defaultAutoPull, assistantModelSelections };
+      });
+      const kept = { defaultAutoPull: true, assistantModelSelections: { [ada]: modelSelection } };
       assert.isNull(created.repositoryIdentity);
       assert.isNull(created.faviconPath);
 
@@ -283,6 +306,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         defaultModelSelection: { ...modelSelection, model: "gpt-5.2-codex" },
       });
       assert.deepEqual(yield* projectModel, { ...modelSelection, model: "gpt-5.2-codex" });
+      assert.deepEqual(yield* otherSettings, kept);
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
       assert.isTrue(updated.autoPull);
@@ -309,6 +333,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         defaultModelSelection: null,
       });
       assert.isUndefined(yield* projectModel);
+      assert.deepEqual(yield* otherSettings, kept);
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
       assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
