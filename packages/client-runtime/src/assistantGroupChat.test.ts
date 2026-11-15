@@ -22,6 +22,7 @@ import {
   assistantGroupProjectLabel,
   assistantGroupTabAfterSend,
   assistantGroupShowsOutgoing,
+  createAssistantGroupOutgoingStore,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -1479,6 +1480,21 @@ describe("assistant group tabs", () => {
     ["refused, in another project", { tab: "project:p1", failed: true }, "project:p2", false],
   ] as const)("composer shows the outgoing message: %s", (_name, outgoing, tab, expected) => {
     assert.strictEqual(assistantGroupShowsOutgoing(outgoing, tab), expected);
+  });
+
+  it("keeps each group's outgoing message until it is replaced or cleared", () => {
+    const store = createAssistantGroupOutgoingStore();
+    let calls = 0;
+    const stop = store.subscribe(() => calls++);
+    const refused = { tab: "project:p1", failed: true } as const;
+    store.set("g1", refused);
+    store.set("g2", { tab: "all", failed: false });
+    store.set("g2", null);
+    stop();
+    store.set("g3", refused);
+    assert.deepStrictEqual([store.get("g1"), store.get("g2"), calls], [refused, null, 3]);
+    store.clear();
+    assert.deepStrictEqual([store.get("g1"), store.get("g3")], [null, null]);
   });
 
   it.each([
