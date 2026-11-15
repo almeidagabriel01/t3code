@@ -542,7 +542,12 @@ function FeedRow(
         className={cn("gap-1 px-4 py-1.5", fromUser ? "items-end" : "items-start")}
       >
         {fromUser ? null : (
-          <Text className="text-xs font-t3-medium text-foreground-secondary">{label}</Text>
+          <View className="flex-row items-center gap-1.5">
+            {author === undefined ? null : (
+              <AssistantAvatar assistant={author} environmentId={props.environmentId} size={16} />
+            )}
+            <Text className="text-xs font-t3-medium text-foreground-secondary">{label}</Text>
+          </View>
         )}
         {quoted(fromUser ? "end" : "start")}
         <View

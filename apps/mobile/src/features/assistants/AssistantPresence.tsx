@@ -16,9 +16,17 @@ import {
 } from "@t3tools/client-runtime/assistantTasks";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { MenuAction } from "@react-native-menu/menu";
-import type { Assistant, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import type { ReactNode } from "react";
+import { TEAMMATE_STATUS_LABEL } from "@t3tools/client-runtime/teammateMessage";
+import type {
+  Assistant,
+  EnvironmentId,
+  MessageId,
+  TeammateReplyStatus,
+  ThreadId,
+} from "@t3tools/contracts";
+import { useState, type ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
+import Animated, { LinearTransition, ReduceMotion } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
@@ -32,6 +40,7 @@ import {
 import { useThreadShell } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
+import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import * as Dialog from "../../components/ui/Dialog";
 import { accentWash, presenceBadgeLabel } from "./assistantPresenceLabels";
 import {
@@ -45,26 +54,51 @@ import { useAssistantFlows } from "./useAssistantFlows";
 import { useOpenAssistantInfo } from "./openAssistantInfo";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
-/** Who wrote in this agent's conversation: the assistant's own avatar, name, and access, in its color. */
+const STATUS_CHIP = {
+  done: { text: "text-success-foreground", wash: "#10b981" },
+  partial: { text: "text-warning-foreground", wash: "#f59e0b" },
+  blocked: { text: "text-danger-foreground", wash: "#ef4444" },
+} satisfies Record<TeammateReplyStatus, { readonly text: string; readonly wash: string }>;
+
+const COLLAPSED_BODY_HEIGHT = 320;
+
+/**
+ * Who wrote in this agent's conversation: the assistant's own avatar, name, role and access, in its
+ * color, with how its request went. A run of messages from one assistant shows its face once.
+ */
 export function AssistantFeedMessage(props: {
   readonly environmentId: EnvironmentId;
   readonly assistantId: string;
   /** Set on the assistant's first message in the thread. */
   readonly joinedAtLabel: string | null;
+  /** The name the message was sent under, for an assistant deleted since. */
+  readonly fallbackName?: string;
+  readonly status?: TeammateReplyStatus | undefined;
+  /** The teammate's own conversation, for "Open thread". */
+  readonly threadId?: string | undefined;
+  readonly timestampLabel?: string | undefined;
+  /** Continues the message above from the same assistant. */
+  readonly continues?: boolean;
+  /** Opens folded to its first screen, with the rest a tap away. */
+  readonly long?: boolean;
   readonly children: ReactNode;
 }) {
   const { active, archived } = useAssistantEntries();
+  const openLinkedThread = useOpenLinkedThread();
+  const [expanded, setExpanded] = useState(false);
   const assistant =
     [...active, ...archived].find(
       (entry) =>
         entry.environmentId === props.environmentId && entry.assistant.id === props.assistantId,
     )?.assistant ?? null;
-  const name = assistant?.name ?? "Assistant";
+  const name = assistant?.name ?? props.fallbackName ?? "Assistant";
   const accent = assistantAccent(props.assistantId);
   const face = assistant ?? removedAssistantFace(props.assistantId);
   const access = assistant ? toolAccessLabel(assistant.toolAccess) : null;
+  const badge = presenceBadgeLabel(access, assistant?.askBeforeActing === true, assistant?.role);
+  const collapsed = props.long === true && !expanded;
   return (
-    <View className="mb-4 gap-3 px-1">
+    <View className={props.continues ? "-mt-2 mb-4 gap-3 px-1" : "mb-4 gap-3 px-1"}>
       {props.joinedAtLabel !== null ? (
         <View
           accessible
@@ -80,28 +114,85 @@ export function AssistantFeedMessage(props: {
         </View>
       ) : null}
       <View className="flex-row items-start gap-2.5">
-        <AssistantAvatar assistant={face} environmentId={props.environmentId} size={28} />
-        <View className="min-w-0 shrink gap-1">
-          <View className="flex-row items-center gap-1.5">
-            <Text className="font-t3-bold text-xs text-foreground" numberOfLines={1}>
-              {name}
-            </Text>
-            <View className="rounded-md border border-border px-1.5 py-px">
-              <Text className="text-2xs text-foreground-muted">
-                {presenceBadgeLabel(access, assistant?.askBeforeActing === true)}
+        {props.continues ? (
+          <View style={{ width: 28 }} />
+        ) : (
+          <AssistantAvatar assistant={face} environmentId={props.environmentId} size={28} />
+        )}
+        <View className="min-w-0 shrink gap-1.5">
+          {props.continues ? null : (
+            <View className="flex-row flex-wrap items-center gap-x-1.5 gap-y-1">
+              <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
+                {name}
               </Text>
+              <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                {badge}
+              </Text>
+              {props.status === undefined ? null : (
+                <View
+                  accessibilityLabel={`Status: ${TEAMMATE_STATUS_LABEL[props.status]}`}
+                  className="rounded px-1.5 py-px"
+                  style={{ backgroundColor: accentWash(STATUS_CHIP[props.status].wash, 0.16) }}
+                >
+                  <Text className={`font-t3-medium text-2xs ${STATUS_CHIP[props.status].text}`}>
+                    {TEAMMATE_STATUS_LABEL[props.status]}
+                  </Text>
+                </View>
+              )}
             </View>
-          </View>
+          )}
           <View
-            className="min-w-0 self-start rounded-b-[14px] rounded-tr-[14px] rounded-tl px-3 py-2"
+            className="min-w-0 self-start rounded-b-[14px] rounded-tr-[14px] rounded-tl px-3 py-2.5"
             style={{
-              backgroundColor: accentWash(accent, 0.12),
+              backgroundColor: accentWash(accent, 0.09),
               borderWidth: 1,
-              borderColor: accentWash(accent, 0.35),
+              borderColor: accentWash(accent, 0.28),
             }}
           >
-            {props.children}
+            <Animated.View
+              layout={LinearTransition.duration(260).reduceMotion(ReduceMotion.System)}
+              style={collapsed ? { maxHeight: COLLAPSED_BODY_HEIGHT, overflow: "hidden" } : null}
+            >
+              {props.children}
+            </Animated.View>
+            {props.long ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                hitSlop={8}
+                onPress={() => setExpanded((value) => !value)}
+                className="mt-1.5 min-h-8 items-end justify-center active:opacity-70"
+              >
+                <Text className="font-t3-medium text-xs text-foreground-secondary">
+                  {expanded ? "Show less" : "Show full message"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
+          {props.threadId || props.timestampLabel ? (
+            <View className="flex-row items-center gap-3 ps-1">
+              {props.threadId ? (
+                <Pressable
+                  accessibilityRole="link"
+                  hitSlop={8}
+                  className="active:opacity-70"
+                  onPress={() =>
+                    openLinkedThread({
+                      environmentId: String(props.environmentId),
+                      threadId: String(props.threadId),
+                    })
+                  }
+                >
+                  <Text className="font-t3-medium text-xs text-foreground-secondary">
+                    Open thread
+                  </Text>
+                </Pressable>
+              ) : null}
+              {props.timestampLabel ? (
+                <Text className="text-xs text-foreground-muted">{props.timestampLabel}</Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
       </View>
     </View>

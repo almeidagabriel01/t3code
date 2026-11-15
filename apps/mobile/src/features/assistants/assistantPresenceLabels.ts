@@ -13,11 +13,13 @@ export function accentWash(accent: string, alpha: number): string {
     .padStart(2, "0")}`;
 }
 
-/** The small chip beside an assistant's name: its role here, access level and whether it asks first. */
-export function presenceBadgeLabel(access: string | null, asksFirst: boolean) {
-  return ["assistant", ...(access ? [access] : []), ...(asksFirst ? ["asks first"] : [])].join(
-    " · ",
-  );
+/** The line beside an assistant's name: its role, access level and whether it asks first. */
+export function presenceBadgeLabel(access: string | null, asksFirst: boolean, role?: string) {
+  return [
+    role || "assistant",
+    ...(access ? [access] : []),
+    ...(asksFirst ? ["asks first"] : []),
+  ].join(" · ");
 }
 
 /** Text color of a status line: what it is doing, in the theme's own tokens. */
