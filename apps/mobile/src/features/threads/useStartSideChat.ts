@@ -184,7 +184,7 @@ export function useStartSideChatWithPrompt() {
     // A slow link gets a few waits for the shell; the route's own loading screen covers a later one.
     const targetRef = scopeThreadRef(source.environmentId, targetThreadId);
     for (let waits = 0; waits < 4 && !(await waitForThreadShell(targetRef)); waits++);
-    setStartingSideChat(targetThreadId, null);
+    setStartingSideChat(targetThreadId, { prompt: shownPrompt, error: null, started: true });
     return true;
   };
 }

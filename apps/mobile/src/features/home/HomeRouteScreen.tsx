@@ -150,6 +150,7 @@ export function HomeRouteScreen() {
   ).map((scope) => ({
     key: scope.key,
     label: scope.title,
+    environmentIds: scope.projectRefs.map((ref) => ref.environmentId),
   }));
   const selectedProjectKey = projectFilterOptions.some(
     (project) => project.key === resolvedProjectKey,

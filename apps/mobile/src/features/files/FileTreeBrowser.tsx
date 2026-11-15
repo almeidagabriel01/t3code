@@ -175,7 +175,11 @@ export function FileTreeBrowser(props: {
     }
     if (selectedIndex < 0 || scrolledSelectionRef.current === controlledSelectedPath) return;
     scrolledSelectionRef.current = controlledSelectedPath;
-    void listRef.current?.scrollIndexIntoView({ index: selectedIndex, animated: false });
+    void listRef.current?.scrollToIndex({
+      index: selectedIndex,
+      animated: false,
+      viewPosition: 0.5,
+    });
   }, [controlledSelectedPath, selectedIndex]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests listings for expanded directories that are not yet loaded or pending

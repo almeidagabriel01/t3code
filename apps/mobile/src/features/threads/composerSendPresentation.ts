@@ -12,7 +12,8 @@ export interface ComposerSendPresentation {
     | "tray.and.arrow.up"
     | "checkmark"
     | "list.number"
-    | "arrow.turn.left.up";
+    | "arrow.turn.left.up"
+    | "bubble.left.and.bubble.right";
   readonly action: ActiveTurnComposerAction | null;
   readonly alternate: ActiveTurnComposerAction | null;
   readonly offersFollowUpChoice: boolean;
@@ -30,11 +31,22 @@ export function resolveComposerSendPresentation(input: {
   readonly canSteer: boolean;
   readonly followUpBehavior: FollowUpBehavior;
   readonly deliveryDeferred: boolean;
+  /** The draft is a `/side` command: sending opens a side chat, never the main turn. */
+  readonly sendsToSideChat?: boolean;
 }): ComposerSendPresentation {
   if (input.editingQueuedMessage) {
     return {
       label: "Update queued message",
       icon: "checkmark",
+      action: null,
+      alternate: null,
+      offersFollowUpChoice: false,
+    };
+  }
+  if (input.sendsToSideChat) {
+    return {
+      label: "Send to side chat",
+      icon: "bubble.left.and.bubble.right",
       action: null,
       alternate: null,
       offersFollowUpChoice: false,

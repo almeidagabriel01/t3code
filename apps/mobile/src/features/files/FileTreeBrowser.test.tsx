@@ -13,7 +13,8 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   menus: [] as unknown[],
-  scrollIndexIntoView: (_params: { index: number; animated: boolean }) => Promise.resolve(),
+  scrollToIndex: (_params: { index: number; animated: boolean; viewPosition: number }) =>
+    Promise.resolve(),
 }));
 
 vi.mock("react-native", () => ({
@@ -45,8 +46,8 @@ vi.mock("@legendapp/list/react-native", () => ({
     ListHeaderComponent?: ReactNode;
   }) => {
     useImperativeHandle(props.ref, () => ({
-      scrollIndexIntoView: (params: { index: number; animated: boolean }) =>
-        mocks.scrollIndexIntoView(params),
+      scrollToIndex: (params: { index: number; animated: boolean; viewPosition: number }) =>
+        mocks.scrollToIndex(params),
     }));
     return (
       <div>
@@ -125,7 +126,7 @@ function mount(props: Partial<Parameters<typeof FileTreeBrowser>[0]>) {
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.menus = [];
-  mocks.scrollIndexIntoView = () => Promise.resolve();
+  mocks.scrollToIndex = () => Promise.resolve();
 });
 
 it("opens each row's explorer menu on long press and skips rows with no actions", () => {
@@ -156,9 +157,11 @@ it("shows the folder a search is limited to with a way back to all files", () =>
   expect(onClear).toHaveBeenCalledOnce();
 });
 
-it("scrolls a revealed file into view once, after its folders open", () => {
-  const scroll = vi.fn((_params: { index: number; animated: boolean }) => Promise.resolve());
-  mocks.scrollIndexIntoView = scroll;
+it("centers a revealed file once, after its folders open", () => {
+  const scroll = vi.fn((_params: { index: number; animated: boolean; viewPosition: number }) =>
+    Promise.resolve(),
+  );
+  mocks.scrollToIndex = scroll;
   const nested: ReadonlyArray<ProjectEntry> = [
     ...entries,
     { path: "src/lib", kind: "directory" },
@@ -194,7 +197,7 @@ it("scrolls a revealed file into view once, after its folders open", () => {
   expect(scroll).not.toHaveBeenCalled();
   const open = new Set(["src", "src/lib"]);
   render(open, "src/lib/a.ts");
-  expect(scroll.mock.calls).toEqual([[{ index: 2, animated: false }]]);
+  expect(scroll.mock.calls).toEqual([[{ index: 2, animated: false, viewPosition: 0.5 }]]);
   render(new Set(open), "src/lib/a.ts");
   expect(scroll).toHaveBeenCalledOnce();
   render(open, null);
