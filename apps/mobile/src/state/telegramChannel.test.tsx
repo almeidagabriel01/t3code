@@ -46,7 +46,7 @@ vi.mock("./server", async () => {
 });
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => mocks.command }));
 vi.mock("./query", () => ({
-  useEnvironmentQuery: () => ({ data: mocks.stored, error: null }),
+  useEnvironmentQuery: () => ({ data: mocks.stored, dataUpdatedAt: 1, error: null }),
 }));
 
 import { TelegramChannelSettingsError } from "@t3tools/contracts";

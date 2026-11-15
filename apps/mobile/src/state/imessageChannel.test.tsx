@@ -48,7 +48,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: () => mocks.command }));
 vi.mock("./query", () => ({
   useEnvironmentQuery: (atom: string) =>
     atom === "settings"
-      ? { data: mocks.stored, error: null }
+      ? { data: mocks.stored, dataUpdatedAt: 1, error: null }
       : { data: { access: "ok" }, refresh: vi.fn() },
 }));
 

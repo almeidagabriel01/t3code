@@ -2,12 +2,15 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
+import { queryUpdatedAt } from "./queryUpdatedAt.ts";
+
 /** The row's title on every client; its description is the channel's undelivered label. */
 export const UNDELIVERED_RESEND_TITLE = "Resend undelivered replies";
 
 /**
  * How many a resend put back in line, against what supplied the count when it started: the
- * status event, or the stored settings while the stream has not reported.
+ * status event, or the fetch of the stored settings (its `queryUpdatedAt`) while the stream has
+ * not reported.
  */
 interface UndeliveredResendAnswer {
   readonly against: unknown;
@@ -18,7 +21,7 @@ type Known = (environmentId: EnvironmentId) => Atom.Atom<AsyncResult.AsyncResult
 
 /**
  * A channel's resend: one request at a time per environment, a second press joins it, and its
- * answer lowers the count shown until what supplied that count changes.
+ * answer lowers the count shown until the next status event or settings fetch.
  */
 export function createUndeliveredResend(status: Known, settings: Known) {
   const answers = Atom.family((_environmentId: EnvironmentId) =>
@@ -39,7 +42,8 @@ export function createUndeliveredResend(status: Known, settings: Known) {
         { environmentId }: { readonly environmentId: EnvironmentId },
         registry: AtomRegistry.AtomRegistry,
       ): unknown =>
-        current(registry, status(environmentId)) ?? current(registry, settings(environmentId)),
+        current(registry, status(environmentId)) ??
+        queryUpdatedAt(registry.get(settings(environmentId))),
       onSuccess: (
         { environmentId }: { readonly environmentId: EnvironmentId },
         registry: AtomRegistry.AtomRegistry,
@@ -48,7 +52,7 @@ export function createUndeliveredResend(status: Known, settings: Known) {
       ) =>
         Effect.sync(() =>
           registry.set(answers(environmentId), {
-            against: against ?? null,
+            against,
             requeued: result.requeued,
           }),
         ),
@@ -68,13 +72,29 @@ export function lowerUndelivered<S extends { readonly undeliveredCount?: number 
 }
 
 /**
- * The settings once a resend answered. The count comes from the event, or from the stored
- * settings when there is none; once that object changes it was read after the server recounted,
- * so it wins.
+ * The settings once a resend answered. The count comes from the event, or, when there is none,
+ * from the settings fetched at `fetchedAt`. A newer event or fetch was read after the server
+ * recounted, so it wins even when its content is the same.
  */
 export function applyUndeliveredResend<
   S extends { readonly undeliveredCount?: number | undefined },
->(settings: S, answer: UndeliveredResendAnswer | null, event: unknown): S {
-  if (answer === null || answer.against !== (event ?? settings)) return settings;
+>(settings: S, answer: UndeliveredResendAnswer | null, event: unknown, fetchedAt: number): S {
+  if (answer === null || answer.against !== (event ?? fetchedAt)) return settings;
   return lowerUndelivered(settings, answer.requeued);
+}
+
+/** Settings and when they arrived: a fetch's `queryUpdatedAt`, or when a change answered them. */
+export interface StoredSettings<S> {
+  readonly value: S;
+  readonly at: number;
+}
+
+/** What a change saved until a fetch finishes after it; then that fetch. */
+export function newerStoredSettings<S>(
+  saved: StoredSettings<S> | null,
+  fetched: S | null,
+  fetchedAt: number,
+): StoredSettings<S> | null {
+  if (saved !== null && (fetched === null || saved.at >= fetchedAt)) return saved;
+  return fetched === null ? null : { value: fetched, at: fetchedAt };
 }

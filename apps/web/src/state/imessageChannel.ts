@@ -44,7 +44,7 @@ export function useImessageSettings(environmentId: EnvironmentId) {
   const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
   const live = query.data && event ? applyImessageStatusEvent(query.data, event) : query.data;
   return {
-    settings: live && applyUndeliveredResend(live, resent, event),
+    settings: live && applyUndeliveredResend(live, resent, event, query.dataUpdatedAt),
     error: query.error,
     refresh: query.refresh,
   };
