@@ -76,6 +76,11 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
   const sendFails = { current: false };
+  /** What every send fails with while set: a default that can never take it. */
+  const sendError: { current: unknown } = { current: null };
+  /** Every send's command id, in order, whatever came of it. */
+  const attempts: Array<string> = [];
+  const receipts = new Set<string>();
   /** Runs inside a send, after it is recorded: what happens meanwhile elsewhere. */
   const onSend: { current: (() => Effect.Effect<unknown>) | null } = { current: null };
   const telegram = Ref.makeUnsafe({
@@ -123,30 +128,47 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: (input) =>
-            sendFails.current
-              ? Effect.fail(new Error("nope") as never)
-              : Effect.suspend(() => {
-                  const hook = onSend.current;
-                  onSend.current = null;
-                  return hook?.() ?? Effect.void;
-                }).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      sent.push({
-                        threadId: input.threadId,
-                        text: input.text,
-                        messageId: input.messageId,
-                      });
-                      queued.set(input.messageId, {
-                        id: `run:${input.messageId}`,
-                        threadId: input.threadId,
-                        status: "queued",
-                        userMessageId: input.messageId,
-                      });
-                      return {} as never;
-                    }),
-                  ),
-                ),
+            Effect.sync(() => void attempts.push(input.commandId)).pipe(
+              Effect.andThen(
+                sendFails.current
+                  ? Effect.fail(new Error("nope") as never)
+                  : sendError.current !== null
+                    ? Effect.fail(sendError.current as never)
+                    : // A replay reads back the run it made: one taken out of the queue has none.
+                      receipts.has(input.commandId) &&
+                        queued.get(input.messageId)?.status === "cancelled"
+                      ? Effect.fail(
+                          new ThreadManagement.ThreadManagementDurableRunProjectionError({
+                            threadId: input.threadId,
+                            messageId: input.messageId,
+                          }),
+                        )
+                      : Effect.suspend(() => {
+                          const hook = onSend.current;
+                          onSend.current = null;
+                          return hook?.() ?? Effect.void;
+                        }).pipe(
+                          Effect.andThen(
+                            Effect.sync(() => {
+                              sent.push({
+                                threadId: input.threadId,
+                                text: input.text,
+                                messageId: input.messageId,
+                              });
+                              receipts.add(input.commandId);
+                              queued.set(input.messageId, {
+                                id: `run:${input.messageId}`,
+                                threadId: input.threadId,
+                                status: "queued",
+                                userMessageId: input.messageId,
+                              });
+                              return {} as never;
+                            }),
+                          ),
+                        ),
+              ),
+            ),
+          hasReceipt: (commandId) => Effect.succeed(receipts.has(commandId)),
           getThreadRecords: (threadId) =>
             Effect.succeed({
               messages: [{ text: answers.get(threadId) ?? "" }],
@@ -193,6 +215,8 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     sent,
     refusal,
     sendFails,
+    sendError,
+    attempts,
     telegram,
     answers,
     contexts,
@@ -1482,6 +1506,61 @@ it.effect("a subagent's pending approval reaches the default once, named for its
     );
     assert.include(told[0]!.text, "Waiting on the user: ana wants to run a command");
     assert.include(told[0]!.text, "They answer it in that thread.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a notice the user took out of the queue is not sent again", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    const asked = yield* askFrom(task, "Taken out of the queue?");
+    // The chat app is on but cannot reach the user yet, so the wait stays untold.
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const id = `assistant-task-waits:${JARVIS}:decision:${asked.id}`;
+    h.queued.get(id)!.status = "cancelled";
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.deepEqual(h.attempts, [id]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a default that can never take the notice is not retried each sweep", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    yield* askFrom(task, "Nowhere to tell?");
+    h.sendError.current = new ThreadManagement.ThreadManagementThreadNotFoundError({
+      projectId: "p1" as never,
+      threadId: JARVIS as never,
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(h.attempts, 1);
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a default that failed for now is told on the next sweep", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    yield* askFrom(task, "Try again?");
+    h.sendFails.current = true;
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 0);
+    h.sendFails.current = false;
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 1);
+    assert.lengthOf(h.attempts, 2);
   }).pipe(Effect.provide(h.layer));
 });
 

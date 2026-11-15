@@ -893,7 +893,7 @@ const make = Effect.gen(function* () {
     return teams[0] === undefined ? agent : `${agent} (${teams[0].name})`;
   });
 
-  /** A default that cannot be told keeps the wait untold, so the next sweep tries again. */
+  /** A default that cannot be told for now keeps the wait untold, so the next sweep tries again. */
   const keepTelling = <E>(self: Effect.Effect<void, E>) =>
     self.pipe(
       Effect.as(true),
@@ -925,10 +925,19 @@ const make = Effect.gen(function* () {
     // A notice is a model turn; past the budget the card in Activity and the chat app still asks.
     if (Option.isSome(yield* spend.budgetRefusal(threadId))) return;
     const id = waitWakeId(threadId, wait.key);
-    yield* threads
+    const commandId = CommandId.make(id);
+    // Sent before, then maybe taken out of the queue by the user: told either way.
+    if (yield* threads.hasReceipt(commandId)) return;
+    const giveUp = (error: { readonly _tag: string }) =>
+      Effect.logWarning("autonomy: the default assistant cannot take this notice", {
+        threadId,
+        key: wait.key,
+        error: error._tag,
+      }).pipe(Effect.as(false));
+    const sent = yield* threads
       .sendToThread({
         projectId: target.value.projectId,
-        commandId: CommandId.make(id),
+        commandId,
         messageId: MessageId.make(id),
         threadId,
         senderThreadId: wait.threadId,
@@ -946,7 +955,19 @@ const make = Effect.gen(function* () {
         createdBy: "agent",
         creationSource: "server",
       })
-      .pipe(Effect.catchTags({ ThreadManagementThreadArchivedError: () => Effect.void }));
+      .pipe(
+        Effect.as(true),
+        // Failures that a later try meets again: the wait counts as told instead of retrying forever.
+        Effect.catchTags({
+          ThreadManagementThreadArchivedError: giveUp,
+          ThreadManagementThreadNotFoundError: giveUp,
+          ThreadManagementDurableRunProjectionError: giveUp,
+          OrchestratorCommandIdConflictError: giveUp,
+          OrchestratorCommandPreviouslyRejectedError: giveUp,
+          OrchestratorSubagentThreadReadOnlyError: giveUp,
+        }),
+      );
+    if (!sent) return;
     if (Option.isNone(yield* needsUser.describe(wait, input.origin))) {
       yield* needsUser.withdrawWake(threadId, wait.key);
     }
