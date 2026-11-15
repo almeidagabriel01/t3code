@@ -7,7 +7,8 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
-  assistantGroupShowsOutgoing,
+  assistantGroupHeldAttachments,
+  assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
   type AssistantGroupTabKey,
@@ -317,14 +318,16 @@ export function GroupComposer(props: {
   };
   // Sent text leaves the draft, so another tab's composer never shows it beside its own project.
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(props.draftKey));
-  const setOutgoing = (next: Outgoing | null) => outgoings.set(props.draftKey, next);
-  const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
-  const sending = outgoing !== null && !outgoing.failed;
+  const setOutgoing = (tab: AssistantGroupTabKey | null, next: Outgoing | null) =>
+    outgoings.set(props.draftKey, tab, next);
+  const shown = assistantGroupShownOutgoing(outgoing, props.tab);
+  const sending = outgoing.some((entry) => !entry.failed);
   const prompt = shown?.prompt ?? draft;
   const setPrompt = (value: string, cursor: number, expanded: number) => {
     if (shown === null) return setDraft(value, cursor, expanded);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
     setOutgoing(
+      shown.tab,
       value === "" ? null : { ...shown, prompt: { value, cursor, expanded }, error: null },
     );
   };
@@ -366,7 +369,11 @@ export function GroupComposer(props: {
     lead,
     props.replyingTo?.to ?? null,
   );
-  const attached = useGroupAttachments(props.environmentId, props.disabled);
+  const attached = useGroupAttachments(
+    props.environmentId,
+    props.disabled,
+    assistantGroupHeldAttachments(outgoing, shown),
+  );
 
   const replace = (value: string, caret: number) => {
     const cursor = collapseExpandedComposerCursor(value, caret);
@@ -452,6 +459,7 @@ export function GroupComposer(props: {
         cursor: collapseExpandedComposerCursor(value, value.length),
         expanded: value.length,
       },
+      attachmentIds: attached.items.map((item) => item.id),
       projectLabel:
         lockedProject ??
         projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
@@ -459,15 +467,15 @@ export function GroupComposer(props: {
       error: null,
     };
     if (shown === null) setDraft("", 0, 0);
-    setOutgoing(sent);
+    setOutgoing(sent.tab, sent);
     setError(null);
     const result = await props.onSend(value.trim(), attached.ready);
     if (result.ok) {
       // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      setOutgoing(null);
+      setOutgoing(sent.tab, null);
       recalled.current = null;
-      attached.clear();
-    } else setOutgoing({ ...sent, failed: true, error: result.message });
+      attached.clear(sent.attachmentIds);
+    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
     // The editor is read-only while its text is on its way; the user types on once it settles.
     window.requestAnimationFrame(() => {
       if (document.activeElement === document.body) editorRef.current?.focusAtEnd();
@@ -683,7 +691,7 @@ export function GroupComposer(props: {
                       </ComposerCommandMenuLayer>
                     ) : null}
                     <GroupAttachmentChips
-                      items={sending && shown === null ? [] : attached.items}
+                      items={attached.items}
                       onRemove={attached.remove}
                       onRetry={attached.retry}
                     />

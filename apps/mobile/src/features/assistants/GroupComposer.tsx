@@ -5,7 +5,8 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
-  assistantGroupShowsOutgoing,
+  assistantGroupHeldAttachments,
+  assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
@@ -61,7 +62,7 @@ import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
 const LEAD_DECIDES = "lead-decides";
-/** Its text waits in the draft store under the group's `:outgoing` key. */
+/** Its text waits in the draft store under its tab's `:outgoing:` key. */
 const outgoings = createAssistantGroupOutgoingStore<
   AssistantGroupOutgoing & { readonly projectId: ProjectId | null; readonly error: string | null }
 >();
@@ -329,17 +330,20 @@ export function GroupComposer(props: {
   ) => Promise<GroupSendResult>;
 }) {
   const groupKey = `assistant-group:${props.environmentId}:${props.teamId}`;
-  // Sent text leaves the draft for its own key, so another tab never shows it beside its project.
-  const outgoingKey = `${groupKey}:outgoing`;
+  // Sent text leaves the draft for its tab's key, so another tab never shows it beside its project.
+  const outgoingKey = (tab: AssistantGroupTabKey | null) => `${groupKey}:outgoing:${tab ?? ""}`;
   const outgoing = useSyncExternalStore(outgoings.subscribe, () => outgoings.get(groupKey));
-  const setOutgoing = (next: Parameters<typeof outgoings.set>[1]) => outgoings.set(groupKey, next);
-  const shown = assistantGroupShowsOutgoing(outgoing, props.tab) ? outgoing : null;
-  const draftKey = shown === null ? groupKey : outgoingKey;
+  const setOutgoing = (
+    tab: AssistantGroupTabKey | null,
+    next: Parameters<typeof outgoings.set>[2],
+  ) => outgoings.set(groupKey, tab, next);
+  const shown = assistantGroupShownOutgoing(outgoing, props.tab);
+  const draftKey = shown === null ? groupKey : outgoingKey(shown.tab);
   const faces = useAssistantFaceImages(props.members);
   const { text } = useComposerDraft(draftKey);
   const [selection, setSelection] = useState(() => ({ start: text.length, end: text.length }));
   const [contentHeight, setContentHeight] = useState(0);
-  const sending = outgoing !== null && !outgoing.failed;
+  const sending = outgoing.some((entry) => !entry.failed);
   const [error, setError] = useState<string | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once.
@@ -353,7 +357,7 @@ export function GroupComposer(props: {
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
-    if (shown !== null) setOutgoing(value === "" ? null : { ...shown, error: null });
+    if (shown !== null) setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
   };
 
   const voice = useVoiceInputController({
@@ -389,7 +393,10 @@ export function GroupComposer(props: {
     lead,
     props.replyingTo?.to ?? null,
   );
-  const attached = useGroupAttachments(props.environmentId);
+  const attached = useGroupAttachments(
+    props.environmentId,
+    assistantGroupHeldAttachments(outgoing, shown),
+  );
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
   const canSend =
     !props.disabled &&
@@ -459,18 +466,25 @@ export function GroupComposer(props: {
     }
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
-    const sent = { tab: props.tab, failed: false, projectId: runProject, error: null };
-    setComposerDraftText(outgoingKey, message);
+    const sent = {
+      tab: props.tab,
+      failed: false,
+      attachmentIds: attached.items.map((item) => item.id),
+      projectId: runProject,
+      error: null,
+    };
+    const sentKey = outgoingKey(sent.tab);
+    setComposerDraftText(sentKey, message);
     if (draftKey === groupKey) clearComposerDraftContent(groupKey);
-    setOutgoing(sent);
+    setOutgoing(sent.tab, sent);
     setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId);
     if (result.ok) {
       // Only the sent text goes: what the user wrote meanwhile in another tab stays.
-      clearComposerDraftContent(outgoingKey);
-      setOutgoing(null);
-      attached.clear();
-    } else setOutgoing({ ...sent, failed: true, error: result.message });
+      clearComposerDraftContent(sentKey);
+      setOutgoing(sent.tab, null);
+      attached.clear(sent.attachmentIds);
+    } else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
   };
 
   const send = async () => {
@@ -513,7 +527,7 @@ export function GroupComposer(props: {
             onCancel={props.onClearReply}
           />
         )}
-        {attached.items.length === 0 || (sending && shown === null) ? null : (
+        {attached.items.length === 0 ? null : (
           <View className="px-3 pt-2">
             <GroupAttachmentChips
               items={attached.items}

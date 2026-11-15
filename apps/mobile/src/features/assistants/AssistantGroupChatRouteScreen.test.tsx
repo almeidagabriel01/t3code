@@ -2031,6 +2031,12 @@ describe("requests", () => {
     remount();
     render();
     expect(input().value).toBe("meanwhile");
+    // A send from another tab leaves the refused one, its text and its error, where they are.
+    await type("@ada third");
+    await click("Send");
+    expect(mocks.post).toHaveBeenLastCalledWith(expect.objectContaining({ text: "@ada third" }));
+    expect(input().value).toBe("");
+    await type("meanwhile");
     await click(TAB.alpha);
     expect(input().value).toBe("@ada second");
     expect(text()).toContain("server down");

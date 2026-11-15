@@ -1348,13 +1348,19 @@ it("keeps what the user writes in another tab during a send, and a refused one i
     params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
   });
   await expectComposer("meanwhile");
+  // A send from another tab leaves the refused one, its text and its error, where they are.
+  fakeGroupChat.postRefusal = null;
+  fakeGroupChat.postGate = null;
+  await userEvent.clear(composer());
+  await userEvent.type(composer(), "@bo third{Enter}");
+  await eventually(() => expect(fakeGroupChat.posts.at(-1)?.text).toBe("@bo third"));
+  await expectComposer("");
+  await userEvent.type(composer(), "meanwhile");
   await userEvent.click(tab("site"));
   await expectComposer("@bo second");
   await expect
     .element(page.getByRole("alert"))
     .toHaveTextContent("This group is archived. Restore it to write here.");
-  fakeGroupChat.postRefusal = null;
-  fakeGroupChat.postGate = null;
   await userEvent.click(submit);
   await eventually(() => expect(fakeGroupChat.posts.at(-1)?.text).toBe("@bo second"));
   await expectComposer("meanwhile");

@@ -70,8 +70,13 @@ async function uploadOne(
  * Files the user attaches to one group message, from the same picker as the thread composer. Each
  * uploads on its own, so one that fails keeps its chip (retry or remove) and never costs the others.
  */
-export function useGroupAttachments(environmentId: EnvironmentId) {
-  const [items, setItems] = useState<ReadonlyArray<GroupAttachmentItem>>([]);
+export function useGroupAttachments(
+  environmentId: EnvironmentId,
+  /** Files another message took: this composer neither shows nor sends them. */
+  held: ReadonlySet<string>,
+) {
+  const [all, setItems] = useState<ReadonlyArray<GroupAttachmentItem>>([]);
+  const items = all.filter((item) => !held.has(item.id));
 
   const update = (id: string, change: Partial<GroupAttachmentItem>) =>
     setItems((list) => list.map((item) => (item.id === id ? { ...item, ...change } : item)));
@@ -108,21 +113,21 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
 
   /** Opens the file picker; returns what to tell the user when it could not take every file. */
   const pick = async (): Promise<string | null> => {
-    const picked = await pickComposerFiles({ existingCount: items.length });
+    const picked = await pickComposerFiles({ existingCount: all.length });
     add(picked.files);
     return picked.error;
   };
 
   /** Opens the photo library; same contract as `pick`. */
   const pickMedia = async (): Promise<string | null> => {
-    const picked = await pickComposerMedia({ existingCount: items.length });
+    const picked = await pickComposerMedia({ existingCount: all.length });
     add(picked.attachments);
     return picked.error;
   };
 
   /** Images pasted into the editor. */
   const paste = async (uris: ReadonlyArray<string>) => {
-    add(await convertPastedImagesToAttachments({ uris, existingCount: items.length }));
+    add(await convertPastedImagesToAttachments({ uris, existingCount: all.length }));
   };
 
   const remove = (id: string) => {
@@ -138,10 +143,10 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
     void run(reset);
   };
 
-  /** After a send the server holds its own copies, so the pending ones can go. */
-  const clear = () => {
-    release(items.map((item) => item.attachment));
-    setItems([]);
+  /** After a send the server holds its own copies, so the ones it took can go. */
+  const clear = (ids: ReadonlyArray<string>) => {
+    release(all.flatMap((item) => (ids.includes(item.id) ? [item.attachment] : [])));
+    setItems((list) => list.filter((item) => !ids.includes(item.id)));
   };
 
   return {
@@ -155,7 +160,7 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
     ready: items.flatMap((item) => (item.attachment === null ? [] : [item.attachment])),
     /** Something is still uploading or failed: sending now would drop it. */
     unsettled: items.some((item) => item.attachment === null),
-    full: items.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    full: all.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   };
 }
 

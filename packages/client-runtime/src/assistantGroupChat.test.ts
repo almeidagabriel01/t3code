@@ -21,7 +21,8 @@ import {
   assistantGroupTabView,
   assistantGroupProjectLabel,
   assistantGroupTabAfterSend,
-  assistantGroupShowsOutgoing,
+  assistantGroupShownOutgoing,
+  assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
@@ -62,6 +63,7 @@ import {
   insertAssistantGroupMention,
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
+  type AssistantGroupTabKey,
 } from "./assistantGroupChat.ts";
 
 const message = (seq: number, overrides: Partial<AssistantGroupMessage> = {}) =>
@@ -1467,34 +1469,78 @@ describe("assistant group tabs", () => {
     assert.strictEqual(assistantGroupTabAfterSend(result, sent, saved, landed), expected);
   });
 
+  const out = (tab: AssistantGroupTabKey | null, failed = false, attachmentIds: string[] = []) => ({
+    tab,
+    failed,
+    attachmentIds,
+  });
+  const refusedP1 = out("project:p1", true, ["f1"]);
+  const sendingP1 = out("project:p1");
+  const sendingP2 = out("project:p2", false, ["f2"]);
+  const fromAll = out("all");
+  const noTabs = out(null);
   it.each([
-    ["nothing outgoing", null, "project:p1", false],
-    ["on its way, in its tab", { tab: "project:p1", failed: false }, "project:p1", true],
-    ["on its way, in All", { tab: "project:p1", failed: false }, "all", true],
-    ["on its way, in another project", { tab: "project:p1", failed: false }, "project:p2", false],
-    ["on its way, in General", { tab: "project:p1", failed: false }, "general", false],
-    ["sent from All, in a project", { tab: "all", failed: false }, "project:p1", false],
-    ["sent with no tabs", { tab: null, failed: false }, null, true],
-    ["refused, in its tab", { tab: "project:p1", failed: true }, "project:p1", true],
-    ["refused, in All", { tab: "project:p1", failed: true }, "all", false],
-    ["refused, in another project", { tab: "project:p1", failed: true }, "project:p2", false],
+    ["nothing outgoing", [], "project:p1", null],
+    ["on its way, in its tab", [sendingP1], "project:p1", sendingP1],
+    ["on its way, in All", [sendingP1], "all", sendingP1],
+    ["on its way, in another project", [sendingP1], "project:p2", null],
+    ["on its way, in General", [sendingP1], "general", null],
+    ["sent from All, in a project", [fromAll], "project:p1", null],
+    ["sent with no tabs", [noTabs], null, noTabs],
+    ["refused, in its tab", [refusedP1], "project:p1", refusedP1],
+    ["refused, in All", [refusedP1], "all", null],
+    ["refused, in another project", [refusedP1], "project:p2", null],
+    [
+      "refused, and another tab's send, in the refused tab",
+      [refusedP1, sendingP2],
+      "project:p1",
+      refusedP1,
+    ],
+    [
+      "refused, and another tab's send, in the sending tab",
+      [refusedP1, sendingP2],
+      "project:p2",
+      sendingP2,
+    ],
+    ["refused, and another tab's send, in All", [refusedP1, sendingP2], "all", sendingP2],
+    ["refused, and another tab's send, in a third tab", [refusedP1, sendingP2], "general", null],
+    ["All's own and another tab's send, in All", [sendingP2, fromAll], "all", fromAll],
+    ["two tabs' sends, in All", [sendingP1, sendingP2], "all", sendingP2],
   ] as const)("composer shows the outgoing message: %s", (_name, outgoing, tab, expected) => {
-    assert.strictEqual(assistantGroupShowsOutgoing(outgoing, tab), expected);
+    assert.strictEqual(assistantGroupShownOutgoing(outgoing, tab), expected);
   });
 
-  it("keeps each group's outgoing message until it is replaced or cleared", () => {
+  it.each([
+    ["the open tab's own files", refusedP1, ["f2"]],
+    ["in a tab that shows none", null, ["f1", "f2"]],
+  ] as const)("holds another message's files back: %s", (_name, shown, held) => {
+    assert.deepStrictEqual(
+      [...assistantGroupHeldAttachments([refusedP1, sendingP2], shown)],
+      [...held],
+    );
+  });
+
+  it("keeps each tab's outgoing message until that tab replaces or clears it", () => {
     const store = createAssistantGroupOutgoingStore();
     let calls = 0;
     const stop = store.subscribe(() => calls++);
-    const refused = { tab: "project:p1", failed: true } as const;
-    store.set("g1", refused);
-    store.set("g2", { tab: "all", failed: false });
-    store.set("g2", null);
+    store.set("g1", "project:p1", refusedP1);
+    const kept = store.get("g1");
+    // Another tab's send and its end leave the refused one as it was.
+    store.set("g1", "project:p2", sendingP2);
+    store.set("g1", "project:p2", null);
+    store.set("g2", "all", fromAll);
+    store.set("g2", "all", null);
     stop();
-    store.set("g3", refused);
-    assert.deepStrictEqual([store.get("g1"), store.get("g2"), calls], [refused, null, 3]);
+    store.set("g3", null, refusedP1);
+    assert.deepStrictEqual(
+      [store.get("g1"), store.get("g2"), store.get("g2") === store.get("g2"), calls],
+      [[refusedP1], [], true, 5],
+    );
+    store.set("g1", "project:p1", sendingP1);
+    assert.deepStrictEqual([kept, store.get("g1")], [[refusedP1], [sendingP1]]);
     store.clear();
-    assert.deepStrictEqual([store.get("g1"), store.get("g3")], [null, null]);
+    assert.deepStrictEqual([store.get("g1"), store.get("g3")], [[], []]);
   });
 
   it.each([

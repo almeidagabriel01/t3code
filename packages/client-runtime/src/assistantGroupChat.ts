@@ -615,34 +615,54 @@ export function assistantGroupTabAfterSend(
 
 /** A message the composer let go of: on its way, or refused and kept for the user to fix. */
 export interface AssistantGroupOutgoing {
-  /** The tab it was sent from. */
+  /** The tab it was sent from: each tab holds at most one. */
   readonly tab: AssistantGroupTabKey | null;
   readonly failed: boolean;
+  /** The composer's files it took; no other tab shows or sends them. */
+  readonly attachmentIds: ReadonlyArray<string>;
 }
 
 /**
- * Whether the open tab's composer shows `outgoing` instead of its draft: the tab it left from, and
- * All while it is on its way. Any other tab would show it beside a project it is not going to.
+ * The outgoing message the open tab's composer shows instead of its draft: the tab's own, and in
+ * All one on its way from any tab. Any other tab would show it beside a project it is not going to.
  */
-export function assistantGroupShowsOutgoing(
-  outgoing: AssistantGroupOutgoing | null,
+export function assistantGroupShownOutgoing<T extends AssistantGroupOutgoing>(
+  outgoing: ReadonlyArray<T>,
   tab: AssistantGroupTabKey | null,
-): boolean {
-  return outgoing !== null && (tab === outgoing.tab || (!outgoing.failed && tab === "all"));
+): T | null {
+  return (
+    outgoing.find((entry) => entry.tab === tab) ??
+    (tab === "all" ? outgoing.findLast((entry) => !entry.failed) : undefined) ??
+    null
+  );
 }
 
+/** The composer's files that belong to a message the open tab does not show. */
+export function assistantGroupHeldAttachments(
+  outgoing: ReadonlyArray<AssistantGroupOutgoing>,
+  shown: AssistantGroupOutgoing | null,
+): ReadonlySet<string> {
+  return new Set(outgoing.flatMap((entry) => (entry === shown ? [] : entry.attachmentIds)));
+}
+
+const NO_OUTGOING: ReadonlyArray<never> = [];
+
 /**
- * The outgoing message of each group composer, outside any one mount: a send that settles or is
- * refused after the user left the chat shows in the composer they come back to.
+ * Each group composer's outgoing messages, one per tab, outside any one mount: a send that settles
+ * or is refused after the user left the chat shows in the composer they come back to, and a send
+ * from one tab never touches another tab's.
  */
 export function createAssistantGroupOutgoingStore<T extends AssistantGroupOutgoing>() {
-  const entries = new Map<string, T>();
+  const groups = new Map<string, ReadonlyArray<T>>();
   const listeners = new Set<() => void>();
   return {
-    get: (key: string): T | null => entries.get(key) ?? null,
-    set: (key: string, next: T | null) => {
-      if (next === null) entries.delete(key);
-      else entries.set(key, next);
+    /** The same array until the group's messages change, as `useSyncExternalStore` needs. */
+    get: (group: string): ReadonlyArray<T> => groups.get(group) ?? NO_OUTGOING,
+    set: (group: string, tab: AssistantGroupTabKey | null, next: T | null) => {
+      const others = (groups.get(group) ?? NO_OUTGOING).filter((entry) => entry.tab !== tab);
+      const entries = next === null ? others : [...others, next];
+      if (entries.length === 0) groups.delete(group);
+      else groups.set(group, entries);
       for (const listener of listeners) listener();
     },
     subscribe: (listener: () => void) => {
@@ -651,7 +671,7 @@ export function createAssistantGroupOutgoingStore<T extends AssistantGroupOutgoi
         listeners.delete(listener);
       };
     },
-    clear: () => entries.clear(),
+    clear: () => groups.clear(),
   };
 }
 
