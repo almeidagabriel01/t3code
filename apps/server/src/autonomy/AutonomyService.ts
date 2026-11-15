@@ -893,11 +893,6 @@ const make = Effect.gen(function* () {
     return teams[0] === undefined ? agent : `${agent} (${teams[0].name})`;
   });
 
-  /**
-   * Tells the default assistant, the user's point of contact, about a wait from anywhere. The id is
-   * the owner wake's when the default follows the thread itself, so it is told once; a wait
-   * answered meanwhile takes the notice back.
-   */
   /** A default that cannot be told keeps the wait untold, so the next sweep tries again. */
   const keepTelling = <E>(self: Effect.Effect<void, E>) =>
     self.pipe(
@@ -909,6 +904,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Tells the default assistant, the user's point of contact, about a wait from anywhere. The id is
+   * the owner wake's when the default follows the thread itself, so it is told once; a wait
+   * answered meanwhile takes the notice back.
+   */
   const tellDefault = Effect.fn("AutonomyService.tellDefault")(function* (input: {
     readonly wait: UserWait;
     readonly title: string;

@@ -193,13 +193,21 @@ const make = Effect.gen(function* () {
     function* ({ type, wait }) {
       if (type === "resolved") {
         // Answered before the assistants got to it: take back the wakes still queued.
+        // Each conversation on its own: one failing read or cancel never keeps the other's wake.
         const targets = [
-          // A thread gone since is followed by no one; the default still takes its wake back.
           yield* needsUser.owner(wait.threadId).pipe(Effect.orElseSucceed(() => Option.none())),
-          yield* needsUser.defaultAssistant,
+          yield* needsUser.defaultAssistant.pipe(Effect.orElseSucceed(() => Option.none())),
         ].flatMap((target) => (Option.isSome(target) ? [target.value.threadId] : []));
         for (const threadId of new Set(targets)) {
-          yield* needsUser.withdrawWake(threadId, wait.key);
+          yield* needsUser.withdrawWake(threadId, wait.key).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("assistant wait wake could not be taken back", {
+                threadId,
+                key: wait.key,
+                cause,
+              }),
+            ),
+          );
         }
         return;
       }
