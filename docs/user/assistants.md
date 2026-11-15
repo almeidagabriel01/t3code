@@ -467,9 +467,10 @@ same time, so use one bot per T3 Code server.
 
 A reply that cannot get through, for example while the network is down, is tried again for about a
 quarter of an hour and goes out on its own once a later message reaches the chat. If it still has
-not arrived, **Undelivered replies** in Settings (Telegram or iMessage) says how many and offers
-**Resend**; you can also ask an assistant to send again the ones from the last day. A part that already arrived is not
-sent twice, though a reply cut off mid-send can occasionally show up twice.
+not arrived, **Resend undelivered replies** in Settings (Telegram or iMessage) says how many from
+the last day did not arrive and sends them again; you can also ask an assistant to. Older ones are
+not sent again. A part that already arrived is not sent twice, though a reply cut off mid-send can
+occasionally show up twice.
 
 ## Memory follows the project
 

@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -295,22 +296,32 @@ it.effect("resend puts every undelivered message of a channel back in line", () 
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("an agent's resend keeps to the last day; Settings resends everything", () =>
+it.effect("resend and the undelivered count keep to the last day", () =>
   Effect.gen(function* () {
     const outbox = yield* ChannelOutbox.ChannelOutbox;
     const registry = yield* ChannelTransport.ChannelTransportRegistry;
-    const { transport } = fakeTransport(() =>
+    const { sent, transport } = fakeTransport(() =>
       Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" })),
     );
+    const count = Stream.runHead(outbox.undeliveredCount("imessage"));
     yield* registry.register(transport);
     yield* outbox.enqueue(message("old"));
     yield* outbox.drain;
+    assert.deepEqual(yield* count, Option.some(1));
     yield* TestClock.adjust("25 hours");
+    yield* outbox.drain;
+    assert.deepEqual(yield* count, Option.some(0));
     yield* outbox.enqueue(message("new"));
     yield* outbox.drain;
-    assert.equal(yield* outbox.resend("imessage", { recentOnly: true }), 1);
+    assert.deepEqual(yield* count, Option.some(1));
+    assert.equal(yield* outbox.resend("imessage"), 1);
+    assert.deepEqual(yield* count, Option.some(0));
     yield* outbox.drain;
-    assert.equal(yield* outbox.resend("imessage"), 2);
+    assert.deepEqual(
+      sent.map((m) => m.deliveryId),
+      ["old", "new", "new"],
+    );
+    assert.equal(yield* outbox.resend("imessage"), 1);
   }).pipe(Effect.provide(layer)),
 );
 
