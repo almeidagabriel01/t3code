@@ -236,6 +236,7 @@ These follow the row, none of them a new mechanism:
   contact: `AutonomyService.notifyWaiting` reads `NeedsUser.pending` and, besides the chat-app card,
   queues a short notice (title, origin, thread link) in its conversation, with the same delay, pause
   switch and baseline as the card. Its own conversation and its own turn's subagents are skipped.
+  The notice is a model turn, so past the default's budget it is skipped for good; the card still goes.
   A wake's id is `waitWakeId(<conversation>, <wait key>)`: when the default follows the thread itself,
   the owner wake and the notice are one command, so the orchestrator's receipt sends it once. A
   resolution cancels both while still queued, and a notice whose wait settled during its send is taken
