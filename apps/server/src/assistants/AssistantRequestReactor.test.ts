@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ProjectId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type TeammateMessageAttribution,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -82,6 +87,16 @@ it.effect(
       assert.include(sends[0]!.text as string, "Status: blocked");
       assert.include(sends[0]!.text as string, "<t3_reply");
       assert.notInclude(sends[0]!.text as string, "<t3_request");
+      const [entry, ...others] = (sends[0]!.teammate as TeammateMessageAttribution).entries;
+      assert.deepInclude(entry, {
+        kind: "reply",
+        threadId: helper,
+        requestId,
+        status: "blocked",
+        files: [],
+      });
+      assert.isTrue(entry!.text.startsWith("Status: blocked"));
+      assert.equal(others.length, 0);
     }).pipe(Effect.provide(layer));
   },
 );

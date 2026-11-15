@@ -98,10 +98,11 @@ import * as Stream from "effect/Stream";
 import { AssistantDirectory } from "../assistants/AssistantDirectory.ts";
 import {
   AssistantRequests,
-  deliveryText,
+  deliveryMessage,
   replyMessageId,
-  replyText,
-  requestText,
+  replyMessage,
+  requestMessage,
+  type TeammateMessage,
 } from "../assistants/AssistantRequests.ts";
 import { copyTransfer, removeTransfer, transferText } from "../assistants/AssistantTransfers.ts";
 import { ServerConfig } from "../config.ts";
@@ -3464,6 +3465,7 @@ const make = Effect.gen(function* () {
         readonly commandId: CommandId;
         readonly messageId: MessageId;
         readonly text: string;
+        readonly teammate?: TeammateMessage["teammate"];
       }) =>
         threadManagement
           .sendToThread({
@@ -3474,6 +3476,7 @@ const make = Effect.gen(function* () {
             ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
             messageId: message.messageId,
             text: message.text,
+            ...(message.teammate === undefined ? {} : { teammate: message.teammate }),
             attachments: [],
             mode,
             ...(input.freshContext ? { freshContext: true } : {}),
@@ -3523,7 +3526,7 @@ const make = Effect.gen(function* () {
           projectId: target.thread.projectId,
           commandId: CommandId.make(messageId),
           messageId,
-          text: yield* deliveryText(Option.getOrUndefined(assistantDirectory), settled.delivery),
+          ...(yield* deliveryMessage(Option.getOrUndefined(assistantDirectory), settled.delivery)),
         }).pipe(Effect.tapError(() => exchange!.requests.reopen(input.replyTo!)));
         return outcomeOf(
           input.threadId,
@@ -3554,18 +3557,18 @@ const make = Effect.gen(function* () {
           reply !== undefined
             ? CommandId.make(messageId)
             : stableCommandId({ scope, requestKey: key, operation, ...(grouped ? { index } : {}) });
-        const text =
+        const content =
           from === undefined
-            ? input.message
+            ? { text: input.message }
             : reply === undefined
-              ? requestText(from, requestId, expectsReply, input.message, files)
-              : replyText(from, input.replyTo!, input.message, replyFiles);
+              ? requestMessage(from, requestId, expectsReply, input.message, files)
+              : replyMessage(from, input.replyTo!, input.message, replyFiles);
         const result = yield* post({
           threadId,
           projectId: each.thread.projectId,
           commandId,
           messageId,
-          text,
+          ...content,
         }).pipe(
           Effect.tapError(() =>
             Effect.gen(function* () {

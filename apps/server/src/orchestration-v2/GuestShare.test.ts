@@ -195,6 +195,67 @@ it.effect("drops guest attribution that a client sends on its own message", () =
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps teammate attribution only on an agent's send, and drops it on an edit", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* setup;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const teammate = {
+      entries: [
+        {
+          kind: "reply" as const,
+          name: "Ada",
+          handle: "ada",
+          threadId: ThreadId.make("assistant:ada:1"),
+          requestId: "message:ask",
+          status: "done" as const,
+          files: [],
+          text: "Status: done",
+        },
+      ],
+    };
+    const send = (id: string, createdBy: "user" | "agent", queued: boolean) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "<t3_reply>…</t3_reply>\nStatus: done",
+        context: { version: 1, records: [], teammate },
+        attachments: [],
+        dispatchMode: { type: queued ? "queue_after_active" : "defer_start" },
+        createdBy,
+        creationSource: createdBy === "user" ? "web" : "mcp",
+      });
+    yield* send("forged", "user", false);
+    yield* send("from-ada", "agent", true);
+    const contextOf = (id: string) =>
+      projections
+        .getThreadProjection(threadId)
+        .pipe(
+          Effect.map(
+            (projection) =>
+              projection.messages.find((message) => message.id === MessageId.make(id))?.context,
+          ),
+        );
+    assert.isUndefined((yield* contextOf("forged"))?.teammate);
+    assert.deepEqual((yield* contextOf("from-ada"))?.teammate, teammate);
+
+    const queued = (yield* projections.getThreadProjection(threadId)).runs.find(
+      (run) => run.status === "queued",
+    );
+    assert.isDefined(queued);
+    yield* orchestrator.dispatch({
+      type: "queued-run.edit",
+      commandId: CommandId.make("edit-teammate"),
+      threadId,
+      runId: queued.id,
+      text: "My own words",
+      context: { version: 1, records: [], teammate },
+    });
+    assert.isUndefined((yield* contextOf("from-ada"))?.teammate);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("keeps a queued guest message unchanged when the owner tries to edit it", () =>
   Effect.gen(function* () {
     const orchestrator = yield* setup;

@@ -28,6 +28,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
+  type TeammateMessageAttribution,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
@@ -4195,7 +4196,13 @@ describe("OrchestratorMcpService assistant requests", () => {
     capabilities: new Set(["orchestration"]),
     issuedAt: 1,
   });
-  type Sent = { messageId: string; commandId: string; text: string; mode: string };
+  type Sent = {
+    messageId: string;
+    commandId: string;
+    text: string;
+    mode: string;
+    teammate?: TeammateMessageAttribution;
+  };
 
   const harness = (failSend = false, baseDir?: string) =>
     Effect.gen(function* () {
@@ -4301,6 +4308,13 @@ describe("OrchestratorMcpService assistant requests", () => {
         assert.include(replies[0]!.text, "Status: done A");
         assert.include(replies[0]!.text, "Status: done B");
         assert.include(replies[0]!.text, 'status="answered"');
+        assert.deepEqual(
+          replies[0]!.teammate?.entries.map((e) => [e.kind, e.name, e.threadId, e.status, e.text]),
+          [
+            ["reply", "Helper", helperId, "done", "Status: done A"],
+            ["reply", "Helper", helper2Id, "done", "Status: done B"],
+          ],
+        );
         assert.equal((yield* requests.settle(toHelper!.messageId)).kind, "held");
       }).pipe(Effect.provide(layer));
     }),
@@ -4367,6 +4381,8 @@ describe("OrchestratorMcpService assistant requests", () => {
           });
           assert.deepEqual(again.paths, first.paths);
           assert.include((yield* Ref.get(sent))[0]!.text, `](<${copied}>)`);
+          assert.deepEqual((yield* Ref.get(sent))[0]!.teammate?.entries[0]?.files, [copied]);
+          assert.equal((yield* Ref.get(sent))[0]!.teammate?.entries[0]?.text, "read this");
 
           const answer = yield* mcp.sendToThread(scopeOf(helperId), {
             threadId: askerId,
@@ -4376,6 +4392,9 @@ describe("OrchestratorMcpService assistant requests", () => {
           });
           assert.match(answer.paths![0]!, /shared\/transfers\/helper\/.*report\.txt$/);
           assert.include((yield* Ref.get(sent)).at(-1)!.text, `](<${answer.paths![0]!}>)`);
+          assert.deepEqual((yield* Ref.get(sent)).at(-1)!.teammate?.entries[0]?.files, [
+            answer.paths![0]!,
+          ]);
 
           const missing = yield* mcp
             .sendToThread(scopeOf(askerId), {
@@ -4456,6 +4475,20 @@ describe("OrchestratorMcpService assistant requests", () => {
         assert.equal(request!.mode, "queue");
         assert.include(request!.text, `requestId="${first.messageId}" expects_reply="true"`);
         assert.include(request!.text, "status?");
+        assert.deepEqual(request!.teammate, {
+          entries: [
+            {
+              kind: "request",
+              name: "Asker",
+              handle: "h",
+              threadId: askerId,
+              requestId: first.messageId,
+              expectsReply: true,
+              files: [],
+              text: "status?",
+            },
+          ],
+        });
 
         // The helper has narrower modes than the asker; answering is still allowed.
         const reply = { threadId: askerId, message: "Status: done", replyTo: first.messageId };
@@ -4468,6 +4501,18 @@ describe("OrchestratorMcpService assistant requests", () => {
         assert.include(replies[0]!.text, "<t3_reply");
         assert.notInclude(replies[0]!.text, "<t3_request");
         assert.include(replies[0]!.text, "do not reply to it");
+        assert.deepEqual(replies[0]!.teammate?.entries, [
+          {
+            kind: "reply",
+            name: "Helper",
+            handle: "h",
+            threadId: helperId,
+            requestId: first.messageId,
+            status: "done",
+            files: [],
+            text: "Status: done",
+          },
+        ]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -4533,7 +4578,9 @@ describe("OrchestratorMcpService assistant requests", () => {
         yield* mcp.sendToThread(scopeOf(askerId), { threadId: plainId, message: "plain" });
         const all = yield* Ref.get(sent);
         assert.include(all[0]!.text, `expects_reply="false"`);
+        assert.equal(all[0]!.teammate?.entries[0]?.expectsReply, false);
         assert.equal(all[1]!.text, "plain");
+        assert.isUndefined(all[1]!.teammate);
       }).pipe(Effect.provide(layer));
     }),
   );
