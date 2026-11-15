@@ -394,6 +394,14 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         GROUP BY delivery_id
       )`);
   }
+  // A piece sent again owes an echo per send, between its first and its last send.
+  const echoColumns = yield* addColumns("imessage_sent", [
+    ["echoes_due", "INTEGER NOT NULL DEFAULT 1"],
+    ["first_sent_at_ms", "INTEGER"],
+  ]);
+  if (echoColumns.includes("echoes_due")) {
+    yield* sql`UPDATE imessage_sent SET echoes_due = 0 WHERE consumed = 1`;
+  }
   // Set once the outbox put a delivery that ran out of tries back in line on its own.
   yield* addColumns("channel_outbox", [["auto_requeued", "INTEGER NOT NULL DEFAULT 0"]]);
   yield* sql`

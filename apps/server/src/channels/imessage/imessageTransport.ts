@@ -18,8 +18,9 @@ export type ImessageSendReport =
 
 /**
  * Sends each piece of a reply through Messages. A fingerprint of every piece is stored before it
- * goes out, so its echo in a self chat is not read back as the user's own message. A piece is
- * confirmed once Messages took it or its echo arrived; a retry sends every other piece again.
+ * goes out, and owes one echo per send, so no echo in a self chat is read back as the user's own
+ * message. A piece is confirmed once Messages took it or its echo arrived; a retry sends every
+ * other piece again.
  */
 export function makeImessageTransport(input: {
   readonly connectionId: string;
@@ -44,11 +45,16 @@ export function makeImessageTransport(input: {
       }
       const pieces = formatImessageMessages(message);
       for (const [index, text] of pieces.entries()) {
+        const now = (yield* DateTime.now).epochMilliseconds;
         const pending = yield* sql`
-          INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms, confirmed)
-          VALUES (${message.deliveryId}, ${index}, ${target.chatGuid}, ${fingerprintText(text)},
-            ${(yield* DateTime.now).epochMilliseconds}, 0)
-          ON CONFLICT (delivery_id, chunk_index) DO UPDATE SET sent_at_ms = excluded.sent_at_ms
+          INSERT INTO imessage_sent (
+            delivery_id, chunk_index, chat_guid, text_hash, first_sent_at_ms, sent_at_ms, confirmed
+          ) VALUES (
+            ${message.deliveryId}, ${index}, ${target.chatGuid}, ${fingerprintText(text)},
+            ${now}, ${now}, 0
+          )
+          ON CONFLICT (delivery_id, chunk_index) DO UPDATE
+          SET sent_at_ms = excluded.sent_at_ms, echoes_due = echoes_due + 1
           WHERE confirmed = 0 AND consumed = 0
           RETURNING id`.pipe(Effect.orDie);
         if (pending.length === 0) continue;
@@ -56,13 +62,18 @@ export function makeImessageTransport(input: {
           input.sender.sendText({ chatGuid: target.chatGuid, text }),
         );
         if ("outcome" in result) {
-          // Certainly not sent: its fingerprint must not swallow a real message with the same text.
+          // Certainly not sent: no echo is owed for it, and a fingerprint owing none must not
+          // swallow a real message with the same text.
           if (result.outcome === "not_sent") {
             yield* sql`
-              DELETE FROM imessage_sent
+              UPDATE imessage_sent SET echoes_due = echoes_due - 1
               WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}`.pipe(
               Effect.orDie,
             );
+            yield* sql`
+              DELETE FROM imessage_sent
+              WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}
+                AND echoes_due <= 0`.pipe(Effect.orDie);
           }
           yield* input.report({ ok: false, code: result.code });
           return yield* new ChannelGatewayError({

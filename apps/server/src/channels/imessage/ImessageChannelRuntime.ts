@@ -178,10 +178,13 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
       readonly id: number;
       readonly chat_guid: string;
       readonly text_hash: string;
+      readonly first_sent_at_ms: number;
       readonly sent_at_ms: number;
     }>`
-        SELECT id, chat_guid, text_hash, sent_at_ms FROM imessage_sent
-        WHERE consumed = 0 AND sent_at_ms > ${now - OWN_REPLY_WINDOW_MS}`;
+        SELECT id, chat_guid, text_hash, sent_at_ms,
+          COALESCE(first_sent_at_ms, sent_at_ms) AS first_sent_at_ms
+        FROM imessage_sent
+        WHERE echoes_due > 0 AND sent_at_ms > ${now - OWN_REPLY_WINDOW_MS}`;
     const seen = yield* sql<{
       readonly chat_guid: string;
       readonly text_hash: string;
@@ -192,6 +195,7 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
         id: row.id,
         chatGuid: row.chat_guid,
         textHash: row.text_hash,
+        firstSentAtMs: row.first_sent_at_ms,
         sentAtMs: row.sent_at_ms,
       })),
       seen: seen.map((row) => ({
@@ -208,7 +212,9 @@ export const make = Effect.fn("ImessageChannelRuntime.make")(function* (
     if (admission.type === "pending_join" || admission.remember === undefined) return;
     const { chatGuid, textHash, dateMs } = admission.remember;
     if (admission.type === "skip" && admission.consumeSentId !== undefined) {
-      yield* sql`UPDATE imessage_sent SET consumed = 1 WHERE id = ${admission.consumeSentId}`;
+      yield* sql`
+          UPDATE imessage_sent SET consumed = 1, echoes_due = MAX(echoes_due - 1, 0)
+          WHERE id = ${admission.consumeSentId}`;
     }
     yield* sql`
           INSERT INTO imessage_seen (chat_guid, text_hash, date_ms)

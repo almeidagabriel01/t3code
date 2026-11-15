@@ -96,9 +96,10 @@ it.effect("a timed-out piece goes again, unless its echo showed Messages sent it
     yield* Effect.flip(transport.send(message("hello")));
     yield* transport.send(message("hello"));
     assert.lengthOf(sent, 3);
-    // Its fingerprint stays for echo matching, once.
-    const rows = yield* sql`SELECT id FROM imessage_sent WHERE delivery_id = 'd1'`;
-    assert.lengthOf(rows, 1);
+    // One fingerprint, owing an echo for each of the three sends.
+    const rows = yield* sql<{ readonly echoes_due: number }>`
+      SELECT echoes_due FROM imessage_sent WHERE delivery_id = 'd1'`;
+    assert.deepEqual(rows, [{ echoes_due: 3 }]);
 
     timeouts = 1;
     yield* Effect.flip(transport.send(message("seen", "d2")));

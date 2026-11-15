@@ -80,6 +80,7 @@ const sentFor = (text: string, extra: Partial<ImessageAdmissionMemory["sent"][nu
   id: 7,
   chatGuid: CHAT,
   textHash: fingerprintText(text),
+  firstSentAtMs: NOW_MS,
   sentAtMs: NOW_MS,
   ...extra,
 });
@@ -223,6 +224,24 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ text: "Jarvis:  hi\n" }),
     memory: { sent: [sentFor("Jarvis: hi")], seen: [] },
     expect: "own_reply",
+  },
+  {
+    name: "self chat: the echo of an earlier send of a reply sent again is still skipped",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi", { firstSentAtMs: NOW_MS, sentAtMs: NOW_MS + 20 * 60_000 })],
+      seen: [],
+    },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: the twin of an echo leaves the fingerprint to the next send's echo",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi")],
+      seen: [{ chatGuid: CHAT, textHash: fingerprintText("Jarvis: hi"), dateMs: NOW_MS - 1_000 }],
+    },
+    expect: "mirrored",
   },
   {
     name: "self chat: same text long after sending is the user's",
