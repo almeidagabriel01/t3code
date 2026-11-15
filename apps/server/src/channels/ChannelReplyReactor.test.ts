@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import type { Decision, DecisionError, OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  DEFAULT_AUTONOMY_SETTINGS,
+  type Decision,
+  type DecisionError,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,6 +19,7 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { ChannelLanguage } from "./ChannelLanguage.ts";
 import * as ChannelOutbox from "./ChannelOutbox.ts";
 import * as Reactor from "./ChannelReplyReactor.ts";
@@ -35,6 +41,7 @@ interface Records {
 
 const harness = (language: "en" | "pt-BR" = "en") => {
   const records = new Map<string, Records>();
+  const notifyWaiting = { current: true };
   const reads: string[] = [];
   const layer = Reactor.layer.pipe(
     Layer.provideMerge(ChannelOutbox.layer),
@@ -46,6 +53,18 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
         Layer.mock(ServerEnvironment)({ getEnvironmentId: Effect.succeed("env-1" as never) }),
+        Layer.mock(ServerSettingsService)({
+          getSettings: Effect.sync(
+            () =>
+              ({
+                autonomy: {
+                  ...DEFAULT_AUTONOMY_SETTINGS,
+                  enabled: true,
+                  notifyWaiting: notifyWaiting.current,
+                },
+              }) as never,
+          ),
+        }),
         Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: () => Effect.succeed({} as never),
@@ -58,7 +77,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
       ),
     ),
   );
-  return { layer, records, reads };
+  return { layer, records, reads, notifyWaiting };
 };
 
 const speak = (
@@ -124,16 +143,23 @@ it.effect("a finished run posts its last assistant message once, however often i
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("a run a wait woke stays in T3: the chat app already has the wait's card", () => {
-  const { layer, records } = harness();
+it.effect("a run a wait woke stays in T3 while the wait's card goes to the chat app", () => {
+  const { layer, records, notifyWaiting } = harness();
   return Effect.gen(function* () {
     const reactor = yield* Reactor.ChannelReplyReactor;
     yield* speak();
     records.set("run-wake", { messages: [{ text: "The tests wait on you." }], turnItems: [] });
-    yield* reactor.handle(
-      runEvent("completed", "run-wake", thread, waitWakeId(thread as never, "decision:d1")),
-    );
+    records.set("run-wake-2", { messages: [{ text: "Still waiting on you." }], turnItems: [] });
+    const wake = waitWakeId(thread as never, "decision:d1");
+    yield* reactor.handle(runEvent("completed", "run-wake", thread, wake));
     assert.lengthOf(yield* outboxRows, 0);
+    // With waiting notices off there is no card, so the answer is what tells the chat.
+    notifyWaiting.current = false;
+    yield* reactor.handle(runEvent("completed", "run-wake-2", thread, wake));
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.message.text),
+      ["Still waiting on you."],
+    );
   }).pipe(Effect.provide(layer));
 });
 

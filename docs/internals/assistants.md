@@ -239,8 +239,8 @@ These follow the row, none of them a new mechanism:
   A wake's id is `waitWakeId(<conversation>, <wait key>)`: when the default follows the thread itself,
   the owner wake and the notice are one command, so the orchestrator's receipt sends it once. A
   resolution cancels both while still queued, and a notice whose wait settled during its send is taken
-  back. The chat app gets each wait once, from the card: `ChannelReplyReactor` never posts a run
-  started by a wait wake.
+  back. The chat app gets each wait once, from the card: while waiting notices are on,
+  `ChannelReplyReactor` does not post a run that a wait wake started.
 - The assistants stream carries the links (`tasks` in the snapshot, `taskUpserted`). The state is not
   stored: clients read it from the thread's own shell (`assistantTaskState`), so it cannot go stale.
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
