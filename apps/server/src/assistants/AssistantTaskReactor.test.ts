@@ -368,6 +368,7 @@ it.effect("a task that waits on an approval wakes its assistant once, with the o
     assert.include(text, "pnpm publish");
     assert.include(text, "Options: Approve / Deny");
     assert.include(text, "Never approve");
+    assert.include(text, "reply with exactly NO_REPLY");
   }).pipe(Effect.provide(layer));
 });
 

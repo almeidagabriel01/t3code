@@ -72,7 +72,7 @@ function waitWakeText(input: {
     prompt.answerable ? `Options: ${prompt.options.map((option) => option.label).join(" / ")}` : "",
   ].filter((line) => line !== "");
   const where = input.source === "decision" ? "in Activity" : `in ${link}`;
-  return `Task ${link} is waiting on the user. It shows them:\n\n${card.join("\n\n")}\n\nTell the user now, in this chat, what it needs and that they answer it ${where}. Never approve, deny or answer it for them: use t3_pending_request respond only when the user tells you to in this chat. If it was already answered, say nothing about it.`;
+  return `Task ${link} is waiting on the user. It shows them:\n\n${card.join("\n\n")}\n\nTell the user now, in this chat, what it needs and that they answer it ${where}. Never approve, deny or answer it for them: use t3_pending_request respond only when the user tells you to in this chat. If it was already answered, reply with exactly ${QUIET_REPLY} and nothing else.`;
 }
 
 /**
