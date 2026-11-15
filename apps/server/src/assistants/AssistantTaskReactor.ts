@@ -2,7 +2,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2DomainEvent,
-  type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -16,7 +15,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   NeedsUser,
@@ -82,24 +80,10 @@ export class AssistantTaskReactor extends Context.Service<
 >()("t3/assistants/AssistantTaskReactor") {}
 
 const make = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const tasks = yield* AssistantTasks;
   const needsUser = yield* NeedsUser;
-
-  const liveOwner = Effect.fnUntraced(function* (assistantId: string) {
-    const rows = yield* sql<{ readonly thread_id: string | null; readonly project_id: string }>`
-      SELECT thread_id, project_id FROM assistants
-      WHERE assistant_id = ${assistantId} AND archived_at IS NULL`;
-    const row = rows[0];
-    return row === undefined || row.thread_id === null
-      ? Option.none()
-      : Option.some({
-          threadId: row.thread_id as ThreadId,
-          projectId: row.project_id as ProjectId,
-        });
-  });
 
   /**
    * A completed run whose thread goes on by itself: a newer run is lined up, or it parked on work
@@ -134,7 +118,7 @@ const make = Effect.gen(function* () {
       ) {
         return;
       }
-      const owner = yield* liveOwner(task.value.assistantId);
+      const owner = yield* needsUser.conversation(task.value.assistantId);
       if (Option.isNone(owner)) return;
       const shell = yield* engine
         .getThreadShell(run.threadId)

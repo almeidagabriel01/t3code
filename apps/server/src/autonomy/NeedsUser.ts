@@ -172,6 +172,10 @@ export class NeedsUser extends Context.Service<
     readonly owner: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<WaitOwner>, SqlError | Orchestrator.OrchestratorV2Error>;
+    /** The assistant's live conversation; None once archived or before it has one. */
+    readonly conversation: (
+      assistantId: string,
+    ) => Effect.Effect<Option.Option<AssistantConversation>, SqlError>;
     /** The default assistant's conversation: the user's point of contact for every wait. */
     readonly defaultAssistant: Effect.Effect<Option.Option<AssistantConversation>, SqlError>;
     /** Takes back a wake about the wait that `targetThreadId` has not started yet. */
@@ -345,6 +349,7 @@ const make = Effect.gen(function* () {
     changes,
     describe,
     owner,
+    conversation,
     defaultAssistant: conversation(DEFAULT_ASSISTANT_ID),
     withdrawWake,
   });
