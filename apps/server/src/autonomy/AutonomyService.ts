@@ -969,14 +969,19 @@ const make = Effect.gen(function* () {
       })
       .pipe(
         Effect.as(true),
-        // Failures that a later try meets again: the wait counts as told instead of retrying forever.
+        // Failures a later try meets again until the user acts, most with no receipt to stop them:
+        // the wait counts as told, as past a budget. I/O and loading failures still retry.
         Effect.catchTags({
           ThreadManagementThreadArchivedError: giveUp,
           ThreadManagementThreadNotFoundError: giveUp,
           ThreadManagementDurableRunProjectionError: giveUp,
+          ThreadManagementProviderInstanceDisabledError: giveUp,
           OrchestratorCommandIdConflictError: giveUp,
           OrchestratorCommandPreviouslyRejectedError: giveUp,
+          OrchestratorCommandRejectedError: giveUp,
           OrchestratorSubagentThreadReadOnlyError: giveUp,
+          OrchestratorThreadAboveModeLimitError: giveUp,
+          OrchestratorRuntimeModeAboveCeilingError: giveUp,
         }),
       );
     if (!sent) return;

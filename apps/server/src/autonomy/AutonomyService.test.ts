@@ -1554,42 +1554,106 @@ it.effect("a notice the user took out of the queue is not sent again", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
-it.effect("a default that can never take the notice is not retried each sweep", () => {
-  const h = harness();
-  return Effect.gen(function* () {
-    const service = yield* Autonomy.AutonomyService;
-    const { task } = yield* otherOrigins(h);
-    yield* askFrom(task, "Nowhere to tell?");
-    h.sendError.current = new ThreadManagement.ThreadManagementThreadNotFoundError({
+const ids = { commandId: "c1" as never, threadId: JARVIS as never };
+/** Refusals no retry gets past until the user acts: the wait counts as told, as past a budget. */
+const refusals: ReadonlyArray<readonly [string, unknown]> = [
+  [
+    "thread not found",
+    new ThreadManagement.ThreadManagementThreadNotFoundError({
       projectId: "p1" as never,
       threadId: JARVIS as never,
-    });
-    yield* TestClock.adjust(MIN);
-    yield* service.notifyWaiting;
-    yield* service.notifyWaiting;
-    yield* service.notifyWaiting;
-    assert.lengthOf(h.attempts, 1);
-    assert.lengthOf(yield* outboxRows, 1);
-  }).pipe(Effect.provide(h.layer));
-});
+    }),
+  ],
+  [
+    "provider instance disabled",
+    new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
+      projectId: "p1" as never,
+      instanceId: "codex" as never,
+    }),
+  ],
+  [
+    "thread above the mode limit",
+    new Orchestrator.OrchestratorThreadAboveModeLimitError({
+      ...ids,
+      mode: "runtime",
+      runtimeMode: "full-access" as never,
+      interactionMode: "default" as never,
+    }),
+  ],
+  [
+    "runtime mode above the ceiling",
+    new Orchestrator.OrchestratorRuntimeModeAboveCeilingError({
+      ...ids,
+      refused: "turn",
+      runtimeMode: "full-access" as never,
+      maxRuntimeMode: "approval-required" as never,
+      organization: "acme",
+    }),
+  ],
+  [
+    "send refused by an assistant guard",
+    new Orchestrator.OrchestratorCommandRejectedError({ ...ids, commandType: "message.dispatch" }),
+  ],
+];
 
-it.effect("a default that failed for now is told on the next sweep", () => {
-  const h = harness();
-  return Effect.gen(function* () {
-    const service = yield* Autonomy.AutonomyService;
-    const { task } = yield* otherOrigins(h);
-    yield* askFrom(task, "Try again?");
-    h.sendFails.current = true;
-    yield* TestClock.adjust(MIN);
-    yield* service.notifyWaiting;
-    assert.lengthOf(toJarvis(h), 0);
-    h.sendFails.current = false;
-    yield* service.notifyWaiting;
-    yield* service.notifyWaiting;
-    assert.lengthOf(toJarvis(h), 1);
-    assert.lengthOf(h.attempts, 2);
-  }).pipe(Effect.provide(h.layer));
-});
+it.effect.each(refusals)(
+  "a default that refuses the notice (%s) is not retried each sweep",
+  ([, error]) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const { task } = yield* otherOrigins(h);
+      yield* askFrom(task, "Nowhere to tell?");
+      h.sendError.current = error;
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      assert.lengthOf(h.attempts, 1);
+      assert.lengthOf(yield* outboxRows, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+/** Failures of the moment: I/O, SQL, a projection still loading, a turn still busy. */
+const transient: ReadonlyArray<readonly [string, unknown]> = [
+  ["untagged", new Error("nope")],
+  [
+    "projection load",
+    new ThreadManagement.ThreadManagementProjectionLoadError({
+      projectId: "p1" as never,
+      threadId: JARVIS as never,
+      cause: new Error("disk I/O error"),
+    }),
+  ],
+  [
+    "dispatch",
+    new Orchestrator.OrchestratorDispatchError({ ...ids, commandType: "message.dispatch" }),
+  ],
+  ["projection", new Orchestrator.OrchestratorProjectionError({ threadId: JARVIS as never })],
+  ["provider selection busy", new Orchestrator.OrchestratorProviderSelectionBusyError(ids)],
+];
+
+it.effect.each(transient)(
+  "a default that failed for now (%s) is told on the next sweep",
+  ([, error]) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const { task } = yield* otherOrigins(h);
+      yield* askFrom(task, "Try again?");
+      h.sendError.current = error;
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 0);
+      h.sendError.current = null;
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 1);
+      assert.lengthOf(h.attempts, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 it.effect("past its budget the default gets no notice, and the card still goes", () => {
   const h = harness();
