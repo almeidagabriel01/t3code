@@ -168,8 +168,14 @@ system service has no screen to use, and the page says so.
 
 An assistant answers quick things itself. For real work that takes several steps in code, it
 starts a thread in the right project with a full brief, using its instructions, model and access. You
-are not asked to wait: when the thread finishes, the assistant wakes up, checks the result, runs the
+are not asked to wait: when the thread finishes (not when it only pauses for its own subagents or
+background work), the assistant wakes up, checks the result, runs the
 tests, asks a teammate to review when that helps, sends fixes back, and only then tells you.
+If the thread stops to ask you something (an approval, a question or a decision), the assistant
+tells you in its chat right away what it needs and where to answer. It never answers for you. The
+same goes for approvals and decisions in tasks it hands off with `delegate_task`; a question from
+such a task goes to the assistant first, which answers it only when the answer follows from the task
+or your instructions, and otherwise asks you.
 
 The threads an assistant launched are listed under it in the sidebar and on the Assistants page with
 their state (running, waiting, done or failed). Open one to see the work; the thread shows the
@@ -365,7 +371,9 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   conversation waits on you: an approval, a question, an open decision or a paused group task. It
   goes out after **Notify after** (1 minute by default), only once, and never for something you
   answered in the meantime. It has its own switch, respects the pause switch and does not count
-  toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
+  toward the daily limit. Your default assistant also gets a short note of it in its conversation,
+  so it can tell you what waits when you ask; that note is a run of the default assistant and counts
+  toward its budget. The same switch sends one notice when a provider reaches its usage limit,
   with the project, provider, the time it resets and the task, once per provider and limit window.
   With **Resume after usage limits** on in **Settings → Threads**, tasks waiting on a limit show
   **Limit until** and the reset time instead of failing.

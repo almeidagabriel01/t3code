@@ -512,6 +512,11 @@ export interface OrchestratorV2Shape {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamDomainEvents: Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>;
+  /** `streamDomainEvents`, anchored once this succeeds: every later event reaches the stream. */
+  readonly subscribeDomainEvents: Effect.Effect<
+    Stream.Stream<OrchestrationV2DomainEvent, OrchestratorV2Error>,
+    OrchestratorV2Error
+  >;
 }
 
 export class OrchestratorV2 extends Context.Service<OrchestratorV2, OrchestratorV2Shape>()(
@@ -14892,6 +14897,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const shellProjectionError = (cause: unknown) =>
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
+  const domainEventStreamError = (cause: unknown) =>
+    new OrchestratorDomainEventStreamError({ cause });
+  // Start at the latest sequence; awareness needs no historical replay. The sink replays every
+  // event after it, so reading it is what anchors the subscription.
+  const subscribeDomainEvents = eventSink.latestSequence().pipe(
+    Effect.map((latest) =>
+      eventSink.stream({ afterSequence: latest }).pipe(
+        Stream.map((stored) => stored.event),
+        Stream.mapError(domainEventStreamError),
+      ),
+    ),
+    Effect.mapError(domainEventStreamError),
+  );
+
   return OrchestratorV2.of({
     resumeQueuedRuns,
     recoverDelegatedTasks,
@@ -15097,20 +15116,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       ),
-    // Start at the latest sequence; awareness needs no historical replay.
-    streamDomainEvents: Stream.unwrap(
-      eventSink
-        .latestSequence()
-        .pipe(Effect.map((latest) => eventSink.stream({ afterSequence: latest }))),
-    ).pipe(
-      Stream.map((stored) => stored.event),
-      Stream.mapError(
-        (cause) =>
-          new OrchestratorDomainEventStreamError({
-            cause,
-          }),
-      ),
-    ),
+    streamDomainEvents: Stream.unwrap(subscribeDomainEvents),
+    subscribeDomainEvents,
   });
 });
 
