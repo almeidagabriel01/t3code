@@ -10,6 +10,7 @@ import {
   assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
+  continuesAssistantSender,
   messageAssistantId,
 } from "./assistantPresence.ts";
 
@@ -51,6 +52,30 @@ describe("assistantSenders", () => {
     [{ senderThreadId: "assistant:jarvis:1" }, "jarvis"],
   ])("reads the sender of %o", (message, expected) => {
     expect(messageAssistantId(message)).toBe(expected);
+  });
+});
+
+describe("continuesAssistantSender", () => {
+  const from = (assistant: string, text = "hi") => ({
+    role: "user",
+    text,
+    createdBy: "agent" as const,
+    senderThreadId: `assistant:${assistant}:1`,
+  });
+  const group = from(
+    "ada",
+    'Teammates answered your request; x\n<t3_reply from="Ada" threadId="assistant:ada:1" replyTo="a" status="answered">\nok\n</t3_reply>\n<t3_reply from="Bo" threadId="assistant:bo:1" replyTo="b" status="answered">\nok\n</t3_reply>',
+  );
+  it.each([
+    ["the same assistant again", from("ada"), from("ada"), true],
+    ["another assistant", from("ada"), from("bo"), false],
+    ["the first message", from("ada"), undefined, false],
+    ["after an answer", from("ada"), { ...from("ada"), role: "assistant" }, false],
+    ["after a person's message", from("ada"), { role: "user", text: "hi" }, false],
+    ["after a group's replies", from("ada"), group, false],
+    ["a group's replies", group, from("ada"), false],
+  ])("%s", (_name, message, previous, expected) => {
+    expect(continuesAssistantSender(message, previous)).toBe(expected);
   });
 });
 

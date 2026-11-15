@@ -200,6 +200,20 @@ describe("resolveUserMessagePresentation", () => {
     ).toEqual({ text: "Why?", attribution: "guest", scheduledTaskId: undefined, guestName: "Sam" });
   });
 
+  it("shows a teammate's words, not the envelope the agent reads", () => {
+    const text =
+      '<t3_reply from="Ada" handle="ada" threadId="assistant:ada:1" replyTo="m">\nA teammate answered.\n</t3_reply>\nStatus: done\nShipped.';
+    for (const creationSource of ["mcp", "server"] as const) {
+      expect(
+        resolveUserMessagePresentation({ role: "user", createdBy: "agent", creationSource, text }),
+      ).toMatchObject({
+        text: "Shipped.",
+        attribution: creationSource === "mcp" ? "agent" : "t3code",
+        teammate: [{ name: "Ada", status: "done", text: "Shipped." }],
+      });
+    }
+  });
+
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {
     const text = "Note: the T3 server restarted.";
     expect(

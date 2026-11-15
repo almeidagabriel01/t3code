@@ -1,6 +1,7 @@
 import { assistantIdFromThreadId, type Assistant } from "@t3tools/contracts";
 
 import { assistantFace, type AssistantFace, type AssistantPresence } from "./assistantRobot.ts";
+import { resolveTeammateMessage } from "./teammateMessage.ts";
 
 /** Distinct hues that read on dark, light and glass surfaces. */
 export const ASSISTANT_ACCENTS = [
@@ -33,6 +34,28 @@ export interface AssistantSender {
 /** The assistant that sent a message, from the message's sender thread; null for anyone else. */
 export function messageAssistantId(message: { readonly senderThreadId?: string | undefined }) {
   return message.senderThreadId ? assistantIdFromThreadId(message.senderThreadId) : null;
+}
+
+type SenderMessage = Parameters<typeof resolveTeammateMessage>[0] & {
+  readonly senderThreadId?: string | undefined;
+};
+
+/** One assistant wrote it; a group's replies carry several, and anyone else none. */
+function soleAssistant(message: SenderMessage | undefined): string | null {
+  if (message === undefined || message.role !== "user") return null;
+  return (resolveTeammateMessage(message)?.length ?? 1) === 1 ? messageAssistantId(message) : null;
+}
+
+/**
+ * Whether a message continues the one right above it from the same assistant, so clients show its
+ * avatar and name once. Anything else between them (an answer, a work row) breaks the run.
+ */
+export function continuesAssistantSender(
+  message: SenderMessage,
+  previous: SenderMessage | undefined,
+): boolean {
+  const sender = soleAssistant(message);
+  return sender !== null && sender === soleAssistant(previous);
 }
 
 /** Assistants that wrote into a thread, in the order they first spoke. */

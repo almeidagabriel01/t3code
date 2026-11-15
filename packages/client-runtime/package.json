@@ -103,6 +103,10 @@
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
     },
+    "./teammateMessage": {
+      "types": "./src/teammateMessage.ts",
+      "default": "./src/teammateMessage.ts"
+    },
     "./prompt-links": {
       "types": "./src/promptLinks.ts",
       "default": "./src/promptLinks.ts"

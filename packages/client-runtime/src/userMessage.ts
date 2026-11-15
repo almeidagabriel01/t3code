@@ -17,6 +17,12 @@ import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import {
+  resolveTeammateMessage,
+  type TeammateMessagePart,
+  teammateMessagePlainText,
+} from "./teammateMessage.ts";
+
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
   beforeCacheExpires: "Compacting before the cache expires…",
@@ -65,16 +71,32 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  readonly context?:
+    | {
+        readonly guest?: GuestMessageAttribution | undefined;
+        readonly teammate?: OrchestrationMessageContext["teammate"];
+      }
+    | undefined;
 }): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
   /** Set when `attribution` is "guest". */
   readonly guestName?: string;
+  /** Set when teammates sent it; `text` is then their words without the envelope. */
+  readonly teammate?: ReadonlyArray<TeammateMessagePart>;
 } {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
+  }
+  const teammate = resolveTeammateMessage(message);
+  if (teammate !== null) {
+    return {
+      text: teammateMessagePlainText(teammate),
+      attribution: message.creationSource === "server" ? "t3code" : "agent",
+      scheduledTaskId: undefined,
+      teammate,
+    };
   }
   // The stored text names the guest for the agent; people see the guest's own words.
   const guest = message.context?.guest;
