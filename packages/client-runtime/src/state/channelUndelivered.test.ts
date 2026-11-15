@@ -3,7 +3,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import { applyUndeliveredResend, createUndeliveredResend } from "./channelUndelivered.ts";
+import {
+  applyUndeliveredResend,
+  createUndeliveredResend,
+  newerStoredSettings,
+} from "./channelUndelivered.ts";
+import { queryUpdatedAt } from "./queryUpdatedAt.ts";
 import { type AtomCommandResult, createAtomCommandScheduler } from "./runtime.ts";
 
 const hub = "hub" as EnvironmentId;
@@ -18,8 +23,8 @@ const setup = () => {
     () => stored,
   );
   const answer = () => registry.get(resend.answers(hub));
-  const known = (value: unknown) =>
-    value === null ? AsyncResult.initial() : AsyncResult.success(value);
+  const known = (value: unknown, timestamp = 1) =>
+    value === null ? AsyncResult.initial() : AsyncResult.success(value, { timestamp });
   /** A resend that put `requeued` back in line, with `event` and `settings` shown when it started. */
   const run = (event: unknown, requeued: number, settings: unknown = null) => {
     registry.set(status, known(event));
@@ -28,7 +33,10 @@ const setup = () => {
     const against = resend.command.onStart(target, registry);
     return resend.command.onSuccess(target, registry, { requeued }, against);
   };
-  return { registry, resend, answer, run };
+  /** A fetch that finished after the resend started, answering `settings`. */
+  const refetch = (settings: unknown) => registry.set(stored, known(settings, 2));
+  const fetchedAt = () => queryUpdatedAt(registry.get(stored));
+  return { registry, resend, answer, run, refetch, fetchedAt };
 };
 
 describe("applyUndeliveredResend", () => {
@@ -36,32 +44,49 @@ describe("applyUndeliveredResend", () => {
   const caughtUp: Shown = { status: "running" };
   const fetched: Shown = { undeliveredCount: 3 };
   const refetched: Shown = { undeliveredCount: 2 };
-  // [case, event and settings when the resend started, settings shown now, event now, count shown]
+  // [case, event and settings when the resend started, settings shown now, fetched since, event now, count shown]
   it.effect.each([
-    ["the stream has not reported since", stale, fetched, stale, stale, 0],
-    ["no stream, over the same settings", null, fetched, fetched, null, 0],
-    ["the stream already moved on", stale, fetched, caughtUp, caughtUp, undefined],
-    ["no stream, and the settings were fetched again", null, fetched, refetched, null, 2],
-  ] as const)("%s", ([, startedEvent, startedSettings, shown, event, expected]) =>
+    ["the stream has not reported since", stale, fetched, stale, false, stale, 0],
+    ["no stream, over the same settings", null, fetched, fetched, false, null, 0],
+    ["the stream already moved on", stale, fetched, caughtUp, false, caughtUp, undefined],
+    ["no stream, and the settings were fetched again", null, fetched, refetched, true, null, 2],
+    ["no stream, and a fetch answered the same settings", null, fetched, fetched, true, null, 3],
+  ] as const)("%s", ([, startedEvent, startedSettings, shown, fetchedSince, event, expected]) =>
     Effect.gen(function* () {
-      const { answer, run } = setup();
+      const { answer, run, refetch, fetchedAt } = setup();
       yield* run(startedEvent, 3, startedSettings);
-      expect(applyUndeliveredResend(shown, answer(), event).undeliveredCount).toBe(expected);
+      if (fetchedSince) refetch(shown);
+      expect(applyUndeliveredResend(shown, answer(), event, fetchedAt()).undeliveredCount).toBe(
+        expected,
+      );
     }),
   );
 
   it.effect("yields to the next status event", () =>
     Effect.gen(function* () {
-      const { answer, run } = setup();
+      const { answer, run, fetchedAt } = setup();
       yield* run(stale, 3);
       const later = { status: "running", undeliveredCount: 1 };
-      expect(applyUndeliveredResend(later, answer(), later).undeliveredCount).toBe(1);
+      expect(applyUndeliveredResend(later, answer(), later, fetchedAt()).undeliveredCount).toBe(1);
     }),
   );
 
   it("changes nothing before any resend", () => {
     const { answer } = setup();
-    expect(applyUndeliveredResend(stale, answer(), stale)).toBe(stale);
+    expect(applyUndeliveredResend(stale, answer(), stale, 0)).toBe(stale);
+  });
+});
+
+describe("newerStoredSettings", () => {
+  const saved = { value: "saved", at: 2 };
+  // [case, saved, fetched, fetched at, shown]
+  it.each([
+    ["nothing saved shows the fetch", null, "fetched", 1, { value: "fetched", at: 1 }],
+    ["a save after the fetch wins", saved, "fetched", 1, saved],
+    ["a fetch that finished after the save wins", saved, "fetched", 3, { value: "fetched", at: 3 }],
+    ["a save shows before any fetch", saved, null, 0, saved],
+  ] as const)("%s", (_, stored, fetched, fetchedAt, shown) => {
+    expect(newerStoredSettings(stored, fetched, fetchedAt)).toEqual(shown);
   });
 });
 

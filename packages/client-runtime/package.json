@@ -303,6 +303,10 @@
       "types": "./src/state/channelUndelivered.ts",
       "default": "./src/state/channelUndelivered.ts"
     },
+    "./state/queryUpdatedAt": {
+      "types": "./src/state/queryUpdatedAt.ts",
+      "default": "./src/state/queryUpdatedAt.ts"
+    },
     "./state/telegramChannel": {
       "types": "./src/state/telegramChannel.ts",
       "default": "./src/state/telegramChannel.ts"

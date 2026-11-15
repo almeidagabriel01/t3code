@@ -6,6 +6,8 @@ import {
 import {
   applyUndeliveredResend,
   lowerUndelivered,
+  newerStoredSettings,
+  type StoredSettings,
 } from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -55,12 +57,12 @@ export function useImessageChannel(environmentId: EnvironmentId) {
   const accessQuery = useEnvironmentQuery(imessageEnvironment.access({ environmentId, input: {} }));
   const statusResult = useAtomValue(imessageEnvironment.status({ environmentId, input: null }));
   // A change answers with the new settings; showing them avoids waiting on a refetch.
-  const [saved, setSaved] = useState<ImessageChannelSettings | null>(null);
-  const stored = saved ?? settingsQuery.data;
+  const [saved, setSaved] = useState<StoredSettings<ImessageChannelSettings> | null>(null);
+  const stored = newerStoredSettings(saved, settingsQuery.data, settingsQuery.dataUpdatedAt);
   const event = AsyncResult.getOrElse(statusResult, () => null);
   const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
-  const live = stored && event ? applyImessageStatusEvent(stored, event) : stored;
-  const settings = live && applyUndeliveredResend(live, resent, event);
+  const live = stored && (event ? applyImessageStatusEvent(stored.value, event) : stored.value);
+  const settings = live && applyUndeliveredResend(live, resent, event, stored?.at ?? 0);
   const canConfigure = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
   const canResend = useAtomValue(
     imessageEnvironment.resendUndelivered.permissionAtom(environmentId),
@@ -87,7 +89,7 @@ export function useImessageChannel(environmentId: EnvironmentId) {
     configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {
       const result = await configure({ environmentId, input });
       if (result._tag === "Success") {
-        setSaved(result.value);
+        setSaved({ value: result.value, at: Date.now() });
         return { ok: true };
       }
       return failed(result);
@@ -98,7 +100,9 @@ export function useImessageChannel(environmentId: EnvironmentId) {
       if (result._tag !== "Success") return failed(result);
       // The answer cannot follow `saved` from the shared runtime, so it lowers it here.
       const { requeued } = result.value;
-      setSaved((now) => (now && now === pressed ? lowerUndelivered(now, requeued) : now));
+      setSaved((now) =>
+        now && now === pressed ? { ...now, value: lowerUndelivered(now.value, requeued) } : now,
+      );
       return { ok: true };
     },
   };

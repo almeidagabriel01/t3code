@@ -6,6 +6,8 @@ import {
 import {
   applyUndeliveredResend,
   lowerUndelivered,
+  newerStoredSettings,
+  type StoredSettings,
 } from "@t3tools/client-runtime/state/channelUndelivered";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -54,12 +56,12 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
   );
   const statusResult = useAtomValue(telegramEnvironment.status({ environmentId, input: null }));
   // A change answers with the new settings; showing them avoids waiting on a refetch.
-  const [saved, setSaved] = useState<TelegramChannelSettings | null>(null);
-  const stored = saved ?? settingsQuery.data;
+  const [saved, setSaved] = useState<StoredSettings<TelegramChannelSettings> | null>(null);
+  const stored = newerStoredSettings(saved, settingsQuery.data, settingsQuery.dataUpdatedAt);
   const event = AsyncResult.getOrElse(statusResult, () => null);
   const resent = useAtomValue(telegramEnvironment.undeliveredResend(environmentId));
-  const live = stored && event ? applyTelegramStatusEvent(stored, event) : stored;
-  const settings = live && applyUndeliveredResend(live, resent, event);
+  const live = stored && (event ? applyTelegramStatusEvent(stored.value, event) : stored.value);
+  const settings = live && applyUndeliveredResend(live, resent, event, stored?.at ?? 0);
   const canConfigure = useAtomValue(telegramEnvironment.configure.permissionAtom(environmentId));
   const canResend = useAtomValue(
     telegramEnvironment.resendUndelivered.permissionAtom(environmentId),
@@ -83,7 +85,7 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
     configure: async (input: TelegramChannelConfigureInput): Promise<TelegramReply> => {
       const result = await configure({ environmentId, input });
       if (result._tag === "Success") {
-        setSaved(result.value);
+        setSaved({ value: result.value, at: Date.now() });
         return { ok: true };
       }
       return failed(result);
@@ -94,7 +96,9 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
       if (result._tag !== "Success") return failed(result);
       // The answer cannot follow `saved` from the shared runtime, so it lowers it here.
       const { requeued } = result.value;
-      setSaved((now) => (now && now === pressed ? lowerUndelivered(now, requeued) : now));
+      setSaved((now) =>
+        now && now === pressed ? { ...now, value: lowerUndelivered(now.value, requeued) } : now,
+      );
       return { ok: true };
     },
   };
