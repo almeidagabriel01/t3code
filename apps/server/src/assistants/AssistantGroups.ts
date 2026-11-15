@@ -90,6 +90,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import { continuesAtReset } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
+import { routesAssistantGroups } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -1856,7 +1857,7 @@ const make = Effect.gen(function* () {
   /** The lead's own provider instance must offer routing: no usage-limit fallback stands in for it. */
   const canRoute = Effect.fn("AssistantGroups.canRoute")(function* (selection: ModelSelection) {
     const instance = yield* registry.getInstance(selection.instanceId);
-    return instance?.textGeneration.routeAssistantGroup !== undefined;
+    return instance !== undefined && routesAssistantGroups(instance);
   });
 
   const openRoots = Effect.fn("AssistantGroups.openRoots")(function* (

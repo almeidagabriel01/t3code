@@ -39,9 +39,10 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
-import type {
-  ProviderInstance,
-  ProviderWorkspaceSnapshot,
+import {
+  routesAssistantGroups,
+  type ProviderInstance,
+  type ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -361,8 +362,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
-  // The same check as `AssistantGroups.canRoute`.
-  supportsAssistantGroupRouting: instance.textGeneration.routeAssistantGroup !== undefined,
+  supportsAssistantGroupRouting: routesAssistantGroups(instance),
 });
 
 export const layer = Layer.effect(
