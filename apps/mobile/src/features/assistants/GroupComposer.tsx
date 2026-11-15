@@ -311,21 +311,37 @@ function ReplyQuote(props: {
  * The group's message box, built on the thread composer's editor: `@` picks members, `#` names a
  * project, a line says who will get the message, and a new request can name its project.
  */
-/** Whether the lead can route a message nobody is mentioned in; undefined while unknown. */
-function useLeadCanRoute(environmentId: EnvironmentId, lead: Assistant | null) {
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute"
+> & { readonly environmentId: EnvironmentId; readonly lead: Assistant | null };
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * server config, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine(props: RecipientsLineProps) {
+  const { environmentId, lead } = props;
   const thread = useQuietThreadShell(
     lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
   );
   const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
   const config = useEnvironmentServerConfig(environmentId);
-  if (lead === null || config === null) return undefined;
-  return assistantGroupLeadCanRoute({
-    lead,
-    threadModel: thread?.modelSelection,
-    settings: config.settings,
-    providers: config.providers,
-    project,
-  });
+  const leadCanRoute =
+    lead === null || config === null
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings: config.settings,
+          providers: config.providers,
+          project,
+        });
+  return (
+    <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
+      {assistantGroupRecipientsPreview({ ...props, leadCanRoute })}
+    </Text>
+  );
 }
 
 export function GroupComposer(props: {
@@ -421,15 +437,6 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
-  const preview = assistantGroupRecipientsPreview({
-    text,
-    members: props.members,
-    lead,
-    leadCanRoute: useLeadCanRoute(props.environmentId, lead),
-    projects: props.projects,
-    projectId: props.projectId,
-    context: props.sendContext,
-  });
   const attached = useGroupAttachments(
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),
@@ -770,9 +777,15 @@ export function GroupComposer(props: {
         )}
       </ComposerSurface>
       {shownError === null ? (
-        <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
-          {preview}
-        </Text>
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={text}
+          members={props.members}
+          lead={lead}
+          projects={props.projects}
+          projectId={props.projectId}
+          context={props.sendContext}
+        />
       ) : (
         <Text accessibilityRole="alert" className="min-h-4 px-3 text-xs text-danger-foreground">
           {shownError}

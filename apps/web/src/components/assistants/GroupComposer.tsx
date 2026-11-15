@@ -276,22 +276,42 @@ interface Outgoing extends AssistantGroupOutgoing {
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
 
-/** Whether the lead can route a message nobody is mentioned in; undefined while unknown. */
-function useLeadCanRoute(environmentId: EnvironmentId, lead: Assistant | null) {
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute"
+> & { readonly environmentId: EnvironmentId; readonly lead: Assistant | null };
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * providers, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine(props: RecipientsLineProps) {
+  const { environmentId, lead } = props;
   const thread = useQuietThreadShell(
     lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
   );
   const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
   const settings = useServerConfigs().get(environmentId)?.settings;
   const providers = useEnvironmentProviders().get(environmentId);
-  if (lead === null || settings === undefined || providers === undefined) return undefined;
-  return assistantGroupLeadCanRoute({
-    lead,
-    threadModel: thread?.modelSelection,
-    settings,
-    providers,
-    project,
-  });
+  const leadCanRoute =
+    lead === null || settings === undefined || providers === undefined
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings,
+          providers,
+          project,
+        });
+  return (
+    <p
+      data-testid="group-recipients"
+      className="min-h-4 px-1 text-xs text-muted-foreground"
+      aria-live="polite"
+    >
+      {assistantGroupRecipientsPreview({ ...props, leadCanRoute })}
+    </p>
+  );
 }
 
 export function GroupComposer(props: {
@@ -400,15 +420,6 @@ export function GroupComposer(props: {
         }));
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
-  const preview = assistantGroupRecipientsPreview({
-    text: prompt.value,
-    members: props.members,
-    lead,
-    leadCanRoute: useLeadCanRoute(props.environmentId, lead),
-    projects: projectRefs,
-    projectId: props.projectId,
-    context: props.sendContext,
-  });
   const attached = useGroupAttachments(
     props.environmentId,
     props.disabled,
@@ -885,13 +896,15 @@ export function GroupComposer(props: {
         </ComposerSurface.Host>
       </ComposerSurface.Shell>
       {shownError === null ? (
-        <p
-          data-testid="group-recipients"
-          className="min-h-4 px-1 text-xs text-muted-foreground"
-          aria-live="polite"
-        >
-          {preview}
-        </p>
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={prompt.value}
+          members={props.members}
+          lead={lead}
+          projects={projectRefs}
+          projectId={props.projectId}
+          context={props.sendContext}
+        />
       ) : (
         <p
           role="alert"
