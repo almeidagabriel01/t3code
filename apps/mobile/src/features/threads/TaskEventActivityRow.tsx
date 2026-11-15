@@ -4,12 +4,14 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 
-// The project gives way first, then the title; the status and action never truncate.
+// The project gives way first, then the title; the status and action never truncate. A chip
+// (the All tab's only sign of the project) gives way after the title, which keeps a floor.
 const SEGMENT_CLASS = {
   title: "min-w-0 shrink text-xs text-foreground-muted",
   label: "shrink-0 text-xs text-foreground-muted",
   project: "min-w-0 shrink-[999] text-xs text-foreground-muted",
 } as const;
+const CHIPPED_TITLE_CLASS = "min-w-10 shrink text-xs text-foreground-muted";
 
 const STATUS_SYMBOL = {
   completed: { name: "checkmark.circle.fill", tint: "accent-adaptive-emerald-600-400" },
@@ -50,12 +52,20 @@ export function TaskEventActivityRow(props: {
         type="monochrome"
       />
       {segments.map((segment) => (
-        <Text key={segment.kind} numberOfLines={1} className={SEGMENT_CLASS[segment.kind]}>
+        <Text
+          key={segment.kind}
+          numberOfLines={1}
+          className={
+            segment.kind === "title" && props.chip !== undefined
+              ? CHIPPED_TITLE_CLASS
+              : SEGMENT_CLASS[segment.kind]
+          }
+        >
           {segment.separated ? `· ${segment.text}` : segment.text}
         </Text>
       ))}
       {props.chip === undefined ? null : (
-        <View className="max-w-28 min-w-0 shrink-[999] rounded-full bg-foreground/8 px-1.5 py-px">
+        <View className="max-w-28 min-w-0 shrink-[0.01] rounded-full bg-foreground/8 px-1.5 py-px">
           <Text
             numberOfLines={1}
             ellipsizeMode="middle"

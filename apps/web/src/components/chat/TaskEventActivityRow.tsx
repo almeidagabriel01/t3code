@@ -11,7 +11,8 @@ import {
 import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
-// The project gives way first, then the title; the status and action never truncate.
+// The project gives way first, then the title; the status and action never truncate. A chip
+// (the All tab's only sign of the project) gives way after the title, which keeps a floor.
 const SEGMENT_CLASS = {
   title: "min-w-0 truncate font-medium text-foreground/90",
   label: "shrink-0",
@@ -54,7 +55,13 @@ export function TaskEventActivityRow(props: {
     >
       <Icon className={cn("size-3.5 shrink-0", className)} aria-hidden />
       {taskEventActivitySegments(props).map((segment) => (
-        <span key={segment.kind} className={SEGMENT_CLASS[segment.kind]}>
+        <span
+          key={segment.kind}
+          className={cn(
+            SEGMENT_CLASS[segment.kind],
+            segment.kind === "title" && props.chip != null && "min-w-10",
+          )}
+        >
           {segment.separated ? `· ${segment.text}` : segment.text}
         </span>
       ))}
