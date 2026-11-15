@@ -1,4 +1,4 @@
-import { assistantFace, assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { projectAssistants } from "@t3tools/client-runtime/assistantSections";
 import {
   assistantWorkingHereLabel,
@@ -13,9 +13,9 @@ import { cn } from "../../lib/cn";
 import {
   useAssistantEntries,
   useAssistantLiveWork,
+  useAssistantStatus,
   type AssistantEntry,
 } from "../../state/assistants";
-import { useQuietThreadShells } from "../../state/entities";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { AssistantCluster } from "./assistantPresentation";
 
@@ -39,7 +39,7 @@ export function ProjectAssistantFaces(props: {
   const { active } = useAssistantEntries();
   const { sites } = useAssistantLiveWork();
   const selectDetail = useSelectWorkspaceDetail();
-  const shells = useQuietThreadShells();
+  const status = useAssistantStatus();
   const faces = projectAssistantFaces({
     assistants: active,
     configured: projectAssistants(active, props.members),
@@ -76,9 +76,7 @@ export function ProjectAssistantFaces(props: {
           key: keyOf(entry),
           assistant: entry.assistant,
           // A working face wears the work's state, so it matches "is working here" in the label.
-          mood:
-            site?.face ??
-            assistantFace(assistantPresenceOf(entry.assistant, entry.environmentId, shells)),
+          mood: site?.face ?? assistantFace(status.of(entry.environmentId, entry.assistant)),
         }))}
       />
     </Pressable>

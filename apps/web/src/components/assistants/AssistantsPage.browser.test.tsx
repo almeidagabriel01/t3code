@@ -48,12 +48,22 @@ vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
   trackRpcRequestSent: () => {},
 }));
 // A thread that waits on the user is what puts an assistant under "Needs you". The fake is a
-// real shell with its id and approval flag replaced, so every other reader still gets a full shape.
+// real shell with its id, approval flag and pending request replaced, as the server sends them, so
+// every other reader still gets a full shape.
 const waiting = vi.hoisted(() => new Set<string>());
 vi.mock(import("~/state/entities"), async (original) => {
   const actual = await original();
   const asWaiting = (base: ReturnType<typeof actual.useQuietThreadShells>[number], id: string) =>
-    ({ ...base, id, hasPendingApprovals: true }) as typeof base;
+    ({
+      ...base,
+      id,
+      hasPendingApprovals: true,
+      pendingRequest: {
+        id: `request-${id}`,
+        kind: "command_execution_approval",
+        createdAt: "2026-03-17T19:00:00.000Z",
+      },
+    }) as typeof base;
   return {
     ...actual,
     useThreadShell: (ref) => {

@@ -32,6 +32,7 @@ vi.mock(import("../../state/assistants"), async (importOriginal) => ({
   useAssistantEntries: (() => ({
     active: threadAssistant.taskOwner === null ? [] : [threadAssistant.taskOwner],
     archived: [],
+    activeTeams: [],
     environmentIds: [],
   })) as never,
 }));

@@ -3,16 +3,28 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_RETRY_TEXT,
   assistantRetryPlan,
+  assistantWorkHeadline,
   assistantWorkStatus,
   type AssistantWorkFix,
+  type AssistantWorkHeadline,
 } from "@t3tools/client-runtime/assistantWork";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { Assistant, EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { AlertTriangleIcon, CheckCircle2Icon, RotateCcwIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  CheckCircle2Icon,
+  CircleEllipsisIcon,
+  CircleXIcon,
+  MessageCircleQuestionIcon,
+  RotateCcwIcon,
+  WifiOffIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -26,6 +38,7 @@ import {
 } from "../../state/assistants";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { Button } from "../ui/button";
@@ -39,6 +52,7 @@ import {
 } from "../ui/dialog";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { openAssistantDialog } from "./assistantDialogState";
 import { assistantWorkAtom } from "./assistantWorkState";
 import { AssistantSchedules } from "./AssistantSchedules";
@@ -93,6 +107,9 @@ function AssistantWorkDialog(props: {
   const { environmentId, assistant, onClose } = props;
   const [tab, setTab] = useState<TabId>("routines");
   const nowMs = useNowMinuteMs();
+  const reachable = environmentReachable(
+    useEnvironmentPresentation(environmentId).presentation?.connection,
+  );
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogPopup className="max-w-lg">
@@ -107,45 +124,53 @@ function AssistantWorkDialog(props: {
             <AssistantStatusCard
               environmentId={environmentId}
               assistant={assistant}
+              reachable={reachable}
               onNavigate={onClose}
             />
-            <ToggleGroup
-              aria-label="Work sections"
-              className="w-full *:flex-1"
-              value={[tab]}
-              onValueChange={(next) => {
-                const value = TABS.find((candidate) => candidate.id === next[0]);
-                if (value !== undefined) setTab(value.id);
-              }}
-            >
-              {TABS.map((candidate) => (
-                <Toggle key={candidate.id} value={candidate.id}>
-                  {candidate.label}
-                </Toggle>
-              ))}
-            </ToggleGroup>
-            {tab === "routines" ? (
-              assistant.threadId === null ? (
-                <p className="text-xs text-muted-foreground">Its conversation is not ready yet.</p>
-              ) : (
-                <AssistantSchedules
-                  environmentId={environmentId}
-                  threadId={assistant.threadId}
-                  onNavigate={onClose}
-                />
-              )
-            ) : tab === "memory" ? (
-              <AssistantWorkMemory
-                environmentId={environmentId}
-                assistant={assistant}
-                onNavigate={onClose}
-              />
-            ) : (
-              <AssistantWorkLibrary
-                environmentId={environmentId}
-                assistant={assistant}
-                nowMs={nowMs}
-              />
+            {/* Routines, Memory and Library come from its server, which cannot answer now. */}
+            {reachable === false ? null : (
+              <>
+                <ToggleGroup
+                  aria-label="Work sections"
+                  className="w-full *:flex-1"
+                  value={[tab]}
+                  onValueChange={(next) => {
+                    const value = TABS.find((candidate) => candidate.id === next[0]);
+                    if (value !== undefined) setTab(value.id);
+                  }}
+                >
+                  {TABS.map((candidate) => (
+                    <Toggle key={candidate.id} value={candidate.id}>
+                      {candidate.label}
+                    </Toggle>
+                  ))}
+                </ToggleGroup>
+                {tab === "routines" ? (
+                  assistant.threadId === null ? (
+                    <p className="text-xs text-muted-foreground">
+                      Its conversation is not ready yet.
+                    </p>
+                  ) : (
+                    <AssistantSchedules
+                      environmentId={environmentId}
+                      threadId={assistant.threadId}
+                      onNavigate={onClose}
+                    />
+                  )
+                ) : tab === "memory" ? (
+                  <AssistantWorkMemory
+                    environmentId={environmentId}
+                    assistant={assistant}
+                    onNavigate={onClose}
+                  />
+                ) : (
+                  <AssistantWorkLibrary
+                    environmentId={environmentId}
+                    assistant={assistant}
+                    nowMs={nowMs}
+                  />
+                )}
+              </>
             )}
           </div>
         </DialogPanel>
@@ -154,9 +179,20 @@ function AssistantWorkDialog(props: {
   );
 }
 
+const HEADLINE_ICON: Record<AssistantWorkHeadline["kind"], readonly [LucideIcon, string]> = {
+  offline: [WifiOffIcon, "text-muted-foreground"],
+  needs: [MessageCircleQuestionIcon, "text-warning-foreground"],
+  blocked: [AlertTriangleIcon, "text-destructive-foreground"],
+  limited: [AlertTriangleIcon, "text-warning-foreground"],
+  working: [CircleEllipsisIcon, "text-info-foreground"],
+  failed: [CircleXIcon, "text-destructive-foreground"],
+  ready: [CheckCircle2Icon, "text-success-foreground"],
+};
+
 function AssistantStatusCard(props: {
   readonly environmentId: EnvironmentId;
   readonly assistant: Assistant;
+  readonly reachable: boolean | null;
   readonly onNavigate: () => void;
 }) {
   const { environmentId, assistant } = props;
@@ -183,7 +219,14 @@ function AssistantStatusCard(props: {
     sandbox,
     autonomyEnabled: autonomy.enabled,
   });
-  const retry = assistantRetryPlan(shell);
+  const headline = assistantWorkHeadline(
+    status,
+    useAssistantStatus().of(environmentId, assistant),
+    props.reachable,
+  );
+  const [HeadlineIcon, headlineTone] = HEADLINE_ICON[headline.kind];
+  const retry = headline.kind === "offline" ? null : assistantRetryPlan(shell);
+  const fixable = headline.kind === "blocked" || headline.kind === "limited";
 
   const fix = async (kind: AssistantWorkFix) => {
     switch (kind) {
@@ -234,28 +277,14 @@ function AssistantStatusCard(props: {
       className="flex flex-col gap-2.5 rounded-xl border border-foreground/12 p-3"
     >
       <div className="flex items-start gap-2.5">
-        {status.ok ? (
-          <CheckCircle2Icon
-            aria-hidden
-            className="mt-0.5 size-4 shrink-0 text-success-foreground"
-          />
-        ) : (
-          <AlertTriangleIcon
-            aria-hidden
-            className={
-              status.severity === "blocked"
-                ? "mt-0.5 size-4 shrink-0 text-destructive-foreground"
-                : "mt-0.5 size-4 shrink-0 text-warning-foreground"
-            }
-          />
-        )}
+        <HeadlineIcon aria-hidden className={`mt-0.5 size-4 shrink-0 ${headlineTone}`} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-sm font-medium">{status.ok ? "Ready to work" : status.title}</span>
-          <p className="text-xs text-muted-foreground">
-            {status.ok ? "Nothing is in its way." : status.detail}
-          </p>
+          <span className="text-sm font-medium">{headline.title}</span>
+          {headline.detail === null ? null : (
+            <p className="text-xs text-muted-foreground">{headline.detail}</p>
+          )}
         </div>
-        {status.ok || status.fix === null ? null : (
+        {!fixable || status.ok || status.fix === null ? null : (
           <Button size="xs" variant="outline" onClick={() => void fix(status.fix!.kind)}>
             {status.fix.label}
           </Button>

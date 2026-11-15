@@ -3,7 +3,7 @@ import {
   assistantGroupAttention,
   type AssistantAttention,
 } from "@t3tools/client-runtime/assistantList";
-import { assistantGroupThreadsOf, assistantPresence } from "@t3tools/client-runtime/assistantRobot";
+import { assistantGroupThreadsOf } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { View } from "react-native";
 
@@ -16,7 +16,7 @@ import { useQuietThreadShells, useThreadShell } from "../../state/entities";
 import { threadHasUnseenCompletion } from "../threads/threadListV2";
 import { assistantStatusLabel } from "../threads/threadStatusLabels";
 
-/** An assistant's presence and status: its own conversation first, then its work in its groups. */
+/** An assistant's thread attention: its own conversation first, then its work in its groups. */
 export function useAssistantAttention({ assistant, environmentId }: AssistantEntry) {
   const thread = useThreadShell(
     assistant.threadId === null ? null : scopeThreadRef(environmentId, assistant.threadId),
@@ -30,7 +30,7 @@ export function useAssistantAttention({ assistant, environmentId }: AssistantEnt
       openDecisions.has(scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id))),
     unseenDone: thread !== null && threadHasUnseenCompletion(thread),
   });
-  return { thread, presence: assistantPresence(thread, groupThreads), attention };
+  return { thread, attention };
 }
 
 /** How to read a group's status from its members' conversations, its threads and its tasks. */

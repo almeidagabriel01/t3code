@@ -16,6 +16,8 @@ import {
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { assistantLiveWork } from "@t3tools/client-runtime/assistantLiveWork";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
+import { assistantStatusOf } from "@t3tools/client-runtime/sidebarZones";
 import {
   AuthOrchestrationReadScope,
   type Assistant,
@@ -48,6 +50,8 @@ import { useEnvironmentQuery } from "./query";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "./atom-registry";
+import { decisionEntriesAtom } from "./decisions";
+import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { environmentThreadShells } from "./threads";
@@ -130,6 +134,27 @@ const assistantLiveWorkAtom = Atom.make((get) =>
 /** Where each assistant works right now and its live delegated children, derived once for every row. */
 export function useAssistantLiveWork() {
   return useAtomValue(assistantLiveWorkAtom);
+}
+
+const assistantStatusAtom = Atom.make((get) => {
+  const presentations = get(environmentPresentations.presentationsAtom);
+  return assistantStatusOf({
+    shells: get(environmentThreadShells.quietThreadShellsAtom),
+    decisions: get(decisionEntriesAtom).open,
+    ownerOf: get(threadOwnershipAtom).ownerOf,
+    sites: get(assistantLiveWorkAtom).sites,
+    reachable: (environmentId) =>
+      environmentReachable(presentations.get(environmentId as EnvironmentId)?.connection),
+  });
+}).pipe(Atom.withLabel("mobile-assistant-status"));
+
+/**
+ * Every assistant's one status (`assistantStatus`), derived once and read alike by the sidebar,
+ * Home, info, Work, project faces and a thread's presence menu. `of` takes an assistant; `read`
+ * adjusts a presence in hand; `items` is the Needs you list it counted.
+ */
+export function useAssistantStatus() {
+  return useAtomValue(assistantStatusAtom);
 }
 
 /** What an assistant spent across its conversations; idle (null) when it has no budget to show. */

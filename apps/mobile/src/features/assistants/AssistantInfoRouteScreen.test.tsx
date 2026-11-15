@@ -89,6 +89,15 @@ vi.mock("../../state/assistants", () => ({
   }),
   useAssistantGroupChat: () => mocks.chat,
   useAssistantLiveWork: () => null,
+  useAssistantStatus: () => ({
+    of: (_environmentId: string, assistant: { id: string } | null) => ({
+      mood: assistant && mocks.working.has(assistant.id) ? "working" : "idle",
+      detail: assistant && mocks.working.has(assistant.id) ? "Working" : "Idle",
+      since: null,
+      reading: false,
+      queued: 0,
+    }),
+  }),
   useAssistantSpend: (_environmentId: string, assistantId: string | null) => ({
     data: assistantId === null ? null : { spent: 3 },
   }),
@@ -112,16 +121,6 @@ vi.mock("../../state/entities", () => ({
 vi.mock("@t3tools/client-runtime/assistantLiveWork", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   assistantWorkingNow: () => mocks.workingNow,
-}));
-vi.mock("@t3tools/client-runtime/assistantRobot", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  assistantPresenceOf: (assistant: { id: string } | null) => ({
-    mood: assistant && mocks.working.has(assistant.id) ? "working" : "idle",
-    detail: assistant && mocks.working.has(assistant.id) ? "Working" : "Idle",
-    since: null,
-    reading: false,
-    queued: 0,
-  }),
 }));
 vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { assistant: { id: string }; mood?: string }) => (

@@ -1,7 +1,6 @@
 import { assistantIdFromThreadId, type Assistant } from "@t3tools/contracts";
 
 import { assistantFace, type AssistantFace, type AssistantPresence } from "./assistantRobot.ts";
-import { ASSISTANT_TASK_FACE, type AssistantTaskState } from "./assistantTasks.ts";
 
 /** Distinct hues that read on dark, light and glass surfaces. */
 export const ASSISTANT_ACCENTS = [
@@ -72,45 +71,47 @@ export function assistantThreadSenders(
   return [{ ...owner, firstMessageId: "", lastMessageId: "" }, ...senders];
 }
 
-/**
- * A sender's face and Working/Idle section, from one reading: the assistant that launched the
- * thread as a task wears the task's state, everyone else their own presence.
- */
+export type AssistantPresenceSection = "needs" | "working" | "idle";
+
+/** Section order and titles, the sidebar's order: Needs you, then Working, then Idle. */
+export const ASSISTANT_PRESENCE_SECTIONS = [
+  ["needs", "Needs you"],
+  ["working", "Working"],
+  ["idle", "Idle"],
+] as const satisfies ReadonlyArray<readonly [AssistantPresenceSection, string]>;
+
+/** A sender's face and section, both from its one `assistantStatus`. */
 export function assistantSenderLook(
-  sender: Pick<AssistantSender, "assistantId" | "assistant">,
-  presence: AssistantPresence | undefined,
-  task: { readonly assistantId: string; readonly state: AssistantTaskState } | null,
-): { readonly face: AssistantFace; readonly working: boolean } {
-  if (task !== null && task.assistantId === sender.assistantId) {
-    return {
-      face: ASSISTANT_TASK_FACE[task.state],
-      working: task.state === "running" || task.state === "waiting",
-    };
-  }
-  const working = presence?.mood === "working";
-  return { face: sender.assistant && presence ? assistantFace(presence) : "sleeping", working };
+  sender: Pick<AssistantSender, "assistant">,
+  status: AssistantPresence | undefined,
+): { readonly face: AssistantFace; readonly section: AssistantPresenceSection } {
+  const mood = status?.mood;
+  return {
+    face: sender.assistant && status ? assistantFace(status) : "sleeping",
+    section: mood === "needs" ? "needs" : mood === "working" ? "working" : "idle",
+  };
 }
 
 /** A presence row's one status line: "Idle · 6 messages here · Asks before acting". */
 export function assistantPresenceStatus(
-  working: boolean,
+  section: AssistantPresenceSection,
   sender: Pick<AssistantSender, "count">,
   asksBeforeActing: boolean,
 ): string {
+  const title = ASSISTANT_PRESENCE_SECTIONS.find(([id]) => id === section)![1];
   return [
-    working ? "Working" : "Idle",
+    title,
     ...(sender.count === 0 ? [] : [`${sender.count} message${sender.count === 1 ? "" : "s"} here`]),
     ...(asksBeforeActing ? ["Asks before acting"] : []),
   ].join(" · ");
 }
 
-/** The thread's assistants split into Working, then Idle, each keeping the order they spoke in. */
+/** The thread's assistants by section, each keeping the order they spoke in. */
 export function assistantPresenceSections<S>(
   senders: ReadonlyArray<S>,
-  isWorking: (sender: S) => boolean,
-): { readonly working: ReadonlyArray<S>; readonly idle: ReadonlyArray<S> } {
-  const working: S[] = [];
-  const idle: S[] = [];
-  for (const sender of senders) (isWorking(sender) ? working : idle).push(sender);
-  return { working, idle };
+  sectionOf: (sender: S) => AssistantPresenceSection,
+): Record<AssistantPresenceSection, ReadonlyArray<S>> {
+  const sections: Record<AssistantPresenceSection, S[]> = { needs: [], working: [], idle: [] };
+  for (const sender of senders) sections[sectionOf(sender)].push(sender);
+  return sections;
 }

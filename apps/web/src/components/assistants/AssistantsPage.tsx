@@ -1,9 +1,4 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import {
-  assistantFace,
-  assistantGroupOwnerKey,
-  assistantPresence,
-} from "@t3tools/client-runtime/assistantRobot";
+import { assistantFace } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantEntryKey,
   assistantSections,
@@ -31,7 +26,7 @@ import {
   useAssistantsEnvironmentIds,
 } from "../../state/assistants";
 import { cn } from "../../lib/utils";
-import { useProjects, useQuietThreadShells } from "../../state/entities";
+import { useProjects } from "../../state/entities";
 import { WorkspaceBreadcrumb } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Badge } from "../ui/badge";
@@ -49,6 +44,7 @@ import {
 import { AssistantIntegrationChips } from "./AssistantIntegrationsField";
 import { AssistantTaskRows, useAssistantTaskSections } from "./AssistantTaskRows";
 import { openAssistantTeamDialog } from "./assistantTeamState";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
 import { useAssistantAttention, useGroupAttention } from "./useAssistantAttention";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 
@@ -62,8 +58,8 @@ function AssistantCard(props: {
   const flows = useAssistantFlows(environmentId);
   const archived = assistant.archivedAt !== null;
   const taskSections = useAssistantTaskSections(props.entry);
-  const { thread, groupThreads, attention } = useAssistantAttention(props.entry);
-  const presence = assistantPresence(thread, groupThreads);
+  const { attention } = useAssistantAttention(props.entry);
+  const presence = useAssistantStatus().of(environmentId, assistant);
   return (
     <article
       data-testid="assistant-card"
@@ -250,30 +246,16 @@ export function AssistantsPage() {
   const { active, archived, teams, activeTeams, archivedTeams } = useAssistantEntries();
   const environmentIds = useAssistantsEnvironmentIds();
   const projects = useProjects();
-  const shells = useQuietThreadShells();
   const groupAttention = useGroupAttention();
+  const status = useAssistantStatus();
   const nowMs = useNowMinuteMs();
   const navigate = useNavigate();
 
-  const keyByThread = new Map(
-    active.flatMap((entry) =>
-      entry.assistant.threadId === null
-        ? []
-        : [
-            [
-              scopedThreadKey(scopeThreadRef(entry.environmentId, entry.assistant.threadId)),
-              assistantEntryKey(entry),
-            ] as const,
-          ],
-    ),
+  const needsKeys = new Set(
+    active
+      .filter((entry) => status.of(entry.environmentId, entry.assistant).mood === "needs")
+      .map(assistantEntryKey),
   );
-  const needsKeys = new Set<string>();
-  for (const shell of shells) {
-    const key =
-      keyByThread.get(scopedThreadKey(scopeThreadRef(shell.environmentId, shell.id))) ??
-      assistantGroupOwnerKey(shell);
-    if (key !== undefined && assistantPresence(shell).mood === "needs") needsKeys.add(key);
-  }
   const sections = assistantSections({ assistants: active, teams: activeTeams, needsKeys });
 
   // Every member counts, also one listed under "Needs you" instead of its group.

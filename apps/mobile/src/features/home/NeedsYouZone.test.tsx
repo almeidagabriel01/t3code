@@ -81,18 +81,30 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/assistants", async () => {
   const { buildThreadOwnership } = await import("../../state/threadOwnership");
+  const { assistantStatusOf } = await import("@t3tools/client-runtime/sidebarZones");
+  const zoneShells = () =>
+    mocks.shells.map((shell) => ({
+      ...shell,
+      lineage: { parentThreadId: null },
+      delegatedFrom: null,
+    }));
+  const ownership = () =>
+    buildThreadOwnership({
+      shells: zoneShells(),
+      active: mocks.active,
+      activeTeams: [],
+      tasksByAssistant: mocks.tasks,
+    });
   return {
     useAssistantEntries: () => ({ active: mocks.active, activeTeams: [] }),
-    useThreadOwnership: () =>
-      buildThreadOwnership({
-        shells: mocks.shells.map((shell) => ({
-          ...shell,
-          lineage: { parentThreadId: null },
-          delegatedFrom: null,
-        })),
-        active: mocks.active,
-        activeTeams: [],
-        tasksByAssistant: mocks.tasks,
+    useThreadOwnership: ownership,
+    useAssistantStatus: () =>
+      assistantStatusOf({
+        shells: zoneShells() as never,
+        decisions: mocks.decisions as never,
+        ownerOf: ownership().ownerOf,
+        sites: [],
+        reachable: () => null,
       }),
   };
 });

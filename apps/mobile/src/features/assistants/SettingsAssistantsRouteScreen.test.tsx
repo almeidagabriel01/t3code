@@ -224,6 +224,14 @@ vi.mock("../../state/assistants", () => ({
     };
   },
   useAssistantsEnvironmentIds: () => mocks.environmentIds,
+  useAssistantStatus: () => ({
+    of: (_environmentId: string, assistant: { threadId: string | null } | null): Presence =>
+      (assistant?.threadId != null ? mocks.presence[assistant.threadId] : undefined) ?? {
+        mood: "idle",
+        detail: "Idle",
+        since: null,
+      },
+  }),
   useAssistantTasks: () => [],
   useAssistantSpend: (environmentId: string, assistantId: string | null) => {
     mocks.spendQuery(environmentId, assistantId);

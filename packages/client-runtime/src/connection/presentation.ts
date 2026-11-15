@@ -64,6 +64,23 @@ export function presentConnectionState(
   }
 }
 
+/** True when connected, false when known to be unreachable, null until the first attempt settles. */
+export function environmentReachable(
+  connection: Pick<EnvironmentConnectionPresentation, "phase"> | null | undefined,
+): boolean | null {
+  switch (connection?.phase) {
+    case "connected":
+      return true;
+    case "offline":
+    case "reconnecting":
+    case "error":
+    case "unsupported":
+      return false;
+    default:
+      return null;
+  }
+}
+
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":

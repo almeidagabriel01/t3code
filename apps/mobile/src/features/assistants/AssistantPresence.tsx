@@ -1,12 +1,13 @@
 import {
+  ASSISTANT_PRESENCE_SECTIONS,
   assistantAccent,
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
+  type AssistantPresenceSection,
 } from "@t3tools/client-runtime/assistantPresence";
-import { assistantPresenceOf } from "@t3tools/client-runtime/assistantRobot";
 import {
   assistantTaskState,
   canDismissAssistantTask,
@@ -23,10 +24,11 @@ import { Menu } from "../../components/ui/Menu";
 import {
   useAssistantActions,
   useAssistantEntries,
+  useAssistantStatus,
   useAssistantTask,
   useTaskAssistant,
 } from "../../state/assistants";
-import { useThreadShell, useThreadShells } from "../../state/entities";
+import { useThreadShell } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import * as Dialog from "../../components/ui/Dialog";
@@ -122,7 +124,7 @@ export interface PresenceTask {
 
 /**
  * The thread's one assistant control: who wrote here and the assistant that launched it as a task,
- * as one cluster; its menu lists Working, then Idle.
+ * as one cluster; its menu lists Needs you, Working, then Idle, from each one's shared status.
  */
 export function ThreadAssistantStack(props: {
   readonly environmentId: EnvironmentId;
@@ -134,7 +136,7 @@ export function ThreadAssistantStack(props: {
   const actions = useAssistantActions(props.environmentId);
   const flows = useAssistantFlows(props.environmentId);
   const openInfo = useOpenAssistantInfo();
-  const shells = useThreadShells();
+  const status = useAssistantStatus();
   const owner = useTaskAssistant(props.environmentId, props.threadId);
   const taskShell = useThreadShell(
     owner === null ? null : scopeThreadRef(props.environmentId, props.threadId),
@@ -158,11 +160,7 @@ export function ThreadAssistantStack(props: {
   const looks = new Map(
     senders.map((sender) => [
       sender.assistantId,
-      assistantSenderLook(
-        sender,
-        assistantPresenceOf(sender.assistant, props.environmentId, shells),
-        task,
-      ),
+      assistantSenderLook(sender, status.of(props.environmentId, sender.assistant)),
     ]),
   );
   return (
@@ -208,7 +206,7 @@ function taskAction(task: PresenceTask, canAct: boolean): MenuAction {
 
 function senderActions(
   sender: Sender,
-  working: boolean,
+  section: AssistantPresenceSection,
   canAct: boolean,
   task: PresenceTask | null,
 ): MenuAction {
@@ -216,7 +214,8 @@ function senderActions(
   return {
     id: `assistant:${sender.assistantId}`,
     title: assistant?.name ?? "Assistant",
-    subtitle: assistantPresenceStatus(working, sender, assistant?.askBeforeActing === true),
+    // A native menu subtitle wraps past one line; the message badge already says "asks first".
+    subtitle: assistantPresenceStatus(section, sender, false),
     subactions: [
       ...(sender.count === 0
         ? []
@@ -261,9 +260,9 @@ function senderActions(
 }
 
 /**
- * The menu tree: a titled inline section for Working, then Idle, omitting an empty one. Android's
- * popup draws inline sections as submenus, so there the rows stay flat in the same order; each
- * subtitle already starts with Working or Idle.
+ * The menu tree: a titled inline section for Needs you, Working, then Idle, omitting an empty one.
+ * Android's popup draws inline sections as submenus, so there the rows stay flat in the same order;
+ * each subtitle already starts with its section.
  */
 export function presenceMenuActions(
   senders: ReadonlyArray<Sender>,
@@ -272,26 +271,19 @@ export function presenceMenuActions(
   task: PresenceTask | null,
   inlineSections = Platform.OS !== "android",
 ): MenuAction[] {
-  const isWorking = (sender: Sender) => looks.get(sender.assistantId)?.working === true;
-  const sections = assistantPresenceSections(senders, isWorking);
-  if (!inlineSections) {
-    return [...sections.working, ...sections.idle].map((sender) =>
-      senderActions(sender, isWorking(sender), canAct, task),
-    );
-  }
-  return (
-    [
-      ["working", "Working", sections.working],
-      ["idle", "Idle", sections.idle],
-    ] as const
-  )
-    .filter(([, , rows]) => rows.length > 0)
-    .map(([id, title, rows]) => ({
+  const sectionOf = (sender: Sender) => looks.get(sender.assistantId)?.section ?? "idle";
+  const sections = assistantPresenceSections(senders, sectionOf);
+  const rows = (id: AssistantPresenceSection) =>
+    sections[id].map((sender) => senderActions(sender, id, canAct, task));
+  if (!inlineSections) return ASSISTANT_PRESENCE_SECTIONS.flatMap(([id]) => rows(id));
+  return ASSISTANT_PRESENCE_SECTIONS.filter(([id]) => sections[id].length > 0).map(
+    ([id, title]) => ({
       id: `section:${id}`,
       title,
       displayInline: true,
-      subactions: rows.map((sender) => senderActions(sender, isWorking(sender), canAct, task)),
-    }));
+      subactions: rows(id),
+    }),
+  );
 }
 
 function PresenceStackView(props: {

@@ -3,14 +3,16 @@ import {
   assistantIndicator,
   countWaits,
   folderIndicator,
-  needsYouItems,
   teamsLayout,
   type ZoneIndicator,
 } from "@t3tools/client-runtime/sidebarZones";
 import { useMemo } from "react";
 
-import { useAssistantEntries, useThreadOwnership } from "../../state/assistants";
-import { useDecisionEntries } from "../../state/decisions";
+import {
+  useAssistantEntries,
+  useAssistantStatus,
+  useThreadOwnership,
+} from "../../state/assistants";
 import { useQuietThreadShells } from "../../state/entities";
 
 const assistantKeyOf = (entry: {
@@ -26,13 +28,14 @@ export function useSidebarZones() {
   const shells = useQuietThreadShells();
   const { active, activeTeams } = useAssistantEntries();
   const { ownerOf, ownedThreadKeys } = useThreadOwnership();
-  const { open: decisions } = useDecisionEntries();
+  const { items, read } = useAssistantStatus();
   return useMemo(() => {
-    const items = needsYouItems({ shells: shells, decisions, ownerOf });
     const waits = (assistantKeys: ReadonlySet<string>, teamKey?: string) =>
       countWaits(items, teamKey === undefined ? { assistantKeys } : { assistantKeys, teamKey });
     const assistantIndicators = new Map<string, ZoneIndicator | null>();
-    const ranked = rankAssistants(active, shells).map((item) => {
+    const ranked = rankAssistants(active, shells, (entry, presence) =>
+      read(entry.environmentId, entry.assistant.id, presence),
+    ).map((item) => {
       const key = assistantKeyOf(item.entry);
       const indicator = assistantIndicator({
         needsYou: waits(new Set([key])),
@@ -68,7 +71,7 @@ export function useSidebarZones() {
       /** Nothing for the Needs you and Teams zones to draw. */
       empty: items.length === 0 && active.length === 0 && activeTeams.length === 0,
     };
-  }, [shells, decisions, ownerOf, ownedThreadKeys, active, activeTeams]);
+  }, [shells, items, read, ownerOf, ownedThreadKeys, active, activeTeams]);
 }
 
 type SidebarZones = ReturnType<typeof useSidebarZones>;
