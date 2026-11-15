@@ -52,12 +52,17 @@ export function materialYouPaletteToMobileThemeVariables(
     "--color-foreground-secondary": palette.onSurfaceVariant,
     "--color-foreground-muted": palette.onSurfaceVariant,
     "--color-foreground-tertiary": withAlpha(palette.onSurfaceVariant, 0.58),
-    "--color-border": withAlpha(palette.outlineVariant, dark ? 0.5 : 0.65),
+    // Dark outlines sit within a shade of the containers, so lines derive from the text there.
+    "--color-border": dark
+      ? withAlpha(palette.onSurface, 0.16)
+      : withAlpha(palette.outlineVariant, 0.65),
     "--color-focus": palette.primary,
     "--color-border-subtle": dark
       ? withAlpha(palette.onSurface, 0.12)
       : withAlpha(palette.outlineVariant, 0.46),
-    "--color-separator": withAlpha(palette.outlineVariant, dark ? 0.24 : 0.34),
+    "--color-separator": dark
+      ? withAlpha(palette.onSurface, 0.1)
+      : withAlpha(palette.outlineVariant, 0.34),
     "--color-subtle": withAlpha(palette.onSurface, 0.05),
     "--color-subtle-strong": withAlpha(palette.onSurface, 0.1),
     "--color-inline-skill-background": withAlpha(palette.tertiaryContainer, 0.52),

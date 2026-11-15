@@ -7,6 +7,7 @@ import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePa
 
 import {
   createMobileThemeVariables,
+  flattenThemeColor,
   getMobileThemeColors,
   getMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
@@ -181,9 +182,11 @@ const clerkColorsFor = (appearance: MobileThemeAppearance) => {
     getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
     appearance,
   );
-  return {
+  // Clerk's native plugin accepts only hex, so translucent roles are drawn onto its page.
+  const page = variables["--color-sheet-solid"];
+  const colors = {
     primary: variables["--color-primary"],
-    background: variables["--color-sheet-solid"],
+    background: page,
     input: variables["--color-input"],
     danger: variables["--color-danger-foreground"],
     success: appearance === "dark" ? "#34d399" : "#059669",
@@ -198,6 +201,9 @@ const clerkColorsFor = (appearance: MobileThemeAppearance) => {
     muted: variables["--color-subtle"],
     shadow: variables["--color-primary-shadow"],
   };
+  return Object.fromEntries(
+    Object.entries(colors).map(([role, color]) => [role, flattenThemeColor(color, page)]),
+  ) as typeof colors;
 };
 
 const clerkVariablesFor = (appearance: MobileThemeAppearance) => {
