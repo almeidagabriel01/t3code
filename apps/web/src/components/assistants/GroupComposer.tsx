@@ -8,6 +8,7 @@ import {
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
@@ -263,8 +264,9 @@ interface Outgoing extends AssistantGroupOutgoing {
   readonly prompt: PromptState;
   readonly projectLabel: string;
   readonly error: string | null;
-  /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
-  readonly requestId: string | null;
+  /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+  readonly requestId: string;
+  readonly sendKey: string;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
@@ -338,8 +340,6 @@ export function GroupComposer(props: {
             ...shown,
             prompt: { value, cursor, expanded },
             error: null,
-            // Changed text is another message: its send gets its own id.
-            requestId: value === shown.prompt.value ? shown.requestId : null,
           },
     );
   };
@@ -463,8 +463,13 @@ export function GroupComposer(props: {
 
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
-    // A refused or unconfirmed message goes again under its first id.
-    const requestId = (shown?.failed === true ? shown.requestId : null) ?? randomUUID();
+    const attachmentIds = attached.items.map((item) => item.id);
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [value.trim(), attachmentIds, props.projectId, props.messageModel.pick, props.replyingTo],
+      randomUUID,
+    );
     const sent: Outgoing = {
       tab: props.tab,
       failed: false,
@@ -473,13 +478,14 @@ export function GroupComposer(props: {
         cursor: collapseExpandedComposerCursor(value, value.length),
         expanded: value.length,
       },
-      attachmentIds: attached.items.map((item) => item.id),
+      attachmentIds,
       projectLabel:
         lockedProject ??
         projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
         ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
       error: null,
       requestId,
+      sendKey,
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);

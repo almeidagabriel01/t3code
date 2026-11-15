@@ -24,6 +24,7 @@ import {
   assistantGroupShownOutgoing,
   assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
+  assistantGroupSendRequestId,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -1518,6 +1519,22 @@ describe("assistant group tabs", () => {
       [...assistantGroupHeldAttachments([refusedP1, sendingP2], shown)],
       [...held],
     );
+  });
+
+  const sent = ["hi", ["f1"], "p1", { model: "opus" }, null] as const;
+  it.each([
+    ["a first send", null, sent, "fresh"],
+    ["a failed message sent again unchanged", sent, sent, "first"],
+    ["changed text", sent, ["hi!", ["f1"], "p1", { model: "opus" }, null], "fresh"],
+    ["another file", sent, ["hi", ["f1", "f2"], "p1", { model: "opus" }, null], "fresh"],
+    ["another project", sent, ["hi", ["f1"], "p2", { model: "opus" }, null], "fresh"],
+    ["another model", sent, ["hi", ["f1"], "p1", { model: "sonnet" }, null], "fresh"],
+    ["a reply now", sent, ["hi", ["f1"], "p1", { model: "opus" }, { to: "ada" }], "fresh"],
+  ] as const)("a send's request id: %s", (_name, before, now, expected) => {
+    const failed =
+      before === null ? null : assistantGroupSendRequestId(null, before, () => "first");
+    const next = assistantGroupSendRequestId(failed, now, () => "fresh");
+    assert.strictEqual(next.requestId, expected);
   });
 
   it("keeps each tab's outgoing message until that tab replaces or clears it", () => {

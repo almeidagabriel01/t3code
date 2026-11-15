@@ -645,6 +645,19 @@ export function assistantGroupHeldAttachments(
   return new Set(outgoing.flatMap((entry) => (entry === shown ? [] : entry.attachmentIds)));
 }
 
+/**
+ * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ */
+export function assistantGroupSendRequestId(
+  failed: { readonly requestId: string; readonly sendKey: string } | null,
+  carries: ReadonlyArray<unknown>,
+  fresh: () => string,
+) {
+  const sendKey = JSON.stringify(carries);
+  return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
 const NO_OUTGOING: ReadonlyArray<never> = [];
 
 /**

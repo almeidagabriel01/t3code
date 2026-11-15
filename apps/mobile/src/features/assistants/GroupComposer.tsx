@@ -6,6 +6,7 @@ import {
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
@@ -68,8 +69,9 @@ const outgoings = createAssistantGroupOutgoingStore<
   AssistantGroupOutgoing & {
     readonly projectId: ProjectId | null;
     readonly error: string | null;
-    /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
-    readonly requestId: string | null;
+    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+    readonly requestId: string;
+    readonly sendKey: string;
   }
 >();
 const EVERYONE = "everyone";
@@ -365,13 +367,7 @@ export function GroupComposer(props: {
     setError(null);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
     if (shown !== null) {
-      setOutgoing(
-        shown.tab,
-        value === ""
-          ? null
-          : // Changed text is another message: its send gets its own id.
-            { ...shown, error: null, requestId: value === text ? shown.requestId : null },
-      );
+      setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
     }
   };
 
@@ -481,13 +477,19 @@ export function GroupComposer(props: {
     }
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
-    // A refused or unconfirmed message goes again under its first id.
-    const requestId = (shown?.failed === true ? shown.requestId : null) ?? uuidv4();
+    const attachmentIds = attached.items.map((item) => item.id);
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [message, attachmentIds, projectId, props.projectModel?.messageModel, props.replyingTo],
+      uuidv4,
+    );
     const sent = {
       tab: props.tab,
       failed: false,
       requestId,
-      attachmentIds: attached.items.map((item) => item.id),
+      sendKey,
+      attachmentIds,
       projectId: runProject,
       error: null,
     };
