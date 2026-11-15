@@ -14,27 +14,39 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  AuthEnvironmentScope,
+  ProjectId,
+  RPC_REQUIRED_SCOPES,
+  RpcScopeAuthorization,
+  rpcRequiredScopes,
+  CommandId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as RpcTest from "effect/rpc/RpcTest";
 
-import {
-  AuthorizedWsRpcGroup,
-  MEMORY_RPC_REQUIRED_SCOPES,
-  RPC_REQUIRED_SCOPES,
-  requiredScopeForRpcMethod,
-  requiredScopeForDeviceList,
-} from "./RpcAuthorization.ts";
+import { AuthorizedWsRpcGroup } from "./RpcAuthorization.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
+type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
+const requiredScopeForRpcMethod = (method: string) => {
+  const [scope, ...rest] = rpcRequiredScopes(method, undefined);
+  expect(rest).toEqual([]);
+  return scope;
+};
+
 describe("RPC authorization scopes", () => {
-  it("declares exactly one scope for every RPC in the server group", () => {
-    expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
+  it("declares exactly one scope for every RPC the server serves", () => {
+    expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(
+      new Set(AuthorizedWsRpcGroup.requests.keys()),
+    );
   });
 
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
@@ -96,9 +108,6 @@ describe("RPC authorization scopes", () => {
   });
 
   it("declares a scope for every memory RPC and requires transcript and filesystem reads where needed", () => {
-    expect(
-      new Set([...Object.keys(RPC_REQUIRED_SCOPES), ...Object.keys(MEMORY_RPC_REQUIRED_SCOPES)]),
-    ).toEqual(new Set(AuthorizedWsRpcGroup.requests.keys()));
     expect(requiredScopeForRpcMethod(WS_METHODS.memoryUpsert)).toBe("memory:write");
     expect(requiredScopeForRpcMethod(WS_METHODS.memorySearch)).toBe("memory:read");
     expect(requiredScopeForRpcMethod(WS_METHODS.memoryHubSettingsUpdate)).toBe("settings:write");
@@ -155,25 +164,76 @@ describe("RPC authorization scopes", () => {
   });
 });
 
-it("requires operate permission for host retry while preserving read-only listing", () => {
-  expect(requiredScopeForDeviceList({})).toBe(AuthOrchestrationReadScope);
-  expect(requiredScopeForDeviceList({ retryHostId: "remote-host" })).toBe(
-    AuthOrchestrationOperateScope,
-  );
+it.each([
+  [{}, AuthOrchestrationReadScope],
+  [{ inspectOnly: true }, AuthOrchestrationReadScope],
+  // Inspecting never runs the retry, so it stays a read.
+  [{ inspectOnly: true, retryHostId: "remote-host" }, AuthOrchestrationReadScope],
+  [{ retryHostId: "remote-host" }, AuthOrchestrationOperateScope],
+  [{ updateTool: "agent", inspectOnly: true }, AuthOrchestrationOperateScope],
+  [{ updateTool: "hub" }, AuthOrchestrationOperateScope],
+] as const)("device.list with %j requires %s", (input, scope) => {
+  expect(rpcRequiredScopes(WS_METHODS.deviceList, input)).toEqual([scope]);
 });
 
-it("requires operate permission for tool updates even alongside a read-only check", () => {
-  expect(requiredScopeForDeviceList({ updateTool: "agent", inspectOnly: true })).toBe(
-    AuthOrchestrationOperateScope,
+describe("middleware and the table clients read", () => {
+  const remove = { operation: "remove", instanceId: ProviderInstanceId.make("codex_work") };
+  const payloadCases: ReadonlyArray<readonly [string, unknown]> = [
+    [WS_METHODS.serverUpdateSettings, { patch: {} }],
+    [WS_METHODS.serverUpdateSettings, { patch: { providerInstances: {} } }],
+    [WS_METHODS.serverUpdateSettings, { patch: {}, providerInstanceMutation: remove }],
+    [
+      WS_METHODS.serverUpdateSettings,
+      { patch: { defaultRuntimeMode: "full-access" }, providerInstanceMutation: remove },
+    ],
+    [WS_METHODS.deviceList, { retryHostId: "remote-host" }],
+    [WS_METHODS.deviceList, { inspectOnly: true, retryHostId: "remote-host" }],
+    [WS_METHODS.deviceList, { updateTool: "hub" }],
+    [
+      WS_METHODS.projectsMutate,
+      { type: "project.delete", commandId: CommandId.make("c"), projectId: ProjectId.make("p") },
+    ],
+    [
+      WS_METHODS.assetsCreateUrl,
+      { resource: { _tag: "draft-workspace-file", cwd: "/repo", path: "a" } },
+    ],
+  ];
+  const cases = [
+    ...[...AuthorizedWsRpcGroup.requests.keys()].map((method) => [method, undefined] as const),
+    ...payloadCases,
+  ];
+  const all = AuthEnvironmentScope.literals;
+
+  it.effect("rejects a call exactly when a grant it reports as required is missing", () =>
+    Effect.gen(function* () {
+      for (const missing of all) {
+        const authorize = yield* Effect.service(RpcScopeAuthorization).pipe(
+          Effect.provide(RpcAuthorization.layer(all.filter((scope) => scope !== missing))),
+        );
+        for (const [method, payload] of cases) {
+          const exit = yield* Effect.exit(
+            authorize(Effect.succeed({} as RpcMiddleware.SuccessValue), {
+              rpc: { _tag: method },
+              payload,
+            } as never),
+          );
+          expect({ method, payload, missing, rejected: Exit.isFailure(exit) }).toEqual({
+            method,
+            payload,
+            missing,
+            rejected: rpcRequiredScopes(method, payload).includes(missing),
+          });
+        }
+      }
+    }).pipe(Effect.scoped),
   );
-  expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
 });
 
 describe("RPC scope middleware", () => {
   const tested = [WS_METHODS.serverProbe, WS_METHODS.serverRetryResourceTelemetry] as const;
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
-      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+      (tag): tag is Exclude<WsRpcMethod, (typeof tested)[number]> =>
         !(tested as ReadonlyArray<string>).includes(tag),
     ),
   );
@@ -220,7 +280,7 @@ it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as
           (
             tag,
           ): tag is Exclude<
-            keyof typeof RPC_REQUIRED_SCOPES,
+            WsRpcMethod,
             typeof WS_METHODS.subscribeVcsBranch | typeof WS_METHODS.subscribeVcsStatus
           > => tag !== WS_METHODS.subscribeVcsBranch && tag !== WS_METHODS.subscribeVcsStatus,
         ),
@@ -269,9 +329,7 @@ it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as
 describe("settings mutation authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
-      (
-        tag,
-      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.serverUpdateSettings> =>
+      (tag): tag is Exclude<WsRpcMethod, typeof WS_METHODS.serverUpdateSettings> =>
         tag !== WS_METHODS.serverUpdateSettings,
     ),
   );
@@ -371,12 +429,8 @@ it.effect("requires task permission before attaching a prepared worktree to a th
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
-        (
-          tag,
-        ): tag is Exclude<
-          keyof typeof RPC_REQUIRED_SCOPES,
-          typeof WS_METHODS.gitPreparePullRequestThread
-        > => tag !== WS_METHODS.gitPreparePullRequestThread,
+        (tag): tag is Exclude<WsRpcMethod, typeof WS_METHODS.gitPreparePullRequestThread> =>
+          tag !== WS_METHODS.gitPreparePullRequestThread,
       ),
     );
     let handled = false;
@@ -407,9 +461,7 @@ it.effect("requires task permission before attaching a prepared worktree to a th
 describe("thread context authorization", () => {
   const group = WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
-      (
-        tag,
-      ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.gitRunStackedAction> =>
+      (tag): tag is Exclude<WsRpcMethod, typeof WS_METHODS.gitRunStackedAction> =>
         tag !== WS_METHODS.gitRunStackedAction,
     ),
   );
@@ -461,9 +513,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
-        (
-          tag,
-        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.assetsCreateUrl> =>
+        (tag): tag is Exclude<WsRpcMethod, typeof WS_METHODS.assetsCreateUrl> =>
           tag !== WS_METHODS.assetsCreateUrl,
       ),
     );
@@ -508,12 +558,8 @@ it.effect("denies manual cleanup before the handler without settings permission"
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
-        (
-          tag,
-        ): tag is Exclude<
-          keyof typeof RPC_REQUIRED_SCOPES,
-          typeof WS_METHODS.serverRunStorageCleanup
-        > => tag !== WS_METHODS.serverRunStorageCleanup,
+        (tag): tag is Exclude<WsRpcMethod, typeof WS_METHODS.serverRunStorageCleanup> =>
+          tag !== WS_METHODS.serverRunStorageCleanup,
       ),
     );
     let handled = false;

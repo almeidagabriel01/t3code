@@ -1,8 +1,17 @@
 import { GLOBAL_SKILLS_WS_METHODS } from "./globalSkillsRpc.ts";
 import * as Schema from "effect/Schema";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import { AssetCreateUrlInput } from "./assets.ts";
+import { DeviceListInput } from "./device.ts";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
+import { ProjectMutation } from "./project.ts";
 import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthDiagnosticsReadScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  AuthTerminalReadScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthMemoryReadScope,
@@ -18,8 +27,18 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
-import { requiredScopesForServerSettingsUpdate, ServerSettingsUpdateInput } from "./settings.ts";
-import { WS_METHODS } from "./rpc.ts";
+import {
+  requiredScopesForProjectMutation,
+  requiredScopesForServerSettingsUpdate,
+  ServerSettingsUpdateInput,
+} from "./settings.ts";
+import {
+  WS_METHODS,
+  type WsMemoryAdministrationRpcGroup,
+  type WsMemoryCoreRpcGroup,
+  type WsMemoryImportRpcGroup,
+  type WsRpcGroup,
+} from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -198,36 +217,287 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
+type ServedRpcTag = RpcGroup.Rpcs<
+  | typeof WsRpcGroup
+  | typeof WsMemoryCoreRpcGroup
+  | typeof WsMemoryAdministrationRpcGroup
+  | typeof WsMemoryImportRpcGroup
+>["_tag"];
+
+/** The scope every served RPC needs before its payload is considered. */
+export const RPC_REQUIRED_SCOPES = {
+  ...CLIENT_GUARDED_RPC_SCOPES,
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getFullThreadDiff]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.launchThread]: AuthOrchestrationOperateScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
+  [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetNpmRelease]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,
+  [WS_METHODS.providerClaudeChromeStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerAuthComplete]: AuthProvidersManageScope,
+  [WS_METHODS.chatGptReconnectProfile]: AuthProvidersManageScope,
+  [WS_METHODS.chatGptImportProfile]: AuthProvidersManageScope,
+  [WS_METHODS.chatGptHandoffSubscribe]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthRespond]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthLogout]: AuthProvidersManageScope,
+  [WS_METHODS.providerAuthSubscribe]: AuthProvidersManageScope,
+  [WS_METHODS.providerInstallStart]: AuthProvidersManageScope,
+  [WS_METHODS.providerInstallCancel]: AuthProvidersManageScope,
+  [WS_METHODS.providerInstallSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.providerInstallRemove]: AuthProvidersManageScope,
+  [WS_METHODS.serverUpdateServer]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverUpdateServerWithProgress]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverCommitDesktopUpdate]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverUpsertKeybinding]: AuthSettingsWriteScope,
+  [WS_METHODS.serverRemoveKeybinding]: AuthSettingsWriteScope,
+  [WS_METHODS.serverGetStorageCleanupReport]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
+  [WS_METHODS.threadsGetWorkspaceStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.peerLinksList]: AuthAccessReadScope,
+  [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
+  [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthProvidersManageScope,
+  [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: AuthProvidersManageScope,
+  [WS_METHODS.serverListAcpRegistrySessions]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverImportAcpRegistrySession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverDeleteAcpRegistrySession]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverListAcpRegistryProviders]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverSetAcpRegistryProvider]: AuthProvidersManageScope,
+  [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
+  [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
+  [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetTraceDiagnostics]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetProcessDiagnostics]: AuthDiagnosticsReadScope,
+  // Thread load balancing reads host load, so it needs thread scope rather than diagnostics scope.
+  [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
+  // Lists every host process holding a port, not just this server's.
+  [WS_METHODS.serverListListeningPorts]: AuthDiagnosticsReadScope,
+  // Runs git (including a fetch) in a folder on the host.
+  [WS_METHODS.serverForkUpdateStatus]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetProcessResourceHistory]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetResourceTelemetryHistory]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverRetryResourceTelemetry]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetUsageSummary]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverGetInstanceSpend]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverRefreshUsageRates]: AuthDiagnosticsReadScope,
+  [WS_METHODS.serverSignalProcess]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.serverReportClientActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.scheduledTasksSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
+  [WS_METHODS.kanbanSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.kanbanGetCard]: AuthOrchestrationReadScope,
+  [WS_METHODS.kanbanListArchived]: AuthOrchestrationReadScope,
+  [WS_METHODS.notesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.notesRead]: AuthOrchestrationReadScope,
+  [WS_METHODS.notesSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.decisionsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.decisionsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.computerUsePermissions]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantsSpend]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantsLibrary]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantSandboxSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantGroupsSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.assistantGroupsHistory]: AuthOrchestrationReadScope,
+  [WS_METHODS.autonomyWatchesList]: AuthOrchestrationReadScope,
+  [WS_METHODS.imessageChannelGetSettings]: AuthOrchestrationReadScope,
+  [WS_METHODS.imessageChannelSubscribeStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.imessageChannelCheckAccess]: AuthOrchestrationReadScope,
+  [WS_METHODS.keepAwakeSubscribeStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.heavyQueueSubscribeCommands]: AuthOrchestrationReadScope,
+  [WS_METHODS.telegramChannelGetSettings]: AuthOrchestrationReadScope,
+  [WS_METHODS.telegramChannelSubscribeStatus]: AuthOrchestrationReadScope,
+  // Delivery logs hold request bodies, so they need the same scope as the URL.
+  [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
+  [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
+  [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
+  [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilterOptions]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRouting]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsRoutingIdentity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsStack]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsLinkedThreads]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChecks]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReviewGuide]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsThreadComments]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsDiffFileContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsFilesViewed]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsChangeBreakdown]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReportState]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlAppAccess]: AuthOrchestrationReadScope,
+  [WS_METHODS.sourceControlStarred]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsListIgnoredFiles]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsReadFile]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchContents]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsSearchEntries]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsWriteFile]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
+  [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
+  [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
+  [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
+  [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
+  [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
+  [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
+  [WS_METHODS.assetsPersistChatAttachments]: AuthOrchestrationOperateScope,
+  [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerUploadFeedback]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpAppsCallTool]: AuthOrchestrationOperateScope,
+  [WS_METHODS.mcpAppsToolInfo]: AuthOrchestrationReadScope,
+  [WS_METHODS.mcpAppsReadResource]: AuthOrchestrationReadScope,
+  [WS_METHODS.mcpAppsUpdateModelContext]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeVcsStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeVcsBranch]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsRefreshBranch]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeWorktreeSetup]: AuthOrchestrationReadScope,
+  [WS_METHODS.worktreeSetupCancel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeResourceTelemetry]: AuthDiagnosticsReadScope,
+  [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.gitResolvePullRequest]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsListRefs]: AuthOrchestrationReadScope,
+  [WS_METHODS.reviewGetBranchCommits]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffPreview]: AuthFilesystemReadScope,
+  [WS_METHODS.reviewGetDiffFileContents]: AuthFilesystemReadScope,
+  [WS_METHODS.terminalOpen]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalAttach]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalObserve]: AuthTerminalReadScope,
+  [WS_METHODS.terminalWrite]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalResize]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClear]: AuthTerminalOperateScope,
+  [WS_METHODS.terminalClose]: AuthTerminalOperateScope,
+  [WS_METHODS.subscribeTerminalMetadata]: AuthTerminalReadScope,
+  [WS_METHODS.previewOpen]: AuthPreviewOperateScope,
+  [WS_METHODS.previewResize]: AuthPreviewOperateScope,
+  [WS_METHODS.previewAdjust]: AuthPreviewOperateScope,
+  [WS_METHODS.previewList]: AuthOrchestrationReadScope,
+  [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
+  [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
+  [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
+  [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeDiscoveredLocalServers]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceConfigure]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceTestHost]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceEasAccount]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceSimlockIdentity]: AuthSettingsWriteScope,
+  [WS_METHODS.deviceList]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceOpen]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceClose]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceShutdown]: AuthOrchestrationOperateScope,
+  [WS_METHODS.deviceDetail]: AuthOrchestrationReadScope,
+  [WS_METHODS.deviceAction]: AuthOrchestrationOperateScope,
+  [WS_METHODS.subscribeDeviceState]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
+} as const satisfies Readonly<Record<ServedRpcTag, AuthEnvironmentScope>>;
+
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
-// The server's middleware receives the payload already decoded, as clients hold it.
+// The server's middleware receives payloads already decoded, as clients hold them.
 const decodeSettingsUpdate = Schema.decodeUnknownSync(Schema.toType(ServerSettingsUpdateInput));
+const decodeProjectMutation = Schema.decodeUnknownSync(Schema.toType(ProjectMutation));
+const decodeAssetCreateUrl = Schema.decodeUnknownSync(Schema.toType(AssetCreateUrlInput));
+const decodeDeviceList = Schema.decodeUnknownSync(Schema.toType(DeviceListInput));
 
-export function clientRpcRequiredScopes(
+/**
+ * What the server authorizes for a call, and what commands report to the UI.
+ * Without a payload it returns the method's minimum; the server always has one.
+ */
+export function rpcRequiredScopes(
   method: string,
-  input: unknown,
+  payload: unknown,
 ): readonly AuthEnvironmentScope[] {
-  if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
-    const payload = decodePrepareThread(input);
-    if (payload.mode === "worktree" && payload.threadId !== undefined)
-      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
-  }
-  if (method === WS_METHODS.gitRunStackedAction && input !== undefined) {
-    const payload = decodeStackedAction(input);
-    if (
-      payload.threadId !== undefined &&
-      (payload.action === "create_pr" || payload.action === "commit_push_pr")
-    )
-      return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
-  }
-  if (method === WS_METHODS.serverUpdateSettings && input !== undefined)
-    return requiredScopesForServerSettingsUpdate(decodeSettingsUpdate(input));
+  if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method))
+    throw new Error(`RPC method ${method} has no declared authorization scope.`);
+  const scope = RPC_REQUIRED_SCOPES[method as ServedRpcTag];
+  if (method === WS_METHODS.serverRetryResourceTelemetry)
+    return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   // Source reads need explicit transcript access; the memory scope alone is not enough.
   if (method === WS_METHODS.memoryReadSource)
     return [AuthMemoryReadScope, AuthOrchestrationReadScope];
   if (method === WS_METHODS.memoryImportProvider)
     return [AuthMemoryWriteScope, AuthFilesystemReadScope];
-  return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
-    ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
-    : [];
+  if (payload === undefined) return [scope];
+  if (method === WS_METHODS.serverUpdateSettings)
+    return requiredScopesForServerSettingsUpdate(decodeSettingsUpdate(payload));
+  if (method === WS_METHODS.projectsMutate)
+    return requiredScopesForProjectMutation(decodeProjectMutation(payload));
+  if (method === WS_METHODS.assetsCreateUrl) {
+    const { resource } = decodeAssetCreateUrl(payload);
+    return [
+      resource._tag === "workspace-file" ||
+      resource._tag === "media-file" ||
+      resource._tag === "draft-workspace-file" ||
+      (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
+        ? AuthFilesystemReadScope
+        : AuthOrchestrationReadScope,
+    ];
+  }
+  if (method === WS_METHODS.deviceList) {
+    // Retrying a host or updating a tool can install or restart tools; inspecting only reads.
+    const input = decodeDeviceList(payload);
+    return input.updateTool !== undefined || (input.retryHostId !== undefined && !input.inspectOnly)
+      ? [AuthOrchestrationOperateScope]
+      : [AuthOrchestrationReadScope];
+  }
+  if (method === WS_METHODS.gitPreparePullRequestThread) {
+    const input = decodePrepareThread(payload);
+    if (input.mode === "worktree" && input.threadId !== undefined)
+      return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+  }
+  if (method === WS_METHODS.gitRunStackedAction) {
+    const input = decodeStackedAction(payload);
+    if (
+      input.threadId !== undefined &&
+      (input.action === "create_pr" || input.action === "commit_push_pr")
+    )
+      return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
+  }
+  return [scope];
+}
+
+/** What the transport refuses to send without a command boundary; other requests go unchecked. */
+export function clientRpcRequiredScopes(
+  method: string,
+  input: unknown,
+): readonly AuthEnvironmentScope[] {
+  return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method) ? rpcRequiredScopes(method, input) : [];
 }

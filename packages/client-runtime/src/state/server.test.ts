@@ -1,4 +1,5 @@
 import {
+  AuthEnvironmentScope,
   EnvironmentId,
   ProviderDriverKind,
   ServerSelfUpdateError,
@@ -29,6 +30,19 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+}));
+const grantedSessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make(
+    AsyncResult.success({
+      authenticated: true,
+      scopes: AuthEnvironmentScope.literals,
+      permissions: AuthEnvironmentScope.literals,
+    }),
+  ),
+);
 import * as TestClock from "effect/testing/TestClock";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";

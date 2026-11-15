@@ -17,6 +17,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalReadScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -30,6 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
@@ -268,6 +270,61 @@ describe("command permissions", () => {
         expect(registry.get(permissions.permissionAtom(other))).toBe(false);
         const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
         expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
+  );
+  it.each([
+    [WS_METHODS.terminalWrite, undefined, ["terminal:operate"]],
+    [ORCHESTRATION_V2_WS_METHODS.dispatchCommand, undefined, ["orchestration:operate"]],
+    [WS_METHODS.serverUpdateProvider, undefined, ["providers:manage"]],
+    [WS_METHODS.serverUpsertKeybinding, undefined, ["settings:write"]],
+    [WS_METHODS.serverSignalProcess, undefined, ["environment:maintain"]],
+    [WS_METHODS.projectsWriteFile, undefined, ["filesystem:write"]],
+    [WS_METHODS.previewOpen, undefined, ["preview:operate"]],
+    [WS_METHODS.vcsRefreshStatus, undefined, ["orchestration:read"]],
+    [WS_METHODS.serverRefreshUsageRates, undefined, ["diagnostics:read"]],
+    [
+      WS_METHODS.serverRetryResourceTelemetry,
+      undefined,
+      ["environment:maintain", "diagnostics:read"],
+    ],
+    [WS_METHODS.deviceList, { retryHostId: "remote-host" }, ["orchestration:operate"]],
+    [WS_METHODS.deviceList, { inspectOnly: true }, ["orchestration:read"]],
+    [WS_METHODS.serverUpdateSettings, undefined, ["settings:write"]],
+    [
+      WS_METHODS.serverUpdateSettings,
+      { patch: {}, providerInstanceMutation: { operation: "remove", instanceId: "codex_work" } },
+      ["providers:manage"],
+    ],
+  ] as const)("a %s command reports what the server requires", (method, input, scopes) => {
+    expect(createCommandPermissions(runtime, method).requiredScopes(input)).toEqual(scopes);
+  });
+  it.effect("a reader sees an operator's command as unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const write = createCommandPermissions(runtime, WS_METHODS.terminalWrite);
+        const reader = [AuthOrchestrationReadScope, AuthTerminalReadScope];
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes: reader, permissions: reader }),
+        );
+        expect(registry.get(write.permissionAtom(env))).toBe(false);
+        expect((yield* write.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+  it.effect("denies when no grant arrives within six seconds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const fiber = yield* permissions
+          .authorize(registry, env)
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust("6 seconds");
+        expect((yield* Fiber.join(fiber))._tag).toBe("EnvironmentAuthorizationError");
       }),
     ),
   );

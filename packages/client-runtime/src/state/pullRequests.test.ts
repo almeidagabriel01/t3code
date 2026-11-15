@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   AuthSourceControlWriteScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   ProjectId,
   PullRequestOperationError,
   WS_METHODS,
@@ -2183,7 +2184,7 @@ const grantedSessions = Atom.family((_id: EnvironmentId) =>
         sessionMethods: [],
         sessionCookieName: "test",
       },
-      scopes: [AuthSourceControlWriteScope],
+      scopes: [AuthSourceControlWriteScope, AuthOrchestrationReadScope],
     }),
   ),
 );

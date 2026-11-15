@@ -1,5 +1,5 @@
 import {
-  clientRpcRequiredScopes,
+  rpcRequiredScopes,
   sessionGrantsScope,
   authScopeRequiredResponse,
   EnvironmentAuthorizationError,
@@ -18,7 +18,7 @@ function makeCommandPermissions<R, E>(
   method: string,
 ) {
   const sessions = createEnvironmentSessionAtoms(runtime);
-  const requiredScopes = (input?: unknown) => clientRpcRequiredScopes(method, input);
+  const requiredScopes = (input?: unknown) => rpcRequiredScopes(method, input);
   const atomsByEnvironment = Atom.family((environmentId: EnvironmentId | null) =>
     Atom.family((scopeKey: string) =>
       Atom.make((get) => {
