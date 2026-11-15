@@ -1,3 +1,4 @@
+import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { foldSearchQuery, rankSearchItems, scoreSearchTerms } from "@t3tools/shared/paletteSearch";
 
 import type { SettingsPageTarget } from "./components/settings-page-targets";
@@ -187,6 +188,19 @@ const SETTINGS_SEARCH_TERMS = {
     "memory",
     "slow down agent jobs",
     "background priority",
+    // Web's row titles on this page, so a setting's own name finds it here too.
+    "this mac",
+    "linux pc",
+    "jobs at once on this mac",
+    "pause heavy work queue",
+    "cpu limit",
+    "keep memory free",
+    "slow down agent jobs when the mac is busy",
+    "over the limit for",
+    "claude code hook",
+    "power off idle simulators",
+    "heavy job notices",
+    ...Object.values(RUNNER_SETTING_COPY).map(({ title }) => title),
   ],
   SettingsAbout: [
     "version",

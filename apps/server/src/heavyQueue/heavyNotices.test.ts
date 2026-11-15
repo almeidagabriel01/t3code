@@ -769,6 +769,28 @@ describe("grouping", () => {
     expect(rawNotices(tick(patch)).map((notice) => notice.many(3))).toEqual([title]);
   });
 
+  it.each([
+    [
+      { runnerDropped: "mac", runnerUnavailable: "mac" },
+      "Confirming the runs stopped there first. Running them on this Mac instead",
+    ],
+    [
+      policies,
+      "Confirming the runs stopped there first. Waiting for your answer in the Resource Manager",
+    ],
+  ] as const)("describes several dropped jobs in plural: %#", (rules, description) => {
+    const drop = (id: string) =>
+      record(requeueRecord({ ...linux, id }, { dropped: true, unconfirmed: true }, rules, NOW));
+    const { batch } = groupNotices(
+      rawNotices(tick({ records: [drop("a"), drop("b")] })),
+      new Map(),
+      NOW,
+    );
+    expect(batch.map(({ title, description }) => ({ title, description }))).toEqual([
+      { title: "Linux dropped 2 jobs mid-run", description },
+    ]);
+  });
+
   it("titles several stuck jobs", () => {
     const stuck = stuckJobs({
       entries: [waiter],

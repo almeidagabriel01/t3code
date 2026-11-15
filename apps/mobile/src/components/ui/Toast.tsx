@@ -23,11 +23,22 @@ import { IconButton } from "./IconButton";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { SymbolView } from "./AppSymbol";
 
+type ToastTone = "default" | "success" | "info" | "warning" | "danger";
+
+/** Same icons as web's toasts: a check only for good news. */
+const TONE_SYMBOL = {
+  default: { name: "checkmark.circle", tint: "accent-icon" },
+  success: { name: "checkmark.circle", tint: "accent-icon" },
+  info: { name: "info.circle", tint: "accent-icon" },
+  warning: { name: "exclamationmark.triangle", tint: "accent-warning-foreground" },
+  danger: { name: "exclamationmark.circle", tint: "accent-danger-foreground" },
+} as const;
+
 export type ToastProps = {
   readonly message: string;
   readonly description?: string;
   readonly singleLine?: boolean;
-  readonly tone?: "default" | "success" | "danger";
+  readonly tone?: ToastTone;
   readonly busy?: boolean;
   readonly action?: { readonly label: string; readonly onPress: () => void };
 } & (
@@ -67,9 +78,9 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
   const surface = (
     <GlassSurface
       key={props.glassReady === false ? "entering" : "settled"}
-      chrome={Platform.OS === "ios" && colorScheme === "dark" ? "none" : undefined}
       tintColor={Platform.OS === "ios" ? null : undefined}
-      className={Platform.OS === "ios" ? "bg-transparent p-2" : "p-3"}
+      // Floating over any screen or sheet: the faint theme border vanishes on dark surfaces.
+      className={cn("border-foreground/12", Platform.OS === "ios" ? "bg-transparent p-2" : "p-3")}
       style={{ borderRadius }}
     >
       <View
@@ -83,11 +94,9 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
           <AppActivityIndicator />
         ) : (
           <SymbolView
-            name={props.tone === "danger" ? "exclamationmark.triangle" : "checkmark.circle"}
+            name={TONE_SYMBOL[props.tone ?? "default"].name}
             size={20}
-            tintColorClassName={
-              props.tone === "danger" ? "accent-danger-foreground" : "accent-icon"
-            }
+            tintColorClassName={TONE_SYMBOL[props.tone ?? "default"].tint}
           />
         )}
         <View className="min-w-0 flex-1" accessibilityLiveRegion="polite">
@@ -120,9 +129,9 @@ function ToastContent(props: ToastProps & { readonly glassReady?: boolean }) {
         boxShadow: [
           {
             offsetX: 0,
-            offsetY: 0,
-            blurRadius: 8,
-            color: colorScheme === "dark" ? "rgba(0, 0, 0, 0.22)" : "rgba(0, 0, 0, 0.08)",
+            offsetY: 6,
+            blurRadius: 20,
+            color: colorScheme === "dark" ? "rgba(0, 0, 0, 0.6)" : "rgba(0, 0, 0, 0.14)",
           },
         ],
       }}

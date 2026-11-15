@@ -140,6 +140,9 @@ export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
 };
 
 /** A machine as a sentence names it: "this Mac", "Linux". */
+export const HEAVY_OVER_LIMIT_DESCRIPTION =
+  "How long this Mac or Linux must stay past a limit, or back under it, before jobs wait or move. A short spike changes nothing.";
+
 export const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
 
 export interface HeavyModeInput {

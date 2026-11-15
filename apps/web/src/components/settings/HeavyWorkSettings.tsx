@@ -1,5 +1,8 @@
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
-import { heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
+import {
+  HEAVY_OVER_LIMIT_DESCRIPTION,
+  heavyLimitIdle,
+} from "@t3tools/client-runtime/state/runnerModel";
 import {
   HEAVY_QUEUE_LIMITS,
   type EnvironmentId,
@@ -48,8 +51,7 @@ const LIMIT_ROWS: ReadonlyArray<{
   {
     key: "heavyOverLimitSeconds",
     searchId: "heavy-work-over-limit",
-    description:
-      "How long this Mac or Linux must stay past a limit, or back under it, before jobs wait or move. A short spike changes nothing.",
+    description: HEAVY_OVER_LIMIT_DESCRIPTION,
   },
 ];
 

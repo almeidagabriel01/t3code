@@ -377,6 +377,8 @@ export interface RawNotice {
   readonly one: string;
   readonly many: (count: number) => string;
   readonly description: string;
+  /** Description for several jobs, when the single-job wording does not read in plural. */
+  readonly manyDescription?: string;
 }
 
 const machineName = (runner: HeavyRunner) => (runner === "linux" ? "Linux" : "this Mac");
@@ -446,9 +448,21 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
         description: `${record.dropped ? "Linux dropped it" : "Linux was unavailable"} and nobody answered in time`,
       });
     case "linux-lost": {
-      const steps = [
-        ...(record.unconfirmed ? ["Confirming the run stopped there first"] : []),
-        ...(record.followUp === "agent" ? [] : [FOLLOW_UP[record.followUp]]),
+      const steps = (several: boolean) => [
+        ...(record.unconfirmed
+          ? [
+              several
+                ? "Confirming the runs stopped there first"
+                : "Confirming the run stopped there first",
+            ]
+          : []),
+        ...(record.followUp === "agent"
+          ? []
+          : [
+              several && record.followUp === "mac"
+                ? "Running them on this Mac instead"
+                : FOLLOW_UP[record.followUp],
+            ]),
       ];
       return notice({
         group: `linux-lost:${record.dropped}:${record.followUp}`,
@@ -460,7 +474,8 @@ const recordNotice = (record: HeavyEventRecord, toldMac: ReadonlySet<string>): R
           record.dropped
             ? `Linux dropped ${jobs(n)} mid-run`
             : `Linux was unavailable for ${jobs(n)}`,
-        description: steps.join(". "),
+        description: steps(false).join(". "),
+        manyDescription: steps(true).join(". "),
       });
     }
     case "needs-mac":
@@ -637,7 +652,7 @@ export const groupNotices = (
       title: several ? notice.many(count) : notice.one,
       description: several
         ? group.descriptions.length === 1
-          ? group.descriptions[0]!
+          ? (notice.manyDescription ?? group.descriptions[0]!)
           : group.jobs.map((job) => short(job.name)).join(", ")
         : notice.description,
       machine: notice.machine,

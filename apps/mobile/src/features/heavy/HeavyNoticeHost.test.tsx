@@ -8,7 +8,15 @@ import { describe, expect, it, vi } from "vite-plus/test";
 const { mocks } = vi.hoisted(() => ({ mocks: { notices: null as unknown } }));
 
 vi.mock("react-native", () => ({
+  Platform: { OS: "ios" },
+  StyleSheet: { absoluteFill: {} },
   View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("react-native-gesture-handler", () => ({
+  GestureHandlerRootView: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("react-native-screens", () => ({
+  FullWindowOverlay: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -102,7 +110,7 @@ describe("HeavyNoticeHost", () => {
         threadId: null,
       }),
     ]);
-    expect(view.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("default");
+    expect(view.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("info");
     await act(async () => view.button("Heavy work")!.click());
     expect(view.navigate).toHaveBeenCalledWith("/settings/maintenance");
     view.unmount();
@@ -113,6 +121,7 @@ describe("HeavyNoticeHost", () => {
       notice({ id: "n-3", tone: "warning", title: "Linux went offline", threadId: null }),
     ]);
     expect(again.host.textContent).toContain("Linux went offline");
+    expect(again.host.querySelector("[role=alert]")?.getAttribute("data-tone")).toBe("warning");
     await act(async () => vi.advanceTimersByTime(15_000));
     expect(again.host.querySelector("[role=alert]")).toBeNull();
     again.unmount();
