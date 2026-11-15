@@ -4,6 +4,13 @@ import {
   backfillTeamProjects,
   forgetDeletedProjects,
 } from "../assistants/AssistantTeamProjects.ts";
+import {
+  countsAsUnreadSql,
+  needsUserTaskScopesSql,
+  scopeNeedsUserSql,
+  taskCountsByScopeSql,
+  workingTaskStatusesSql,
+} from "../assistants/groupChatSql.ts";
 import { ensureMemorySchema } from "./MemorySchema.ts";
 
 // Fork-only tables live outside the numbered migrations: a fork id would collide with the next
@@ -566,6 +573,21 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`UPDATE assistant_requests SET group_id = request_id WHERE group_id IS NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_requests_group_idx ON assistant_requests(group_id)`;
 
+  // What the last task event told a conversation about a thread (TaskEventNotices): a run that
+  // changes nothing against it wakes no one.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_task_notices (
+      thread_id TEXT NOT NULL,
+      subject_thread_id TEXT NOT NULL,
+      run_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      head_sha TEXT,
+      message_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (thread_id, subject_thread_id)
+    )
+  `;
+
   // A thread an assistant launched for real work; its state is the thread's own.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_tasks (
@@ -670,22 +692,6 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["memories_json", "TEXT NOT NULL DEFAULT '[]'"],
     ["default_model_selection", "TEXT"],
   ]);
-  // A team with its chat counters, so a sidebar row needs no second fetch. Recreated on every start.
-  yield* sql`
-    CREATE VIEW assistant_team_state AS
-    SELECT t.*,
-      COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
-        AS latest_seq,
-      (SELECT COUNT(*) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.author != 'user'
-          AND m.kind NOT IN ('routing', 'boundary', 'change')) AS unread_count,
-      (SELECT COUNT(*) FROM assistant_group_tasks k
-        WHERE k.team_id = t.team_id AND k.status IN ('queued', 'running', 'waiting')) AS open_tasks,
-      (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
-        WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
-        ORDER BY m.seq DESC LIMIT 1) AS preview
-    FROM assistant_teams t
-  `;
   // A member's hidden thread for a group, and the last chat message that thread was shown.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_threads (
@@ -705,6 +711,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["title", "TEXT"],
   ]);
   yield* addColumns("assistant_group_tasks", [["request_id", "TEXT"]]);
+  // Every line of a request carries the request's project (NULL: General or chat-wide), so a tab
+  // pages its own lines. Filled once below, in the start that adds the column; after that only
+  // the rows the repair gives a request take its project, so General is never swept again.
+  const scoped = yield* addColumns("assistant_group_messages", [["request_project_id", "TEXT"]]);
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_message_idx ON assistant_group_tasks(request_message_id)`;
   // Every start, only rows still without a request (an older build could add the columns and stop
   // before filling them): a message that opened root tasks, or a person's message replying to
@@ -715,17 +725,20 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       WHERE r.task_id = assistant_group_tasks.root_id)
     WHERE request_id IS NULL`;
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = message_id
+    UPDATE assistant_group_messages SET request_id = message_id, request_project_id = project_id
     WHERE request_id IS NULL AND (
       EXISTS (SELECT 1 FROM assistant_group_tasks t
         WHERE t.kind = 'root' AND t.request_message_id = assistant_group_messages.message_id)
       OR (kind = 'message' AND author <> 'assistant' AND reply_to IS NULL))`;
+  const taskRequest = sql`COALESCE(
+    (SELECT t.request_id FROM assistant_group_tasks t
+      WHERE t.task_id = assistant_group_messages.task_id),
+    (SELECT t.request_id FROM assistant_group_tasks t
+      WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))`;
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = COALESCE(
-      (SELECT t.request_id FROM assistant_group_tasks t
-        WHERE t.task_id = assistant_group_messages.task_id),
-      (SELECT t.request_id FROM assistant_group_tasks t
-        WHERE t.kind = 'reply' AND t.request_message_id = assistant_group_messages.message_id))
+    UPDATE assistant_group_messages SET request_id = ${taskRequest},
+      request_project_id = (SELECT h.project_id FROM assistant_group_messages h
+        WHERE h.message_id = ${taskRequest})
     WHERE request_id IS NULL AND (kind = 'message' OR task_id IS NOT NULL)`;
   yield* sql`
     WITH RECURSIVE chain(message_id, request_id) AS (
@@ -738,11 +751,14 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       WHERE m.request_id IS NULL
     )
     UPDATE assistant_group_messages SET request_id = (
-      SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id)
+      SELECT c.request_id FROM chain c WHERE c.message_id = assistant_group_messages.message_id),
+      request_project_id = (SELECT h.project_id FROM chain c
+        JOIN assistant_group_messages h ON h.message_id = c.request_id
+        WHERE c.message_id = assistant_group_messages.message_id)
     WHERE request_id IS NULL AND reply_to IS NOT NULL`;
   // A person's reply to a message that is gone, or that belongs to no request, starts its own.
   yield* sql`
-    UPDATE assistant_group_messages SET request_id = message_id
+    UPDATE assistant_group_messages SET request_id = message_id, request_project_id = project_id
     WHERE request_id IS NULL AND kind = 'message' AND author <> 'assistant'`;
   // A notice that a member's conversation waits on the user: one per wait (`wait_key`), resolved in
   // place once nothing waits any more.
@@ -754,9 +770,109 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   ]);
   // The lead's notice asking which project a request is for.
   yield* addColumns("assistant_group_messages", [["asks_project", "INTEGER NOT NULL DEFAULT 0"]]);
+  // A member's answer: how long its run worked.
+  yield* addColumns("assistant_group_messages", [["worked_ms", "INTEGER"]]);
+  // The model a user message's work starts on, picked for that message only.
+  yield* addColumns("assistant_group_messages", [["model_selection", "TEXT"]]);
   yield* sql`CREATE UNIQUE INDEX IF NOT EXISTS assistant_group_messages_wait_idx ON assistant_group_messages(wait_key) WHERE wait_key IS NOT NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_request_idx ON assistant_group_messages(request_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_tasks_request_idx ON assistant_group_tasks(request_id)`;
+  if (scoped.length > 0)
+    yield* sql`
+    UPDATE assistant_group_messages SET request_project_id = (
+      SELECT h.project_id FROM assistant_group_messages h
+      WHERE h.message_id = assistant_group_messages.request_id)
+    WHERE request_project_id IS NULL AND request_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM assistant_group_messages h
+      WHERE h.message_id = assistant_group_messages.request_id AND h.project_id IS NOT NULL)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_scope_idx ON assistant_group_messages(team_id, request_project_id, seq)`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_open_wait_idx ON assistant_group_messages(team_id) WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_asks_project_idx ON assistant_group_messages(team_id, request_project_id) WHERE asks_project = 1`;
+  // How far the user has read one tab of a group: scope is the project id, or '' for General.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS assistant_group_read_cursors (
+      team_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      read_seq INTEGER NOT NULL,
+      PRIMARY KEY (team_id, scope)
+    )
+  `;
+  // A team with its chat counters, recreated on every start after every column it reads. A tab
+  // reads from its own cursor, else the group's read_seq; it is listed while it has unread, a wait
+  // on the user, its own cursor, working or stopped tasks (so an end reads apart from a move), and
+  // General while it has a request, which `general` tells clients.
+  yield* sql`
+    CREATE VIEW assistant_team_state AS
+    SELECT s.*,
+      (SELECT COALESCE(SUM(j.value ->> '$.unreadCount'), 0) FROM json_each(s.scopes_json) j)
+        AS unread_count
+    FROM (
+      SELECT t.*,
+        COALESCE((SELECT MAX(seq) FROM assistant_group_messages m WHERE m.team_id = t.team_id), 0)
+          AS latest_seq,
+        (SELECT COUNT(*) FROM assistant_group_tasks k
+          WHERE k.team_id = t.team_id AND k.status IN (${sql.literal(workingTaskStatusesSql)}))
+          AS open_tasks,
+        (SELECT COUNT(*) FROM assistant_group_tasks k
+          WHERE k.team_id = t.team_id AND k.status = 'running') AS running_tasks,
+        (SELECT substr(m.text, 1, 400) FROM assistant_group_messages m
+          WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+          ORDER BY m.seq DESC LIMIT 1) AS preview,
+        (SELECT m.request_project_id FROM assistant_group_messages m
+          WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
+          ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
+        -- Each distinct request project is one scope_idx seek, not a walk of the chat.
+        (WITH RECURSIVE r(id) AS (
+            SELECT (SELECT MIN(m.request_project_id) FROM assistant_group_messages m
+              WHERE m.team_id = t.team_id AND m.request_project_id IS NOT NULL)
+            UNION ALL SELECT (SELECT MIN(m.request_project_id) FROM assistant_group_messages m
+              WHERE m.team_id = t.team_id AND m.request_project_id > r.id)
+            FROM r WHERE r.id IS NOT NULL)
+          SELECT json_group_array(g.id) FROM (SELECT r.id FROM r WHERE r.id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM projection_projects p
+              WHERE p.project_id = r.id AND p.deleted_at IS NULL)
+            ORDER BY r.id) g) AS removed_project_ids_json,
+        (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
+            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
+            'openTasks', x.open_tasks, 'doneTasks', x.done_tasks, 'general', x.general,
+            'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
+          FROM (
+            SELECT c.scope, COALESCE(r.read_seq, t.read_seq) AS read_seq, r.read_seq AS own,
+              (SELECT COUNT(*) FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.request_project_id IS NULLIF(c.scope, '')
+                  AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
+                AS unread,
+              ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
+              c.working AS open_tasks,
+              c.stopped AS done_tasks,
+              (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.request_project_id IS NULL
+                  AND m.request_id IS NOT NULL)) AS general
+            -- The task counts are one grouped walk of the team's tasks, added to every other tab.
+            FROM (SELECT o.scope, SUM(o.working) AS working, SUM(o.stopped) AS stopped
+              FROM (SELECT scope, 0 AS working, 0 AS stopped FROM (
+              SELECT scope FROM assistant_group_read_cursors WHERE team_id = t.team_id
+              UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.seq > t.read_seq AND m.request_id IS NOT NULL
+              UNION SELECT COALESCE(m.request_project_id, '') FROM assistant_group_messages m
+                WHERE m.team_id = t.team_id AND m.wait_key IS NOT NULL
+                  AND m.wait_resolved_at IS NULL
+              UNION ${sql.literal(needsUserTaskScopesSql("t.team_id"))}
+              UNION SELECT ''
+              )
+              UNION ALL ${sql.literal(taskCountsByScopeSql("t.team_id"))}) o
+              GROUP BY o.scope
+            ) c
+            LEFT JOIN assistant_group_read_cursors r ON r.team_id = t.team_id AND r.scope = c.scope
+            -- A stable order, so a client's "Removed project 2" stays the same project.
+            ORDER BY c.scope
+          ) x
+          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
+            OR x.done_tasks > 0)
+          AS scopes_json
+      FROM assistant_teams t
+    ) s
+  `;
   // A member's hidden thread for one request, in the request's project. The per-group threads above
   // stay for history and for runs that started before requests had their own.
   yield* sql`
@@ -775,6 +891,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
     ["followed_model_selection", "TEXT"],
     ["pending_model_selection", "TEXT"],
   ]);
+  // A model picked in the thread that a message's own model set aside until its task is done.
+  yield* addColumns("assistant_group_request_threads", [["restore_model_selection", "TEXT"]]);
+  // The message's model that switch applied: a thread off it was changed by the user since.
+  yield* addColumns("assistant_group_request_threads", [["aimed_model_selection", "TEXT"]]);
   // A member's request conversation a cleared chat left it, deleted with the member.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_kept_threads (

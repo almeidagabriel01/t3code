@@ -37,6 +37,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
+  queuedRowTitle,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
@@ -243,8 +244,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isGuestMessage: context?.guest !== undefined,
           text,
         });
-        const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+        const title = queuedRowTitle({
+          message,
+          displayText: controls.displayText,
+          hasAttachments: attachments.length > 0,
+        });
         return (
           <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
             <QueueRowSwipeable

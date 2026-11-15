@@ -240,9 +240,12 @@ Click a group in the sidebar (or tap it on Home) to open its chat. A message tha
 nothing starts a new **request**; it does not run an agent by itself.
 
 - The chat shows each request as a block with its project, a short title and its status (Routing,
-  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold away; click the header
-  to open or fold one. With requests in more than one project, **Show** (at the top on the web, in
-  the group's menu on mobile) shows one project's requests (**All projects** shows every one).
+  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold to one line; click it
+  to open the request, and its header to fold it again. A group with more than one project shows a
+  tab per project above the chat, plus **All** (every request, one line each) and **General**
+  (requests with no project, when there are some). Each tab keeps its own unread count, a dot marks
+  one that needs you, and the box sends to the open tab's project. The app remembers the last tab
+  per device.
 - Each request runs in one project, chosen from the group's projects and its members'. Pick it in the
   box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
   or leave **Lead decides**: the lead picks it from the request, and when it could be more than one
@@ -260,11 +263,16 @@ nothing starts a new **request**; it does not run an agent by itself.
   active again. Requests from before this change keep their old shared conversation for history.
 - Each member's conversation for a request starts on the request's project model (see [model
   order](project-settings.md#defaults-and-inheritance)); the group's **Default model** (in **Group settings**) applies in the group's projects when the
-  project sets none. The model next to **Project** in the box shows and changes that project's model,
-  and **Model in <project>** in the group's menu gives one member its own model there. A change moves
-  the open requests' conversations that still follow the old value, after their current turn, and a
-  finished request's conversations when work on it comes back; one you switched by hand keeps its
-  model. While you write in a member's conversation, the group's next task for it waits for that turn
+  project sets none. The model next to **Project** in the box is for the message you send next: pick
+  another and that message's work, hand-offs and questions between members included, runs on it,
+  marked **This message**, and nothing is saved. Picked for a new request, it holds for the whole
+  request, whatever later changes to the project's model. A model that is off or unknown there runs the project's instead. After
+  you send, or once another tab opens, it shows the project's model again; the button beside it (on mobile,
+  the chip's menu) goes back sooner. **Model in <project>** in the group's menu sets **Project's
+  model** and gives one member its own model there. A change moves the open requests' conversations
+  that still follow the old value, after their current turn, and a finished request's conversations
+  when work on it comes back; one you switched by hand keeps its model, and goes back to it after a message's own model; a
+  switch you make during that message's work stays. While you write in a member's conversation, the group's next task for it waits for that turn
   to end.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
@@ -281,8 +289,9 @@ nothing starts a new **request**; it does not run an agent by itself.
   asked), its request says so with what it asks and the request shows **Needs you**. **Open
   conversation** or **Open decision** takes you to answer it. Answer anywhere (the chat, Activity,
   Telegram) and the notice is marked resolved.
-- Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
-  continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
+- Each open task shows as a card with its owner and status; a finished one is a single line that
+  opens the member's conversation. **Stop** pauses running work, **Resume** continues it,
+  **Reassign** gives it to another member and **Cancel** ends the whole request.
   **Open conversation** shows the member's conversation for that request.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
   per request). So members cannot pass work around forever, a request stops whole, and the chat

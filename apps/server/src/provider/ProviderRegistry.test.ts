@@ -286,6 +286,7 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      modifySettings: () => Effect.die("Unexpected settings modification"),
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
@@ -1841,6 +1842,96 @@ it.layer(
       }),
     );
 
+    it.effect("says which instances can route a group, as group chat checks it", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const providerFor = (instanceId: ProviderInstanceId) =>
+          ({
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          }) as const satisfies ServerProvider;
+        const instanceFor = (
+          instanceId: ProviderInstanceId,
+          textGeneration: Partial<ProviderInstance["textGeneration"]>,
+        ): ProviderInstance => ({
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: `codex:instance:${instanceId}`,
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(providerFor(instanceId)),
+            refresh: Effect.succeed(providerFor(instanceId)),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: textGeneration as ProviderInstance["textGeneration"],
+        });
+        const routes = instanceFor(ProviderInstanceId.make("routes"), {
+          routeAssistantGroup: () => Effect.die("unused"),
+        });
+        const cannot = instanceFor(ProviderInstanceId.make("cannot"), {});
+        const instances = [routes, cannot];
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(instances.find((entry) => entry.instanceId === requestedId)),
+            listInstances: Effect.succeed(instances),
+            listUnavailable: Effect.succeed([providerFor(ProviderInstanceId.make("gone"))]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-routing-" }),
+            ),
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const providers = yield* registry.refresh();
+          assert.deepStrictEqual(
+            Object.fromEntries(
+              providers.map((provider) => [
+                provider.instanceId,
+                provider.supportsAssistantGroupRouting,
+              ]),
+            ),
+            { routes: true, cannot: false, gone: false },
+          );
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect("publishes workspace skills while machine health is in error", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("codex");
@@ -2444,6 +2535,7 @@ it.layer(
             withBundledCompatibility({
               ...refreshedProvider,
               models: [...initialProvider.models],
+              supportsAssistantGroupRouting: false,
             }),
           );
         }).pipe(Effect.provide(runtimeServices));
@@ -2820,15 +2912,12 @@ it.layer(
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
 
-          assert.deepStrictEqual(yield* registry.getProviders, [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refresh(codexDriver), [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
-            withBundledCompatibility(cachedProvider),
-          ]);
+          const expected = [
+            { ...withBundledCompatibility(cachedProvider), supportsAssistantGroupRouting: false },
+          ];
+          assert.deepStrictEqual(yield* registry.getProviders, expected);
+          assert.deepStrictEqual(yield* registry.refresh(codexDriver), expected);
+          assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), expected);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

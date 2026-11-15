@@ -69,12 +69,19 @@ function buildAgentAwarenessDeepLink(input: {
   return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
 }
 
-/** The mobile route of a group's chat; older apps ignore it and open the thread named beside it. */
+/**
+ * The mobile route of a group's chat, opened on the tab of `projectId` (null: General) when given;
+ * older apps ignore it and open the thread named beside it.
+ */
 export function buildAssistantGroupDeepLink(input: {
   readonly environmentId: EnvironmentId;
   readonly teamId: string;
+  readonly projectId?: string | null;
 }): string {
-  return `/assistant-groups/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.teamId)}`;
+  const path = `/assistant-groups/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.teamId)}`;
+  if (input.projectId === undefined) return path;
+  const tab = input.projectId === null ? "general" : `project:${input.projectId}`;
+  return `${path}?tab=${encodeURIComponent(tab)}`;
 }
 
 export interface ProjectThreadAwarenessV2Input {

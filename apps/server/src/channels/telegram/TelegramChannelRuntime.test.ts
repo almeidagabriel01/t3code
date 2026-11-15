@@ -25,6 +25,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ChannelBridge from "../ChannelBridge.ts";
 import { ChannelGateway } from "../ChannelGateway.ts";
 import * as ChannelOutbox from "../ChannelOutbox.ts";
+import { projectsLayer } from "../channelBridgeTestSupport.ts";
 import { ChannelLanguage } from "../ChannelLanguage.ts";
 import * as ChannelTransport from "../ChannelTransport.ts";
 import * as Runtime from "./TelegramChannelRuntime.ts";
@@ -671,6 +672,7 @@ it.effect("a photo from Telegram reaches the assistant's thread with the image s
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
       Layer.mergeAll(
+        projectsLayer(),
         ChannelTransport.layer,
         ChannelLanguage.layerFixed("en"),
         FetchHttpClient.layer,

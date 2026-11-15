@@ -30,6 +30,7 @@ import {
   fakeTransport,
   otherChatAddress,
   outboxRows,
+  projectsLayer,
 } from "./channelBridgeTestSupport.ts";
 
 const thread = "assistant:jarvis:2";
@@ -37,6 +38,8 @@ const thread = "assistant:jarvis:2";
 interface Records {
   messages: Array<{ text: string }>;
   turnItems: Array<{ type: string; failure?: { message: string } }>;
+  /** The message that started the run; the user's own by default. */
+  started?: { readonly id: string; readonly senderThreadId?: string };
 }
 
 const harness = (language: "en" | "pt-BR" = "en") => {
@@ -49,6 +52,7 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     Layer.provideMerge(
       Layer.mergeAll(
         ChannelTransport.layer,
+        projectsLayer({ acme: "Acme" }),
         ChannelLanguage.layerFixed(language),
         SqlitePersistence.layerMemory,
         NodeCrypto.layer,
@@ -65,10 +69,18 @@ const harness = (language: "en" | "pt-BR" = "en") => {
               }) as never,
           ),
         }),
-        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.empty }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.empty,
+          getThreadShell: () => Effect.succeed({ projectId: "acme" } as never),
+        }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: () => Effect.succeed({} as never),
           getThreadRecords: (_threadId, _kinds, filter) => {
+            if (filter?.messageIds !== undefined) {
+              return Effect.succeed({
+                messages: [records.get("run-1")?.started ?? { id: "m1", createdBy: "user" }],
+              } as never);
+            }
             const runId = filter?.messageRunIds?.[0] ?? "";
             reads.push(runId);
             return Effect.succeed((records.get(runId) ?? { messages: [], turnItems: [] }) as never);
@@ -138,6 +150,7 @@ it.effect("a finished run posts its last assistant message once, however often i
       senderName: "Jarvis",
       markdown: true,
       language: "en",
+      project: "Acme",
     });
     assert.lengthOf(reads, 1);
   }).pipe(Effect.provide(layer));
@@ -207,6 +220,30 @@ const outcomes: ReadonlyArray<{
     status: "interrupted",
     records: { messages: [{ text: "Stopped here" }], turnItems: [] },
     text: "Stopped here",
+  },
+  {
+    name: "a task event's long report, sent as its short version",
+    status: "completed",
+    records: {
+      messages: [
+        {
+          text: "Upload retry is done.\n\n| Check | Result |\n| --- | --- |\n| tests | 12 passed |",
+        },
+      ],
+      turnItems: [],
+      started: { id: "assistant-task:run-0", senderThreadId: "mcp:launch:task" },
+    },
+    text: "Upload retry is done.\n…",
+  },
+  {
+    name: "a task event the assistant ended quiet",
+    status: "completed",
+    records: {
+      messages: [{ text: "NO_REPLY" }],
+      turnItems: [],
+      started: { id: "assistant-task:run-0", senderThreadId: "mcp:launch:task" },
+    },
+    text: undefined,
   },
   {
     name: "still running",
@@ -335,6 +372,7 @@ it.effect("an open decision becomes a card with its options, posted once", () =>
         { label: "No", value: "no" },
       ],
       language: "en",
+      project: "Acme",
     });
   }).pipe(Effect.provide(layer));
 });
@@ -437,6 +475,7 @@ it.effect.each(settlements)(
         senderName: "Jarvis",
         text: `Deploy? — ${settlement.line}`,
         language: "en",
+        project: "Acme",
       });
     }).pipe(Effect.provide(layer));
   },

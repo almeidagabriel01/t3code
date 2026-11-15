@@ -5,6 +5,8 @@ import {
   DEFAULT_AUTONOMY_SETTINGS,
   type Decision,
   type OrchestrationV2DomainEvent,
+  type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,9 +19,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
 import { cardContext, WAIT_WAKE_PREFIX } from "../autonomy/needsYou.ts";
 import * as DecisionService from "../decisions/DecisionService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { turnOriginOf } from "../mcp/turnOrigin.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -92,6 +96,13 @@ const make = Effect.gen(function* () {
         };
   });
 
+  /** The thread's project; none when it cannot be read. */
+  const projectOf = (threadId: string) =>
+    engine.getThreadShell(threadId as ThreadId).pipe(
+      Effect.map((shell): ProjectId | null => shell?.projectId ?? null),
+      Effect.orElseSucceed(() => null),
+    );
+
   const postRun = Effect.fn("ChannelReplyReactor.postRun")(function* (
     run: Extract<OrchestrationV2DomainEvent, { type: "run.updated" }>["payload"],
   ) {
@@ -113,7 +124,13 @@ const make = Effect.gen(function* () {
       turnItemRunIds: [run.id],
       turnItemTypes: ["error"],
     });
-    const answer = records.messages.findLast((message) => message.text.trim() !== "")?.text;
+    const started = yield* threads.getThreadRecords(run.threadId, ["messages"], {
+      messageIds: [run.userMessageId],
+    });
+    const answer = assistantRunReply(
+      records.messages.findLast((message) => message.text.trim() !== "")?.text,
+      turnOriginOf(started.messages[0]),
+    );
     const failure = records.turnItems.findLast((item) => item.type === "error");
     const language = yield* channelLanguage.current;
     const text =
@@ -127,6 +144,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: target.address,
+      projectId: yield* projectOf(run.threadId),
       senderName: target.assistantName,
       text,
       ...(answer === undefined ? {} : { markdown: true }),
@@ -179,6 +197,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId,
           destination: target.address,
+          projectId: yield* projectOf(decision.fromThreadId),
           senderName: target.assistantName,
           text: [shown.title, context.text, link].filter((part) => part !== "").join("\n\n"),
           ...(context.cut
@@ -204,6 +223,7 @@ const make = Effect.gen(function* () {
       yield* outbox.enqueue({
         deliveryId: `channel-decision-settled:${decision.id}`,
         destination,
+        projectId: yield* projectOf(decision.fromThreadId),
         senderName,
         // The settled line reads "<title> — <outcome>"; chat has no other place to put the title.
         // oxlint-disable-next-line t3code/no-em-dash-copy -- fixed product format

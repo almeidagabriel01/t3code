@@ -24,7 +24,7 @@ const state = vi.hoisted(() => ({
   queued: {} as Record<string, number>,
   teams: [] as Array<{
     environmentId: string;
-    team: { id: string; name: string; memberIds: string[] };
+    team: { id: string; name: string; memberIds: string[]; chat?: unknown };
   }>,
   tasks: [] as Array<{
     threadId: string;
@@ -195,9 +195,9 @@ const element = (
   </ul>
 );
 
-const team = (id: string, name: string, memberIds: string[]) => ({
+const team = (id: string, name: string, memberIds: string[], chat?: unknown) => ({
   environmentId: "env",
-  team: { id, name, memberIds },
+  team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
 });
 const rows = (container: HTMLElement) =>
   container.querySelectorAll('[data-testid="sidebar-assistant-row"]');
@@ -381,17 +381,28 @@ describe("AssistantSidebarSection", () => {
   it("puts a group on one row, collapsed by default, with running or empty status", async () => {
     const members = ["Ada", "Bob", "Cid", "Dee", "Eve", "Fay"];
     setup(members, { moods: { [threadOf("Ada")]: "working", [threadOf("Bob")]: "working" } });
+    const waitingChat = {
+      latestSeq: 1,
+      readSeq: 1,
+      unreadCount: 0,
+      working: false,
+      preview: null,
+      scopes: [{ projectId: null, unreadCount: 0, waiting: true, readSeq: 1 }],
+    };
     state.teams = [
       team(
         "t1",
         "Growth",
         members.map((m) => m.toLowerCase()),
+        waitingChat,
       ),
       team("t0", "Quiet", []),
     ];
     await using screen = await render(element());
     const groups = screen.container.querySelectorAll('[data-testid="sidebar-assistant-fold"]');
     expect(groups).toHaveLength(2);
+    expect(groups[0]?.querySelector('[aria-label="Waiting on you"]')).not.toBeNull();
+    expect(groups[1]?.querySelector('[aria-label="Waiting on you"]')).toBeNull();
     expect(groups[0]?.querySelector('[data-testid="group-status"]')?.textContent).toBe("2 running");
     expect(groups[1]?.querySelector('[data-testid="group-status"]')?.textContent).toBe("empty");
     expect(groups[0]?.querySelector('[data-testid="group-avatars"]')?.textContent).toBe("+2");

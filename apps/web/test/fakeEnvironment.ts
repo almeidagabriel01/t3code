@@ -61,6 +61,7 @@ import {
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ServerConfigStreamEvent,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import type {
@@ -364,6 +365,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
 
 let extraCapabilities: Record<string, boolean> = {};
 let hostOs: "linux" | "darwin" = "linux";
+let extraProjects: ReadonlyArray<OrchestrationProjectShell> = [];
 let reasoningEffort = false;
 const effortCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -391,6 +393,17 @@ let settingsOverride: Partial<ServerSettings> | null = null;
 /** Starts the server with these settings on top; reset when the environment is disposed. */
 export function setFakeServerSettings(settings: Partial<ServerSettings> | null): void {
   settingsOverride = settings;
+}
+const configSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
+/** Sets the settings and pushes them to open config streams, as the server does after a write. */
+export function pushFakeServerSettings(settings: Partial<ServerSettings> | null): void {
+  settingsOverride = settings;
+  const event: ServerConfigStreamEvent = {
+    version: 1,
+    type: "settingsUpdated",
+    payload: { settings: currentServerConfig().settings },
+  };
+  for (const queue of configSubscribers) Effect.runSync(Queue.offer(queue, event));
 }
 const currentServerConfig = (): ServerConfig => {
   const config = serverConfig();
@@ -474,7 +487,7 @@ const handlers: Record<string, (input: never) => unknown> = {
           snapshot: {
             schemaVersion: 1,
             snapshotSequence: sequence,
-            projects: [project],
+            projects: [project, ...extraProjects],
             threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
             archivedThreads: [],
           },
@@ -522,7 +535,13 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
 };
 
 class FakeCommandRejected extends Schema.TaggedError<FakeCommandRejected>()("FakeCommandRejected", {
@@ -696,15 +715,23 @@ export const fakeGroupChat = {
     readonly reason: "mention_required" | "archived";
     readonly message: string;
   } | null,
+  /** Holds each post's reply until it settles. */
+  postGate: null as Promise<void> | null,
+  /** Cuts the next post off unanswered, as a connection lost on the way does. */
+  postCut: false,
   posts: [] as Array<Record<string, unknown>>,
+  /** Each post's `clientRequestId`, apart, so the posts' own expectations stay as they are. */
+  postRequestIds: [] as unknown[],
   taskActions: [] as Array<Record<string, unknown>>,
   reads: [] as Array<Record<string, unknown>>,
   conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
+  subscriptions: [] as Array<Record<string, unknown>>,
 };
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
-handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
-  subscribe<AssistantGroupsEvent>(
+handlers[WS_METHODS.assistantGroupsSubscribe] = (input: Record<string, unknown>) => {
+  fakeGroupChat.subscriptions.push(input);
+  return subscribe<AssistantGroupsEvent>(
     [
       {
         type: "snapshot",
@@ -718,6 +745,7 @@ handlers[WS_METHODS.assistantGroupsSubscribe] = () =>
       return () => groupChatSubscribers.delete(queue);
     },
   );
+};
 /** Replaces the chat, including for a subscription an earlier screen left open. */
 export function publishGroupChat(
   messages: AssistantGroupMessage[],
@@ -733,16 +761,26 @@ handlers[WS_METHODS.assistantGroupsHistory] = (input: Record<string, unknown>) =
   fakeGroupChat.histories.push(input);
   return Effect.succeed(fakeGroupChat.older ?? { messages: [], tasks: [], hasMore: false });
 };
-handlers[WS_METHODS.assistantGroupsPost] = (input: Record<string, unknown>) => {
+handlers[WS_METHODS.assistantGroupsPost] = ({
+  clientRequestId,
+  ...input
+}: Record<string, unknown>) => {
+  fakeGroupChat.postRequestIds.push(clientRequestId);
   fakeGroupChat.posts.push(input);
+  if (fakeGroupChat.postCut) return Effect.interrupt;
   const refusal = fakeGroupChat.postRefusal;
-  if (refusal !== null) return Effect.fail(new AssistantError(refusal));
+  const gate = fakeGroupChat.postGate;
+  if (refusal !== null) {
+    const refused = Effect.fail(new AssistantError(refusal));
+    return gate === null ? refused : Effect.promise(() => gate).pipe(Effect.andThen(refused));
+  }
   const message = {
     ...fakeGroupChat.messages.at(-1)!,
     id: `posted-${fakeGroupChat.posts.length}`,
     text: String(input.text),
   } as AssistantGroupMessage;
-  return Effect.succeed({ message, tasks: [] });
+  const reply = { message, tasks: [] };
+  return gate === null ? Effect.succeed(reply) : Effect.promise(() => gate).pipe(Effect.as(reply));
 };
 handlers[WS_METHODS.assistantGroupsMarkRead] = (input: { readonly readSeq?: number }) => {
   fakeGroupChat.reads.push(input);
@@ -1169,7 +1207,13 @@ const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
   initialConfig: Effect.sync(currentServerConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }]),
+    subscribe<ServerConfigStreamEvent>(
+      [{ version: 1 as const, type: "snapshot" as const, config: currentServerConfig() }],
+      (queue) => {
+        configSubscribers.add(queue);
+        return () => configSubscribers.delete(queue);
+      },
+    ),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -1225,9 +1269,16 @@ export function installFakeEnvironment(
     readonly reasoningEffort?: boolean;
     /** Accepted for upstream tests; the command handler below settles every command. */
     readonly acceptCommands?: boolean;
+    /** More projects beside `PROJECT_ID`, by id and title. */
+    readonly projects?: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   } = {},
 ): Disposable {
   threads = fixtures;
+  extraProjects = (options.projects ?? []).map((extra) => ({
+    ...project,
+    ...extra,
+    workspaceRoot: `/workspace/${extra.title}`,
+  }));
   dispatched = [];
   acceptCommands = options.acceptCommands === true;
   hostOs = options.mac ? "darwin" : "linux";

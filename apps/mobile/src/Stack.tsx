@@ -135,6 +135,7 @@ import { KanbanLinkThreadRouteScreen } from "./features/kanban/KanbanLinkThreadR
 import { NotesRouteScreen } from "./features/notes/NotesRouteScreen";
 import { AssistantEditRouteScreen } from "./features/assistants/AssistantEditRouteScreen";
 import { AssistantGroupChatRouteScreen } from "./features/assistants/AssistantGroupChatRouteScreen";
+import { GroupMessageModelPickerRouteScreen } from "./features/assistants/GroupMessageModelPickerRouteScreen";
 import {
   AssistantGroupSettingsRouteScreen,
   GroupDefaultModelPickerRouteScreen,
@@ -429,6 +430,10 @@ const SETTINGS_SCREENS = {
   }),
   SettingsProjectModel: createNativeStackScreen({
     screen: ProjectModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
+  GroupMessageModel: createNativeStackScreen({
+    screen: GroupMessageModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
   SettingsClaudeChrome: createNativeStackScreen({

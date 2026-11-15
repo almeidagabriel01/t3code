@@ -6,7 +6,7 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { MarkdownImageSourceResolver } from "./SelectableMarkdownText.types";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
-import { useCallback } from "react";
+import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { assetEnvironment } from "../state/assets";
@@ -19,7 +19,19 @@ export function useMarkdownImageSource(props: {
   readonly workspaceRoot: string | null;
   readonly captured?: boolean;
 }): MarkdownImageSourceResolver {
-  const { environmentId, threadId, workspaceRoot, captured } = props;
+  const resolverFor = useMarkdownImageSources(props);
+  return useMemo(
+    () => resolverFor(props.threadId, props.workspaceRoot),
+    [resolverFor, props.threadId, props.workspaceRoot],
+  );
+}
+
+/** Builds a thread and root's resolver; keep each one stable, as a new one retries failed images. */
+export function useMarkdownImageSources(props: {
+  readonly environmentId: EnvironmentId;
+  readonly captured?: boolean | undefined;
+}): (threadId: ThreadId | null, workspaceRoot: string | null) => MarkdownImageSourceResolver {
+  const { environmentId, captured } = props;
   const connection = usePreparedConnection(environmentId);
   const environment = useEnvironmentPresentation(environmentId);
   const connectionPhase = environment.presentation?.connection.phase;
@@ -32,41 +44,34 @@ export function useMarkdownImageSource(props: {
   });
   const httpBaseUrl = Option.isSome(connection) ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
-  return useCallback(
-    async (image) => {
-      const media = resolveMobileMarkdownMediaSource(image.href, {
-        threadId: threadId ?? undefined,
-        workspaceRoot,
-        imageEmbed: true,
-      });
-      if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };
-      if (
-        captured ||
-        !fileAccess.canReadFiles ||
-        media === null ||
-        media.access === "unavailable" ||
-        httpBaseUrl === null ||
-        connectionPhase === "offline" ||
-        connectionPhase === "error" ||
-        connectionPhase === "unsupported" ||
-        connectionPhase === "reconnecting"
-      )
-        throw new Error("Markdown image is unavailable");
-      const result = await createUrl({ environmentId, input: { resource: media.resource } });
-      if (result._tag !== "Success") throw new Error("Could not authorize Markdown image");
-      const uri = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-      if (uri === null) throw new Error("Markdown image URL is invalid");
-      return { uri };
-    },
-    [
-      captured,
-      fileAccess.canReadFiles,
-      connectionPhase,
-      createUrl,
-      environmentId,
-      httpBaseUrl,
-      threadId,
-      workspaceRoot,
-    ],
+  return useMemo(
+    () =>
+      (threadId, workspaceRoot): MarkdownImageSourceResolver =>
+      async (image) => {
+        const media = resolveMobileMarkdownMediaSource(image.href, {
+          threadId: threadId ?? undefined,
+          workspaceRoot,
+          imageEmbed: true,
+        });
+        if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };
+        if (
+          captured ||
+          !fileAccess.canReadFiles ||
+          media === null ||
+          media.access === "unavailable" ||
+          httpBaseUrl === null ||
+          connectionPhase === "offline" ||
+          connectionPhase === "error" ||
+          connectionPhase === "unsupported" ||
+          connectionPhase === "reconnecting"
+        )
+          throw new Error("Markdown image is unavailable");
+        const result = await createUrl({ environmentId, input: { resource: media.resource } });
+        if (result._tag !== "Success") throw new Error("Could not authorize Markdown image");
+        const uri = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+        if (uri === null) throw new Error("Markdown image URL is invalid");
+        return { uri };
+      },
+    [captured, fileAccess.canReadFiles, connectionPhase, createUrl, environmentId, httpBaseUrl],
   );
 }

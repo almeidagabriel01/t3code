@@ -8,4 +8,6 @@ export type ProviderSnapshotSource = {
   readonly getSnapshot: ManagedServerProvider["getSnapshot"];
   readonly refresh: ManagedServerProvider["refresh"];
   readonly streamChanges: Stream.Stream<ServerProvider>;
+  /** Stamped on every snapshot when set; group chat routes on this exact instance. */
+  readonly supportsAssistantGroupRouting?: boolean;
 };

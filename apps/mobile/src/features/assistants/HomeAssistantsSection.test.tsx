@@ -251,7 +251,7 @@ const team = (
   name: string,
   memberIds: string[],
   environmentId = "hub",
-  chat?: { unreadCount: number; latestSeq: number },
+  chat?: { unreadCount: number; latestSeq: number; scopes?: unknown },
 ) => ({
   environmentId,
   team: { id, name, memberIds, ...(chat === undefined ? {} : { chat }) },
@@ -435,11 +435,20 @@ describe("HomeAssistantsSection", () => {
     mocks.teams = [
       team("g1", "Busy", [], "hub", { unreadCount: 120, latestSeq: 130 }),
       team("g2", "Quiet", [], "hub", { unreadCount: 0, latestSeq: 5 }),
-      team("g3", "Empty", [], "hub", { unreadCount: 0, latestSeq: 0 }),
+      team("g3", "Empty", [], "hub", {
+        unreadCount: 0,
+        latestSeq: 0,
+        scopes: [{ projectId: null, unreadCount: 0, waiting: true, readSeq: 0 }],
+      }),
     ];
     render();
     const badges = Array.from(container.querySelectorAll('[data-testid="group-unread"]'));
     expect(badges.map((node) => node.textContent)).toEqual(["99+"]);
+    expect(
+      Array.from(container.querySelectorAll('[data-testid="group-waiting-dot"]')).map((node) =>
+        node.closest('[aria-label="Empty"]'),
+      ),
+    ).toEqual([byLabel("Empty")]);
     expect(byLabel("Busy actions")).not.toBeNull();
     expect(container.querySelectorAll('[aria-label="menu:Mark as read"]')).toHaveLength(1);
     expect(container.querySelectorAll('[aria-label="menu:Mark as unread"]')).toHaveLength(2);

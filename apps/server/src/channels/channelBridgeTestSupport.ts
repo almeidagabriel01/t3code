@@ -7,9 +7,13 @@ import {
   type ChannelOutboundMessage as Outbound,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 export const dmAddress = {
@@ -88,3 +92,18 @@ export const outboxRows = Effect.gen(function* () {
   }>`SELECT * FROM channel_outbox ORDER BY rowid`;
   return rows.map((row) => ({ ...row, message: decodeOutbound(row.message_json) }));
 });
+
+/** The projects the outbox looks titles up in: `scratch` is the assistants home, an id not in `titles` is unknown. */
+export const projectsLayer = (titles: Readonly<Record<string, string>> = {}) =>
+  Layer.mergeAll(
+    Layer.mock(ProjectService)({
+      getById: (id) =>
+        Effect.succeed(
+          titles[id] === undefined ? Option.none() : Option.some({ title: titles[id] } as never),
+        ),
+    }),
+    Layer.mock(ManagedProjectFolders)({
+      namedProjectsRoot: "",
+      isAssistantHomeProject: (id) => Effect.succeed(id === "scratch"),
+    }),
+  );

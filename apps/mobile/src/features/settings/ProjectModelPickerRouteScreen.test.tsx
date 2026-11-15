@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   picker: null as null | {
     title: string;
     selected: unknown;
+    clear?: { label: string; onPress: () => void };
     onPick: (selection: unknown) => void;
     onClose: () => void;
   },
@@ -56,7 +57,7 @@ const members = [
 
 let root: Root;
 let container: HTMLDivElement;
-const render = (assistantId?: string) =>
+const render = (assistantId?: string, clearLabel?: string) =>
   act(() =>
     root.render(
       <ProjectModelPickerRouteScreen
@@ -64,6 +65,7 @@ const render = (assistantId?: string) =>
           params: {
             members: members as never,
             ...(assistantId === undefined ? {} : { assistantId: assistantId as never }),
+            ...(clearLabel === undefined ? {} : { clearLabel }),
           },
         }}
       />,
@@ -106,6 +108,34 @@ describe("ProjectModelPickerRouteScreen", () => {
     ]);
     act(() => mocks.picker!.onClose());
     expect(mocks.goBack).toHaveBeenCalledOnce();
+  });
+
+  it("clears the project's own model, which then marks nothing", () => {
+    render(undefined, "Members' models");
+    expect(mocks.picker!.clear?.label).toBe("Members' models");
+    act(() => mocks.picker!.clear!.onPress());
+    expect(mocks.write.mock.calls[0]![1]).toEqual([
+      // Ada's own model stays: the server keeps assistant models a write leaves out.
+      { environmentId: "hub", patch: { projectSettingsOverrides: { p1: {} } } },
+      { environmentId: "laptop", patch: { projectSettingsOverrides: { p2: null } } },
+    ]);
+    // Cleared, the project follows the environment's model: nothing to clear or mark.
+    const hub = environment("hub", {});
+    mocks.environments = [
+      {
+        ...hub,
+        serverConfig: {
+          settings: { ...hub.serverConfig.settings, defaultModelSelection: codex("gpt-5.4") },
+        },
+      },
+    ];
+    render(undefined, "Members' models");
+    expect(mocks.picker!.clear).toBeUndefined();
+    expect(mocks.picker!.selected).toBeNull();
+    // Settings' own entry names what the project goes back to.
+    mocks.environments = [environment("hub", { p1: { defaultModelSelection: codex("gpt-5.5") } })];
+    render();
+    expect(mocks.picker!.clear?.label).toBe("Use the environment's model");
   });
 
   it("saves one assistant's model on its own environment, starting from the project's", () => {

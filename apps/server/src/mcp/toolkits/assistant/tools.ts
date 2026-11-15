@@ -3,6 +3,7 @@ import {
   AUTONOMY_MODES,
   AssistantWorkspace,
   OrchestratorMcpFailure,
+  PickedModelSlug,
   ProviderInstanceId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -84,6 +85,10 @@ export const AssistantParameters = Schema.Struct({
   channel: Schema.optional(Schema.Literals(["telegram", "imessage"])),
   /** group_post: files to share with the group (absolute paths, copied when sent). */
   paths: Schema.optional(Schema.Array(Text(1024)).check(Schema.isMaxLength(10))),
+  /** group_post: the model this request's work runs on, only when the user names one for it. */
+  model: Schema.optional(
+    Schema.Struct({ providerInstanceId: ProviderInstanceId, model: PickedModelSlug }),
+  ),
 });
 export type AssistantParameters = typeof AssistantParameters.Type;
 
@@ -93,7 +98,7 @@ const AssistantTool = Tool.make("t3_assistant", {
     "Change (all take an optional `clientRequestId`; a repeat with the same one changes nothing more): `create` {name, instructions, toolAccess, workspace?, projectId? or projectIds? (the projects it may work in; refused elsewhere), role?, avatarHue?, defaultModel? {providerInstanceId, model} (its first conversation starts on it; later work uses it where the project sets no model)}, `update` {handle, any of those (defaultModel null clears it), notifications?: reply-only (answer only when messaged, the default) or reply-and-notify (also wake on its own rules); set notifications only when the user asks, in a turn they started}, `archive` {handle}, `group_create` {name, members?: handles, lead?}, `group_update` {group, name?, members? (replaces), addMembers?, removeMembers?, lead?, projectIds? (replaces the group's projects), addProjects?, removeProjects?: project ids every member may work in, on top of its own; removing one keeps a member's own access}, `task_dismiss` / `task_restore` {threadId}: hide or show a finished task in the list (refused while it runs; the thread stays). Groups may be empty or hold one assistant; only active assistants can join. A group's optional `lead` (a member's handle) only routes a group request that mentions no one; it gives no extra permissions. `group_create` and `group_update` work only in a turn the user started; from another assistant's message, a schedule or a group task they are refused, so tell the user and do not retry. Each change leaves a line in the group chat.",
     '`notify_user` {text, threadId?, clientRequestId?}: an assistant only, when the user asked to be told ("message me when the deploy ends", "send me the summary"). Sends a short plain message to the user\'s Telegram (or iMessage) and Activity, with a link to `threadId` if given. No attachments or secrets. Refused while assistant notifications are paused or past today\'s limit: then tell the user in your reply and do not retry.',
     "`resend_undelivered` {channel?}: when the user says replies never arrived. Requeues the last day's undelivered replies without repeating parts that arrived; answers {requeued: {telegram, imessage}}.",
-    "`group_post` {group, text, paths?, projectId?}: post a request in a group's chat from this conversation. Write a complete brief; start it with `@handle` (or `@everyone`) to pick who works on it, otherwise the lead routes it. projectId: the project it is for (id or name, one of the members' projects); left out, the lead picks it. Members answer in the group chat, not to you. Not available inside a group task (use t3_group there).",
+    "`group_post` {group, text, paths?, projectId?, model?}: post a request in a group's chat from this conversation. Write a complete brief; start it with `@handle` (or `@everyone`) to pick who works on it, otherwise the lead routes it. projectId: the project it is for (id or name, one of the members' projects); left out, the lead picks it. model {providerInstanceId, model}: only when the user names a model for this request (`orchestrator_capabilities` lists them); that request's work runs on it and no default changes; left out, the project's and group's defaults apply. Members answer in the group chat, not to you. Not available inside a group task (use t3_group there).",
     '`container_task` {text, name? (title), clientRequestId?}: run ONE task in the sandbox container while you stay on this Mac ("run the CI in the container"). Only when the user asks for the container; otherwise work here. Never switch your workspace for it. The first time it asks the user how much CPU the container may use ({status: pending_decision}); if it answers pending_decision or starting, tell the user and repeat the same call later. {status: started} means end your turn: the result arrives as a message. The container is discarded when its tasks are done, unless the user keeps it. `container_discard`: remove it now (its files stay); refused while tasks run in it.',
     'toolAccess is read-only, workspace-write or full, and is the user\'s call: on `create` it is required. If the user did not say which, ask them first and offer `default (up to my level)` or a custom setup; never pick it yourself and do not call create until they answer. Default means your own level, or the closest one below it. A level above yours (or changing an assistant that is above yours) is not made right away: the user gets an approval card and the result is {status: "pending_approval"}. Tell the user it is waiting, then repeat the same call (same clientRequestId) once they approve.',
   ].join(" "),

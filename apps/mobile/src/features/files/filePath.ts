@@ -5,6 +5,7 @@ import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 
 function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
@@ -64,7 +65,26 @@ export function resolveFileLinkPath(
     const expanded = resolvePathLinkTarget(targetPath, workspaceRoot);
     return isAbsolutePath(expanded) ? expanded : null;
   }
-  return isAbsolutePath(targetPath) ? targetPath : normalizeRelativePath(targetPath);
+  if (isAbsolutePath(targetPath)) return targetPath;
+  const relativePath = normalizeRelativePath(targetPath);
+  if (relativePath !== null || !workspaceRoot) return relativePath;
+  return resolveClimbingLink(workspaceRoot, targetPath);
+}
+
+// A link such as `../other-repo/x.ts` names a host file, which the server reads in place;
+// one that climbs back into the root is a workspace file.
+function resolveClimbingLink(workspaceRoot: string, targetPath: string): string | null {
+  const joined = resolveWorkspaceFilePath(workspaceRoot, targetPath);
+  const body = normalizeRelativePath(joined);
+  if (body === null) return null;
+  const hostPath = isWindowsPathStyle(workspaceRoot)
+    ? `${joined.startsWith("\\\\") ? "\\\\" : ""}${body.replaceAll("/", "\\")}`
+    : `/${body}`;
+  if (!isAbsolutePath(hostPath)) return null;
+  const relativePath = workspaceRelativeFilePath(hostPath, workspaceRoot);
+  // The root itself is no file, as with a `.` link.
+  if (relativePath === ".") return null;
+  return relativePath ?? hostPath;
 }
 
 export function resolveWorkspaceRelativeFilePath(

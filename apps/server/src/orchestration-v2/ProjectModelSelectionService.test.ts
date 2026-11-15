@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectModelSelection from "./ProjectModelSelectionService.ts";
@@ -42,6 +43,7 @@ const layer = ProjectModelSelection.layer.pipe(
           enabled("team"),
           enabled("assistant"),
           enabled("global"),
+          enabled("probing"),
           ["off", { driver: "codex", enabled: false }],
         ]),
         defaultModelSelection: pick("global"),
@@ -57,6 +59,15 @@ const layer = ProjectModelSelection.layer.pipe(
         },
       }),
       Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone }),
+      // A message's model must name a model its provider lists; the defaults are not checked.
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          { instanceId: ProviderInstanceId.make("team"), models: [{ slug: "team-model" }] },
+          { instanceId: ProviderInstanceId.make("off"), models: [{ slug: "off-model" }] },
+          // Still probing: no models listed yet, so it cannot tell a pick is unknown.
+          { instanceId: ProviderInstanceId.make("probing"), models: [] },
+        ] as never),
+      }),
       SqlitePersistence.layerMemory,
     ),
   ),
@@ -97,6 +108,14 @@ it.effect("each layer wins over the ones below it, and a disabled instance skips
       [{ projectId: disabled, assistantId: ana, teamId: offTeam }, "assistant", "assistant"],
       [{ projectId: withDefault, assistantId: ana, explicit: pick("team") }, "message", "team"],
       [{ projectId: bare, explicit: pick("off") }, "global", "global"],
+      [{ projectId: withDefault, explicit: pick("probing") }, "message", "probing"],
+      // A message's model nobody offers falls to the next layer, never an error.
+      [{ projectId: withDefault, explicit: pick("nowhere") }, "project", "project"],
+      [
+        { projectId: withDefault, explicit: { ...pick("team"), model: "no-such-model" } },
+        "project",
+        "project",
+      ],
     ] as const;
     for (const [input, layerName, instanceId] of cases) {
       const resolved = yield* service.resolveForNewThread(input);

@@ -1,18 +1,19 @@
 import {
   type AssistantId,
-  assistantGroupProjectIds,
   type AssistantTeamId,
   DEFAULT_MODEL,
-  isProviderAvailable,
   type ModelSelection,
   type ProjectId,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import {
+  firstUsableProviderModel,
+  isPickedModelUsable,
   type ModelSelectionLayer,
+  projectModelLayer,
   resolveModelSelection,
+  teamModelLayer,
 } from "@t3tools/shared/modelSelectionPrecedence";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
@@ -41,31 +42,13 @@ export class ProjectModelSelectionError extends Schema.TaggedError<ProjectModelS
   }
 }
 
-/** Like a new thread with no configured default: the first usable provider and its default model. */
-export function firstUsableProviderModel(
-  providers: ReadonlyArray<ServerProvider>,
-): ModelSelection | null {
-  const provider = providers.find(
-    (entry) =>
-      entry.enabled &&
-      entry.installed &&
-      entry.auth.status !== "unauthenticated" &&
-      isProviderAvailable(entry),
-  );
-  if (provider === undefined) return null;
-  const model =
-    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
-    provider.models.find((entry) => !entry.isCustom) ??
-    provider.models[0];
-  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
-}
-
 export class ProjectModelSelectionService extends Context.Service<
   ProjectModelSelectionService,
   {
     /**
      * The model new work starts on: explicit, assistant in project, project, team, assistant,
-     * then global. A layer whose instance is missing or disabled for the project is skipped.
+     * then global. A layer whose instance is missing or disabled for the project is skipped, and
+     * an explicit model its provider does not list.
      * Never falls back to `fallbackModelSelections`: switching provider is the user's call.
      */
     readonly resolveForNewThread: (input: {
@@ -104,21 +87,19 @@ const make = Effect.gen(function* () {
             ? undefined
             : (yield* sql<AssistantTeamRow>`SELECT * FROM assistant_teams WHERE team_id = ${teamId}`)[0];
         const teamValue = teamRow === undefined ? undefined : toAssistantTeam(teamRow);
-        const teamProjects =
-          teamValue === undefined || teamValue.memberIds.length === 0
-            ? (teamValue?.projectIds ?? [])
-            : assistantGroupProjectIds(
-                (yield* sql<AssistantRow>`
-                  SELECT * FROM assistants WHERE assistant_id IN ${sql.in(teamValue.memberIds)}`).map(
-                  toAssistant,
-                ),
-                teamValue.projectIds,
-              );
-        // The team's default holds only in its effective projects: its own plus its members'.
         const team =
-          teamValue === undefined || (teamProjects.length > 0 && !teamProjects.includes(projectId))
+          teamValue === undefined
             ? undefined
-            : (teamValue.defaultModelSelection ?? undefined);
+            : teamModelLayer(
+                teamValue,
+                teamValue.memberIds.length === 0
+                  ? []
+                  : (yield* sql<AssistantRow>`
+                      SELECT * FROM assistants WHERE assistant_id IN ${sql.in(teamValue.memberIds)}`).map(
+                      toAssistant,
+                    ),
+                projectId,
+              );
         const assistant =
           assistantId === undefined
             ? undefined
@@ -132,18 +113,26 @@ const make = Effect.gen(function* () {
         const configuredGlobal = settings.defaultModelSelection;
         const result = resolveModelSelection(
           {
-            message: explicit,
+            message:
+              explicit !== undefined &&
+              isPickedModelUsable(
+                settings,
+                projectId,
+                Option.isSome(providerRegistry) ? providers : undefined,
+                explicit,
+              )
+                ? explicit
+                : undefined,
             assistantProject:
               assistantId === undefined
                 ? undefined
                 : settings.projectSettingsOverrides[projectId]?.assistantModelSelections?.[
                     assistantId
                   ],
-            // Without its own value, the resolved project default is the global one.
-            project:
-              resolved.sources.defaultModelSelection === "environment"
-                ? undefined
-                : (resolved.settings.defaultModelSelection ?? undefined),
+            project: projectModelLayer(
+              resolved.sources.defaultModelSelection,
+              resolved.settings.defaultModelSelection,
+            ),
             team,
             assistant,
             global: (configuredGlobal !== null && isUsable(configuredGlobal)

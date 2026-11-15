@@ -624,6 +624,7 @@ export default defineConfig({
       {
         files: [
           "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",
+          "apps/mobile/src/features/assistants/AssistantGroupChatRouteScreen.tsx",
           "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
           "apps/mobile/src/features/files/FileMarkdownPreview.tsx",
           "apps/mobile/src/features/files/SourceFileSurface.tsx",
@@ -635,6 +636,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/features/threads/AssistantMarkdownContent.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",

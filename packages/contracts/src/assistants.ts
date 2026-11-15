@@ -302,6 +302,33 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * routes a group request that mentions nobody; it gains no permission.
  */
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
+export const AssistantTeamChatScope = Schema.Struct({
+  projectId: Schema.NullOr(ProjectId),
+  unreadCount: Schema.Int,
+  /** An open wait on the user, or the lead asking which project, in this tab. */
+  waiting: Schema.Boolean,
+  /** The tab's read position: its own, else the group's. */
+  readSeq: Schema.Int,
+  /** The project's title, kept after it is deleted; absent for General and unknown projects. */
+  title: Schema.optionalKey(Schema.String),
+  /**
+   * The group's queued, running or waiting tasks in this tab; absent when none, and from older
+   * servers. Every working task counts in one tab, so their sum is the group's `working`.
+   */
+  openTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * The group's stopped tasks in this tab, so an end tells apart from work that only moved to
+   * another tab; absent when none, and from older servers.
+   */
+  doneTasks: Schema.optionalKey(Schema.Int),
+  /**
+   * General only: it holds a request. Without one it is listed only for its counts, and shows no
+   * tab for them alone. Absent from older servers, which list General only with a request.
+   */
+  hasRequests: Schema.optionalKey(Schema.Boolean),
+});
+export type AssistantTeamChatScope = typeof AssistantTeamChatScope.Type;
+
 export const AssistantTeamChat = Schema.Struct({
   latestSeq: Schema.Int,
   /** The last message the user has read; unread messages are the newer ones not written by them. */
@@ -309,10 +336,49 @@ export const AssistantTeamChat = Schema.Struct({
   unreadCount: Schema.Int,
   /** A task of the group is queued, running or waiting. */
   working: Schema.Boolean,
+  /** Tasks of the whole group running now, whatever tab is open. Absent from older servers. */
+  runningCount: Schema.optionalKey(Schema.Int),
   /** The start of the latest member message, for a "work finished" notice. */
   preview: Schema.NullOr(Schema.String),
+  /** The project of the request `preview` comes from; null for none. Absent from older servers. */
+  previewProjectId: Schema.optionalKey(Schema.NullOr(ProjectId)),
+  /**
+   * Per project tab (`null` = General): tabs with unread or waiting messages, their own read
+   * position or tasks, plus General when it has a request. Absent from older servers, which have
+   * no tabs.
+   */
+  scopes: Schema.optionalKey(Schema.Array(AssistantTeamChatScope)),
+  /**
+   * The projects of the group's requests that no longer exist, by id, so every client numbers
+   * their "Removed project" labels alike, whatever history it loaded. Absent from older servers.
+   */
+  removedProjectIds: Schema.optionalKey(Schema.Array(ProjectId)),
 });
 export type AssistantTeamChat = typeof AssistantTeamChat.Type;
+
+/**
+ * The tabs (`null` = General) whose work just ended: open tasks before, none now, and more of
+ * them stopped. A server without stopped counts only ends work while the group's open total falls.
+ */
+export function assistantGroupFinishedScopes(
+  previous: Pick<AssistantTeamChat, "scopes"> | undefined,
+  next: Pick<AssistantTeamChat, "scopes"> | undefined,
+): ReadonlyArray<ProjectId | null> {
+  const before = previous?.scopes ?? [];
+  const after = next?.scopes ?? [];
+  const now = (projectId: ProjectId | null) => after.find((scope) => scope.projectId === projectId);
+  const emptied = before.filter(
+    (scope) => (scope.openTasks ?? 0) > 0 && (now(scope.projectId)?.openTasks ?? 0) === 0,
+  );
+  if ([...before, ...after].some((scope) => scope.doneTasks !== undefined)) {
+    return emptied
+      .filter((scope) => (now(scope.projectId)?.doneTasks ?? 0) > (scope.doneTasks ?? 0))
+      .map((scope) => scope.projectId);
+  }
+  const total = (scopes: typeof before) =>
+    scopes.reduce((sum, scope) => sum + (scope.openTasks ?? 0), 0);
+  return total(after) < total(before) ? emptied.map((scope) => scope.projectId) : [];
+}
 
 export const AssistantTeam = Schema.Struct({
   id: AssistantTeamId,

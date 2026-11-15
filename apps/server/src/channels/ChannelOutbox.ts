@@ -1,4 +1,4 @@
-import { type ChannelKind, ChannelOutboundMessage } from "@t3tools/contracts";
+import { type ChannelKind, ChannelOutboundMessage, type ProjectId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,8 +13,10 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import { ProjectService } from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { redactChannelText } from "./channelRedaction.ts";
+import { channelProjectTitleOf, redactChannelText } from "./channelRedaction.ts";
 import * as ChannelTransport from "./ChannelTransport.ts";
 
 const MAX_ATTEMPTS = 10;
@@ -85,8 +87,15 @@ export const undeliveredField = Effect.fn("ChannelOutbox.undeliveredField")(func
 export class ChannelOutbox extends Context.Service<
   ChannelOutbox,
   {
-    /** Stores one delivery; a repeat of the same `deliveryId` changes nothing. */
-    readonly enqueue: (message: ChannelOutboundMessage) => Effect.Effect<void>;
+    /**
+     * Stores one delivery; a repeat of the same `deliveryId` changes nothing. `projectId` is
+     * resolved to the project's title once, here; none for no project, a deleted one or the assistants home.
+     */
+    readonly enqueue: (
+      message: Omit<ChannelOutboundMessage, "project"> & {
+        readonly projectId?: ProjectId | null | undefined;
+      },
+    ) => Effect.Effect<void>;
     readonly find: (deliveryId: string) => Effect.Effect<Option.Option<OutboxRow>>;
     /** Wakes the worker; `enqueue` does this itself, a caller that enqueues in a transaction calls it after commit. */
     readonly wake: Effect.Effect<void>;
@@ -103,6 +112,8 @@ export class ChannelOutbox extends Context.Service<
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const registry = yield* ChannelTransport.ChannelTransportRegistry;
+  const projects = yield* ProjectService;
+  const folders = yield* ManagedProjectFolders;
   const wakeups = yield* Queue.sliding<void>(1);
   const undelivered = yield* SubscriptionRef.make<ReadonlyMap<string, number>>(new Map());
   const lock = yield* Semaphore.make(1);
@@ -113,12 +124,14 @@ const make = Effect.gen(function* () {
   const wake = Queue.offer(wakeups, undefined).pipe(Effect.asVoid);
 
   const enqueue: ChannelOutbox["Service"]["enqueue"] = Effect.fn("ChannelOutbox.enqueue")(
-    function* (written) {
+    function* ({ projectId, ...written }) {
       // The one way out to a chat app: whoever wrote it, nothing recognizable as a credential
       // is stored here or reaches a third-party server.
+      const title = yield* channelProjectTitleOf({ projects, folders }, projectId);
       const message = {
         ...written,
         text: redactChannelText(written.text),
+        ...(title === undefined ? {} : { project: title }),
         ...(written.choices === undefined
           ? {}
           : {

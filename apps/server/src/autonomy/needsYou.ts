@@ -150,7 +150,6 @@ export interface NeedsYouCard {
   /** The decision's title, already in the chat's language. */
   readonly title: string;
   readonly context: string;
-  readonly projectName: string | null;
   readonly threadTitle: string | null;
   readonly link: string | null;
   /** Answerable cards end with numbered choices; the rest point to T3. */
@@ -168,12 +167,10 @@ export function needsYouText(
   const t = channelStrings(language);
   const context = cardContext(card.context, language);
   const answerable = card.answerable && !context.cut;
-  const where = [
-    ...(card.projectName === null ? [] : [`${t.projectLabel} ${card.projectName}`]),
-    ...(card.threadTitle === null || card.threadTitle === card.agent
-      ? []
-      : [`${t.threadLabel} ${card.threadTitle}`]),
-  ].join(" · ");
+  const where =
+    card.threadTitle === null || card.threadTitle === card.agent
+      ? ""
+      : `${t.threadLabel} ${card.threadTitle}`;
   const lines = [
     t.waitingForYou(card.agent),
     card.title,

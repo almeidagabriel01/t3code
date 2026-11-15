@@ -59,6 +59,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AppBar } from "../../components/ui/AppBar";
+import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
@@ -682,6 +683,10 @@ type ThreadSettingsCatalogItem =
   | {
       readonly kind: "options";
       readonly key: "options";
+    }
+  | {
+      readonly kind: "clear";
+      readonly key: "clear";
     };
 
 function ThreadSettingsModelListRow(props: {
@@ -927,6 +932,7 @@ function ThreadSettingsMainContent(props: {
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
   const session = useThreadSettingsSession();
+  const { clear } = useThreadSettingsPickerPresentation();
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -963,6 +969,10 @@ function ThreadSettingsMainContent(props: {
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [
+    // Over a search or a filter it would sit above the results and be tapped by mistake.
+    ...(clear === undefined || hasActiveCatalogFilter
+      ? []
+      : ([{ kind: "clear", key: "clear" }] as const)),
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
@@ -982,6 +992,12 @@ function ThreadSettingsMainContent(props: {
       );
     } else if (item.kind === "notice") {
       content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
+    } else if (item.kind === "clear" && clear !== undefined) {
+      content = (
+        <View className="mx-4 mb-4 overflow-hidden rounded-2xl">
+          <ListActionRow icon="arrow.uturn.backward" label={clear.label} onPress={clear.onPress} />
+        </View>
+      );
     } else if (item.kind === "empty") {
       content = (
         <View className="items-center px-8 py-14">
@@ -1160,9 +1176,13 @@ type ThreadSettingsPickerStackParams = {
   ThreadSettingsChoice: ThreadSettingsSubmenuPage & { readonly title: string };
 };
 
+/** A row above the models that drops the choice instead of picking one, such as a project's own. */
+export type ThreadSettingsPickerClear = { readonly label: string; readonly onPress: () => void };
+
 type ThreadSettingsPickerPresentation = {
   readonly onClose: () => void;
   readonly title?: string;
+  readonly clear?: ThreadSettingsPickerClear;
 };
 
 const ThreadSettingsPickerStack = createNativeStackNavigator<ThreadSettingsPickerStackParams>();
@@ -1296,6 +1316,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
   const presentation = {
     onClose: props.onClose,
     ...(props.title === undefined ? {} : { title: props.title }),
+    ...(props.clear === undefined ? {} : { clear: props.clear }),
   };
 
   return (
@@ -1320,11 +1341,19 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
 }
 
 export function ThreadSettingsPickerScreen(
-  props: ThreadSettingsSessionProps & { readonly onClose: () => void; readonly title?: string },
+  props: ThreadSettingsSessionProps & {
+    readonly onClose: () => void;
+    readonly title?: string;
+    readonly clear?: ThreadSettingsPickerClear;
+  },
 ) {
   return (
     <ThreadSettingsSessionProvider {...props}>
-      <ThreadSettingsPickerNavigator onClose={props.onClose} title={props.title} />
+      <ThreadSettingsPickerNavigator
+        onClose={props.onClose}
+        title={props.title}
+        clear={props.clear}
+      />
     </ThreadSettingsSessionProvider>
   );
 }

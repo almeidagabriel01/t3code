@@ -1,3 +1,4 @@
+import { AssistantError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -18,6 +19,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("./query", () => ({ useEnvironmentQuery: mocks.query }));
 
 import { useAtomValue } from "@effect/atom-react";
+import { ASSISTANT_GROUP_CHAT_IDLE } from "@t3tools/client-runtime/state/assistants";
 
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -80,6 +82,11 @@ describe("group chat hooks", () => {
     expect(useAssistantGroupChat("hub" as never, "g1" as never)).toBe(state);
     vi.mocked(useAtomValue).mockReturnValueOnce(AsyncResult.initial());
     expect(useAssistantGroupChat("hub" as never, "g1" as never)).toBeNull();
+    // Before the tab is known nothing is read: not the whole chat, not a scope.
+    vi.mocked(useAtomValue).mockImplementationOnce((atom) =>
+      atom === ASSISTANT_GROUP_CHAT_IDLE ? AsyncResult.initial() : AsyncResult.success(state),
+    );
+    expect(useAssistantGroupChat("hub" as never, "g1" as never, null)).toBeNull();
   });
 
   const commands = () => {
@@ -116,17 +123,20 @@ describe("group chat hooks", () => {
     });
     post.mockResolvedValueOnce({
       _tag: "Failure",
-      cause: Cause.fail({ message: "needs a mention", reason: "mention_required" }),
+      cause: Cause.fail(
+        new AssistantError({ message: "needs a mention", reason: "mention_required" }),
+      ),
     });
     expect(await actions.post({ teamId: "g1", text: "hi" } as never)).toEqual({
       ok: false,
       message: "needs a mention",
       reason: "mention_required",
     });
+    // Anything but the server's typed answer may follow a post it took: it is unconfirmed.
     post.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail({ message: "boom" }) });
     expect(await actions.post({ teamId: "g1", text: "hi" } as never)).toMatchObject({
       ok: false,
-      reason: null,
+      reason: "unconfirmed",
     });
   });
 
