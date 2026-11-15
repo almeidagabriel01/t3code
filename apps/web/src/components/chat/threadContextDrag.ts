@@ -162,6 +162,15 @@ function zoneRect(rect: DOMRect, zone: TabDropZone) {
   }
 }
 
+/** A sidebar drop on the composer is a mention, so the body's bottom edge zone sits above it. */
+function aboveComposer(body: HTMLElement, rect: DOMRect) {
+  const composerTop = body.querySelector(`[${DROP_TARGET_ATTRIBUTE}]`)?.getBoundingClientRect().top;
+  if (composerTop === undefined || composerTop <= rect.top || composerTop >= rect.bottom) {
+    return rect;
+  }
+  return { left: rect.left, top: rect.top, width: rect.width, height: composerTop - rect.top };
+}
+
 function findTabDrop(
   point: { x: number; y: number },
   label: ThreadDragLabel,
@@ -199,7 +208,7 @@ function findTabDrop(
   const groupId = body?.getAttribute(BODY_ATTRIBUTE);
   if (!body || !groupId) return null;
   const rect = body.getBoundingClientRect();
-  const zone = resolveTabDropZone(rect, point);
+  const zone = resolveTabDropZone(label.fromTab ? rect : aboveComposer(body, rect), point);
   return {
     groups,
     target: { groupId, zone },
@@ -247,6 +256,7 @@ export function dropThreadContext(
     count: 1,
     threadKey,
     projectKey: label?.projectKey ?? null,
+    fromTab: label?.fromTab === true,
   });
   if (drop === null) return false;
   drop.groups.dispatchEvent(

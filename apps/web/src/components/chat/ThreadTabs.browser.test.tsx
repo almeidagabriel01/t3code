@@ -230,6 +230,62 @@ describe("thread tabs", () => {
     await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
   });
 
+  it("moves focus across thread and file tabs with the arrows, Home and End", async () => {
+    await setup({
+      ...sideBySide(),
+      groups: [{ id: "main", tabs: ["env:a", "env:b"], active: "env:a" }],
+      layout: leaf("main"),
+    });
+    panels().openFile(ref("b"), "b.ts");
+    panels().openFile(ref("a"), "src/x.ts");
+    await using screen = await render(<Harness route="a" />, { router: "/env/a" });
+    const focused = () => document.activeElement?.getAttribute("aria-label");
+    await expect
+      .element(screen.getByRole("tab", { name: "x.ts" }))
+      .toHaveAttribute("tabindex", "0");
+    screen.getByRole("tab", { name: "x.ts" }).element().focus();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("Thread b");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("b.ts");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(focused()).toBe("Thread a");
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(focused()).toBe("b.ts");
+    await userEvent.keyboard("{Home}");
+    expect(focused()).toBe("Thread a");
+    await userEvent.keyboard("{End}");
+    expect(focused()).toBe("b.ts");
+
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env/b"));
+    expect(panels().byThreadKey["env:b"]?.activeMainId).toBe("file:b.ts");
+
+    // Enter on a tab's x closes it rather than opening the tab.
+    screen.getByRole("button", { name: "Close Thread a" }).element().focus();
+    await userEvent.keyboard("{Enter}");
+    expect(workspace()?.groups[0]?.tabs).toEqual(["env:b"]);
+  });
+
+  it("shows the whole active tab in a narrow row", async () => {
+    await setup({
+      ...sideBySide(),
+      groups: [{ id: "main", tabs: ["env:a", "env:b"], active: "env:a" }],
+      layout: leaf("main"),
+    });
+    for (const name of ["one.ts", "two.ts", "three.ts", "four.ts", "Transcript.tsx"]) {
+      panels().openFile(ref("a"), `src/${name}`);
+    }
+    await using screen = await render(<Harness route="a" width={420} />, { router: "/env/a" });
+    const active = screen.getByRole("tab", { name: "Transcript.tsx" });
+    await expect.element(active).toHaveAttribute("aria-selected", "true");
+    const strip = screen.getByRole("tablist").element().getBoundingClientRect();
+    const tab = active.element().getBoundingClientRect();
+    expect(tab.left).toBeGreaterThanOrEqual(strip.left);
+    expect(tab.right).toBeLessThanOrEqual(strip.right + 1);
+  });
+
   it("closes a split group's shown file with Cmd+W before its thread", async () => {
     await setup(sideBySide());
     panels().openFile(ref("c"), "c.ts");
@@ -338,6 +394,17 @@ describe("dragging threads onto the thread area", () => {
     // The composer takes a sidebar drop as a mention; a thread without tabs finds no zone.
     await act(() => moveThreadContextDrag(center(screen.getByTestId("composer").element()), label));
     expect(preview()).toBeNull();
+    // A sidebar thread splits down from the band just above the composer; a tab keeps the full body.
+    const composerTop = screen.getByTestId("composer").element().getBoundingClientRect().top;
+    const aboveComposer = { x: rect.left + rect.width / 2, y: composerTop - 5 };
+    await act(() => moveThreadContextDrag(aboveComposer, label));
+    expect(preview()?.dataset.threadTabDropPreview).toBe("down");
+    const sidebarDown = preview()?.getBoundingClientRect().toJSON();
+    const tabLabel = { ...label, fromTab: true };
+    await act(() => moveThreadContextDrag(aboveComposer, tabLabel));
+    expect(preview()?.dataset.threadTabDropPreview).toBe("center");
+    await act(() => moveThreadContextDrag({ ...aboveComposer, y: rect.bottom - 5 }, tabLabel));
+    expect(preview()?.getBoundingClientRect().toJSON()).toEqual(sidebarDown);
     await act(() => moveThreadContextDrag(rightEdge, { ...label, projectKey: null }));
     expect(preview()).toBeNull();
     await act(() => moveThreadContextDrag(rightEdge, { ...label, count: 2, threadKey: null }));
