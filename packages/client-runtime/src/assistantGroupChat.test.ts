@@ -583,11 +583,44 @@ describe("assistantGroupAwaitingRoute", () => {
 describe("composer helpers", () => {
   const ALPHA = { id: "p1" as ProjectId, name: "Alpha" };
   const BETA = { id: "p2" as ProjectId, name: "Beta" };
-  const none = { replyOwnerId: null, request: null, stopped: [] };
+  const none = { replyOwner: null, request: null, stopped: [] };
   const started = (ownerId: string | null) => ({
     ...none,
     request: { projectId: ALPHA.id, started: true, ownerId: ownerId as AssistantId | null },
   });
+  // `AssistantGroups.post` matches a request's tasks by `request_id` alone, so a task from before
+  // requests had ids (`requestId` unset) neither starts nor stops its request; with no request,
+  // every stopped root of the group counts.
+  const chat = start(
+    snapshot(
+      [
+        message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
+        message(2, {
+          author: "assistant",
+          assistantId: "beto" as AssistantId,
+          taskId: "k" as AssistantGroupTask["id"],
+          requestId: "m1" as AssistantGroupMessageId,
+        }),
+        message(3, { requestId: "m3" as AssistantGroupMessageId }),
+        message(4, { requestId: "m4" as AssistantGroupMessageId }),
+        message(5, {
+          author: "assistant",
+          assistantId: "ada" as AssistantId,
+          taskId: "old" as AssistantGroupTask["id"],
+          requestId: "m4" as AssistantGroupMessageId,
+        }),
+      ],
+      [
+        task("k", 1, {
+          requestId: "m1" as AssistantGroupMessageId,
+          ownerId: "beto" as AssistantId,
+          status: "failed",
+          updatedAt: "2026-11-01T00:00:09.000Z",
+        }),
+        task("old", 4, { status: "paused", updatedAt: "2026-11-01T00:00:05.000Z" }),
+      ],
+    ),
+  );
   type Row = {
     readonly text: string;
     readonly lead?: typeof jarvis | null;
@@ -647,12 +680,26 @@ describe("composer helpers", () => {
     ],
     [
       "a reply to a member",
-      { text: "why?", routes: false, context: { ...started("beto"), replyOwnerId: beto.id } },
+      { text: "why?", routes: false, context: { ...started("beto"), replyOwner: { id: beto.id } } },
+      "To Beto Silva",
+    ],
+    // The answered message is older than the loaded history: the quote names the member.
+    [
+      "a reply to a member whose message is not loaded",
+      {
+        text: "why?",
+        routes: false,
+        context: assistantGroupSendContext(chat, {
+          id: "m9" as AssistantGroupMessageId,
+          to: "Beto Silva",
+          projectId: ALPHA.id,
+        }),
+      },
       "To Beto Silva",
     ],
     [
       "a mention wins over the reply",
-      { text: "@ada why?", context: { ...started("beto"), replyOwnerId: beto.id } },
+      { text: "@ada why?", context: { ...started("beto"), replyOwner: { id: beto.id } } },
       "To Ada",
     ],
     [
@@ -708,45 +755,21 @@ describe("composer helpers", () => {
     );
   });
 
-  // `AssistantGroups.post` matches a request's tasks by `request_id` alone, so a task from before
-  // requests had ids (`requestId` unset) neither starts nor stops its request; with no request,
-  // every stopped root of the group counts.
-  const chat = start(
-    snapshot(
-      [
-        message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
-        message(2, {
-          author: "assistant",
-          assistantId: "beto" as AssistantId,
-          taskId: "k" as AssistantGroupTask["id"],
-          requestId: "m1" as AssistantGroupMessageId,
-        }),
-        message(3, { requestId: "m3" as AssistantGroupMessageId }),
-        message(4, { requestId: "m4" as AssistantGroupMessageId }),
-        message(5, {
-          author: "assistant",
-          assistantId: "ada" as AssistantId,
-          taskId: "old" as AssistantGroupTask["id"],
-          requestId: "m4" as AssistantGroupMessageId,
-        }),
-      ],
-      [
-        task("k", 1, {
-          requestId: "m1" as AssistantGroupMessageId,
-          ownerId: "beto" as AssistantId,
-          status: "failed",
-          updatedAt: "2026-11-01T00:00:09.000Z",
-        }),
-        task("old", 4, { status: "paused", updatedAt: "2026-11-01T00:00:05.000Z" }),
-      ],
-    ),
-  );
   it.each<[string, string | null, unknown]>([
+    [
+      "a member's answer older than the loaded history",
+      "m9",
+      {
+        replyOwner: { name: "Beto Silva" },
+        request: { projectId: "p1", started: true, ownerId: null },
+        stopped: [],
+      },
+    ],
     [
       "a member's answer in a started request",
       "m2",
       {
-        replyOwnerId: "beto",
+        replyOwner: { id: "beto" },
         request: { projectId: "p1", started: true, ownerId: "beto" },
         stopped: [{ taskId: "k", ownerId: "beto" }],
       },
@@ -755,7 +778,7 @@ describe("composer helpers", () => {
       "a request the lead has not routed",
       "m3",
       {
-        replyOwnerId: null,
+        replyOwner: null,
         request: { projectId: null, started: false, ownerId: null },
         stopped: [],
       },
@@ -764,7 +787,7 @@ describe("composer helpers", () => {
       "an answer whose task has no request id",
       "m5",
       {
-        replyOwnerId: "ada",
+        replyOwner: { id: "ada" },
         request: { projectId: null, started: false, ownerId: null },
         stopped: [],
       },
@@ -773,7 +796,7 @@ describe("composer helpers", () => {
       "no reply: the group's stopped work, newest first",
       null,
       {
-        replyOwnerId: null,
+        replyOwner: null,
         request: null,
         stopped: [
           { taskId: "k", ownerId: "beto" },
@@ -783,7 +806,12 @@ describe("composer helpers", () => {
     ],
   ])("reads the send context of %s", (_name, replyTo, expected) => {
     assert.deepEqual<unknown>(
-      assistantGroupSendContext(chat, replyTo as AssistantGroupMessageId | null, [ada, beto]),
+      assistantGroupSendContext(
+        chat,
+        replyTo === null
+          ? null
+          : { id: replyTo as AssistantGroupMessageId, to: "Beto Silva", projectId: ALPHA.id },
+      ),
       expected,
     );
   });

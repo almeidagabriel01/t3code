@@ -735,10 +735,21 @@ function joinNames(names: ReadonlyArray<string>): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
+/** The message a draft answers, as the composer quotes it. */
+export interface AssistantGroupReplyRef {
+  readonly id: AssistantGroupMessageId;
+  /** The member the quote names; null for a reply to a request itself. */
+  readonly to: string | null;
+  readonly projectId: ProjectId | null;
+}
+
 /** What the server reads besides the draft to route it (`AssistantGroups.post`). */
 export interface AssistantGroupSendContext {
-  /** The member whose message the draft replies to, while still a member. */
-  readonly replyOwnerId: AssistantId | null;
+  /**
+   * Whose work the draft answers: the owner of the answered message's task, else the member the
+   * quote names while that message or its task is not loaded. The preview checks membership.
+   */
+  readonly replyOwner: { readonly id: string } | { readonly name: string } | null;
   /** The request a reply continues; `ownerId` when exactly one member works it. */
   readonly request: {
     readonly projectId: ProjectId | null;
@@ -752,10 +763,20 @@ export interface AssistantGroupSendContext {
 /** The send context from the loaded chat; tasks of requests not loaded are not seen. */
 export function assistantGroupSendContext(
   state: AssistantGroupChatState | null,
-  replyToMessageId: AssistantGroupMessageId | null,
-  members: ReadonlyArray<Pick<Assistant, "id">>,
+  reply: AssistantGroupReplyRef | null,
 ): AssistantGroupSendContext {
-  const target = replyToMessageId === null ? undefined : state?.messages.get(replyToMessageId);
+  const target = reply === null ? undefined : state?.messages.get(reply.id);
+  if (reply !== null && target === undefined) {
+    // Older than the loaded history. A member's answer lies in a request that has started; what
+    // of it stopped is not known here.
+    return reply.to === null
+      ? { replyOwner: null, request: null, stopped: [] }
+      : {
+          replyOwner: { name: reply.to },
+          request: { projectId: reply.projectId, started: true, ownerId: null },
+          stopped: [],
+        };
+  }
   const requestId = target?.requestId;
   const request =
     requestId === undefined
@@ -769,14 +790,15 @@ export function assistantGroupSendContext(
   );
   const roots = ofRequest.filter((task) => task.kind === "root");
   const owners = [...new Set(roots.map((task) => task.ownerId))];
-  const isMember = (id: string | null | undefined) =>
-    id != null && members.some((member) => member.id === id);
-  const replyTask =
-    target?.author === "assistant" && target.taskId != null
-      ? state?.tasks.get(target.taskId)
-      : undefined;
+  const answersTask = target?.author === "assistant" && target.taskId != null;
+  const replyTask = answersTask ? state?.tasks.get(target.taskId!) : undefined;
   return {
-    replyOwnerId: isMember(replyTask?.ownerId) ? replyTask!.ownerId : null,
+    replyOwner:
+      replyTask !== undefined
+        ? { id: replyTask.ownerId }
+        : answersTask && reply?.to != null
+          ? { name: reply.to }
+          : null,
     request:
       request === undefined
         ? null
@@ -815,11 +837,18 @@ export function assistantGroupRecipientsPreview(input: {
 }): string | null {
   const { text, members, lead, projects, context } = input;
   if (text.trim() === "") return null;
-  const { request } = context;
+  const { request, replyOwner } = context;
+  // The server sends a reply to its owner only while they are a member.
+  const owners =
+    replyOwner === null
+      ? []
+      : members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
   const decision = routeGroupMessage({
     text,
     members,
-    replyOwnerId: context.replyOwnerId,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
     stopped: context.stopped,
     fromUser: true,
     requestOwnerId: request?.ownerId ?? null,

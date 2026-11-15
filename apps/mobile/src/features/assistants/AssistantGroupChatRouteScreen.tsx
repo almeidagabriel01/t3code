@@ -1618,7 +1618,7 @@ export function AssistantGroupChatRouteScreen({
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}
-        sendContext={assistantGroupSendContext(live, replyTo?.id ?? null, members)}
+        sendContext={assistantGroupSendContext(live, replyTo)}
         onJumpToReply={
           replyTo === null || live?.messages.get(replyTo.id) === undefined
             ? null

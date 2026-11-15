@@ -1642,7 +1642,12 @@ export function AssistantGroupChat(props: {
               setModelPick(selection === null ? null : { tab: tabKey, value: selection }),
           }}
           replyingTo={replyTo?.quote ?? null}
-          sendContext={assistantGroupSendContext(live, replyTo?.id ?? null, members)}
+          sendContext={assistantGroupSendContext(
+            live,
+            replyTo === null
+              ? null
+              : { id: replyTo.id, to: replyTo.quote.to, projectId: replyTo.projectId },
+          )}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
           history={sentByUser}
