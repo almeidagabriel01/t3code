@@ -1,10 +1,9 @@
 import { GLOBAL_SKILLS_WS_METHODS } from "./globalSkillsRpc.ts";
-import * as Schema from "effect/Schema";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
-import { AssetCreateUrlInput } from "./assets.ts";
-import { DeviceListInput } from "./device.ts";
-import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
-import { ProjectMutation } from "./project.ts";
+import type { AssetCreateUrlInput } from "./assets.ts";
+import type { DeviceListInput } from "./device.ts";
+import type { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
+import type { ProjectMutation } from "./project.ts";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -30,7 +29,7 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import {
   requiredScopesForProjectMutation,
   requiredScopesForServerSettingsUpdate,
-  ServerSettingsUpdateInput,
+  type ServerSettingsUpdateInput,
 } from "./settings.ts";
 import {
   WS_METHODS,
@@ -224,9 +223,8 @@ type ServedRpcTag = RpcGroup.Rpcs<
   | typeof WsMemoryImportRpcGroup
 >["_tag"];
 
-/** The scope every served RPC needs before its payload is considered. */
-export const RPC_REQUIRED_SCOPES = {
-  ...CLIENT_GUARDED_RPC_SCOPES,
+// Typed against the unguarded tags, so restating a guarded method here fails to compile.
+const UNGUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,
   [ORCHESTRATION_V2_WS_METHODS.getNativeChildWork]: AuthOrchestrationReadScope,
@@ -427,19 +425,20 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
-} as const satisfies Readonly<Record<ServedRpcTag, AuthEnvironmentScope>>;
+} as const satisfies Readonly<
+  Record<Exclude<ServedRpcTag, ClientGuardedRpcTag>, AuthEnvironmentScope>
+>;
 
-const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
-const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
-// The server's middleware receives payloads already decoded, as clients hold them.
-const decodeSettingsUpdate = Schema.decodeUnknownSync(Schema.toType(ServerSettingsUpdateInput));
-const decodeProjectMutation = Schema.decodeUnknownSync(Schema.toType(ProjectMutation));
-const decodeAssetCreateUrl = Schema.decodeUnknownSync(Schema.toType(AssetCreateUrlInput));
-const decodeDeviceList = Schema.decodeUnknownSync(Schema.toType(DeviceListInput));
+/** The scope every served RPC needs before its payload is considered. */
+export const RPC_REQUIRED_SCOPES = {
+  ...CLIENT_GUARDED_RPC_SCOPES,
+  ...UNGUARDED_RPC_SCOPES,
+} as const satisfies Readonly<Record<ServedRpcTag, AuthEnvironmentScope>>;
 
 /**
  * What the server authorizes for a call, and what commands report to the UI.
- * Without a payload it returns the method's minimum; the server always has one.
+ * The payload is the method's decoded input: the RPC server decodes before its
+ * middleware runs, and clients hold typed input. Without one this is the minimum.
  */
 export function rpcRequiredScopes(
   method: string,
@@ -457,11 +456,11 @@ export function rpcRequiredScopes(
     return [AuthMemoryWriteScope, AuthFilesystemReadScope];
   if (payload === undefined) return [scope];
   if (method === WS_METHODS.serverUpdateSettings)
-    return requiredScopesForServerSettingsUpdate(decodeSettingsUpdate(payload));
+    return requiredScopesForServerSettingsUpdate(payload as ServerSettingsUpdateInput);
   if (method === WS_METHODS.projectsMutate)
-    return requiredScopesForProjectMutation(decodeProjectMutation(payload));
+    return requiredScopesForProjectMutation(payload as ProjectMutation);
   if (method === WS_METHODS.assetsCreateUrl) {
-    const { resource } = decodeAssetCreateUrl(payload);
+    const { resource } = payload as AssetCreateUrlInput;
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
@@ -472,19 +471,19 @@ export function rpcRequiredScopes(
     ];
   }
   if (method === WS_METHODS.deviceList) {
-    // Retrying a host or updating a tool can install or restart tools; inspecting only reads.
-    const input = decodeDeviceList(payload);
-    return input.updateTool !== undefined || (input.retryHostId !== undefined && !input.inspectOnly)
+    // Mirrors the handler: updating a tool or retrying a host can install or restart tools.
+    const input = payload as DeviceListInput;
+    return input.updateTool || (input.retryHostId && !input.inspectOnly)
       ? [AuthOrchestrationOperateScope]
       : [AuthOrchestrationReadScope];
   }
   if (method === WS_METHODS.gitPreparePullRequestThread) {
-    const input = decodePrepareThread(payload);
+    const input = payload as GitPreparePullRequestThreadInput;
     if (input.mode === "worktree" && input.threadId !== undefined)
       return [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
   }
   if (method === WS_METHODS.gitRunStackedAction) {
-    const input = decodeStackedAction(payload);
+    const input = payload as GitRunStackedActionInput;
     if (
       input.threadId !== undefined &&
       (input.action === "create_pr" || input.action === "commit_push_pr")

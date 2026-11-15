@@ -196,6 +196,8 @@ describe("settings client guards", () => {
   it.each([
     ["no payload", undefined, ["settings:write"]],
     ["an empty patch", { patch: {} }, ["settings:write"]],
+    // A spread optional field can arrive as an explicit undefined; it changes nothing.
+    ["an undefined field", { patch: { defaultRuntimeMode: undefined } }, ["settings:write"]],
     ["a settings field", { patch: { defaultRuntimeMode: "full-access" } }, ["settings:write"]],
     ["a provider field", { patch: { providerInstances: {} } }, ["providers:manage"]],
     [
