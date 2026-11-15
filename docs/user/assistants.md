@@ -371,7 +371,9 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   conversation waits on you: an approval, a question, an open decision or a paused group task. It
   goes out after **Notify after** (1 minute by default), only once, and never for something you
   answered in the meantime. It has its own switch, respects the pause switch and does not count
-  toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
+  toward the daily limit. Your default assistant also gets a short note of it in its conversation,
+  so it can tell you what waits when you ask; that note is a run of the default assistant and counts
+  toward its budget. The same switch sends one notice when a provider reaches its usage limit,
   with the project, provider, the time it resets and the task, once per provider and limit window.
   With **Resume after usage limits** on in **Settings → Threads**, tasks waiting on a limit show
   **Limit until** and the reset time instead of failing.

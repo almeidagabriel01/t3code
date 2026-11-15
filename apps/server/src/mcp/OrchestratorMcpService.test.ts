@@ -3973,13 +3973,16 @@ describe("OrchestratorMcpService thread list", () => {
         [["thread:b-snoozed", "waiting"]],
       );
     }).pipe(
-      Effect.provide(service),
       Effect.provide(
-        Layer.mock(NeedsUser)({
-          pending: Effect.succeed([
-            { source: "decision", key: "decision:d1", threadId: "thread:b-snoozed" } as never,
-          ]),
-        }),
+        service.pipe(
+          Layer.provide(
+            Layer.mock(NeedsUser)({
+              pending: Effect.succeed([
+                { source: "decision", key: "decision:d1", threadId: "thread:b-snoozed" } as never,
+              ]),
+            }),
+          ),
+        ),
       ),
     ),
   );

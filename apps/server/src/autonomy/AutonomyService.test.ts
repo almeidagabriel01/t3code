@@ -974,7 +974,7 @@ it.effect(
         h.dispatched.map((command) => [command["requestId"], command["decision"]]),
         [["plain", "accept"]],
       );
-      // None of it is a model wake, so the daily wake limit is untouched.
+      // The cards are no model wake, so the daily wake limit is untouched.
       const sql = yield* SqlClient.SqlClient;
       assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_wakes`, 0);
       // Jarvis hears of every wait but the one in its own conversation.
@@ -1482,6 +1482,20 @@ it.effect("a subagent's pending approval reaches the default once, named for its
     );
     assert.include(told[0]!.text, "Waiting on the user: ana wants to run a command");
     assert.include(told[0]!.text, "They answer it in that thread.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("past its budget the default gets no notice, and the card still goes", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    yield* askFrom(task, "Over budget?");
+    h.refusal.current = true;
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 0);
+    assert.lengthOf(yield* outboxRows, 1);
   }).pipe(Effect.provide(h.layer));
 });
 

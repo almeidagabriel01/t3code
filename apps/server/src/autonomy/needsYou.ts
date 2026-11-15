@@ -187,7 +187,7 @@ export function needsYouText(
 
 /**
  * The default assistant's short notice of a wait (title, origin and thread link), so it knows what
- * waits on the user. The user's chat app already got the card, so it only keeps it in mind.
+ * waits on the user. The card in Activity and the chat app asks it, so it only keeps it in mind.
  */
 export function defaultNoticeText(input: {
   readonly title: string;
@@ -200,6 +200,6 @@ export function defaultNoticeText(input: {
   return [
     `Waiting on the user: ${input.title}`,
     `From ${input.origin} in ${input.link}. They answer it ${where}.`,
-    "Their chat app already has it: keep it for when they ask what waits on them, never answer it for them, and reply in one line at most.",
+    "It is also in Activity: keep it for when they ask what waits on them, never answer it for them, and reply in one line at most.",
   ].join("\n");
 }

@@ -922,6 +922,8 @@ const make = Effect.gen(function* () {
     const { threadId } = target.value;
     // Its own conversation, or its own turn's subagents: it is already there.
     if (wait.threadId === threadId || input.rootThreadId === threadId) return;
+    // A notice is a model turn; past the budget the card in Activity and the chat app still asks.
+    if (Option.isSome(yield* spend.budgetRefusal(threadId))) return;
     const id = waitWakeId(threadId, wait.key);
     yield* threads
       .sendToThread({
