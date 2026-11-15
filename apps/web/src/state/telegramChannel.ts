@@ -3,6 +3,7 @@ import {
   applyTelegramStatusEvent,
   createTelegramChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/telegramChannel";
+import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
 import {
   type AtomCommandResult,
   squashAtomCommandFailure,
@@ -40,8 +41,10 @@ export function useTelegramSettings(environmentId: EnvironmentId) {
   const event = Option.getOrNull(
     AsyncResult.value(useAtomValue(telegramEnvironment.status({ environmentId, input: null }))),
   );
+  const resent = useAtomValue(telegramEnvironment.undeliveredResend(environmentId));
+  const live = query.data && event ? applyTelegramStatusEvent(query.data, event) : query.data;
   return {
-    settings: query.data && event ? applyTelegramStatusEvent(query.data, event) : query.data,
+    settings: live && applyUndeliveredResend(live, resent, event),
     error: query.error,
     refresh: query.refresh,
   };
@@ -54,6 +57,9 @@ export type TelegramReply =
 /** Each change settles into a reply, so the form can show the server's refusal where it happened. */
 export function useTelegramActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(telegramEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    telegramEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(telegramEnvironment.configure, { reportFailure: false });
   const resend = useAtomCommand(telegramEnvironment.resendUndelivered, { reportFailure: false });
   const reply = (result: AtomCommandResult<unknown, unknown>): TelegramReply => {
@@ -69,6 +75,7 @@ export function useTelegramActions(environmentId: EnvironmentId) {
   };
   return {
     canAct,
+    canResend,
     configure: async (input: TelegramChannelConfigureInput) =>
       reply(await configure({ environmentId, input })),
     resendUndelivered: async () => reply(await resend({ environmentId, input: {} })),

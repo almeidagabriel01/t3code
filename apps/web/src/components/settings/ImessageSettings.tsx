@@ -272,7 +272,7 @@ function ImessageEnvironment(props: {
         />
         <UndeliveredRepliesRow
           label={imessageUndeliveredLabel(settings)}
-          canAct={actions.canAct}
+          canAct={actions.canResend}
           onResend={actions.resendUndelivered}
         />
         <SettingsRow

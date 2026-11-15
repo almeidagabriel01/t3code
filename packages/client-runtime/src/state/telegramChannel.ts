@@ -16,6 +16,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
+import { createUndeliveredResend } from "./channelUndelivered.ts";
 
 /** Lays a live status event over the stored settings; the event replaces status and errors. */
 export function applyTelegramStatusEvent(
@@ -49,16 +50,22 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
 ) {
   // One lane per environment keeps edits applied in the order they were made.
   const scheduler = createAtomCommandScheduler();
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:telegram-channel:status",
+    subscribe: (_input: null) => subscribe(WS_METHODS.telegramChannelSubscribeStatus, {}),
+  });
+  const settings = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:telegram-channel:settings",
+    tag: WS_METHODS.telegramChannelGetSettings,
+    staleTimeMs: 30_000,
+  });
+  const resend = createUndeliveredResend(
+    (environmentId) => status({ environmentId, input: null }),
+    (environmentId) => settings({ environmentId, input: {} }),
+  );
   return {
-    settings: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:telegram-channel:settings",
-      tag: WS_METHODS.telegramChannelGetSettings,
-      staleTimeMs: 30_000,
-    }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:telegram-channel:status",
-      subscribe: (_input: null) => subscribe(WS_METHODS.telegramChannelSubscribeStatus, {}),
-    }),
+    settings,
+    status,
     configure: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:telegram-channel:configure",
       tag: WS_METHODS.telegramChannelConfigure,
@@ -72,11 +79,10 @@ export function createTelegramChannelEnvironmentAtoms<R, E>(
       label: "environment-data:telegram-channel:resend-undelivered",
       tag: WS_METHODS.telegramChannelResendUndelivered,
       scheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId }: { environmentId: string }) => environmentId,
-      },
+      ...resend.command,
     }),
+    /** What the last resend answered; `applyUndeliveredResend` lays it over the settings. */
+    undeliveredResend: resend.answers,
   };
 }
 

@@ -13,6 +13,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
+import { createUndeliveredResend } from "./channelUndelivered.ts";
 
 /** Lays a live status event over the stored settings; the event replaces status and errors. */
 export function applyImessageStatusEvent(
@@ -41,16 +42,22 @@ export function createImessageChannelEnvironmentAtoms<R, E>(
 ) {
   // One lane per environment keeps handle edits applied in the order they were made.
   const scheduler = createAtomCommandScheduler();
+  const status = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:imessage-channel:status",
+    subscribe: (_input: null) => subscribe(WS_METHODS.imessageChannelSubscribeStatus, {}),
+  });
+  const settings = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:imessage-channel:settings",
+    tag: WS_METHODS.imessageChannelGetSettings,
+    staleTimeMs: 30_000,
+  });
+  const resend = createUndeliveredResend(
+    (environmentId) => status({ environmentId, input: null }),
+    (environmentId) => settings({ environmentId, input: {} }),
+  );
   return {
-    settings: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:imessage-channel:settings",
-      tag: WS_METHODS.imessageChannelGetSettings,
-      staleTimeMs: 30_000,
-    }),
-    status: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:imessage-channel:status",
-      subscribe: (_input: null) => subscribe(WS_METHODS.imessageChannelSubscribeStatus, {}),
-    }),
+    settings,
+    status,
     /** The permission state before enabling; read again after the user grants access. */
     access: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:imessage-channel:access",
@@ -70,11 +77,10 @@ export function createImessageChannelEnvironmentAtoms<R, E>(
       label: "environment-data:imessage-channel:resend-undelivered",
       tag: WS_METHODS.imessageChannelResendUndelivered,
       scheduler,
-      concurrency: {
-        mode: "serial",
-        key: ({ environmentId }: { environmentId: string }) => environmentId,
-      },
+      ...resend.command,
     }),
+    /** What the last resend answered; `applyUndeliveredResend` lays it over the settings. */
+    undeliveredResend: resend.answers,
   };
 }
 

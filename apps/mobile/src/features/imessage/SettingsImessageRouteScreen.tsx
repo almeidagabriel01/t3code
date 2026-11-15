@@ -216,7 +216,7 @@ function ImessageEnvironment(props: {
         />
         <UndeliveredRepliesRow
           label={imessageUndeliveredLabel(settings)}
-          disabled={!imessage.canConfigure}
+          disabled={!imessage.canResend}
           onResend={imessage.resendUndelivered}
           onError={setError}
         />

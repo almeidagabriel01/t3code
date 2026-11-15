@@ -119,6 +119,7 @@ describe("createTelegramChannelEnvironmentAtoms", () => {
       "resendUndelivered",
       "settings",
       "status",
+      "undeliveredResend",
     ]);
     expect(atoms.settings({ environmentId: "hub" as never, input: {} })).toBeDefined();
     expect(atoms.status({ environmentId: "hub" as never, input: null })).toBeDefined();

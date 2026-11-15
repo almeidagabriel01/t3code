@@ -122,6 +122,7 @@ vi.mock("../../state/telegramChannel", () => ({
     settings: mocks.settings,
     loadError: mocks.loadError,
     canConfigure: mocks.can,
+    canResend: mocks.can,
     configure: mocks.configure,
     resendUndelivered: mocks.resend,
   }),

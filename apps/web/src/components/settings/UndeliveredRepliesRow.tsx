@@ -1,3 +1,4 @@
+import { UNDELIVERED_RESEND_TITLE } from "@t3tools/client-runtime/state/channelUndelivered";
 import { RotateCwIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -24,7 +25,7 @@ export function UndeliveredRepliesRow(props: {
   };
   return (
     <SettingsRow
-      title="Undelivered replies"
+      title={UNDELIVERED_RESEND_TITLE}
       description={<span className="text-warning-foreground">{props.label}</span>}
       status={
         error ? (

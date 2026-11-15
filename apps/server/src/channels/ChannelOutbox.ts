@@ -23,7 +23,10 @@ const NO_TRANSPORT_RETRY_SECONDS = 30;
 /** The worker also looks on this interval, so a wake lost between a commit and its offer is brief. */
 const IDLE_CHECK = "10 seconds";
 const PERMANENT_ERROR_CODES = ["automation_denied", "messages_not_signed_in", "chat_not_found"];
-/** Matches the transports' record of confirmed pieces, so a requeue never repeats one. */
+/**
+ * Matches the transports' record of confirmed pieces, so a requeue never repeats one. Older
+ * failures are history: not counted as undelivered and never sent again.
+ */
 const REQUEUE_WINDOW_HOURS = 24;
 
 const MessageJson = Schema.fromJsonString(ChannelOutboundMessage);
@@ -90,16 +93,10 @@ export class ChannelOutbox extends Context.Service<
     /** Sends every row that is due now, once, in creation order. */
     readonly drain: Effect.Effect<void>;
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
-    /** How many deliveries to this kind of channel ran out of tries; current value first. */
+    /** How many recent deliveries to this kind of channel ran out of tries; current value first. */
     readonly undeliveredCount: (kind: ChannelKind) => Stream.Stream<number>;
-    /**
-     * Puts the undelivered messages of this kind back in line; returns how many. `recentOnly`
-     * keeps to the last day, so an agent never revives a stale reply the user did not ask for.
-     */
-    readonly resend: (
-      kind: ChannelKind,
-      options?: { readonly recentOnly?: boolean },
-    ) => Effect.Effect<number>;
+    /** Puts the messages `undeliveredCount` counts back in line; returns how many. */
+    readonly resend: (kind: ChannelKind) => Effect.Effect<number>;
   }
 >()("t3/channels/ChannelOutbox") {}
 
@@ -153,11 +150,15 @@ const make = Effect.gen(function* () {
     sql`UPDATE channel_outbox SET state = ${state}, last_error_code = ${code} WHERE delivery_id = ${id}`;
 
   const kindOf = sql.literal(`json_extract(message_json, '$.destination.kind')`);
+  /** Ran out of tries recently enough to go out again: what is counted, resent and requeued. */
+  const resendable = inSeconds(-REQUEUE_WINDOW_HOURS * 3600).pipe(
+    Effect.map((since) => sql`state IN ('failed', 'ambiguous') AND created_at >= ${since}`),
+  );
 
   const countUndelivered = Effect.gen(function* () {
     const rows = yield* sql<{ readonly kind: string; readonly count: number }>`
       SELECT ${kindOf} AS kind, COUNT(*) AS count FROM channel_outbox
-      WHERE state IN ('failed', 'ambiguous') GROUP BY kind`;
+      WHERE ${yield* resendable} GROUP BY kind`;
     const next = new Map(rows.map((row) => [row.kind, row.count]));
     const current = yield* SubscriptionRef.get(undelivered);
     const same =
@@ -173,13 +174,11 @@ const make = Effect.gen(function* () {
     message: ChannelOutboundMessage,
   ) {
     const now = yield* nowIso;
-    const since = yield* inSeconds(-REQUEUE_WINDOW_HOURS * 3600);
     const requeued = yield* sql`
         UPDATE channel_outbox
         SET state = 'pending', attempts = 0, next_attempt_at = ${now}, auto_requeued = 1
-        WHERE state IN ('failed', 'ambiguous') AND auto_requeued = 0
+        WHERE ${yield* resendable} AND auto_requeued = 0
           AND COALESCE(last_error_code, '') NOT IN ${sql.in(PERMANENT_ERROR_CODES)}
-          AND created_at >= ${since}
           AND ${kindOf} = ${message.destination.kind}
           AND json_extract(message_json, '$.destination.connectionId') = ${message.destination.connectionId}
         RETURNING delivery_id`;
@@ -268,13 +267,11 @@ const make = Effect.gen(function* () {
 
   const resend: ChannelOutbox["Service"]["resend"] = Effect.fn("ChannelOutbox.resend")(function* (
     kind,
-    options,
   ) {
     const now = yield* nowIso;
-    const since = options?.recentOnly ? yield* inSeconds(-REQUEUE_WINDOW_HOURS * 3600) : "";
     const requeued = yield* sql`
         UPDATE channel_outbox SET state = 'pending', attempts = 0, next_attempt_at = ${now}
-        WHERE state IN ('failed', 'ambiguous') AND ${kindOf} = ${kind} AND created_at >= ${since}
+        WHERE ${yield* resendable} AND ${kindOf} = ${kind}
         RETURNING delivery_id`;
     yield* countUndelivered;
     yield* wake;

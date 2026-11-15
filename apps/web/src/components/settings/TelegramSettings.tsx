@@ -383,7 +383,7 @@ function TelegramEnvironment(props: {
         />
         <UndeliveredRepliesRow
           label={telegramUndeliveredLabel(settings)}
-          canAct={actions.canAct}
+          canAct={actions.canResend}
           onResend={actions.resendUndelivered}
         />
         <SettingsRow
