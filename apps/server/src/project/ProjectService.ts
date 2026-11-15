@@ -9,6 +9,10 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import {
+  clearProjectSettingsOverrides as clearProjectSettingKeys,
+  projectOverrideForWrite,
+} from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -114,6 +118,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "delete-thread",
       "restore-threads",
       "dispatch-project-command",
+      "update-project-settings",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -386,6 +391,32 @@ export const make = Effect.gen(function* () {
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
   });
 
+  // Clients read and clear the project's model in its settings override; the record copy only
+  // feeds settings that were never folded.
+  const writeProjectModel = Effect.fn("ProjectService.writeProjectModel")(
+    function* (projectId: ProjectId, selection: ProjectUpdatePayload["defaultModelSelection"]) {
+      if (selection === undefined) return;
+      const settings = yield* serverSettings.getSettings;
+      const stored = settings.projectSettingsOverrides[projectId];
+      if (selection === null && stored === undefined) return;
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]:
+            selection === null
+              ? clearProjectSettingKeys(settings, projectId, ["defaultModelSelection"])
+              : { ...projectOverrideForWrite(stored), defaultModelSelection: selection },
+        },
+      });
+    },
+    (effect, projectId) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({ operation: "update-project-settings", projectId, cause }),
+        ),
+      ),
+  );
+
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
       const workspaceRoot = yield* normalizeWorkspaceRoot({
@@ -401,6 +432,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
+      yield* writeProjectModel(input.projectId, input.defaultModelSelection);
       yield* restoreDeletedThreads({ ...input, workspaceRoot });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
@@ -504,6 +536,7 @@ export const make = Effect.gen(function* () {
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
+      yield* writeProjectModel(input.projectId, input.defaultModelSelection);
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }

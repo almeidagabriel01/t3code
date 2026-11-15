@@ -254,6 +254,13 @@ it.layer(layerTest)("ProjectService", (it) => {
         ],
       });
       assert.equal(created.workspaceRoot, "/work/project");
+      // The model goes where web and mobile read and clear it: the project's settings override.
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const projectModel = Effect.map(
+        settings.getSettings,
+        (current) => current.projectSettingsOverrides[projectId]?.defaultModelSelection,
+      );
+      assert.deepEqual(yield* projectModel, modelSelection);
       assert.isNull(created.repositoryIdentity);
       assert.isNull(created.faviconPath);
 
@@ -273,7 +280,9 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectIcon: { kind: "emoji", emoji: "🦊" },
         faviconPath: "/work/project/custom.svg",
         defaultThreadEnvMode: "worktree",
+        defaultModelSelection: { ...modelSelection, model: "gpt-5.2-codex" },
       });
+      assert.deepEqual(yield* projectModel, { ...modelSelection, model: "gpt-5.2-codex" });
       assert.equal(updated.title, "Renamed");
       assert.equal(updated.createdAt, created.createdAt);
       assert.isTrue(updated.autoPull);
@@ -297,7 +306,9 @@ it.layer(layerTest)("ProjectService", (it) => {
         projectIcon: null,
         faviconPath: null,
         defaultThreadEnvMode: null,
+        defaultModelSelection: null,
       });
+      assert.isUndefined(yield* projectModel);
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
       assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
