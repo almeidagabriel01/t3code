@@ -1264,6 +1264,22 @@ describe("group composer", () => {
     mocks.post.mockResolvedValue({ ok: false, message: "server down", reason: null });
     await click("Send");
     expect(text()).toContain("server down");
+    // A post the chat then shows landed; one the user edited since keeps their text, not the warning.
+    const landed = (clientRequestId: unknown) => {
+      mocks.live = snapshot([...FEED, message("m9", 9, { author: "user", clientRequestId })]);
+      return render();
+    };
+    await type("hi again");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await type("hi again, edited");
+    await landed(mocks.requestIds.at(-1));
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, "hi again, edited"]);
+    await type("hi");
+    await click("Send");
+    expect(text()).toContain("unconfirmed");
+    await landed(mocks.requestIds.at(-1));
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
   });
 
   it("replies to a member's message from the row button or its menu, then clears or sends", async () => {
