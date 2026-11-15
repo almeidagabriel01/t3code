@@ -100,6 +100,25 @@ function EnvironmentAlerts(props: {
   const suffix = props.showEnvironment ? ` · ${props.environment.label}` : "";
   return (
     <>
+      {allowed ? null : (
+        <View className="overflow-hidden rounded-2xl bg-grouped-card">
+          <ListRowLayout
+            icon={{ ios: "lock", android: "lock" }}
+            label="Limited permissions"
+            description={`This session can view ${props.environment.label}'s providers but can't change their settings.`}
+          />
+        </View>
+      )}
+      {paused ? (
+        <View className="overflow-hidden rounded-2xl">
+          <ListRow
+            icon="bell.badge"
+            label="Alerts are paused"
+            description="Assistant notifications are off, so limit alerts wait. Change it in Assistants."
+            onPress={() => navigation.navigate("SettingsAssistants")}
+          />
+        </View>
+      ) : null}
       {sections.length === 0 ? (
         <Text className="text-foreground-muted">{`No subscription limits reported yet.${suffix}`}</Text>
       ) : (
@@ -163,16 +182,6 @@ function EnvironmentAlerts(props: {
           </SettingsSection>
         ))
       )}
-      {paused ? (
-        <View className="overflow-hidden rounded-2xl">
-          <ListRow
-            icon="bell.badge"
-            label="Alerts are paused"
-            description="Assistant notifications are off, so these alerts wait. Change it in Assistants."
-            onPress={() => navigation.navigate("SettingsAssistants")}
-          />
-        </View>
-      ) : null}
     </>
   );
 }

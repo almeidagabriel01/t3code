@@ -53,9 +53,9 @@ vi.mock("../../components/ui/RowPressable", () => ({
   ),
 }));
 vi.mock("../../components/ui/ListRowLayout", () => ({
-  ListRowLayout: (p: { label: string; detail?: string }) => (
+  ListRowLayout: (p: { label: string; detail?: string; description?: string }) => (
     <span>
-      {p.label}: {p.detail}
+      {p.label}: {p.detail ?? p.description}
     </span>
   ),
 }));
@@ -196,8 +196,16 @@ describe("SettingsUsageAlertsRouteScreen", () => {
 
   it("locks the row without permission: no menu opens and the row reads as disabled", async () => {
     const { host, unmount } = await mount({ windows: [weekly], allowed: false });
-    expect(host.querySelector("[aria-disabled=true]")?.textContent).toContain("Weekly");
+    const row = host.querySelector("[aria-disabled=true]")!;
+    expect(row.textContent).toContain("Weekly");
     expect(host.querySelector("[role=menuitemradio]")).toBeNull();
+    // The reason sits above the rows it explains.
+    expect(host.textContent).toContain(
+      "Limited permissions: This session can view Mac's providers but can't change their settings.",
+    );
+    expect(host.textContent!.indexOf("Limited permissions")).toBeLessThan(
+      host.textContent!.indexOf("Weekly"),
+    );
     expect(mocks.update).not.toHaveBeenCalled();
     await unmount();
   });
@@ -226,7 +234,10 @@ describe("SettingsUsageAlertsRouteScreen", () => {
     const waiting = await mount({ windows: [weekly], autonomy: false, ignorePause: false });
     const note = waiting.host.querySelector("[data-note]")!;
     expect(note.textContent).toContain("Alerts are paused");
-    expect(note.textContent).toContain("Change it in Assistants");
+    expect(note.textContent).toContain("so limit alerts wait. Change it in Assistants");
+    expect(waiting.host.textContent!.indexOf("Alerts are paused")).toBeLessThan(
+      waiting.host.textContent!.indexOf("Weekly"),
+    );
     await click(note);
     expect(mocks.navigate).toHaveBeenCalledWith("SettingsAssistants");
     await waiting.unmount();
