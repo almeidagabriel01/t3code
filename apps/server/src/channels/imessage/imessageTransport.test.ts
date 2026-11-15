@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -106,6 +107,40 @@ it.effect("a timed-out piece goes again, unless its echo showed Messages sent it
     yield* sql`UPDATE imessage_sent SET consumed = 1 WHERE delivery_id = 'd2'`;
     yield* transport.send(message("seen", "d2"));
     assert.lengthOf(sent, 4);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an echo that arrives while a resend is refused still marks the piece as sent", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    let calls = 0;
+    let asked = () => {};
+    let answer = (_: ImessageSendFailure) => {};
+    const transport = makeImessageTransport({
+      connectionId: "c1",
+      sender: {
+        sendText: async () => {
+          calls += 1;
+          if (calls === 1) return { outcome: "unknown", code: "timeout" };
+          if (calls > 2) return { acceptedAt: "2026-01-01T00:00:00.000Z" };
+          asked();
+          return new Promise((resolve) => (answer = resolve));
+        },
+      },
+      sql,
+      isActive: Effect.succeed(true),
+      report: () => Effect.void,
+    });
+    yield* Effect.flip(transport.send(message("hello")));
+    const second = new Promise<void>((resolve) => (asked = resolve));
+    const resend = yield* Effect.forkChild(Effect.flip(transport.send(message("hello"))));
+    yield* Effect.promise(() => second);
+    // The first send's echo arrives, then Messages refuses the second.
+    yield* sql`UPDATE imessage_sent SET consumed = 1, echoes_due = echoes_due - 1`;
+    answer({ outcome: "not_sent", code: "unknown" });
+    yield* Fiber.join(resend);
+    yield* transport.send(message("hello"));
+    assert.equal(calls, 2);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

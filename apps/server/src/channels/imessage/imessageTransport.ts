@@ -62,8 +62,8 @@ export function makeImessageTransport(input: {
           input.sender.sendText({ chatGuid: target.chatGuid, text }),
         );
         if ("outcome" in result) {
-          // Certainly not sent: no echo is owed for it, and a fingerprint owing none must not
-          // swallow a real message with the same text.
+          // Certainly not sent: no echo is owed for it. A fingerprint owing none goes, unless an
+          // echo already proved an earlier send of the piece arrived.
           if (result.outcome === "not_sent") {
             yield* sql`
               UPDATE imessage_sent SET echoes_due = echoes_due - 1
@@ -73,7 +73,7 @@ export function makeImessageTransport(input: {
             yield* sql`
               DELETE FROM imessage_sent
               WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}
-                AND echoes_due <= 0`.pipe(Effect.orDie);
+                AND echoes_due <= 0 AND consumed = 0`.pipe(Effect.orDie);
           }
           yield* input.report({ ok: false, code: result.code });
           return yield* new ChannelGatewayError({
