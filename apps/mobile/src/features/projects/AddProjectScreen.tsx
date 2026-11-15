@@ -80,7 +80,17 @@ import { useProjects, useServerConfigs, waitForProject } from "../../state/entit
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
-import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessLocked,
+  scopeAccessMessage,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import {
+  environmentSession,
+  useEnvironmentScopeAccess,
+  readEnvironmentScope,
+} from "../../state/session";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -527,20 +537,24 @@ function SourceControlRow(props: {
   );
 }
 
+const CREATE_PROJECT_SCOPES = [AuthOrchestrationOperateScope];
+const CLONE_PROJECT_SCOPES = [AuthSourceControlWriteScope, AuthOrchestrationOperateScope];
+
 export function AddProjectSourceScreen(props: { readonly environmentId?: string | string[] }) {
   const navigation = useNavigation();
   const { environmentOptions, selectedEnvironment, setSelectedEnvironmentId } =
     useSelectedEnvironment(stringParam(props.environmentId) as EnvironmentId | null);
-  const canWriteSourceControl = useEnvironmentScope(
+  const createAccess = useEnvironmentScopeAccess(
     selectedEnvironment?.environmentId ?? null,
-    AuthSourceControlWriteScope,
+    CREATE_PROJECT_SCOPES,
   );
-  const canCreateProject = useEnvironmentScope(
+  const cloneAccess = useEnvironmentScopeAccess(
     selectedEnvironment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    CLONE_PROJECT_SCOPES,
   );
+  const canCreateProject = !scopeAccessLocked(createAccess);
   const isConnected = canCreateProjectInEnvironment(selectedEnvironment?.connectionState);
-  const canCloneProject = isConnected && canWriteSourceControl && canCreateProject;
+  const canCloneProject = isConnected && !scopeAccessLocked(cloneAccess);
   const discoveryState = useEnvironmentQuery(
     selectedEnvironment === null || !isConnected
       ? null
@@ -628,9 +642,8 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
             <ListRow
               title="Local folder"
               subtitle={
-                canCreateProject
-                  ? "Browse a folder on disk"
-                  : "This connection cannot add projects."
+                scopeAccessMessage(createAccess, "This connection cannot add projects.") ??
+                "Browse a folder on disk"
               }
               icon={
                 <SymbolView
@@ -658,11 +671,12 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
                   selectedEnvironmentId={selectedEnvironment.environmentId}
                   ready={canCloneProject && readiness(candidate).ready}
                   hint={
-                    !canCloneProject
-                      ? "This connection cannot clone projects."
+                    scopeAccessMessage(cloneAccess, "This connection cannot clone projects.") ??
+                    (!canCloneProject
+                      ? ""
                       : readiness(candidate).ready
                         ? addProjectRemoteSourcePathHint(candidate)
-                        : (readiness(candidate).hint ?? "")
+                        : (readiness(candidate).hint ?? ""))
                   }
                   isFirst={false}
                 />
@@ -1306,10 +1320,11 @@ export function AddProjectNewScreen(props: { readonly environmentId?: string | s
 
 export function AddProjectLocalFolderScreen(props: { readonly environmentId?: string | string[] }) {
   const environment = useEnvironmentFromParam(props.environmentId);
-  const canCreateProject = useEnvironmentScope(
+  const createAccess = useEnvironmentScopeAccess(
     environment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    CREATE_PROJECT_SCOPES,
   );
+  const canCreateProject = !scopeAccessLocked(createAccess);
   const createProject = useCreateProject(environment);
   const { isBrowseNavigating, navigateToBrowsePath, pathInput, setPathInput } =
     useBrowsePathInput(environment);
@@ -1342,8 +1357,12 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
-          {!canCreateProject ? (
+          {scopeAccessShowsBanner(createAccess) ? (
             <ErrorBanner message="This connection cannot add projects." />
+          ) : createAccess === "unavailable" ? (
+            <Text className="text-sm text-foreground-muted">
+              {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+            </Text>
           ) : null}
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
@@ -1384,15 +1403,11 @@ export function AddProjectDestinationScreen(props: {
   });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
-  const canWriteSourceControl = useEnvironmentScope(
+  const cloneAccess = useEnvironmentScopeAccess(
     environment?.environmentId ?? null,
-    AuthSourceControlWriteScope,
+    CLONE_PROJECT_SCOPES,
   );
-  const canCreateProject = useEnvironmentScope(
-    environment?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
-  );
-  const canCloneProject = canWriteSourceControl && canCreateProject;
+  const canCloneProject = !scopeAccessLocked(cloneAccess);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
@@ -1501,9 +1516,9 @@ export function AddProjectDestinationScreen(props: {
             onPress={submitPath}
             loading={isSubmitting}
           />
-          {!canCloneProject ? (
+          {scopeAccessShowsBanner(cloneAccess) || cloneAccess === "unavailable" ? (
             <Text className="text-sm text-foreground-muted">
-              This connection cannot clone projects.
+              {scopeAccessMessage(cloneAccess, "This connection cannot clone projects.")}
             </Text>
           ) : null}
           <FolderBrowser

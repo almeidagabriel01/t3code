@@ -1,3 +1,11 @@
+import {
+  type DynamicColor,
+  Hct,
+  MaterialDynamicColors as M,
+  SchemeTonalSpot,
+  argbFromHex,
+  hexFromArgb,
+} from "@material/material-color-utilities";
 import { describe, expect, it } from "vite-plus/test";
 import {
   BUILT_IN_THEME_IDS,
@@ -13,6 +21,9 @@ import {
   readGeneratedMobileThemeVariables,
 } from "./mobileTheme.test-support";
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
+import clerkTheme from "../../clerk-theme.json";
+import type { MaterialYouPalette } from "./materialYouPalette";
+import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme.android";
 
 import {
   createMobileThemeSelectionPatch,
@@ -54,6 +65,63 @@ function compositeOver(overlay: string, background: string): string {
     Math.round(Number(overlayMatch[index]) * alpha + backgroundChannels[index - 1]! * (1 - alpha)),
   );
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// The default light theme's hairlines are the faintest that still read; dark needs more.
+const LINE_FLOOR = { light: 1.07, dark: 1.2 } as const;
+
+/** Lines sit on cards and on the screen: each reads on all of them, separator weakest, border strongest. */
+function expectReadableLines(
+  variables: Readonly<Record<string, string>>,
+  appearance: "light" | "dark",
+  label: string,
+) {
+  const screen = variables["--color-screen"]!;
+  const surfaces = ["--color-grouped-card", "--color-card", "--color-screen"].map((surface) =>
+    flattenThemeColor(variables[surface]!, screen),
+  );
+  const reading = (token: string) =>
+    Math.min(
+      ...surfaces.map((surface) =>
+        contrastRatio(flattenThemeColor(variables[token]!, surface), surface),
+      ),
+    );
+  const separator = reading("--color-separator");
+  const subtle = reading("--color-border-subtle");
+  const border = reading("--color-border");
+  expect(separator, `${label}: separator reads`).toBeGreaterThanOrEqual(LINE_FLOOR[appearance]);
+  expect(subtle, `${label}: border-subtle at least separator`).toBeGreaterThanOrEqual(separator);
+  expect(border, `${label}: border at least border-subtle`).toBeGreaterThanOrEqual(subtle);
+}
+
+function materialYouSample(seed: string, dark: boolean): MaterialYouPalette {
+  const scheme = new SchemeTonalSpot(Hct.fromInt(argbFromHex(seed)), dark, 0);
+  const hex = (color: DynamicColor) => hexFromArgb(color.getArgb(scheme)).toUpperCase();
+  return {
+    primary: hex(M.primary),
+    onPrimary: hex(M.onPrimary),
+    primaryContainer: hex(M.primaryContainer),
+    onPrimaryContainer: hex(M.onPrimaryContainer),
+    inversePrimary: hex(M.inversePrimary),
+    secondaryContainer: hex(M.secondaryContainer),
+    onSecondaryContainer: hex(M.onSecondaryContainer),
+    tertiary: hex(M.tertiary),
+    tertiaryContainer: hex(M.tertiaryContainer),
+    onTertiaryContainer: hex(M.onTertiaryContainer),
+    surface: hex(M.surface),
+    onSurface: hex(M.onSurface),
+    onSurfaceVariant: hex(M.onSurfaceVariant),
+    surfaceContainer: hex(M.surfaceContainer),
+    surfaceContainerHigh: hex(M.surfaceContainerHigh),
+    surfaceContainerHighest: hex(M.surfaceContainerHighest),
+    surfaceContainerLow: hex(M.surfaceContainerLow),
+    surfaceContainerLowest: hex(M.surfaceContainerLowest),
+    errorContainer: hex(M.errorContainer),
+    onErrorContainer: hex(M.onErrorContainer),
+    outline: hex(M.outline),
+    outlineVariant: hex(M.outlineVariant),
+    scrim: hex(M.scrim),
+  };
 }
 
 describe("mobile themes", () => {
@@ -173,6 +241,7 @@ describe("mobile themes", () => {
           contrastRatio(group, sheet),
           `${platform} ${appearance}: grouped surface on sheet`,
         ).toBeGreaterThanOrEqual(1.025);
+        expectReadableLines(variables, appearance, `${platform} ${appearance}`);
         for (const role of [
           "--color-foreground",
           "--color-foreground-secondary",
@@ -250,6 +319,28 @@ describe("mobile themes", () => {
       darkThemeId: "grove",
       themeId: "iris",
     });
+  });
+
+  it.each(["#6750A4", "#1B6EF3", "#2E7D32", "#B3261E"])(
+    "keeps Material You lines readable from a %s wallpaper",
+    (seed) => {
+      for (const appearance of ["light", "dark"] as const) {
+        const variables = materialYouPaletteToMobileThemeVariables(
+          materialYouSample(seed, appearance === "dark"),
+          appearance,
+          getMobileThemeRuntimeVariables(DEFAULT_MOBILE_THEME_ID, appearance, "android"),
+        );
+        expectReadableLines(variables, appearance, appearance);
+      }
+    },
+  );
+
+  it("writes the Clerk theme in the hex the Clerk native plugin requires", () => {
+    for (const colors of [clerkTheme.colors, clerkTheme.darkColors]) {
+      for (const [role, color] of Object.entries(colors)) {
+        expect(color, role).toMatch(/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/);
+      }
+    }
   });
 
   it("converts OKLCH colors to React Native sRGB ColorValues", () => {

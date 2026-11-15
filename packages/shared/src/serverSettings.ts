@@ -34,6 +34,7 @@ import { normalizeProjectPathForDispatch } from "./path.ts";
 import { deepMerge } from "./Struct.ts";
 import { fallbackModelSelectionsOf, type FallbackSettings } from "./usageLimits.ts";
 import { fromLenientJson } from "./schemaJson.ts";
+import { mergeUsageLimitAlerts } from "./usageLimitAlerts.ts";
 import { createModelSelection, readCustomModelEntries } from "./model.ts";
 import {
   getBackgroundActivityBaseProfile,
@@ -551,6 +552,7 @@ function applyServerSettingsPatchFields(
     mcpServers: mcpServersPatch,
     usageLimitSources: usageLimitSourcesPatch,
     providerBudgets: providerBudgetsPatch,
+    usageLimitAlerts: usageLimitAlertsPatch,
     folderProjects: folderProjectsPatch,
     textGenerators: textGeneratorsPatch,
     secretProviders: secretProvidersPatch,
@@ -789,6 +791,11 @@ function applyServerSettingsPatchFields(
     ...(providerBudgetsPatch !== undefined
       ? {
           providerBudgets: mergeSettingsEntries(current.providerBudgets, providerBudgetsPatch),
+        }
+      : {}),
+    ...(usageLimitAlertsPatch !== undefined
+      ? {
+          usageLimitAlerts: mergeUsageLimitAlerts(current.usageLimitAlerts, usageLimitAlertsPatch),
         }
       : {}),
     ...(folderProjectsPatch !== undefined

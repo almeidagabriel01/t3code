@@ -34,7 +34,8 @@ export function resolveMcpGate(input: {
   readonly connected: boolean;
   /** The environment's `mcpApprovalCodes` capability; undefined until its config loads. */
   readonly approvalCodes: boolean | undefined;
-  readonly canReadRelay: boolean;
+  /** Undefined until the session has loaded. */
+  readonly canReadRelay: boolean | undefined;
   readonly linkState: EnvironmentCloudLinkStateResult | null;
   readonly linkStateError: string | null;
   /** A backend this device runs; its link state names its own tunnel. */
@@ -69,6 +70,7 @@ export function resolveMcpGate(input: {
   }
   if (input.approvalCodes === undefined) return { kind: "checking" };
   if (!input.approvalCodes) return { kind: "update" };
+  if (input.canReadRelay === undefined) return { kind: "checking" };
   if (!input.canReadRelay) return { kind: "no-relay-read" };
   if (input.linkStateError !== null) return { kind: "error", message: input.linkStateError };
   const { linkState } = input;

@@ -131,6 +131,7 @@ const SETTINGS_SEARCH_TERMS = {
     "click",
     "keys",
   ],
+  SettingsUsageAlerts: ["limit alerts", "usage", "limits", "quota", "weekly", "session", "notify"],
   SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [

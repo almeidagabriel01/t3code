@@ -622,6 +622,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./usageLimitAlerts": {
+      "types": "./src/usageLimitAlerts.ts",
+      "import": "./src/usageLimitAlerts.ts"
     }
   },
   "scripts": {

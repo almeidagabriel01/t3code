@@ -30,6 +30,7 @@ function useKanbanCommand<W extends KanbanCommandValue, E>(
 export function useKanbanActions(environmentId: EnvironmentId) {
   return {
     canEdit: useAtomValue(kanbanEnvironment.createCard.permissionAtom(environmentId)),
+    editAccess: useAtomValue(kanbanEnvironment.createCard.accessAtom(environmentId)),
     createCard: useKanbanCommand(kanbanEnvironment.createCard, environmentId),
     updateCard: useKanbanCommand(kanbanEnvironment.updateCard, environmentId),
     moveCard: useKanbanCommand(kanbanEnvironment.moveCard, environmentId),

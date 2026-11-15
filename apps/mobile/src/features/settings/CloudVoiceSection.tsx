@@ -38,7 +38,8 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { Chip } from "../../components/ui/Chip";
 import { ListSection } from "../../components/ui/ListSection";
 import type { EnvironmentPresentation } from "../../state/environments";
-import { useEnvironmentScope } from "../../state/session";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import {
   chooseVoiceDestination,
   pendingCloudVoiceChoice,
@@ -228,12 +229,15 @@ function ChatGptSignInDetail({
   );
 }
 
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
+
 function CloudChoices({ environment, active, onClose }: Props & { onClose: () => void }) {
   const id = environment.environmentId;
   const connection = useAtomValue(cloudVoiceConnectionAtom(id));
   const keys = useAtomValue(cloudVoiceKeysAtom(id));
   const reload = useAtomRefresh(cloudVoiceKeysAtom(id));
-  const canManage = useEnvironmentScope(id, AuthSettingsWriteScope);
+  const access = useEnvironmentScopeAccess(id, SETTINGS_WRITE_SCOPES);
+  const canManage = !scopeAccessLocked(access);
   const [editing, setEditing] = useState<{
     provider: CloudSpeechProvider;
     enable: boolean;
@@ -379,7 +383,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                               : "API key saved"
                             : canManage
                               ? "Add an API key to use this provider"
-                              : "Ask an environment administrator to add an API key"
+                              : (scopeAccessMessage(
+                                  access,
+                                  "Ask an environment administrator to add an API key",
+                                ) ?? "")
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
@@ -544,7 +551,9 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
           <ListSection>
             {routed && !key && !canManage ? (
               <ListActionRow
-                label="Ask an administrator to add an OpenRouter key"
+                label={
+                  scopeAccessMessage(access, "Ask an administrator to add an OpenRouter key") ?? ""
+                }
                 disabled
                 onPress={() => {}}
               />

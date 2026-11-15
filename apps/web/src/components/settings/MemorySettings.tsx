@@ -65,8 +65,15 @@ import {
   readEnvironmentScope,
   readPreparedConnection,
   useEnvironmentScope,
+  useEnvironmentScopeAccess,
   usePreparedConnection,
 } from "../../state/session";
+import {
+  type SessionScopeAccess,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { memoryEnvironment } from "../../state/memory";
@@ -147,6 +154,8 @@ export function MemorySettings({ target }: { target: MemorySettingsSearch }) {
   );
 }
 
+const MEMORY_READ_SCOPES = [AuthMemoryReadScope];
+
 function MemoryDestination({
   target,
   environmentId,
@@ -154,7 +163,7 @@ function MemoryDestination({
   target: MemorySettingsSearch;
   environmentId: EnvironmentId;
 }) {
-  const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
+  const readAccess = useEnvironmentScopeAccess(environmentId, MEMORY_READ_SCOPES);
   const prepared = usePreparedConnection(environmentId);
   // Reconnection drops all open forms and command results; no prior destination survives.
   const connection = Option.getOrNull(prepared);
@@ -171,10 +180,10 @@ function MemoryDestination({
         </SettingsSection>
       ) : (
         <MemoryDestinationContent
-          key={`${identity.key}:${canRead}`}
+          key={`${identity.key}:${readAccess}`}
           target={target}
           environmentId={environmentId}
-          canRead={canRead}
+          readAccess={readAccess}
         />
       )}
     </SettingsPageContainer>
@@ -185,13 +194,15 @@ function MemoryDestination({
 function MemoryDestinationContent({
   target,
   environmentId,
-  canRead,
+  readAccess,
 }: {
   target: MemorySettingsSearch;
   environmentId: EnvironmentId;
-  canRead: boolean;
+  readAccess: SessionScopeAccess;
 }) {
+  const canRead = !scopeAccessLocked(readAccess);
   const canAdmin = useAtomValue(memoryEnvironment.hubSettingsGet.permissionAtom(environmentId));
+  const adminAccess = useAtomValue(memoryEnvironment.hubSettingsGet.accessAtom(environmentId));
   const canSync = useAtomValue(memoryEnvironment.syncStatus.permissionAtom(environmentId));
   const getSync = useAtomCommand(memoryEnvironment.syncStatus, { reportFailure: false });
   const [sync, setSync] = useState<MemorySyncStatus | null>(null);
@@ -277,14 +288,18 @@ function MemoryDestinationContent({
           onSharingRefresh={refreshSync}
           sync={sync}
         />
-      ) : (
+      ) : scopeAccessShowsBanner(adminAccess) ? (
         <SettingsSection title="Sharing">
           <SettingsRow
             title="Sharing unavailable"
             description="Settings write permission is required to manage sharing."
           />
         </SettingsSection>
-      )}
+      ) : adminAccess === "unavailable" ? (
+        <SettingsSection title="Sharing">
+          <SettingsRow title="Sharing unavailable" description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+        </SettingsSection>
+      ) : null}
       {syncError ? (
         <SettingsSection title="Memory status">
           <SettingsRow
@@ -328,14 +343,21 @@ function MemoryDestinationContent({
             sync !== null && sync.state !== "disabled" && sync.state !== "bootstrapping"
           }
         />
-      ) : (
+      ) : scopeAccessShowsBanner(readAccess) ? (
         <SettingsSection title="Memories">
           <SettingsRow
             title="Memory read permission required"
             description="Memory read permission is required to view records. Write permission does not grant read access."
           />
         </SettingsSection>
-      )}
+      ) : readAccess === "unavailable" ? (
+        <SettingsSection title="Memories">
+          <SettingsRow
+            title="Memories unavailable"
+            description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+          />
+        </SettingsSection>
+      ) : null}
     </>
   );
 }
@@ -375,6 +397,7 @@ function MemoryRecords({
   const canGetBinding = useAtomValue(
     memoryEnvironment.projectBindingGet.permissionAtom(environmentId),
   );
+  const bindingAccess = useAtomValue(memoryEnvironment.projectBindingGet.accessAtom(environmentId));
   const [selection, setSelection] = useState("user");
   const [attempt, setAttempt] = useState(0);
   const selectedProject = projects.find((project) => `project:${project.id}` === selection);
@@ -421,8 +444,10 @@ function MemoryRecords({
               <span role="alert">{error}</span>
             ) : projectScope?.status === "loading" ? (
               "Loading project memory scope"
-            ) : !canGetBinding && projects.length > 0 ? (
+            ) : scopeAccessShowsBanner(bindingAccess) && projects.length > 0 ? (
               "Project scope requires memory write permission to look up its shared key."
+            ) : bindingAccess === "unavailable" && projects.length > 0 ? (
+              SCOPE_ACCESS_UNAVAILABLE_MESSAGE
             ) : undefined
           }
           control={
@@ -1203,6 +1228,7 @@ export function MemoryRevertControl({
   const { environments } = useEnvironments();
   const registry = useContext(RegistryContext);
   const canWrite = useAtomValue(memoryEnvironment.revertResolution.permissionAtom(environmentId));
+  const writeAccess = useAtomValue(memoryEnvironment.revertResolution.accessAtom(environmentId));
   const connection = Option.getOrNull(usePreparedConnection(environmentId));
   const revert = useAtomCommand(memoryEnvironment.revertResolution, { reportFailure: false });
   const supportsInputs =
@@ -1361,7 +1387,9 @@ export function MemoryRevertControl({
           Next originals page
         </Button>
       ) : null}
-      {!canWrite ? <p>Memory write permission is required to revert.</p> : null}
+      {scopeAccessShowsBanner(writeAccess) ? (
+        <p>Memory write permission is required to revert.</p>
+      ) : null}
       {result ? <p role="status">{presentMemoryRevertResult(result).label}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
       {(!result || result.status === "refused") && available ? (

@@ -1,5 +1,7 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -208,3 +210,110 @@ export const InstanceSpend = Schema.Struct({
 });
 export const InstanceSpendResult = Schema.Struct({ instances: Schema.Array(InstanceSpend) });
 export type InstanceSpendResult = typeof InstanceSpendResult.Type;
+
+/** Remaining percent of a usage window at or below which the user is told once; `"off"` silences a default. */
+export const UsageLimitAlertThreshold = Schema.Union([
+  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 99 })),
+  Schema.Literal("off"),
+]);
+export type UsageLimitAlertThreshold = typeof UsageLimitAlertThreshold.Type;
+
+export const USAGE_LIMIT_ALERT_CHOICES = [5, 10, 15, 20, 25, 30, 40, 50] as const;
+
+// A hand-edited bad entry drops alone: any decode failure in settings.json resets every setting.
+const validEntries = <K extends Schema.Codec<string, string>, V extends Schema.Top>(
+  key: K,
+  value: V,
+): Schema.Codec<Record<K["Type"], V["Type"]>, unknown> => {
+  const decodeKey = Schema.decodeUnknownOption(key);
+  const decodeValue = Schema.decodeUnknownOption(value as never);
+  return Schema.Unknown.pipe(
+    Schema.decodeTo(
+      Schema.Record(Schema.String, Schema.toType(value)),
+      SchemaTransformation.transform<{ readonly [key: string]: V["Type"] }, unknown>({
+        decode: (raw) =>
+          Object.fromEntries(
+            typeof raw !== "object" || raw === null || Array.isArray(raw)
+              ? []
+              : Object.entries(raw).flatMap(([rawKey, rawValue]) => {
+                  const decodedKey = decodeKey(rawKey);
+                  const decodedValue = decodeValue(rawValue);
+                  return Option.isSome(decodedKey) && Option.isSome(decodedValue)
+                    ? [[decodedKey.value, decodedValue.value]]
+                    : [];
+                }),
+          ),
+        encode: (entries) => entries,
+        // The generic value type cannot be resolved here; the return type pins the result.
+      }) as never,
+    ),
+  ) as unknown as Schema.Codec<Record<K["Type"], V["Type"]>, unknown>;
+};
+
+const validTimeZone = Schema.optionalKey(Schema.Unknown).pipe(
+  Schema.decodeTo(
+    Schema.optionalKey(TrimmedNonEmptyString),
+    SchemaTransformation.transformOptional<string, unknown>({
+      decode: (raw) => raw.pipe(Option.flatMap(Schema.decodeUnknownOption(TrimmedNonEmptyString))),
+      encode: (zone) => zone,
+    }),
+  ),
+);
+
+/** Stored per provider instance; windows are keyed by `ServerProviderUsageWindow.id`. */
+export const UsageLimitAlertConfig = Schema.Struct({
+  windows: validEntries(Schema.String, UsageLimitAlertThreshold).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** IANA zone of the client that last saved it, for the reset time in the message. */
+  timeZone: validTimeZone,
+});
+export type UsageLimitAlertConfig = typeof UsageLimitAlertConfig.Type;
+
+const isPlainObject = (raw: unknown): raw is Readonly<Record<string, unknown>> =>
+  typeof raw === "object" && raw !== null && !Array.isArray(raw);
+
+const UsageLimitAlertsFields = Schema.Struct({
+  /** Alerts still reach the user while Autonomy is paused or off; only this kind of message does. */
+  ignoreAutonomyPause: Schema.Unknown.pipe(
+    Schema.decodeTo(
+      Schema.Boolean,
+      SchemaTransformation.transform<boolean, unknown>({
+        decode: (raw) => (typeof raw === "boolean" ? raw : true),
+        encode: (value) => value,
+      }),
+    ),
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  instances: validEntries(ProviderInstanceId, UsageLimitAlertConfig).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+
+export const UsageLimitAlerts = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    UsageLimitAlertsFields,
+    SchemaTransformation.transform<typeof UsageLimitAlertsFields.Encoded, unknown>({
+      decode: (raw) => (isPlainObject(raw) ? raw : {}) as typeof UsageLimitAlertsFields.Encoded,
+      encode: (value) => value,
+    }),
+  ),
+);
+export type UsageLimitAlerts = typeof UsageLimitAlerts.Type;
+
+/** Merges per window: a number sets it, `"off"` silences it, `null` returns it to the default. */
+export const UsageLimitAlertConfigPatch = Schema.Struct({
+  windows: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.NullOr(UsageLimitAlertThreshold)),
+  ),
+  timeZone: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type UsageLimitAlertConfigPatch = typeof UsageLimitAlertConfigPatch.Type;
+
+export const UsageLimitAlertsPatch = Schema.Struct({
+  ignoreAutonomyPause: Schema.optionalKey(Schema.Boolean),
+  instances: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, Schema.NullOr(UsageLimitAlertConfigPatch)),
+  ),
+});
+export type UsageLimitAlertsPatch = typeof UsageLimitAlertsPatch.Type;

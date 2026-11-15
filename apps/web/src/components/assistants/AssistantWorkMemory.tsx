@@ -22,11 +22,12 @@ import { PencilIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { memoryEnvironment } from "../../state/memory";
 import { useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemoryScope";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { useProjects, useThreadShell } from "../../state/entities";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -38,6 +39,7 @@ const MemoryForgetControl = lazy(() =>
   import("../settings/MemorySettings").then((module) => ({ default: module.MemoryForgetControl })),
 );
 
+const MEMORY_READ_SCOPES = [AuthMemoryReadScope];
 const NO_ITEMS: ReadonlyArray<never> = [];
 
 /** What the assistant's conversations taught the memory, each with its source, to edit or forget. */
@@ -47,7 +49,8 @@ export function AssistantWorkMemory(props: {
   readonly onNavigate: () => void;
 }) {
   const { environmentId, assistant } = props;
-  const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
+  const readAccess = useEnvironmentScopeAccess(environmentId, MEMORY_READ_SCOPES);
+  const canRead = !scopeAccessLocked(readAccess);
   const space = useMemorySpace(environmentId, canRead);
   const projectMemory = useProjectMemoryScope(
     environmentId,
@@ -85,7 +88,14 @@ export function AssistantWorkMemory(props: {
   const failed = [user, project, thread].some((query) => query.error !== null);
 
   if (!canRead) {
-    return <Note>Memory read permission is required to see what it remembers.</Note>;
+    const message =
+      readAccess === "unknown"
+        ? null
+        : scopeAccessMessage(
+            readAccess,
+            "Memory read permission is required to see what it remembers.",
+          );
+    return message === null ? null : <Note>{message}</Note>;
   }
   if (space === null) {
     return <Note>Memory is off or still getting ready on this server.</Note>;

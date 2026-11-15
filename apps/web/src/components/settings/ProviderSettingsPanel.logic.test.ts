@@ -1,14 +1,18 @@
+import { sessionScopeAccess } from "@t3tools/client-runtime/state/sessionScope";
 import {
   AuthProvidersManageScope,
   ProjectId,
   ProviderInstanceId,
+  type AuthSessionState,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  PROVIDER_SETTINGS_SCOPES,
   buildProviderInstanceOverridePatch,
-  resolveRemoteOperateAccess,
+  classifyProviderEnvironmentAccess,
 } from "./ProviderSettingsPanel.logic";
 
 describe("buildProviderInstanceOverridePatch", () => {
@@ -64,51 +68,78 @@ describe("buildProviderInstanceOverridePatch", () => {
   });
 });
 
+describe("classifyProviderEnvironmentAccess", () => {
+  const classify = (
+    operateAccess: Parameters<typeof classifyProviderEnvironmentAccess>[0]["operateAccess"],
+    overrides: Partial<Parameters<typeof classifyProviderEnvironmentAccess>[0]> = {},
+  ) =>
+    classifyProviderEnvironmentAccess({
+      connectionPhase: "connected",
+      hasServerConfig: true,
+      operateAccess,
+      ...overrides,
+    });
+
+  it.each([
+    ["unknown", { kind: "loading", reason: "permissions" }],
+    ["unavailable", { kind: "read-only" }],
+    ["missing", { kind: "read-only" }],
+    ["granted", { kind: "editable" }],
+  ] as const)("operate access %s", (access, expected) => {
+    expect(classify(access)).toEqual(expected);
+  });
+
+  it("waits for config and reports connection problems before access", () => {
+    expect(classify("granted", { hasServerConfig: false })).toEqual({
+      kind: "loading",
+      reason: "config",
+    });
+    expect(classify("granted", { connectionPhase: "error" })).toEqual({ kind: "error" });
+  });
+});
+
 describe("remote operate access", () => {
+  const session = (value: Record<string, unknown>) =>
+    AsyncResult.success(value as unknown as AuthSessionState);
+  const classifySession = (result: AsyncResult.AsyncResult<AuthSessionState, unknown>) =>
+    classifyProviderEnvironmentAccess({
+      connectionPhase: "connected",
+      hasServerConfig: true,
+      operateAccess: sessionScopeAccess(result, PROVIDER_SETTINGS_SCOPES),
+    }).kind;
+
   it("does not treat the old orchestration grant as provider management", () => {
     expect(
-      resolveRemoteOperateAccess({
-        session: {
+      classifySession(
+        session({
           authenticated: true,
           scopes: ["orchestration:operate"],
           auth: { serverUpdateScope: "environment:maintain" },
-        },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
+        }),
+      ),
+    ).toBe("read-only");
   });
 
   it("accepts the orchestration grant from a server that predates providers:manage", () => {
     expect(
-      resolveRemoteOperateAccess({
-        session: { authenticated: true, scopes: ["orchestration:operate"], auth: {} },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("granted");
+      classifySession(
+        session({ authenticated: true, scopes: ["orchestration:operate"], auth: {} }),
+      ),
+    ).toBe("editable");
   });
+
   it("derives access from the environment session's granted scopes", () => {
     expect(
-      resolveRemoteOperateAccess({
-        session: { authenticated: true, scopes: [AuthProvidersManageScope] },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("granted");
-    expect(
-      resolveRemoteOperateAccess({
-        session: { authenticated: true, scopes: ["orchestration:read"] },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
-    expect(
-      resolveRemoteOperateAccess({
-        session: { authenticated: false },
-        isPending: false,
-        hasError: false,
-      }),
-    ).toBe("denied");
+      classifySession(session({ authenticated: true, scopes: [AuthProvidersManageScope] })),
+    ).toBe("editable");
+    expect(classifySession(session({ authenticated: true, scopes: ["orchestration:read"] }))).toBe(
+      "read-only",
+    );
+    expect(classifySession(session({ authenticated: false }))).toBe("read-only");
+  });
+
+  it("opens read-only when the session check failed with no session", () => {
+    expect(classifySession(AsyncResult.fail(new Error("no session")))).toBe("read-only");
+    expect(classifySession(AsyncResult.initial<AuthSessionState>())).toBe("loading");
   });
 });

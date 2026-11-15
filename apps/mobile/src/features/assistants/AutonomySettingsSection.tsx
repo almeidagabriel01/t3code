@@ -21,7 +21,7 @@ import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
-import { useAutonomySettings } from "../../state/autonomy";
+import { useAutonomySettings, useLimitAlertsWhilePaused } from "../../state/autonomy";
 import { useTelegramChannel, useTelegramEnvironmentIds } from "../../state/telegramChannel";
 
 const RULE_ICONS: Record<AutonomyRule, AppSymbolName> = {
@@ -124,6 +124,7 @@ export function AutonomySettingsSection(props: {
 }) {
   const { environmentId } = props;
   const { autonomy, write } = useAutonomySettings(environmentId);
+  const limitAlerts = useLimitAlertsWhilePaused(environmentId);
   const telegramAvailable = useTelegramEnvironmentIds().includes(environmentId);
   const paused = !autonomy.enabled;
   return (
@@ -138,6 +139,15 @@ export function AutonomySettingsSection(props: {
         value={autonomy.enabled}
         onValueChange={(enabled) => void write({ ...autonomy, enabled })}
       />
+      {limitAlerts.value === null ? null : (
+        <ListToggleRow
+          icon="gauge.with.dots.needle.50percent"
+          label="Limit alerts while paused"
+          description="Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels in Limit alerts."
+          value={limitAlerts.value}
+          onValueChange={(value) => void limitAlerts.write(value)}
+        />
+      )}
       <ListToggleRow
         icon="envelope.badge"
         label="Notify me when something is waiting for me"

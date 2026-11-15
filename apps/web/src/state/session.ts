@@ -1,10 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import {
+  sessionScopeAccess,
+  type SessionScopeAccess,
+} from "@t3tools/client-runtime/state/sessionScope";
+import {
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
-  sessionGrantsScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -38,8 +41,20 @@ export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const session = AsyncResult.getOrElse(result, () => null);
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
+  return sessionScopeAccess(result, [scope]) === "granted";
+}
+
+/** For permission notices: "unknown" until the session resolves, so nothing flashes meanwhile. */
+export function useEnvironmentScopeAccess(
+  environmentId: EnvironmentId | null,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): SessionScopeAccess {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionScopeAccess(result, scopes),
+  );
 }
 
 const environmentsWithScopeAtom = Atom.family((key: string) => {
@@ -51,6 +66,28 @@ const environmentsWithScopeAtom = Atom.family((key: string) => {
     return new Set(ids.filter((_, index) => sessionHasScope(states[index]!, scope)));
   }).pipe(Atom.withLabel(`web-environments-with-scope:${key}`));
 });
+
+const environmentsScopeAccessAtom = Atom.family((key: string) => {
+  const [scope, idsKey = ""] = key.split(/\n(.*)/s) as [AuthEnvironmentScope, string?];
+  const ids = idsKey === "" ? [] : (idsKey.split("\n") as EnvironmentId[]);
+  const statesAtom = environmentSessionStatesAtom(idsKey);
+  return Atom.make((get) => {
+    const states = get(statesAtom);
+    return new Map(ids.map((id, index) => [id, sessionScopeAccess(states[index]!, [scope])]));
+  }).pipe(Atom.withLabel(`web-environments-scope-access:${key}`));
+});
+
+/** Per environment, for permission notices: "unknown" until its session resolves. */
+export function useEnvironmentsScopeAccess(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  scope: AuthEnvironmentScope,
+): ReadonlyMap<EnvironmentId, SessionScopeAccess> {
+  return useAtomValue(
+    environmentsScopeAccessAtom(
+      `${scope}\n${environmentIdsKey(environments.map(({ environmentId }) => environmentId))}`,
+    ),
+  );
+}
 
 export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,

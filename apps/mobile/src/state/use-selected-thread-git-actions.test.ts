@@ -34,6 +34,14 @@ vi.mock("@effect/atom-react", () => ({ useAtomMount: () => {} }));
 vi.mock("./session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
+  useEnvironmentScopeAccess: (environmentId: unknown, scopes: ReadonlyArray<string>) =>
+    scopes.every((scope) =>
+      (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(
+        scope,
+      ),
+    )
+      ? "granted"
+      : "missing",
   readEnvironmentScope: (environmentId: unknown, scope: string) =>
     (environmentId === state.thread.environmentId ? state.scopes : state.primaryScopes).has(scope),
 }));

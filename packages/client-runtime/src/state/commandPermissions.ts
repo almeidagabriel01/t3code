@@ -9,9 +9,10 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentSessionAtoms } from "./session.ts";
+import { sessionScopeAccess, type SessionScopeAccess } from "./sessionScope.ts";
 
 function makeCommandPermissions<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -19,24 +20,26 @@ function makeCommandPermissions<R, E>(
 ) {
   const sessions = createEnvironmentSessionAtoms(runtime);
   const requiredScopes = (input?: unknown) => clientRpcRequiredScopes(method, input);
-  const atomsByEnvironment = Atom.family((environmentId: EnvironmentId | null) =>
+  const accessByEnvironment = Atom.family((environmentId: EnvironmentId | null) =>
     Atom.family((scopeKey: string) =>
-      Atom.make((get) => {
-        if (environmentId === null) return false;
+      Atom.make((get): SessionScopeAccess => {
+        if (environmentId === null) return "unknown";
         const scopes = scopeKey.split(",").filter(Boolean) as AuthEnvironmentScope[];
-        if (scopes.length === 0) return true;
-        const result = get(sessions.sessionStateAtom(environmentId));
-        const session = AsyncResult.getOrElse(result, () => null);
-        return (
-          result._tag !== "Failure" &&
-          session !== null &&
-          scopes.every((scope) => sessionGrantsScope(session, scope))
-        );
+        if (scopes.length === 0) return "granted";
+        return sessionScopeAccess(get(sessions.sessionStateAtom(environmentId)), scopes);
       }),
     ),
   );
+  const permissionsByEnvironment = Atom.family((environmentId: EnvironmentId | null) =>
+    Atom.family((scopeKey: string) =>
+      Atom.make((get) => get(accessByEnvironment(environmentId)(scopeKey)) === "granted"),
+    ),
+  );
+  /** For permission notices: "unknown" until the session resolves, so they never flash. */
+  const accessAtom = (environmentId: EnvironmentId | null, input?: unknown) =>
+    accessByEnvironment(environmentId)(requiredScopes(input).join(","));
   const permissionAtom = (environmentId: EnvironmentId | null, input?: unknown) =>
-    atomsByEnvironment(environmentId)(requiredScopes(input).join(","));
+    permissionsByEnvironment(environmentId)(requiredScopes(input).join(","));
   const authorize = (
     registry: AtomRegistry.AtomRegistry,
     environmentId: EnvironmentId,
@@ -66,7 +69,7 @@ function makeCommandPermissions<R, E>(
         }),
       );
     });
-  return { requiredScopes, permissionAtom, authorize };
+  return { requiredScopes, accessAtom, permissionAtom, authorize };
 }
 
 const permissionsByRuntime = new WeakMap<

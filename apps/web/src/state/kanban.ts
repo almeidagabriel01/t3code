@@ -10,6 +10,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { kanbanCardRecordForThread } from "@t3tools/client-runtime/state/kanbanLogic";
+import type { SessionScopeAccess } from "@t3tools/client-runtime/state/sessionScope";
 import * as Option from "effect/Option";
 import { Atom, AsyncResult } from "effect/reactivity";
 
@@ -19,7 +20,7 @@ import { environmentAtomList } from "./environmentAtomList";
 import { environmentServerConfigsAtom } from "./server";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { environmentPresentations } from "./presentation";
-import { useEnvironmentsWithScope } from "./session";
+import { useEnvironmentsScopeAccess, useEnvironmentsWithScope } from "./session";
 
 export const kanbanEnvironment = createKanbanEnvironmentAtoms(connectionAtomRuntime);
 
@@ -46,6 +47,15 @@ export function useKanbanEnvironmentIds(): ReadonlyArray<EnvironmentId> {
     AuthOrchestrationReadScope,
   );
   return supported.filter((id) => readable.has(id));
+}
+
+/** Each board-capable environment's read access, so one slow session never holds another's board. */
+export function useKanbanReadAccess(): ReadonlyMap<EnvironmentId, SessionScopeAccess> {
+  const supported = useAtomValue(kanbanEnvironmentIdsAtom);
+  return useEnvironmentsScopeAccess(
+    supported.map((environmentId) => ({ environmentId })),
+    AuthOrchestrationReadScope,
+  );
 }
 
 const providerEntriesAtom = Atom.make((get) => {

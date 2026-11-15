@@ -109,6 +109,10 @@ export function useKanbanCanEdit(environmentId: EnvironmentId | null): boolean {
   return useAtomValue(kanbanEnvironment.createCard.permissionAtom(environmentId));
 }
 
+export function useKanbanEditAccess(environmentId: EnvironmentId | null) {
+  return useAtomValue(kanbanEnvironment.createCard.accessAtom(environmentId));
+}
+
 export interface KanbanEnvironmentState {
   readonly environmentId: EnvironmentId;
   readonly state: KanbanState | null;

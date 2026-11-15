@@ -559,6 +559,31 @@ it.effect("gives an older group chat its requests: every message and task joins 
   }).pipe(Effect.provide(database)),
 );
 
+it.effect.each(["new", "old"] as const)(
+  "keeps usage limit alert state across starts of a %s database",
+  (shape) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* ensureForkSchema();
+      // "old": a database from a build before the table existed.
+      if (shape === "old") yield* sql`DROP TABLE usage_limit_alert_state`;
+      yield* ensureForkSchema();
+      yield* sql`INSERT INTO usage_limit_alert_state
+        (instance_id, account_key, window_id, armed, episode, updated_at)
+        VALUES ('claudeAgent', 'k', 'seven_day', 0, 1, 't')`;
+      yield* ensureForkSchema();
+
+      assert.deepStrictEqual(
+        yield* sql`SELECT instance_id, episode, pending FROM usage_limit_alert_state`,
+        [{ instance_id: "claudeAgent", episode: 1, pending: 0 }],
+      );
+      // One row per instance, account and window.
+      yield* sql`INSERT INTO usage_limit_alert_state
+        (instance_id, account_key, window_id, armed, episode, updated_at)
+        VALUES ('claudeAgent', 'k', 'seven_day', 1, 2, 't')`.pipe(Effect.flip);
+    }).pipe(Effect.provide(database)),
+);
+
 it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)(
   "fills request ids, groups and request projects in a %s database",
   (shape) =>

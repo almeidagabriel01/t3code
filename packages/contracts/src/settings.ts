@@ -55,7 +55,7 @@ import {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
-import { ProviderBudget } from "./usage.ts";
+import { ProviderBudget, UsageLimitAlerts, UsageLimitAlertsPatch } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
@@ -1923,6 +1923,7 @@ export const ServerSettings = Schema.Struct({
   providerBudgets: Schema.Record(ProviderInstanceId, ProviderBudget).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  usageLimitAlerts: UsageLimitAlerts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   /** Projects opened with Open folder; clients hide them while they have no active thread. */
   folderProjects: Schema.Record(ProjectId, Schema.Literal(true)).pipe(
@@ -2360,6 +2361,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   providerBudgets: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, Schema.NullOr(ProviderBudget)),
   ),
+  // Merged per window; null removes the instance's entry.
+  usageLimitAlerts: Schema.optionalKey(UsageLimitAlertsPatch),
   folderProjects: Schema.optionalKey(Schema.Record(ProjectId, Schema.NullOr(Schema.Literal(true)))),
 
   usagePriceOverrides: Schema.optionalKey(

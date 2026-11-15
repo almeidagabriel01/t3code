@@ -3,7 +3,7 @@
  * text is never run through here. Decisions stay English in storage (the app shows them as written);
  * `localizeDecision` maps their known phrases when a card is rendered into a chat.
  */
-import type { ChannelLanguage } from "@t3tools/contracts";
+import type { ChannelLanguage, ServerProviderUsageWindow } from "@t3tools/contracts";
 
 export type ResolvedChannelLanguage = Exclude<ChannelLanguage, "auto">;
 
@@ -48,6 +48,8 @@ export interface ChannelStrings {
   readonly groupTaskReason: (reason: string | null) => string;
   /** When a provider's usage limit resets; `time` is null when the provider did not say. */
   readonly usageLimitBack: (time: string | null) => string;
+  /** A usage window that dropped to its alert threshold; one or two lines, no links. */
+  readonly usageLimitLow: (notice: UsageLimitLowNotice) => string;
   readonly decision: {
     readonly approve: string;
     readonly deny: string;
@@ -73,6 +75,21 @@ export interface ChannelStrings {
     readonly usageLimit: string;
   };
 }
+
+export interface UsageLimitLowNotice {
+  readonly provider: string;
+  /** Shown only when several instances of the provider could be meant. */
+  readonly account: string | null;
+  readonly remaining: number;
+  readonly kind: ServerProviderUsageWindow["kind"];
+  readonly label: string;
+  /** Model a scoped window is for, such as "Opus" in "Weekly · Opus". */
+  readonly scope: string | null;
+  readonly resets: string | null;
+}
+
+const noticeSubject = (notice: UsageLimitLowNotice) =>
+  notice.account === null ? notice.provider : `${notice.provider} (${notice.account})`;
 
 const en: ChannelStrings = {
   noAssistants: "No assistants are set up. Create one in Settings → Assistants.",
@@ -120,6 +137,21 @@ const en: ChannelStrings = {
           ? "No member could be picked for it. Reassign or cancel it."
           : `Paused${reason === null ? "" : ` (${reason})`}. Resume, reassign or cancel it.`,
   usageLimitBack: (time) => (time === null ? "Back when the limit resets." : `Back at ${time}.`),
+  usageLimitLow: (notice) => {
+    const limit =
+      notice.kind === "session"
+        ? "session limit"
+        : notice.kind === "weekly"
+          ? "weekly limit"
+          : notice.kind === "monthly"
+            ? "monthly limit"
+            : `"${notice.label}" limit`;
+    const scope = notice.scope === null ? "" : ` (${notice.scope})`;
+    const resets = notice.resets === null ? "" : ` Resets ${notice.resets}.`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: the ${limit}${scope} ran out.${resets}`
+      : `${noticeSubject(notice)}: ${notice.remaining}% of the ${limit}${scope} left.${resets}`;
+  },
   decision: {
     approve: "Approve",
     deny: "Deny",
@@ -190,6 +222,21 @@ const ptBR: ChannelStrings = {
           ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
           : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
   usageLimitBack: (time) => (time === null ? "Volta quando o limite renovar." : `Volta: ${time}.`),
+  usageLimitLow: (notice) => {
+    const limit =
+      notice.kind === "session"
+        ? "limite da sessão"
+        : notice.kind === "weekly"
+          ? "limite semanal"
+          : notice.kind === "monthly"
+            ? "limite mensal"
+            : `limite "${notice.label}"`;
+    const scope = notice.scope === null ? "" : ` (${notice.scope})`;
+    const resets = notice.resets === null ? "" : ` Renova ${notice.resets}.`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: o ${limit}${scope} acabou.${resets}`
+      : `${noticeSubject(notice)}: restam ${notice.remaining}% do ${limit}${scope}.${resets}`;
+  },
   decision: {
     approve: "Aprovar",
     deny: "Negar",

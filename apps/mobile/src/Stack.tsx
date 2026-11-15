@@ -96,6 +96,7 @@ import { SettingsNavigationRouteScreen } from "./features/settings/SettingsNavig
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
+import { SettingsUsageAlertsRouteScreen } from "./features/settings/SettingsUsageAlertsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentDetailRouteScreen } from "./features/settings/SettingsEnvironmentDetailRouteScreen";
@@ -246,6 +247,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsProviderAccountsRouteScreen,
     linking: "settings/provider-accounts",
     options: settingsPage("Providers"),
+  }),
+  SettingsUsageAlerts: createNativeStackScreen({
+    screen: SettingsUsageAlertsRouteScreen,
+    linking: "settings/usage-alerts",
+    options: settingsPage("Limit alerts"),
   }),
   SettingsEnvironmentMaintenance: createNativeStackScreen({
     screen: SettingsEnvironmentMaintenanceRouteScreen,

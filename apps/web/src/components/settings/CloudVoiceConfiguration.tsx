@@ -37,6 +37,7 @@ import * as Schema from "effect/Schema";
 import type { HttpClient } from "effect/http";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { isSecretsFeatureEnabled } from "../../env";
 import {
   inEnvironmentSpeechRuntime,
@@ -48,7 +49,11 @@ import {
   useAudioChoice,
 } from "../../speech/voiceConsent";
 import type { EnvironmentPresentation } from "../../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  usePreparedConnection,
+} from "../../state/session";
 import { Button } from "../ui/button";
 import {
   Combobox,
@@ -90,6 +95,7 @@ function useCloudRead<A, E>(
 }
 const isApiKey = Schema.is(CloudSpeechApiKey);
 const isModelId = Schema.is(CloudSpeechModelId);
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
 
 function ModelPicker({
@@ -207,6 +213,7 @@ export function CloudVoiceConfiguration({
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
   const canManage = useEnvironmentScope(id, AuthSettingsWriteScope);
+  const manageAccess = useEnvironmentScopeAccess(id, SETTINGS_WRITE_SCOPES);
   const [presence, refresh] = useCloudRead(canUse ? prepared : null, getCloudSpeechKeys);
   const [models, refreshModels] = useCloudRead(
     routed && canUse ? prepared : null,
@@ -251,6 +258,14 @@ export function CloudVoiceConfiguration({
       reference.reference === credential.reference
     );
   const connected = canUse && prepared !== null;
+  const adminNotice =
+    manageAccess === "unknown" ? null : (
+      <p>
+        {manageAccess === "unavailable"
+          ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+          : `Ask an administrator on ${environment.label} to add an API key.`}
+      </p>
+    );
   // Fixed providers edit the key only when nothing is saved or the device already uses them.
   const editingKey = !keyless && canManage && saved !== undefined && (routed || active || !saved);
   const listedModels = AsyncResult.isSuccess(models) ? (models.value?.models ?? null) : null;
@@ -436,7 +451,7 @@ export function CloudVoiceConfiguration({
                 {editingKey ? (
                   <div className="grid gap-2">{keyField}</div>
                 ) : !saved ? (
-                  <p>Ask an administrator on {environment.label} to add an API key.</p>
+                  adminNotice
                 ) : (
                   <p className="text-sm text-muted-foreground">
                     Uses the API key saved on {environment.label}. This choice applies only to this
@@ -456,7 +471,7 @@ export function CloudVoiceConfiguration({
                 {keyField}
               </form>
             ) : !saved ? (
-              <p>Ask an administrator on {environment.label} to add an API key.</p>
+              adminNotice
             ) : (
               <p className="text-sm text-muted-foreground">
                 This choice applies only to this device. Choose Off to stop sharing.
