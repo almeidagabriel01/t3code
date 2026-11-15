@@ -15,10 +15,17 @@ import { View } from "react-native";
 
 import { useControlTheme } from "./useControlTheme";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
-import type { ButtonProps } from "./Button";
+import { PressableButton, type ButtonProps } from "./Button.shared";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 
+const COMPACT_CONTENT_PADDING = { start: 20, end: 20, top: 6, bottom: 6 };
+
 export function Button(props: ButtonProps) {
+  return props.size === "tile" ? <PressableButton {...props} /> : <MaterialButton {...props} />;
+}
+
+function MaterialButton(props: ButtonProps) {
+  const compact = props.size === "compact";
   const { colors } = useControlTheme();
   const typography = useScaledTextRole("footnote");
   const { scale, mediumIconSize } = useAndroidControlSizing();
@@ -70,8 +77,9 @@ export function Button(props: ButtonProps) {
           <Component
             enabled={!props.disabled && !props.loading}
             onClick={props.onPress}
+            {...(compact ? { contentPadding: COMPACT_CONTENT_PADDING } : {})}
             modifiers={[
-              defaultMinSize({ minHeight: 48 }),
+              defaultMinSize({ minHeight: compact ? 40 : 48 }),
               ...(props.fullWidth ? [fillMaxWidth()] : []),
             ]}
             colors={{
