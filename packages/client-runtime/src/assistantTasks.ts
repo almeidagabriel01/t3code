@@ -8,14 +8,24 @@ import {
 import type { assistantPresence, AssistantFace } from "./assistantRobot.ts";
 
 /** What a task row says, read from the task thread's own shell. */
-export type AssistantTaskState = AssistantTaskStatus;
+export type AssistantTaskState = AssistantTaskStatus | "usage_limited";
 
 export const ASSISTANT_TASK_STATE_LABEL: Record<AssistantTaskState, string> = {
   running: "Running",
   waiting: "Waiting",
+  usage_limited: "Usage limit",
   done: "Done",
   failed: "Failed",
 };
+
+/** "Limit until <time>" while the reset is ahead, else null; `formatAt` is the platform's upcoming-time format. */
+export function usageLimitLabel(
+  resetAt: string | null | undefined,
+  nowMs: number,
+  formatAt: (iso: string) => string,
+): string | null {
+  return resetAt != null && Date.parse(resetAt) > nowMs ? `Limit until ${formatAt(resetAt)}` : null;
+}
 
 type TaskShell = NonNullable<Parameters<typeof assistantPresence>[0]> & {
   readonly id: string;
@@ -27,12 +37,13 @@ type TaskShell = NonNullable<Parameters<typeof assistantPresence>[0]> & {
 export const ASSISTANT_TASK_FACE: Record<AssistantTaskState, AssistantFace> = {
   running: "working",
   waiting: "waiting",
+  usage_limited: "waiting",
   failed: "failed",
   done: "done",
 };
 
 export function assistantTaskState(shell: TaskShell): AssistantTaskState {
-  return assistantTaskStatusOf({
+  const status = assistantTaskStatusOf({
     needsUser:
       shell.hasPendingApprovals ||
       shell.hasPendingUserInput ||
@@ -40,11 +51,15 @@ export function assistantTaskState(shell: TaskShell): AssistantTaskState {
       (shell.pendingGuestMessageCount ?? 0) > 0,
     runtimeStatus: shell.runtime?.status ?? null,
   });
+  // A usage limit waits for its reset or a provider switch, which runs the same thread again.
+  return status === "failed" && shell.runtime?.lastErrorClass === "usage_limit"
+    ? "usage_limited"
+    : status;
 }
 
 /** A task whose thread still runs or waits on the user keeps its row; the server refuses it too. */
 export const canDismissAssistantTask = (state: AssistantTaskState) =>
-  state === "done" || state === "failed";
+  state === "done" || state === "failed" || state === "usage_limited";
 
 /** What a thread menu needs of a thread's task link; null when the thread is no task. */
 export function assistantTaskMenuState(
@@ -64,11 +79,17 @@ export interface AssistantTaskRow<S extends TaskShell> {
   readonly state: AssistantTaskState;
 }
 
-const ORDER: Record<AssistantTaskState, number> = { waiting: 0, running: 1, failed: 2, done: 3 };
+const ORDER: Record<AssistantTaskState, number> = {
+  waiting: 0,
+  running: 1,
+  usage_limited: 2,
+  failed: 3,
+  done: 4,
+};
 
 /**
- * An assistant's tasks that still have a thread and were not dismissed, waiting first, then running, failed and done,
- * each newest first. A deleted thread drops out; an archived one stays hidden once it is done.
+ * An assistant's tasks that still have a thread and were not dismissed, waiting first, then
+ * running, usage-limited, failed and done, each newest first. A deleted thread drops out; an archived one stays hidden once it is done.
  */
 export function assistantTaskRows<S extends TaskShell>(
   tasks: ReadonlyArray<AssistantTask>,

@@ -2,6 +2,7 @@ import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { groupMentionChip, groupMentionTokenOptions } from "../lib/groupMentionChips";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import {
@@ -140,6 +141,7 @@ export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
   models = EMPTY_MODELS,
+  groupMentions,
   selection,
   style,
   textStyle,
@@ -167,11 +169,12 @@ export function ComposerEditor({
   // an abandoned render from leaking a trailing token into the next one.
   const [confirmedTokens, setConfirmedTokens] = useState(() => ({
     value: props.value,
-    tokens: collectComposerInlineTokens(props.value),
+    tokens: collectComposerInlineTokens(props.value, groupMentionTokenOptions(groupMentions)),
   }));
   let tokens = confirmedTokens.tokens;
   if (confirmedTokens.value !== props.value) {
     tokens = collectComposerInlineTokens(props.value, {
+      ...groupMentionTokenOptions(groupMentions),
       preserveTrailingFrom: confirmedTokens.tokens,
     });
     setConfirmedTokens({ value: props.value, tokens });
@@ -187,6 +190,7 @@ export function ComposerEditor({
     return JSON.stringify(
       composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens).map((token) => {
         const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
+        const group = groupMentionChip(token, groupMentions);
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -199,6 +203,20 @@ export function ComposerEditor({
           presentation,
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
+        if (group !== null) {
+          // Native taps ignore these kinds (Android) or report a press the wrapper drops (iOS).
+          return {
+            type: token.type,
+            source: token.source,
+            start: token.start,
+            end: token.end,
+            accent: contextChipAccent(group.accent, theme, chipTextColor),
+            label: group.label,
+            detail: "",
+            iconUri: group.iconUri ?? contextChipIconUri(group.icon),
+            tintsIcon: group.iconUri === undefined,
+          };
+        }
         return {
           type: token.type,
           source: token.source,
@@ -230,6 +248,7 @@ export function ComposerEditor({
     skillLabels,
     modelsBySource,
     modelTokens,
+    groupMentions,
     theme,
     chipTextColor,
   ]);

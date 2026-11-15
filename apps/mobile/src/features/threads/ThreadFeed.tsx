@@ -1260,7 +1260,7 @@ function MarkdownDetailsFold(props: {
   );
 }
 
-function useMarkdownStyles(): MarkdownStyleSets {
+export function useMarkdownStyles(): MarkdownStyleSets {
   const { appearance } = useAppearancePreferences();
   const nativeMarkdownTypography = resolveNativeMarkdownTypography(appearance.baseFontSize);
   const theme = useUniwindTheme();

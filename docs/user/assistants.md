@@ -17,7 +17,10 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
   projects, but adding more projects does not. An assistant with real projects is a **project
   assistant**: it shows a project badge, is listed under each of its projects, and may only launch,
   delegate and message work inside them (see [Project assistants](#project-assistants)).
-- **Model**. Change it from the model picker in the conversation, or in the assistant's settings.
+- **Model**. Change it from the model picker in the conversation. **Default model** in the
+  assistant's settings is the model its new conversations start on when the project sets none;
+  **Use your default** clears it. A project can give the assistant its own model under **Model by
+  assistant** in the project's settings.
 - **Instructions**. Sent with every message, so they keep applying after a long conversation is
   compacted, resumed or moved to another provider. An edit applies from the next message.
 - **Tool access**, described below.
@@ -28,8 +31,21 @@ Open **Settings → Assistants**, or use **+** next to Assistants in the sidebar
 ## Project assistants
 
 An assistant set to **All projects** works across all your projects. One set to real projects is a
-project assistant. T3 Code refuses its launches, delegated tasks and messages to agent conversations
-in any project outside its list, and tells it why. It can still message other assistants.
+project assistant. It works in its own projects plus those of its groups (see
+[Group projects](#group-projects)). T3 Code refuses its launches, delegated tasks and messages to
+agent conversations in any other project, and tells it why. It can still message other assistants.
+
+A project assistant with more than one project never falls back to its first one. It has to name
+the project when it starts work, and asks you when your request does not make it clear. Its
+delegated tasks would run in its own conversation's project, so it starts a thread in the right
+project instead. Editing an assistant shows the projects it gets from its groups apart from its own.
+
+Only you can change which projects an assistant works in. An assistant may do it for you in a
+conversation you started, but not from another assistant's message, a schedule or a group task.
+
+A scheduled task that a project assistant makes stays inside its projects. If the assistant later
+loses the task's project, or is deleted, the task stops starting work and its last run says why.
+Tasks made before this check existed don't know which assistant made them, so they keep running.
 
 ## Tool access
 
@@ -199,27 +215,81 @@ Home list your groups under the assistants.
 - Deleting an assistant removes it from its groups, which stay even when they end up empty. Archived
   members stay in the group and come back when unarchived.
 
+### Group projects
+
+A group can have projects of its own, and every member may work in them on top of its own projects,
+but only in that group's requests: a member's conversation for a request reaches its own projects
+and that group's, never another group's. Give a new project to a whole team in one step:
+
+- From the group: open its settings and tick the projects under **Projects**. The settings show how
+  many members gain access.
+- From the project: under **Settings > Projects**, open the project and use **Assistants with
+  access** to tick groups, or single assistants. After you add a project, T3 Code offers the same
+  choice.
+
+Someone who joins the group later gets its projects too. Taking a project away from the group keeps
+it for any member that has it on its own list. For the others, a turn already running there finishes,
+and their work in that project that has not started (queued or waiting for a usage limit) is
+cancelled. Deleting a project does the same for every group, whatever its list. Archived projects stay in the list, marked as
+archived. Each member's instructions list its groups' projects by name, so you do not have to write
+them in by hand.
+
 ### Group chat
 
-Click a group in the sidebar (or tap it on Home) to open its chat. A message there is a request to
-the members; it does not run an agent by itself.
+Click a group in the sidebar (or tap it on Home) to open its chat. A message that replies to
+nothing starts a new **request**; it does not run an agent by itself.
+
+- The chat shows each request as a block with its project, a short title and its status (Routing,
+  Needs project, Working, Needs you, Done, Cancelled). Finished requests fold away; click the header
+  to open or fold one. With requests in more than one project, **Show** (at the top on the web, in
+  the group's menu on mobile) shows one project's requests (**All projects** shows every one).
+- Each request runs in one project, chosen from the group's projects and its members'. Pick it in the
+  box's **Project** menu, or type `#` and pick one (`#billing-api` names the project "Billing API"),
+  or leave **Lead decides**: the lead picks it from the request, and when it could be more than one
+  (or the text names two projects) it asks you in the chat. Answer in words or click a project under
+  the question. When the menu and the text disagree, the menu wins and the lead says so. Only members that may work in the
+  request's project take part: a member you mention who cannot work there is left out, and the chat
+  says so.
+- The message box is the same editor as a project's: lists, code blocks, pasted images and files,
+  dictation, Enter to send and Shift+Enter for a new line. **Reply** on a message (or **Reply to
+  request**) shows what you answer above the box; click it to jump to the original.
+- Every member works a request in its own conversation for that request, in its project, and sees
+  only that request's messages. More work on the same request (a reply, QA handing a fix back to the
+  developer) continues that conversation. When all of a request's tasks are done or cancelled, its
+  conversations are settled (they stay under Settled); replying to it or resuming it makes them
+  active again. Requests from before this change keep their old shared conversation for history.
+- Each member's conversation for a request starts on the request's project model (see [model
+  order](project-settings.md#defaults-and-inheritance)); the group's **Default model** (in **Group settings**) applies in the group's projects when the
+  project sets none. The model next to **Project** in the box shows and changes that project's model,
+  and **Model in <project>** in the group's menu gives one member its own model there. A change moves
+  the open requests' conversations that still follow the old value, after their current turn, and a
+  finished request's conversations when work on it comes back; one you switched by hand keeps its
+  model. While you write in a member's conversation, the group's next task for it waits for that turn
+  to end.
 
 - Write `@Ada @Beto` anywhere in the message to give each of them a task, or `@everyone` for all
-  members. Names with spaces work (`@Ana Paula`). The line under the box says who will get it.
-- With no mention, a short "continue" resumes the group's stopped task, and while exactly one task is
-  open your follow-up goes to its owner. Otherwise the group's **Lead** picks who answers (and may
+  members. Names with spaces work (`@Ana Paula`); **Mention** in the box inserts one. The line under
+  the box says who will get it. The box also takes files and dictation, like a project chat.
+- With no mention, a short "continue" resumes the stopped task (of the request you reply to, else the
+  newest one), and a reply goes to the member working that request. Otherwise the group's **Lead**
+  picks who answers (and may
   decide nothing needs doing, as for "thanks"). Set one in **Edit group**; it only routes and gets no
   extra permissions. A group with one member sends everything to it. Without a lead the message waits,
   and is routed once you set one. Routing needs a lead on Claude, Codex or Antigravity.
-- **Reply** on a member's message sends your follow-up to that member.
+- **Reply** on a message continues its request; on a member's message it goes to that member.
+- When a member's conversation waits on you (a command or file approval, a question, a decision it
+  asked), its request says so with what it asks and the request shows **Needs you**. **Open
+  conversation** or **Open decision** takes you to answer it. Answer anywhere (the chat, Activity,
+  Telegram) and the notice is marked resolved.
 - Each task shows as a card with its owner and status. **Stop** pauses running work, **Resume**
   continues it, **Reassign** gives it to another member and **Cancel** ends the whole request.
-  **Open conversation** shows the member's own thread for this group.
+  **Open conversation** shows the member's conversation for that request.
 - Members can give each other subtasks, hand a task over, or ask each other one short question (two
   per request). So members cannot pass work around forever, a request stops whole, and the chat
   says why, after 12 hand-offs in which nobody delivers a new result, or after 30 hand-offs since you
-  last acted on it. **Resume**, **Reassign** or "continue" on any of its cards picks it up with its
-  subtasks; that, or any message you send to its members, starts both counts over. At most two tasks
+  last acted on it. The counts are per request: another request keeps running. **Resume**,
+  **Reassign** or "continue" on any of its cards picks it up with its subtasks; that, or any message
+  you send in that request, starts both counts over. At most two tasks
   run at the same time in a group; the rest wait their turn.
 - **Group routines** (group menu) lists the scheduled messages that post in the chat, for example a
   morning status request, with the next run in your local time, the last result, **Run now**, pause
@@ -235,10 +305,13 @@ the members; it does not run an agent by itself.
   last answer's start (web and desktop; the phone shows the count only).
 - **Group settings** (group menu) holds instructions every member gets with each task, a short list
   of group memories, and the conversation actions. **New conversation** and **Compact context**
-  (summarizes first) draw a divider: members read only what comes after it, and the older messages
-  stay above. **Undo divider** removes the latest one while nothing follows it. **Clear history**
-  deletes the chat, its tasks and files after you confirm. These wait until the group stops working.
-- An agent in any conversation can post a request into a group ("ask the Leadership group to…").
+  draw a divider: the lead routes new requests reading only what comes after it, and the older
+  messages stay above. Compact first writes a summary of the chat that only the lead reads; members
+  never get it, since each sees just its own request. **Undo divider** removes the latest one while
+  nothing follows it. **Clear history** deletes the chat, its tasks and files after you
+  confirm; members keep their requests' conversations, settled. These wait until the group stops working.
+- An agent in any conversation can post a request into a group ("ask the Leadership group to…"),
+  naming its project or leaving it to the lead.
 
 ## Agents can create assistants
 
@@ -298,7 +371,10 @@ Autonomy is **off** until you turn it on in **Settings → Assistants → Autono
   conversation waits on you: an approval, a question, an open decision or a paused group task. It
   goes out after **Notify after** (1 minute by default), only once, and never for something you
   answered in the meantime. It has its own switch, respects the pause switch and does not count
-  toward the daily limit.
+  toward the daily limit. The same switch sends one notice when a provider reaches its usage limit,
+  with the project, provider, the time it resets and the task, once per provider and limit window.
+  With **Resume after usage limits** on in **Settings → Threads**, tasks waiting on a limit show
+  **Limit until** and the reset time instead of failing.
 - **Notifications per day**, 20 by default.
 - **Messages from assistants per day**, 20 by default: short messages an assistant sends you itself.
 
@@ -379,6 +455,11 @@ too: `/name text` works like `@Name text`, and `/name` alone switches to that as
 arrive as numbered choices: reply with the number. Only private chats with the bot are heard; groups and attachments
 are not. More than 10 messages a minute from one person are held back, with one notice.
 
+Replies keep their formatting, and a link to a conversation opens it in the browser or the app. A
+reply too long for one message comes as up to three numbered parts. When it ends with a question
+or a decision for you, that part arrives whole after a short outline of the rest; the full reply
+is always in T3 Code.
+
 When **Notify me when something is waiting for me** is on (see [Autonomy](#autonomy)), the bot also
 tells you when any conversation waits on you: who is asking, the project and conversation, a short
 summary and a link to open it in T3 Code. Approvals and single-choice questions come with numbered
@@ -390,15 +471,25 @@ If the status shows an error, it says what to fix; T3 Code keeps retrying, waiti
 failure, and turning the switch off stops it at once. Two programs cannot read the same bot at the
 same time, so use one bot per T3 Code server.
 
+A reply that cannot get through, for example while the network is down, is tried again for about a
+quarter of an hour and goes out on its own once a later message reaches the chat. If it still has
+not arrived, **Undelivered replies** in Settings (Telegram or iMessage) says how many and offers
+**Resend**; you can also ask an assistant to send again the ones from the last day. A part that already arrived is not
+sent twice, though a reply cut off mid-send can occasionally show up twice.
+
 ## Memory follows the project
 
 An assistant shares memory with its project (and your user memory). To keep one assistant's memory
 apart, give it its own project. See [Memory](./memory.md).
 
+An assistant with several projects names the project a fact belongs to when it saves it, or saves it
+for you everywhere when it holds for all of them. When it looks something up, it searches all of its
+projects.
+
 ## Reset, restore, archive and delete
 
-- **Reset conversation** starts a fresh conversation with the same settings and model. The earlier
-  one is archived.
+- **Reset conversation** starts a fresh conversation with the same settings, on the model its
+  project sets for the assistant. The earlier one is archived.
 - **Restore** brings back one of an assistant's earlier conversations from **Archived threads**. The
   current one is archived in its place.
 - **Archive** hides an assistant and keeps its history. Its handle stays reserved, so an archived

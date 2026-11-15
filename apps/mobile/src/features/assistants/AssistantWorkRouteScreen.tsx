@@ -34,6 +34,7 @@ import { AssistantWorkLibrarySection } from "./AssistantWorkLibrarySection";
 import { AssistantWorkMemorySection } from "./AssistantWorkMemorySection";
 import { assistantWorkTargetAtom } from "./assistantWorkTarget";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 /** Whether the assistant can work now, and what it runs, remembers and has handed over. */
 export function AssistantWorkRouteScreen() {
@@ -126,6 +127,7 @@ function StatusSection(props: {
     autonomyEnabled: autonomy.enabled,
   });
   const retry = assistantRetryPlan(shell);
+  const limitLabel = useUsageLimitLabel();
 
   const fix = async (kind: AssistantWorkFix) => {
     switch (kind) {
@@ -189,9 +191,12 @@ function StatusSection(props: {
             icon="arrow.clockwise"
             label="Retry"
             description={
-              shell?.latestRun?.status === "failed"
-                ? "Its last run failed."
-                : "Its last run was stopped."
+              shell?.latestRun?.status === "failed" &&
+              shell.runtime?.lastErrorClass === "usage_limit"
+                ? (limitLabel(shell.runtime.usageLimitResetAt) ?? "Its last run hit a usage limit.")
+                : shell?.latestRun?.status === "failed"
+                  ? "Its last run failed."
+                  : "Its last run was stopped."
             }
             loading={retrying}
             onPress={() => void retryRun()}

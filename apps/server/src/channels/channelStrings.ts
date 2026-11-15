@@ -19,8 +19,15 @@ export interface ChannelStrings {
   readonly couldNotPassOn: (reason: string) => string;
   readonly conversationNotStarted: string;
   readonly rateLimited: string;
+  readonly attachmentUnsupported: string;
+  readonly attachmentDownloadFailed: string;
   readonly replyWithNumber: string;
   readonly truncatedNote: string;
+  /** Ends a long reply cut down to its outline so the part that waits on you fits one message. */
+  readonly summaryNote: string;
+  readonly codeSummary: (lines: number) => string;
+  /** Names a thread link that carries no title of its own. */
+  readonly threadLink: string;
   readonly approvalNotice: string;
   readonly couldNotFinish: (detail: string | undefined) => string;
   readonly withdrawn: string;
@@ -35,9 +42,13 @@ export interface ChannelStrings {
   readonly threadLabel: string;
   readonly openInT3: string;
   readonly answerInT3: string;
+  /** Ends a card whose text was cut short, so it is never answered from the chat. */
+  readonly cutOpenInT3: string;
   /** After a number answered one card while another is still open in the chat. */
   readonly stillWaiting: (title: string) => string;
   readonly groupTaskReason: (reason: string | null) => string;
+  /** When a provider's usage limit resets; `time` is null when the provider did not say. */
+  readonly usageLimitBack: (time: string | null) => string;
   readonly decision: {
     readonly approve: string;
     readonly deny: string;
@@ -60,6 +71,7 @@ export interface ChannelStrings {
     readonly watch: string;
     readonly routine: string;
     readonly taskPaused: string;
+    readonly usageLimit: string;
   };
 }
 
@@ -75,8 +87,14 @@ const en: ChannelStrings = {
   couldNotPassOn: (reason) => `I could not pass that on: ${reason}`,
   conversationNotStarted: "its conversation has not started yet",
   rateLimited: "You're sending messages too fast. I'll read new ones again in a minute.",
+  attachmentUnsupported:
+    "I can't read that kind of attachment. Send it as a photo (PNG, JPEG, WebP or GIF up to 10 MB) or as text.",
+  attachmentDownloadFailed: "I couldn't download that attachment. Please send it again.",
   replyWithNumber: "Reply with the number.",
   truncatedNote: "… The rest of this reply was too long to send.",
+  summaryNote: "Summary. The full reply is in T3.",
+  codeSummary: (lines) => `[code, ${lines} ${lines === 1 ? "line" : "lines"}]`,
+  threadLink: "Thread",
   approvalNotice:
     "Your message is waiting for the owner's approval in T3 Code. You can chat here once they allow you.",
   couldNotFinish: (detail) =>
@@ -92,6 +110,8 @@ const en: ChannelStrings = {
   threadLabel: "Thread:",
   openInT3: "Open in T3:",
   answerInT3: "Answer it in T3.",
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- the wording the developer asked for
+  cutOpenInT3: "(cut short — open it in T3)",
   stillWaiting: (title) => `Still waiting for you: "${title}". Numbers now answer it.`,
   groupTaskReason: (reason) =>
     reason === "handoff_limit"
@@ -101,6 +121,7 @@ const en: ChannelStrings = {
         : reason === "routing_failed"
           ? "No member could be picked for it. Reassign or cancel it."
           : `Paused${reason === null ? "" : ` (${reason})`}. Resume, reassign or cancel it.`,
+  usageLimitBack: (time) => (time === null ? "Back when the limit resets." : `Back at ${time}.`),
   decision: {
     approve: "Approve",
     deny: "Deny",
@@ -121,6 +142,7 @@ const en: ChannelStrings = {
     watch: "Watch:",
     routine: "Routine:",
     taskPaused: "Group task paused",
+    usageLimit: "Usage limit reached",
   },
 };
 
@@ -136,8 +158,14 @@ const ptBR: ChannelStrings = {
   couldNotPassOn: (reason) => `Não consegui repassar isso: ${reason}`,
   conversationNotStarted: "a conversa dele ainda não começou",
   rateLimited: "Você está mandando mensagens rápido demais. Volto a ler as novas em um minuto.",
+  attachmentUnsupported:
+    "Não consigo ler esse tipo de anexo. Mande como foto (PNG, JPEG, WebP ou GIF de até 10 MB) ou como texto.",
+  attachmentDownloadFailed: "Não consegui baixar esse anexo. Mande de novo, por favor.",
   replyWithNumber: "Responda com o número.",
   truncatedNote: "… O resto desta resposta era longo demais para enviar.",
+  summaryNote: "Resumo. A resposta completa está no T3.",
+  codeSummary: (lines) => `[código, ${lines} ${lines === 1 ? "linha" : "linhas"}]`,
+  threadLink: "Thread",
   approvalNotice:
     "Sua mensagem está aguardando a aprovação do dono no T3 Code. Você poderá conversar aqui assim que ele liberar.",
   couldNotFinish: (detail) =>
@@ -153,6 +181,8 @@ const ptBR: ChannelStrings = {
   threadLabel: "Thread:",
   openInT3: "Abrir no T3:",
   answerInT3: "Responda no T3.",
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- the wording the developer asked for
+  cutOpenInT3: "(cortado — abra no T3)",
   stillWaiting: (title) => `Ainda esperando você: "${title}". Os números agora respondem a ele.`,
   groupTaskReason: (reason) =>
     reason === "handoff_limit"
@@ -162,6 +192,7 @@ const ptBR: ChannelStrings = {
         : reason === "routing_failed"
           ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
           : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
+  usageLimitBack: (time) => (time === null ? "Volta quando o limite renovar." : `Volta: ${time}.`),
   decision: {
     approve: "Aprovar",
     deny: "Negar",
@@ -182,6 +213,7 @@ const ptBR: ChannelStrings = {
     watch: "Vigia:",
     routine: "Rotina:",
     taskPaused: "Tarefa de grupo pausada",
+    usageLimit: "Limite de uso atingido",
   },
 };
 
@@ -224,6 +256,7 @@ const AFTER_COLON: ReadonlyArray<DecisionKey> = [
   "ciFailed",
   "reviewIncomplete",
   "taskPaused",
+  "usageLimit",
   "watch",
 ];
 const LABELS: ReadonlyArray<DecisionKey> = ["approve", "deny", "gotIt"];

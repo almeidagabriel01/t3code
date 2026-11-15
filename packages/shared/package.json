@@ -163,6 +163,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./modelSelectionPrecedence": {
+      "types": "./src/modelSelectionPrecedence.ts",
+      "import": "./src/modelSelectionPrecedence.ts"
+    },
     "./backgroundActivitySettings": {
       "types": "./src/backgroundActivitySettings.ts",
       "import": "./src/backgroundActivitySettings.ts"
@@ -546,6 +550,10 @@
     "./generatedImageMarkdown": {
       "types": "./src/generatedImageMarkdown.ts",
       "import": "./src/generatedImageMarkdown.ts"
+    },
+    "./markdownAst": {
+      "types": "./src/markdownAst.ts",
+      "import": "./src/markdownAst.ts"
     },
     "./markdownPipeline": {
       "types": "./src/markdownPipeline.ts",

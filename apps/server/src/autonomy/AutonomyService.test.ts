@@ -10,12 +10,14 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
@@ -35,6 +37,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
 import * as NeedsUser from "./NeedsUser.ts";
+import { requestThreadId } from "../assistants/AssistantGroups.ts";
 
 const awake: AssistantAutonomy = {
   mode: "reply-and-notify",
@@ -988,6 +991,89 @@ it.effect("without Telegram the waiting request is only in Activity, answerable 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect("what already waited before the first run is never told, what came after is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "old", threadId: "t1", createdAt: "1969-12-31T23:00:00.000Z" });
+    yield* pendingRequest(h, { id: "new", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => row.delivery_id.startsWith("needs-you:")),
+      [true],
+    );
+    const decisions = yield* DecisionService.DecisionService;
+    assert.deepEqual(
+      (yield* decisions.list({})).map((decision) => decision.approvalRequestId),
+      ["new"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a baseline that could not be recorded at start never lets the old backlog through",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM autonomy_needs_you WHERE subject_key = 'baseline'`;
+      h.shells.set("t1", plain);
+      yield* pendingRequest(h, { id: "old", threadId: "t1" });
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a card the chat app refused or may not have shown is told again later", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* pendingRequest(h, { id: "r2", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [first, second] = yield* outboxRows;
+    yield* sql`UPDATE channel_outbox SET state = 'failed' WHERE delivery_id = ${first!.delivery_id}`;
+    yield* sql`UPDATE channel_outbox SET state = 'ambiguous' WHERE delivery_id = ${second!.delivery_id}`;
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["failed", "ambiguous"],
+    );
+    yield* TestClock.adjust(31 * MIN);
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => row.state),
+      ["pending", "pending"],
+    );
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a card waits for a chat that is on but not ready, and is told once it is", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, { id: "r1", threadId: "t1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: ["111"] }));
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
 it.effect(
   "iMessage carries the card when Telegram is not set up and the user wrote from it",
   () => {
@@ -1041,6 +1127,62 @@ it.effect("secrets in a waiting command never reach the chat", () => {
     const [row] = yield* outboxRows;
     assert.include(row!.message.text, "GITHUB_TOKEN=[redacted] gh pr merge");
     assert.notInclude(row!.message.text, "ghp_");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a secret at the edge of the clipped context is redacted before the cut", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    h.shells.set("t1", plain);
+    yield* pendingRequest(h, {
+      id: "r1",
+      threadId: "t1",
+      item: {
+        type: "approval_request",
+        requestId: "r1",
+        prompt: `echo ${"a".repeat(1_180)} ghp_${"Z".repeat(32)}`,
+      },
+    });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const [row] = yield* outboxRows;
+    assert.notInclude(row!.message.text, "ghp_");
+    assert.notInclude(row!.message.text, "ZZZZ");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a command cut to fit the card cannot be approved from the chat", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    h.shells.set("t1", plain);
+    for (const [id, length] of [
+      ["card", 2_000],
+      ["decision", 5_000],
+    ] as const) {
+      yield* pendingRequest(h, {
+        id,
+        threadId: "t1",
+        item: { type: "approval_request", requestId: id, prompt: `echo ${"a".repeat(length)}` },
+      });
+    }
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 2);
+    for (const { message } of rows) {
+      assert.isUndefined(message.choices);
+      assert.include(message.text, "(cut short — open it in T3)");
+      assert.include(message.text, "https://app.t3.codes/threads/env-1/t1");
+    }
+    assert.lengthOf(yield* cards, 0);
+    // Cut at the decision's own limit, it is not an approval in Activity either.
+    const cut = (yield* decisions.list({})).find((decision) =>
+      decision.context.includes("a".repeat(4_000).slice(0, 3_900)),
+    );
+    assert.isUndefined(cut?.approvalRequestId);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1164,9 +1306,9 @@ it.effect(
       const task = (id: string, reason: string) => sql`
         INSERT INTO assistant_group_tasks
           (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
-           reason, created_at, updated_at)
+           reason, request_id, created_at, updated_at)
         VALUES (${id}, 'team-1', ${id}, 'root', 'msg-1', 'ana', 'Ship the release notes',
-          'paused', ${reason}, ${T0}, ${T0})`;
+          'paused', ${reason}, 'msg-1', ${T0}, ${T0})`;
       yield* task("limit", "handoff_limit");
       yield* task("stopped", "stopped");
       yield* TestClock.adjust(MIN);
@@ -1180,12 +1322,56 @@ it.effect(
       assert.include(rows[0]!.message.text, "Chegou ao limite de repasses.");
       const [notice] = yield* decisions.list({});
       assert.equal(notice!.status, "open");
+      // The notice opens the conversation of the task's own request.
+      assert.equal(notice!.fromThreadId, requestThreadId("ana", "team-1", "msg-1"));
       yield* sql`UPDATE assistant_group_tasks SET status = 'running', updated_at = 'later' WHERE task_id = 'limit'`;
       yield* service.notifyWaiting;
       assert.equal((yield* decisions.get(notice!.id)).status, "withdrawn");
     }).pipe(Effect.provide(h.layer));
   },
 );
+
+it.effect("a paused branch of a group request is told once, for its top task", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+    const task = (id: string, parent: string | null) => sql`
+      INSERT INTO assistant_group_tasks
+        (task_id, team_id, root_id, parent_id, kind, request_message_id, owner_id, instruction,
+         status, reason, created_at, updated_at)
+      VALUES (${id}, 'team-1', 'root', ${parent}, ${parent === null ? "root" : "subtask"}, 'msg-1',
+        'ana', ${`Do ${id}`}, 'paused', 'handoff_limit', ${T0}, ${T0})`;
+    yield* task("root", null);
+    yield* task("child", "root");
+    yield* task("grandchild", "child");
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const rows = yield* outboxRows;
+    assert.lengthOf(rows, 1);
+    assert.include(rows[0]!.message.text, "Do root");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a message whose delivery could not be queued is not counted as sent", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    const say = service.notifyUser({ assistantId: "jarvis", key: "k1", text: "Deploy done." });
+    yield* sql`ALTER TABLE channel_outbox RENAME TO channel_outbox_away`;
+    const failed = yield* Effect.exit(say);
+    yield* sql`ALTER TABLE channel_outbox_away RENAME TO channel_outbox`;
+    assert.isTrue(Exit.isFailure(failed));
+    assert.equal((yield* say).status, "sent");
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
 
 const scheduledRun = (
   status: string,
@@ -1295,6 +1481,188 @@ it.effect(
       assert.equal((yield* say("k7", "Next day.")).status, "sent");
       yield* Ref.set(h.settings, { ...ON, enabled: false });
       assert.include(yield* refused(say("k8", "Paused.")), "paused");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+/** A thread whose latest run hit a usage limit, with the wait the recovery worker armed on it. */
+const limited = (
+  h: ReturnType<typeof harness>,
+  threadId: string,
+  runId: string,
+  input: {
+    provider?: string;
+    resetAt?: string | null;
+    autoResume?: boolean;
+    /** False when the worker armed nothing, as with auto-resume off. */
+    armed?: boolean;
+    failedAt?: string;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const provider = input.provider ?? "claudeAgent";
+    const resetAt = input.resetAt === undefined ? "1970-01-01T05:00:00.000Z" : input.resetAt;
+    const failedAt = input.failedAt ?? T0;
+    const recovery =
+      input.armed === false || resetAt === null
+        ? {}
+        : {
+            limitRecovery: { runId, resetAt, autoResume: input.autoResume ?? true, snooze: false },
+          };
+    h.shells.set(threadId, { ...plain, title: `Task ${threadId}` });
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_threads (thread_id, project_id, title, default_provider,
+        runtime_mode, interaction_mode, created_at, updated_at, payload_json)
+      VALUES (${threadId}, 'p1', ${`Task ${threadId}`}, ${provider}, 'full-access', 'default', ${T0},
+        ${T0}, ${JSON.stringify({ archivedAt: null, ...recovery })})`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider,
+        provider_instance_id, status, requested_at, completed_at, payload_json)
+      VALUES (${runId}, ${threadId}, 1, ${provider}, ${provider}, 'failed', ${failedAt},
+        ${failedAt}, '{}')`;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal,
+        type, status, updated_at, payload_json)
+      VALUES (${`${runId}:error`}, ${threadId}, ${runId}, 1, 'error', 'failed', ${failedAt},
+        ${JSON.stringify({ type: "error", failure: { class: "usage_limit", resetAt } })})`;
+  });
+
+it.effect("a wait armed before the service started, or while gated off, is told on a sweep", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    yield* limited(h, "t1", "r1");
+    yield* limited(h, "t2", "r2", { provider: "codex" });
+    const service = yield* Autonomy.AutonomyService;
+    yield* Ref.set(h.settings, { ...ON, notifyWaiting: false });
+    // The arm seen while gated off does not spend the notice.
+    yield* service.handleEvent(
+      ev("thread.metadata-updated", "t2", {
+        id: "t2",
+        limitRecovery: { runId: "r2", resetAt: "1970-01-01T05:00:00.000Z", autoResume: true },
+      }),
+    );
+    yield* service.notifyWaiting;
+    assert.lengthOf(yield* outboxRows, 0);
+    yield* Ref.set(h.settings, ON);
+    yield* service.notifyWaiting;
+    const texts = (yield* outboxRows).map((row) => row.message.text);
+    assert.lengthOf(texts, 2);
+    assert.isTrue(texts.some((text) => text.includes("Task t1")));
+    assert.isTrue(texts.some((text) => text.includes("Task t2")));
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect(
+  "a usage limit is told with auto-resume off, and with no reset once per local day",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      // Auto-resume off: the worker arms nothing, and the limit is still told.
+      yield* limited(h, "t1", "r1", { armed: false });
+      // No reset time: the window is the local day the run failed.
+      yield* limited(h, "t2", "r2", { provider: "codex", resetAt: null });
+      yield* limited(h, "t3", "r3", { provider: "codex", resetAt: null });
+      yield* service.notifyWaiting;
+      const texts = (yield* outboxRows).map((row) => row.message.text);
+      assert.lengthOf(texts, 2);
+      assert.isTrue(texts.some((text) => text.includes("Task t1")));
+      assert.isTrue(texts.some((text) => text.includes("Task t2")));
+
+      // A day later the same failures are not told again; a failure on the new day is.
+      yield* TestClock.adjust(24 * 60 * MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 2);
+      yield* limited(h, "t4", "r4", {
+        provider: "codex",
+        resetAt: null,
+        failedAt: "1970-01-02T00:00:00.000Z",
+      });
+      // The sweep runs every few seconds: it reads failed errors by their index, not every thread.
+      const statements: Array<string> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (...args) => {
+            end(...args);
+            const query = span.attributes.get("db.query.text");
+            if (typeof query === "string") statements.push(query);
+          };
+          return span;
+        },
+      });
+      yield* service.notifyWaiting.pipe(Effect.withTracer(tracer));
+      assert.lengthOf(yield* outboxRows, 3);
+      const query = statements.find((statement) => statement.includes('AS "failedAt"'));
+      assert.isDefined(query);
+      const sql = yield* SqlClient.SqlClient;
+      const scans = (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+        .map((row) => row.detail)
+        .filter((detail) => detail.startsWith("SCAN"));
+      assert.deepEqual(scans, [
+        "SCAN failure USING INDEX orchestration_v2_projection_turn_items_failed_error_idx",
+      ]);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect(
+  "a usage limit is told once per provider and window, retried after a failed send, gated",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const sql = yield* SqlClient.SqlClient;
+      yield* limited(h, "t2", "r2");
+
+      // A failed send leaves no mark; the next sweep retries on the same decision.
+      yield* sql`CREATE TRIGGER outbox_down BEFORE INSERT ON channel_outbox
+        BEGIN SELECT RAISE(ABORT, 'down'); END`;
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 0);
+      assert.lengthOf(
+        yield* sql`SELECT 1 FROM autonomy_needs_you WHERE subject_key != 'baseline'`,
+        0,
+      );
+      yield* sql`DROP TRIGGER outbox_down`;
+      // Another task in the same window, sorting first, reuses the decision already opened.
+      yield* limited(h, "t1", "r1", { resetAt: "1970-01-01T05:00:40.000Z" });
+      yield* service.notifyWaiting;
+      const rows = yield* outboxRows;
+      assert.lengthOf(rows, 1);
+      assert.include(rows[0]!.message.text, "Usage limit reached");
+      assert.include(rows[0]!.message.text, "Task t2");
+
+      // Same provider and window on a later sweep: no second notice.
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 1);
+
+      // A new window, or another provider, is told again.
+      yield* limited(h, "t4", "r4", { resetAt: "1970-01-01T10:00:00.000Z" });
+      yield* limited(h, "t5", "r5", { provider: "codex" });
+      // A Stop's hold arms nothing to wait for, and a thread that ran again waits no more.
+      yield* limited(h, "t6", "r6", { provider: "cursor", autoResume: false });
+      yield* limited(h, "t7", "r7", { provider: "opencode" });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider,
+          provider_instance_id, status, requested_at, payload_json)
+        VALUES ('r7b', 't7', 2, 'opencode', 'opencode', 'completed', ${T0}, '{}')`;
+      yield* service.notifyWaiting;
+      assert.lengthOf(yield* outboxRows, 3);
+      // Telling never dispatches anything, so no thread changes provider.
+      assert.lengthOf(h.dispatched, 0);
+      // Once a window resets, its notice is withdrawn; a later window's stays.
+      const decisions = yield* DecisionService.DecisionService;
+      const openNotices = Effect.map(
+        decisions.list({}),
+        (all) => all.filter((decision) => decision.status === "open").length,
+      );
+      assert.equal(yield* openNotices, 3);
+      yield* TestClock.adjust(6 * 60 * MIN);
+      yield* service.notifyWaiting;
+      assert.equal(yield* openNotices, 1);
     }).pipe(Effect.provide(h.layer));
   },
 );

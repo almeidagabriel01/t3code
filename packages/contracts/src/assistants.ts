@@ -16,7 +16,7 @@ import { InstanceBudgetStatus, ProviderBudget } from "./usage.ts";
 
 /**
  * An assistant is a named, long-lived conversation: a row that points at its current real thread.
- * The thread's own model selection is the assistant's model; a reset starts a new generation.
+ * Its conversation runs on the thread's own model; a reset starts a new generation.
  */
 export const ASSISTANT_NAME_MAX_LENGTH = 60;
 export const ASSISTANT_ROLE_MAX_LENGTH = 60;
@@ -268,6 +268,8 @@ export const Assistant = Schema.Struct({
   scope: AssistantScope.pipe(Schema.withDecodingDefault(Effect.succeed("all" as const))),
   /** Extra MCP servers injected only into this assistant's sessions, next to T3's own. */
   mcpServers: Schema.Array(AssistantMcpServer).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The model its new work starts on when the project names none. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   archivedAt: Schema.NullOr(IsoDateTime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -324,10 +326,33 @@ export const AssistantTeam = Schema.Struct({
   /** Absent from older servers. */
   instructions: Schema.optionalKey(AssistantTeamInstructions),
   memories: Schema.optionalKey(AssistantTeamMemories),
+  /** The model a group request starts on, below the project's own default. Absent from older servers. */
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Projects every member may work in, on top of its own; absent from older servers. */
+  projectIds: Schema.Array(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type AssistantTeam = typeof AssistantTeam.Type;
+
+/**
+ * The projects a project assistant may work in: its own, then those of each active group it is in.
+ * Empty for scope "all", which reaches every project. The one place this union is computed.
+ */
+export function assistantEffectiveProjectIds(
+  assistant: Pick<Assistant, "id" | "scope" | "projectIds">,
+  teams: ReadonlyArray<Pick<AssistantTeam, "memberIds" | "archivedAt" | "projectIds">>,
+): ReadonlyArray<ProjectId> {
+  if (assistant.scope !== "project") return [];
+  return [
+    ...new Set([
+      ...assistant.projectIds,
+      ...teams.flatMap((team) =>
+        team.archivedAt === null && team.memberIds.includes(assistant.id) ? team.projectIds : [],
+      ),
+    ]),
+  ];
+}
 
 /** The first reason a team is unusable, or null. Clients and the server share it. */
 export function assistantTeamProblem(team: {
@@ -440,6 +465,8 @@ export const AssistantsUpdateInput = Schema.Struct({
   mcpServers: Schema.optional(Schema.Array(AssistantMcpServerInput)),
   role: Schema.optional(AssistantRole),
   archived: Schema.optional(Schema.Boolean),
+  /** Null clears it. Unlike `modelSelection`, it leaves the current conversation's model alone. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
 });
 export type AssistantsUpdateInput = typeof AssistantsUpdateInput.Type;
 
@@ -617,6 +644,12 @@ export const AssistantTeamsUpdateInput = Schema.Struct({
   instructions: Schema.optional(AssistantTeamInstructions),
   /** Replaces the whole list. */
   memories: Schema.optional(AssistantTeamMemories),
+  /** Null clears it. */
+  defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  /** Replaces the group's projects; the two lists below then apply to it, removals last. */
+  projectIds: Schema.optional(Schema.Array(ProjectId)),
+  addProjectIds: Schema.optional(Schema.Array(ProjectId)),
+  removeProjectIds: Schema.optional(Schema.Array(ProjectId)),
 });
 export type AssistantTeamsUpdateInput = typeof AssistantTeamsUpdateInput.Type;
 

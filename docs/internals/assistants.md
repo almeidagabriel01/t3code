@@ -92,9 +92,17 @@ lead when it was that member; archiving leaves membership alone. `ensureForkSche
 ## Group chat (an OpenBot channel)
 
 `AssistantGroups` owns a group's chat (`assistant_group_messages`, seq per group) and its tasks
-(`assistant_group_tasks`). A chat message runs nothing itself: it opens one root task per recipient,
-and each member works its tasks in its own hidden thread for that group,
-`assistant:<assistantId>:g-<hash>` (`assistant_group_threads`). The suffix is a hash because team ids
+(`assistant_group_tasks`). A message that replies to nothing starts a request (`request_id` = its own
+id); every later message, task and answer of it carries that id, and the first message holds the
+request's `project_id` and `title`. A chat message runs nothing itself: it opens one root task per
+recipient, and each member works a request in its own hidden thread for that request, launched in the
+request's project, `assistant:<assistantId>:g-<hash>` (`assistant_group_request_threads`). Requests
+never share a thread, so a packet, `history`, `#seq` quotes, stopped-task lists and hand-off counts are
+all scoped to one request. When every task of a request is completed or cancelled its threads are
+settled (`settleThread`, retried when a cancelled run ends); a task opening again in it un-settles
+them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
+the per-group threads of chats from before requests; they stay for history and for runs that started
+on them, and `threadRowOf` reads both tables. The suffix is a hash because team ids
 may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
 source of a member's thread id: a deleted thread keeps its id reserved, so `ensureThread` launches the
 replacement under an id derived from the dead one and moves the row. `forThread` resolves these
@@ -104,9 +112,22 @@ lifecycle through the Orchestrator directly.
 
 Recipients are decided before any model, first match winning (`routeGroupMessage`): the `@` mentions
 anywhere in the text (`assistantGroupMentions`, the one parser the clients highlight and preview
-with), a reply to a member message, a user's bare "continue" (resumes the newest stopped root task),
-a user's follow-up while exactly one task is open (its owner), then a group of one. Only then does the
-lead route, through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
+with), a reply to a member message, a user's bare "continue" (resumes the newest stopped root task of the request replied to, else of
+the group), a user's reply into a request one member works (that member), then a group of one. A
+message replying to nothing is a new request and never follows up on what is open. Only then does the
+lead route; it also picks a new request's project among the members' projects
+(`assistantGroupProjectIds`) and titles it, and when the project is unclear it asks with a `notice`
+replying to the message and marked `asksProject` (clients show "Needs project" from that mark alone),
+so the user's answer routes the request again. The union of the members' projects only offers and infers; it never authorizes. A
+request's work goes only to members that may work in its project (`assistantWorksIn` in
+`AssistantSandboxPolicy.ts`, the one source of a member's projects): mentions, the lead's pick, assign,
+transfer, reply and reassign are filtered or refused, the chat gets a notice naming who was left out,
+`ensureRequestThread` refuses a launch outside it (the task fails with `outside_project`), and an
+agent's `group_post` passes `projectScopeRefusal`. Before the lead, the project comes from the request, then the composer's pick, then a
+single `#slug` in the text (`assistantGroupProjectMentions`, the same parser clients highlight with;
+slugs come from `assistantGroupProjectSlugs` over the group's live projects, so colliding titles get
+the same `-2` suffix on every surface only when all pass that same list);
+two `#projects` force the question even when the lead would infer one. The lead routes through the optional `routeAssistantGroup` text-generation op (Claude, Codex,
 Antigravity), which may answer `noReply` for a thanks: no task, a muted `change` line that also marks
 the message as handled. With no lead a message is stored and left pending (clients show it as waiting,
 derived from "no task and no note"); `routePending` routes it when a team change sets one and on
@@ -114,11 +135,17 @@ start. A lead whose provider cannot route still refuses with `mention_required` 
 stored. Agents and schedules skip the continue and follow-up rules: they are not the user answering
 what is on screen.
 
-A member's task packet (`AssistantGroupPacket`) holds the chat since its last task, a rolling summary
-of the earlier chat, and older messages the instruction names (`#seq`) or replies to; `t3_group history`
-covers the rest. The summary lives in `assistant_group_summaries`, is refreshed in the background by
-`summarizeAssistantGroup` (the same providers as routing, on the server's text-generation model) once
-16k unsummarized characters pile up, and failing or missing it never delays a task.
+A member's task packet (`AssistantGroupPacket`) holds the request's messages since its last task and
+older messages of the request the instruction names (`#seq`) or replies to; `t3_group history` covers
+the rest of the request. Compact writes `assistant_group_summaries` with `summarizeAssistantGroup`;
+only the lead's routing reads it, because it mixes requests.
+
+What a member's request thread waits on the user for (pending non-machine runtime requests, and open
+decisions it asked, minus the mirrors of those requests and autonomy notices) comes from
+`threadsWaitingOnUser` in `AssistantGroupWaiting.ts`. `syncWaiting` posts one `notice` per wait in
+the request, keyed by `wait_key` (unique), and marks it resolved in place once the wait is gone. It
+runs on `runtime-request.updated` for a group thread, on any decision change from one
+(`AssistantGroupReactor` watches the decision stream), and in `reconcile` at start.
 
 A chat message may carry attachments, uploaded as pending first like any composer upload. `post` claims
 them into group-owned ids (`group-<hash>-…`) so they outlive the 24h pending sweep, and

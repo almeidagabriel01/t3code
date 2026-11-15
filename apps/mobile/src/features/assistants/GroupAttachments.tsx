@@ -17,7 +17,12 @@ import {
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
 } from "../../lib/attachmentUpload";
-import { pickComposerFiles, type DraftComposerAttachment } from "../../lib/composerImages";
+import {
+  convertPastedImagesToAttachments,
+  pickComposerFiles,
+  pickComposerMedia,
+  type DraftComposerAttachment,
+} from "../../lib/composerImages";
 import { useAssetUrl } from "../../state/assets";
 
 export interface GroupAttachmentItem {
@@ -87,10 +92,8 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
     if (ids.length > 0) void releasePendingAttachmentUploads(environmentId, ids).catch(() => {});
   };
 
-  /** Opens the picker; returns what to tell the user when it could not take every file. */
-  const pick = async (): Promise<string | null> => {
-    const picked = await pickComposerFiles({ existingCount: items.length });
-    const added = picked.files.map((source): GroupAttachmentItem => ({
+  const add = (sources: ReadonlyArray<DraftComposerAttachment>) => {
+    const added = sources.map((source): GroupAttachmentItem => ({
       id: source.id,
       name: source.name,
       sizeBytes: source.sizeBytes,
@@ -101,7 +104,25 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
     }));
     setItems((list) => [...list, ...added]);
     for (const item of added) void run(item);
+  };
+
+  /** Opens the file picker; returns what to tell the user when it could not take every file. */
+  const pick = async (): Promise<string | null> => {
+    const picked = await pickComposerFiles({ existingCount: items.length });
+    add(picked.files);
     return picked.error;
+  };
+
+  /** Opens the photo library; same contract as `pick`. */
+  const pickMedia = async (): Promise<string | null> => {
+    const picked = await pickComposerMedia({ existingCount: items.length });
+    add(picked.attachments);
+    return picked.error;
+  };
+
+  /** Images pasted into the editor. */
+  const paste = async (uris: ReadonlyArray<string>) => {
+    add(await convertPastedImagesToAttachments({ uris, existingCount: items.length }));
   };
 
   const remove = (id: string) => {
@@ -126,6 +147,8 @@ export function useGroupAttachments(environmentId: EnvironmentId) {
   return {
     items,
     pick,
+    pickMedia,
+    paste,
     remove,
     retry,
     clear,

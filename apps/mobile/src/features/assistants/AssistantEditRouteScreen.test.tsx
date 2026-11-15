@@ -93,7 +93,14 @@ vi.mock("../../components/ui/ListRowLayout", () => ({
     </>
   ),
 }));
-vi.mock("../../components/ui/ListSection", () => ({ ListSection: Children }));
+vi.mock("../../components/ui/ListSection", () => ({
+  ListSection: (props: { title?: string; children?: ReactNode }) => (
+    <>
+      {props.title}
+      {props.children}
+    </>
+  ),
+}));
 vi.mock("../../components/ui/Menu", () => ({
   Menu: (props: {
     actions: Array<{ id: string; title: string }>;
@@ -161,6 +168,13 @@ vi.mock("../../state/assistants", () => ({
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
 }));
+vi.mock("../../state/entities", () => ({
+  useProjects: () => [
+    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
+    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
+  ],
+}));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
 }));
@@ -204,6 +218,11 @@ vi.mock("./useAssistantEditor", async () => {
         () => appAtomRegistry.get(draft.assistantEditorAtom),
       );
       const project = { id: "p1", title: "Alpha" };
+      const stored = editor?.assistant?.defaultModelSelection;
+      const defaultModelSelection =
+        editor?.current.defaultModelSelection === undefined
+          ? (stored ?? null)
+          : editor.current.defaultModelSelection;
       return {
         editor,
         projects: [project, { id: "p2", title: "Beta" }],
@@ -216,6 +235,10 @@ vi.mock("./useAssistantEditor", async () => {
         effectiveProject: project,
         modelLabel: "GPT",
         modelSelection: null,
+        supportsDefaultModel: stored !== undefined,
+        defaultModelSelection,
+        defaultModelLabel: defaultModelSelection === null ? null : "Claude Opus 5.5",
+        userDefaultModelLabel: "GPT-5.5",
         globalAutonomy: DEFAULT_AUTONOMY_SETTINGS,
       };
     },
@@ -287,6 +310,28 @@ beforeEach(() => {
   mocks.upload.mockResolvedValue("att-1");
 });
 afterEach(() => act(() => root.unmount()));
+
+describe("assistant default model", () => {
+  it("clears the assistant's own default model back to the user's, and saves only then", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    render({ ...assistant(), defaultModelSelection: opus } as Assistant, { advanced: false });
+    expect(container.textContent).toContain("Default model");
+    expect(container.textContent).toContain("when the project names no model for this assistant");
+    pick("Use your default");
+    expect(container.textContent).toContain("Follows your default model, GPT-5.5.");
+    expect(container.textContent).not.toContain("Use your default");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0]).toEqual({
+      assistantId: "a1",
+      defaultModelSelection: null,
+    });
+  });
+
+  it("is hidden on servers that do not know assistant default models", () => {
+    render(assistant(), { advanced: false });
+    expect(container.textContent).not.toContain("Default model");
+  });
+});
 
 describe("assistant workspace", () => {
   it("saves the sandbox when it is chosen, and host when switching back", async () => {
@@ -718,5 +763,28 @@ describe("assistant team", () => {
     type("Role", " Chief ");
     await act(async () => pick("Save"));
     expect(mocks.update.mock.calls[0]?.[0]).toMatchObject({ role: "Chief" });
+  });
+});
+
+describe("projects inherited from groups", () => {
+  it("lists them read-only with the group, and saving sends only the own projects", async () => {
+    mocks.teams = [
+      {
+        environmentId: "hub",
+        team: {
+          id: "t1",
+          name: "Growth",
+          memberIds: ["a1"],
+          projectIds: ["p2"],
+          archivedAt: null,
+        },
+      },
+    ];
+    render({ ...assistant(), scope: "project", projectIds: ["p1"] } as unknown as Assistant);
+    expect(container.textContent).toContain("From groups");
+    expect(container.textContent).toContain("via Growth");
+    pick("Beta");
+    await act(async () => pick("Save"));
+    expect(mocks.update.mock.calls[0]?.[0].projectIds).toEqual(["p1", "p2"]);
   });
 });

@@ -713,6 +713,8 @@ export const OrchestrationV2Run = Schema.Struct({
   ordinal: PositiveInt,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  /** The user picked this selection in the message itself; otherwise a queued run takes the thread's selection when it starts. */
+  modelSelectionPinned: Schema.optional(Schema.Boolean),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
   rootNodeId: Schema.NullOr(NodeId),

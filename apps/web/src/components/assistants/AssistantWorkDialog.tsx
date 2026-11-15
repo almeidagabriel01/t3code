@@ -28,6 +28,7 @@ import { useProjects, useThreadShell } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -184,6 +185,9 @@ function AssistantStatusCard(props: {
     autonomyEnabled: autonomy.enabled,
   });
   const retry = assistantRetryPlan(shell);
+  const limitLabel = useUsageLimitLabel();
+  const limited =
+    shell?.latestRun?.status === "failed" && shell.runtime?.lastErrorClass === "usage_limit";
 
   const fix = async (kind: AssistantWorkFix) => {
     switch (kind) {
@@ -263,10 +267,18 @@ function AssistantStatusCard(props: {
       </div>
       {retry === null ? null : (
         <div className="flex items-center gap-2.5 border-t border-foreground/12 pt-2.5">
-          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
-            {shell?.latestRun?.status === "failed"
-              ? "Its last run failed."
-              : "Its last run was stopped."}
+          <p
+            className={
+              limited
+                ? "min-w-0 flex-1 text-xs text-warning-foreground"
+                : "min-w-0 flex-1 text-xs text-muted-foreground"
+            }
+          >
+            {limited
+              ? (limitLabel(shell.runtime?.usageLimitResetAt) ?? "Its last run hit a usage limit.")
+              : shell?.latestRun?.status === "failed"
+                ? "Its last run failed."
+                : "Its last run was stopped."}
           </p>
           <Button size="xs" variant="outline" disabled={retrying} onClick={() => void retryRun()}>
             <RotateCcwIcon />

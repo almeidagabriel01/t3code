@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 
+import { offerProjectAssistantAccess } from "~/components/assistants/ProjectAssistantAccessDialog";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
@@ -122,6 +123,7 @@ export function useNewProject() {
       return null;
     });
     if (project === null) return true;
+    offerProjectAssistantAccess(input.environmentId, projectId);
     await handleNewThread(projectRef).catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({

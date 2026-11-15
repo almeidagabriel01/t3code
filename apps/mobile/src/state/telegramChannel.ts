@@ -56,6 +56,16 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
   const settings = stored && event ? applyTelegramStatusEvent(stored, event) : stored;
   const canConfigure = useAtomValue(telegramEnvironment.configure.permissionAtom(environmentId));
   const configure = useAtomCommand(telegramEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(telegramEnvironment.resendUndelivered, { reportFailure: false });
+  const failed = (result: Parameters<typeof squashAtomCommandFailure>[0]): TelegramReply => {
+    const failure = squashAtomCommandFailure(result);
+    const base =
+      failure instanceof Error && failure.message.trim().length > 0
+        ? failure.message
+        : "The request could not be completed.";
+    const detail = isTelegramSettingsError(failure) ? failure.detail : undefined;
+    return { ok: false, message: detail ? `${detail}: ${base}` : base };
+  };
   return {
     settings,
     loadError: settingsQuery.error,
@@ -66,13 +76,11 @@ export function useTelegramChannel(environmentId: EnvironmentId) {
         setSaved(result.value);
         return { ok: true };
       }
-      const failure = squashAtomCommandFailure(result);
-      const base =
-        failure instanceof Error && failure.message.trim().length > 0
-          ? failure.message
-          : "The request could not be completed.";
-      const detail = isTelegramSettingsError(failure) ? failure.detail : undefined;
-      return { ok: false, message: detail ? `${detail}: ${base}` : base };
+      return failed(result);
+    },
+    resendUndelivered: async (): Promise<TelegramReply> => {
+      const result = await resend({ environmentId, input: {} });
+      return result._tag === "Success" ? { ok: true } : failed(result);
     },
   };
 }

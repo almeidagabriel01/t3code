@@ -12,18 +12,14 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   defaultModelSelectionsAreMixed,
   getCustomModelOptionsByInstance,
-  resolveEffectiveDefaultModelSelection,
 } from "../../modelSelection";
-import {
-  providerInstanceEntriesFor,
-  resolveDefaultProviderModelSelection,
-  resolveProjectDefaultProviderModelSelection,
-} from "../../providerInstances";
-import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
+import { useEnvironmentProviders } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { useAssistantEntries } from "../../state/assistants";
+import { AssistantModelsRow } from "./AssistantModelsRow";
 import { FallbackModelsRow } from "./FallbackModelsRow";
 import { FolderModelsRow } from "./FolderModelsRow";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -41,11 +37,13 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useScopedDefaultModel } from "./useScopedModelAvailability";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
   useScopedSettingSource,
+  useScopedSettingsWriteAllowed,
+  useUpdateProjectAssistantModel,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
@@ -59,24 +57,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateAssistantModel = useUpdateProjectAssistantModel();
+  const canWriteSettings = useScopedSettingsWriteAllowed();
   const navigate = useNavigate();
-  const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
-  const representative = target
-    ? environments.find((environment) => environment.environmentId === target.environmentId)
-    : undefined;
-  const providers =
-    (representative?.serverConfig
-      ? providersByEnvironment.get(representative.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const storedSelection =
-    settings.defaultModelSelection === null
-      ? resolveProjectDefaultProviderModelSelection(providers, settings, target?.projectId ?? null)
-      : resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
-  const selection = storedSelection
-    ? resolveEffectiveDefaultModelSelection(settings, providers, storedSelection)
-    : null;
-  const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
+  const { representative, providers, selection, entries, modelDisabledReason } =
+    useScopedDefaultModel();
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -110,7 +96,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;
 
-  const modelDisabledReason = useScopedModelDisabledReason(settings, entries);
   const effortDisabledReason = selection
     ? modelDisabledReason(selection.instanceId, selection.model)
     : null;
@@ -257,6 +242,33 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     />
   ) : null;
 
+  const assistantEntries = useAssistantEntries();
+  const ownAssistants = (list: typeof assistantEntries.active) =>
+    list
+      .filter((entry) => entry.environmentId === representative?.environmentId)
+      .map(({ assistant }) => assistant);
+  const assistantRow =
+    isProjectScope && target?.projectId && representative ? (
+      <AssistantModelsRow
+        settings={settings}
+        providers={providers}
+        anchor={selection}
+        selections={
+          representative.serverConfig?.settings.projectSettingsOverrides[target.projectId]
+            ?.assistantModelSelections ?? {}
+        }
+        assistants={ownAssistants(assistantEntries.active)}
+        archivedAssistants={ownAssistants(assistantEntries.archived)}
+        canWrite={canWriteSettings}
+        save={(assistantId, value, onFailed) =>
+          updateAssistantModel(representative.environmentId, assistantId, value, onFailed)
+        }
+        environmentId={representative.environmentId}
+        instanceEntries={entries}
+        getModelDisabledReason={modelDisabledReason}
+      />
+    ) : null;
+
   const folderRow = !isProjectScope ? (
     <FolderModelsRow
       settings={settings}
@@ -278,6 +290,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {assistantRow}
           {fallbackRow}
           {folderRow}
           {workspaceRow}
@@ -285,6 +298,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       ) : category === "general" ? (
         <>
           {modelRow}
+          {assistantRow}
           {fallbackRow}
           {folderRow}
           <SettingsRow

@@ -30,6 +30,7 @@ import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as AutonomyService from "../../../autonomy/AutonomyService.ts";
+import * as ChannelOutbox from "../../../channels/ChannelOutbox.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as AssistantHandlers from "./handlers.ts";
 import { AssistantToolkit, type AssistantParameters } from "./tools.ts";
@@ -74,7 +75,12 @@ const assistantsMock = () => {
         },
       ],
     }),
-    assistant("eng", { role: "Engineer", toolAccess: "read-only" }),
+    assistant("eng", {
+      role: "Engineer",
+      toolAccess: "read-only",
+      scope: "project",
+      projectIds: ["p1"] as never,
+    }),
     assistant("gone", { archivedAt: "2026-01-01T00:00:00.000Z" }),
   ];
   const teams: Array<AssistantTeam> = [
@@ -83,6 +89,8 @@ const assistantsMock = () => {
       name: "Core",
       memberIds: ["ceo", "eng"],
       leadId: "ceo",
+      archivedAt: null,
+      projectIds: [],
     } as never,
   ];
   const writes: Array<unknown> = [];
@@ -158,6 +166,8 @@ const assistantsMock = () => {
           ...input,
           id: options?.id ?? "t",
           leadId: input.leadId ?? null,
+          archivedAt: null,
+          projectIds: [],
         } as never;
         writes.push({ createTeam: input });
         teams.push(team);
@@ -167,7 +177,13 @@ const assistantsMock = () => {
       Effect.sync(() => {
         writes.push({ updateTeam: input });
         const index = teams.findIndex((team) => team.id === input.teamId);
-        teams[index] = { ...teams[index]!, ...input } as never;
+        const { addProjectIds = [], removeProjectIds = [], ...rest } = input;
+        const base = [...(input.projectIds ?? teams[index]!.projectIds), ...addProjectIds];
+        teams[index] = {
+          ...teams[index]!,
+          ...rest,
+          projectIds: [...new Set(base)].filter((id) => !removeProjectIds.includes(id)),
+        } as never;
         return teams[index]!;
       }),
   });
@@ -213,6 +229,7 @@ const harness = (
     const posts: Array<Parameters<AssistantGroups.AssistantGroups["Service"]["agentPost"]>[0]> = [];
     const notified: Array<Parameters<AutonomyService.AutonomyService["Service"]["notifyUser"]>[0]> =
       [];
+    const resent: string[] = [];
     const deps = Layer.succeedContext(
       yield* Layer.build(
         Layer.mergeAll(
@@ -314,6 +331,13 @@ const harness = (
                 });
               }),
           }),
+          Layer.mock(ChannelOutbox.ChannelOutbox)({
+            resend: (kind, options) =>
+              Effect.sync(() => {
+                resent.push(options?.recentOnly ? kind : `${kind} (all)`);
+                return kind === "telegram" ? 2 : 0;
+              }),
+          }),
           Layer.mock(AssistantGroups.AssistantGroups)({
             member: {} as AssistantGroups.AssistantGroups["Service"]["member"],
             announce: (input) =>
@@ -358,7 +382,7 @@ const harness = (
         Effect.provide(deps),
       );
     const decisions = yield* DecisionService.DecisionService.pipe(Effect.provide(deps));
-    return { call, writes, decisions, posts, announced, container, notified };
+    return { call, writes, decisions, posts, announced, container, notified, resent };
   });
 
 it.effect("list and read give each assistant its role and its groups' lead by handle", () =>
@@ -467,30 +491,55 @@ it.effect("create without a toolAccess is refused so the agent asks the user", (
   }),
 );
 
-it.effect("create and update pass the list of projects, the first being the home", () =>
-  Effect.gen(function* () {
-    const { call, writes } = yield* harness("full-access");
-    yield* call({
-      action: "create",
-      name: "Many",
-      instructions: "",
-      toolAccess: "read-only",
-      projectIds: ["a", "b"],
-      clientRequestId: "many",
-    });
-    yield* call({
-      action: "update",
-      handle: "eng",
-      projectIds: ["b", "c"],
-      clientRequestId: "upd",
-    });
-    const listed = yield* call({ action: "read", handle: "eng" });
-    expect(writes).toEqual([
-      { create: expect.objectContaining({ projectId: "a", projectIds: ["a", "b"] }) },
-      { update: expect.objectContaining({ projectIds: ["b", "c"] }) },
-    ]);
-    expect(listed).toMatchObject({ projectIds: ["b", "c"] });
-  }),
+it.effect(
+  "create and update pass the projects, the first being the home, and the default model",
+  () =>
+    Effect.gen(function* () {
+      const { call, writes } = yield* harness("full-access");
+      const defaultModel = { providerInstanceId, model: "gpt-5" };
+      const selection = { instanceId: providerInstanceId, model: "gpt-5" };
+      yield* call({
+        action: "create",
+        name: "Many",
+        instructions: "",
+        toolAccess: "read-only",
+        projectIds: ["a", "b"],
+        defaultModel,
+        clientRequestId: "many",
+      });
+      yield* call({
+        action: "update",
+        handle: "eng",
+        projectIds: ["b", "c"],
+        defaultModel,
+        clientRequestId: "upd",
+      });
+      const listed = yield* call({ action: "read", handle: "eng" });
+      yield* call({
+        action: "update",
+        handle: "eng",
+        defaultModel: null,
+        clientRequestId: "clear",
+      });
+      expect(writes).toEqual([
+        {
+          create: expect.objectContaining({
+            projectId: "a",
+            projectIds: ["a", "b"],
+            modelSelection: selection,
+          }),
+        },
+        {
+          update: expect.objectContaining({
+            projectIds: ["b", "c"],
+            defaultModelSelection: selection,
+          }),
+        },
+        { update: expect.objectContaining({ defaultModelSelection: null }) },
+      ]);
+      expect(listed).toMatchObject({ projectIds: ["b", "c"], defaultModel });
+      expect(yield* call({ action: "read", handle: "eng" })).toMatchObject({ defaultModel: null });
+    }),
 );
 
 it.effect("create above the caller's level waits for approval, then is made once", () =>
@@ -600,6 +649,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         group: " Ops ",
         text: " @eng ship it ",
         paths: ["/home/user/a.txt"],
+        projectId: "Core",
       }),
     ).toEqual({
       status: "posted",
@@ -613,6 +663,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
         group: "Ops",
         text: "@eng ship it",
         paths: ["/home/user/a.txt"],
+        project: "Core",
       }),
     ]);
     // A repeat of the same call carries the same request id, so the service posts it once.
@@ -621,6 +672,7 @@ it.effect("group_post posts from the calling conversation and needs a group and 
       group: " Ops ",
       text: " @eng ship it ",
       paths: ["/home/user/a.txt"],
+      projectId: "Core",
     });
     expect(posts[1]!.clientRequestId).toBe(posts[0]!.clientRequestId);
     expect(yield* call({ action: "group_post", text: "hi" })).toMatchObject({
@@ -652,6 +704,37 @@ it.effect("a group change leaves one chat line per change, and a repeat leaves n
       "removed the group's lead",
     ]);
     expect(new Set(announced.map((line) => line.clientRequestId)).size).toBe(4);
+  }),
+);
+
+it.effect("group_update gives and takes a group's projects; read shows where each one works", () =>
+  Effect.gen(function* () {
+    const { call, writes, announced } = yield* harness("approval-required");
+    const given = yield* call({ action: "group_update", group: "Core", addProjects: ["p2", "p3"] });
+    expect(given.group.projectIds).toEqual(["p2", "p3"]);
+    expect(writes.at(-1)).toEqual({
+      updateTeam: expect.objectContaining({ teamId: "t1", addProjectIds: ["p2", "p3"] }),
+    });
+    const eng = yield* call({ action: "read", handle: "eng" });
+    expect(eng).toMatchObject({
+      projectIds: ["p1"],
+      effectiveProjectIds: ["p1", "p2", "p3"],
+      teams: [{ name: "Core", projectIds: ["p2", "p3"] }],
+    });
+    // Everywhere already: an assistant of scope "all" lists none.
+    expect((yield* call({ action: "read", handle: "ceo" })).effectiveProjectIds).toEqual([]);
+    yield* call({ action: "group_update", group: "Core", removeProjects: ["p2"] });
+    yield* call({ action: "group_update", group: "Core", projectIds: ["p4"] });
+    expect((yield* call({ action: "read", handle: "eng" })).effectiveProjectIds).toEqual([
+      "p1",
+      "p4",
+    ]);
+    expect(announced.map((line) => line.text)).toEqual([
+      "gave the group p2, p3",
+      "took p2 from the group",
+      "gave the group p4",
+      "took p3 from the group",
+    ]);
   }),
 );
 
@@ -716,8 +799,26 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
       code: "capability_denied",
       message: expect.stringContaining("this turn came from a scheduled task"),
     });
+    // Nor may it give an assistant, itself included, more projects.
+    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+      expect(yield* fromRoutine.call({ action: "update", handle: "eng", ...change })).toMatchObject(
+        {
+          code: "capability_denied",
+          message: expect.stringContaining("this turn came from a scheduled task"),
+        },
+      );
+    }
+    // Making a new assistant with projects is the same escalation.
+    const made = { action: "create", name: "Fresh", toolAccess: "read-only" } as const;
+    for (const change of [{ projectIds: ["p-other"] }, { projectId: "p-other" }]) {
+      expect(yield* fromRoutine.call({ ...made, ...change })).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringContaining("this turn came from a scheduled task"),
+      });
+    }
     expect(fromRoutine.writes).toEqual([]);
     // Other changes from that turn need no user.
+    expect(yield* fromRoutine.call(made)).toMatchObject({ status: "created" });
     expect(
       yield* fromRoutine.call({ action: "update", handle: "eng", role: "Lead" }),
     ).toMatchObject({
@@ -740,6 +841,12 @@ it.effect("only the user turns an assistant's notifications on, and only the mod
       },
     ]);
     expect((yield* call({ action: "read", handle: "ceo" })).notifications).toBe("reply-only");
+    expect(yield* call({ action: "update", handle: "eng", projectIds: ["p-other"] })).toMatchObject(
+      { status: "updated" },
+    );
+    expect(
+      yield* call({ ...made, projectIds: ["p-other"], clientRequestId: "fresh-user" }),
+    ).toMatchObject({ status: "created" });
   }),
 );
 
@@ -780,6 +887,19 @@ it.effect("notify_user is for an assistant's own turn, and a retry in the turn s
       code: "invalid_request",
       message: "notifications are paused",
     });
+  }),
+);
+
+it.effect("resend_undelivered puts undelivered replies back in line on one channel or both", () =>
+  Effect.gen(function* () {
+    const { call, resent } = yield* harness("full-access");
+    expect(yield* call({ action: "resend_undelivered" })).toEqual({
+      requeued: { telegram: 2, imessage: 0 },
+    });
+    expect(yield* call({ action: "resend_undelivered", channel: "imessage" })).toEqual({
+      requeued: { telegram: 0, imessage: 0 },
+    });
+    expect(resent).toEqual(["telegram", "imessage", "imessage"]);
   }),
 );
 

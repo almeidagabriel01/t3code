@@ -125,4 +125,18 @@ export const UserId = Context.Reference<number | undefined>("@t3tools/shared/Hos
   defaultValue: () => process.getuid?.(),
 });
 
+/** Sends `signal` to `pid`; false when no such process accepts it. Signal 0 only checks it exists. */
+export const SignalProcess = Context.Reference<
+  (pid: number, signal: NodeJS.Signals | 0) => boolean
+>("@t3tools/shared/HostProcess/SignalProcess", {
+  defaultValue: () => (pid, signal) => {
+    try {
+      process.kill(pid, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
+
 export const isWindows = Effect.map(Platform, (platform) => platform === "win32");

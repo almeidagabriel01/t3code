@@ -175,7 +175,7 @@ function StackAvatar(props: {
         size={22}
       />
       <View
-        className={`absolute -bottom-0.5 -right-0.5 size-2 rounded-full border border-screen ${props.working ? "bg-success-foreground" : "bg-foreground-muted"}`}
+        className={`absolute -bottom-0.5 -right-0.5 size-2 rounded-full border border-screen ${props.working ? "bg-adaptive-emerald-600-400" : "bg-foreground-muted"}`}
       />
     </View>
   );

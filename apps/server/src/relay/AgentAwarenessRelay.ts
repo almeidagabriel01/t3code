@@ -462,7 +462,8 @@ export const make = Effect.gen(function* () {
   const isGroupThread = (threadId: ThreadId) =>
     assistantIdFromThreadId(threadId) === null
       ? Effect.succeed(false)
-      : sql`SELECT 1 FROM assistant_group_threads WHERE thread_id = ${threadId}`.pipe(
+      : sql`SELECT 1 FROM assistant_group_request_threads WHERE thread_id = ${threadId}
+          UNION ALL SELECT 1 FROM assistant_group_threads WHERE thread_id = ${threadId}`.pipe(
           Effect.map((rows) => rows.length > 0),
           Effect.orElseSucceed(() => false),
         );
@@ -1007,12 +1008,15 @@ export const make = Effect.gen(function* () {
   const publishGroupFinish = Effect.fn("AgentAwarenessRelay.publishGroupFinish")(function* (
     team: AssistantTeam,
   ) {
-    const rows = yield* sql<{ readonly thread_id: string }>`
-      SELECT g.thread_id FROM assistant_group_messages m
-      JOIN assistant_group_threads g ON g.team_id = m.team_id AND g.assistant_id = m.assistant_id
+    const rows = yield* sql<{ readonly thread_id: string | null }>`
+      SELECT COALESCE(r.thread_id, g.thread_id) AS thread_id FROM assistant_group_messages m
+      LEFT JOIN assistant_group_request_threads r
+        ON r.request_id = m.request_id AND r.assistant_id = m.assistant_id
+      LEFT JOIN assistant_group_threads g
+        ON g.team_id = m.team_id AND g.assistant_id = m.assistant_id
       WHERE m.team_id = ${team.id} AND m.author = 'assistant' AND m.kind = 'message'
       ORDER BY m.seq DESC LIMIT 1`;
-    if (rows[0] === undefined) return;
+    if (rows[0]?.thread_id == null) return;
     const threadId = ThreadId.make(rows[0].thread_id);
     const preview = (team.chat?.preview ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
     groupFinishes.set(threadId, {

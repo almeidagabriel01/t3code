@@ -70,6 +70,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { AssistantId } from "./assistants.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -172,6 +173,29 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
+
+export const MIN_TOOL_OUTPUT_HISTORY_DAYS = 1;
+export const MAX_TOOL_OUTPUT_HISTORY_DAYS = 365;
+export const ToolOutputHistoryDays = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_TOOL_OUTPUT_HISTORY_DAYS,
+    maximum: MAX_TOOL_OUTPUT_HISTORY_DAYS,
+  }),
+);
+export type ToolOutputHistoryDays = typeof ToolOutputHistoryDays.Type;
+/** Offered when the user turns the summary on; it stays off until then because it cannot be undone. */
+export const SUGGESTED_TOOL_OUTPUT_HISTORY_DAYS: ToolOutputHistoryDays = 30;
+
+export const MIN_PROVIDER_IDLE_TIMEOUT_MINUTES = 1;
+export const MAX_PROVIDER_IDLE_TIMEOUT_MINUTES = 240;
+export const ProviderIdleTimeoutMinutes = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
+    maximum: MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+  }),
+);
+export type ProviderIdleTimeoutMinutes = typeof ProviderIdleTimeoutMinutes.Type;
+const DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES: ProviderIdleTimeoutMinutes = 10;
 
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
@@ -1408,7 +1432,11 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
-} satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
+  assistantModelSelections: Schema.optionalKey(Schema.Record(AssistantId, ModelSelection)),
+} satisfies Record<
+  ProjectScopedServerSettingKey | "providerInstances" | "assistantModelSelections",
+  unknown
+>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 // Whole-entry writers must round-trip unknown keys; keep the type closed to catch misspellings.
@@ -1750,6 +1778,12 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  toolOutputHistoryDays: Schema.NullOr(ToolOutputHistoryDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  providerIdleTimeoutMinutes: ProviderIdleTimeoutMinutes.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_IDLE_TIMEOUT_MINUTES)),
+  ),
   compactIdleThreads: LegacyCompactIdleThreads.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -2048,6 +2082,8 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  // A project or assistant model named an instance that is missing or disabled for that project.
+  "use-unavailable-provider-instance",
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -2079,6 +2115,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
         this.managedBy,
         this.providerLabel ?? this.providerInstanceId ?? "this",
       );
+    }
+    if (this.operation === "use-unavailable-provider-instance") {
+      return `The provider instance ${this.providerInstanceId ?? ""} does not exist or is disabled for this project.`;
     }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
@@ -2191,7 +2230,11 @@ const ServerSettingsPatchFields = Schema.Struct({
   fallbackModelSelections: Schema.optionalKey(
     Schema.Array(ModelSelection).check(Schema.isMaxLength(MAX_FALLBACK_MODEL_SELECTIONS)),
   ),
-  /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
+  /**
+   * Replaces each project's override set; null removes it. Omitted providerInstances and
+   * assistantModelSelections keep their stored value; assistantModelSelections merges per
+   * assistant, where null removes that assistant.
+   */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
       ProjectId,
@@ -2200,6 +2243,9 @@ const ServerSettingsPatchFields = Schema.Struct({
           Schema.Struct({
             ...ProjectSettingsOverrides.fields,
             sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+            assistantModelSelections: Schema.optionalKey(
+              Schema.Record(AssistantId, Schema.NullOr(ModelSelection)),
+            ),
           }),
         ),
       ),
@@ -2234,6 +2280,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   deviceBlockedLinks: Schema.optionalKey(Schema.Array(DeviceLinkClientRef)),
   hiddenLinkedDeviceSources: Schema.optionalKey(Schema.Array(Schema.String)),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  toolOutputHistoryDays: Schema.optionalKey(Schema.NullOr(ToolOutputHistoryDays)),
+  providerIdleTimeoutMinutes: Schema.optionalKey(ProviderIdleTimeoutMinutes),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),

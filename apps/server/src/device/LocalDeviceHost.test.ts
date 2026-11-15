@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -10,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -57,6 +60,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   const runs: Array<ProcessRunner.ProcessRunInput> = [];
+  // Fake processes, so no test ever signals a real one; this server's own PID stands for "alive".
+  const processes = new Map<number, { commandLine: string; ignoresTerm?: boolean }>([
+    [process.pid, { commandLine: "" }],
+  ]);
+  const signals: Array<readonly [number, NodeJS.Signals]> = [];
+  const terminated = yield* Deferred.make<void>();
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -82,6 +91,15 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.SignalProcess, (pid, signal) => {
+      const target = processes.get(pid);
+      if (signal !== 0) signals.push([pid, signal]);
+      if (!target) return false;
+      if (signal === "SIGTERM") Deferred.doneUnsafe(terminated, Effect.void);
+      if (signal === "SIGKILL" || (signal === "SIGTERM" && !target.ignoresTerm))
+        processes.delete(pid);
+      return true;
+    }),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() =>
@@ -114,6 +132,10 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
         runs.push(input);
+        if (input.command === "ps")
+          return Effect.succeed(
+            processOutput(0, processes.get(Number(input.args.at(-1)))?.commandLine ?? ""),
+          );
         return input.args.includes("devices")
           ? startup(stateDir, input.env)
           : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
@@ -136,7 +158,18 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, baseDir, stateDir, hub, daemonHealthy, runs };
+  return {
+    host,
+    fs,
+    baseDir,
+    stateDir,
+    hub,
+    daemonHealthy,
+    runs,
+    processes,
+    signals,
+    terminated,
+  };
 });
 
 describe("AgentDevice startup", () => {
@@ -206,6 +239,126 @@ describe("AgentDevice startup", () => {
         baseUrl: "http://127.0.0.1:12347",
         token: "token-2",
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  const stuckDaemon = Effect.fn("stuckDaemon")(function* (
+    recordedIn:
+      | "daemon.json"
+      | "daemon.lock"
+      | "daemon.lock behind a dead daemon.json" = "daemon.json",
+  ) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const stuckPid = 4242;
+    const fixture = yield* agentFixture(
+      (stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 23456, token: "fresh-token", pid: 5151 }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      processOutput(0),
+      {
+        previousDaemon: {
+          httpPort: 12345,
+          token: "stuck-token",
+          pid: stuckPid,
+          version: AGENT_DEVICE_VERSION,
+        },
+      },
+    );
+    const daemonEntry = path.join(
+      fixture.baseDir,
+      "tools",
+      "agent-device",
+      AGENT_DEVICE_VERSION,
+      "node_modules/agent-device/dist/src/internal/daemon.js",
+    );
+    fixture.processes.set(stuckPid, { commandLine: `node ${daemonEntry}`, ignoresTerm: true });
+    if (recordedIn !== "daemon.json") {
+      yield* recordedIn === "daemon.lock"
+        ? fs.remove(`${fixture.stateDir}/daemon.json`)
+        : fs.writeFileString(
+            `${fixture.stateDir}/daemon.json`,
+            // Above the Linux and macOS PID limits, so never a live process.
+            JSON.stringify({ httpPort: 12345, token: "stuck-token", pid: 4_194_305 }),
+          );
+      yield* fs.makeDirectory(`${fixture.stateDir}/daemon.lock`);
+      yield* fs.writeFileString(
+        `${fixture.stateDir}/daemon.lock/owner.json`,
+        JSON.stringify({ pid: stuckPid, startTime: "earlier" }),
+      );
+    }
+    yield* Ref.set(fixture.daemonHealthy, false);
+    return { ...fixture, stuckPid };
+  });
+
+  // regression: a daemon whose daemon.json an earlier server deleted is known only by its lock.
+  it.effect.each(["daemon.json", "daemon.lock", "daemon.lock behind a dead daemon.json"] as const)(
+    "stops agent tools that stopped answering, recorded in %s, then starts fresh ones",
+    (recordedIn) =>
+      Effect.gen(function* () {
+        const { host, fs, stateDir, signals, terminated, stuckPid, runs } =
+          yield* stuckDaemon(recordedIn);
+        const ready = yield* host
+          .ensureAgentReady(() => Effect.void, { recycleUnresponsive: true })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(terminated);
+        yield* TestClock.adjust("5 seconds");
+        expect((yield* Fiber.join(ready)).agentDevice).toMatchObject({
+          baseUrl: "http://127.0.0.1:23456",
+          token: "fresh-token",
+        });
+        expect(signals).toEqual([
+          [stuckPid, "SIGTERM"],
+          [stuckPid, "SIGKILL"],
+        ]);
+        expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+        expect(yield* fs.readFileString(`${stateDir}/daemon.json`)).toContain("fresh-token");
+        expect((yield* host.summary).tools?.agent.unresponsive).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves agent tools that stopped answering alone while sessions use them", () =>
+    Effect.gen(function* () {
+      const { host, fs, stateDir, signals, stuckPid, runs, processes } = yield* stuckDaemon();
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "AgentDeviceUnresponsiveError", pid: stuckPid });
+      expect(signals).toEqual([]);
+      expect(runs.filter((run) => run.args.includes("devices"))).toEqual([]);
+      expect(yield* fs.readFileString(`${stateDir}/daemon.json`)).toContain("stuck-token");
+      expect((yield* host.summary).tools?.agent).toMatchObject({
+        runningVersion: AGENT_DEVICE_VERSION,
+        unresponsive: true,
+      });
+      processes.delete(stuckPid);
+      expect((yield* host.summary).tools?.agent.unresponsive).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves a daemon that took its lock within the startup window alone", () =>
+    Effect.gen(function* () {
+      const { host, fs, stateDir, signals, stuckPid } = yield* stuckDaemon("daemon.lock");
+      yield* TestClock.adjust("1 minute");
+      yield* fs.writeFileString(
+        `${stateDir}/daemon.lock/owner.json`,
+        JSON.stringify({ pid: stuckPid, acquiredAtMs: 60_000 - 1_000 }),
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void, { recycleUnresponsive: true });
+      expect(ready.agentDevice?.token).toBe("fresh-token");
+      expect(signals).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("never signals a recorded PID that another program now uses", () =>
+    Effect.gen(function* () {
+      const { host, signals, stuckPid, processes } = yield* stuckDaemon();
+      processes.set(stuckPid, { commandLine: "/usr/bin/some-other-program" });
+      const ready = yield* host.ensureAgentReady(() => Effect.void, { recycleUnresponsive: true });
+      expect(ready.agentDevice?.token).toBe("fresh-token");
+      expect(signals).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

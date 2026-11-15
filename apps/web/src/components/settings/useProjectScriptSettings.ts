@@ -14,7 +14,10 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { clearProjectSettingsOverrides } from "@t3tools/shared/projectSettings";
+import {
+  clearProjectSettingsOverrides,
+  projectOverrideForWrite,
+} from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -125,7 +128,7 @@ export function useProjectScriptSettings(
                           "defaultProjectScripts",
                         ])
                       : {
-                          ...settings.projectSettingsOverrides[project.id],
+                          ...projectOverrideForWrite(settings.projectSettingsOverrides[project.id]),
                           defaultProjectScripts: nextScripts,
                         },
                 },

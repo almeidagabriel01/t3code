@@ -14,6 +14,25 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 
 const MAX_OVERDUE_ARM_MS = 24 * 60 * 60 * 1000;
 
+/** The reset of a limit window the worker waits for: a valid time after the run ended. */
+const limitWindowResetMs = (resetAt: string | null | undefined, endedAtMs: number) => {
+  if (!resetAt) return null;
+  const resetMs = Date.parse(resetAt);
+  // An already-expired window reported with a fresh failure cannot start a retry loop.
+  return Number.isFinite(resetMs) && resetMs > endedAtMs ? resetMs : null;
+};
+
+/** Whether the worker continues a run that hit a usage limit by itself once the window resets. */
+export const continuesAtReset = (
+  resetAt: string | null | undefined,
+  endedAtMs: number,
+  nowMs: number,
+  autoResume: boolean,
+) => {
+  const resetMs = limitWindowResetMs(resetAt, endedAtMs);
+  return autoResume && resetMs !== null && nowMs - resetMs <= MAX_OVERDUE_ARM_MS;
+};
+
 export function limitRecoveryCommand(
   thread: ProjectionStore.ProjectionLimitRecoveryCandidate,
   autoResume: boolean,
@@ -30,13 +49,11 @@ export function limitRecoveryCommand(
     thread.pendingRuntimeRequest !== null
   )
     return null;
-  const resetMs = Date.parse(thread.usageLimitResetAt);
-  // An already-expired window reported with a fresh failure cannot start a retry loop.
-  if (
-    !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
-  )
-    return null;
+  const resetMs = limitWindowResetMs(
+    thread.usageLimitResetAt,
+    DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt),
+  );
+  if (resetMs === null) return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {

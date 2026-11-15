@@ -60,6 +60,23 @@ export const makeRemember = (deps: {
         : input.scope === "user"
           ? { kind: "user" }
           : yield* Effect.gen(function* () {
+              // A named project wins over the conversation's; the caller has checked it is allowed.
+              if (input.projectId !== undefined) {
+                const projectKey = yield* deps
+                  .resolveProjectKey(space, {
+                    environmentId: deps.environmentId,
+                    projectId: input.projectId,
+                  })
+                  .pipe(
+                    Effect.catchTags({
+                      MemoryStoreConflict: () => Effect.succeed(null),
+                      MemoryAccessError: () => Effect.succeed(null),
+                    }),
+                  );
+                if (!projectKey)
+                  return yield* new MemoryRememberScopeUnavailable({ scope: "project" });
+                return { kind: "project", projectKey } as const;
+              }
               const project = sourceThread
                 ? yield* resolveThreadProject(
                     {

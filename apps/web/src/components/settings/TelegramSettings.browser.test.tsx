@@ -116,6 +116,24 @@ it("shows live status, the bot's name, and the last delivery failure", async () 
     .toBeVisible();
 });
 
+it("says how many replies never reached Telegram and resends them", async () => {
+  resetFakeTelegram({
+    enabled: true,
+    tokenConfigured: true,
+    allowedUserIds: ["111"],
+    status: "running",
+    undeliveredCount: 2,
+  });
+  await using _screen = await openTelegram();
+  publishTelegramStatus({ status: "running", undeliveredCount: 2 });
+  await expect.element(page.getByText("2 replies did not reach Telegram.")).toBeVisible();
+  publishTelegramStatus({ status: "running", undeliveredCount: 1 });
+  await expect.element(page.getByText("1 reply did not reach Telegram.")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Resend" }));
+  await eventually(() => expect(fakeTelegram.resends).toBe(1));
+  await expect.element(page.getByText("Undelivered replies")).not.toBeInTheDocument();
+});
+
 it("keeps the switch off until a token exists, then turns Telegram on without any user id", async () => {
   resetFakeTelegram();
   await using _screen = await openTelegram();

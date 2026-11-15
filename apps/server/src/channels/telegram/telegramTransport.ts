@@ -16,22 +16,24 @@ export type TelegramSendReport =
   | { readonly ok: false; readonly code: ChannelDeliveryErrorCode; readonly invalidToken: boolean };
 
 const deliveryCode = (error: TelegramApiError): ChannelDeliveryErrorCode =>
-  error.code === "chat_not_found"
+  error.code === "chat_not_found" || error.code === "bad_request"
     ? "chat_not_found"
     : error.code === "timeout"
       ? "timeout"
       : "unknown";
 
 /**
- * Sends each piece of a reply as its own message. A piece is claimed before it goes out, so a
- * retry after a later piece failed does not repeat the earlier ones; a piece Telegram certainly
- * refused is released, one whose outcome is unknown keeps its claim.
+ * Sends each piece of a reply as its own message. A piece is recorded as confirmed once Telegram
+ * answers for it, so a retry repeats none of those; a piece Telegram refused or never answered for
+ * goes again, because a possible duplicate beats a lost reply.
  */
 export function makeTelegramTransport(input: {
   readonly connectionId: string;
   /** The client for the running configuration; undefined while the channel is off. */
   readonly api: Effect.Effect<TelegramApi | undefined>;
   readonly sql: SqlClient.SqlClient;
+  /** Origin of the web links thread links become. */
+  readonly hostedAppUrl: string;
   readonly report: (result: TelegramSendReport) => Effect.Effect<void>;
 }): ChannelTransport {
   const { sql } = input;
@@ -50,22 +52,19 @@ export function makeTelegramTransport(input: {
         });
       }
       let lastId: string | undefined;
-      for (const [index, text] of formatTelegramMessages(message).entries()) {
-        const claimed = yield* sql`
-          INSERT OR IGNORE INTO telegram_sent (delivery_id, chunk_index, sent_at_ms)
-          VALUES (${message.deliveryId}, ${index}, ${(yield* DateTime.now).epochMilliseconds})
+      for (const [index, text] of formatTelegramMessages(message, {
+        hostedAppUrl: input.hostedAppUrl,
+      }).entries()) {
+        const pending = yield* sql`
+          INSERT INTO telegram_sent (delivery_id, chunk_index, sent_at_ms, confirmed)
+          VALUES (${message.deliveryId}, ${index}, ${(yield* DateTime.now).epochMilliseconds}, 0)
+          ON CONFLICT (delivery_id, chunk_index) DO UPDATE SET sent_at_ms = excluded.sent_at_ms
+          WHERE confirmed = 0
           RETURNING chunk_index`.pipe(Effect.orDie);
-        if (claimed.length === 0) continue;
+        if (pending.length === 0) continue;
         const sent = yield* Effect.result(api.sendMessage({ chatId: target.chatId, text }));
         if (sent._tag === "Failure") {
           const error = sent.failure;
-          if (error.outcome === "not_sent") {
-            yield* sql`
-              DELETE FROM telegram_sent
-              WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}`.pipe(
-              Effect.orDie,
-            );
-          }
           yield* input.report({
             ok: false,
             code: deliveryCode(error),
@@ -80,6 +79,9 @@ export function makeTelegramTransport(input: {
               : {}),
           });
         }
+        yield* sql`
+          UPDATE telegram_sent SET confirmed = 1
+          WHERE delivery_id = ${message.deliveryId} AND chunk_index = ${index}`.pipe(Effect.orDie);
         lastId = sent.success.messageId === "" ? lastId : sent.success.messageId;
       }
       yield* input.report({ ok: true });

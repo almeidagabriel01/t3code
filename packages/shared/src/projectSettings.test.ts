@@ -1,4 +1,5 @@
 import {
+  type AssistantId,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderDriverKind,
@@ -494,4 +495,19 @@ it("keeps project speech vocabulary on its originating project and clears it to 
     projectSettingsOverrides: { [projectId]: cleared },
   });
   expect(resolveProjectSettings(restored, projectId).settings.speechProjectCustomWords).toEqual([]);
+});
+
+it("clears overrides without resending the per-assistant models, which the server merges per key", () => {
+  const ada = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+  const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    projectSettingsOverrides: {
+      [projectId]: {
+        defaultAutoPull: true,
+        assistantModelSelections: { ada } as Record<AssistantId, typeof ada>,
+      },
+    },
+  });
+  // An empty entry, not null: null deletes the whole entry, assistant models included.
+  expect(clearProjectSettingsOverrides(settings, projectId, ["defaultAutoPull"])).toEqual({});
+  expect(clearProjectSettingsOverrides(settings, otherProjectId, ["defaultAutoPull"])).toBeNull();
 });

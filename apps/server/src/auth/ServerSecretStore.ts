@@ -3,11 +3,13 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 
@@ -170,7 +172,48 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
-  const get: ServerSecretStore["Service"]["get"] = (name) =>
+  // Cache is valid only while the directory watcher is attached; otherwise every get reads disk.
+  const cache = new Map<string, Option.Option<Uint8Array>>();
+  let watching = false;
+  // Bumped on every write/invalidation so a read that started earlier cannot cache stale bytes.
+  let generation = 0;
+  const invalidate = (name: string) => {
+    generation++;
+    cache.delete(name);
+  };
+
+  const ready = yield* Deferred.make<void>();
+  yield* fileSystem
+    .watch(serverConfig.secretsDir, {
+      onReady: () => {
+        watching = true;
+        Deferred.doneUnsafe(ready, Effect.void);
+      },
+    })
+    .pipe(
+      Stream.runForEach((event) =>
+        Effect.sync(() => {
+          const file = path.basename(event.path);
+          if (file.endsWith(".bin")) invalidate(file.slice(0, -".bin".length));
+          else if (!file.endsWith(".tmp")) {
+            generation++;
+            cache.clear();
+          }
+        }),
+      ),
+      Effect.ignore,
+      Effect.ensuring(
+        Effect.sync(() => {
+          watching = false;
+          generation++;
+          cache.clear();
+        }).pipe(Effect.andThen(Deferred.succeed(ready, void 0))),
+      ),
+      Effect.forkScoped,
+    );
+  yield* Deferred.await(ready);
+
+  const readFromDisk = (name: string) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
       Effect.catch((cause) =>
@@ -183,8 +226,22 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
-      Effect.withSpan("ServerSecretStore.get"),
     );
+
+  const get: ServerSecretStore["Service"]["get"] = (name) =>
+    Effect.suspend(() => {
+      const hit = watching ? cache.get(name) : undefined;
+      if (hit) return Effect.succeed(Option.map(hit, (bytes) => Uint8Array.from(bytes)));
+      const startedAt = generation;
+      return readFromDisk(name).pipe(
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            if (watching && generation === startedAt) cache.set(name, value);
+          }),
+        ),
+        Effect.map((value) => Option.map(value, (bytes) => Uint8Array.from(bytes))),
+      );
+    }).pipe(Effect.withSpan("ServerSecretStore.get"));
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
     const secretPath = resolveSecretPath(name);
@@ -219,6 +276,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       }),
+      Effect.ensuring(Effect.sync(() => invalidate(name))),
       Effect.withSpan("ServerSecretStore.set"),
     );
   };
@@ -249,6 +307,7 @@ export const make = Effect.gen(function* () {
           yield* fileSystem.link(tempPath, secretPath);
         }).pipe(
           Effect.ensuring(fileSystem.remove(tempPath).pipe(Effect.ignore)),
+          Effect.ensuring(Effect.sync(() => invalidate(name))),
           Effect.mapError(
             (cause) =>
               new SecretStorePersistError({
@@ -315,6 +374,7 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
+      Effect.ensuring(Effect.sync(() => invalidate(name))),
       Effect.withSpan("ServerSecretStore.remove"),
     );
 

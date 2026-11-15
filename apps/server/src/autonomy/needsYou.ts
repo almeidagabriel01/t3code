@@ -32,8 +32,36 @@ export const userInputOptionIndex = (optionId: string | undefined): number | und
   return Number.isInteger(index) && index >= 0 ? index : undefined;
 };
 
-const clip = (text: string, max: number) =>
-  text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+/** Redacts before it cuts, so a credential straddling the limit never leaves as a fragment. */
+const clip = (text: string, max: number) => {
+  const clean = redactChannelText(text);
+  if (clean.length <= max) return clean;
+  const cut = /[\uD800-\uDBFF]/.test(clean.charAt(max - 2)) ? max - 2 : max - 1;
+  return `${clean.slice(0, cut)}…`;
+};
+
+/** How much of a decision's context a chat card shows. */
+const CARD_CONTEXT_MAX_LENGTH = 1_200;
+
+const tooLong = (text: string, max: number) => redactChannelText(text).length > max;
+
+/**
+ * A decision's context as a chat card shows it. Cut short, it says so: a card must never be
+ * answered on the strength of a command or question the user could not read in full.
+ */
+export function cardContext(
+  context: string,
+  language: ResolvedChannelLanguage,
+): { readonly text: string; readonly cut: boolean } {
+  const trimmed = context.trim();
+  if (!tooLong(trimmed, CARD_CONTEXT_MAX_LENGTH)) {
+    return { text: redactChannelText(trimmed), cut: false };
+  }
+  return {
+    text: `${clip(trimmed, CARD_CONTEXT_MAX_LENGTH)}\n${channelStrings(language).cutOpenInT3}`,
+    cut: true,
+  };
+}
 
 export interface RequestDecision {
   readonly title: string;
@@ -58,7 +86,12 @@ export function requestDecision(
   if (request.kind === "user_input") {
     const questions = item?.type === "user_input_request" ? item.questions : [];
     const [only] = questions;
+    const asked = questions
+      .map((question) => question.question)
+      .join("\n\n")
+      .trim();
     const single =
+      !tooLong(asked, DECISION_CONTEXT_MAX_LENGTH) &&
       questions.length === 1 &&
       only !== undefined &&
       only.multiSelect !== true &&
@@ -66,13 +99,7 @@ export function requestDecision(
       only.options.length <= DECISION_MAX_OPTIONS;
     return {
       title: clip(`${agent} ${DECISION_PHRASES.asksQuestion}`, DECISION_TITLE_MAX_LENGTH),
-      context: clip(
-        questions
-          .map((question) => question.question)
-          .join("\n\n")
-          .trim(),
-        DECISION_CONTEXT_MAX_LENGTH,
-      ),
+      context: clip(asked, DECISION_CONTEXT_MAX_LENGTH),
       options:
         single && live
           ? only.options.map((option, index) => ({
@@ -91,19 +118,20 @@ export function requestDecision(
       : [request.kind === "command" ? `\`\`\`sh\n${prompt}\n\`\`\`` : prompt]),
     ...(detail?.reason?.trim() ? [`${DECISION_PHRASES.reason} ${detail.reason.trim()}`] : []),
   ].join("\n\n");
+  const approvable = live && !tooLong(context, DECISION_CONTEXT_MAX_LENGTH);
   return {
     title: clip(
       `${agent} ${WANTS[request.kind] ?? DECISION_PHRASES.needsApproval}`,
       DECISION_TITLE_MAX_LENGTH,
     ),
-    context: context.slice(0, DECISION_CONTEXT_MAX_LENGTH),
-    options: live
+    context: clip(context, DECISION_CONTEXT_MAX_LENGTH),
+    options: approvable
       ? [
           { id: "accept", label: DECISION_PHRASES.approve },
           { id: "decline", label: DECISION_PHRASES.deny },
         ]
       : [{ id: "ok", label: DECISION_PHRASES.gotIt }],
-    answerable: live,
+    answerable: approvable,
   };
 }
 
@@ -119,9 +147,17 @@ export interface NeedsYouCard {
   readonly answerable: boolean;
 }
 
-/** The chat text of a notice that something waits on the user. Secrets never leave in it. */
-export function needsYouText(card: NeedsYouCard, language: ResolvedChannelLanguage): string {
+/**
+ * The chat text of a notice that something waits on the user, and whether the chat may answer it:
+ * not when its context had to be cut. The outbox redacts all of it again.
+ */
+export function needsYouText(
+  card: NeedsYouCard,
+  language: ResolvedChannelLanguage,
+): { readonly text: string; readonly answerable: boolean } {
   const t = channelStrings(language);
+  const context = cardContext(card.context, language);
+  const answerable = card.answerable && !context.cut;
   const where = [
     ...(card.projectName === null ? [] : [`${t.projectLabel} ${card.projectName}`]),
     ...(card.threadTitle === null || card.threadTitle === card.agent
@@ -132,9 +168,9 @@ export function needsYouText(card: NeedsYouCard, language: ResolvedChannelLangua
     t.waitingForYou(card.agent),
     card.title,
     where,
-    clip(card.context.trim(), 1_200),
-    card.answerable ? "" : t.answerInT3,
+    context.text,
+    answerable || context.cut ? "" : t.answerInT3,
     card.link === null ? "" : `${t.openInT3} ${card.link}`,
   ];
-  return redactChannelText(lines.filter((line) => line !== "").join("\n\n"));
+  return { text: lines.filter((line) => line !== "").join("\n\n"), answerable };
 }

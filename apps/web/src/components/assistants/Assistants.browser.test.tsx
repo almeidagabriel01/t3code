@@ -167,6 +167,7 @@ it("lists groups in Settings with a way into their chat, and archived groups wit
     memberIds: ["jarvis"] as AssistantId[],
     leadId: null,
     archivedAt,
+    projectIds: [],
     createdAt: when,
     updatedAt: when,
   });

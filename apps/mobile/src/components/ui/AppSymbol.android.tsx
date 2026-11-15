@@ -6,6 +6,7 @@ import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
 import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
+import IconAt from "@tabler/icons-react-native/IconAt";
 import IconCopyPlus from "@tabler/icons-react-native/IconCopyPlus";
 import IconFilePlus from "@tabler/icons-react-native/IconFilePlus";
 import IconFolderSearch from "@tabler/icons-react-native/IconFolderSearch";
@@ -205,6 +206,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.uturn.backward": IconArrowBackUp,
   "arrow.uturn.forward": IconArrowForwardUp,
   archivebox: IconArchive,
+  at: IconAt,
   "archivebox.fill": IconArchive,
   "bell.badge": IconBellRinging,
   "bolt.circle": IconBolt,

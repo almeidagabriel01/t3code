@@ -11,6 +11,8 @@ describe("redactChannelText", () => {
     ],
     ["PGPASSWORD='hunter22' psql", "PGPASSWORD=[redacted] psql"],
     ['{"client_secret": "s3cr3t"}', '{"client_secret": [redacted]}'],
+    ['password: "hunter2xyz"', "password: [redacted]"],
+    ["API_KEY=a1b2c3d4e5", "API_KEY=[redacted]"],
     [
       "git clone https://bob:ghp_x@github.com/acme/app",
       "git clone https://[redacted]@github.com/acme/app",
@@ -18,6 +20,8 @@ describe("redactChannelText", () => {
     ["token: ghp_abcdefghijklmnopqrstuvwxyz0123", "token: [redacted]"],
     ["-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----", "[redacted]"],
     ["AKIAABCDEFGHIJKLMNOP in the log", "[redacted] in the log"],
+    [`Markdown-escaped ghp\\_${"Z".repeat(32)} here`, "Markdown-escaped [redacted] here"],
+    [`sk\\-proj\\-${"a".repeat(24)}`, "[redacted]"],
   ])("redacts %s", (input, expected) => {
     expect(redactChannelText(input)).toBe(expected);
     expect(containsSecret(input)).toBe(true);
@@ -28,8 +32,21 @@ describe("redactChannelText", () => {
     "Rename tokenizer.ts to lexer.ts",
     "The password field is now required.",
     "https://github.com/acme/app/pull/42",
+    "interface X { apiKey: string; token: Token }",
+    "max_tokens: 4096",
+    "secret: z.string()",
+    "// token: the session",
+    "snake\\_case and 1\\.5 keep their escapes",
   ])("leaves ordinary text alone: %s", (input) => {
     expect(redactChannelText(input)).toBe(input);
     expect(containsSecret(input)).toBe(false);
   });
+
+  // Linear today (milliseconds); the quadratic forms took far past the 120 s test timeout here.
+  it.each(["a.".repeat(500_000), "token.".repeat(40_000)])(
+    "stays linear on adversarial input (%#)",
+    (input) => {
+      expect(redactChannelText(input)).toBe(input);
+    },
+  );
 });

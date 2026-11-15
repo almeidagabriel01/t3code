@@ -11,6 +11,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     ownHandles: [] as string[],
     can: true,
     configure: vi.fn(),
+    resend: vi.fn(),
     checkAccess: vi.fn(),
   },
 }));
@@ -121,6 +122,7 @@ vi.mock("../../state/imessageChannel", () => ({
     checkAccess: mocks.checkAccess,
     canConfigure: mocks.can,
     configure: mocks.configure,
+    resendUndelivered: mocks.resend,
   }),
 }));
 
@@ -163,6 +165,7 @@ beforeEach(() => {
   mocks.ownHandles = [];
   mocks.can = true;
   mocks.configure.mockReset().mockResolvedValue({ ok: true });
+  mocks.resend.mockReset().mockResolvedValue({ ok: true });
   mocks.checkAccess.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
@@ -180,6 +183,15 @@ describe("iMessage settings", () => {
     mocks.access = "messages_not_signed_in";
     render();
     expect(container.textContent).toContain("Messages is not signed in");
+  });
+
+  it("offers to resend replies that never reached Messages", async () => {
+    render({ status: "running", undeliveredCount: 1 });
+    expect(container.textContent).toContain("1 reply did not reach Messages.");
+    await press("Resend undelivered replies");
+    expect(mocks.resend).toHaveBeenCalledOnce();
+    render({ status: "running" });
+    expect(button("Resend undelivered replies")).toBeNull();
   });
 
   it("shows status errors as sentences", () => {

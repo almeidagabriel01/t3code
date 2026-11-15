@@ -4,6 +4,9 @@ import { assert, it } from "@effect/vitest";
 import {
   AssistantId,
   type AssistantError,
+  type AssistantsEvent,
+  CommandId,
+  EventId,
   type AssistantsCreateInput,
   DEFAULT_ASSISTANT_ID,
   type ModelSelection,
@@ -14,16 +17,22 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -58,9 +67,10 @@ interface FakeThread {
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
-const harness = () => {
+const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> } = {}) => {
   const threads = new Map<string, FakeThread>();
   const launched: Array<{ threadId: string; projectId: string; runtimeMode: string }> = [];
+  const inspected: string[] = [];
   const dispatched: Array<{ type: string; threadId: string; extra?: unknown }> = [];
   const retargets: Array<{ from: ReadonlyArray<string>; to: string; projectId: string }> = [];
   const taskDeletes: string[] = [];
@@ -76,6 +86,7 @@ const harness = () => {
         const sql = yield* SqlClient.SqlClient;
         return {
           getThreadRecords: (threadId: string) => {
+            inspected.push(threadId);
             const thread = threads.get(threadId);
             return thread === undefined
               ? Effect.fail(new Error("missing") as never)
@@ -166,6 +177,9 @@ const harness = () => {
       getById: (projectId) =>
         Effect.succeed(projectId === missingProject ? Option.none() : Option.some({} as never)),
     }),
+    ProjectModelSelection.layer.pipe(
+      Layer.provide(Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeedNone })),
+    ),
   );
   const base = Layer.mergeAll(
     NodeCrypto.layer,
@@ -190,9 +204,36 @@ const harness = () => {
   const connectorsLayer = AssistantConnectors.layer.pipe(
     Layer.provide(Layer.merge(secretStore, AssistantDirectory.layer)),
   );
+  // With `failEventStream`, the first subscription to the event stream fails and completes it.
+  const failing = options.failEventStream;
+  const eventStore =
+    failing === undefined
+      ? OrchestrationEventStore.layer
+      : Layer.effect(
+          OrchestrationEventStore.OrchestrationEventStore,
+          Effect.gen(function* () {
+            const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+            let subscriptions = 0;
+            return OrchestrationEventStore.OrchestrationEventStore.of({
+              ...store,
+              streamApplicationEvents: (input) =>
+                Stream.suspend(() =>
+                  (subscriptions += 1) === 1
+                    ? Stream.fromEffect(Deferred.succeed(failing, undefined)).pipe(
+                        Stream.flatMap(() =>
+                          Stream.fail(
+                            new PersistenceSqlError({ operation: "stream", detail: "closed" }),
+                          ),
+                        ),
+                      )
+                    : store.streamApplicationEvents(input),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(OrchestrationEventStore.layer));
   const layer = Assistants.layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(mocks, connectorsLayer, AssistantTaskLinks.layer).pipe(
+      Layer.mergeAll(mocks, connectorsLayer, AssistantTaskLinks.layer, eventStore).pipe(
         Layer.provideMerge(base),
       ),
     ),
@@ -201,6 +242,7 @@ const harness = () => {
     secretValues,
     layer,
     threads,
+    inspected,
     launched,
     dispatched,
     pointers,
@@ -256,6 +298,40 @@ it.effect("a deleted conversation is replaced by the next generation", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("listing healthy assistants inspects no thread and relaunches only deleted ones", () => {
+  const { layer, threads, launched, inspected } = harness();
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const assistants = yield* Assistants.AssistantService;
+    yield* assistants.ensureDefault;
+    const other = yield* assistants.create(create());
+    const third = yield* assistants.create(create({ name: "Third One" }));
+    const project = (threadId: string, deletedAt: string | null) =>
+      sql`INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+            created_at, updated_at, deleted_at, payload_json
+          ) VALUES (${threadId}, 'p', 't', 'codex', 'full-access', 'default', 'now', 'now', ${deletedAt}, '{}')`;
+    yield* project(jarvisThread(1), null);
+    yield* project(other.threadId!, null);
+    yield* project(third.threadId!, null);
+
+    inspected.length = 0;
+    const before = launched.length;
+    yield* assistants.list;
+    assert.lengthOf(inspected, 0);
+    assert.lengthOf(launched, before);
+
+    // Unknown to the projection stays put, as an unreadable thread always did.
+    yield* sql`DELETE FROM orchestration_v2_projection_threads WHERE thread_id = ${third.threadId!}`;
+    threads.get(other.threadId!)!.deletedAt = "now";
+    yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = 'now' WHERE thread_id = ${other.threadId!}`;
+    const all = yield* assistants.list;
+    assert.lengthOf(launched, before + 1);
+    assert.equal(all.find((a) => a.id === other.id)!.generation, 2);
+    assert.equal(all.find((a) => a.id === third.id)!.threadId, third.threadId);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("create derives a handle, keeps it reserved, and launches in the chosen project", () => {
   const { layer, launched } = harness();
   return Effect.gen(function* () {
@@ -263,6 +339,19 @@ it.effect("create derives a handle, keeps it reserved, and launches in the chose
     const made = yield* assistants.create(create({ modelSelection: model("m1") }));
     assert.equal(made.handle, "research-buddy");
     assert.equal(made.threadId, `assistant:${made.id}:1`);
+    // The model it is made with is its default too, and must name a usable instance.
+    assert.deepEqual(made.defaultModelSelection, model("m1"));
+    assert.equal(
+      (yield* assistants
+        .create(
+          create({
+            name: "Ghost",
+            modelSelection: { instanceId: ProviderInstanceId.make("ghost"), model: "m" },
+          }),
+        )
+        .pipe(Effect.flip)).reason,
+      "invalid",
+    );
     assert.deepEqual(launched.at(-1), {
       threadId: made.threadId!,
       projectId: repo,
@@ -291,15 +380,20 @@ it.effect("create derives a handle, keeps it reserved, and launches in the chose
 });
 
 it.effect(
-  "reset moves the pointer before archiving the old conversation and keeps its model",
+  "reset moves the pointer before archiving the old conversation and follows the project's model",
   () => {
     const { layer, threads, pointers, launched, retargets } = harness();
     return Effect.gen(function* () {
       const assistants = yield* Assistants.AssistantService;
       const made = yield* assistants.create(create({ modelSelection: model("m1") }));
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: { [repo]: { defaultModelSelection: model("repo") } },
+      });
       const reset = yield* assistants.reset({ assistantId: made.id });
       assert.equal(reset.threadId, `assistant:${made.id}:2`);
-      assert.equal(threads.get(reset.threadId!)!.modelSelection.model, "m1");
+      // The old conversation's model is not carried over.
+      assert.equal(threads.get(reset.threadId!)!.modelSelection.model, "repo");
       assert.deepEqual(pointers.at(-1), {
         type: "thread.archive",
         threadId: `assistant:${made.id}:1`,
@@ -400,7 +494,23 @@ it.effect("remove deletes the row first, then every conversation and its schedul
     const made = yield* assistants.create(create());
     yield* assistants.reset({ assistantId: made.id });
     pointers.length = 0;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const other = AssistantId.make("other");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [repo]: {
+          defaultModelSelection: model("repo"),
+          assistantModelSelections: { [made.id]: model("mine") },
+        },
+        [scratch]: { assistantModelSelections: { [made.id]: model("mine"), [other]: model("x") } },
+      },
+    });
     yield* assistants.remove(made.id);
+    // Its per-project exceptions go with it in every project; the rest stays.
+    assert.deepEqual((yield* settings.getSettings).projectSettingsOverrides, {
+      [repo]: { defaultModelSelection: model("repo") },
+      [scratch]: { assistantModelSelections: { [other]: model("x") } },
+    });
     assert.deepEqual(
       pointers.map((entry) => [entry.type, entry.threadId, entry.rows]),
       [
@@ -585,6 +695,127 @@ it.effect("a budget round-trips through create and update, and null removes it",
   }).pipe(Effect.provide(layer));
 });
 
+it.effect(
+  "a new conversation follows its project, or the assistant's default in the home project",
+  () => {
+    const { layer, threads } = harness();
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
+        defaultModelSelection: model("global"),
+        projectSettingsOverrides: { [repo]: { defaultModelSelection: model("repo") } },
+      });
+      const modelOf = (assistant: { readonly threadId: ThreadId | null }) =>
+        threads.get(assistant.threadId!)!.modelSelection.model;
+
+      const made = yield* assistants.create(create());
+      assert.equal(modelOf(made), "repo");
+      // Moved home with a default in the same call: the new conversation takes that default.
+      const home = yield* assistants.update({
+        assistantId: made.id,
+        projectId: scratch,
+        defaultModelSelection: model("assistant"),
+      });
+      assert.equal(modelOf(home), "assistant");
+      // Back in a project, the project wins over both the default and the last conversation.
+      assert.equal(
+        modelOf(yield* assistants.update({ assistantId: made.id, projectId: repo })),
+        "repo",
+      );
+      // No project and no default of its own: the global default.
+      assert.equal(
+        modelOf(yield* assistants.create(create({ name: "Homebody", scope: "all" }))),
+        "global",
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "assistant and team model defaults are stored apart from the conversation, null clears",
+  () => {
+    const { layer, dispatched } = harness();
+    const beyond = model("claude-opus-5-5");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const made = yield* assistants.create(create());
+      assert.isNull(made.defaultModelSelection);
+      const set = yield* assistants.update({ assistantId: made.id, defaultModelSelection: beyond });
+      assert.deepEqual(set.defaultModelSelection, beyond);
+      // Other edits keep it, and it never switches the current conversation.
+      assert.deepEqual(
+        (yield* assistants.update({ assistantId: made.id, name: "Renamed" })).defaultModelSelection,
+        beyond,
+      );
+      assert.isFalse(dispatched.some((command) => command.type === "thread.model-selection.set"));
+      assert.isNull(
+        (yield* assistants.update({ assistantId: made.id, defaultModelSelection: null }))
+          .defaultModelSelection,
+      );
+
+      const team = yield* assistants.createTeam({ name: "Dev", memberIds: [made.id] });
+      assert.isNull(team.defaultModelSelection);
+      const withDefault = yield* assistants.updateTeam({
+        teamId: team.id,
+        defaultModelSelection: beyond,
+      });
+      assert.deepEqual(withDefault.defaultModelSelection, beyond);
+      assert.deepEqual(
+        (yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" })).defaultModelSelection,
+        beyond,
+      );
+      assert.isNull(
+        (yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: null }))
+          .defaultModelSelection,
+      );
+
+      // A new default must name an instance that exists and is enabled.
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const off = {
+        driver: ProviderDriverKind.make("codex"),
+        enabled: false,
+      };
+      yield* settings.updateSettings({
+        providerInstances: { [ProviderInstanceId.make("off")]: off },
+      });
+      for (const selection of [
+        { instanceId: ProviderInstanceId.make("ghost"), model: "m" },
+        { instanceId: ProviderInstanceId.make("off"), model: "m" },
+      ]) {
+        const refusals = [
+          yield* assistants
+            .update({ assistantId: made.id, defaultModelSelection: selection })
+            .pipe(Effect.flip),
+          yield* assistants
+            .updateTeam({ teamId: team.id, defaultModelSelection: selection })
+            .pipe(Effect.flip),
+        ];
+        assert.deepEqual(
+          refusals.map((error) => error.reason),
+          ["invalid", "invalid"],
+        );
+      }
+      // A default whose instance was disabled later blocks no other edit, nor sending it back.
+      yield* assistants.update({ assistantId: made.id, defaultModelSelection: beyond });
+      yield* assistants.updateTeam({ teamId: team.id, defaultModelSelection: beyond });
+      yield* settings.updateSettings({
+        providerInstances: { [ProviderInstanceId.make("codex")]: off },
+      });
+      yield* assistants.update({
+        assistantId: made.id,
+        name: "Again",
+        defaultModelSelection: beyond,
+      });
+      yield* assistants.updateTeam({
+        teamId: team.id,
+        name: "Dev 3",
+        defaultModelSelection: beyond,
+      });
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("subscribers get a snapshot, then every change", () => {
   const { layer } = harness();
   return Effect.gen(function* () {
@@ -677,7 +908,7 @@ it.each([
     "claude:built-in",
   ],
 ] as const)("firstUsableProviderModel: %s", (_name, providers, expected) => {
-  const selection = Assistants.firstUsableProviderModel(providers);
+  const selection = ProjectModelSelection.firstUsableProviderModel(providers);
   assert.strictEqual(
     selection === null ? null : `${selection.instanceId}:${selection.model}`,
     expected,
@@ -1070,6 +1301,48 @@ it.effect(
 );
 
 it.effect(
+  "a group keeps its own projects, replaced or changed by delta, and only real ones",
+  () => {
+    const { layer } = harness();
+    const docs = ProjectId.make("docs");
+    const web = ProjectId.make("web");
+    return Effect.gen(function* () {
+      const assistants = yield* Assistants.AssistantService;
+      const refused = <A>(effect: Effect.Effect<A, AssistantError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+      const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo] }));
+      const team = yield* assistants.createTeam({ name: "Dev", memberIds: [ana.id] });
+      assert.deepEqual(team.projectIds, []);
+      const set = yield* assistants.updateTeam({ teamId: team.id, projectIds: [docs, repo, docs] });
+      assert.deepEqual(set.projectIds, [docs, repo]);
+      // Removals apply last, so an id in both lists ends up out.
+      const changed = yield* assistants.updateTeam({
+        teamId: team.id,
+        addProjectIds: [web, repo],
+        removeProjectIds: [repo, web],
+      });
+      assert.deepEqual(changed.projectIds, [docs]);
+      for (const bad of [missingProject, scratch]) {
+        assert.include(
+          yield* refused(assistants.updateTeam({ teamId: team.id, addProjectIds: [web, bad] })),
+          "does not exist",
+        );
+      }
+      assert.deepEqual((yield* assistants.teams)[0]?.projectIds, [docs]);
+      // Other fields leave the list alone, and a member's own list never changes with it.
+      const renamed = yield* assistants.updateTeam({ teamId: team.id, name: "Dev 2" });
+      assert.deepEqual(renamed.projectIds, [docs]);
+      assert.deepEqual((yield* assistants.list).find((one) => one.id === ana.id)?.projectIds, [
+        repo,
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
   "a project assistant keeps a list of projects, and only a new home starts a conversation",
   () => {
     const { layer } = harness();
@@ -1245,6 +1518,92 @@ it.effect("a chat counter refresh reaches the stream but not services reacting t
       [1, "Done"],
     );
     assert.isFalse((yield* PubSub.takeAll(changes)).some((seen) => seen.type === "teamUpserted"));
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a deleted project leaves assistant and group lists, and subscribers see it", () => {
+  const { layer } = harness();
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const gone = ProjectId.make("gone");
+    const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo, gone] }));
+    const team = yield* assistants.createTeam({ name: "Core", memberIds: [ana.id] });
+    yield* sql`UPDATE assistant_teams SET project_ids_json = '["gone","repo"]' WHERE team_id = ${team.id}`;
+    // A group open to every project names none, yet its work may still sit in the deleted one.
+    const open = yield* assistants.createTeam({ name: "Open", memberIds: [ana.id] });
+    const changes = yield* assistants.subscribeChanges;
+    const now = "2026-01-03T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES (${gone}, 'Gone', '/work/gone', '[]', ${now}, ${now}, ${now})`;
+    const deleted = yield* store.appendProjectEvent({
+      type: "project.deleted",
+      eventId: EventId.make("event:gone:deleted"),
+      aggregateKind: "project",
+      aggregateId: gone,
+      occurredAt: now,
+      commandId: CommandId.make("command:gone:delete"),
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { projectId: gone, deletedAt: now },
+    });
+    yield* store.publishCommitted([deleted]);
+
+    const seen = new Map<string, ReadonlyArray<string>>();
+    while (seen.size < 3) {
+      const event: AssistantsEvent = yield* PubSub.take(changes);
+      if (event.type === "upserted" && event.assistant.id === ana.id)
+        seen.set("assistant", event.assistant.projectIds);
+      if (event.type === "teamUpserted" && event.team.id === team.id)
+        seen.set("team", event.team.projectIds);
+      if (event.type === "teamUpserted" && event.team.id === open.id)
+        seen.set("open", event.team.projectIds);
+    }
+    assert.deepEqual(Object.fromEntries(seen), { assistant: [repo], team: [repo], open: [] });
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("a deleted project still leaves the lists after the event stream fails once", () => {
+  const failed = Deferred.makeUnsafe<void>();
+  const { layer } = harness({ failEventStream: failed });
+  return Effect.gen(function* () {
+    const assistants = yield* Assistants.AssistantService;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    const gone = ProjectId.make("gone");
+    const ana = yield* assistants.create(create({ name: "Ana", projectIds: [repo, gone] }));
+    const changes = yield* assistants.subscribeChanges;
+    yield* Deferred.await(failed);
+    // Deleted while nothing listens: the next subscription picks it up from where it stopped.
+    const now = "2026-01-03T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES (${gone}, 'Gone', '/work/gone', '[]', ${now}, ${now}, ${now})`;
+    const deleted = yield* store.appendProjectEvent({
+      type: "project.deleted",
+      eventId: EventId.make("event:gone:deleted"),
+      aggregateKind: "project",
+      aggregateId: gone,
+      occurredAt: now,
+      commandId: CommandId.make("command:gone:delete"),
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: { projectId: gone, deletedAt: now },
+    });
+    yield* store.publishCommitted([deleted]);
+    yield* TestClock.adjust("1 minute");
+    let projectIds: ReadonlyArray<string> = [];
+    while (projectIds.length !== 1) {
+      const event: AssistantsEvent = yield* PubSub.take(changes);
+      if (event.type === "upserted" && event.assistant.id === ana.id) {
+        projectIds = event.assistant.projectIds;
+      }
+    }
+    assert.deepEqual(projectIds, [repo]);
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

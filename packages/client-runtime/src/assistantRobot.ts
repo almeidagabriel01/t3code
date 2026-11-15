@@ -9,7 +9,7 @@ import { resolveSidebarThreadStatus } from "./state/threadAttention.ts";
 import type { EnvironmentThreadShell } from "./state/models.ts";
 
 /** What the robot's face shows; it follows the assistant's thread. */
-export type AssistantMood = "idle" | "working" | "needs" | "failed";
+export type AssistantMood = "idle" | "working" | "needs" | "limited" | "failed";
 
 /** What the robot draws: the mood plus finer states derived from the same thread. */
 export type AssistantFace =
@@ -25,9 +25,9 @@ export type AssistantFace =
 export const ASSISTANT_DONE_MS = 8_000;
 const ASSISTANT_SLEEP_MS = 6 * 60 * 60 * 1000;
 
-/** Moods map to faces one to one, "needs" being the face that waits on the user. */
+/** Moods map to faces one to one; "needs" and "limited" wait, on the user or on the reset. */
 export const faceOfMood = (face: AssistantMood | AssistantFace): AssistantFace =>
-  face === "needs" ? "waiting" : face;
+  face === "needs" || face === "limited" ? "waiting" : face;
 
 /**
  * `now` decides done (just replied) and sleeping (quiet for hours); without it the face is
@@ -199,13 +199,16 @@ type GroupPresenceThread = PresenceThread & { readonly title: string };
 export function assistantPresence(
   thread: PresenceThread | null,
   groupThreads: ReadonlyArray<GroupPresenceThread> = [],
+  /** The platform's "Limit until <time>", null without a reset ahead; see `usageLimitLabel`. */
+  limitLabel?: (resetAt: string | null | undefined) => string | null,
 ): AssistantPresence {
-  const own = { ...presenceOf(thread), queued: thread?.queuedMessageCount ?? 0 };
+  const own = { ...presenceOf(thread, limitLabel), queued: thread?.queuedMessageCount ?? 0 };
   if (own.mood !== "idle") return own;
   for (const group of groupThreads) {
     const presence = presenceOf(group);
-    // A failed group task shows on its card in the chat; the assistant itself is free.
-    if (presence.mood === "idle" || presence.mood === "failed") continue;
+    // A failed or limited group task shows on its card in the chat; the assistant itself is free.
+    if (presence.mood === "idle" || presence.mood === "failed" || presence.mood === "limited")
+      continue;
     const where = group.title.split(" · ").at(-1) ?? "a group";
     return {
       ...own,
@@ -242,7 +245,10 @@ export function assistantGroupThreadsOf<
   );
 }
 
-function presenceOf(thread: PresenceThread | null): Omit<AssistantPresence, "queued"> {
+function presenceOf(
+  thread: PresenceThread | null,
+  limitLabel?: (resetAt: string | null | undefined) => string | null,
+): Omit<AssistantPresence, "queued"> {
   if (thread === null) return { mood: "idle", detail: "Idle", since: null, reading: false };
   const status = resolveSidebarThreadStatus(thread);
   const message = thread.source.latestVisibleMessage;
@@ -276,7 +282,12 @@ function presenceOf(thread: PresenceThread | null): Omit<AssistantPresence, "que
         since: thread.latestRun?.completedAt ?? null,
       };
     case "limited":
-      return { mood: "failed", detail: "Hit a usage limit", since: null, reading: false };
+      return {
+        mood: "limited",
+        detail: limitLabel?.(thread.runtime?.usageLimitResetAt) ?? "Usage limit",
+        since: null,
+        reading: false,
+      };
     case "ready":
       return { mood: "idle", detail: said === "" ? "Idle" : said, since: spokeAt, reading: false };
   }

@@ -4,15 +4,10 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   projects: [] as Array<Record<string, unknown>>,
+  editor: null as unknown,
 }));
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({
-    environmentId: "env",
-    current: { projectIds: ["all"], modelSelection: null },
-    assistant: null,
-  }),
-}));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.editor }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
   useEnvironmentServerConfig: () => null,
@@ -37,7 +32,54 @@ const project = (id: string, title: string, extra: Record<string, unknown> = {})
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.editor = {
+    environmentId: "env",
+    current: { projectIds: ["all"], modelSelection: null },
+    assistant: null,
+  };
 });
+
+const probe = () => {
+  let state: ReturnType<typeof useAssistantEditor> | null = null;
+  const Probe = () => {
+    state = useAssistantEditor();
+    return null;
+  };
+  const root = createRoot(document.createElement("div"));
+  act(() => root.render(<Probe />));
+  act(() => root.unmount());
+  return state!;
+};
+
+it.each([
+  ["an older server", undefined, undefined, false, null],
+  ["the stored default", "stored", undefined, true, "stored"],
+  ["a picked default", "stored", "picked", true, "picked"],
+  ["a cleared default", "stored", null, true, null],
+  ["no default yet", null, undefined, true, null],
+] as const)(
+  "reads the assistant's default model from %s",
+  (_name, stored, touched, shown, value) => {
+    const model = (name: string | null) =>
+      name === null ? null : { instanceId: "codex", model: name };
+    mocks.editor = {
+      environmentId: "env",
+      current: {
+        projectIds: ["all"],
+        modelSelection: null,
+        defaultModelSelection: touched === undefined ? undefined : model(touched),
+      },
+      assistant: {
+        projectId: null,
+        threadId: null,
+        ...(stored === undefined ? {} : { defaultModelSelection: model(stored) }),
+      },
+    };
+    const state = probe();
+    expect(state.supportsDefaultModel).toBe(shown);
+    expect(state.defaultModelSelection).toEqual(value === null ? null : model(value));
+  },
+);
 
 it("names the assistants home project All projects and any other project by its title", () => {
   expect(

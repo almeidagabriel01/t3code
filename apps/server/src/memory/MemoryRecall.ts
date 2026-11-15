@@ -20,9 +20,12 @@ const recallTerms = (query: string) => {
   return [...new Set(terms.length > 0 ? terms : [query.toLowerCase()])].slice(0, MAX_TERMS);
 };
 
+/** More projects than this are searched only up to it; each adds one search per term. */
+const MAX_PROJECTS = 12;
+
 /**
- * One query across this conversation, its project and the user's memory. Compact on purpose:
- * text and ids only, best match first.
+ * One query across this conversation, its project (or the named ones, for an assistant that works
+ * in several) and the user's memory. Compact on purpose: text and ids only, best match first.
  */
 export const makeRecall = (deps: {
   readonly sql: SqlClient.SqlClient;
@@ -38,25 +41,46 @@ export const makeRecall = (deps: {
   ) => Effect.Effect<M.MemoryPage, MemoryServiceError>;
 }) =>
   Effect.fn("MemoryService.recall")(function* (
-    input: M.MemoryRecallInput & { readonly memorySpaceId: M.MemorySpaceId },
+    input: M.MemoryRecallInput & {
+      readonly memorySpaceId: M.MemorySpaceId;
+      readonly projectIds?: ReadonlyArray<M.ProjectId> | undefined;
+    },
     permit: Effect.Effect<void, MemoryAccessError>,
     sourceThread?: M.ScopedThreadRef,
   ) {
     const space = input.memorySpaceId;
-    const project = sourceThread
-      ? yield* resolveThreadProject(
-          {
-            sql: deps.sql,
-            environmentId: deps.environmentId,
-            resolveProjectKey: deps.resolveProjectKey,
-          },
-          sourceThread,
-          space,
-        ).pipe(Effect.catchTags({ SqlError: () => Effect.succeed(null) }))
-      : null;
+    // ponytail: capped at MAX_PROJECTS; past that, search project keys in one query.
+    const named = (input.projectIds ?? []).slice(0, MAX_PROJECTS);
+    const overCap = (input.projectIds ?? []).slice(MAX_PROJECTS);
+    const unresolved: Array<M.ProjectId> = [];
+    const namedKeys = yield* Effect.forEach(named, (projectId) =>
+      deps.resolveProjectKey(space, { environmentId: deps.environmentId, projectId }).pipe(
+        Effect.orElseSucceed(() => {
+          unresolved.push(projectId);
+          return null;
+        }),
+      ),
+    );
+    const project =
+      named.length > 0
+        ? null
+        : sourceThread
+          ? yield* resolveThreadProject(
+              {
+                sql: deps.sql,
+                environmentId: deps.environmentId,
+                resolveProjectKey: deps.resolveProjectKey,
+              },
+              sourceThread,
+              space,
+            ).pipe(Effect.catchTags({ SqlError: () => Effect.succeed(null) }))
+          : null;
     const scopes: ReadonlyArray<M.MemoryScope> = [
       { kind: "user" },
       ...(project ? [{ kind: "project", projectKey: project.projectKey } as const] : []),
+      ...namedKeys.flatMap((projectKey) =>
+        projectKey ? [{ kind: "project", projectKey } as const] : [],
+      ),
       ...(sourceThread ? [{ kind: "thread", thread: sourceThread } as const] : []),
     ];
     const terms = recallTerms(input.query);
@@ -103,12 +127,24 @@ export const makeRecall = (deps: {
       )
       .slice(0, input.limit ?? 8)
       .map((entry) => entry.hit);
+    const skipped = [
+      ...(unresolved.length > 0
+        ? [`${unresolved.join(", ")} (its memory could not be resolved)`]
+        : []),
+      ...(overCap.length > 0
+        ? [`${overCap.join(", ")} (over the ${MAX_PROJECTS}-project limit)`]
+        : []),
+    ];
+    const notes = [
+      ...(items.length === 0
+        ? ["No matches. Rephrase or try single keywords before concluding it is not saved."]
+        : partial
+          ? ["Memory index is still building; results may be incomplete."]
+          : []),
+      ...(skipped.length > 0 ? [`Projects not searched: ${skipped.join("; ")}.`] : []),
+    ];
     return {
       items,
-      ...(items.length === 0
-        ? { note: "No matches. Rephrase or try single keywords before concluding it is not saved." }
-        : partial
-          ? { note: "Memory index is still building; results may be incomplete." }
-          : {}),
+      ...(notes.length > 0 ? { note: notes.join(" ") } : {}),
     } satisfies M.MemoryRecallResult;
   });

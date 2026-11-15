@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ChatImageAttachment } from "./chatAttachment.ts";
 
 /**
  * Messages from chat apps (iMessage, Telegram) to assistants and back. A transport turns its events into a
@@ -56,6 +57,10 @@ export const ChannelInboundMessage = Schema.Struct({
   actor: ChannelActorRef,
   replyAddress: ChannelReplyAddress,
   text: Schema.String,
+  /** Images that came with the message, stored as pending uploads the thread claims. */
+  attachments: Schema.optional(Schema.Array(ChatImageAttachment)),
+  /** Something attached could not be passed on; the sender is told instead of left guessing. */
+  attachmentProblem: Schema.optional(Schema.Literals(["unsupported", "download_failed"])),
   receivedAt: IsoDateTime,
 });
 export type ChannelInboundMessage = typeof ChannelInboundMessage.Type;
@@ -73,6 +78,8 @@ export const ChannelOutboundMessage = Schema.Struct({
   text: Schema.String,
   /** Who is speaking; every message starts with it so replies read apart from yours in a self chat. */
   senderName: TrimmedNonEmptyString,
+  /** True when an assistant wrote `text`: rich transports render it as Markdown, never T3's own phrases. */
+  markdown: Schema.optional(Schema.Boolean),
   /** Transports without buttons list the choices as a numbered list in the text. */
   choices: Schema.optional(Schema.Array(ChannelChoice)),
   /** The language of T3's own phrases the transport adds, such as the numbered-choices hint. */

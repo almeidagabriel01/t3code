@@ -17,7 +17,9 @@ import {
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
+  MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_PROVIDER_IDLE_TIMEOUT_MINUTES,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
@@ -85,6 +87,13 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -1639,6 +1648,91 @@ export function DiffsSettingsPanel() {
         <PullRequestLinksOpenInAppSetting />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ProviderIdleTimeoutInput({
+  value,
+  onCommit,
+}: {
+  value: number;
+  onCommit: (minutes: number) => void;
+}) {
+  const [draft, setDraft] = useState<number | null>(value);
+  const [savedValue, setSavedValue] = useState(value);
+  if (savedValue !== value) {
+    setSavedValue(value);
+    setDraft(value);
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <NumberField
+        value={draft}
+        min={MIN_PROVIDER_IDLE_TIMEOUT_MINUTES}
+        max={MAX_PROVIDER_IDLE_TIMEOUT_MINUTES}
+        step={1}
+        size="sm"
+        className="w-32"
+        onValueChange={setDraft}
+        onValueCommitted={(next) => {
+          if (next === null) {
+            setDraft(value);
+            return;
+          }
+          const minutes = Math.min(
+            MAX_PROVIDER_IDLE_TIMEOUT_MINUTES,
+            Math.max(MIN_PROVIDER_IDLE_TIMEOUT_MINUTES, Math.round(next)),
+          );
+          setDraft(minutes);
+          if (minutes !== value) onCommit(minutes);
+        }}
+      >
+        <NumberFieldGroup>
+          <NumberFieldDecrement aria-label="Decrease close idle Claude agents" />
+          <NumberFieldInput aria-label="Minutes before an idle Claude agent closes" />
+          <NumberFieldIncrement aria-label="Increase close idle Claude agents" />
+        </NumberFieldGroup>
+      </NumberField>
+      <span className="text-xs text-muted-foreground">minutes</span>
+    </div>
+  );
+}
+
+export function ProviderIdleTimeoutRow() {
+  return useOptionalSettingsScope() === null ? null : <ScopedProviderIdleTimeoutRow />;
+}
+
+function ScopedProviderIdleTimeoutRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["providerIdleTimeoutMinutes"]}
+      {...searchableSetting("close-idle-claude-agents")}
+      description="Minutes without activity before an idle Claude agent process is closed. The conversation resumes on your next message."
+      resetAction={
+        settings.providerIdleTimeoutMinutes !==
+        DEFAULT_UNIFIED_SETTINGS.providerIdleTimeoutMinutes ? (
+          <SettingResetButton
+            label="close idle Claude agents"
+            onClick={() =>
+              updateSettings({
+                providerIdleTimeoutMinutes: DEFAULT_UNIFIED_SETTINGS.providerIdleTimeoutMinutes,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <ProviderIdleTimeoutInput
+          value={settings.providerIdleTimeoutMinutes}
+          onCommit={(minutes) => updateSettings({ providerIdleTimeoutMinutes: minutes })}
+        />
+      }
+    />
   );
 }
 

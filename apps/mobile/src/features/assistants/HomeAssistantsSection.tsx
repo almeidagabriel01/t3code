@@ -39,6 +39,7 @@ import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 import { useHomeSectionPreferences } from "../home/useHomeSectionPreferences";
 
 const COLLAPSED_AVATAR_LIMIT = 5;
@@ -50,9 +51,11 @@ const threadRefOf = ({ assistant, environmentId }: AssistantEntry) =>
 function useAssistantState(entry: AssistantEntry) {
   const thread = useThreadShell(threadRefOf(entry));
   const shells = useQuietThreadShells();
+  const limitLabel = useUsageLimitLabel();
   const presence = assistantPresence(
     thread,
     assistantGroupThreadsOf(shells, entry.environmentId, entry.assistant.id),
+    limitLabel,
   );
   return {
     presence,

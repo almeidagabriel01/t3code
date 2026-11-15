@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -56,7 +57,9 @@ const moveFailure = (action: string, result: QueueFile.MoveResult) => {
   }
 };
 
-const unavailable = (error: unknown) => failure("unavailable", `Heavy queue unavailable: ${error}`);
+const isHeavyQueueError = Schema.is(HeavyQueueError);
+const unavailable = (error: unknown) =>
+  isHeavyQueueError(error) ? error : failure("unavailable", `Heavy queue unavailable: ${error}`);
 
 export class HeavyQueue extends Context.Service<
   HeavyQueue,
@@ -180,12 +183,13 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
   const settingsPath =
     claudeSettings ?? ClaudeSettingsHook.claudeSettingsPath(yield* HostProcess.Environment);
   const platform = yield* HostProcess.Platform;
+  const entry = (yield* HostProcess.Arguments)[1];
   const scriptPath = `${dir}/${ClaudeSettingsHook.HOOK_SCRIPT}`;
   // Windows has no /bin/sh, so Claude Code runs T3 there and pays its startup on every Bash call.
   const settingsCommand = platform === "win32" ? hookCommand : `/bin/sh ${shellQuote(scriptPath)}`;
   const writeScript = () => {
     if (platform !== "win32")
-      ClaudeSettingsHook.writeHookScript(scriptPath, hookScript(hookCommand));
+      ClaudeSettingsHook.writeHookScript(scriptPath, hookScript(hookCommand), entry);
   };
   // An update moves the executable; the installed hook follows it from the next start.
   if (ClaudeSettingsHook.readHeavyHookInstalled(settingsPath)) {
@@ -362,7 +366,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     setClaudeHook: Effect.fn("HeavyQueue.setClaudeHook")((installed: boolean) =>
       change(() => {
         if (installed) writeScript();
-        ClaudeSettingsHook.setHeavyHookInstalled(settingsPath, settingsCommand, installed);
+        ClaudeSettingsHook.setHeavyHookInstalled(settingsPath, settingsCommand, installed, entry);
       }),
     ),
     setDeviceIdleMinutes: Effect.fn("HeavyQueue.setDeviceIdleMinutes")((minutes: number) =>

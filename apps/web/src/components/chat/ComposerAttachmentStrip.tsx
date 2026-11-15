@@ -702,9 +702,11 @@ export function ComposerQueuedAttachmentRow({
 export function ComposerAttachButton({
   addComposerAttachments,
   focusComposer,
+  disabled = false,
 }: {
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
+  readonly disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   return (
@@ -732,6 +734,7 @@ export function ComposerAttachButton({
               type="button"
               variant="ghost"
               size="icon-sm"
+              disabled={disabled}
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
               aria-label="Attach files"

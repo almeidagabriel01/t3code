@@ -15,6 +15,7 @@ import {
   assistantTaskRows,
   assistantTaskState,
   canDismissAssistantTask,
+  usageLimitLabel,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
 import { v2ThreadShell } from "./state/orchestrationV2TestFixtures.ts";
@@ -41,6 +42,11 @@ const waiting = shell({
   },
 });
 const failed = shell({ latestRunId: RunId.make("run-1"), status: "failed" });
+const limited = shell({
+  latestRunId: RunId.make("run-1"),
+  status: "failed",
+  lastErrorClass: "usage_limit",
+});
 const done = shell({});
 
 const task = (threadId: string, createdAt: string): AssistantTask => ({
@@ -56,11 +62,24 @@ describe("assistantTaskState", () => {
     ["running", running],
     ["waiting", waiting],
     ["failed", failed],
+    ["usage_limited", limited],
     ["done", done],
   ] as const)("a thread that is %s reads as %s", (state, thread) => {
     expect(assistantTaskState(thread)).toBe(state);
     expect(ASSISTANT_TASK_FACE[state]).toBeDefined();
-    expect(canDismissAssistantTask(state)).toBe(state === "done" || state === "failed");
+    expect(canDismissAssistantTask(state)).toBe(state !== "running" && state !== "waiting");
+  });
+});
+
+describe("usageLimitLabel", () => {
+  const now = Date.parse("2026-11-14T12:00:00.000Z");
+  it.each([
+    ["2026-11-14T15:30:00.000Z", "Limit until <2026-11-14T15:30:00.000Z>"],
+    ["2026-11-14T11:00:00.000Z", null],
+    [null, null],
+    ["not a date", null],
+  ])("reads %s as %s", (resetAt, label) => {
+    expect(usageLimitLabel(resetAt, now, (iso) => `<${iso}>`)).toBe(label);
   });
 });
 
@@ -70,6 +89,7 @@ describe("assistantTaskRows", () => {
     ["running-a", running],
     ["waiting-a", waiting],
     ["failed-a", failed],
+    ["limited-a", limited],
     ["done-new", done],
     ["archived-done", shell({ archivedAt: at })],
     ["archived-running", shell({ ...runningFields, archivedAt: at })],
@@ -79,18 +99,20 @@ describe("assistantTaskRows", () => {
     task("running-a", "2026-11-02T00:00:00.000Z"),
     task("waiting-a", "2026-11-03T00:00:00.000Z"),
     task("failed-a", "2026-11-04T00:00:00.000Z"),
+    task("limited-a", "2026-11-01T00:00:00.000Z"),
     task("done-new", "2026-11-05T00:00:00.000Z"),
     task("deleted", "2026-11-05T00:00:00.000Z"),
     task("archived-done", "2026-11-05T00:00:00.000Z"),
     task("archived-running", "2026-11-06T00:00:00.000Z"),
   ];
 
-  it("orders waiting, running, failed, done, newest first, and drops what has no thread", () => {
+  it("orders waiting, running, usage-limited, failed, done, newest first, and drops what has no thread", () => {
     const rows = assistantTaskRows(tasks, (threadId) => shells.get(threadId));
     expect(rows.map((row) => row.task.threadId)).toEqual([
       "waiting-a",
       "archived-running",
       "running-a",
+      "limited-a",
       "failed-a",
       "done-new",
       "done-old",

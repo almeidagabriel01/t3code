@@ -156,4 +156,15 @@ describe("useTelegramChannel", () => {
     });
     act(() => root.unmount());
   });
+
+  it("resends what never arrived and reports a refusal", async () => {
+    const root = mount();
+    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
+    expect(await latest().resendUndelivered()).toEqual({ ok: true });
+    expect(mocks.command).toHaveBeenLastCalledWith({ environmentId: "hub", input: {} });
+    mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
+    mocks.failure = new Error("Not allowed.");
+    expect(await latest().resendUndelivered()).toEqual({ ok: false, message: "Not allowed." });
+    act(() => root.unmount());
+  });
 });

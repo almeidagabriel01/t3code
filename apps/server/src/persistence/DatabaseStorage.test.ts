@@ -11,6 +11,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as DatabaseStorage from "./DatabaseStorage.ts";
@@ -29,6 +30,7 @@ const storageLayer = <E>(
 ) =>
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
+    Layer.provide(ServerSettingsService.layerTest()),
     Layer.provideMerge(Sqlite.layerMemory),
     Layer.provideMerge(config),
     Layer.provide(NodeServices.layer),
@@ -62,6 +64,7 @@ const compactionLayer = (
         pruneEventStore,
       }),
     ),
+    Layer.provide(ServerSettingsService.layerTest()),
     Layer.provide(Sqlite.layerMemory),
   );
 
@@ -121,6 +124,7 @@ const reclaimLayer = (
   DatabaseStorage.layer.pipe(
     Layer.provide(ProjectionMaintenance.layer),
     Layer.provide(Layer.succeed(DatabaseStorage.ServerRestart, restart)),
+    Layer.provide(ServerSettingsService.layerTest()),
     Layer.provide(
       Layer.effectDiscard(
         Effect.gen(function* () {
