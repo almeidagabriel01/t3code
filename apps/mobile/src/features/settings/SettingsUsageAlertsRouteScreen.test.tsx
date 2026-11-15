@@ -35,12 +35,10 @@ vi.mock("@effect/atom-react", () => ({
             ],
           ],
         ])
-      : atom.key === "allowed"
-        ? mocks.allowed
-        : {
-            autonomy: { enabled: mocks.autonomy },
-            usageLimitAlerts: { ignoreAutonomyPause: mocks.ignorePause, instances: mocks.alerts },
-          },
+      : {
+          autonomy: { enabled: mocks.autonomy },
+          usageLimitAlerts: { ignoreAutonomyPause: mocks.ignorePause, instances: mocks.alerts },
+        },
 }));
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ navigate: mocks.navigate }),
@@ -75,7 +73,7 @@ vi.mock("../../state/presentation", () => ({
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     settingsValueAtom: () => ({ key: "settings" }),
-    updateSettings: { permissionAtom: () => ({ key: "allowed" }) },
+    updateSettings: {},
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
