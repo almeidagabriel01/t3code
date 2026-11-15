@@ -44,7 +44,7 @@ import {
 import { useClientSettings } from "~/hooks/useSettings";
 import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
 import { useRenderedAppearance } from "~/hooks/useTheme";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { ComposerContextLabel } from "../ComposerContextLabel";
@@ -263,6 +263,8 @@ interface Outgoing extends AssistantGroupOutgoing {
   readonly prompt: PromptState;
   readonly projectLabel: string;
   readonly error: string | null;
+  /** Its post's `clientRequestId`, so a resend of the same text never posts twice. */
+  readonly requestId: string | null;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
@@ -292,6 +294,7 @@ export function GroupComposer(props: {
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
+    requestId: string,
   ) => Promise<GroupSendResult>;
 }) {
   const richText = useClientSettings((settings) => settings.composerRichTextEnabled);
@@ -329,7 +332,15 @@ export function GroupComposer(props: {
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
     setOutgoing(
       shown.tab,
-      value === "" ? null : { ...shown, prompt: { value, cursor, expanded }, error: null },
+      value === ""
+        ? null
+        : {
+            ...shown,
+            prompt: { value, cursor, expanded },
+            error: null,
+            // Changed text is another message: its send gets its own id.
+            requestId: value === shown.prompt.value ? shown.requestId : null,
+          },
     );
   };
   // The caret sits beside a chip, where `@` and `#` start nothing.
@@ -452,6 +463,8 @@ export function GroupComposer(props: {
 
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
+    // A refused or unconfirmed message goes again under its first id.
+    const requestId = (shown?.failed === true ? shown.requestId : null) ?? randomUUID();
     const sent: Outgoing = {
       tab: props.tab,
       failed: false,
@@ -466,11 +479,12 @@ export function GroupComposer(props: {
         projectItems.find((item) => item.value === (props.projectId ?? LEAD_DECIDES))?.label ??
         ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
       error: null,
+      requestId,
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);
     setError(null);
-    const result = await props.onSend(value.trim(), attached.ready);
+    const result = await props.onSend(value.trim(), attached.ready, requestId);
     if (result.ok) {
       // Only the sent text goes: what the user wrote meanwhile in another tab stays.
       setOutgoing(sent.tab, null);

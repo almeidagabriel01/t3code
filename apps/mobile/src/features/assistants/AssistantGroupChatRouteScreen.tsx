@@ -1352,10 +1352,12 @@ export function AssistantGroupChatRouteScreen({
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
     projectId: ProjectId | undefined,
+    requestId: string,
   ): Promise<GroupSendResult> => {
     const reply = await actions.post({
       teamId,
       text,
+      clientRequestId: requestId,
       ...(attachments.length === 0 ? {} : { attachments }),
       ...(replyTo === null ? {} : { replyToMessageId: replyTo.id }),
       ...(projectId === undefined ? {} : { projectId }),

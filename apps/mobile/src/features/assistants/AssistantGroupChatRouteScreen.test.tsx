@@ -24,6 +24,9 @@ const { mocks, Children } = vi.hoisted(() => ({
     markReadFlow: vi.fn(),
     appState: "active",
     post: vi.fn(),
+    /** Each post's `clientRequestId`, apart, so the posts' own expectations stay as they are. */
+    requestIds: [] as unknown[],
+    uuids: 0,
     taskAction: vi.fn(),
     olderThan: vi.fn(),
     alert: vi.fn(),
@@ -136,6 +139,7 @@ vi.mock("react-native", () => ({
     </button>
   ),
 }));
+vi.mock("../../lib/uuid", () => ({ uuidv4: () => `req-${++mocks.uuids}` }));
 vi.mock("../../lib/composerImages", () => ({
   pickComposerFiles: (...args: unknown[]) => mocks.pick(...args),
   pickComposerMedia: (...args: unknown[]) => mocks.pickMedia(...args),
@@ -666,7 +670,10 @@ vi.mock("../../state/assistants", () => ({
     canAct: mocks.canAct,
     canMarkRead: mocks.canMarkRead,
     markRead: mocks.markRead,
-    post: mocks.post,
+    post: ({ clientRequestId, ...input }: { readonly clientRequestId?: string }) => {
+      mocks.requestIds.push(clientRequestId);
+      return mocks.post(input);
+    },
     taskAction: mocks.taskAction,
     olderThan: mocks.olderThan,
   }),
@@ -866,6 +873,7 @@ beforeEach(() => {
     canAct: true,
     canMarkRead: true,
     appState: "active",
+    requestIds: [],
     decisions: [],
     voicePhase: "idle",
     shells: new Map(),
@@ -2044,6 +2052,9 @@ describe("requests", () => {
     expect(text()).toContain("server down");
     await click("Send");
     expect(mocks.post).toHaveBeenLastCalledWith(expect.objectContaining({ text: "@ada second" }));
+    // The refused message goes again under its own id, which a post the server did take would match.
+    const [first, second, third, resent] = mocks.requestIds;
+    expect([new Set([first, second, third]).size, resent === second]).toEqual([3, true]);
     expect(input().value).toBe("meanwhile");
   });
 
