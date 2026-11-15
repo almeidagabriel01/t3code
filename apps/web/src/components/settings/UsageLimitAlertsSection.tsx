@@ -13,11 +13,12 @@ import {
   usageLimitAlertsPaused,
 } from "@t3tools/shared/usageLimitAlerts";
 import { Link } from "@tanstack/react-router";
+import { CirclePauseIcon } from "lucide-react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -138,22 +139,21 @@ export function UsageLimitAlertsPausedNotice({
     return null;
   }
   return (
-    <SettingsGroup divided={false} className="overflow-hidden">
-      <SettingsRow
-        title="Alerts are paused"
-        description={
-          <>
-            Assistant notifications are off, so limit alerts wait. Change it in{" "}
-            <Link
-              to="/settings/assistants"
-              className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-            >
-              Assistants
-            </Link>
-            .
-          </>
-        }
-      />
-    </SettingsGroup>
+    <Alert variant="warning">
+      <CirclePauseIcon aria-hidden />
+      <AlertTitle>Alerts are paused</AlertTitle>
+      <AlertDescription>
+        <p>
+          Assistant notifications are off, so limit alerts wait. Change it in{" "}
+          <Link
+            to="/settings/assistants"
+            className="cursor-pointer rounded-sm underline outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            Assistants
+          </Link>
+          .
+        </p>
+      </AlertDescription>
+    </Alert>
   );
 }

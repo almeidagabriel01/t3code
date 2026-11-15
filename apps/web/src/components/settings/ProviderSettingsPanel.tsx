@@ -36,7 +36,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Result from "effect/Result";
-import { PlusIcon } from "lucide-react";
+import { LockIcon, PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -86,6 +86,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -982,6 +983,16 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      {readOnly ? (
+        <Alert variant="info">
+          <LockIcon aria-hidden />
+          <AlertTitle>Limited permissions</AlertTitle>
+          <AlertDescription>
+            This session can view {environmentLabel}'s providers but can't change their settings.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <UsageLimitAlertsPausedNotice environmentId={environmentId} providers={serverProviders} />
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
@@ -1038,15 +1049,6 @@ export function EnvironmentProviderSettings({
         {deviceTabs ? (
           <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
         ) : null}
-        {readOnly ? (
-          <SettingsGroup divided={false} className="overflow-hidden">
-            <SettingsRow
-              title="Limited permissions"
-              description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
-            />
-          </SettingsGroup>
-        ) : null}
-        <UsageLimitAlertsPausedNotice environmentId={environmentId} providers={serverProviders} />
         <SettingsGroup
           divided={false}
           className={cn(
