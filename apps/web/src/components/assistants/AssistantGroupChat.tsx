@@ -861,7 +861,7 @@ function RequestBlock(props: {
             props.allChip === null ? null : (
               <span
                 data-testid="group-request-chip"
-                className="flex max-w-28 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
+                className="flex max-w-28 min-w-0 shrink-[999] items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
               >
                 <FolderIcon aria-hidden className="size-3 shrink-0" />
                 <ProjectLabelText label={props.allChip} />
@@ -888,9 +888,8 @@ function RequestBlock(props: {
         <TaskEventActivityRow
           title={block.title}
           status={activity.status}
-          label={
-            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
-          }
+          label={activity.label}
+          project={props.projectName}
           onOpen={props.onToggle}
           action="Open request"
         />

@@ -1716,7 +1716,7 @@ describe("requests", () => {
     );
   });
 
-  const FOLDED_FIX = "Fix build, Finished · Alpha. Open request";
+  const FOLDED_FIX = "Fix build, Finished, Alpha. Open request";
 
   it("draws each request with its title, project and status, the latest one last", () => {
     setup();

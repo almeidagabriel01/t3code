@@ -715,9 +715,8 @@ function RequestHeader(props: {
         <TaskEventActivityRow
           title={block.title}
           status={activity.status}
-          label={
-            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
-          }
+          label={activity.label}
+          project={props.projectName}
           onOpen={props.onToggle}
           action="Open request"
         />
