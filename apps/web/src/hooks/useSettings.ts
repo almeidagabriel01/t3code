@@ -684,7 +684,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           if (
             session._tag !== "Initial" &&
             !serverEnvironment.updateSettings
-              .requiredScopes({ patch: sharedPatch })
+              .requiredScopes({ patch: targetPatch })
               .every((scope) => readEnvironmentScope(targetId, scope))
           ) {
             deniedLabels.push(target?.label ?? targetId);
