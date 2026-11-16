@@ -66,6 +66,7 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  type ComponentProps,
   type Ref,
 } from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
@@ -123,14 +124,18 @@ import {
 import { ASSISTANT_FOLDED_HEIGHT } from "../threads/assistantMessageFold";
 import { FloatingScrollToEndButton } from "../threads/floating-working-control";
 import { TaskEventActivityRow } from "../threads/TaskEventActivityRow";
-import { useMarkdownStyles } from "../threads/ThreadFeed";
+import {
+  isMediaAttachment,
+  MessageAttachmentList,
+  useMarkdownStyles,
+  UserMessageMedia,
+} from "../threads/ThreadFeed";
 import {
   useMarkdownLinkHost,
   useMarkdownLinks,
   type MarkdownLinkContext,
 } from "../threads/useThreadMarkdownLinks";
 import { WorkedForFold } from "../threads/WorkedForFold";
-import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
   type GroupComposerProject,
@@ -171,6 +176,8 @@ const mentionChip = (
 
 const NEW_JUMP_MIN_ROWS = 4;
 const HIGHLIGHT_MS = 1200;
+const NO_PENDING_ATTACHMENTS: ComponentProps<typeof UserMessageMedia>["pendingAttachments"] = [];
+const noop = () => {};
 const SCROLL_TO_END_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const SCROLL_TO_END_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
@@ -473,7 +480,7 @@ function FeedRow(
   const { message } = props.row;
   const styles = useMarkdownStyles();
   const { appearance } = useAppearancePreferences();
-  const { fontScale } = useWindowDimensions();
+  const { fontScale, width: windowWidth } = useWindowDimensions();
   const rowSizing = deriveThreadWorkLogSizing({ baseFontSize: appearance.baseFontSize, fontScale });
   const iconColor = useUniwindTheme()["--color-icon-subtle"];
   const [workedOpen, setWorkedOpen] = useState(false);
@@ -545,6 +552,8 @@ function FeedRow(
     const parts = splitAssistantTransferText(message.text);
     const label =
       message.authorLabel ?? author?.name ?? (message.author === "routine" ? "Schedule" : "Agent");
+    const attachments = message.attachments ?? [];
+    const media = attachments.filter(isMediaAttachment);
     return (
       <View
         testID="group-request"
@@ -559,6 +568,18 @@ function FeedRow(
           </View>
         )}
         {quoted(fromUser ? "end" : "start")}
+        {media.length === 0 ? null : (
+          <View className="w-[85%]">
+            <UserMessageMedia
+              attachments={media}
+              pendingAttachments={NO_PENDING_ATTACHMENTS}
+              environmentId={props.environmentId}
+              maxWidth={(windowWidth - 32) * 0.85}
+              onPressPreview={props.onPreview}
+              onPlaybackStart={noop}
+            />
+          </View>
+        )}
         <View
           className={cn(
             "max-w-[85%] rounded-[20px] px-3.5 py-2.5",
@@ -583,12 +604,13 @@ function FeedRow(
               />
             </View>
           )}
+          <MessageAttachmentList
+            attachments={attachments.filter((attachment) => !isMediaAttachment(attachment))}
+            environmentId={props.environmentId}
+            onPressPreview={props.onPreview}
+            onPlaybackStart={noop}
+          />
         </View>
-        <GroupMessageAttachments
-          environmentId={props.environmentId}
-          attachments={message.attachments ?? []}
-          onPreview={props.onPreview}
-        />
         {assistantGroupAwaitingRoute(props.chat, message) ? (
           <Text testID="group-routing" className="text-xs text-foreground-muted">
             {props.lead === undefined

@@ -316,7 +316,9 @@ vi.mock("../threads/useThreadMarkdownLinks", async () => {
 });
 vi.mock("../../components/ui/NativePresentation", () => ({ PresentationSource: Children }));
 vi.mock("../../components/ui/VideoPreviewModal", () => ({
-  VideoPreviewModal: () => <div data-testid="video-preview" />,
+  VideoPreviewModal: (props: { source: { sourceIdentifier: string } | null }) => (
+    <div data-testid="video-preview">{props.source?.sourceIdentifier}</div>
+  ),
 }));
 vi.mock("../layout/workspace/useAndroidWorkspaceNavigation", () => ({
   useWorkspaceBackNavigation: () => mocks.goBack,
@@ -335,8 +337,83 @@ vi.mock("../threads/floating-working-control", () => ({
 }));
 vi.mock("../threads/ThreadFeed", () => {
   const styles = { user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } };
-  return { useMarkdownStyles: () => styles };
+  type Sent = { id: string; name: string; type: string; mimeType: string };
+  // The thread's own pieces: each file opens as the preview of its kind.
+  const files =
+    (testID: string) =>
+    (props: {
+      attachments: ReadonlyArray<Sent>;
+      onPressPreview: (source: { kind: string; name: string }) => void;
+    }) => (
+      <div data-testid={testID}>
+        {props.attachments.map((attachment) => (
+          <button
+            key={attachment.id}
+            aria-label={`Open ${attachment.name}`}
+            onClick={() =>
+              props.onPressPreview({
+                kind:
+                  attachment.type === "image"
+                    ? "image"
+                    : attachment.mimeType === "application/pdf"
+                      ? "pdf"
+                      : "document",
+                name: attachment.name,
+              })
+            }
+          />
+        ))}
+      </div>
+    );
+  return {
+    useMarkdownStyles: () => styles,
+    isMediaAttachment: (attachment: Sent) =>
+      attachment.type === "image" || attachment.mimeType.startsWith("video/"),
+    UserMessageMedia: files("message-media"),
+    MessageAttachmentList: files("message-files"),
+  };
 });
+// The thread's strip, showing the upload state its owner hands it.
+vi.mock("../../components/ComposerAttachmentStrip", () => ({
+  ComposerAttachmentStrip: (props: {
+    attachments: ReadonlyArray<{ id: string; name: string; type: string }>;
+    ownUploads: {
+      stateOf: (id: string) => { status: string; progress?: number; reason?: string } | undefined;
+      retry: (id: string) => void;
+    };
+    onRemove: (id: string) => void;
+    onPressPreview: (source: { kind: string; name: string }) => void;
+    onPressVideo: (attachment: unknown, sourceIdentifier: string) => void;
+  }) =>
+    props.attachments.map((attachment) => {
+      const upload = props.ownUploads.stateOf(attachment.id);
+      return (
+        <div key={attachment.id} data-testid="group-attachment-chip">
+          {upload?.status === "failed"
+            ? upload.reason
+            : upload?.status === "uploading"
+              ? `Uploading ${upload.progress}`
+              : "ready"}
+          <button
+            aria-label={`Open ${attachment.name}`}
+            onClick={() =>
+              attachment.type === "video"
+                ? props.onPressVideo(attachment, `draft:${attachment.id}`)
+                : props.onPressPreview({ kind: attachment.type, name: attachment.name })
+            }
+          />
+          <button
+            aria-label={`Retry ${attachment.name}`}
+            onClick={() => props.ownUploads.retry(attachment.id)}
+          />
+          <button
+            aria-label={`Remove ${attachment.name}`}
+            onClick={() => props.onRemove(attachment.id)}
+          />
+        </div>
+      );
+    }),
+}));
 vi.mock("../settings/appearance/useScaledTextRole", () => ({
   useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));
@@ -1697,6 +1774,25 @@ describe("group attachments", () => {
     expect(chips()).toHaveLength(1);
   });
 
+  it("shows a file uploading, and opens picked files in the preview like the thread composer", async () => {
+    const video = { ...draft("clip.mov"), type: "video", mimeType: "video/quicktime" };
+    mocks.pick.mockResolvedValue({ files: [draft("shot.png", "image"), video], error: null });
+    // Uploads that never finish: the strip shows their progress.
+    mocks.prepare.mockImplementation(() => new Promise(() => {}));
+    render();
+    await click("Add attachment:Choose Files");
+    expect([...chips()].map((chip) => chip.textContent)).toEqual(["Uploading 0", "Uploading 0"]);
+    expect(byLabel("Send")!.disabled).toBe(true);
+    const previews = () =>
+      [...container.querySelectorAll('[data-testid="preview"], [data-testid="video-preview"]')]
+        .map((preview) => preview.textContent)
+        .filter((shown) => shown !== "");
+    await click("Open shot.png");
+    expect(previews()).toEqual(["image:shot.png"]);
+    await click("Open clip.mov");
+    expect(previews()).toEqual(["draft:draft-clip.mov"]);
+  });
+
   it("tells the user what the picker could not take, and when it fails outright", async () => {
     mocks.pick.mockResolvedValueOnce({
       files: [],
@@ -1733,10 +1829,15 @@ describe("group attachments", () => {
       }),
     ]);
     render();
-    expect(
-      container.querySelectorAll('[data-testid="group-message-attachments"] button'),
-    ).toHaveLength(3);
-    expect(text()).toContain("sheet.pdf");
+    // As the thread shows them: pictures and videos above the bubble, other files inside it.
+    const names = (testID: string) =>
+      [...container.querySelectorAll(`[data-testid="${testID}"] button`)].map((button) =>
+        button.getAttribute("aria-label"),
+      );
+    expect([names("message-media"), names("message-files")]).toEqual([
+      ["Open shot.png"],
+      ["Open sheet.pdf", "Open notes.txt"],
+    ]);
     await click("Open shot.png");
     expect(container.querySelector('[data-testid="preview"]')!.textContent).toBe("image:shot.png");
     await click("Open sheet.pdf");
@@ -2737,7 +2838,8 @@ describe("the thread's pieces in the feed", () => {
       threadId: null,
       workspaceRoot: "/repo/alpha",
     });
-    expect(container.querySelectorAll('[data-testid="preview"]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-testid="video-preview"]')).toHaveLength(1);
+    // One host for every row, beside the composer's own for its drafts.
+    expect(container.querySelectorAll('[data-testid="preview"]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-testid="video-preview"]')).toHaveLength(2);
   });
 });

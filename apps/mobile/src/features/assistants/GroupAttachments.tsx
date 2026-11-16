@@ -1,19 +1,13 @@
 import { createAssistantGroupFileStore } from "@t3tools/client-runtime/assistantGroupChat";
-import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  type AssetResource,
   type ChatAttachment,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { Image } from "expo-image";
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { Pressable, View } from "react-native";
 
-import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
-import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
-import { assetImageSource } from "../../lib/assetImageSource";
+import type { ComposerAttachmentOwnUploads } from "../../components/ComposerAttachmentStrip";
+import type { ComposerAttachmentUploadState } from "../../lib/composerAttachmentUploadQueue";
 import {
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
@@ -24,12 +18,9 @@ import {
   pickComposerMedia,
   type DraftComposerAttachment,
 } from "../../lib/composerImages";
-import { useAssetUrl } from "../../state/assets";
 
 export interface GroupAttachmentItem {
   readonly id: string;
-  readonly name: string;
-  readonly sizeBytes: number;
   readonly source: DraftComposerAttachment;
   readonly progress: number;
   readonly error: string | null;
@@ -56,7 +47,7 @@ async function uploadOne(
     uploaded.id === undefined ||
     (uploaded.type !== "image" && uploaded.type !== "file")
   ) {
-    throw new Error(`Upload failed for '${item.name}'.`);
+    throw new Error(`Upload failed for '${item.source.name}'.`);
   }
   return {
     type: uploaded.type,
@@ -118,8 +109,6 @@ export function useGroupAttachments(
   const add = (sources: ReadonlyArray<DraftComposerAttachment>) => {
     const added = sources.map((source): GroupAttachmentItem => ({
       id: source.id,
-      name: source.name,
-      sizeBytes: source.sizeBytes,
       source,
       progress: 0,
       error: null,
@@ -179,8 +168,18 @@ export function useGroupAttachments(
     setItems((list) => list.filter((item) => !ids.includes(item.id)));
   };
 
+  /** The thread composer's strip shows these uploads with its own progress and retry. */
+  const uploads: ComposerAttachmentOwnUploads = {
+    stateOf: (id) => {
+      const item = items.find((entry) => entry.id === id);
+      return item === undefined ? undefined : groupAttachmentUploadState(item);
+    },
+    retry,
+  };
+
   return {
     items,
+    uploads,
     pick,
     pickMedia,
     paste,
@@ -194,161 +193,8 @@ export function useGroupAttachments(
   };
 }
 
-/** What is waiting to be sent: a chip per file with its upload state and a way to drop it. */
-export function GroupAttachmentChips(props: {
-  readonly items: ReadonlyArray<GroupAttachmentItem>;
-  readonly onRemove: (id: string) => void;
-  readonly onRetry: (id: string) => void;
-}) {
-  if (props.items.length === 0) return null;
-  return (
-    <View testID="group-attachment-chips" className="flex-row flex-wrap gap-1.5">
-      {props.items.map((item) => (
-        <View
-          key={item.id}
-          testID="group-attachment-chip"
-          className="max-w-56 flex-row items-center gap-1.5 rounded-xl border border-border px-2 py-1.5"
-        >
-          <SymbolView
-            name={item.source.type === "image" ? "photo" : "doc"}
-            size={16}
-            tintColorClassName="accent-icon-subtle"
-          />
-          <View className="min-w-0 shrink gap-0.5">
-            <Text className="text-xs font-t3-medium text-foreground" numberOfLines={1}>
-              {item.name}
-            </Text>
-            {item.error === null ? (
-              <Text className="text-xs text-foreground-muted">
-                {item.attachment === null
-                  ? `Uploading ${Math.round(item.progress * 100)}%`
-                  : formatAttachmentSize(item.sizeBytes)}
-              </Text>
-            ) : (
-              <Text
-                accessibilityRole="alert"
-                className="text-xs text-danger-foreground"
-                numberOfLines={2}
-              >
-                {item.error}
-              </Text>
-            )}
-          </View>
-          {item.error === null ? null : (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Retry ${item.name}`}
-              hitSlop={8}
-              onPress={() => props.onRetry(item.id)}
-              className="active:opacity-70"
-            >
-              <SymbolView
-                name="arrow.clockwise"
-                size={16}
-                tintColorClassName="accent-icon-subtle"
-              />
-            </Pressable>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Remove ${item.name}`}
-            hitSlop={8}
-            onPress={() => props.onRemove(item.id)}
-            className="active:opacity-70"
-          >
-            <SymbolView
-              name="xmark.circle.fill"
-              size={16}
-              tintColorClassName="accent-icon-subtle"
-            />
-          </Pressable>
-        </View>
-      ))}
-    </View>
-  );
-}
-
-const resourceOf = (attachment: ChatAttachment): AssetResource => ({
-  _tag: "attachment",
-  attachmentId: attachment.id,
-  fileName: attachment.name,
-  mimeType: attachment.mimeType,
-  ...(attachment.type === "image" || attachment.mimeType === "application/pdf"
-    ? { disposition: "inline" as const }
-    : {}),
-});
-
-const previewOf = (
-  environmentId: EnvironmentId,
-  attachment: ChatAttachment,
-): FilePreviewSource => ({
-  kind:
-    attachment.type === "image"
-      ? "image"
-      : attachment.mimeType === "application/pdf"
-        ? "pdf"
-        : "document",
-  name: attachment.name,
-  mimeType: attachment.mimeType,
-  environmentId,
-  resource: resourceOf(attachment),
-});
-
-function Thumbnail(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachment: ChatAttachment;
-}) {
-  const resource = resourceOf(props.attachment);
-  const url = useAssetUrl(props.environmentId, resource);
-  return url === null ? null : (
-    <Image
-      source={assetImageSource(props.environmentId, resource, url)}
-      cachePolicy="memory-disk"
-      contentFit="cover"
-      style={{ width: "100%", height: "100%" }}
-      accessibilityIgnoresInvertColors
-    />
-  );
-}
-
-/** A sent message's files: image thumbnails and file chips, each opening the file preview. */
-export function GroupMessageAttachments(props: {
-  readonly environmentId: EnvironmentId;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly onPreview: (source: FilePreviewSource) => void;
-}) {
-  if (props.attachments.length === 0) return null;
-  return (
-    <View testID="group-message-attachments" className="max-w-[85%] flex-row flex-wrap gap-1.5">
-      {props.attachments.map((attachment) => (
-        <Pressable
-          key={attachment.id}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${attachment.name}`}
-          onPress={() => props.onPreview(previewOf(props.environmentId, attachment))}
-          className={
-            attachment.type === "image"
-              ? "size-24 overflow-hidden rounded-xl bg-secondary active:opacity-80"
-              : "max-w-56 flex-row items-center gap-1.5 rounded-xl border border-border px-2 py-1.5 active:opacity-70"
-          }
-        >
-          {attachment.type === "image" ? (
-            <Thumbnail environmentId={props.environmentId} attachment={attachment} />
-          ) : (
-            <>
-              <SymbolView name="doc" size={16} tintColorClassName="accent-icon-subtle" />
-              <View className="min-w-0 shrink gap-0.5">
-                <Text className="text-xs font-t3-medium text-foreground" numberOfLines={1}>
-                  {attachment.name}
-                </Text>
-                <Text className="text-xs text-foreground-muted">
-                  {formatAttachmentSize(attachment.sizeBytes)}
-                </Text>
-              </View>
-            </>
-          )}
-        </Pressable>
-      ))}
-    </View>
-  );
+function groupAttachmentUploadState(item: GroupAttachmentItem): ComposerAttachmentUploadState {
+  if (item.error !== null) return { status: "failed", reason: item.error };
+  if (item.attachment === null) return { status: "uploading", progress: item.progress };
+  return { status: "ready" };
 }

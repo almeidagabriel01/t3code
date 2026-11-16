@@ -36,11 +36,14 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { ComposerActionButton } from "../../components/ComposerToolbar";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
@@ -69,11 +72,7 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
-import {
-  clearGroupAttachments,
-  GroupAttachmentChips,
-  useGroupAttachments,
-} from "./GroupAttachments";
+import { clearGroupAttachments, useGroupAttachments } from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
@@ -436,6 +435,8 @@ export function GroupComposer(props: {
   // Only the open tab's own message on its way, or the one All shows, makes this composer wait.
   const sending = shown !== null && !shown.failed;
   const [error, setError] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
+  const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const editor = useRef<ComposerEditorHandle>(null);
   // Set before the flush, so Return and a tap in the same moment post once from that tab.
   const inFlight = useRef(new Set<AssistantGroupTabKey | null>());
@@ -664,10 +665,18 @@ export function GroupComposer(props: {
         )}
         {attached.items.length === 0 ? null : (
           <View className="px-3 pt-2">
-            <GroupAttachmentChips
-              items={attached.items}
+            <ComposerAttachmentStrip
+              attachments={attached.items.map((item) => item.source)}
+              ownUploads={attached.uploads}
               onRemove={attached.remove}
-              onRetry={attached.retry}
+              onPressPreview={(source) => {
+                setPreviewVideo(null);
+                setPreviewFile(source);
+              }}
+              onPressVideo={(attachment, sourceIdentifier) => {
+                setPreviewFile(null);
+                setPreviewVideo({ type: "local", attachment, sourceIdentifier });
+              }}
             />
           </View>
         )}
@@ -872,6 +881,8 @@ export function GroupComposer(props: {
           {shownError}
         </Text>
       )}
+      <VideoPreviewModal source={previewVideo} onRequestClose={() => setPreviewVideo(null)} />
+      <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
     </View>
   );
 }
