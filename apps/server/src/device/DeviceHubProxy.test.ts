@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import type { CaptureRoute } from "./CaptureDevices.ts";
 import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
@@ -58,6 +59,13 @@ const fixture = (
                   scopes,
                 }),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+      ),
+      Layer.provideMerge(
+        Layer.mock(SessionStore.SessionStore, {
+          cookieName: "t3_session",
+          legacyCookieName: undefined,
+          awaitInvalidation: () => Effect.never,
+        }),
       ),
       Layer.provideMerge(
         Layer.succeed(DeviceService.DeviceService, {
