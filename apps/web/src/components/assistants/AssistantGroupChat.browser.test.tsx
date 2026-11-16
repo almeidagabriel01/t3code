@@ -603,6 +603,33 @@ it("replies to a member's message and sends the reply link, or drops it", async 
   await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
 });
 
+it("lets go of a cut-off reply's quote once its post shows, also after an edit", async () => {
+  const feed = [
+    message(1, { text: "@ada hi" }),
+    message(2, { author: "assistant", assistantId: "ada" as AssistantId, text: "hello back" }),
+  ];
+  publishGroupChat(feed, []);
+  await using _screen = await openChat();
+  const chip = main().getByTestId("group-reply-chip");
+  fakeGroupChat.postCut = true;
+  for (const [index, edit] of ["", "!"].entries()) {
+    await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
+    await userEvent.type(composer(), `thanks ${index}{Enter}`);
+    await expect
+      .element(page.getByText("Couldn't confirm the send.", { exact: false }))
+      .toBeVisible();
+    if (edit !== "") await userEvent.type(composer(), edit);
+    const sent = fakeGroupChat.postRequestIds[index] as string;
+    publishGroupChat(
+      [...feed, message(3, { replyToMessageId: "m2" as never, clientRequestId: sent })],
+      [],
+    );
+    await expect.element(chip).not.toBeInTheDocument();
+    await expectComposer(edit === "" ? "" : `thanks ${index}${edit}`);
+    await userEvent.clear(composer());
+  }
+});
+
 it("shows a task's expected result and resources, and why a queued or limited one waits", async () => {
   const resetAt = "2099-03-04T09:30:00.000Z";
   publishGroupChat(
