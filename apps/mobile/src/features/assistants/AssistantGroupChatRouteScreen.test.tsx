@@ -144,6 +144,8 @@ vi.mock("../../lib/composerImages", () => ({
   pickComposerFiles: (...args: unknown[]) => mocks.pick(...args),
   pickComposerMedia: (...args: unknown[]) => mocks.pickMedia(...args),
   convertPastedImagesToAttachments: async () => [],
+  isFileBackedComposerAttachment: (attachment: { fileUri?: string }) =>
+    attachment.fileUri !== undefined,
 }));
 vi.mock("react-native-reanimated", () => {
   const animation = {
@@ -376,7 +378,7 @@ vi.mock("../threads/ThreadFeed", () => {
 // The thread's strip, showing the upload state its owner hands it.
 vi.mock("../../components/ComposerAttachmentStrip", () => ({
   ComposerAttachmentStrip: (props: {
-    attachments: ReadonlyArray<{ id: string; name: string; type: string }>;
+    attachments: ReadonlyArray<{ id: string; name: string; type: string; mimeType: string }>;
     ownUploads: {
       stateOf: (id: string) => { status: string; progress?: number; reason?: string } | undefined;
       retry: (id: string) => void;
@@ -384,6 +386,7 @@ vi.mock("../../components/ComposerAttachmentStrip", () => ({
     onRemove: (id: string) => void;
     onPressPreview: (source: { kind: string; name: string }) => void;
     onPressVideo: (attachment: unknown, sourceIdentifier: string) => void;
+    onPressDocument: (attachment: unknown) => void;
   }) =>
     props.attachments.map((attachment) => {
       const upload = props.ownUploads.stateOf(attachment.id);
@@ -399,7 +402,9 @@ vi.mock("../../components/ComposerAttachmentStrip", () => ({
             onClick={() =>
               attachment.type === "video"
                 ? props.onPressVideo(attachment, `draft:${attachment.id}`)
-                : props.onPressPreview({ kind: attachment.type, name: attachment.name })
+                : attachment.mimeType === "text/plain"
+                  ? props.onPressDocument(attachment)
+                  : props.onPressPreview({ kind: attachment.type, name: attachment.name })
             }
           />
           <button
@@ -1705,12 +1710,15 @@ describe("group attachments", () => {
     await click("Add attachment:Choose Files");
     expect(chips()).toHaveLength(3);
     expect(text()).toContain("Upload rejected (413)");
+    // Like the thread composer, the composer says why it will not send.
+    expect(text()).toContain("Retry or remove the failed attachment");
 
     // The failed file holds the send until it is retried or removed; the others stay.
     await type("@ada see these");
     expect(byLabel("Send")!.disabled).toBe(true);
     await click("Remove broken.pdf");
     expect(chips()).toHaveLength(2);
+    expect(text()).not.toContain("Retry or remove the failed attachment");
     expect(mocks.release).not.toHaveBeenCalled();
     expect(byLabel("Send")!.disabled).toBe(false);
 
@@ -1776,12 +1784,19 @@ describe("group attachments", () => {
 
   it("shows a file uploading, and opens picked files in the preview like the thread composer", async () => {
     const video = { ...draft("clip.mov"), type: "video", mimeType: "video/quicktime" };
-    mocks.pick.mockResolvedValue({ files: [draft("shot.png", "image"), video], error: null });
+    const notes = { ...draft("notes.txt"), mimeType: "text/plain", fileUri: "file:///notes.txt" };
+    const pasted = { ...draft("pasted.txt"), mimeType: "text/plain" };
+    mocks.pick.mockResolvedValue({
+      files: [draft("shot.png", "image"), video, notes, pasted],
+      error: null,
+    });
     // Uploads that never finish: the strip shows their progress.
     mocks.prepare.mockImplementation(() => new Promise(() => {}));
     render();
     await click("Add attachment:Choose Files");
-    expect([...chips()].map((chip) => chip.textContent)).toEqual(["Uploading 0", "Uploading 0"]);
+    expect([...chips()].map((chip) => chip.textContent)).toEqual(
+      Array.from({ length: 4 }, () => "Uploading 0"),
+    );
     expect(byLabel("Send")!.disabled).toBe(true);
     const previews = () =>
       [...container.querySelectorAll('[data-testid="preview"], [data-testid="video-preview"]')]
@@ -1791,6 +1806,11 @@ describe("group attachments", () => {
     expect(previews()).toEqual(["image:shot.png"]);
     await click("Open clip.mov");
     expect(previews()).toEqual(["draft:draft-clip.mov"]);
+    // Other documents open from the device in the system viewer; one without a file has none.
+    await click("Open notes.txt");
+    expect(previews()).toEqual(["document:notes.txt"]);
+    await click("Open pasted.txt");
+    expect(previews()).toEqual(["document:notes.txt"]);
   });
 
   it("tells the user what the picker could not take, and when it fails outright", async () => {

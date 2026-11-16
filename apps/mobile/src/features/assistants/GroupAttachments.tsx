@@ -187,6 +187,7 @@ export function useGroupAttachments(
     retry,
     clear,
     ready: items.flatMap((item) => (item.attachment === null ? [] : [item.attachment])),
+    failed: items.some((item) => item.error !== null),
     /** Something is still uploading or failed: sending now would drop it. */
     unsettled: items.some((item) => item.attachment === null),
     full: all.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,

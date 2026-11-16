@@ -44,6 +44,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
+import { FAILED_ATTACHMENT_BLOCK_REASON } from "../../lib/composerAttachmentUploadQueue";
+import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
@@ -632,7 +634,8 @@ export function GroupComposer(props: {
   };
 
   const showsProject = elsewhere || lockedProject !== null || props.projects.length > 1;
-  const shownError = shown?.error ?? error;
+  const shownError =
+    shown?.error ?? error ?? (attached.failed ? FAILED_ATTACHMENT_BLOCK_REASON : null);
   const lineHeight = bodyText.lineHeight;
   const editorHeight =
     Math.min(Math.max(contentHeight, lineHeight), lineHeight * EDITOR_MAX_LINES) + 2 * EDITOR_INSET;
@@ -676,6 +679,18 @@ export function GroupComposer(props: {
               onPressVideo={(attachment, sourceIdentifier) => {
                 setPreviewFile(null);
                 setPreviewVideo({ type: "local", attachment, sourceIdentifier });
+              }}
+              // No thread to open it in: the system viewer shows the local file.
+              onPressDocument={(attachment) => {
+                if (!isFileBackedComposerAttachment(attachment)) return;
+                setPreviewVideo(null);
+                setPreviewFile({
+                  kind: "document",
+                  name: attachment.name,
+                  mimeType: attachment.mimeType,
+                  attachment,
+                  sourceIdentifier: `draft-file:${attachment.id}`,
+                });
               }}
             />
           </View>
