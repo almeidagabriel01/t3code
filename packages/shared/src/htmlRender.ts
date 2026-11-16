@@ -1,4 +1,5 @@
 import {
+  SUCCESS_COLORS,
   T3_CODE_DARK_THEME_COLORS,
   T3_CODE_LIGHT_THEME_COLORS,
   type ThemeAppearance,
@@ -156,15 +157,13 @@ export interface HtmlRenderTheme {
 
 const FIXED_COLORS = {
   light: {
-    success: "#10b981",
-    successForeground: "#047857",
+    ...SUCCESS_COLORS.light,
     info: "#3b82f6",
     infoForeground: "#1d4ed8",
     chart: ["#0d9488", "#d97706", "#9333ea", "#e11d48", "#65a30d"],
   },
   dark: {
-    success: "#10b981",
-    successForeground: "#34d399",
+    ...SUCCESS_COLORS.dark,
     info: "#3b82f6",
     infoForeground: "#60a5fa",
     chart: ["#2dd4bf", "#fbbf24", "#c084fc", "#fb7185", "#a3e635"],

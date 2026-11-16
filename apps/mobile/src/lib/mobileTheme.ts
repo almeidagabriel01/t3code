@@ -6,6 +6,7 @@ import {
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
+  SUCCESS_COLORS,
   type MobileThemeId as SharedMobileThemeId,
   type ThemeAppearance,
   type ThemeColors,
@@ -346,6 +347,11 @@ export function createMobileThemeVariables(
     c.secondary,
     groupedCard,
   ];
+  const success = SUCCESS_COLORS[appearance];
+  const successSurface = flattenThemeColor(
+    withAlpha(success.success, appearance === "dark" ? 0.16 : 0.08),
+    c.surface,
+  );
   return {
     "--color-screen": c.canvas,
     "--color-sheet": withAlpha(c.chrome, 0.98),
@@ -404,6 +410,11 @@ export function createMobileThemeVariables(
     "--color-danger": c.errorSurface,
     "--color-danger-border": withAlpha(c.error, 0.32),
     "--color-danger-foreground": c.errorForeground,
+    "--color-success": successSurface,
+    "--color-success-foreground": themeColorWithContrast(success.successForeground, [
+      successSurface,
+      ...textSurfaces,
+    ]),
     "--color-update": c.updateSurface,
     "--color-update-foreground": c.updateForeground,
     "--color-input": c.surface,
