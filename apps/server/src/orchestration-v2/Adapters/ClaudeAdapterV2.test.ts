@@ -938,7 +938,10 @@ describe("ClaudeAdapterV2 heavy queue hook", () => {
     assert.deepInclude((queued as { hookSpecificOutput: object }).hookSpecificOutput, {
       hookEventName: "PreToolUse",
     });
-    assert.include(JSON.stringify(queued), "t3 heavy --queue-dir /q --name 'vp test run'");
+    assert.include(
+      JSON.stringify(queued),
+      "t3 heavy --queue-dir /q --request-id 'toolu_1' --name 'vp test run'",
+    );
     assert.deepEqual(await preToolUse("ls"), [{}]);
     assert.isUndefined(options({ deviceToolsAvailable: false, hook: false }).hooks);
   });

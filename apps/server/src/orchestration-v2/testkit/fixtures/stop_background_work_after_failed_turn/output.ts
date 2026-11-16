@@ -10,9 +10,10 @@ import {
 } from "../shared.ts";
 import { STOP_BACKGROUND_WORK_AFTER_FAILED_TURN_PROMPT } from "./input.ts";
 
-export function assertStopBackgroundWorkAfterFailedTurnOutput(
+function assertFailedTurnCommandEnded(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
+  snapshotKey: string,
 ) {
   assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["failed"] });
   const projection = projectionFor(result, transcript.scenario);
@@ -20,7 +21,7 @@ export function assertStopBackgroundWorkAfterFailedTurnOutput(
   assertUserMessagesInclude(projection, [STOP_BACKGROUND_WORK_AFTER_FAILED_TURN_PROMPT]);
 
   const before = result.capturedShellSnapshots
-    .get("before-stop")
+    .get(snapshotKey)
     ?.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(
     before?.pendingBackgroundTasks?.map((task) => task.kind),
@@ -33,9 +34,29 @@ export function assertStopBackgroundWorkAfterFailedTurnOutput(
   assert.isNotNull(command?.completedAt);
   const shell = result.shellSnapshot.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
+  assert.equal(projection.runs[0]?.status, "failed");
+  return projection;
+}
+
+export function assertStopBackgroundWorkAfterFailedTurnOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  const projection = assertFailedTurnCommandEnded(result, transcript, "before-stop");
   assert.include(
     projection.turnItems.map((item) => item.type),
     "run_interrupt_request",
   );
-  assert.equal(projection.runs[0]?.status, "failed");
+}
+
+export function assertBackgroundWorkEndsWithReleasedSessionOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  const projection = assertFailedTurnCommandEnded(result, transcript, "before-release");
+  assert.notInclude(
+    projection.turnItems.map((item) => item.type),
+    "run_interrupt_request",
+    "the release, not a Stop, ended the command",
+  );
 }
