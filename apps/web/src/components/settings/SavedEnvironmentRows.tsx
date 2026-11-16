@@ -26,7 +26,8 @@ import * as Option from "effect/Option";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { CONNECTION_SETTINGS_COPY } from "./settingsSearchConnectionItems";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import {
@@ -660,18 +661,18 @@ function ConfiguredCloudLinkRow({
             connectDenial !== undefined && !managedTunnelActive
               ? connectDenial
               : signedOut
-                ? "Sign in to make this environment available to your other devices through T3 Connect."
+                ? CONNECTION_SETTINGS_COPY.t3ConnectSignedOut
                 : linkRevoked
-                  ? "This environment was removed from T3 Connect. Turn it on to link it again."
+                  ? CONNECTION_SETTINGS_COPY.t3ConnectRevoked
                   : managedTunnelActive
                     ? reachability?.status === "unreachable"
-                      ? "T3 Connect is on, but other devices cannot reach this environment."
+                      ? CONNECTION_SETTINGS_COPY.t3ConnectUnreachable
                       : reachability?.status === "reachable"
-                        ? "This environment is available to your other devices through T3 Connect."
-                        : "T3 Connect is on. Reachability has not been checked yet."
+                        ? CONNECTION_SETTINGS_COPY.t3ConnectReachable
+                        : CONNECTION_SETTINGS_COPY.t3ConnectNotChecked
                     : managedTunnelOutOfSync
-                      ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
-                      : "Make this environment available to your other devices through T3 Connect."
+                      ? CONNECTION_SETTINGS_COPY.t3ConnectOutOfSync
+                      : settingCopy("t3-connect").description
           }
           status={operationError ?? cloudLinkState.error ?? reachabilityStatus}
           managed={managedTunnelActive ? undefined : connectDenial}
@@ -695,12 +696,12 @@ function ConfiguredCloudLinkRow({
       ) : linkRevoked ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description={CONNECTION_SETTINGS_COPY.t3ConnectLinkAgain}
         />
       ) : isElectron ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="Run `t3 connect link` on the host, then restart T3 Code there."
+          description={CONNECTION_SETTINGS_COPY.t3ConnectLinkOnHost}
         />
       ) : null}
       {signedOut && showSwitch ? null : (
@@ -708,8 +709,8 @@ function ConfiguredCloudLinkRow({
           title={searchableSetting("publish-agent-activity").title}
           description={
             signedOut
-              ? "Sign in to send activity to mobile notifications and Live Activities."
-              : "Send activity to mobile notifications and Live Activities without T3 Connect."
+              ? CONNECTION_SETTINGS_COPY.publishSignedOut
+              : settingCopy("publish-agent-activity").description
           }
           managed={connectDenial}
           control={
@@ -730,7 +731,7 @@ function ConfiguredCloudLinkRow({
       {managedTunnelActive && !signedOut ? (
         <SettingsRow
           title={searchableSetting("hold-webhooks-while-offline").title}
-          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing."
+          description={settingCopy("hold-webhooks-while-offline").description}
           managed={connectDenial}
           control={
             <CloudLinkSwitch
@@ -760,8 +761,8 @@ export function CloudLinkRow({
   if (!canReadRelay) {
     return (
       <SettingsRow
-        title="T3 Connect"
-        description="To edit these settings, pair this connection with both View relay and Manage relay permissions."
+        title={settingCopy("t3-connect").title}
+        description={CONNECTION_SETTINGS_COPY.t3ConnectPermissions}
       />
     );
   }

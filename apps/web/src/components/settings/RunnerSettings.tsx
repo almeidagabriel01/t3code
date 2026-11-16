@@ -597,8 +597,7 @@ export function RunnerSettingsSection() {
   const linux = environmentId === null ? null : queue.linux;
   return (
     <SettingsSection
-      id="runner"
-      title="Runner"
+      {...searchableSetting("runner")}
       variant="plain"
       headerAction={linux === null ? null : <LinuxStatus linux={linux} />}
     >

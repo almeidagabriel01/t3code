@@ -35,6 +35,7 @@ import {
 import { IntervalSecondsField } from "./IntervalSecondsField";
 import { PolicyTooltip, SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { GENERAL_SETTINGS_COPY } from "./settingsSearchGeneralItems";
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: "Balanced",
@@ -355,10 +356,7 @@ export function BackgroundActivitySettingsRow() {
       title={
         <span className="inline-flex items-center gap-1.5">
           {searchableSetting("background-activity").title}
-          <PolicyTooltip>
-            This shared policy gates background work such as Git refreshes and provider health
-            probes after their individual intervals elapse.
-          </PolicyTooltip>
+          <PolicyTooltip>{GENERAL_SETTINGS_COPY.backgroundActivityPolicy}</PolicyTooltip>
         </span>
       }
       description={backgroundActivityDescription}

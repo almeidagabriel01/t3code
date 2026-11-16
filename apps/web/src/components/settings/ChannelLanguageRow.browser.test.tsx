@@ -23,7 +23,7 @@ it("shows the option's label, not its value, and saves the chosen language", asy
   mocks.language = "auto";
   mocks.update.mockClear();
   await using _screen = await render(
-    <ChannelLanguageRow environmentId={environmentId} disabled={false} />,
+    <ChannelLanguageRow environmentId={environmentId} disabled={false} page="telegram" />,
     { router: false }, // the row reads settings only
   );
   await expect.element(page.getByText("Language", { exact: true })).toBeVisible();
@@ -37,7 +37,7 @@ it("shows the option's label, not its value, and saves the chosen language", asy
 it("cannot be changed while the environment is read-only", async () => {
   mocks.language = "pt-BR";
   await using _screen = await render(
-    <ChannelLanguageRow environmentId={environmentId} disabled />,
+    <ChannelLanguageRow environmentId={environmentId} disabled page="telegram" />,
     { router: false }, // the row reads settings only
   );
   await expect

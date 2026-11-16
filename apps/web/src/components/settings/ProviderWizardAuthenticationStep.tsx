@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/require-searchable-settings-copy -- add-provider wizard dialog, not a Settings page */
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 

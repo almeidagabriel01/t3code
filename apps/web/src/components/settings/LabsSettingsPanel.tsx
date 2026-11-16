@@ -8,6 +8,7 @@ import { Button } from "../ui/button";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
@@ -16,7 +17,7 @@ import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPoli
 export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
-      <SettingsSection id="beta" title="Beta">
+      <SettingsSection {...searchableSetting("beta")}>
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -37,7 +38,7 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description={MAINTENANCE_SETTINGS_COPY.guestLinksSignedOut}
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
           Sign in
@@ -68,12 +69,11 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
-          Share a thread with a guest who watches it live in a browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
+          {MAINTENANCE_SETTINGS_COPY.guestLinksBefore}
           <Link to="/settings/access" className="underline underline-offset-2">
-            Sharing & access
+            {MAINTENANCE_SETTINGS_COPY.sharingLink}
           </Link>
-          . Turning it off stops every guest link.
+          {MAINTENANCE_SETTINGS_COPY.guestLinksAfter}
         </>
       }
       control={
@@ -98,12 +98,11 @@ function LinkedEnvironmentsRow() {
       settingKeys={["linkedEnvironmentsEnabled"]}
       description={
         <>
-          Let agents here work on your other machines, and theirs here. Turn it on for each machine,
-          then link them in{" "}
+          {MAINTENANCE_SETTINGS_COPY.linkedEnvironmentsBefore}
           <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
+            {MAINTENANCE_SETTINGS_COPY.connectionsLink}
           </Link>
-          . While off, nothing new starts over a link; running tasks finish.
+          {MAINTENANCE_SETTINGS_COPY.linkedEnvironmentsAfter}
         </>
       }
       control={
@@ -128,7 +127,6 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart."
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}
@@ -153,20 +151,20 @@ function SimlockHostsRow() {
       settingKeys={["simlockDeviceHostsEnabled"]}
       description={
         <>
-          Let the Device panel lease simulators and emulators from your own{" "}
+          {MAINTENANCE_SETTINGS_COPY.simlockBefore}
           <a
             href="https://incubator.callstack.com/simlock/"
             target="_blank"
             rel="noreferrer"
             className="underline underline-offset-2"
           >
-            Simlock
-          </a>{" "}
-          pool, added in{" "}
+            {MAINTENANCE_SETTINGS_COPY.simlockName}
+          </a>
+          {MAINTENANCE_SETTINGS_COPY.simlockMiddle}
           <Link to="/settings/devices" className="underline underline-offset-2">
-            Devices
+            {MAINTENANCE_SETTINGS_COPY.devicesLink}
           </Link>
-          . An alpha that may change or break. T3 Code never installs Simlock.
+          {MAINTENANCE_SETTINGS_COPY.simlockAfter}
         </>
       }
       control={
@@ -203,7 +201,6 @@ function FastWorktreeCheckoutRow() {
       serverScoped
       {...searchableSetting("worktree-fast-checkout")}
       settingKeys={["fastWorktreeCheckout"]}
-      description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
       control={
         <ScopedSwitch
           settingKeys={["fastWorktreeCheckout"]}

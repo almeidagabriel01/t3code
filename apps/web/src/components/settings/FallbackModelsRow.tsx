@@ -25,6 +25,7 @@ import {
   SettingResetButton,
   SettingsRow,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import type { useUpdateScopedSettings } from "./useScopedSettings";
 
 export type PickerProps = Pick<
@@ -112,9 +113,7 @@ export function FallbackModelsRow(
       serverScoped
       settingKeys={["fallbackModelSelections", "fallbackModelSelection"]}
       mixed={mixed}
-      id="fallback-model"
-      title="Fallback models"
-      description={`Tried in order for new threads when the default model's provider is out of usage. Up to ${MAX_FALLBACK_MODEL_SELECTIONS}.`}
+      {...searchableSetting("fallback-model")}
       resetAction={
         mixed || list.length > 0 ? (
           <SettingResetButton label="fallback models" onClick={() => save([])} />

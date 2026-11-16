@@ -40,7 +40,8 @@ import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { ASSISTANT_SETTINGS_COPY } from "./settingsSearchAssistantItems";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { UndeliveredRepliesRow } from "./UndeliveredRepliesRow";
 
 const SECTION_ICON = "size-4 text-muted-foreground";
@@ -91,13 +92,14 @@ function TokenSection(props: {
 
   return (
     <SettingsSection
-      title={`Bot token${props.suffix}`}
+      title={`${settingCopy("telegram-bot-token").title}${props.suffix}`}
       icon={<KeyRoundIcon className={SECTION_ICON} />}
     >
       <SettingsRow
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- status badge, not a setting
         title={
           <span className="inline-flex items-center gap-2">
-            Bot token
+            {settingCopy("telegram-bot-token").title}
             <Badge variant={configured ? "success" : "warning"} size="sm">
               {configured ? "Saved" : "Not set"}
             </Badge>
@@ -105,8 +107,8 @@ function TokenSection(props: {
         }
         description={
           configured
-            ? "The token is stored on the server and is never shown again. Paste a new one to replace it."
-            : "Paste the token @BotFather gave you."
+            ? ASSISTANT_SETTINGS_COPY.telegramTokenSaved
+            : settingCopy("telegram-bot-token").description
         }
         status={<FieldError message={error} />}
         control={
@@ -136,8 +138,7 @@ function TokenSection(props: {
       />
       {configured ? (
         <SettingsRow
-          title="Remove the token"
-          description="Turns Telegram off and forgets the token on this server."
+          {...settingCopy("telegram-remove-token")}
           control={
             <Button variant="destructive-outline" disabled={!canAct} onClick={() => void remove()}>
               <Trash2Icon />
@@ -171,12 +172,11 @@ function PendingSection(props: {
 
   return (
     <SettingsSection
-      title={`Waiting for approval${props.suffix}`}
+      title={`${settingCopy("telegram-waiting").title}${props.suffix}`}
       icon={<UserRoundCheckIcon className={SECTION_ICON} />}
     >
       <SettingsRow
-        title="People who wrote to the bot"
-        description="Their messages are not passed on until you allow them."
+        {...settingCopy("telegram-pending-senders")}
         status={<FieldError message={error} />}
       />
       {senders.map((sender) => {
@@ -258,12 +258,11 @@ function UserIdSection(props: {
 
   return (
     <SettingsSection
-      title={`Who can write to the bot${props.suffix}`}
+      title={`${settingCopy("telegram-who-can-write").title}${props.suffix}`}
       icon={<UserRoundIcon className={SECTION_ICON} />}
     >
       <SettingsRow
-        title="Telegram user ids"
-        description="Only these people are heard. Allow someone from the waiting list above, or add their number here."
+        {...settingCopy("telegram-user-ids")}
         status={<FieldError message={error} />}
         control={
           <div className="flex w-full items-center gap-2 @min-[32rem]/settings-row:w-72">
@@ -286,7 +285,10 @@ function UserIdSection(props: {
         }
       />
       {userIds.length === 0 ? (
-        <SettingsRow title="No user ids yet" />
+        <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
+          title="No user ids yet"
+        />
       ) : (
         userIds.map((id) => (
           // A plain row: SettingsRow stacks its control under the title in a narrow panel.
@@ -333,8 +335,12 @@ function TelegramEnvironment(props: {
 
   if (settings === null) {
     return (
-      <SettingsSection title={`Telegram${suffix}`} icon={<SendIcon className={SECTION_ICON} />}>
+      <SettingsSection
+        title={`${settingCopy("telegram").title}${suffix}`}
+        icon={<SendIcon className={SECTION_ICON} />}
+      >
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           title={error ? "Telegram settings could not be loaded" : "Loading Telegram settings…"}
           description={error ?? undefined}
         />
@@ -358,11 +364,12 @@ function TelegramEnvironment(props: {
     <>
       <SettingsSection
         {...(props.first ? { id: searchableSetting("telegram").id } : {})}
-        title={`Telegram${suffix}`}
+        title={`${settingCopy("telegram").title}${suffix}`}
         icon={<SendIcon className={SECTION_ICON} />}
       >
         <SettingsRow
-          title="Status"
+          {...settingCopy("telegram-status")}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- live status readout, not a setting
           description={
             <span
               className={settings.status === "error" ? "text-destructive-foreground" : undefined}
@@ -387,8 +394,8 @@ function TelegramEnvironment(props: {
           onResend={actions.resendUndelivered}
         />
         <SettingsRow
-          title="Use Telegram"
-          description={hint ?? "Answer messages from the people you allow."}
+          title={settingCopy("telegram-use").title}
+          description={hint ?? settingCopy("telegram-use").description}
           status={<FieldError message={switchError} />}
           control={
             <Switch
@@ -399,7 +406,7 @@ function TelegramEnvironment(props: {
             />
           }
         />
-        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} />
+        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} page="telegram" />
       </SettingsSection>
 
       <TokenSection
@@ -435,9 +442,14 @@ export function TelegramSettingsPanel() {
   return (
     <SettingsPageContainer>
       {environmentIds.length === 0 ? (
-        <SettingsSection title="Telegram" icon={<SendIcon className={SECTION_ICON} />}>
+        <SettingsSection
+          title={settingCopy("telegram").title}
+          icon={<SendIcon className={SECTION_ICON} />}
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Telegram is not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Connect to a T3 Code server that supports Telegram, then its settings appear here."
           />
         </SettingsSection>
@@ -457,29 +469,20 @@ export function TelegramSettingsPanel() {
               first={index === 0}
             />
           ))}
-          <SettingsSection title="Set up a bot" icon={<CircleHelpIcon className={SECTION_ICON} />}>
-            <SettingsRow
-              title="1. Create the bot"
-              description="In Telegram, open @BotFather and send /newbot. Pick a name and a username; it replies with the bot token."
-            />
-            <SettingsRow
-              title="2. Paste the token and turn it on"
-              description="Save the token above, then switch on Use Telegram."
-            />
-            <SettingsRow
-              title="3. Message the bot"
-              description="Open your bot, press Start and say hello. You then show up under Waiting for approval here."
-            />
-            <SettingsRow
-              title="4. Allow yourself"
-              description="Press Allow next to your name. Then send @ to see your assistants."
-            />
+          <SettingsSection
+            {...searchableSetting("telegram-setup")}
+            icon={<CircleHelpIcon className={SECTION_ICON} />}
+          >
+            <SettingsRow {...searchableSetting("telegram-setup-create")} />
+            <SettingsRow {...searchableSetting("telegram-setup-token")} />
+            <SettingsRow {...searchableSetting("telegram-setup-message")} />
+            <SettingsRow {...searchableSetting("telegram-setup-allow")} />
           </SettingsSection>
-          <SettingsSection title="Good to know" icon={<InfoIcon className={SECTION_ICON} />}>
-            <SettingsRow
-              title="Approvals and limits"
-              description="Approvals arrive as numbered choices: reply with the number. Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
-            />
+          <SettingsSection
+            {...searchableSetting("telegram-good-to-know")}
+            icon={<InfoIcon className={SECTION_ICON} />}
+          >
+            <SettingsRow {...searchableSetting("telegram-limits")} />
           </SettingsSection>
         </>
       )}

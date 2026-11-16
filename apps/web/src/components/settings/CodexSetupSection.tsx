@@ -46,6 +46,8 @@ import { Input } from "../ui/input";
 import { OpenAI } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
 import { getOnboardingProviderState } from "../../onboarding/providerReadiness.logic";
 import { getProviderSummary } from "./providerStatus";
@@ -202,7 +204,12 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           }
         />
       ) : (
-        <SettingsRow title="ChatGPT account" description="Preparing sign-in." />
+        <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sign-in progress state, not a setting
+          title="ChatGPT account"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- sign-in progress state, not a setting
+          description="Preparing sign-in."
+        />
       )
     ) : (
       <ManagedCodexSetup
@@ -940,7 +947,7 @@ function ManagedCodexSetup({
     <section aria-label="Codex setup" className="divide-y divide-border/50">
       {accountPicker}
       <SettingsRow
-        title="ChatGPT account"
+        title={settingCopy("codex-chatgpt-account").title}
         description={accountDescription}
         control={
           <div className="flex max-w-88 flex-wrap items-center justify-end gap-2">
@@ -1087,8 +1094,7 @@ export function CodexManagedRuntimeFields({
   return (
     <>
       <SettingsRow
-        title="Binary path"
-        description="Selected by T3 Code."
+        {...settingCopy("codex-binary-path")}
         control={
           <div className="w-full sm:w-80">
             <Input
@@ -1102,8 +1108,7 @@ export function CodexManagedRuntimeFields({
         }
       />
       <SettingsRow
-        title="CODEX_HOME path"
-        description="Shared Codex config, sessions, and state."
+        {...settingCopy("codex-home-path")}
         control={
           <div className="w-full sm:w-80">
             <Input
@@ -1117,11 +1122,11 @@ export function CodexManagedRuntimeFields({
         }
       />
       <SettingsRow
-        title="Shadow home path"
+        title={settingCopy("codex-shadow-home-path").title}
         description={
           provider?.runtimePaths?.shadowHomePath
-            ? "Account-specific home sharing the Codex state above."
-            : "This instance uses the shared Codex home directly."
+            ? settingCopy("codex-shadow-home-path").description
+            : PROVIDER_SETTINGS_COPY.codexShadowHomeDirect
         }
         control={
           <div className="w-full sm:w-80">

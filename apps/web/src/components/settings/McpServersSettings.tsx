@@ -31,7 +31,8 @@ import { Label } from "../ui/label";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   draftFor,
@@ -55,7 +56,9 @@ export function McpServersSettings() {
         />
       ) : (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- no-environment state, not a setting
           title="MCP servers"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- no-environment state, not a setting
           description="Connect an environment to manage its MCP servers."
         />
       )}
@@ -101,8 +104,7 @@ function ServerList({
         </p>
       ) : null}
       <SettingsRow
-        title="Manage servers"
-        description="Servers are available to agent sessions on this environment. OpenCode, Pi, and Muse do not support MCP servers added here."
+        {...settingCopy("mcp-servers-manage")}
         control={
           <Button
             size="sm"
@@ -123,7 +125,8 @@ function ServerList({
               {server.transport} ·{" "}
               {server.transport === "stdio" ? server.command : new URL(server.url).origin}
               <br />
-              Agents see it as {t3McpProviderName(name)} · {supportedProviders(server.transport)}
+              {PROVIDER_SETTINGS_COPY.mcpAgentsSeeItAs} {t3McpProviderName(name)} ·{" "}
+              {supportedProviders(server.transport)}
             </span>
           }
           control={

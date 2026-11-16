@@ -13,6 +13,8 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLinkRequests } from "../device/DeviceLinkRequests";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
+import { CONNECTION_SETTINGS_COPY } from "./settingsSearchConnectionItems";
 
 /**
  * Devices across linked environments: requests and uses from theirs here, with a way to shut
@@ -46,20 +48,20 @@ export function DeviceLinksSettings(props: {
   return (
     <>
       {(state.linkRequests ?? []).length > 0 ? (
-        <SettingsSection id="device-link-requests" title="Device requests">
+        <SettingsSection id="device-link-requests" {...settingCopy("device-link-requests")}>
           <DeviceLinkRequests environmentId={environmentId} state={state} />
         </SettingsSection>
       ) : null}
       {clients.length > 0 ? (
-        <SettingsSection id="device-link-clients" title="Linked environments using devices here">
+        <SettingsSection id="device-link-clients" {...settingCopy("device-link-clients")}>
           {clients.map((client) => (
             <SettingsRow
               key={client.linkId}
               title={client.label}
               description={
                 client.blocked
-                  ? "Shut out: it cannot list, watch or drive any device here."
-                  : "Can use devices here under the access settings above."
+                  ? CONNECTION_SETTINGS_COPY.linkClientBlocked
+                  : CONNECTION_SETTINGS_COPY.linkClientAllowed
               }
               control={
                 <Button
@@ -85,15 +87,15 @@ export function DeviceLinksSettings(props: {
         </SettingsSection>
       ) : null}
       {sources.length > 0 ? (
-        <SettingsSection id="device-linked-sources" title="Devices from linked environments">
+        <SettingsSection id="device-linked-sources" {...settingCopy("device-linked-sources")}>
           {sources.map((source) => (
             <SettingsRow
               key={source.environmentId}
               title={source.label}
               description={
                 source.hidden
-                  ? "Hidden: its devices are not listed here or offered to agents."
-                  : (source.status ?? "Listed when it next answers.")
+                  ? CONNECTION_SETTINGS_COPY.linkedSourceHidden
+                  : (source.status ?? CONNECTION_SETTINGS_COPY.linkedSourceListed)
               }
               control={
                 <Switch

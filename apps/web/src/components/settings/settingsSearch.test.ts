@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  type IntegrationsState,
   makeProviderSettingsSchema,
+  PROVIDER_DISPLAY_NAMES,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
@@ -10,6 +12,7 @@ import * as Schema from "effect/Schema";
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
+  integrationSearchItems,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
@@ -59,6 +62,7 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 const EVERYTHING_AVAILABLE = {
+  localEnvironmentDisabled: false,
   hasCloudPublicConfig: true,
   hasEnvironment: true,
   hasProviderSettingsEnvironment: true,
@@ -139,6 +143,7 @@ describe("searchSettings", () => {
     expect(limits.map((item) => [item.id, item.machine])).toEqual([
       ["heavy-work-cpu-ceiling", "This Mac"],
       ["runner-linux-cpu-ceiling", "Linux PC"],
+      ["assistant-sandbox-cpu", undefined],
     ]);
     expect(searchSettings("linux pc cpu").map((item) => item.id)).toContain(
       "runner-linux-cpu-ceiling",
@@ -150,9 +155,9 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
-    expect(searchSettings("hold to quit")).toEqual([]);
-    expect(searchSettings("wsl")).toEqual([]);
-    expect(searchSettings("update track")).toEqual([]);
+    for (const query of ["hold to quit", "wsl", "update track"]) {
+      expect(searchSettings(query).filter((item) => item.desktopOnly === true)).toEqual([]);
+    }
   });
 
   it("hides System glass when the desktop bridge has no material API", () => {
@@ -296,17 +301,17 @@ describe("searchSettings", () => {
   });
 
   it("finds rows by the titles shown on their pages", () => {
-    for (const [title, id] of [
-      ["Automatic worktree cleanup", "storage-worktrees"],
-      ["Delete settled worktrees", "storage-worktrees"],
-      ["Delete old browser artifacts", "storage-artifacts"],
-      ["Delete old rotated logs", "storage-artifacts"],
-      ["Custom search URL", "browser-search-engine"],
-      ["Native sessions", "providers"],
-      ["CODEX_HOME path", "providers"],
-      ["Shadow home path", "providers"],
-    ] as const) {
-      expect(searchSettings(title)[0]?.id, title).toBe(id);
+    for (const title of [
+      "Automatic worktree cleanup",
+      "Delete settled worktrees",
+      "Delete old browser artifacts",
+      "Delete old rotated logs",
+      "Custom search URL",
+      "Native sessions",
+      "CODEX_HOME path",
+      "Shadow home path",
+    ]) {
+      expect(searchSettings(title)[0]?.title, title).toBe(title);
     }
   });
 
@@ -335,6 +340,58 @@ describe("searchSettings", () => {
   ] as const)("finds the $title row by $query", ({ query, title, to }) => {
     const found = searchSettings(query, filterAvailableSettingsSearchItems(EVERYTHING_AVAILABLE));
     expect(found.map((item) => [item.title, item.to])).toContainEqual([title, to]);
+  });
+
+  it("finds every provider by its display name", () => {
+    for (const name of Object.values(PROVIDER_DISPLAY_NAMES).filter((name) => name !== undefined)) {
+      expect(searchSettings(name).map((item) => item.title)).toContain(name);
+    }
+  });
+
+  it("finds integrations by the name and blurb the directory draws", () => {
+    const items = integrationSearchItems([
+      {
+        catalog: [],
+        integrations: [],
+        ownApps: [],
+        loopbackRedirectUri: "http://127.0.0.1:1/callback",
+        detected: [
+          {
+            id: "detected-1",
+            name: "Acme tracker",
+            origin: "claude-code" as const,
+            transport: "http",
+            catalogId: null,
+            enabled: true,
+            copyable: false,
+            secretKeys: [],
+            needsValue: [],
+          },
+        ],
+        detectionSources: [],
+      } satisfies IntegrationsState,
+    ]);
+    expect(searchSettings("acme", items).map((item) => [item.title, item.to])).toEqual([
+      ["Acme tracker", "/settings/integrations"],
+    ]);
+  });
+
+  it("hides every row of a page that this machine does not have", () => {
+    const pages = filterAvailableSettingsSearchItems({
+      ...EVERYTHING_AVAILABLE,
+      hasMemory: false,
+      hasTelegram: false,
+    }).map((item) => item.to);
+    expect(pages).not.toContain("/settings/memory");
+    expect(pages).not.toContain("/settings/telegram");
+    expect(pages).toContain("/settings/imessage");
+  });
+
+  it("keeps each description short enough to stay two lines beside a control", () => {
+    const long = SETTINGS_SEARCH_ITEMS.flatMap((item: SettingsSearchItem) =>
+      (item.description?.length ?? 0) > 200 ? [item.id] : [],
+    );
+    expect(long).toEqual([]);
   });
 
   it("keeps catalog result ids unique", () => {
@@ -403,6 +460,7 @@ describe("auto-settlement search availability", () => {
       hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
     });
     expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
+      "threads-section-auto-settle",
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",

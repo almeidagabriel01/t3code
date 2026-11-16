@@ -31,7 +31,7 @@ import {
 import { AccountPicker } from "../statusBar/AccountPicker";
 import { useUsageItems } from "../statusBar/useUsageItems";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 type StatusBarSettingsValues = Pick<
@@ -163,13 +163,11 @@ function ThresholdField({
 
 function ToggleRow({
   search,
-  description,
   label,
   checked,
   onChange,
 }: {
   readonly search: ReturnType<typeof searchableSetting>;
-  readonly description: string;
   readonly label: string;
   readonly checked: boolean;
   readonly onChange: (checked: boolean) => void;
@@ -177,7 +175,6 @@ function ToggleRow({
   return (
     <SettingsRow
       {...search}
-      description={description}
       control={
         <Switch
           checked={checked}
@@ -191,14 +188,12 @@ function ToggleRow({
 
 function SegmentRow({
   search,
-  description,
   id,
   label,
   settings,
   updateSettings,
 }: {
   readonly search: ReturnType<typeof searchableSetting>;
-  readonly description: string;
   readonly id: string;
   readonly label: string;
   readonly settings: StatusBarSettingsValues;
@@ -207,7 +202,6 @@ function SegmentRow({
   return (
     <SettingsRow
       {...search}
-      description={description}
       control={
         <Switch
           checked={isStatusBarItemShown(settings.statusBarHiddenItems, id)}
@@ -235,10 +229,9 @@ function StatusBarSettingsSections({
 
   return (
     <>
-      <SettingsSection id="status-bar" title="Status bar">
+      <SettingsSection id="status-bar" title={settingCopy("status-bar-visible").title}>
         <SettingsRow
           {...searchableSetting("status-bar-visible")}
-          description="Show a bar along the bottom of the window. Right-click it to choose what it shows."
           control={
             <Switch
               checked={settings.statusBarVisible}
@@ -252,36 +245,29 @@ function StatusBarSettingsSections({
           search={searchableSetting("status-bar-segment-usage")}
           id={STATUS_BAR_USAGE_ITEM}
           label="Usage"
-          description="Provider usage limits and reset countdowns."
         />
         <SegmentRow
           {...segment}
           search={searchableSetting("status-bar-segment-ports")}
           id={STATUS_BAR_PORTS_ITEM}
           label="Ports"
-          description="Listening ports, with the processes that hold them."
         />
         <SegmentRow
           {...segment}
           search={searchableSetting("status-bar-segment-resources")}
           id={STATUS_BAR_RESOURCE_ITEM}
           label="Resource usage"
-          description="Memory, CPU and running terminals."
         />
         <SegmentRow
           {...segment}
           search={searchableSetting("status-bar-segment-keep-awake")}
           id={STATUS_BAR_KEEP_AWAKE_ITEM}
           label="Keep awake"
-          description="A coffee cup while this computer is being held awake."
         />
       </SettingsSection>
 
-      <SettingsSection id="status-bar-usage" title="Usage">
-        <SettingsRow
-          {...searchableSetting("status-bar-items")}
-          description="Choose which accounts the usage segment shows. New accounts show by default."
-        >
+      <SettingsSection id="status-bar-usage" title={settingCopy("status-bar-section-usage").title}>
+        <SettingsRow {...searchableSetting("status-bar-items")}>
           <div className="pt-2">
             <AccountPicker
               items={items}
@@ -297,7 +283,6 @@ function StatusBarSettingsSections({
         </SettingsRow>
         <SettingsRow
           {...searchableSetting("status-bar-usage-refresh")}
-          description="How often usage limits are checked in the background. Usage also updates live while agents run. Paused while the window is hidden."
           control={
             <LabeledSelect
               label="Refresh usage"
@@ -309,7 +294,6 @@ function StatusBarSettingsSections({
         />
         <SettingsRow
           {...searchableSetting("status-bar-usage-mode")}
-          description="Verbose shows a meter with each limit window. Compact shows only the tightest one."
           control={
             <LabeledSelect
               label="Usage display"
@@ -321,7 +305,6 @@ function StatusBarSettingsSections({
         />
         <SettingsRow
           {...searchableSetting("status-bar-usage-percentage")}
-          description="Show how much of each limit is used, or how much is left."
           control={
             <LabeledSelect
               label="Usage percentage"
@@ -333,7 +316,6 @@ function StatusBarSettingsSections({
         />
         <SettingsRow
           {...searchableSetting("status-bar-usage-reset")}
-          description="Weekly limits show the day they reset, or the time when that is within 24 hours. The 5-hour session limit always shows its countdown."
           control={
             <RadioGroup
               aria-label="Reset shown as"
@@ -357,7 +339,6 @@ function StatusBarSettingsSections({
         <ToggleRow
           search={searchableSetting("status-bar-usage-pace")}
           label="Usage pace"
-          description="Mark where even spending would be on each limit, and show how far ahead or behind you are."
           checked={settings.usagePaceEnabled}
           onChange={(usagePaceEnabled) => updateSettings({ usagePaceEnabled })}
         />
@@ -365,7 +346,6 @@ function StatusBarSettingsSections({
           <ToggleRow
             search={searchableSetting("status-bar-usage-pace-in-bar")}
             label="Pace in the status bar"
-            description="Also show the pace marker and how far over or under pace you are in the bar itself. Off keeps it in the usage popover only."
             checked={settings.statusBarUsagePaceVisible}
             onChange={(statusBarUsagePaceVisible) => updateSettings({ statusBarUsagePaceVisible })}
           />
@@ -373,20 +353,17 @@ function StatusBarSettingsSections({
         <ToggleRow
           search={searchableSetting("status-bar-usage-projection")}
           label="Usage projection"
-          description="Project where each limit lands at reset, or when it runs out, once a fifteenth of the window has passed."
           checked={settings.usageProjectionEnabled}
           onChange={(usageProjectionEnabled) => updateSettings({ usageProjectionEnabled })}
         />
         <ToggleRow
           search={searchableSetting("status-bar-usage-daily-budget")}
           label="Daily budget"
-          description="For weekly limits, show how much of the budget allowed through today you have used."
           checked={settings.usageDailyBudgetEnabled}
           onChange={(usageDailyBudgetEnabled) => updateSettings({ usageDailyBudgetEnabled })}
         />
         <SettingsRow
           {...searchableSetting("status-bar-usage-thresholds")}
-          description="Bars turn amber past the watch level and red past the critical level. Watch stays below critical."
           control={
             <div className="flex flex-wrap items-center gap-3">
               <ThresholdField
@@ -409,16 +386,14 @@ function StatusBarSettingsSections({
         <ToggleRow
           search={searchableSetting("status-bar-usage-sessions")}
           label="Sessions per account"
-          description="List the threads using each account in the usage popover."
           checked={settings.usageShowSessions}
           onChange={(usageShowSessions) => updateSettings({ usageShowSessions })}
         />
       </SettingsSection>
 
-      <SettingsSection id="status-bar-ports" title="Ports">
+      <SettingsSection id="status-bar-ports" title={settingCopy("status-bar-section-ports").title}>
         <SettingsRow
           {...searchableSetting("status-bar-ports-refresh")}
-          description="How often listening ports are checked in the background. An open ports list refreshes every few seconds."
           control={
             <LabeledSelect
               label="Refresh ports"
@@ -430,7 +405,6 @@ function StatusBarSettingsSections({
         />
         <SettingsRow
           {...searchableSetting("status-bar-ports-count")}
-          description="What the ports count includes. The list always shows both."
           control={
             <LabeledSelect
               label="Ports count"
@@ -442,10 +416,12 @@ function StatusBarSettingsSections({
         />
       </SettingsSection>
 
-      <SettingsSection id="status-bar-resources" title="Resource manager">
+      <SettingsSection
+        id="status-bar-resources"
+        title={settingCopy("status-bar-section-resources").title}
+      >
         <SettingsRow
           {...searchableSetting("status-bar-resource-sort")}
-          description="How the resource manager orders projects and terminals when it opens."
           control={
             <LabeledSelect
               label="Resource manager sort"

@@ -42,7 +42,6 @@ export function SidebarDisplaySettingsRows({
     <>
       <SettingsRow
         {...searchableSetting("sidebar-show-assistants-section")}
-        description="List your assistants and groups above the projects, with the threads they started under them."
         control={
           <Switch
             checked={settings.sidebarShowAssistantsSection}
@@ -55,7 +54,6 @@ export function SidebarDisplaySettingsRows({
       />
       <SettingsRow
         {...searchableSetting("sidebar-show-subagents")}
-        description="List a thread's active subagents under it in the sidebar."
         control={
           <Switch
             checked={settings.sidebarShowSubagents}
@@ -68,7 +66,6 @@ export function SidebarDisplaySettingsRows({
       />
       <SettingsRow
         {...searchableSetting("sidebar-agent-activity")}
-        description="Compact folds several subagents into one summary row. Full lists every one."
         control={
           <Select
             value={settings.sidebarAgentActivityDisplayMode}
@@ -95,10 +92,7 @@ export function SidebarDisplaySettingsRows({
           </Select>
         }
       />
-      <SettingsRow
-        {...searchableSetting("project-hover-card")}
-        description="Choose what the card shows when you hover a project. Turn everything off to disable the card."
-      >
+      <SettingsRow {...searchableSetting("project-hover-card")}>
         <div className="flex flex-col gap-2 pt-2">
           {PROJECT_HOVER_CARD_PROPERTIES.map((property) => (
             <label key={property} className="flex items-center justify-between gap-3 text-sm">

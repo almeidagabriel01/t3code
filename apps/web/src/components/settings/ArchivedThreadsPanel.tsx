@@ -27,7 +27,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 /** An old assistant conversation comes back as the assistant's current one, not as a loose thread. */
@@ -78,12 +78,15 @@ export function ArchivedProjectsSection() {
   const archived = groups.filter((group) => group.archived);
   if (archived.length === 0) return null;
   return (
-    <SettingsSection title="Archived projects" icon={<ArchiveIcon className="size-3.5" />}>
+    <SettingsSection
+      title={settingCopy("archived-projects").title}
+      icon={<ArchiveIcon className="size-3.5" />}
+    >
       {archived.map((group) => (
         <SettingsRow
           key={group.projectKey}
           title={group.displayName}
-          description="Hidden from the sidebar. Threads and files are kept."
+          description={settingCopy("archived-projects").description}
           control={
             <Button
               type="button"
@@ -296,6 +299,7 @@ export function ArchivedThreadsPanel() {
           title={searchableSetting("archive").title}
         >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading, error and empty states, not a setting
             title={
               <span className="inline-flex items-center gap-2">
                 {isLoadingArchive ? (
@@ -310,6 +314,7 @@ export function ArchivedThreadsPanel() {
                     : "No archived threads"}
               </span>
             }
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading, error and empty states, not a setting
             description={
               isLoadingArchive
                 ? "Checking connected environments."
@@ -339,6 +344,7 @@ export function ArchivedThreadsPanel() {
                     void handleContextMenu(thread, { x: event.clientX, y: event.clientY });
                   }}
                   title={thread.title}
+                  // oxlint-disable-next-line t3code/require-searchable-settings-copy -- thread dates, not a setting
                   description={
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
                       {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}

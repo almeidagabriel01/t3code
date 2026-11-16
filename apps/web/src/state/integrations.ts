@@ -57,6 +57,18 @@ export function useIntegrationsState(
   );
 }
 
+const openIntegrationsStatesAtom = Atom.make((get) =>
+  get(integrationsEnvironmentIdsAtom).flatMap((environmentId) => {
+    const state = get(integrationsStateAtom(environmentId));
+    return state === null ? [] : [state];
+  }),
+).pipe(Atom.withLabel("web-integrations-open-states"));
+
+/** Every connected environment's integrations, live, so Settings search finds them by name. */
+export function useOpenIntegrationsStates(): ReadonlyArray<IntegrationsState> {
+  return useAtomValue(openIntegrationsStatesAtom);
+}
+
 /** `reason` is the server's `IntegrationError` reason, for `integrationErrorMessage`. */
 export type IntegrationReply<A = void> =
   | { readonly ok: true; readonly value: A }

@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/require-searchable-settings-copy -- onboarding step on the welcome page, not a Settings page */
 import { useAtomValue } from "@effect/atom-react";
 import {
   MemoryOperationId,

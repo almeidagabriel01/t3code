@@ -1,17 +1,15 @@
-import {
-  CHANNEL_LANGUAGE_DESCRIPTION,
-  CHANNEL_LANGUAGE_OPTIONS,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { CHANNEL_LANGUAGE_OPTIONS, type EnvironmentId } from "@t3tools/contracts";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow } from "./settingsLayout";
+import { settingCopy } from "./settingsSearch";
 
 /** One server setting, shown in both the iMessage and the Telegram settings. */
 export function ChannelLanguageRow(props: {
   readonly environmentId: EnvironmentId;
   readonly disabled: boolean;
+  readonly page: "telegram" | "imessage";
 }) {
   const language = useEnvironmentSettings(
     props.environmentId,
@@ -20,8 +18,9 @@ export function ChannelLanguageRow(props: {
   const updateSettings = useUpdateEnvironmentSettings(props.environmentId);
   return (
     <SettingsRow
-      title="Language"
-      description={CHANNEL_LANGUAGE_DESCRIPTION}
+      {...settingCopy(
+        props.page === "imessage" ? "channel-language-imessage" : "channel-language-telegram",
+      )}
       control={
         <Select
           value={language}

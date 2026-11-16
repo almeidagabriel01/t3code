@@ -42,7 +42,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AssistantSandboxSection } from "./AssistantSandboxSection";
 import { AutonomySection } from "./AutonomySettings";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 function IconAction(props: {
   readonly label: string;
@@ -277,6 +277,7 @@ function ArchivedTeamRow(props: { readonly entry: AssistantTeamEntry }) {
           {team.name}
         </span>
       }
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- team data, not a setting
       description={`${team.memberIds.length} members`}
       control={
         <Button
@@ -304,10 +305,10 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
       title={
         <span className="inline-flex items-center gap-2">
           <UserRoundIcon className="size-4 text-muted-foreground" />
-          Jarvis
+          {settingCopy("assistants-restore-jarvis").title}
         </span>
       }
-      description="The default assistant was deleted. Restore him to chat with Jarvis again."
+      description={settingCopy("assistants-restore-jarvis").description}
       control={
         <Button
           size="sm"
@@ -347,7 +348,9 @@ export function AssistantsSettingsPanel() {
           icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
         >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="No assistants available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Connect to a server that supports assistants, then they appear here."
           />
         </SettingsSection>
@@ -360,9 +363,8 @@ export function AssistantsSettingsPanel() {
           return (
             <Fragment key={environmentId}>
               <SettingsSection
-                title={
-                  multipleEnvironments ? `Assistants · ${labelOf(environmentId)}` : "Assistants"
-                }
+                {...(index === 0 ? { id: searchableSetting("assistants").id } : {})}
+                title={`${settingCopy("assistants").title}${multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}`}
                 icon={<UserRoundIcon className="size-4 text-muted-foreground" />}
                 headerAction={
                   <Button
@@ -386,7 +388,7 @@ export function AssistantsSettingsPanel() {
                 {hasDefault ? null : <RestoreJarvisRow environmentId={environmentId} />}
               </SettingsSection>
               <SettingsSection
-                title={multipleEnvironments ? `Groups · ${labelOf(environmentId)}` : "Groups"}
+                title={`${settingCopy("assistants-groups").title}${multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}`}
                 icon={<UsersIcon className="size-4 text-muted-foreground" />}
                 headerAction={
                   <Button
@@ -401,7 +403,9 @@ export function AssistantsSettingsPanel() {
               >
                 {inEnvironment(activeTeams, environmentId).length === 0 ? (
                   <SettingsRow
+                    // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
                     title="No groups yet"
+                    // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
                     description="A group lists its assistants as each other's teammates. A lead is optional."
                   />
                 ) : (
@@ -433,11 +437,7 @@ export function AssistantsSettingsPanel() {
         return groups.length === 0 ? null : (
           <SettingsSection
             key={`groups:${environmentId}`}
-            title={
-              multipleEnvironments
-                ? `Archived groups · ${labelOf(environmentId)}`
-                : "Archived groups"
-            }
+            title={`${settingCopy("assistants-archived-groups").title}${multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}`}
             icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
           >
             {groups.map((entry) => (
@@ -451,7 +451,7 @@ export function AssistantsSettingsPanel() {
         return entries.length === 0 ? null : (
           <SettingsSection
             key={environmentId}
-            title={multipleEnvironments ? `Archived · ${labelOf(environmentId)}` : "Archived"}
+            title={`${settingCopy("assistants-archived").title}${multipleEnvironments ? ` · ${labelOf(environmentId)}` : ""}`}
             icon={<ArchiveIcon className="size-4 text-muted-foreground" />}
           >
             {entries.map((entry) => (

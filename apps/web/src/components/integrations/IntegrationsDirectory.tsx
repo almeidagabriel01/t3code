@@ -407,7 +407,7 @@ export function IntegrationsDirectory(props: {
       {section("Connected", directory.connected)}
       {section("Available", directory.available)}
       <SettingsSection
-        title="Other"
+        {...searchableSetting("integrations-other")}
         className="[&>[data-slot=settings-group]:empty]:hidden"
         headerAction={
           <Button size="xs" variant="outline" onClick={props.onCustomServers}>

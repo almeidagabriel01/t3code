@@ -103,7 +103,8 @@ import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { CompactIdleThreadsRow, ProviderIdleTimeoutRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
@@ -1040,7 +1041,9 @@ export function EnvironmentProviderSettings({
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- read-only state, not a setting
               title="Limited permissions"
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- read-only state, not a setting
               description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
             />
           </SettingsGroup>
@@ -1112,20 +1115,16 @@ export function EnvironmentProviderSettings({
         />
       ) : null}
 
-      <SettingsSection title="Advanced">
+      <SettingsSection title={settingCopy("provider-advanced").title}>
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
             <span className="inline-flex items-center gap-1.5">
               {searchableSetting("provider-health-check-interval").title}
-              <PolicyTooltip>
-                This interval is configured here, then the shared Background activity policy decides
-                whether provider probes may run when the timer fires. Custom intervals appear as
-                Advanced in Maintenance settings.
-              </PolicyTooltip>
+              <PolicyTooltip>{PROVIDER_SETTINGS_COPY.healthIntervalPolicy}</PolicyTooltip>
             </span>
           }
-          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+          description={searchableSetting("provider-health-check-interval").description}
           resetAction={
             providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
               <span
@@ -1387,10 +1386,7 @@ function ProviderInstanceRow({
           !readOnly &&
           driver === "cursor" &&
           liveProvider?.setup?.canAuthenticate === false ? (
-          <SettingsRow
-            title="Cursor account"
-            description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
-          />
+          <SettingsRow {...settingCopy("cursor-account")} />
         ) : null
       }
       onUpdate={(next) => actions.updateInstance(instanceId, instance, next)}
