@@ -622,6 +622,11 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantTaskColumns.some((column) => column.name === "dismissed_at")) {
     yield* sql`ALTER TABLE assistant_tasks ADD COLUMN dismissed_at TEXT`;
   }
+  // The thread it was launched from: a group request's waits follow the chain down from it.
+  yield* addColumns("assistant_tasks", [["launched_from_thread_id", "TEXT"]]);
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS assistant_tasks_launched_from_idx
+    ON assistant_tasks(launched_from_thread_id)`;
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {

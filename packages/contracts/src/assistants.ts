@@ -441,6 +441,8 @@ export const AssistantTask = Schema.Struct({
   createdAt: IsoDateTime,
   /** Hidden from the lists once set; the thread itself is untouched. Absent from older servers. */
   dismissedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /** The thread it was launched from. Absent from older servers. */
+  launchedFromThreadId: Schema.optional(Schema.NullOr(ThreadId)),
 });
 export type AssistantTask = typeof AssistantTask.Type;
 

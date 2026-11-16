@@ -17,6 +17,7 @@ interface TaskRow {
   readonly title: string;
   readonly created_at: string;
   readonly dismissed_at?: string | null;
+  readonly launched_from_thread_id?: string | null;
 }
 
 const toTask = (row: TaskRow): AssistantTask => ({
@@ -26,6 +27,7 @@ const toTask = (row: TaskRow): AssistantTask => ({
   title: row.title,
   createdAt: row.created_at,
   dismissedAt: row.dismissed_at ?? null,
+  launchedFromThreadId: (row.launched_from_thread_id ?? null) as ThreadId | null,
 });
 
 /**
@@ -73,8 +75,10 @@ const make = Effect.gen(function* () {
   return AssistantTasks.of({
     link: Effect.fn("AssistantTasks.link")(function* (task) {
       yield* sql`
-        INSERT OR IGNORE INTO assistant_tasks (thread_id, assistant_id, project_id, title, created_at)
-        VALUES (${task.threadId}, ${task.assistantId}, ${task.projectId}, ${task.title}, ${task.createdAt})`;
+        INSERT OR IGNORE INTO assistant_tasks
+          (thread_id, assistant_id, project_id, title, created_at, launched_from_thread_id)
+        VALUES (${task.threadId}, ${task.assistantId}, ${task.projectId}, ${task.title},
+          ${task.createdAt}, ${task.launchedFromThreadId ?? null})`;
       const stored = yield* forThread(task.threadId);
       if (Option.isSome(stored)) yield* PubSub.publish(changes, stored.value);
     }, Effect.orDie),
@@ -138,6 +142,7 @@ export const linkTaskLaunch = Effect.fn("AssistantTasks.linkLaunch")(function* (
     projectId: input.projectId,
     title: input.title,
     createdAt: yield* nowIso,
+    launchedFromThreadId: input.callerThreadId,
   });
   return true;
 });

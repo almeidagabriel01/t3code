@@ -55,6 +55,7 @@ it.effect("a launch from an assistant links its thread, and a repeat keeps the f
     assert.strictEqual(list.length, 1);
     assert.strictEqual(list[0]?.title, "Add retry");
     assert.strictEqual(list[0]?.assistantId, "jarvis");
+    assert.strictEqual(list[0]?.launchedFromThreadId, "assistant:jarvis:1");
     assert.strictEqual((yield* PubSub.take(subscription)).threadId, "thread-a");
 
     // A thread that is no assistant's, and a caller with no thread, link nothing.
@@ -75,7 +76,7 @@ it.effect("a launch from an assistant links its thread, and a repeat keeps the f
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("rows written before dismissing existed read as not dismissed", () =>
+it.effect("rows written before dismissing or launch origins existed read as neither", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const tasks = yield* Tasks.AssistantTasks;
@@ -84,6 +85,7 @@ it.effect("rows written before dismissing existed read as not dismissed", () =>
       VALUES ('old', 'a', 'p1', 'Old', '2026-01-01T00:00:00.000Z')`;
     const old = Option.getOrNull(yield* tasks.forThread(ThreadId.make("old")));
     assert.isNull(old?.dismissedAt);
+    assert.isNull(old?.launchedFromThreadId);
     const subscription = yield* PubSub.subscribe(tasks.changes);
     const dismissed = yield* tasks.setDismissed(ThreadId.make("old"), "2026-02-01T00:00:00.000Z");
     assert.strictEqual(Option.getOrNull(dismissed)?.dismissedAt, "2026-02-01T00:00:00.000Z");
