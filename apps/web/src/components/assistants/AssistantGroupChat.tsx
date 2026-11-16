@@ -840,7 +840,9 @@ function RequestBody(props: {
 
 /** A project label truncated before its number, so "Removed project 2" never reads as the first. */
 function ProjectLabelText(props: { readonly label: string; readonly testId?: string }) {
-  const [, head = props.label, tail] = /^(.*?)( \d+)?$/.exec(props.label) ?? [];
+  const match = /^(.*?)( \d+)?$/.exec(props.label);
+  const head = match?.[1] ?? props.label;
+  const tail = match?.[2];
   return (
     <span className="flex min-w-0" data-testid={props.testId}>
       <span className="truncate">{head}</span>

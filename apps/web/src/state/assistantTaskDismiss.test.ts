@@ -8,6 +8,7 @@ const run = vi.hoisted(() => vi.fn());
 vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: {} }));
 vi.mock("./server", () => ({ environmentServerConfigsAtom: Atom.make(new Map()) }));
 vi.mock("./session", () => ({ useEnvironmentsWithScope: () => new Set() }));
+vi.mock("./threads", () => ({ environmentThreadShells: {} }));
 vi.mock("./query", () => ({ useEnvironmentQuery: vi.fn() }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 vi.mock("@t3tools/client-runtime/state/assistants", async (importOriginal) => ({
