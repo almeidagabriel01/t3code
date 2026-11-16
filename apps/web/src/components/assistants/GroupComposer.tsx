@@ -11,9 +11,11 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
+  assistantGroupSendToRestore,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendRouting,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
@@ -114,6 +116,24 @@ export interface GroupReplyQuote {
   /** A reply's request runs in this project when it has one, so the picker is locked to it. */
   readonly projectId: ProjectId | null;
   readonly projectLabel: string | null;
+}
+
+/** A reply being written: the message it answers, quoted on top of the composer. */
+export interface GroupReplyTarget {
+  readonly id: AssistantGroupMessageId;
+  readonly projectId: ProjectId | null;
+  readonly quote: GroupReplyQuote;
+}
+
+export type GroupSendRouting = AssistantGroupSendRouting<GroupReplyTarget>;
+
+/** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
+export interface GroupLandedSend {
+  readonly tab: AssistantGroupTabKey | null;
+  /** The project it runs in; null lets the lead decide. */
+  readonly projectId: ProjectId | null;
+  /** What it went with; null once a landing let go of it. */
+  readonly routing: GroupSendRouting | null;
 }
 
 const LEAD_DECIDES = "lead";
@@ -268,7 +288,7 @@ function ReplyQuote(props: {
 type PromptState = { readonly value: string; readonly cursor: number; readonly expanded: number };
 
 /** A sent message the composer holds apart from the draft, with what its tab showed. */
-interface Outgoing extends AssistantGroupOutgoing {
+interface Outgoing extends AssistantGroupOutgoing, GroupLandedSend {
   readonly prompt: PromptState;
   readonly projectLabel: string;
   readonly error: string | null;
@@ -342,6 +362,11 @@ export function GroupComposer(props: {
   /** The model the next message runs on, picked here only for it. */
   readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
+  /** The reply and picks the next send goes with, so a failed one keeps them for its resend. */
+  readonly routing: GroupSendRouting;
+  readonly onLanded: (sent: GroupLandedSend) => void;
+  /** A failed send came back into view: the chat takes back what it went with. */
+  readonly onRestore: (routing: GroupSendRouting) => void;
   /** The chat the recipients line reads what routes the draft from. */
   readonly chat: AssistantGroupChatRef;
   readonly onJumpToReply: () => void;
@@ -517,14 +542,23 @@ export function GroupComposer(props: {
     setOutgoing(sent.tab, null);
     recalled.current = null;
     attached.clear(sent.attachmentIds);
+    props.onLanded(sent);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost; the outgoing store is outside React
+  const seenSend = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send coming into view takes its routing back; the outgoing store is outside React
   useLayoutEffect(() => {
+    const { seen, restore } = assistantGroupSendToRestore(seenSend.current, shown, props.tab);
+    seenSend.current = seen;
+    if (restore?.routing != null) props.onRestore(restore.routing);
     if (props.messages === undefined) return;
     for (const entry of outgoing) {
       const landed = assistantGroupLandedSend(entry, entry.prompt.value, props.messages.values());
       if (landed === "settle") settle(entry);
-      else if (landed === "clear-warning") setOutgoing(entry.tab, { ...entry, error: null });
+      else if (landed === "clear-warning") {
+        // The post landed: what it went with goes, and the user's edit is a new message.
+        setOutgoing(entry.tab, { ...entry, error: null, routing: null });
+        props.onLanded(entry);
+      }
     }
   });
 
@@ -554,6 +588,8 @@ export function GroupComposer(props: {
       requestId,
       text: value.trim(),
       sendKey,
+      projectId: props.replyingTo?.projectId ?? props.projectId,
+      routing: props.routing,
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);

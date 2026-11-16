@@ -1066,7 +1066,10 @@ const twoProjectPeople = () => [
   assistant("jarvis", "Jarvis", { isDefault: true }),
 ];
 const inRequest = (root: number) => ({ requestId: `m${root}` as never });
-const twoRequests = (other: ProjectId = OTHER_PROJECT) =>
+const twoRequests = (
+  other: ProjectId = OTHER_PROJECT,
+  more: ReadonlyArray<ReturnType<typeof message>> = [],
+) =>
   publishGroupChat(
     [
       message(1, { ...inRequest(1), projectId: PROJECT_ID, title: "Budget review" }),
@@ -1078,6 +1081,7 @@ const twoRequests = (other: ProjectId = OTHER_PROJECT) =>
         text: "Budget answered",
       }),
       message(3, { ...inRequest(3), projectId: other, title: "Ship the app" }),
+      ...more,
     ],
     [
       task("t-1", 1, {
@@ -1403,6 +1407,49 @@ it("keeps what the user writes in another tab during a send, and a refused one i
   await userEvent.click(submit);
   await eventually(() => expect(fakeGroupChat.posts.at(-1)?.text).toBe("@bo second"));
   await expectComposer("meanwhile");
+});
+
+it("keeps a cut-off reply's quote and id across another tab and the chat reopening, until its post shows", async () => {
+  twoRequests(SITE_PROJECT);
+  await using screen = await openChat({
+    people: sitePeople(),
+    team: team({ chat: scopedChat() }),
+  });
+  const chip = main().getByTestId("group-reply-chip");
+  const warning = page.getByText("Couldn't confirm the send.", { exact: false });
+  await userEvent.click(tab("render"));
+  await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
+  fakeGroupChat.postCut = true;
+  await userEvent.type(composer(), "one more{Enter}");
+  await expect.element(warning).toBeVisible();
+  await userEvent.click(tab("site"));
+  await expect.element(chip).not.toBeInTheDocument();
+  await userEvent.click(tab("render"));
+  await expect.element(chip).toHaveTextContent("Replying to Ada Budget answered");
+  await screen.router.navigate({ to: "/assistants" });
+  await expect.element(composer()).not.toBeInTheDocument();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+  });
+  await expect.element(chip).toHaveTextContent("Replying to Ada Budget answered");
+  await userEvent.click(page.getByRole("button", { name: "Submit message" }));
+  await eventually(() => expect(fakeGroupChat.posts).toHaveLength(2));
+  const [first, resent] = fakeGroupChat.postRequestIds;
+  expect([fakeGroupChat.posts[1]?.replyToMessageId, resent]).toEqual(["m2", first]);
+  // The post had landed: the chat showing it drops the quote with the warning.
+  twoRequests(SITE_PROJECT, [
+    message(4, {
+      ...inRequest(1),
+      projectId: PROJECT_ID,
+      replyToMessageId: "m2" as never,
+      text: "one more",
+      clientRequestId: first as string,
+    }),
+  ]);
+  await expect.element(warning).not.toBeInTheDocument();
+  await expect.element(chip).not.toBeInTheDocument();
+  await expectComposer("");
 });
 
 it("shows every request in All as one line with its project, opened in place, and marks nothing read", async () => {

@@ -16,6 +16,7 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupProjectLabel,
@@ -159,9 +160,11 @@ import {
 import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
+  type GroupLandedSend,
   type GroupProjectOption,
-  type GroupReplyQuote,
+  type GroupReplyTarget as ReplyTarget,
   type GroupSendResult,
+  type GroupSendRouting,
 } from "./GroupComposer";
 import { GroupMentionChip, type GroupMentionProject } from "./GroupMentionChip";
 import {
@@ -998,12 +1001,6 @@ function GroupTabs(props: {
   );
 }
 
-interface ReplyTarget {
-  readonly id: AssistantGroupMessage["id"];
-  readonly projectId: ProjectId | null;
-  readonly quote: GroupReplyQuote;
-}
-
 /** What the composer reaches in the feed, which is remounted for each tab. */
 interface GroupFeedHandle {
   readonly jumpTo: (messageId: AssistantGroupMessage["id"]) => void;
@@ -1535,19 +1532,7 @@ export function AssistantGroupChat(props: {
         : { projectId: groupComposerProject }),
       ...(messageModel === undefined ? {} : { modelSelection: messageModel }),
     });
-    if (reply.ok) {
-      feedHandle.current?.followEnd();
-      // A reply or tab the user opened while the post was on its way stays.
-      setReplyTo((current) => (current === replyTo ? null : current));
-      setComposerPick((current) => (current === composerPick ? null : current));
-      setModelPick((current) => (current === modelPick ? null : current));
-      // A send that lands in another tab's project takes the user there, so it never vanishes.
-      const landed = replyTo?.projectId ?? groupComposerProject;
-      if (tabs !== null && tab !== null) {
-        setSavedTab((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed) ?? saved);
-      }
-      return { ok: true };
-    }
+    if (reply.ok) return { ok: true };
     return {
       ok: false,
       message:
@@ -1556,6 +1541,29 @@ export function AssistantGroupChat(props: {
           ? "This group is archived. Restore it to write here."
           : reply.message,
     };
+  };
+
+  // One way a send lands, by its reply or by the chat showing its post.
+  const landed = (sent: GroupLandedSend) => {
+    feedHandle.current?.followEnd();
+    // A reply or tab the user opened while the post was on its way stays.
+    setReplyTo((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setComposerPick((current) =>
+      assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
+    );
+    setModelPick((current) => assistantGroupLandedPick(current, sent.routing?.modelPick ?? null));
+    // A send that lands in another tab's project takes the user there, so it never vanishes.
+    if (tabs !== null && sent.tab !== null) {
+      const from = sent.tab;
+      setSavedTab(
+        (saved) => assistantGroupTabAfterSend(tabs, from, saved, sent.projectId) ?? saved,
+      );
+    }
+  };
+  const restore = (routing: GroupSendRouting) => {
+    setReplyTo(routing.reply);
+    setComposerPick(routing.projectPick);
+    setModelPick(routing.modelPick);
   };
 
   const body = () => {
@@ -1651,6 +1659,9 @@ export function AssistantGroupChat(props: {
           }}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
+          routing={{ reply: replyTo, projectPick: composerPick, modelPick }}
+          onLanded={landed}
+          onRestore={restore}
           history={sentByUser}
           messages={live?.messages}
           onSend={send}
