@@ -32,6 +32,7 @@ const reactTests = [
   "src/features/usage/AccountSessions.test.tsx",
   "src/features/usage/WeekSplitOverlay.test.tsx",
   "src/features/usage/UsageLimitsWeekSplit.test.tsx",
+  "src/features/usage/UsageRouteScreen.test.tsx",
   "src/features/projects/useProjectOrganize.test.tsx",
   "src/features/threads/ThreadSideChatsRow.test.tsx",
   "src/features/threads/ThreadSideChatBar.test.tsx",
