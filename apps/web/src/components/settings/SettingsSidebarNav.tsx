@@ -156,7 +156,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
-  const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
+  const [query, setQuery] = useState("");
+  const searchableItems = useAvailableSettingsSearchItems(query, scopeSearch);
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
     paths: group.paths.filter(
@@ -177,7 +178,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       "",
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
   // In a narrow page the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);

@@ -657,16 +657,20 @@ export const fakeIntegrations = {
   state: null as IntegrationsState | null,
   begun: [] as IntegrationBeginConnectInput[],
   beginResult: null as IntegrationBeginConnectResult | null,
+  /** Live integrations streams opened so far. */
+  subscriptions: 0,
 };
 const integrationSubscribers = new Set<Queue.Queue<IntegrationsState>>();
-handlers[WS_METHODS.integrationsSubscribe] = () =>
-  subscribe<IntegrationsState>(
+handlers[WS_METHODS.integrationsSubscribe] = () => {
+  fakeIntegrations.subscriptions += 1;
+  return subscribe<IntegrationsState>(
     fakeIntegrations.state === null ? [] : [fakeIntegrations.state],
     (queue) => {
       integrationSubscribers.add(queue);
       return () => integrationSubscribers.delete(queue);
     },
   );
+};
 handlers[WS_METHODS.integrationsBeginConnect] = (input: IntegrationBeginConnectInput) => {
   fakeIntegrations.begun.push(input);
   return fakeIntegrations.beginResult === null

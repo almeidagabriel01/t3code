@@ -15,7 +15,6 @@ export function HeavyNoticesRow() {
   return (
     <SettingsRow
       {...searchableSetting("heavy-work-notices")}
-      description="Toasts when a heavy job fails, gets stuck or runs on another machine than planned, on this Mac or Linux."
       control={
         <Select
           value={mode}

@@ -19,6 +19,7 @@ import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { toastManager } from "../ui/toast";
 import { AssistantAvatar } from "./assistantPresentation";
 import { SettingsSection } from "../settings/settingsLayout";
+import { searchableSetting } from "../settings/settingsSearch";
 
 function AccessRow(props: {
   readonly label: string;
@@ -187,7 +188,7 @@ export function ProjectAssistantAccessSettings(props: {
   );
   if (members.length === 0) return null;
   return (
-    <SettingsSection title="Assistants with access">
+    <SettingsSection {...searchableSetting("assistants-with-access")}>
       {members.map((member) => (
         <div key={`${member.environmentId}:${member.id}`} className="px-3 py-3 sm:px-4">
           <ProjectAssistantAccess environmentId={member.environmentId} projectId={member.id} />

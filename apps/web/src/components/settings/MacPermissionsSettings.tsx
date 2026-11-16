@@ -14,7 +14,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 const PANE_ICONS: Record<MacPermissionPane, ReactNode> = {
   "screen-recording": <MonitorIcon className="size-3.5" />,
@@ -51,7 +51,7 @@ function MacPermissionsSections({ environmentId }: { readonly environmentId: Env
   const permissions = query.data;
   return (
     <SettingsSection
-      title="Mac permissions"
+      title={settingCopy("mac-permissions").title}
       headerAction={
         <Button
           variant="outline"
@@ -66,7 +66,9 @@ function MacPermissionsSections({ environmentId }: { readonly environmentId: Env
       {permissions === null ? (
         <SettingsRow
           {...searchableSetting("mac-permissions")}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           title={query.error === null ? "Checking..." : "Could not check the permissions"}
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           description={
             query.error ?? "Reading what macOS lets T3 Code do. A macOS prompt may appear."
           }
@@ -109,10 +111,12 @@ export function MacPermissionsSettingsPanel() {
   return (
     <SettingsPageContainer>
       {environmentId === null ? (
-        <SettingsSection title="Mac permissions">
+        <SettingsSection title={settingCopy("mac-permissions").title}>
           <SettingsRow
             {...searchableSetting("mac-permissions")}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="Not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Mac permissions apply when T3 Code runs on a Mac, and a Mac environment is connected."
           />
         </SettingsSection>

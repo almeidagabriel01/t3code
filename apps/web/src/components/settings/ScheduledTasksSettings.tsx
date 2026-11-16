@@ -159,6 +159,7 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
@@ -504,7 +505,7 @@ export function ScheduledTasksSettings(target: {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Scheduled tasks"
+        {...searchableSetting("scheduled-tasks")}
         variant="plain"
         headerAction={
           <Button
@@ -522,6 +523,7 @@ export function ScheduledTasksSettings(target: {
         }
       >
         {scope.kind === "unavailable" ? (
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           <SettingsSection title="Unavailable selection">
             <SettingsRow title={scope.message} />
           </SettingsSection>
@@ -666,14 +668,18 @@ function ScheduledTaskEnvironmentList({
       })}
       {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           title="Task unavailable"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
           description="This task was deleted or belongs to a different project. Check your project filter."
           role="status"
         />
       ) : null}
       {populated.length === 0 && loaded.length > 0 ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
           title="No scheduled tasks"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
           description="No tasks match this environment and project selection."
         />
       ) : null}
@@ -755,25 +761,33 @@ function ScheduledTaskEnvironmentSection({
     >
       {!connected ? (
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
           title="Environment disconnected"
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
           description={`Reconnect ${environment.label} to view its scheduled tasks.`}
         />
       ) : tasksQuery.error ? (
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
         <SettingsRow title="Could not load scheduled tasks" description={tasksQuery.error} />
       ) : !tasks ? (
+        // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading state, not a setting
         <SettingsRow title="Loading scheduled tasks…" role="status" />
       ) : (
         <>
           {taskId && !linkedTask ? (
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
               title="Task unavailable"
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
               description="This task was deleted or belongs to a different project. Check your project filter."
               role="status"
             />
           ) : null}
           {tasks.length === 0 ? (
             <SettingsRow
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
               title="No scheduled tasks"
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
               description="No tasks match this environment and project selection."
             />
           ) : (

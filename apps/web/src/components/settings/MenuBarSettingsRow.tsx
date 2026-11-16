@@ -14,7 +14,6 @@ export function MenuBarSettingsRow({
   return (
     <SettingsRow
       {...searchableSetting("show-in-menu-bar")}
-      description="List threads that need you, running threads and pinned threads in the macOS menu bar."
       resetAction={
         checked !== DEFAULT_UNIFIED_SETTINGS.showInMenuBar ? (
           <SettingResetButton

@@ -1223,7 +1223,9 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   return (
     <SettingsRow
       className="bg-muted/15"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- draft form for a new keybinding, not a setting
       title="New keybinding"
+      // oxlint-disable-next-line t3code/require-searchable-settings-copy -- draft form labels for a new keybinding, not a setting
       description={
         <span className="flex h-6 items-center gap-1.5">
           <span className="text-xs leading-none text-muted-foreground/70">When</span>

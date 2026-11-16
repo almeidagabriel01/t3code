@@ -115,7 +115,9 @@ function EnvironmentSecretProviders({
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No secret providers configured."
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="Add a 1Password account, then pick it as the source of a provider variable."
           />
         ) : (
@@ -136,6 +138,7 @@ function EnvironmentSecretProviders({
                     <span className="min-w-0 wrap-anywhere">{config.label}</span>
                   </span>
                 }
+                // oxlint-disable-next-line t3code/require-searchable-settings-copy -- provider account, not a setting
                 description={
                   classified.kind === "one_password" && kind ? (
                     <span className="flex min-w-0 items-center gap-1">

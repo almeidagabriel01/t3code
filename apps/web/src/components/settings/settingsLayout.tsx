@@ -190,8 +190,9 @@ export function SettingsSearchTarget({
   children,
   // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
   title: _searchTitle,
+  description: _searchDescription,
   ...targetProps
-}: ComponentPropsWithoutRef<"div">) {
+}: ComponentPropsWithoutRef<"div"> & { description?: string }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
   return (
     <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
@@ -229,9 +230,12 @@ export function SettingsSection({
   variant = "grouped",
   children,
   className,
+  // Sections draw no description; `searchableSetting` passes one for rows.
+  description: _searchDescription,
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
+  description?: string;
   hideTitle?: boolean;
   icon?: ReactNode;
   titleAction?: ReactNode;

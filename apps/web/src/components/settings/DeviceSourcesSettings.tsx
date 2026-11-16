@@ -39,6 +39,7 @@ import {
 } from "./easDeviceHostsSettings.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsSection } from "./settingsLayout";
+import { searchableSetting } from "./settingsSearch";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SimlockDeviceHostEditor } from "./SimlockDeviceHostEditor";
 import {
@@ -568,7 +569,7 @@ export function DeviceSourcesSettings(props: {
   );
 
   return (
-    <SettingsSection id="device-sources" title="Device sources" headerAction={addMenu}>
+    <SettingsSection {...searchableSetting("device-sources")} headerAction={addMenu}>
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
       ))}

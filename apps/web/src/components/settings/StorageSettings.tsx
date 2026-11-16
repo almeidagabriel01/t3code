@@ -48,7 +48,8 @@ import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsGroup } from "./SettingsGroup";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import {
   useClearScopedSettings,
   useScopedSettings,
@@ -76,9 +77,6 @@ export function WorktreesDirectoryRow() {
   return (
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
-      }
       serverScoped
       settingKeys={["worktreesDirectory"]}
       resetAction={
@@ -316,6 +314,7 @@ function CleanupResults({
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
             title={<span className="wrap-anywhere select-text">{name}</span>}
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- cleanup report details, not a setting
             description={
               <span className="block space-y-2 wrap-anywhere select-text">
                 <span className={`block ${entry.outcome === "failed" ? "text-destructive" : ""}`}>
@@ -471,14 +470,14 @@ function CleanupSection() {
     ).finally(() => setPending(false));
   };
   return (
-    <SettingsSection id="storage-cleanup" title="Cleanup" variant="plain">
+    <SettingsSection {...searchableSetting("storage-cleanup")} variant="plain">
       <SettingsGroup>
         <SettingsRow
           {...searchableSetting("storage-delete-now")}
           description={
             <span>
               {!hasRules
-                ? "Turn on a cleanup rule to use this."
+                ? settingCopy("storage-delete-now").description
                 : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
                       {supported.length > 1 ? `${label}: ` : ""}
@@ -502,7 +501,7 @@ function CleanupSection() {
       {summaries.some(({ report }) => report !== null) && (
         <FoldedSettingsSection
           id="storage-cleanup-last-run"
-          title="Last run"
+          title={settingCopy("storage-cleanup-last-run").title}
           headerPlacement="inside"
           summary={lastRunSummary(
             summaries.filter(({ report }) => report !== null),
@@ -606,7 +605,7 @@ export function WorktreeCleanupSection() {
     )
   ) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection {...searchableSetting("storage-worktrees")} variant="plain">
         <SettingsScopeNotice inline target="all">
           Update the selected machines to configure project worktree cleanup.
         </SettingsScopeNotice>
@@ -615,24 +614,24 @@ export function WorktreeCleanupSection() {
   }
   if (!supportsStorageCleanup(connectedEnvironments)) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection {...searchableSetting("storage-worktrees")} variant="plain">
         <StorageCleanupScopeNotice />
       </SettingsSection>
     );
   }
 
   return (
-    <SettingsSection id="storage-worktrees" title="Cleanup">
+    <SettingsSection {...searchableSetting("storage-worktrees")}>
       <>
         {isProjectScope && (
           <SettingsRow
-            title="Automatic worktree cleanup"
+            {...settingCopy("storage-worktree-mode")}
             description={
               mode === "off"
-                ? "Keep this project's worktrees until you delete them manually."
+                ? MAINTENANCE_SETTINGS_COPY.worktreeCleanupOff
                 : mode === "custom"
-                  ? "Use these rules for this project."
-                  : "Use each machine's worktree cleanup settings."
+                  ? MAINTENANCE_SETTINGS_COPY.worktreeCleanupCustom
+                  : settingCopy("storage-worktree-mode").description
             }
             serverScoped
             settingKeys={["worktreeCleanup"]}
@@ -670,10 +669,9 @@ export function WorktreeCleanupSection() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
+              {...settingCopy("storage-worktree-on-delete")}
               status={ruleStatus("worktreeOnDelete")}
               managedPaths={lockablePath("worktreeOnDelete")}
-              description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -685,10 +683,9 @@ export function WorktreeCleanupSection() {
             />
             {mergedSupported ? (
               <SettingsRow
-                title="Delete merged worktrees"
+                {...settingCopy("storage-worktree-merged")}
                 status={ruleStatus("worktreeMerged") ?? ruleStatus("worktreeMergedAfterDays")}
                 managedPaths={lockablePath("worktreeMerged")}
-                description="Remove worktrees whose commits are already in the default branch, merged locally or through a pull request."
                 serverScoped={!isProjectScope}
               >
                 <MergedWorktreesControl
@@ -704,10 +701,9 @@ export function WorktreeCleanupSection() {
               </SettingsScopeNotice>
             )}
             <SettingsRow
-              title="Delete inactive worktrees"
+              {...settingCopy("storage-worktree-inactive")}
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
@@ -719,10 +715,9 @@ export function WorktreeCleanupSection() {
             />
             {mergedSupported && runnerCopyApplies && (
               <SettingsRow
-                title="Delete the Linux copy too"
+                {...settingCopy("storage-worktree-runner-copy")}
                 status={ruleStatus("worktreeRunnerCopy")}
                 managedPaths={lockablePath("worktreeRunnerCopy")}
-                description="When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine."
                 serverScoped={!isProjectScope}
                 control={
                   <Switch
@@ -744,7 +739,7 @@ export function WorktreeCleanupSection() {
                     true,
                 ) && (
                   <SettingsRow
-                    title="Delete settled worktrees"
+                    {...settingCopy("storage-worktree-settled")}
                     managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
@@ -754,7 +749,6 @@ export function WorktreeCleanupSection() {
                     ]
                       .filter(Boolean)
                       .join(". ")}
-                    description="Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept."
                     serverScoped={!isProjectScope}
                     control={
                       <RetentionControl
@@ -778,10 +772,10 @@ export function WorktreeCleanupSection() {
                   managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
-                      ? "Includes ignored files, except node_modules."
+                      ? settingCopy("storage-worktree-keep-when").description
                       : settings.worktreeKeepWhen === "tracked-changes"
-                        ? "Deletes untracked and ignored files, including .env."
-                        : "Keeps edits and untracked files. Deletes ignored files, including .env."
+                        ? MAINTENANCE_SETTINGS_COPY.keepWhenTracked
+                        : MAINTENANCE_SETTINGS_COPY.keepWhenUncommitted
                   }
                   serverScoped={!isProjectScope}
                   control={
@@ -876,7 +870,7 @@ export function StorageCleanupSections() {
     return (
       <>
         {databaseStorageNotice}
-        <SettingsSection id="storage-artifacts" title="Artifacts and logs" variant="plain">
+        <SettingsSection {...searchableSetting("storage-artifacts")} variant="plain">
           <StorageCleanupScopeNotice />
         </SettingsSection>
       </>
@@ -886,13 +880,12 @@ export function StorageCleanupSections() {
   return (
     <>
       {databaseStorageNotice}
-      <SettingsSection id="storage-artifacts" title="Artifacts and logs">
+      <SettingsSection {...searchableSetting("storage-artifacts")}>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old browser artifacts"
+            {...settingCopy("storage-browser-artifacts")}
             status={artifactsStatus}
             managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
-            description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
               <RetentionControl
@@ -905,10 +898,9 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old rotated logs"
+            {...settingCopy("storage-rotated-logs")}
             status={logsStatus}
             managedPaths={["storageCleanup.logsAfterDays"]}
-            description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={
               <RetentionControl
@@ -921,10 +913,9 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old worktree snapshots"
+            {...settingCopy("storage-worktree-snapshots")}
             status={snapshotsStatus}
             managedPaths={["storageCleanup.worktreeSnapshotsAfterDays"]}
-            description="Delete the changes saved before cleanup removed a worktree after this many days. Older ones can no longer be restored; the thread still recreates its worktree from the branch."
             serverScoped
             control={
               <RetentionControl
@@ -937,9 +928,8 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Summarize old tool output"
+            {...settingCopy("storage-tool-output")}
             settingKeys={["toolOutputHistoryDays"]}
-            description="Replace detailed tool output in thread history, such as screenshots, file contents and command output, with a short summary after this many days. Off keeps everything."
             serverScoped
             control={
               <RetentionControl

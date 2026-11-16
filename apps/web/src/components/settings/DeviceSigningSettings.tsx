@@ -3,12 +3,13 @@ import { useState } from "react";
 
 import { Input } from "../ui/input";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 function SigningField(props: {
   readonly settingKey: "appleTeamId" | "appleRunnerBundleId";
   readonly title: string;
-  readonly description: string;
+  readonly description?: string;
   readonly placeholder: string;
   readonly invalidMessage: string;
   readonly isValid: (value: string) => boolean;
@@ -62,11 +63,10 @@ function SigningField(props: {
 export function DeviceSigningSettings() {
   const settings = useScopedSettings();
   return (
-    <SettingsSection id="device-signing" title="iPhone signing">
+    <SettingsSection {...searchableSetting("device-signing")}>
       <SigningField
         settingKey="appleTeamId"
-        title="Apple Team ID"
-        description="Agents need your team id to sign the runner they install on a USB iPhone. Find it under Membership in your Apple Developer account."
+        {...settingCopy("apple-team-id")}
         placeholder="ABCDE12345"
         invalidMessage="A Team ID is 10 uppercase letters and digits, such as ABCDE12345."
         isValid={isAppleTeamId}
@@ -75,17 +75,13 @@ export function DeviceSigningSettings() {
       />
       <SigningField
         settingKey="appleRunnerBundleId"
-        title="Runner bundle id (optional)"
-        description="Leave empty to use the default. Set it when the default id is taken by another team."
+        {...settingCopy("apple-runner-bundle-id")}
         placeholder="com.yourname.agentdevice.runner"
         invalidMessage="A bundle id is reverse-DNS, such as com.yourname.agentdevice.runner."
         isValid={isAppleBundleId}
         value={settings.appleRunnerBundleId}
       />
-      <SettingsRow
-        title="First run on the phone"
-        description="Trust the developer profile in Settings, General, VPN & Device Management, and turn on Developer Mode in Privacy & Security."
-      />
+      <SettingsRow {...settingCopy("device-first-run")} />
     </SettingsSection>
   );
 }

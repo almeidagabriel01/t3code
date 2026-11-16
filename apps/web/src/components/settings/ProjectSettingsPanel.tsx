@@ -45,6 +45,8 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { CONNECTION_SETTINGS_COPY } from "./settingsSearchConnectionItems";
 import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
@@ -433,7 +435,7 @@ function ProjectDetail({
     </div>
   );
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection {...searchableSetting("project-checkouts")}>
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         Grouping rule decides how each checkout joins project groups in the sidebar. Changing it can
         move a checkout to a different project.
@@ -443,6 +445,7 @@ function ProjectDetail({
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- fallback label of a data row, not a setting
               title={member.environmentLabel ?? "Environment"}
               description={member.workspaceRoot}
               control={checkoutControls(member)}
@@ -513,7 +516,7 @@ function ProjectDetail({
             Can't find a setting? Keep this project picked above and hop to any other settings page.
           </AlertDescription>
         </Alert>
-        <SettingsSection id="project-overview" title="Project" hideTitle>
+        <SettingsSection {...searchableSetting("project-overview")} hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
@@ -522,8 +525,7 @@ function ProjectDetail({
             </p>
           ) : null}
           <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            {...searchableSetting("project-name")}
             resetAction={
               canResetScratchTitle ? (
                 <SettingResetButton
@@ -562,7 +564,7 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Project icon"
+            {...searchableSetting("project-icon")}
             description={
               projectIcon?.kind === "lucide"
                 ? `${projectIcon.name} · ${projectIcon.color}`
@@ -570,7 +572,7 @@ function ProjectDetail({
                   ? `${projectIcon.text} · ${projectIcon.color}`
                   : projectIcon?.kind === "emoji"
                     ? projectIcon.emoji
-                    : (faviconPath ?? "Automatic")
+                    : (faviconPath ?? CONNECTION_SETTINGS_COPY.projectIconAutomatic)
             }
             resetAction={
               group.memberProjects.some((member) => !hasDefaultProjectIcon(member)) ? (
@@ -610,8 +612,7 @@ function ProjectDetail({
           {canOrganize ? (
             <>
               <SettingsRow
-                title="Pin"
-                description="Pinned projects come first in project pickers."
+                {...settingCopy("project-pin")}
                 control={
                   <Switch
                     checked={group.pinned}
@@ -627,11 +628,11 @@ function ProjectDetail({
                 }
               />
               <SettingsRow
-                title="Archive"
+                {...settingCopy("project-archive")}
                 description={
                   group.archived
-                    ? "Hidden from project pickers. Threads and files are kept."
-                    : "Hides the project from project pickers. Threads and files are kept."
+                    ? CONNECTION_SETTINGS_COPY.projectArchivedHidden
+                    : settingCopy("project-archive").description
                 }
                 control={
                   <Button
@@ -658,21 +659,23 @@ function ProjectDetail({
         <ProjectActionsSettings />
         <ProjectAssistantAccessSettings members={group.memberProjects} />
         {checkoutChoices}
-        <SettingsSection title="Danger">
+        <SettingsSection {...searchableSetting("project-danger")}>
           <SettingsRow
             title={
               hasOtherMembers
-                ? "Remove checkout"
+                ? CONNECTION_SETTINGS_COPY.removeCheckoutTitle
                 : group.memberProjects.length > 1
-                  ? "Remove this project everywhere"
-                  : "Remove project"
+                  ? CONNECTION_SETTINGS_COPY.removeEverywhereTitle
+                  : settingCopy("project-remove").title
             }
             description={
               hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                ? CONNECTION_SETTINGS_COPY.removeCheckoutDescription
                 : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
+                  ? CONNECTION_SETTINGS_COPY.removeEverywhereDescription(
+                      group.memberProjects.length,
+                    )
+                  : settingCopy("project-remove").description
             }
             control={
               <Button

@@ -8,7 +8,8 @@ import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 
 const LOCAL_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -58,8 +59,8 @@ export function ProviderBudgetSection({
       }
     >
       <SettingsRow
-        title="Budget (USD)"
-        description={`Priced from this app's own turns, so it can miss usage from elsewhere. Periods start at midnight in ${timeZone}.`}
+        title={settingCopy("provider-budget-amount").title}
+        description={`${PROVIDER_SETTINGS_COPY.budgetPricedPrefix}${timeZone}.`}
         control={
           <DraftInput
             id={`provider-instance-${instanceId}-budget-amount`}
@@ -87,7 +88,7 @@ export function ProviderBudgetSection({
       {budget === undefined ? null : (
         <>
           <SettingsRow
-            title="Period"
+            title={settingCopy("provider-budget-period").title}
             control={
               <Select
                 value={budget.period}
@@ -111,8 +112,7 @@ export function ProviderBudgetSection({
             }
           />
           <SettingsRow
-            title="Warn at (%)"
-            description="The status bar turns yellow at this share of the budget."
+            {...settingCopy("provider-budget-warn")}
             control={
               <DraftInput
                 size="sm"
@@ -129,8 +129,7 @@ export function ProviderBudgetSection({
             }
           />
           <SettingsRow
-            title="Block new turns when exceeded"
-            description="Turns already running finish. Agents and scheduled tasks are blocked too."
+            {...settingCopy("provider-budget-block")}
             control={
               <Switch
                 checked={budget.blockWhenExceeded}

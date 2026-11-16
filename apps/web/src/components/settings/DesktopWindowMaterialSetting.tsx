@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { GENERAL_SETTINGS_COPY } from "./settingsSearchGeneralItems";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 function materialStatus(state: DesktopWindowMaterialState | null): string {
@@ -38,7 +39,7 @@ function materialStatus(state: DesktopWindowMaterialState | null): string {
     case "active":
       return state.applied === "windows-mica" ? "Using Mica." : "Using Liquid Glass.";
     default:
-      return "Use the system material in the sidebar and title bar.";
+      return GENERAL_SETTINGS_COPY.systemMaterialAtRest;
   }
 }
 
@@ -67,7 +68,7 @@ export function DesktopWindowMaterialSetting() {
         {...searchableSetting("desktop-system-material")}
         description={
           presetForcesMaterial && !statusTakesPriority
-            ? "On while the Liquid Glass style is selected."
+            ? GENERAL_SETTINGS_COPY.systemMaterialPreset
             : materialStatus(state)
         }
         control={

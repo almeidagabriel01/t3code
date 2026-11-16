@@ -40,7 +40,8 @@ import {
 } from "./ImessageSettings.logic";
 import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { ASSISTANT_SETTINGS_COPY } from "./settingsSearchAssistantItems";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 import { UndeliveredRepliesRow } from "./UndeliveredRepliesRow";
 
 const SECTION_ICON = "size-4 text-muted-foreground";
@@ -125,8 +126,8 @@ function HandleSection(props: {
       />
       {suggestions.length > 0 ? (
         <SettingsRow
-          title="Found on this Mac"
-          description={`Messages here sends from ${suggestions.map((handle) => formatImessageHandleInput(handle)).join(" and ")}.`}
+          title={settingCopy("imessage-found-on-mac").title}
+          description={`${ASSISTANT_SETTINGS_COPY.imessageFoundFrom} ${suggestions.map((handle) => formatImessageHandleInput(handle)).join(" and ")}.`}
           control={
             <Button variant="outline" disabled={!canAct} onClick={() => void addFound()}>
               <PlusIcon />
@@ -186,10 +187,11 @@ function ImessageEnvironment(props: {
   if (settings === null) {
     return (
       <SettingsSection
-        title={`iMessage${suffix}`}
+        title={`${settingCopy("imessage").title}${suffix}`}
         icon={<MessageCircleIcon className={SECTION_ICON} />}
       >
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- loading and error state, not a setting
           title={error ? "iMessage settings could not be loaded" : "Loading iMessage settings…"}
           description={error ?? undefined}
         />
@@ -215,7 +217,7 @@ function ImessageEnvironment(props: {
   return (
     <>
       <SettingsSection
-        title={`Access${suffix}`}
+        title={`${settingCopy("imessage-access").title}${suffix}`}
         icon={<ShieldCheckIcon className={SECTION_ICON} />}
         headerAction={
           <Button size="xs" variant="ghost-muted" onClick={() => checkAgain()}>
@@ -225,19 +227,21 @@ function ImessageEnvironment(props: {
         }
       >
         <SettingsRow
+          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- status badge, not a setting
           title={
             <span className="inline-flex items-center gap-2">
-              Full Disk Access
+              {settingCopy("imessage-full-disk-access").title}
               <Badge variant={accessState.granted ? "success" : "warning"} size="sm">
                 {accessState.granted ? "Granted" : "Not granted"}
               </Badge>
             </span>
           }
-          description={accessState.message ?? "T3 Code can read your messages on this Mac."}
+          description={accessState.message ?? settingCopy("imessage-full-disk-access").description}
         />
         {settings.lastError === "automation_denied" ||
         settings.lastError === "messages_not_signed_in" ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting
             title="Messages"
             description={
               <span className="text-destructive-foreground">
@@ -250,11 +254,11 @@ function ImessageEnvironment(props: {
 
       <SettingsSection
         {...(props.first ? { id: searchableSetting("imessage").id } : {})}
-        title={`iMessage${suffix}`}
+        title={`${settingCopy("imessage").title}${suffix}`}
         icon={<MessageCircleIcon className={SECTION_ICON} />}
       >
         <SettingsRow
-          title="Status"
+          {...settingCopy("imessage-status")}
           description={
             <span
               className={settings.status === "error" ? "text-destructive-foreground" : undefined}
@@ -276,8 +280,8 @@ function ImessageEnvironment(props: {
           onResend={actions.resendUndelivered}
         />
         <SettingsRow
-          title="Use iMessage"
-          description={hint ?? "Answer messages from the people listed below."}
+          title={settingCopy("imessage-use").title}
+          description={hint ?? settingCopy("imessage-use").description}
           status={<FieldError message={switchError} />}
           control={
             <Switch
@@ -288,13 +292,13 @@ function ImessageEnvironment(props: {
             />
           }
         />
-        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} />
+        <ChannelLanguageRow environmentId={environmentId} disabled={!canAct} page="imessage" />
       </SettingsSection>
 
       <HandleSection
-        title={`Chat with yourself${suffix}`}
-        label="Your phone numbers and emails"
-        description="Write to yourself in Messages; the assistant answers in the same chat, each reply starting with its name."
+        title={`${ASSISTANT_SETTINGS_COPY.chatWithYourself}${suffix}`}
+        label={settingCopy("imessage-own-handles").title}
+        description={ASSISTANT_SETTINGS_COPY.ownHandlesDescription}
         emptyTitle="No numbers or emails yet"
         icon={<UserRoundIcon className={SECTION_ICON} />}
         handles={settings.selfHandles}
@@ -304,9 +308,9 @@ function ImessageEnvironment(props: {
       />
 
       <HandleSection
-        title={`Other accounts${suffix}`}
-        label="Allowed phone numbers and emails"
-        description="If this Mac's Messages uses an Apple ID of its own, these people can message it."
+        title={`${ASSISTANT_SETTINGS_COPY.otherAccounts}${suffix}`}
+        label={settingCopy("imessage-allowed-handles").title}
+        description={ASSISTANT_SETTINGS_COPY.allowedHandlesDescription}
         emptyTitle="No other accounts"
         icon={<AtSignIcon className={SECTION_ICON} />}
         handles={settings.allowedHandles}
@@ -325,9 +329,14 @@ export function ImessageSettingsPanel() {
   return (
     <SettingsPageContainer>
       {environmentIds.length === 0 ? (
-        <SettingsSection title="iMessage" icon={<MessageCircleIcon className={SECTION_ICON} />}>
+        <SettingsSection
+          title={settingCopy("imessage").title}
+          icon={<MessageCircleIcon className={SECTION_ICON} />}
+        >
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             title="iMessage is not available"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
             description="Connect to a Mac running T3 Code, then its iMessage settings appear here."
           />
         </SettingsSection>
@@ -347,11 +356,11 @@ export function ImessageSettingsPanel() {
               first={index === 0}
             />
           ))}
-          <SettingsSection title="Good to know" icon={<InfoIcon className={SECTION_ICON} />}>
-            <SettingsRow
-              title="Approvals and limits"
-              description="Approvals arrive as numbered choices: reply with the number. Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
-            />
+          <SettingsSection
+            {...searchableSetting("imessage-good-to-know")}
+            icon={<InfoIcon className={SECTION_ICON} />}
+          >
+            <SettingsRow {...searchableSetting("imessage-limits")} />
           </SettingsSection>
         </>
       )}

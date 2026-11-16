@@ -41,6 +41,7 @@ import {
   isAdvancedTypographyTarget,
   revealSettingsSearchTarget,
   searchableSetting,
+  settingCopy,
 } from "./settingsSearch";
 
 let fontDefaultFamilies: { readonly sans: string; readonly code: string } | undefined;
@@ -72,7 +73,6 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("interface-font")}
-      description="Everything outside code blocks and the terminal."
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -103,7 +103,6 @@ function PromptFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("prompt-font")}
-      description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
       value={settings.fontFamilyComposer}
@@ -128,12 +127,10 @@ function PromptFontRow() {
 }
 
 function CodeFontRow({
-  title,
-  description = "Code blocks, diffs, and file previews.",
+  copy = "code-font",
   preview,
 }: {
-  title?: string;
-  description?: string;
+  copy?: "code-font" | "monospace-font";
   preview?: ReactNode;
 }) {
   const settings = useScopedSettings();
@@ -142,8 +139,7 @@ function CodeFontRow({
   return (
     <FontFamilySettingsRow
       {...searchableSetting("code-font")}
-      {...(title !== undefined ? { title } : {})}
-      description={description}
+      {...settingCopy(copy)}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
       value={settings.fontFamilyCode}
@@ -175,7 +171,6 @@ function TerminalFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("terminal-font")}
-      description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
@@ -216,7 +211,6 @@ function FontSmoothingRow() {
   return (
     <SettingsRow
       {...searchableSetting("font-smoothing")}
-      description="Use thinner grayscale text smoothing instead of the macOS default."
       resetAction={
         settings.fontSmoothing !== DEFAULT_UNIFIED_SETTINGS.fontSmoothing ? (
           <SettingResetButton
@@ -244,7 +238,6 @@ function WordWrapRow() {
   return (
     <SettingsRow
       {...searchableSetting("word-wrap")}
-      description="Wrap long lines in code blocks, diffs, and file previews by default."
       resetAction={
         settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
           <SettingResetButton
@@ -285,7 +278,6 @@ function SeparateFontsRow({
   return (
     <SettingsRow
       {...searchableSetting("separate-fonts")}
-      description="Set the prompt, code, and terminal fonts separately instead of one monospace font."
       control={
         <Switch
           checked={checked}
@@ -303,8 +295,7 @@ function SimpleFontRows() {
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
       <CodeFontRow
-        title="Monospace font"
-        description="Code blocks, diffs, file previews, and the terminal."
+        copy="monospace-font"
         preview={
           <>
             <CodeFontPreview />
@@ -344,7 +335,7 @@ export function TypographySection() {
   const showAdvanced =
     advanced || (searchTargetId !== null && isAdvancedTypographyTarget(searchTargetId));
   return (
-    <SettingsSection id="typography" title="Typography">
+    <SettingsSection id="typography" title={settingCopy("typography-section").title}>
       {showAdvanced ? <FontSettingsGroup /> : <SimpleFontRows />}
       <WordWrapRow />
       <AdvancedSettings
@@ -372,7 +363,7 @@ function FontFamilySettingsRow({
 }: {
   id?: string;
   title: string;
-  description: string;
+  description?: string | undefined;
   defaultFamily: string;
   defaultValue: string;
   preview?: ReactNode;

@@ -21,7 +21,8 @@ import { IdleNote, RunnerGroup, UnitStepper, useHeavyModeLine } from "./RunnerSe
 import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow, SettingsSection, useSettingsSearchRevealedId } from "./settingsLayout";
-import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
+import { searchableSetting, settingCopy, type SettingsSearchItemId } from "./settingsSearch";
+import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -123,7 +124,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
       <SettingsGroup>
         <SettingsRow
           {...searchableSetting("heavy-work-enabled")}
-          description="On: tests, builds and simulators take turns, and agents ask before adding to a busy machine. Off: heavy jobs start right away and agents do not ask first."
           status={modeLine}
           control={
             <Switch
@@ -137,7 +137,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
         {pause.shown ? (
           <SettingsRow
             {...searchableSetting("heavy-work-pause")}
-            description="While paused nothing new starts. Jobs already running continue."
             status={pause.status}
             control={
               <Switch
@@ -155,7 +154,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
           {max.shown ? (
             <SettingsRow
               {...searchableSetting("heavy-work-max")}
-              description="With 1, heavy jobs run strictly one at a time. With more, the next one starts only while this Mac is under its limits."
               status={max.status}
               control={
                 <UnitStepper
@@ -174,7 +172,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
           {slowRow.shown ? (
             <SettingsRow
               {...searchableSetting("heavy-work-slow-agents")}
-              description="While this Mac stays over its CPU limit, agents' running jobs and the build daemons they use drop to background priority, and speed up again once there is room. Your own jobs keep their speed."
               status={slowRow.status}
               control={
                 <Switch
@@ -200,8 +197,8 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
             status={rulesRow.status}
             description={
               state.rules.length === 0
-                ? "No project has a fixed priority. Set one from a queued job's menu in the Resource Manager."
-                : "Jobs from these projects go ahead of, or behind, the others. Jobs already queued keep their place."
+                ? MAINTENANCE_SETTINGS_COPY.heavyRulesEmpty
+                : settingCopy("heavy-work-rules").description
             }
           >
             {state.rules.length === 0 ? null : (
@@ -232,7 +229,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
         ) : null}
         <SettingsRow
           {...searchableSetting("heavy-work-claude-hook")}
-          description="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
           control={
             <Switch
               checked={state.claudeHookInstalled}
@@ -244,7 +240,6 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
         />
         <SettingsRow
           {...searchableSetting("heavy-work-device-idle")}
-          description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
           control={
             <Select
               value={String(state.deviceIdleMinutes)}
@@ -280,11 +275,13 @@ export function HeavyWorkSettingsSection() {
   const environmentId =
     scope.environmentIds.length === 1 ? (environment?.environmentId ?? null) : null;
   return (
-    <SettingsSection id="heavy-work" title="Heavy work" variant="plain">
+    <SettingsSection {...searchableSetting("heavy-work")} variant="plain">
       {environmentId === null ? (
         <SettingsGroup>
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- pick-an-environment prompt, not a setting
             title="Heavy work queue"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- pick-an-environment prompt, not a setting
             description="Choose one environment to manage its queue."
           />
         </SettingsGroup>

@@ -30,7 +30,7 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 const TEMPLATE_ICONS = ["bug", "lightbulb", "wrench", "broom", "tag"].map((value) => ({
   value,
@@ -188,8 +188,7 @@ export function KanbanDefaultTemplateEditor(props: {
   return (
     <>
       <SettingsSection
-        id="kanban-default-template"
-        title="Default for new boards"
+        {...searchableSetting("kanban-new-board-defaults")}
         headerAction={
           <span className="flex gap-1">
             <Button
@@ -216,10 +215,7 @@ export function KanbanDefaultTemplateEditor(props: {
       >
         <SettingsRow
           {...searchableSetting("kanban-default-template")}
-          description={
-            problem ??
-            "Columns and card templates a board starts with. Boards that already exist keep theirs."
-          }
+          description={problem ?? settingCopy("kanban-default-template").description}
         />
         {columnRows.map(({ key, value: column }, index) => (
           <SettingsRow
@@ -299,7 +295,7 @@ export function KanbanDefaultTemplateEditor(props: {
           />
         ))}
         <SettingsRow
-          title="Add a column"
+          {...searchableSetting("kanban-add-column")}
           control={
             <Button
               size="xs"
@@ -322,8 +318,7 @@ export function KanbanDefaultTemplateEditor(props: {
       </SettingsSection>
 
       <SettingsSection
-        id="kanban-default-card-templates"
-        title="Default card templates"
+        {...searchableSetting("kanban-default-card-templates")}
         headerAction={
           <Button
             size="xs"
@@ -338,7 +333,9 @@ export function KanbanDefaultTemplateEditor(props: {
       >
         {draft.cardTemplates.length === 0 ? (
           <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No templates"
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             description="New boards start without card templates."
           />
         ) : (
@@ -346,6 +343,7 @@ export function KanbanDefaultTemplateEditor(props: {
             <SettingsRow
               key={key}
               title={template.name}
+              // oxlint-disable-next-line t3code/require-searchable-settings-copy -- per-template summary of user data, not a setting
               description={`${template.checklist.length} checklist item${template.checklist.length === 1 ? "" : "s"} · ${PRIORITY_LABELS[template.priority]}`}
               control={
                 <span className="flex gap-1">

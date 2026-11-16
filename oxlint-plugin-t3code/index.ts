@@ -33,6 +33,7 @@ import preferCatchTags from "./rules/prefer-catch-tags.ts";
 import preferEffectFn from "./rules/prefer-effect-fn.ts";
 import requireCenteredScrollGutter from "./rules/require-centered-scroll-gutter.ts";
 import requireDisposableRender from "./rules/require-disposable-render.ts";
+import requireSearchableSettingsCopy from "./rules/require-searchable-settings-copy.ts";
 import requireSuppressionReason from "./rules/require-suppression-reason.ts";
 
 export default definePlugin({
@@ -73,6 +74,7 @@ export default definePlugin({
     "prefer-effect-fn": preferEffectFn,
     "require-centered-scroll-gutter": requireCenteredScrollGutter,
     "require-disposable-render": requireDisposableRender,
+    "require-searchable-settings-copy": requireSearchableSettingsCopy,
     "require-suppression-reason": requireSuppressionReason,
   },
 });

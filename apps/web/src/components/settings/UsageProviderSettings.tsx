@@ -15,6 +15,7 @@ import {
 import { Button } from "../ui/button";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
+import { PROVIDER_SETTINGS_COPY } from "./settingsSearchProviderItems";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 export function UsageProviderSettings({
@@ -46,7 +47,10 @@ export function UsageProviderSettings({
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow
+            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
+            title="No hubs configured."
+          />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -56,7 +60,8 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
+                    {PROVIDER_SETTINGS_COPY.cliProxy}
+                    {source.enabled ? "" : PROVIDER_SETTINGS_COPY.usageHubDisabled}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
                 }
