@@ -1435,7 +1435,8 @@ export function AssistantGroupChat(props: {
   const entries = useAssistantEntries();
   const actions = useAssistantGroupActions(environmentId);
   const flows = useAssistantTeamFlows(environmentId);
-  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  // The reply being written, for the tab it was opened in.
+  const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<ReplyTarget> | null>(null);
   const [memberModel, setMemberModel] = useState<Assistant | null>(null);
   const [projectModelOpen, setProjectModelOpen] = useState(false);
   // The composer's model for the next message only; it never saves a default.
@@ -1470,10 +1471,15 @@ export function AssistantGroupChat(props: {
     saved: savedTab,
   });
   const tabKey = tab?.key ?? null;
-  // Another tab, chosen or not (a saved tab loading, a removed one), drops both picks for good.
+  // Another tab, chosen or not (a saved tab loading, a removed one), drops the picks for good,
+  // and an open reply, which would answer a request out of view; the draft itself stays.
   const heldModelPick = assistantGroupTabPick(modelPick, tabKey);
   if (heldModelPick !== modelPick) setModelPick(null);
   if (assistantGroupTabPick(composerPick, tabKey) !== composerPick) setComposerPick(null);
+  if (assistantGroupTabPick(replyPick, tabKey) !== replyPick) setReplyPick(null);
+  const replyTo = assistantGroupTabPick(replyPick, tabKey)?.value ?? null;
+  const setReplyTo = (target: ReplyTarget | null) =>
+    setReplyPick(target === null ? null : { tab: tabKey, value: target });
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   useShowGroupTab(environmentId, teamId, pending ? undefined : tabKey);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
@@ -1547,7 +1553,7 @@ export function AssistantGroupChat(props: {
   const landed = (sent: GroupLandedSend) => {
     feedHandle.current?.followEnd();
     // A reply or tab the user opened while the post was on its way stays.
-    setReplyTo((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setReplyPick((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
     setComposerPick((current) =>
       assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
     );
@@ -1561,7 +1567,7 @@ export function AssistantGroupChat(props: {
     }
   };
   const restore = (routing: GroupSendRouting) => {
-    setReplyTo(routing.reply);
+    setReplyPick(routing.reply);
     setComposerPick(routing.projectPick);
     setModelPick(routing.modelPick);
   };
@@ -1600,16 +1606,7 @@ export function AssistantGroupChat(props: {
           </div>
         ) : null}
         {tabs === null || tab === null ? null : (
-          <GroupTabs
-            tabs={tabs}
-            active={tab.key}
-            projects={projects}
-            onSelect={(key) => {
-              setSavedTab(key);
-              // An open reply would answer a request out of view; the draft itself stays.
-              setReplyTo(null);
-            }}
-          />
+          <GroupTabs tabs={tabs} active={tab.key} projects={projects} onSelect={setSavedTab} />
         )}
         {pending ? (
           <div className="min-h-0 flex-1" />
@@ -1659,7 +1656,7 @@ export function AssistantGroupChat(props: {
           }}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
-          routing={{ reply: replyTo, projectPick: composerPick, modelPick }}
+          routing={{ reply: replyPick, projectPick: composerPick, modelPick }}
           onLanded={landed}
           onRestore={restore}
           history={sentByUser}

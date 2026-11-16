@@ -16,6 +16,7 @@ import {
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
   type AssistantGroupSendRouting,
+  type AssistantGroupTabPick,
   type AssistantGroupTabKey,
   insertAssistantGroupMention,
   insertAssistantGroupProject,
@@ -125,7 +126,7 @@ export interface GroupReplyTarget {
   readonly quote: GroupReplyQuote;
 }
 
-export type GroupSendRouting = AssistantGroupSendRouting<GroupReplyTarget>;
+export type GroupSendRouting = AssistantGroupSendRouting<AssistantGroupTabPick<GroupReplyTarget>>;
 
 /** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
 export interface GroupLandedSend {
