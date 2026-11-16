@@ -1,6 +1,6 @@
 import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import {
-  canEditQueuedMessage,
+  queuedMessageEditRefusal,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +16,8 @@ export interface ThreadQueueRowControls {
   readonly canSend: boolean;
   readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
+  /** Why this message is never the owner's to edit, or null. */
+  readonly editRefusal: string | null;
   readonly isEditing: boolean;
 }
 
@@ -30,13 +32,14 @@ export function resolveThreadQueueRowControls(input: {
   /** The queued message; a teammate's shows the first one's words, and a teammate's or a guest's stays theirs. */
   readonly message?:
     | (Parameters<typeof resolveUserMessagePresentation>[0] &
-        Parameters<typeof canEditQueuedMessage>[0])
+        Parameters<typeof queuedMessageEditRefusal>[0])
     | undefined;
 }): ThreadQueueRowControls {
   const presentation = input.message ? resolveUserMessagePresentation(input.message) : null;
   const shownText = presentation?.teammate
     ? teammateMessageSummary(presentation.teammate).line
     : input.text;
+  const editRefusal = queuedMessageEditRefusal(input.message);
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
 
@@ -44,17 +47,14 @@ export function resolveThreadQueueRowControls(input: {
     canDismiss: !input.busy,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
-    canEdit:
-      mutationEnabled &&
-      !isEditing &&
-      canEditQueuedMessage(input.message) &&
-      input.editBlocked !== true,
+    canEdit: mutationEnabled && !isEditing && editRefusal === null && input.editBlocked !== true,
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(shownText)
       ? ""
       : assistantCitationsToPlainText(shownText),
+    editRefusal,
     isEditing,
   };
 }

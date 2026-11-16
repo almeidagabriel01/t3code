@@ -130,6 +130,7 @@ describe("threadQueueControlPresentation", () => {
   it.each([
     [
       "a guest's",
+      "A guest's message cannot be edited. Cancel it instead.",
       {
         role: "user",
         text: "Why?",
@@ -138,8 +139,8 @@ describe("threadQueueControlPresentation", () => {
         },
       },
     ],
-    ["a teammate's", ada],
-  ])("lets the owner cancel %s queued message but not rewrite it", (_name, message) => {
+    ["a teammate's", "A teammate's message cannot be edited. Cancel it instead.", ada],
+  ])("lets the owner cancel %s queued message but not rewrite it", (_name, reason, message) => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,
@@ -149,6 +150,7 @@ describe("threadQueueControlPresentation", () => {
     });
 
     expect(controls.canEdit).toBe(false);
+    expect(controls.editRefusal).toBe(reason);
     expect(controls.canDismiss).toBe(true);
   });
 

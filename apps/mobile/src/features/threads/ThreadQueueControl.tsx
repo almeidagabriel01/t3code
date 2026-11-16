@@ -279,6 +279,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     {
                       id: "edit",
                       title: "Edit",
+                      ...(controls.editRefusal === null ? {} : { subtitle: controls.editRefusal }),
                       attributes: { disabled: !controls.canEdit },
                       image: "pencil",
                     },
@@ -298,7 +299,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityHint={
                       controls.canEdit
                         ? "Opens this message in the composer for editing"
-                        : (editBlockedReason ?? undefined)
+                        : (controls.editRefusal ?? editBlockedReason ?? undefined)
                     }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}
