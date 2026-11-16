@@ -14,6 +14,8 @@ const { Children, mocks } = vi.hoisted(() => ({
     query: "",
     searching: [] as boolean[],
     selectedTargets: [] as { environmentId: string }[],
+    cloud: false,
+    openSettings: vi.fn(),
   },
 }));
 
@@ -62,7 +64,7 @@ vi.mock("../layout/workspace/WorkspaceTabsContext", () => ({
 vi.mock("../layout/adaptive-workspace-context", () => ({
   useAdaptiveWorkspaceLayout: () => ({ layout: {} }),
 }));
-vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
+vi.mock("../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => mocks.cloud }));
 vi.mock("../../native/native-layout-metrics", () => ({ useNativeColumnLayoutMetrics: () => null }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: () => null }));
@@ -98,7 +100,7 @@ vi.mock("./components/SettingsSection", async () => ({
   SettingsSection: Children,
   SettingsSidebarContext: (await import("react")).createContext(null),
 }));
-vi.mock("./settings-navigation", () => ({ openSettings: () => {} }));
+vi.mock("./settings-navigation", () => ({ openSettings: mocks.openSettings }));
 vi.mock("uniwind", () => ({ useResolveClassNames: () => ({}) }));
 vi.mock("../../components/ui/AppSymbol", () => ({
   SymbolView: (props: { name: string }) => <b data-symbol={props.name} />,
@@ -107,10 +109,12 @@ vi.mock("../../components/ui/RowPressable", () => ({
   RowPressable: (props: {
     disabled?: boolean;
     accessibilityState?: { disabled?: boolean };
+    onPress?: () => void;
     children: ReactNode;
   }) => (
     <button
       disabled={props.disabled}
+      onClick={props.onPress}
       data-a11y-disabled={String(props.accessibilityState?.disabled)}
     >
       {props.children}
@@ -168,6 +172,8 @@ beforeEach(() => {
   mocks.query = "";
   mocks.searching = [];
   mocks.selectedTargets = [local];
+  mocks.cloud = false;
+  mocks.openSettings.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -223,40 +229,53 @@ describe("Integrations row of the Settings list", () => {
   });
 });
 
+const rowState = (label: string) => {
+  const row = container.querySelector<HTMLElement>(`[data-label="${label}"]`)!;
+  return {
+    icon: row.dataset.icon,
+    disabled: row.querySelector("button")!.disabled,
+    announcedDisabled: row.querySelector("button")!.dataset.a11yDisabled,
+    dimmed: row.querySelector("s")!.dataset.dimmed,
+    chevron: row.querySelector('[data-symbol="chevron.right"]') !== null,
+  };
+};
+const enabled = { disabled: false, announcedDisabled: "false", dimmed: "false", chevron: true };
+
 describe("Server pages of the Settings list", () => {
   const serverPages = [
-    ["Providers", "person.crop.circle"],
-    ["Threads", "text.bubble"],
-    ["MCP servers & skills", "hammer"],
-    ["Source control", "arrow.triangle.branch"],
-    ["Worktrees", "square.on.square"],
-    ["Maintenance", "arrow.clockwise"],
+    ["Providers", "person.crop.circle", "SettingsProviderAccounts"],
+    ["Threads", "text.bubble", "SettingsThreads"],
+    ["MCP servers & skills", "hammer", "SettingsAgentTools"],
+    ["Source control", "arrow.triangle.branch", "SettingsEnvironmentSourceControl"],
+    ["Worktrees", "square.on.square", "SettingsWorktrees"],
+    ["Maintenance", "arrow.clockwise", "SettingsEnvironmentMaintenance"],
   ] as const;
-  const rowState = (label: string) => {
-    const row = container.querySelector<HTMLElement>(`[data-label="${label}"]`)!;
-    return {
-      icon: row.dataset.icon,
-      disabled: row.querySelector("button")!.disabled,
-      announcedDisabled: row.querySelector("button")!.dataset.a11yDisabled,
-      dimmed: row.querySelector("s")!.dataset.dimmed,
-      chevron: row.querySelector('[data-symbol="chevron.right"]') !== null,
-    };
-  };
 
   it.each([
-    ["with no environment, look and read as disabled, without a chevron", [], true],
-    ["with an environment, open their page", [local], false],
-  ] as const)("%s", (_name, targets, off) => {
+    ["with no environment", []],
+    ["with an environment", [local]],
+  ] as const)("open their page %s", (_name, targets) => {
     mocks.selectedTargets = [...targets];
     act(() => root.render(<WorkspaceSettingsList />));
-    for (const [label, icon] of serverPages) {
-      expect(rowState(label)).toEqual({
-        icon,
-        disabled: off,
-        announcedDisabled: String(off),
-        dimmed: String(off),
-        chevron: !off,
-      });
+    for (const [label, icon, target] of serverPages) {
+      expect(rowState(label)).toEqual({ icon, ...enabled });
+      mocks.openSettings.mockReset();
+      act(() => container.querySelector<HTMLElement>(`[data-label="${label}"] button`)!.click());
+      expect(mocks.openSettings.mock.calls.map((call) => call[1])).toEqual([target]);
     }
+  });
+});
+
+describe("A disabled row of the Settings list", () => {
+  it("looks and reads as disabled, without a chevron, while the account loads", () => {
+    mocks.cloud = true;
+    act(() => root.render(<WorkspaceSettingsList />));
+    expect(rowState("T3 Account")).toEqual({
+      icon: "person.crop.circle",
+      disabled: true,
+      announcedDisabled: "true",
+      dimmed: "true",
+      chevron: false,
+    });
   });
 });
