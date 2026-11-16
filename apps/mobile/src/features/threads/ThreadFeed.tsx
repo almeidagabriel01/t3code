@@ -43,8 +43,6 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
-  assistantIdFromThreadId,
-  assistantTransferList,
   idleCompactionOf,
   type OrchestrationMessageContext,
   ThreadId,
@@ -231,12 +229,8 @@ import { useThreadMarkdownLinks } from "./useThreadMarkdownLinks";
 import { ASSISTANT_FOLDED_HEIGHT, isAssistantMessageFoldable } from "./assistantMessageFold";
 import { FoldableContent } from "../../components/FoldableContent";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
-import {
-  assistantJoins,
-  continuesAssistantSender,
-  messageAssistantId,
-} from "@t3tools/client-runtime/assistantPresence";
-import { teammateMessageIsLong } from "@t3tools/client-runtime/teammateMessage";
+import { assistantJoins, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import { assistantContinuedMessageIds, assistantFeedBlocks } from "./assistantFeedBlocks";
 import { AssistantFeedMessage } from "../assistants/AssistantPresence";
 import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
@@ -1676,55 +1670,41 @@ function renderFeedEntry(
     const presenceAssistantId = isUser ? messageAssistantId(message) : null;
     const teammateParts = isUser ? presentation.teammate : undefined;
     if (presenceAssistantId !== null || teammateParts !== undefined) {
-      // A group's replies arrive as one message: one block per teammate.
-      const parts = teammateParts ?? [null];
+      const blocks = assistantFeedBlocks({
+        message,
+        parts: teammateParts,
+        presenceAssistantId,
+        renderedText,
+        joins: props.assistantJoins.get(message.id),
+        continued: props.assistantContinuedMessageIds.has(message.id),
+      });
       return (
         <View>
-          {parts.map((part, index) => {
-            const threadId = part?.threadId || message.senderThreadId;
-            const assistantId =
-              (part === null ? null : assistantIdFromThreadId(part.threadId)) ??
-              presenceAssistantId ??
-              part?.threadId ??
-              "";
-            const text =
-              part === null
-                ? renderedText
-                : renderAssistantCitationsAsText(
-                    part.files.length === 0
-                      ? part.text
-                      : `${part.text}\n\n${assistantTransferList(part.files)}`,
-                  );
-            return (
-              <AssistantFeedMessage
-                key={part === null ? message.id : `${part.kind}:${part.threadId}:${part.requestId}`}
+          {blocks.map((block) => (
+            <AssistantFeedMessage
+              key={block.key}
+              environmentId={props.environmentId}
+              assistantId={block.assistantId}
+              fallbackName={block.fallbackName}
+              joinedAtLabel={block.joined ? timestampLabel : null}
+              status={block.status}
+              threadId={block.threadId}
+              timestampLabel={block.showTimestamp ? timestampLabel : undefined}
+              continues={block.continues}
+              long={block.long}
+            >
+              <UserMessageContent
+                text={block.text}
                 environmentId={props.environmentId}
-                assistantId={assistantId}
-                fallbackName={part?.name}
-                joinedAtLabel={
-                  props.assistantJoins.get(message.id)?.includes(assistantId)
-                    ? timestampLabel
-                    : null
-                }
-                status={part?.status}
-                threadId={threadId}
-                timestampLabel={index === parts.length - 1 ? timestampLabel : undefined}
-                continues={parts.length === 1 && props.assistantContinuedMessageIds.has(message.id)}
-                long={teammateMessageIsLong(text)}
-              >
-                <UserMessageContent
-                  text={text}
-                  environmentId={props.environmentId}
-                  context={message.context}
-                  markdownStyles={markdownStyles.assistant}
-                  reviewCommentColors={props.reviewCommentColors}
-                  skills={props.skills}
-                  linkHandlers={props.markdownLinkHandlers}
-                  renderImage={props.renderMarkdownImage}
-                />
-              </AssistantFeedMessage>
-            );
-          })}
+                context={message.context}
+                markdownStyles={markdownStyles.assistant}
+                reviewCommentColors={props.reviewCommentColors}
+                skills={props.skills}
+                linkHandlers={props.markdownLinkHandlers}
+                renderImage={props.renderMarkdownImage}
+              />
+            </AssistantFeedMessage>
+          ))}
         </View>
       );
     }
@@ -2797,22 +2777,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [props.feed],
   );
-  const assistantContinuedMessageIds = useMemo(() => {
-    const continued = new Set<string>();
-    props.feed.forEach((entry, index) => {
-      const previous = props.feed[index - 1];
-      if (
-        entry.type === "message" &&
-        continuesAssistantSender(
-          entry.message,
-          previous?.type === "message" ? previous.message : undefined,
-        )
-      ) {
-        continued.add(entry.message.id);
-      }
-    });
-    return continued;
-  }, [props.feed]);
+  const assistantContinued = useMemo(
+    () =>
+      assistantContinuedMessageIds(
+        props.feed.map((entry) => (entry.type === "message" ? entry.message : null)),
+      ),
+    [props.feed],
+  );
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {
@@ -3087,7 +3058,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ) : null}
           {renderFeedEntry(info, {
             assistantJoins: assistantJoinsByMessage,
-            assistantContinuedMessageIds,
+            assistantContinuedMessageIds: assistantContinued,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
