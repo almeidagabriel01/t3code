@@ -40,6 +40,11 @@ describe("t3code/require-searchable-settings-copy", () => {
   );
 
   rule.invalid(
+    "reports text passed to a wrapper that forwards it to a row",
+    `const row = <FontFamilySettingsRow title="Code font" description="Code blocks and diffs." />;`,
+  );
+
+  rule.invalid(
     "reports a section title template",
     `const section = <SettingsSection title={\`Autonomy\${suffix}\`} />;`,
   );

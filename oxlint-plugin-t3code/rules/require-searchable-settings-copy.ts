@@ -1,6 +1,7 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-const ELEMENTS = new Set(["SettingsRow", "SettingsSection"]);
+// Wrappers such as `FontFamilySettingsRow` forward these props to a `SettingsRow`.
+const ELEMENT = /Settings(Row|Section)$/u;
 const PROPS = new Set(["title", "description"]);
 
 const MESSAGE = (element: string, prop: string) =>
@@ -49,7 +50,7 @@ export default defineRule({
   create(context) {
     return {
       JSXOpeningElement(node) {
-        if (node.name.type !== "JSXIdentifier" || !ELEMENTS.has(node.name.name)) return;
+        if (node.name.type !== "JSXIdentifier" || !ELEMENT.test(node.name.name)) return;
         for (const attribute of node.attributes) {
           if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier") {
             continue;
