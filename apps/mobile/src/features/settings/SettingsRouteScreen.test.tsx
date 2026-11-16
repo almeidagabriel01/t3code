@@ -11,6 +11,8 @@ const { Children, mocks } = vi.hoisted(() => ({
       | null
       | { key: string; label: string; members: { project: unknown }[] }[],
     integrationIds: [] as string[],
+    query: "",
+    searching: [] as boolean[],
   },
 }));
 
@@ -33,7 +35,9 @@ vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveProjectGroupLabel: ({ representative }: { representative: { title: string } }) =>
     representative.title,
 }));
-vi.mock("../layout/workspace/navigation-tab-order", () => ({
+// Settings search reads the tab labels, so only the layout queries are stubbed.
+vi.mock("../layout/workspace/navigation-tab-order", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../layout/workspace/navigation-tab-order")>()),
   navigationCustomizationAvailable: () => false,
   overflowNavigationTabs: () => [],
 }));
@@ -50,7 +54,9 @@ vi.mock("../layout/workspace/workspace-tab-navigation", () => ({
   rememberedSettingsPage: () => null,
 }));
 vi.mock("../layout/workspace/useSelectWorkspaceTab", () => ({ useSelectWorkspaceTab: () => null }));
-vi.mock("../layout/workspace/WorkspaceTabsContext", () => ({ useWorkspaceTabs: () => null }));
+vi.mock("../layout/workspace/WorkspaceTabsContext", () => ({
+  useWorkspaceTabs: () => ({ state: { tabs: { settings: { query: mocks.query } } } }),
+}));
 vi.mock("../layout/adaptive-workspace-context", () => ({
   useAdaptiveWorkspaceLayout: () => ({ layout: {} }),
 }));
@@ -65,6 +71,11 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
 vi.mock("../../state/assistants", () => ({ useAssistantsEnvironmentIds: () => [] }));
 vi.mock("../../state/integrations", () => ({
   useIntegrationsEnvironmentIds: () => mocks.integrationIds,
+  // The live feed's names, as the hook returns them while it subscribes.
+  useIntegrationSearchNames: (searching: boolean) => {
+    mocks.searching.push(searching);
+    return searching ? ["Linear"] : [];
+  },
 }));
 vi.mock("../../state/kanban", () => ({ useHasKanbanEnvironments: () => false }));
 vi.mock("../../state/imessageChannel", () => ({ useImessageEnvironmentIds: () => [] }));
@@ -122,6 +133,8 @@ beforeEach(() => {
   mocks.selectedProjectKeys = null;
   mocks.selectedProjectGroups = null;
   mocks.integrationIds = [];
+  mocks.query = "";
+  mocks.searching = [];
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -162,5 +175,17 @@ describe("Integrations row of the Settings list", () => {
     expect(row.dataset.target).toBe("SettingsIntegrations");
     expect(row.dataset.icon).toBe("cable.connector");
     expect(row.previousElementSibling?.getAttribute("data-label")).toBe("MCP servers & skills");
+    // No search, no subscription; a search subscribes and finds the page by a live name.
+    expect(mocks.searching.every((searching) => !searching)).toBe(true);
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.query = "linear";
+    act(() => root.render(<WorkspaceSettingsList />));
+    expect(mocks.searching.at(-1)).toBe(true);
+    expect(
+      [...container.querySelectorAll("[data-label]")].map((node) =>
+        node.getAttribute("data-label"),
+      ),
+    ).toEqual(["Integrations"]);
   });
 });

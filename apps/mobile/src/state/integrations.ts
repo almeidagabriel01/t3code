@@ -12,10 +12,9 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
@@ -66,31 +65,24 @@ export function useIntegrationsState(
   );
 }
 
-/**
- * The integration names the Integrations screen draws, from feeds a screen already opened. It peeks
- * the registry instead of reading the atom, so search never opens a stream to index. Not a hook: a
- * compiled caller memoizes it on its arguments, so `query` makes it rerun on every search.
- */
-export function openIntegrationNames(
-  environmentIds: ReadonlyArray<EnvironmentId>,
-  query: string,
-): readonly string[] {
-  if (query.trim() === "") return [];
-  return environmentIds.flatMap((environmentId) => {
-    const live = integrationsEnvironment.live({ environmentId, input: null });
-    const node: AtomRegistry.Node<Atom.Type<typeof live>> | undefined = appAtomRegistry
-      .getNodes()
-      .get(live);
-    const state = Option.getOrNull(
-      Option.flatMap(node?.valueOption() ?? Option.none(), AsyncResult.value),
-    );
+// The titles the Integrations screen draws; reading it subscribes every environment's live feed.
+const integrationSearchNamesAtom = Atom.make((get): readonly string[] =>
+  get(integrationsEnvironmentIdsAtom).flatMap((environmentId) => {
+    const state = get(integrationsFeedAtom(environmentId));
     if (state === null) return [];
     const { connected, available, other } = integrationDirectory(state, {
       query: "",
       category: null,
     });
     return [...connected, ...available, ...other].map((row) => row.title);
-  });
+  }),
+).pipe(Atom.withLabel("mobile-integration-search-names"));
+
+const NO_NAMES_ATOM = Atom.make<readonly string[]>([]);
+
+/** Integration names for search; the feeds stay subscribed only while `searching`. */
+export function useIntegrationSearchNames(searching: boolean): readonly string[] {
+  return useAtomValue(searching ? integrationSearchNamesAtom : NO_NAMES_ATOM);
 }
 
 /** `reason` feeds `integrationErrorMessage`; anything that is not an integration refusal reads as Error. */
