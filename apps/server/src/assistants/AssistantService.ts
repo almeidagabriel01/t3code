@@ -116,7 +116,6 @@ export interface AssistantTaskList {
 
 const TASK_LIST_CAP = 50;
 
-/** The task chip the clients show, read from the task thread's shell. */
 /** The run a task's result comes from: its newest one that was not rolled back. */
 export const deliveredRunOf = <Run extends { readonly status: string; readonly ordinal: number }>(
   runs: ReadonlyArray<Run>,
@@ -128,6 +127,7 @@ export const deliveredRunOf = <Run extends { readonly status: string; readonly o
       undefined,
     );
 
+/** The task chip the clients show, read from the task thread's shell. */
 export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
   const parked =
     backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";

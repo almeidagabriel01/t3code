@@ -41,8 +41,10 @@ export class AssistantTasks extends Context.Service<
     /** Undoes a link whose launch then failed. */
     readonly unlink: (threadId: ThreadId) => Effect.Effect<void>;
     readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<AssistantTask>>;
-    /** Dismissing keeps the first time; restoring clears it. None when the thread is no task. */
-    /** A restore records `handledRunId`, so that run's delivery never dismisses the task again. */
+    /**
+     * Dismissing keeps the first time; restoring clears it and records `handledRunId`, so that
+     * run's delivery never dismisses the task again. None when the thread is no task.
+     */
     readonly setDismissed: (
       threadId: ThreadId,
       dismissedAt: string | null,
