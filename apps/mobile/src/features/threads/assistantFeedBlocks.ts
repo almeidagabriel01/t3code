@@ -17,7 +17,6 @@ export interface AssistantFeedBlock {
   readonly status: TeammateMessagePart["status"];
   readonly text: string;
   readonly joined: boolean;
-  readonly showTimestamp: boolean;
   readonly continues: boolean;
   readonly long: boolean;
 }
@@ -57,7 +56,7 @@ export function assistantFeedBlocks(input: {
   const joins = input.index.joins.get(input.message.id);
   const continued = input.index.continued.has(input.message.id);
   const parts = input.parts ?? [null];
-  return parts.map((part, index) => {
+  return parts.map((part) => {
     const assistantId =
       (part === null ? null : assistantIdFromThreadId(part.threadId)) ??
       input.presenceAssistantId ??
@@ -79,7 +78,6 @@ export function assistantFeedBlocks(input: {
       status: part?.status,
       text,
       joined: joins?.includes(assistantId) ?? false,
-      showTimestamp: index === parts.length - 1,
       continues: parts.length === 1 && continued,
       long: isLongMessage(text),
     };
