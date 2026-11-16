@@ -9,6 +9,11 @@ export const MACHINE_REQUEST_KINDS = ["dynamic_tool_call", "auth_refresh"] as co
 export const requestWaitsOnUser = (kind: string): boolean =>
   !(MACHINE_REQUEST_KINDS as ReadonlyArray<string>).includes(kind);
 
+/** A guest message waits on the owner to send or dismiss it. */
+export const guestWaitsOnUser = (shell: {
+  readonly pendingGuestMessageCount?: number | undefined;
+}): boolean => (shell.pendingGuestMessageCount ?? 0) > 0;
+
 /** Notices only inform, and a request's mirror is told about through the request itself. */
 export const decisionWaitsOnUser = (decision: {
   readonly notice?: true | undefined;

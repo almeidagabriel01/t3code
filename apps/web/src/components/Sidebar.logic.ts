@@ -64,6 +64,7 @@ import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
 import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
@@ -1190,7 +1191,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
+  if (guestWaitsOnUser(thread)) {
     return {
       label: "Guest Request",
       colorClass: "text-guest-foreground",

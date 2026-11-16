@@ -1,5 +1,9 @@
 import { assistantIdFromThreadId, type AssistantTeamChat } from "@t3tools/contracts";
-import { decisionWaitsOnUser, requestWaitsOnUser } from "@t3tools/shared/needsUser";
+import {
+  decisionWaitsOnUser,
+  guestWaitsOnUser,
+  requestWaitsOnUser,
+} from "@t3tools/shared/needsUser";
 
 import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
@@ -29,6 +33,8 @@ export interface ZoneShell {
     readonly kind: string;
     readonly createdAt: string;
   } | null;
+  readonly pendingGuestMessageCount?: number | undefined;
+  readonly oldestPendingGuestMessageAt?: string | null | undefined;
 }
 
 export type ThreadOwner =
@@ -103,7 +109,8 @@ export function threadOwnerResolver<S extends ZoneShell>(input: {
   };
 }
 
-export type NeedsYouKind = "approval" | "question" | "decision";
+/** The Needs you card for guest messages waiting on the owner, on web and mobile. */
+export const GUEST_WAITING_LABEL = "Guest waiting";
 
 export interface NeedsYouDecision {
   readonly id: string;
@@ -114,18 +121,24 @@ export interface NeedsYouDecision {
   readonly approvalRequestId?: string | undefined;
 }
 
-export interface NeedsYouItem<D extends NeedsYouDecision = NeedsYouDecision> {
+export type NeedsYouItem<D extends NeedsYouDecision = NeedsYouDecision> = {
   readonly key: string;
-  readonly kind: NeedsYouKind;
   readonly environmentId: string;
   readonly threadId: string;
   readonly createdAt: string;
   readonly owner: ThreadOwner;
-  readonly request: { readonly id: string; readonly kind: string } | null;
-  readonly decision: D | null;
-}
+} & (
+  | {
+      readonly kind: "approval" | "question";
+      readonly request: { readonly id: string; readonly kind: string };
+    }
+  | { readonly kind: "decision"; readonly decision: D }
+  | { readonly kind: "guest" }
+);
 
-/** Every pending request and open decision that waits on the user, oldest first. */
+export type NeedsYouKind = NeedsYouItem["kind"];
+
+/** Every pending request, waiting guest and open decision that waits on the user, oldest first. */
 export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(input: {
   readonly shells: ReadonlyArray<S>;
   readonly decisions: ReadonlyArray<{ readonly environmentId: string; readonly decision: D }>;
@@ -133,18 +146,30 @@ export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(i
 }): ReadonlyArray<NeedsYouItem<D>> {
   const items: Array<NeedsYouItem<D>> = [];
   for (const shell of input.shells) {
+    if (shell.archivedAt !== null) continue;
     const request = shell.pendingRequest;
-    if (shell.archivedAt !== null || request == null || !requestWaitsOnUser(request.kind)) continue;
-    items.push({
-      key: `request:${shell.environmentId}:${request.id}`,
-      kind: request.kind === "user_input" ? "question" : "approval",
-      environmentId: shell.environmentId,
-      threadId: shell.id,
-      createdAt: request.createdAt,
-      owner: input.ownerOf(shell),
-      request: { id: request.id, kind: request.kind },
-      decision: null,
-    });
+    if (request != null && requestWaitsOnUser(request.kind)) {
+      items.push({
+        key: `request:${shell.environmentId}:${request.id}`,
+        kind: request.kind === "user_input" ? "question" : "approval",
+        environmentId: shell.environmentId,
+        threadId: shell.id,
+        createdAt: request.createdAt,
+        owner: input.ownerOf(shell),
+        request: { id: request.id, kind: request.kind },
+      });
+    }
+    if (guestWaitsOnUser(shell)) {
+      items.push({
+        key: `guest:${shell.environmentId}:${shell.id}`,
+        kind: "guest",
+        environmentId: shell.environmentId,
+        threadId: shell.id,
+        // Shells always carry it once a guest waits (see `presentThreadShell`).
+        createdAt: shell.oldestPendingGuestMessageAt ?? "",
+        owner: input.ownerOf(shell),
+      });
+    }
   }
   for (const { environmentId, decision } of input.decisions) {
     if (decision.status !== "open" || !decisionWaitsOnUser(decision)) continue;
@@ -155,7 +180,6 @@ export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(i
       threadId: decision.fromThreadId,
       createdAt: decision.createdAt,
       owner: input.ownerOf({ environmentId, id: decision.fromThreadId }),
-      request: null,
       decision,
     });
   }

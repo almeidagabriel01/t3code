@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   isAtomCommandInterrupted,
@@ -316,6 +317,19 @@ const DecisionItem = memo(function DecisionItem(
   );
 });
 
+/** Guest messages wait in the thread, where the owner sends or dismisses them. */
+const GuestItem = memo(function GuestItem(props: ItemOrigin) {
+  return (
+    <ItemFrame
+      {...props}
+      icon="person.badge.clock"
+      summary={GUEST_WAITING_LABEL}
+      error={null}
+      actions={null}
+    />
+  );
+});
+
 /** Everything that waits on the user, oldest first, answerable in place. Absent when empty. */
 export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?: boolean }) {
   const { items } = useSidebarZones();
@@ -355,16 +369,24 @@ export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?
               : null,
           sidebar,
         };
-        return item.decision !== null ? (
-          <DecisionItem key={item.key} {...origin} decision={item.decision} />
-        ) : (
-          <RequestItem
-            key={item.key}
-            {...origin}
-            kind={item.kind === "question" ? "question" : "approval"}
-            requestId={item.request!.id}
-          />
-        );
+        switch (item.kind) {
+          case "decision":
+            return <DecisionItem key={item.key} {...origin} decision={item.decision} />;
+          case "guest":
+            return <GuestItem key={item.key} {...origin} />;
+          case "approval":
+          case "question":
+            return (
+              <RequestItem
+                key={item.key}
+                {...origin}
+                kind={item.kind}
+                requestId={item.request.id}
+              />
+            );
+          default:
+            return item satisfies never;
+        }
       })}
       {items.length > SHOWN_LIMIT ? (
         <Pressable

@@ -1,4 +1,5 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
@@ -201,6 +202,8 @@ export interface EnvironmentThreadShell {
   } | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
+  /** When the oldest of them arrived; null when none waits. */
+  readonly oldestPendingGuestMessageAt?: string | null;
   /** Messages waiting behind the active run. */
   readonly queuedMessageCount?: number;
   readonly hasActionableProposedPlan: boolean;
@@ -368,6 +371,10 @@ export function presentThreadShell(
             createdAt: iso(thread.pendingRuntimeRequest.createdAt),
           },
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
+    // Older servers send the count alone; the shell's last change is the nearest time they give.
+    oldestPendingGuestMessageAt: guestWaitsOnUser(thread)
+      ? (thread.oldestPendingGuestMessageAt ?? updatedAt)
+      : null,
     queuedMessageCount: thread.queuedMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],

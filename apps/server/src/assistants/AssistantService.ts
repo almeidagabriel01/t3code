@@ -34,6 +34,7 @@ import {
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { assistantHomeModel } from "@t3tools/shared/modelSelectionPrecedence";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -121,7 +122,7 @@ const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
     backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
   const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
   return assistantTaskStatusOf({
-    needsUser: shell.pendingRuntimeRequest !== null || (shell.pendingGuestMessageCount ?? 0) > 0,
+    needsUser: shell.pendingRuntimeRequest !== null || guestWaitsOnUser(shell),
     runtimeStatus: status === "idle" && !parked ? null : status,
   });
 };

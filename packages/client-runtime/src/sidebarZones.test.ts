@@ -77,9 +77,17 @@ describe("needsYouItems", () => {
   it("lists user waits oldest first and leaves out what T3 answers or only mirrors", () => {
     const items = needsYouItems({
       shells: [
+        // A guest waiting on the owner is its own item, timed by the guest's oldest message.
         shell("plain", {
           pendingRequest: { id: "r1", kind: "command", createdAt: "2026-01-01T00:00:05.000Z" },
+          pendingGuestMessageCount: 2,
+          oldestPendingGuestMessageAt: "2026-01-01T00:00:04.000Z",
         }),
+        shell("task", {
+          pendingGuestMessageCount: 1,
+          oldestPendingGuestMessageAt: "2026-01-01T00:00:00.000Z",
+        }),
+        shell("resolved", { pendingGuestMessageCount: 0, oldestPendingGuestMessageAt: null }),
         shell("task-child", {
           pendingRequest: { id: "r2", kind: "user_input", createdAt: "2026-01-01T00:00:01.000Z" },
         }),
@@ -93,6 +101,8 @@ describe("needsYouItems", () => {
         shell("archived", {
           archivedAt: "2026-01-01T00:00:00.000Z",
           pendingRequest: { id: "r4", kind: "command", createdAt: "2026-01-01T00:00:00.000Z" },
+          pendingGuestMessageCount: 1,
+          oldestPendingGuestMessageAt: "2026-01-01T00:00:00.000Z",
         }),
       ],
       decisions: [
@@ -104,8 +114,10 @@ describe("needsYouItems", () => {
       ownerOf,
     });
     expect(items.map((item) => [item.key, item.kind, item.owner.kind])).toEqual([
+      ["guest:e:task", "guest", "assistant"],
       ["request:e:r2", "question", "assistant"],
       ["decision:e:d1", "decision", "project"],
+      ["guest:e:plain", "guest", "project"],
       ["request:e:r1", "approval", "project"],
     ]);
   });

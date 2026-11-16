@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { NeedsYouItem } from "@t3tools/client-runtime/sidebarZones";
+import { GUEST_WAITING_LABEL, type NeedsYouItem } from "@t3tools/client-runtime/sidebarZones";
 import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   isAtomCommandInterrupted,
@@ -16,7 +16,13 @@ import {
   type RuntimeRequestId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { HashIcon, MessageCircleQuestionIcon, ShieldAlertIcon, SignpostIcon } from "lucide-react";
+import {
+  HashIcon,
+  MessageCircleQuestionIcon,
+  ShieldAlertIcon,
+  SignpostIcon,
+  UserRoundIcon,
+} from "lucide-react";
 import { memo, useState, type ReactNode } from "react";
 
 import { useNowMinuteMs } from "../../hooks/useNowMinute";
@@ -120,9 +126,15 @@ interface CardProps {
 }
 
 /** An approval or a question: reads the thread's pending requests, so only drawn cards subscribe. */
-function RequestCard(props: CardProps & { readonly threadRef: ScopedThreadRef }) {
-  const { item, threadRef } = props;
-  const requestId = item.request!.id as RuntimeRequestId;
+function RequestCard(
+  props: CardProps & {
+    readonly kind: "approval" | "question";
+    readonly requestId: string;
+    readonly threadRef: ScopedThreadRef;
+  },
+) {
+  const { threadRef } = props;
+  const requestId = props.requestId as RuntimeRequestId;
   const requests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(threadRef));
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const respondToApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -135,7 +147,7 @@ function RequestCard(props: CardProps & { readonly threadRef: ScopedThreadRef })
   const [text, setText] = useState("");
   const open = <OpenButton onOpen={props.onOpen} />;
 
-  if (item.kind === "approval") {
+  if (props.kind === "approval") {
     const approval = requests?.approvals.find((candidate) => candidate.requestId === requestId);
     const respond = (decision: ProviderApprovalDecision) =>
       answer.run(async () =>
@@ -303,6 +315,19 @@ function DecisionCard(props: CardProps & { readonly decision: Decision }) {
   );
 }
 
+/** Guest messages wait in the thread, where the owner sends or dismisses them. */
+function GuestCard(props: CardProps) {
+  return (
+    <CardShell
+      {...props}
+      kindIcon={<UserRoundIcon aria-hidden className="size-3.5 shrink-0" />}
+      summary={GUEST_WAITING_LABEL}
+      error={null}
+      actions={<OpenButton onOpen={props.onOpen} />}
+    />
+  );
+}
+
 const NeedsYouCard = memo(function NeedsYouCard(props: {
   readonly item: Item;
   readonly assistant: AssistantEntry | null;
@@ -315,7 +340,8 @@ const NeedsYouCard = memo(function NeedsYouCard(props: {
   const shell = useQuietThreadShell(threadRef);
   const project =
     shell === null ? undefined : props.projectOf(threadRef.environmentId, shell.projectId);
-  const title = shell?.title ?? (item.decision?.threadTitle || "Thread");
+  const title =
+    shell?.title ?? ((item.kind === "decision" && item.decision.threadTitle) || "Thread");
   const origin =
     props.teamName !== null ? (
       <span className="flex min-w-0 shrink items-center gap-1 font-medium">
@@ -341,11 +367,19 @@ const NeedsYouCard = memo(function NeedsYouCard(props: {
     projectName: project?.title ?? null,
     onOpen: () => props.onOpenThread(threadRef),
   };
-  return item.decision !== null ? (
-    <DecisionCard {...card} decision={item.decision} />
-  ) : (
-    <RequestCard {...card} threadRef={threadRef} />
-  );
+  switch (item.kind) {
+    case "decision":
+      return <DecisionCard {...card} decision={item.decision} />;
+    case "guest":
+      return <GuestCard {...card} />;
+    case "approval":
+    case "question":
+      return (
+        <RequestCard {...card} kind={item.kind} requestId={item.request.id} threadRef={threadRef} />
+      );
+    default:
+      return item satisfies never;
+  }
 });
 
 /** Everything waiting on the user, oldest first, answerable in place. Absent while nothing waits. */
