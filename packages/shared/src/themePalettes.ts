@@ -27,6 +27,12 @@ export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
 
+/** Palettes carry no success role, so every theme uses the same emerald. */
+export const SUCCESS_COLORS = {
+  light: { success: "#10b981", successForeground: "#047857" },
+  dark: { success: "#10b981", successForeground: "#34d399" },
+} as const satisfies Record<ThemeAppearance, Record<"success" | "successForeground", string>>;
+
 export const THEME_COLOR_ROLES = [
   "canvas",
   "chrome",

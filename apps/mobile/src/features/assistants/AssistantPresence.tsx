@@ -55,11 +55,12 @@ import { useAssistantFlows } from "./useAssistantFlows";
 import { useOpenAssistantInfo } from "./openAssistantInfo";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
+// Each pair is a theme surface and its foreground, held to AA in every theme by mobileTheme.test.ts.
 const STATUS_CHIP = {
-  done: { text: "text-success-foreground", wash: "#10b981" },
-  partial: { text: "text-warning-foreground", wash: "#f59e0b" },
-  blocked: { text: "text-danger-foreground", wash: "#ef4444" },
-} satisfies Record<TeammateReplyStatus, { readonly text: string; readonly wash: string }>;
+  done: { surface: "bg-success", text: "text-success-foreground" },
+  partial: { surface: "bg-warning", text: "text-warning-foreground" },
+  blocked: { surface: "bg-danger", text: "text-danger-foreground" },
+} satisfies Record<TeammateReplyStatus, { readonly surface: string; readonly text: string }>;
 
 /**
  * Who wrote in this agent's conversation: the assistant's own avatar, name, role and access, in its
@@ -98,8 +99,7 @@ export function AssistantFeedMessage(props: {
     props.status === undefined ? null : (
       <View
         accessibilityLabel={`Status: ${TEAMMATE_STATUS_LABEL[props.status]}`}
-        className="self-start rounded px-1.5 py-px"
-        style={{ backgroundColor: accentWash(STATUS_CHIP[props.status].wash, 0.16) }}
+        className={`self-start rounded px-1.5 py-px ${STATUS_CHIP[props.status].surface}`}
       >
         <Text className={`font-t3-medium text-2xs ${STATUS_CHIP[props.status].text}`}>
           {TEAMMATE_STATUS_LABEL[props.status]}
