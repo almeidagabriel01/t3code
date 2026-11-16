@@ -501,6 +501,38 @@ describe("heavy queue file", () => {
     expect(unread).not.toHaveProperty("cpu");
   });
 
+  it.each(["__proto__", "constructor"])(
+    "a command labelled %s is one more key: the history keeps its shape and its other commands",
+    (label) => {
+      const dir = tempDir();
+      const sample = {
+        at: 1,
+        busyCores: 0,
+        cpuCount: 4,
+        availableMemoryBytes: 1,
+        totalMemoryBytes: 2,
+      };
+      for (const [id, name, memoryBytes] of [
+        ["other", "vp run build", 10],
+        ["hostile", label, 20],
+        ["after", "vp run lint", 30],
+      ] as const) {
+        Queue.enqueue(dir, { ...entry(id), label: name });
+        Queue.tryStart(dir, id);
+        Queue.recordSample(dir, sample, { [id]: { cpu: 1, memoryBytes } });
+        Queue.remove(dir, id);
+      }
+      const doc = Queue.readDoc(dir);
+      expect(Object.keys(doc.history)).toEqual(["vp run build", label, "vp run lint"]);
+      expect(doc.history["vp run build"]?.map((run) => run.memoryBytes)).toEqual([10]);
+      expect(Object.getOwnPropertyDescriptor(doc.history, label)?.value).toHaveLength(1);
+      // Reading it back (plans, estimates, Linux's usual time) never throws.
+      Queue.enqueue(dir, { ...entry("next"), label });
+      expect(() => Queue.readPlan(dir)).not.toThrow();
+      expect(Queue.usualMs(doc, { ...entry("x"), label }, "linux")).toBeNull();
+    },
+  );
+
   it("keeps only the last runs per command and ignores finished entries without samples", () => {
     const dir = tempDir();
     const GIB = 1024 ** 3;

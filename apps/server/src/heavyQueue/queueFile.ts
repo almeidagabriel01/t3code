@@ -23,10 +23,10 @@ import {
   HISTORY_RUNS,
   estimate,
   medianDuration,
+  runsOf,
   signatureOf,
   type History,
   type LinuxHistory,
-  type Run,
   type Sample,
   SAMPLE_FRESH_MS,
   sustain,
@@ -691,21 +691,27 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
   return { doc, result: "ok" };
 };
 
-/** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
 /** Commands the file remembers runs of; the one run longest ago goes first. */
 const HISTORY_COMMANDS = 1000;
 
+/** A history to write into: no prototype, so any signature (`__proto__` too) is a plain key. */
+const writable = <A>(book: Readonly<Record<string, A>>): Record<string, A> =>
+  Object.assign(Object.create(null) as Record<string, A>, book);
+
 const remember = <A>(book: Record<string, ReadonlyArray<A>>, signature: string, run: A) => {
-  const runs = [...(book[signature] ?? []), run].slice(-HISTORY_RUNS);
+  const runs = [...(Object.hasOwn(book, signature) ? book[signature]! : []), run].slice(
+    -HISTORY_RUNS,
+  );
   delete book[signature];
   book[signature] = runs;
   for (const old of Object.keys(book).slice(0, -HISTORY_COMMANDS)) delete book[old];
 };
 
+/** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
 const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): QueueDoc => {
   const kept = new Set(after.entries.map((entry) => entry.id));
-  const history: Record<string, ReadonlyArray<Run>> = { ...after.history };
-  const linuxHistory: Record<string, LinuxHistory[string]> = { ...after.linuxHistory };
+  const history = writable(after.history);
+  const linuxHistory = writable(after.linuxHistory);
   let changed = false;
   for (const gone of before.entries) {
     if (gone.startedAt === null || kept.has(gone.id)) continue;
@@ -734,10 +740,7 @@ export const usualMs = (
   doc: Pick<QueueDoc, "history" | "linuxHistory">,
   entry: Pick<HeavyQueueEntry, "label">,
   runner: HeavyRunner,
-) =>
-  medianDuration(
-    (runner === "linux" ? doc.linuxHistory : doc.history)[signatureOf(entry.label)] ?? [],
-  );
+) => medianDuration(runsOf(runner === "linux" ? doc.linuxHistory : doc.history, entry));
 
 const mutate = <A>(dir: string, decide: (doc: QueueDoc) => Decided<A>, now = Date.now()) =>
   withLock(dir, () => {

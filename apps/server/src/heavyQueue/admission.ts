@@ -169,6 +169,15 @@ export const signatureOf = (label: string): string => {
   return [...command, ...(target === undefined ? [] : [target])].join(" ").toLowerCase();
 };
 
+/** A command's recorded runs. Own keys only: a label such as `constructor` names no runs. */
+export const runsOf = <A>(
+  book: Readonly<Record<string, ReadonlyArray<A>>>,
+  entry: Pick<HeavyQueueEntry, "label">,
+): ReadonlyArray<A> => {
+  const signature = signatureOf(entry.label);
+  return Object.hasOwn(book, signature) ? book[signature]! : [];
+};
+
 interface Cost {
   readonly cpu: number;
   readonly memoryBytes: number;
@@ -181,7 +190,7 @@ interface Cost {
  * for runs whose processes the monitor never saw, so only a positive reading counts.
  */
 export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label">) => {
-  const cpus = (history[signatureOf(entry.label)] ?? []).flatMap((run) =>
+  const cpus = runsOf(history, entry).flatMap((run) =>
     typeof run.cpu === "number" && run.cpu > 0 ? [run.cpu] : [],
   );
   return cpus.length === 0 ? undefined : Math.max(...cpus);
@@ -192,7 +201,7 @@ export const estimate = (
   entry: Pick<HeavyQueueEntry, "label" | "server">,
   cpuCount: number,
 ): Cost => {
-  const runs = history[signatureOf(entry.label)] ?? [];
+  const runs = runsOf(history, entry);
   const medium = kindOf(entry) === "medium";
   const guessCpu = Math.min(medium ? 2 : 4, Math.max(1, cpuCount));
   // The usual run, not the worst: admission starts one job per settle window, so a run that
@@ -214,8 +223,7 @@ export const estimate = (
 
 /** Learned to stay small; a command never seen is not light. */
 const isLight = (history: History, entry: Pick<HeavyQueueEntry, "label" | "server">) =>
-  (history[signatureOf(entry.label)] ?? []).length > 0 &&
-  estimate(history, entry, 1).memoryBytes < LIGHT_BYTES;
+  runsOf(history, entry).length > 0 && estimate(history, entry, 1).memoryBytes < LIGHT_BYTES;
 
 export interface PlanInput extends MacLimits {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;

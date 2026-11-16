@@ -27,7 +27,7 @@ import {
   learnedCpu,
   machineHold,
   SAMPLE_FRESH_MS,
-  signatureOf,
+  runsOf,
 } from "./admission.ts";
 import * as ClaudeSettingsHook from "./claudeSettingsHook.ts";
 import { withoutUsage } from "./classifyHeavyCommands.ts";
@@ -254,7 +254,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       if (
         entry.startedAt !== null ||
         plan.routes[entry.id] === "linux" ||
-        (doc.history[signatureOf(entry.label)] ?? []).length === 0
+        runsOf(doc.history, entry).length === 0
       ) {
         continue;
       }
