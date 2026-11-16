@@ -93,14 +93,14 @@ place in the whole queue.
   job starts only when this Mac has room for what that command usually uses in
   its runs here (the same test file counts as one command), and a few seconds
   after the previous start so its real load shows first. A later job that fits
-  goes ahead of one that does not fit yet; after five minutes of waiting, the
-  job in front lets nothing pass until it starts. Simulators, emulators and the
+  goes ahead of one that does not fit yet; after five minutes of waiting
+  (**Let smaller jobs pass for**), the job in front lets nothing pass until it starts. Simulators, emulators and the
   dev app run alone.
   Running jobs are never stopped to relieve pressure.
 - **Memory pressure.** On macOS, a second job waits while the system reports
   memory pressure or is swapping heavily, whatever the free percentage says;
   memory held by running simulators and emulators counts as used. Only a
-  command whose runs here stayed under 512 MB still starts then, and not even
+  light command (runs here stayed under 512 MB) still starts then, and not even
   that while the pressure is critical. A lone job
   always starts. Each job's test runners and build tools get as many workers as
   the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
@@ -110,10 +110,14 @@ place in the whole queue.
   `make` runs one job at a time unless you pass `-j`, so it is left as is.
 - **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
   much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
-  while the CPU limit is crossed; below the memory floor only a command that
-  stayed under 512 MB starts. After memory pressure or swapping held the queue, memory must recover 5 points past the floor
+  while the CPU limit is crossed; below the memory floor only a light command starts. After memory pressure or swapping held the queue, memory must recover 5 points past the floor
   before the next one starts. A job's usage includes the build daemons it uses,
   such as Gradle's, so the queue learns what a build really costs.
+- **Job sizing.** The **Job sizing** group under **Heavy work** sets what counts
+  as light (default 512 MB), what a command with no runs here is taken to need
+  (1.5 GB for builds and suites, 0.5 GB for lint, typecheck and single test
+  files), how many commands keep their past runs (1000), and how long smaller
+  jobs may pass the first in line (5 minutes).
 - **Slow down agent jobs when the Mac is busy.** On macOS, once this Mac stays
   over its CPU limit for **Over the limit for**, agents' running jobs and the
   build daemons they use drop to background CPU priority. They return to normal
