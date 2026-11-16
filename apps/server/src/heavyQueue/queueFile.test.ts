@@ -709,6 +709,12 @@ describe("heavy queue file", () => {
     ] as const) {
       expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
     }
+    // An answer is reused only briefly: a changed .gitignore shows within a minute.
+    const script = NodePath.join(repo, "scripts", "go.sh");
+    expect(Queue.syncedInCopy(script, 0)).toBe(true);
+    NodeFS.appendFileSync(NodePath.join(repo, ".gitignore"), "scripts/\n");
+    expect(Queue.syncedInCopy(script, 1_000)).toBe(true);
+    expect(Queue.syncedInCopy(script, 61_000)).toBe(false);
   });
 
   it("sets several settings in one write, each clamped, ignoring unknown keys", () => {

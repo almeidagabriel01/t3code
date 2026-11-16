@@ -498,15 +498,18 @@ export const gitRootOf = (cwd: string) => {
 };
 
 const LOCKFILES = ["pnpm-lock.yaml", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock"];
-const syncedPaths = new Map<string, boolean>();
+/** How long an answer is reused: plans run every poll, while .gitignore and lockfiles change rarely. */
+const SYNCED_FRESH_MS = 60_000;
+const syncedPaths = new Map<string, { readonly at: number; readonly found: boolean }>();
 
 /**
  * Whether `remoto`'s copy of `path`'s checkout has it. It leaves out what git ignores, but
  * reinstalls a `node_modules` from a lockfile between the checkout and it.
  */
-export const syncedInCopy = (path: string): boolean => {
-  let found = syncedPaths.get(path);
-  if (found !== undefined) return found;
+export const syncedInCopy = (path: string, now = Date.now()): boolean => {
+  const known = syncedPaths.get(path);
+  if (known !== undefined && now - known.at < SYNCED_FRESH_MS) return known.found;
+  let found: boolean;
   const root = gitRootOf(NodePath.dirname(path));
   const modules = /^(.*?)[\\/]node_modules([\\/]|$)/.exec(path)?.[1];
   if (root === null) found = true;
@@ -521,7 +524,8 @@ export const syncedInCopy = (path: string): boolean => {
     const check = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "-q", "--", path]);
     found = check.status !== 0;
   }
-  syncedPaths.set(path, found);
+  if (syncedPaths.size > 1000) syncedPaths.clear();
+  syncedPaths.set(path, { at: now, found });
   return found;
 };
 
