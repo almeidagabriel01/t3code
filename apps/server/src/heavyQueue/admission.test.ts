@@ -399,6 +399,17 @@ describe("admission plan", () => {
       reason: { head: "memory pressure high" },
     },
     {
+      name: "critical memory pressure holds even a light job",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...sixteen, pressureLevel: 4 },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+      },
+      admit: null,
+      hold: "pressure",
+      reason: { a: "memory pressure critical" },
+    },
+    {
       name: "a busy CPU holds even a light job",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
       change: {

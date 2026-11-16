@@ -343,11 +343,12 @@ export const plan = (input: PlanInput): Plan => {
   const machine = limit ?? (steady ? null : ("steadying" as const));
   const holding = limit === "pressure" || limit === "swap-in" ? true : input.holding;
 
-  // Short memory holds back only what would add to it; a busy CPU holds back everyone.
+  // Short memory holds back only what would add to it; a busy CPU or critical pressure, everyone.
+  const critical = (sample.pressureLevel ?? 0) >= 4;
   const verdict = (entry: HeavyQueueEntry): { hold: HeavyQueueHold | null; why: string } => {
     const job = jobVerdict(input, sample, entry);
     if (machine === null) return job;
-    if (machine !== "cpu" && isLight(input.history, entry) && job.hold !== "job-cpu") {
+    if (machine !== "cpu" && !critical && isLight(input.history, entry) && job.hold !== "job-cpu") {
       return { hold: null, why: "" };
     }
     return { hold: machine, why: heavyHoldText(machine, sample, input.maxRunning) };
