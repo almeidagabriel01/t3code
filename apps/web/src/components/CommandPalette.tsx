@@ -524,7 +524,7 @@ function OpenCommandPaletteDialog(props: {
   const assistantEntries = useAssistantEntries();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const availableSettingsSearchItems = useAvailableSettingsSearchItems();
+  const availableSettingsSearchItems = useAvailableSettingsSearchItems(deferredQuery);
   const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();

@@ -64,9 +64,13 @@ const openIntegrationsStatesAtom = Atom.make((get) =>
   }),
 ).pipe(Atom.withLabel("web-integrations-open-states"));
 
-/** Every connected environment's integrations, live, so Settings search finds them by name. */
-export function useOpenIntegrationsStates(): ReadonlyArray<IntegrationsState> {
-  return useAtomValue(openIntegrationsStatesAtom);
+const NO_OPEN_INTEGRATIONS = Atom.make<ReadonlyArray<IntegrationsState>>([]).pipe(
+  Atom.withLabel("web-integrations-open-states-none"),
+);
+
+/** Every connected environment's integrations, live, so Settings search finds them by name; disabled, it subscribes to nothing. */
+export function useOpenIntegrationsStates(enabled: boolean): ReadonlyArray<IntegrationsState> {
+  return useAtomValue(enabled ? openIntegrationsStatesAtom : NO_OPEN_INTEGRATIONS);
 }
 
 /** `reason` is the server's `IntegrationError` reason, for `integrationErrorMessage`. */

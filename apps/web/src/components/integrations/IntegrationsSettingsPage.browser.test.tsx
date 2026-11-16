@@ -81,6 +81,26 @@ async function openApp(path: string) {
   return { screen, router };
 }
 
+// First in the file: later tests open Integrations, and a stream they leave cached would mask a new one.
+it("Settings search opens the live integrations stream only while it has a query", async () => {
+  publishIntegrations({
+    catalog: [notion],
+    integrations: [],
+    ownApps: [],
+    loopbackRedirectUri: "http://127.0.0.1:43110/integrations/callback",
+    detected: [],
+    detectionSources: [],
+  });
+  const { screen } = await openApp("/settings/general");
+  await using _screen = screen;
+  await expect.element(page.getByRole("treeitem", { name: "Integrations" })).toBeVisible();
+  expect(fakeIntegrations.subscriptions).toBe(0);
+
+  await page.getByRole("combobox", { name: "Search settings" }).fill("notion");
+  await expect.element(page.getByRole("option", { name: /Notion/ })).toBeVisible();
+  expect(fakeIntegrations.subscriptions).toBe(1);
+});
+
 it("Settings → Integrations lists the environment's catalog and connects through the server", async () => {
   publishIntegrations({
     catalog: [notion],

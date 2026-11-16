@@ -21,7 +21,11 @@ import {
   integrationSearchItems,
 } from "./settingsSearch";
 
-export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch = {}) {
+/** Integration rows join only while `query` has text, so an idle Settings opens no live stream. */
+export function useAvailableSettingsSearchItems(
+  query: string,
+  scopeSearch: SettingsScopeSearch = {},
+) {
   const { environments } = useEnvironments();
   // Explicit booleans keep flags out of the filter cache so environment updates do not rebuild the list.
   const hasEnvironment =
@@ -105,7 +109,8 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 
-  const integrationItems = integrationSearchItems(useOpenIntegrationsStates());
+  const searchesIntegrations = hasIntegrations && query.trim().length > 0;
+  const integrationStates = useOpenIntegrationsStates(searchesIntegrations);
 
   const items = filterAvailableSettingsSearchItems({
     localEnvironmentDisabled,
@@ -127,5 +132,5 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
   });
-  return hasIntegrations ? [...items, ...integrationItems] : items;
+  return searchesIntegrations ? [...items, ...integrationSearchItems(integrationStates)] : items;
 }
