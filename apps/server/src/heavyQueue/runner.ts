@@ -37,6 +37,7 @@ import {
   UNREADABLE_SCRIPT,
   workParts,
   type Part,
+  type ReadScript,
 } from "./heavyHook.ts";
 import type { Redirect, Word } from "./shellLine.ts";
 
@@ -272,7 +273,12 @@ const alwaysMac = (part: Part): boolean => {
   return INSTALLS.test(first) || INSTALLS.test(second) || DEV_SERVER.test(script);
 };
 
-const PYTHON = /^(python[\d.]*|pytest|py\.test|pip[\d.]*|poetry|pipenv|tox|nox|uvx?)$/;
+const PYTHON =
+  /^(python[\d.]*|i?python[\d.]*|pytest|py\.test|pip[\d.]*|pipx|poetry|pipenv|tox|nox|uvx?|pdm|hatch|rye|conda|mamba|micromamba|pixi|jupyter(-[\w-]+)?|virtualenv|coverage|mypy|pylint|flake8|black|isort|behave|nosetests)$/;
+/** A program inside a Python environment: a venv, tox or nox env, conda install, or `site-packages`. */
+const PYTHON_ENV =
+  /(^|\/)(\.?v?env\/bin|\.(tox|nox)\/[^/]+\/bin|site-packages|envs\/[^/]+\/bin|\.pyenv|\.conda|\.pixi|(mini|ana)conda3?|miniforge3|mambaforge|micromamba)\//;
+const PYTHON_SHEBANG = /^#!\s*(\S*\/)?(env\s+(-\S+\s+)*)?python[\d.]*(\s|$)/;
 const INTERPRETERS = new Set([
   "node",
   "bun",
@@ -288,8 +294,9 @@ const INLINE_CODE = /^-(c|e|p|-eval|-print)$/;
 export const PYTHON_HERE = "Python runs here: the Linux copy has no Python environment";
 
 /**
- * Why a work part's program can't run from the Linux copy of `root`: Python, whose environment is
- * never rebuilt there, or a program or interpreted script in a file that copy lacks. Words program
+ * Why a work part's program can't run from the Linux copy of `root`: Python (a known tool, a
+ * program inside an environment, or a script whose shebang is Python), whose environment is never
+ * rebuilt there, or a program or interpreted script in a file that copy lacks. Words program
  * first; null when it can.
  */
 export const programTie = (
@@ -297,10 +304,12 @@ export const programTie = (
   cwd: string,
   root: string,
   synced: WorkContext["synced"],
+  read?: ReadScript,
 ): string | null => {
   const [program = "", ...args] = values;
   const name = programName(program);
-  if (PYTHON.test(name)) return PYTHON_HERE;
+  if (PYTHON.test(name) || PYTHON_ENV.test(program)) return PYTHON_HERE;
+  if (program.includes("/") && PYTHON_SHEBANG.test(read?.(program) ?? "")) return PYTHON_HERE;
   if (synced === undefined) return null;
   const script =
     INTERPRETERS.has(name) && !args.some((arg) => INLINE_CODE.test(arg))
@@ -329,6 +338,7 @@ const tieOf = (
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
   synced: WorkContext["synced"],
+  read: ReadScript | undefined,
 ): string | null => {
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
@@ -359,6 +369,7 @@ const tieOf = (
     cwd,
     root,
     synced,
+    read,
   );
   if (program !== null) return program;
   for (const word of part.command.words.slice(part.programAt + 1)) {
@@ -474,10 +485,9 @@ export const eligibilityOf = (
   }
   const { config, home, rootOf } = context;
   const { scripts } = entry;
-  const { unsafe, parts } = readLine(
-    line,
-    scripts === undefined ? undefined : (word) => scripts[word] ?? null,
-  );
+  const read: ReadScript | undefined =
+    scripts === undefined ? undefined : (word) => scripts[word] ?? null;
+  const { unsafe, parts } = readLine(line, read);
   if (unsafe !== null) {
     return { eligibility: "mac-only", reason: `Couldn't read this command safely (${unsafe})` };
   }
@@ -513,7 +523,7 @@ export const eligibilityOf = (
               rootOf,
             );
       const at = moved?.cwd ?? cwd;
-      const tie = tieOf(part, at, vars, rootOf, config, context.synced);
+      const tie = tieOf(part, at, vars, rootOf, config, context.synced, read);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
       if (part.script?.body === null) return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };

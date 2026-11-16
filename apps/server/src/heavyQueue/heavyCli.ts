@@ -1076,7 +1076,7 @@ const runLinuxPart = async (
   }
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
   // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
-  const local = programTie([program, ...args], cwd, root, syncedInCopy);
+  const local = programTie([program, ...args], cwd, root, syncedInCopy, scriptReader(cwd));
   if (local !== null) return endLine(dir, id, { kind: "mac", reason: local });
   // A `sh -c` text goes whole: judged again expanded, so it never names a folder Linux lacks.
   const text = shellTextOf([program, ...args]);

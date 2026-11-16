@@ -1334,36 +1334,70 @@ describe("patterns and eligibility", () => {
     config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true },
     synced: (path: string) => !/^\/w\/(\.venv|dist|nolock\/node_modules)\//.test(path),
   };
-  it.each([
-    [".venv/bin/pytest -q", "mac-only", PYTHON_HERE],
-    ["pytest tests", "mac-only", PYTHON_HERE],
-    ["python3 -m pytest", "mac-only", PYTHON_HERE],
-    ["uv run pytest", "mac-only", PYTHON_HERE],
-    ["remoto pytest", "mac-only", PYTHON_HERE],
-    [
-      "source .venv/bin/activate && vp test run",
-      "mac-only",
-      "Sets up its shell here first: source .venv/bin/activate",
-    ],
-    [". ./env.sh; vp test run", "mac-only", "Sets up its shell here first: . ./env.sh"],
-    ["node dist/cli.js test", "mac-only", "Uses a file the Linux copy doesn't have: dist/cli.js"],
-    ["./dist/run-tests", "mac-only", "Uses a file the Linux copy doesn't have: dist/run-tests"],
-    ["node_modules/.bin/vitest run", "linux", null],
-    [
-      "nolock/node_modules/.bin/vitest run",
-      "mac-only",
-      "Uses a file the Linux copy doesn't have: nolock/node_modules/.bin/vitest",
-    ],
-    ["node -e 'process.exit(0)' && vp test run", "linux", null],
-    ["vp test run /w/src/a.test.ts", "linux", null],
-    [
-      "vp test run /Users/me/other/a.test.ts",
-      "mac-only",
-      "Uses a file outside the project: /Users/me/other/a.test.ts",
-    ],
-    ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
-  ])("%s is %s from the Linux copy", (label, eligibility, reason) => {
-    expect(eligibilityOf({ label, cwd: "/w" }, copy)).toEqual({ eligibility, reason });
+  it.each(
+    (
+      [
+        [".venv/bin/pytest -q", "mac-only", PYTHON_HERE],
+        ["pytest tests", "mac-only", PYTHON_HERE],
+        ["python3 -m pytest", "mac-only", PYTHON_HERE],
+        ["uv run pytest", "mac-only", PYTHON_HERE],
+        ["remoto pytest", "mac-only", PYTHON_HERE],
+        [
+          "source .venv/bin/activate && vp test run",
+          "mac-only",
+          "Sets up its shell here first: source .venv/bin/activate",
+        ],
+        [". ./env.sh; vp test run", "mac-only", "Sets up its shell here first: . ./env.sh"],
+        [
+          "node dist/cli.js test",
+          "mac-only",
+          "Uses a file the Linux copy doesn't have: dist/cli.js",
+        ],
+        ["./dist/run-tests", "mac-only", "Uses a file the Linux copy doesn't have: dist/run-tests"],
+        ["node_modules/.bin/vitest run", "linux", null],
+        [
+          "nolock/node_modules/.bin/vitest run",
+          "mac-only",
+          "Uses a file the Linux copy doesn't have: nolock/node_modules/.bin/vitest",
+        ],
+        ["node -e 'process.exit(0)' && vp test run", "linux", null],
+        ["vp test run /w/src/a.test.ts", "linux", null],
+        [
+          "vp test run /Users/me/other/a.test.ts",
+          "mac-only",
+          "Uses a file outside the project: /Users/me/other/a.test.ts",
+        ],
+        ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
+        // Python is the class: its tools, a program inside an environment, a script whose shebang is Python.
+        ["pdm run pytest", "mac-only", PYTHON_HERE],
+        ["hatch run test", "mac-only", PYTHON_HERE],
+        ["rye test", "mac-only", PYTHON_HERE],
+        ["conda run -n app pytest", "mac-only", PYTHON_HERE],
+        ["mamba run pytest", "mac-only", PYTHON_HERE],
+        ["micromamba run pytest", "mac-only", PYTHON_HERE],
+        ["pixi run test", "mac-only", PYTHON_HERE],
+        ["ipython -c 1", "mac-only", PYTHON_HERE],
+        ["jupyter nbconvert --execute a.ipynb", "mac-only", PYTHON_HERE],
+        ["pipx run tox", "mac-only", PYTHON_HERE],
+        ["envs/app/bin/test-runner", "mac-only", PYTHON_HERE],
+        ["/opt/miniconda3/bin/runtests", "mac-only", PYTHON_HERE],
+        ["lib/python3.12/site-packages/x/run", "mac-only", PYTHON_HERE],
+        [".tox/py312/bin/run-tests", "mac-only", PYTHON_HERE],
+        [
+          "./tools/check",
+          "mac-only",
+          PYTHON_HERE,
+          { "./tools/check": "#!/usr/bin/env python3\nprint(1)" },
+        ],
+        ["./tools/check.sh", "linux", null, { "./tools/check.sh": "#!/bin/sh\nvp test run" }],
+      ] as ReadonlyArray<
+        readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
+      >
+    ).map(([label, eligibility, reason, scripts]) => ({ label, eligibility, reason, scripts })),
+  )("$label is $eligibility from the Linux copy", ({ label, eligibility, reason, scripts }) => {
+    expect(
+      eligibilityOf({ label, cwd: "/w", ...(scripts === undefined ? {} : { scripts }) }, copy),
+    ).toEqual({ eligibility, reason });
   });
 
   // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.
