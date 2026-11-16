@@ -9,6 +9,12 @@ describe("buildPairingUrl", () => {
     );
   });
 
+  it("uses HTTP for a schemeless localhost", () => {
+    expect(buildPairingUrl("localhost:3773", "pairing-token")).toBe(
+      "http://localhost:3773/#token=pairing-token",
+    );
+  });
+
   it("keeps HTTPS as the default for a schemeless hostname", () => {
     expect(buildPairingUrl("remote.example.com", "pairing-token")).toBe(
       "https://remote.example.com/#token=pairing-token",
@@ -33,6 +39,10 @@ describe("extractPairingUrlFromQrPayload", () => {
 });
 
 describe("parsePairingUrl", () => {
+  it("keeps a schemeless host as typed", () => {
+    expect(parsePairingUrl("localhost:3773")).toEqual({ host: "localhost:3773", code: "" });
+  });
+
   it("reads hosted pairing links into backend host fields", () => {
     expect(
       parsePairingUrl(
