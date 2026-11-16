@@ -251,10 +251,14 @@ export default defineConfig({
           },
         ],
         resolve: {
-          alias: {
+          alias: [
             // Metro serves this generated script; tests that render the viewer mock it.
-            "@t3tools/mobile-device-stream": `${sourceRoot}types/mobile-device-stream.d.ts`,
-          },
+            {
+              find: "@t3tools/mobile-device-stream",
+              replacement: `${sourceRoot}types/mobile-device-stream.d.ts`,
+            },
+            { find: /^uniwind$/, replacement: `${sourceRoot}testing/uniwind.ts` },
+          ],
         },
         test: {
           name: "react",
