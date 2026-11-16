@@ -139,10 +139,33 @@ export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
   running: "Running",
 };
 
-/** A machine as a sentence names it: "this Mac", "Linux". */
-export const HEAVY_OVER_LIMIT_DESCRIPTION =
-  "How long this Mac or Linux must stay past a limit, or back under it, before jobs wait or move. A short spike changes nothing.";
+/** The heavy queue's limit rows; web and mobile both read these. */
+export const HEAVY_LIMIT_COPY: Record<
+  HeavyQueueLimitKey,
+  { readonly title: string; readonly description: string }
+> = {
+  macCpuCeilingPercent: {
+    title: "CPU limit",
+    description: "A new heavy job waits while this Mac's CPU stays above this.",
+  },
+  macMemoryFloorPercent: {
+    title: "Keep memory free",
+    description: "A new heavy job waits while less than this much of this Mac's memory is free.",
+  },
+  heavyOverLimitSeconds: {
+    title: "Over the limit for",
+    description:
+      "How long this Mac or Linux must stay past a limit, or back under it, before jobs wait or move. A short spike changes nothing.",
+  },
+};
 
+export const HEAVY_NOTICES_COPY = {
+  title: "Heavy job notices",
+  description:
+    "Toasts when a heavy job fails, gets stuck or runs on another machine than planned, on this Mac or Linux.",
+} as const;
+
+/** A machine as a sentence names it: "this Mac", "Linux". */
 export const RUNNER_NAME: Record<HeavyRunner, string> = { mac: "this Mac", linux: "Linux" };
 
 export interface HeavyModeInput {

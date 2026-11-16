@@ -1,3 +1,4 @@
+import { HEAVY_NOTICES_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { HEAVY_NOTICES_MODE_OPTIONS, type HeavyNoticesMode } from "@t3tools/contracts";
 
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
@@ -11,10 +12,7 @@ export function HeavyNoticesSection(props: {
   readonly onChange: (mode: HeavyNoticesMode) => void;
 }) {
   return (
-    <SettingsSection
-      title="Heavy job notices"
-      footer="Toasts when a heavy job fails, gets stuck or runs on another machine than planned, on this Mac or Linux."
-    >
+    <SettingsSection title={HEAVY_NOTICES_COPY.title} footer={HEAVY_NOTICES_COPY.description}>
       {HEAVY_NOTICES_MODE_OPTIONS.map((option, index) => (
         <ListChoiceRow
           key={option.value}

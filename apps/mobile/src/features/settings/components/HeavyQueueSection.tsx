@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
-  HEAVY_OVER_LIMIT_DESCRIPTION,
+  HEAVY_LIMIT_COPY,
   heavyLimitIdle,
   heavyModeLine,
 } from "@t3tools/client-runtime/state/runnerModel";
@@ -21,6 +21,7 @@ import { NumberField } from "../../../components/ui/NumberField";
 import { useProjects } from "../../../state/entities";
 import { heavyQueueEnvironment, useHeavyQueueState } from "../../../state/heavyQueue";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { HEAVY_QUEUE_LABEL } from "./heavyQueueCopy";
 import { SettingsActionRow } from "./SettingsActionRow";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
@@ -34,30 +35,10 @@ export interface RunnerMode {
 }
 
 const LIMIT_ROWS = [
-  {
-    key: "macCpuCeilingPercent",
-    icon: "gauge.with.dots.needle.50percent",
-    label: "CPU limit",
-    description: "A new job waits while this Mac's CPU is busier than this.",
-  },
-  {
-    key: "macMemoryFloorPercent",
-    icon: "internaldrive",
-    label: "Keep memory free",
-    description: "A new job waits while less than this share of this Mac's memory is free.",
-  },
-  {
-    key: "heavyOverLimitSeconds",
-    icon: "clock",
-    label: "Over the limit for",
-    description: HEAVY_OVER_LIMIT_DESCRIPTION,
-  },
-] as const satisfies ReadonlyArray<{
-  key: HeavyQueueLimitKey;
-  icon: AppSymbolName;
-  label: string;
-  description: string;
-}>;
+  { key: "macCpuCeilingPercent", icon: "gauge.with.dots.needle.50percent" },
+  { key: "macMemoryFloorPercent", icon: "internaldrive" },
+  { key: "heavyOverLimitSeconds", icon: "clock" },
+] as const satisfies ReadonlyArray<{ key: HeavyQueueLimitKey; icon: AppSymbolName }>;
 const UNIT: Record<(typeof HEAVY_QUEUE_LIMITS)[HeavyQueueLimitKey]["unit"], string> = {
   percent: "%",
   seconds: "s",
@@ -114,16 +95,17 @@ export function HeavyQueueSection(props: {
     void setRuleCommand({ environmentId, input: { root, priority: null } });
   const limitRow = (row: (typeof LIMIT_ROWS)[number]) => {
     const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
+    const copy = HEAVY_LIMIT_COPY[row.key];
     return (
       <ListRowLayout
         key={row.key}
         icon={row.icon}
-        label={row.label}
-        description={row.description}
+        label={copy.title}
+        description={copy.description}
         accessory={
           <View className="flex-row items-center gap-1">
             <NumberField
-              label={row.label}
+              label={copy.title}
               min={min}
               max={max}
               value={state[row.key]}
@@ -152,12 +134,12 @@ export function HeavyQueueSection(props: {
   return (
     <>
       <SettingsSection
-        title={named("Heavy work queue")}
+        title={named(HEAVY_QUEUE_LABEL.queue)}
         footer="Agents queue tests, builds and simulators here. Each machine runs up to its own limit at once, and starts the next job only when it has room."
       >
         <SettingsSwitchRow
           icon="list.number"
-          label="Heavy work queue"
+          label={HEAVY_QUEUE_LABEL.queue}
           subtitle={
             state.enabled
               ? "On: heavy jobs take turns, and agents ask before adding to a busy machine."
@@ -193,7 +175,7 @@ export function HeavyQueueSection(props: {
           <>
             <SettingsSwitchRow
               icon="pause"
-              label="Pause queue"
+              label={HEAVY_QUEUE_LABEL.pause}
               subtitle="Nothing new starts while paused. Running jobs continue."
               value={state.paused}
               disabled={!canChange}
@@ -218,7 +200,7 @@ export function HeavyQueueSection(props: {
         {sharedLimits.map(limitRow)}
         <SettingsSwitchRow
           icon="link"
-          label="Claude Code hook"
+          label={HEAVY_QUEUE_LABEL.claudeHook}
           subtitle="Adds a hook to your Claude Code settings so heavy Bash commands in Claude sessions outside T3 Code wait in this queue too. Sessions T3 Code starts already do."
           value={state.claudeHookInstalled}
           disabled={!canChange}
@@ -226,7 +208,7 @@ export function HeavyQueueSection(props: {
         />
         <ListRowLayout
           icon="moon"
-          label="Power off idle simulators"
+          label={HEAVY_QUEUE_LABEL.idleSimulators}
           description="Emulators and simulators T3 Code used power off after this long without use. Opening one boots it again."
         />
         {IDLE_MINUTES.map((minutes) => (
@@ -240,7 +222,7 @@ export function HeavyQueueSection(props: {
         ))}
       </SettingsSection>
       {state.enabled || macLimits.length > 0 ? (
-        <SettingsSection title={named("This Mac")}>
+        <SettingsSection title={named(HEAVY_QUEUE_LABEL.thisMac)}>
           {state.enabled ? (
             <>
               <ListRowLayout
@@ -249,7 +231,7 @@ export function HeavyQueueSection(props: {
               />
               <SettingsActionRow
                 icon="plus"
-                label="Allow one more"
+                label={HEAVY_QUEUE_LABEL.allowMore}
                 disabled={!canChange || state.maxRunning >= MAX_LIMIT}
                 onPress={() =>
                   void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning + 1 } })
@@ -257,7 +239,7 @@ export function HeavyQueueSection(props: {
               />
               <SettingsActionRow
                 icon="minus"
-                label="Allow one fewer"
+                label={HEAVY_QUEUE_LABEL.allowFewer}
                 disabled={!canChange || state.maxRunning <= 1}
                 onPress={() =>
                   void setMaxRunning({ environmentId, input: { maxRunning: state.maxRunning - 1 } })
@@ -269,7 +251,7 @@ export function HeavyQueueSection(props: {
           {state.enabled && slowAgentJobs !== undefined ? (
             <SettingsSwitchRow
               icon="hourglass"
-              label="Slow down agent jobs when the Mac is busy"
+              label={HEAVY_QUEUE_LABEL.slowAgentJobs}
               subtitle="While this Mac stays over its CPU limit, agents' running jobs and the build daemons they use drop to background priority, and speed up again once there is room. Your own jobs keep their speed."
               value={slowAgentJobs.value}
               disabled={slowAgentJobs.disabled}

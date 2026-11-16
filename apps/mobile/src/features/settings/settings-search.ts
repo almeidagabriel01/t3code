@@ -1,6 +1,6 @@
-import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { foldSearchQuery, rankSearchItems, scoreSearchTerms } from "@t3tools/shared/paletteSearch";
 
+import { MAINTENANCE_PAGE_LABELS } from "./components/heavyQueueCopy";
 import type { SettingsPageTarget } from "./components/settings-page-targets";
 
 /** What each page holds besides its row's label, so search finds a setting by its own name. */
@@ -178,29 +178,19 @@ const SETTINGS_SEARCH_TERMS = {
     "clone cache",
   ],
   SettingsEnvironmentMaintenance: [
+    ...MAINTENANCE_PAGE_LABELS,
     "updates",
     "provider updates",
     "restart",
     "manage environments",
-    "heavy work queue",
     "resource manager",
     "cpu",
     "memory",
-    "slow down agent jobs",
     "background priority",
-    // Web's row titles on this page, so a setting's own name finds it here too.
-    "this mac",
+    // Web's names for rows mobile labels differently.
     "linux pc",
     "jobs at once on this mac",
     "pause heavy work queue",
-    "cpu limit",
-    "keep memory free",
-    "slow down agent jobs when the mac is busy",
-    "over the limit for",
-    "claude code hook",
-    "power off idle simulators",
-    "heavy job notices",
-    ...Object.values(RUNNER_SETTING_COPY).map(({ title }) => title),
   ],
   SettingsAbout: [
     "version",

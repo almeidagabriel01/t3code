@@ -1,8 +1,5 @@
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
-import {
-  HEAVY_OVER_LIMIT_DESCRIPTION,
-  heavyLimitIdle,
-} from "@t3tools/client-runtime/state/runnerModel";
+import { HEAVY_LIMIT_COPY, heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
 import {
   HEAVY_QUEUE_LIMITS,
   type EnvironmentId,
@@ -36,23 +33,10 @@ const QUEUE_OFF_NOTE = "Only applies while the heavy work queue is on.";
 const LIMIT_ROWS: ReadonlyArray<{
   readonly key: HeavyQueueLimitKey;
   readonly searchId: SettingsSearchItemId;
-  readonly description: string;
 }> = [
-  {
-    key: "macCpuCeilingPercent",
-    searchId: "heavy-work-cpu-ceiling",
-    description: "A new heavy job waits while this Mac's CPU stays above this.",
-  },
-  {
-    key: "macMemoryFloorPercent",
-    searchId: "heavy-work-memory-floor",
-    description: "A new heavy job waits while less than this much of this Mac's memory is free.",
-  },
-  {
-    key: "heavyOverLimitSeconds",
-    searchId: "heavy-work-over-limit",
-    description: HEAVY_OVER_LIMIT_DESCRIPTION,
-  },
+  { key: "macCpuCeilingPercent", searchId: "heavy-work-cpu-ceiling" },
+  { key: "macMemoryFloorPercent", searchId: "heavy-work-memory-floor" },
+  { key: "heavyOverLimitSeconds", searchId: "heavy-work-over-limit" },
 ];
 
 function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -100,7 +84,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
       <SettingsRow
         key={row.key}
         {...searchableSetting(row.searchId)}
-        description={row.description}
+        description={HEAVY_LIMIT_COPY[row.key].description}
         status={row.status}
         control={
           <UnitStepper
