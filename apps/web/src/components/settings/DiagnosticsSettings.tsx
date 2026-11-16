@@ -42,7 +42,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -911,13 +915,13 @@ function DiagnosticsSettingsBody() {
   if (!canReadDiagnostics) {
     return (
       <SettingsPageContainer>
-        <p className="text-sm text-muted-foreground">
+        <SettingsServerEnvironmentNotice>
           {environmentId === null
             ? CONNECT_ENVIRONMENT_FOR_DIAGNOSTICS
             : diagnosticsAccess.isPending
               ? "Checking diagnostics access…"
-              : diagnosticsAccess.error}
-        </p>
+              : (diagnosticsAccess.error ?? CONNECT_ENVIRONMENT_FOR_DIAGNOSTICS)}
+        </SettingsServerEnvironmentNotice>
       </SettingsPageContainer>
     );
   }

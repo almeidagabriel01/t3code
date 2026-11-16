@@ -37,7 +37,12 @@ import {
 } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { useAccessEnvironment } from "./useAccessEnvironment";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting, settingCopy } from "./settingsSearch";
@@ -1578,13 +1583,9 @@ function ConnectionsSettingsContent({
           </Dialog>
         </>
       ) : (
-        <SettingsSection {...searchableSetting("connections-environment")}>
-          <SettingsRow
-            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
-            title="No environment selected"
-            description={CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS}
-          />
-        </SettingsSection>
+        <SettingsServerEnvironmentNotice id={searchableSetting("connections-environment").id}>
+          {CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS}
+        </SettingsServerEnvironmentNotice>
       )}
     </>
   );
