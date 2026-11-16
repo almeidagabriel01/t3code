@@ -450,3 +450,19 @@ it("a message continuing the same teammate shows its face and name once", () => 
   );
   expect(view.container.textContent).toBe("again");
 });
+
+it("a continuing message still shows its own status", () => {
+  mocks.assistants = [assistant("lead", "Pessoal Lead")];
+  using view = mount(
+    <AssistantFeedMessage
+      environmentId={"hub" as never}
+      assistantId="lead"
+      joinedAtLabel={null}
+      status="blocked"
+      continues
+    >
+      again
+    </AssistantFeedMessage>,
+  );
+  expect(view.container.textContent).toBe("Blockedagain");
+});

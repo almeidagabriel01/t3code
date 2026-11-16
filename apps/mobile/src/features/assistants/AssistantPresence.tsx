@@ -61,6 +61,7 @@ const STATUS_CHIP = {
 } satisfies Record<TeammateReplyStatus, { readonly text: string; readonly wash: string }>;
 
 const COLLAPSED_BODY_HEIGHT = 320;
+const FOLD_TRANSITION = LinearTransition.duration(260).reduceMotion(ReduceMotion.System);
 
 /**
  * Who wrote in this agent's conversation: the assistant's own avatar, name, role and access, in its
@@ -97,6 +98,18 @@ export function AssistantFeedMessage(props: {
   const access = assistant ? toolAccessLabel(assistant.toolAccess) : null;
   const badge = presenceBadgeLabel(access, assistant?.askBeforeActing === true, assistant?.role);
   const collapsed = props.long === true && !expanded;
+  const status =
+    props.status === undefined ? null : (
+      <View
+        accessibilityLabel={`Status: ${TEAMMATE_STATUS_LABEL[props.status]}`}
+        className="self-start rounded px-1.5 py-px"
+        style={{ backgroundColor: accentWash(STATUS_CHIP[props.status].wash, 0.16) }}
+      >
+        <Text className={`font-t3-medium text-2xs ${STATUS_CHIP[props.status].text}`}>
+          {TEAMMATE_STATUS_LABEL[props.status]}
+        </Text>
+      </View>
+    );
   return (
     <View className={props.continues ? "-mt-2 mb-4 gap-3 px-1" : "mb-4 gap-3 px-1"}>
       {props.joinedAtLabel !== null ? (
@@ -120,7 +133,10 @@ export function AssistantFeedMessage(props: {
           <AssistantAvatar assistant={face} environmentId={props.environmentId} size={28} />
         )}
         <View className="min-w-0 shrink gap-1.5">
-          {props.continues ? null : (
+          {props.continues ? (
+            // The name shows once per run; each message's own status still shows.
+            status
+          ) : (
             <View className="flex-row flex-wrap items-center gap-x-1.5 gap-y-1">
               <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
                 {name}
@@ -128,17 +144,7 @@ export function AssistantFeedMessage(props: {
               <Text className="text-xs text-foreground-muted" numberOfLines={1}>
                 {badge}
               </Text>
-              {props.status === undefined ? null : (
-                <View
-                  accessibilityLabel={`Status: ${TEAMMATE_STATUS_LABEL[props.status]}`}
-                  className="rounded px-1.5 py-px"
-                  style={{ backgroundColor: accentWash(STATUS_CHIP[props.status].wash, 0.16) }}
-                >
-                  <Text className={`font-t3-medium text-2xs ${STATUS_CHIP[props.status].text}`}>
-                    {TEAMMATE_STATUS_LABEL[props.status]}
-                  </Text>
-                </View>
-              )}
+              {status}
             </View>
           )}
           <View
@@ -150,7 +156,8 @@ export function AssistantFeedMessage(props: {
             }}
           >
             <Animated.View
-              layout={LinearTransition.duration(260).reduceMotion(ReduceMotion.System)}
+              // Only a foldable body animates; other rows skip layout tracking in the list.
+              layout={props.long ? FOLD_TRANSITION : undefined}
               style={collapsed ? { maxHeight: COLLAPSED_BODY_HEIGHT, overflow: "hidden" } : null}
             >
               {props.children}

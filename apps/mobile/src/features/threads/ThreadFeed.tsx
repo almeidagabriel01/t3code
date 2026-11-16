@@ -232,7 +232,7 @@ import { ASSISTANT_FOLDED_HEIGHT, isAssistantMessageFoldable } from "./assistant
 import { FoldableContent } from "../../components/FoldableContent";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import {
-  assistantSenders,
+  assistantJoins,
   continuesAssistantSender,
   messageAssistantId,
 } from "@t3tools/client-runtime/assistantPresence";
@@ -1403,7 +1403,7 @@ function renderFeedEntry(
     readonly onSendToMainChat?: ((text: string) => void) | undefined;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly assistantFirstMessageIds: ReadonlySet<string>;
+    readonly assistantJoins: ReadonlyMap<string, ReadonlyArray<string>>;
     readonly assistantContinuedMessageIds: ReadonlySet<string>;
   },
 ) {
@@ -1702,7 +1702,7 @@ function renderFeedEntry(
                 assistantId={assistantId}
                 fallbackName={part?.name}
                 joinedAtLabel={
-                  index === 0 && props.assistantFirstMessageIds.has(message.id)
+                  props.assistantJoins.get(message.id)?.includes(assistantId)
                     ? timestampLabel
                     : null
                 }
@@ -2790,13 +2790,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const assistantFirstMessageIds = useMemo(
+  const assistantJoinsByMessage = useMemo(
     () =>
-      new Set(
-        assistantSenders(
-          props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
-          [],
-        ).map((sender) => sender.firstMessageId),
+      assistantJoins(
+        props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
       ),
     [props.feed],
   );
@@ -3089,7 +3086,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : null}
           {renderFeedEntry(info, {
-            assistantFirstMessageIds,
+            assistantJoins: assistantJoinsByMessage,
             assistantContinuedMessageIds,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
