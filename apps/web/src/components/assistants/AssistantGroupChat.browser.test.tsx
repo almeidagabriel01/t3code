@@ -23,6 +23,7 @@ import { AppRoot } from "~/AppRoot";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import type { AttachmentUploadState } from "~/lib/attachmentUploadState";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { formatUpcomingTimestamp } from "~/timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -64,11 +65,43 @@ vi.mock(
     return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
   },
 );
+// The shared upload queue with its network replaced: `upload` answers each file, `discard` sees
+// every finished upload the composer lets go of.
 const uploads = vi.hoisted(() => ({ upload: vi.fn(), discard: vi.fn() }));
-vi.mock(import("~/lib/attachmentUploadQueue"), async (original) => ({
-  ...(await original()),
-  uploadStandaloneAttachment: uploads.upload,
-  discardStandaloneAttachment: uploads.discard,
+vi.mock(import("~/lib/attachmentUploadQueue"), async (original) => {
+  const actual = await original();
+  const set = (id: string, upload: AttachmentUploadState | null) =>
+    actual.useAttachmentUploadStore.setState(({ uploadsByImageId }) => {
+      const { [id]: _gone, ...rest } = uploadsByImageId;
+      return { uploadsByImageId: upload === null ? rest : { ...rest, [id]: upload } };
+    });
+  const start: typeof actual.startAttachmentUpload = ({ environmentId, image }) => {
+    set(image.id, { status: "uploading", environmentId, progress: 0 });
+    Promise.resolve(uploads.upload(environmentId, image.file)).then(
+      ({ attachmentId }: { readonly attachmentId: string }) =>
+        set(image.id, { status: "ready", environmentId, attachmentId }),
+      (cause: Error) => set(image.id, { status: "failed", environmentId, reason: cause.message }),
+    );
+  };
+  return {
+    ...actual,
+    startAttachmentUpload: start,
+    retryAttachmentUpload: start,
+    releaseAttachmentUpload: (id) => {
+      const upload = actual.readAttachmentUpload(id);
+      if (upload?.status === "ready") uploads.discard(upload.environmentId, upload.attachmentId);
+      set(id, null);
+    },
+  };
+});
+// The server takes files, as a real one advertises.
+vi.mock(import("../chat/useFileAttachmentCapabilities"), () => ({
+  useFileAttachmentCapabilities: () => ({
+    attachmentUploadsCapabilityKnown: true,
+    supportsAttachmentUploads: true,
+    maxFileAttachmentBytes: 10 * 1024 * 1024,
+    fileStagingLimit: 10 * 1024 * 1024,
+  }),
 }));
 // A one-pixel image for every attachment, so thumbnails and the viewer have something to show.
 const PIXEL = "data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAACAkQBADs=";
@@ -260,6 +293,7 @@ async function openChat(
     postGate: null,
     postCut: false,
     older: null,
+    contextUsage: new Map(),
   });
   fakeTeamEdits.updates = [];
   publishAssistants(options.people ?? people(), [options.team ?? team()]);
@@ -622,6 +656,33 @@ it("replies to a member's message and sends the reply link, or drops it", async 
   await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
 });
 
+it("measures the context of the member a reply lands with, from that member's thread", async () => {
+  publishGroupChat(
+    [
+      message(1, { ...inRequest(1), text: "@ada hi" }),
+      message(2, {
+        ...inRequest(1),
+        author: "assistant",
+        assistantId: "ada" as AssistantId,
+        taskId: "t" as never,
+        text: "hello back",
+      }),
+    ],
+    [task("t", 1, { requestId: "m1" as never, status: "completed" })],
+  );
+  await using _screen = await openChat();
+  fakeGroupChat.contextUsage.set(`assistant:ada:g-${"0".repeat(16)}`, {
+    latestTurnUsage: { usedTokens: 50_000, maxTokens: 200_000, updatedAt: WHEN },
+    providerThread: null,
+  });
+  await expect.element(main().getByText("hello back")).toBeVisible();
+  // A new request opens fresh threads: there is nothing to measure yet.
+  expect(main().getByTestId("composer-context-meter").elements()).toHaveLength(0);
+  await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
+  await userEvent.type(composer(), "thanks");
+  await expect.element(main().getByTestId("composer-context-meter")).toHaveTextContent("25%");
+});
+
 it("lets go of a cut-off reply's quote once its post shows, also after an edit", async () => {
   const feed = [
     message(1, { text: "@ada hi" }),
@@ -720,7 +781,7 @@ it("shows a task's expected result and resources, and why a queued or limited on
 
 it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversation", async () => {
   publishGroupChat(
-    [message(1)],
+    [message(1, inRequest(1))],
     [
       task("run", 1),
       task("hold", 1, {
@@ -744,6 +805,14 @@ it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversat
   expect(work.elements().map((row) => row.textContent)).toEqual([
     expect.stringMatching(/^AdaRunning/),
   ]);
+  // The request names each owner once, by its newest task, and lists the three tasks as a tree.
+  const owners = main().getByTestId("group-request-owners").getByRole("button");
+  await expect.element(owners.first()).toBeVisible();
+  expect(owners.elements().map((owner) => owner.getAttribute("aria-label"))).toEqual([
+    "Ada · Paused. Open thread",
+    "Bo · Paused. Open thread",
+  ]);
+  expect(main().getByTestId("group-task-tree-row").elements()).toHaveLength(3);
   const cards = main().getByTestId("group-task-card");
   await userEvent.click(cards.first().getByRole("button", { name: "Stop" }));
   await eventually(() =>
@@ -793,6 +862,90 @@ it("pages in earlier messages above the newest ones", async () => {
   await expect
     .element(main().getByRole("button", { name: "Load earlier messages" }))
     .not.toBeInTheDocument();
+});
+
+it("lists what waits on the user, resumes it, and goes to it through earlier pages", async () => {
+  publishGroupChat(
+    [message(3, { ...inRequest(3), text: "newest" })],
+    [
+      task("hold", 1, {
+        requestId: "m1" as never,
+        ownerId: "bo" as AssistantId,
+        status: "paused",
+        reason: "routing_failed",
+      }),
+    ],
+    true,
+  );
+  await using _screen = await openChat();
+  const strip = main().getByTestId("group-waiting");
+  await expect.element(strip).toHaveAccessibleName("Waiting on you (1)");
+  await userEvent.click(strip.getByRole("button", { name: "Resume" }));
+  await eventually(() =>
+    expect(fakeGroupChat.taskActions).toEqual([{ taskId: "hold", action: "resume" }]),
+  );
+  fakeGroupChat.older = {
+    messages: [message(1, { ...inRequest(1), text: "fix the login" })],
+    tasks: [],
+    hasMore: false,
+  };
+  await userEvent.click(strip.getByTestId("group-waiting-row"));
+  await eventually(() => expect(fakeGroupChat.histories).toEqual([{ teamId: "t1", beforeSeq: 3 }]));
+  const block = main().getByRole("region", { name: "fix the login" });
+  await expect.element(block).toHaveAttribute("data-highlighted");
+  expect(document.activeElement).toBe(block.element());
+});
+
+it("says when a request it was sent to is no longer in the chat", async () => {
+  publishGroupChat([message(1, inRequest(1))]);
+  await using screen = await openChat();
+  await expect.element(main().getByTestId("group-request-block")).toBeVisible();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+    search: { request: "m9" },
+  });
+  await expect.element(page.getByText("Request not found")).toBeVisible();
+});
+
+it("opens the request a group's Needs you indicator points at, from the sidebar", async () => {
+  publishGroupChat([
+    message(1, { ...inRequest(1), text: "pick a project" }),
+    message(2, { ...inRequest(2), text: "later request" }),
+  ]);
+  await using screen = await openChat({
+    team: team({
+      chat: chatOf({
+        unreadCount: 0,
+        readSeq: 2,
+        latestSeq: 2,
+        scopes: [
+          {
+            projectId: null,
+            unreadCount: 0,
+            readSeq: 2,
+            waiting: true,
+            waitingRequest: {
+              requestId: "m1",
+              title: "pick a project",
+              reason: "project",
+              assistantId: null,
+            },
+          },
+        ],
+      }),
+    }),
+  });
+  const indicator = page.getByTestId("sidebar-assistant-fold").getByTestId("zone-indicator");
+  await userEvent.hover(indicator);
+  await expect
+    .element(page.getByTestId("folder-indicator-detail"))
+    .toHaveTextContent("Needs you · General: pick a project (Needs a project)");
+  await userEvent.click(indicator);
+  const block = main().getByRole("region", { name: "pick a project" });
+  await expect.element(block).toHaveAttribute("data-highlighted");
+  // The link's request is used once: the address goes back to the plain chat.
+  await eventually(() => expect(screen.router.state.location.search).toEqual({}));
 });
 
 it("shows an archived group as read-only with a way back", async () => {
@@ -978,25 +1131,31 @@ it("attaches pasted files, keeps the others when one fails, and sends what is re
   });
   await using _screen = await openChat();
   paste(composer().element(), [shot(), sheet(), broken()]);
-  const chips = main().getByTestId("group-attachment-chip");
-  await expect.element(chips.nth(0).getByText("shot.png")).toBeVisible();
-  await expect.element(chips.nth(1).getByText("sheet.pdf")).toBeVisible();
-  await expect.element(main().getByRole("alert")).toHaveTextContent("Upload rejected (413)");
+  // The thread composer's own tiles: the image previews in the viewer, files list by name.
+  const remove = (name: string) => main().getByRole("button", { name: `Remove ${name}` });
+  await userEvent.click(main().getByRole("button", { name: "Preview shot.png" }));
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  await expect.element(main().getByRole("button", { name: "sheet.pdf" })).toBeVisible();
+  await expect
+    .element(main().getByRole("button", { name: "Retry upload for broken.txt" }))
+    .toBeVisible();
 
   // The failed file holds the send until it is retried or removed; the others stay.
   await userEvent.type(composer(), "@ada see these");
   await expect
-    .element(main().getByRole("button", { name: "Waiting for files to upload" }))
+    .element(main().getByRole("button", { name: "Retry or remove the file that failed to upload" }))
     .toBeDisabled();
-  await userEvent.click(main().getByRole("button", { name: "Remove broken.txt" }));
-  await expect.element(chips.nth(2)).not.toBeInTheDocument();
+  await userEvent.click(remove("broken.txt"));
+  await expect.element(remove("broken.txt")).not.toBeInTheDocument();
   await expect.element(main().getByRole("button", { name: "Submit message" })).toBeEnabled();
 
   // Removing a chip before sending deletes its upload.
-  await userEvent.click(main().getByRole("button", { name: "Remove sheet.pdf" }));
+  await userEvent.click(remove("sheet.pdf"));
   expect(uploads.discard).toHaveBeenCalledWith(ENVIRONMENT_ID, "pending-sheet.pdf");
   paste(composer().element(), [sheet()]);
-  await expect.element(chips.nth(1).getByText("sheet.pdf")).toBeVisible();
+  await expect.element(remove("sheet.pdf")).toBeVisible();
 
   await expect.element(main().getByRole("button", { name: "Submit message" })).toBeEnabled();
   await userEvent.click(main().getByRole("button", { name: "Submit message" }));
@@ -1024,7 +1183,8 @@ it("attaches pasted files, keeps the others when one fails, and sends what is re
       },
     ]),
   );
-  await expect.element(main().getByTestId("group-attachment-chips")).not.toBeInTheDocument();
+  await expect.element(remove("shot.png")).not.toBeInTheDocument();
+  await expect.element(remove("sheet.pdf")).not.toBeInTheDocument();
 });
 
 it("retries a failed upload from its chip, and the picker adds files too", async () => {
@@ -1042,9 +1202,9 @@ it("retries a failed upload from its chip, and the picker adds files too", async
   files.items.add(sheet());
   input.files = files.files;
   input.dispatchEvent(new Event("change", { bubbles: true }));
-  await expect.element(main().getByRole("alert")).toHaveTextContent("Upload failed");
-  await userEvent.click(main().getByRole("button", { name: "Retry sheet.pdf" }));
-  await expect.element(main().getByRole("alert")).not.toBeInTheDocument();
+  const retry = main().getByRole("button", { name: "Retry upload for sheet.pdf" });
+  await userEvent.click(retry);
+  await expect.element(retry).not.toBeInTheDocument();
   await userEvent.type(composer(), "@ada take it{Enter}");
   await eventually(() => expect(fakeGroupChat.posts).toHaveLength(1));
   expect(fakeGroupChat.posts[0]!.attachments).toHaveLength(1);
@@ -1070,13 +1230,11 @@ it("takes files dropped on the composer and shows the drop highlight while dragg
   );
   expect(uploads.upload).not.toHaveBeenCalled();
   drag("drop");
-  await expect
-    .element(main().getByTestId("group-attachment-chip").getByText("sheet.pdf"))
-    .toBeVisible();
+  await expect.element(main().getByRole("button", { name: "Remove sheet.pdf" })).toBeVisible();
   expect(uploads.upload).toHaveBeenCalledOnce();
 });
 
-it("shows a message's images as thumbnails that open the viewer and its files as chips", async () => {
+it("shows a message's images as thumbnails that open the viewer and its files as cards", async () => {
   publishGroupChat([
     message(1, {
       text: "@ada look at these",
@@ -1095,8 +1253,11 @@ it("shows a message's images as thumbnails that open the viewer and its files as
   await using _screen = await openChat();
   const attachments = main().getByTestId("group-message-attachments");
   await expect.element(attachments.getByRole("img", { name: "shot.png" })).toBeVisible();
+  const file = attachments.getByRole("button", { name: "Preview sheet.pdf" });
+  await expect.element(file).toBeVisible();
+  expect(file.element().textContent).toContain("PDF · 4.00 KB");
   await expect
-    .element(attachments.getByRole("button", { name: "Download sheet.pdf" }).getByText("4 KB"))
+    .element(attachments.getByRole("button", { name: "Download sheet.pdf" }))
     .toBeVisible();
   await userEvent.click(attachments.getByRole("button", { name: "Preview shot.png" }));
   await expect.element(page.getByRole("dialog")).toBeVisible();
@@ -1622,7 +1783,7 @@ it("keeps a cut-off reply's quote and id across another tab and the chat reopeni
   await userEvent.click(tab("render"));
   await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
   paste(composer().element(), [shot()]);
-  await expect.element(main().getByTestId("group-attachment-chip")).toBeVisible();
+  await expect.element(main().getByRole("button", { name: "Remove shot.png" })).toBeVisible();
   fakeGroupChat.postCut = true;
   await userEvent.type(composer(), "one more{Enter}");
   await expect.element(warning).toBeVisible();
@@ -1638,7 +1799,7 @@ it("keeps a cut-off reply's quote and id across another tab and the chat reopeni
   });
   await expect.element(chip).toHaveTextContent("Replying to Ada Budget answered");
   // Its file came back with it, still uploaded.
-  await expect.element(main().getByTestId("group-attachment-chip")).toBeVisible();
+  await expect.element(main().getByRole("button", { name: "Remove shot.png" })).toBeVisible();
   expect(uploads.discard).not.toHaveBeenCalled();
   await userEvent.click(page.getByRole("button", { name: "Submit message" }));
   await eventually(() => expect(fakeGroupChat.posts).toHaveLength(2));

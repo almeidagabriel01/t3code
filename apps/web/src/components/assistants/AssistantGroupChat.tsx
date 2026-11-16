@@ -16,6 +16,9 @@ import {
   assistantGroupRequestProject,
   assistantGroupRunningCount,
   assistantGroupMemberWork,
+  assistantGroupRequestOwners,
+  assistantGroupTaskTree,
+  ASSISTANT_GROUP_TASK_MOOD,
   ASSISTANT_GROUP_STATUS_LABEL,
   type AssistantGroupMemberWork,
   assistantGroupTabAfterSend,
@@ -37,7 +40,11 @@ import {
   assistantGroupMentionHref,
   assistantGroupMessageExcerpt,
   assistantGroupWorkedLabel,
+  assistantGroupWaitingRequests,
+  assistantGroupWaitingWhy,
+  type AssistantGroupWaitingItem,
 } from "@t3tools/client-runtime/assistantGroupChat";
+import { folderIndicatorDetail } from "@t3tools/client-runtime/sidebarZones";
 import { teamSummary } from "@t3tools/client-runtime/assistantTeam";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -54,6 +61,7 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import {
+  ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   assistantGroupInstructionBody,
   assistantGroupProjectIds,
   splitAssistantTransferText,
@@ -79,6 +87,7 @@ import {
   MailIcon,
   MailOpenIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   ReplyIcon,
   SettingsIcon,
@@ -86,6 +95,7 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -173,6 +183,9 @@ import {
 } from "./GroupComposer";
 import { GroupMentionChip, GroupProjectChip, type GroupMentionProject } from "./GroupMentionChip";
 import { RelativeTime } from "../RelativeTime";
+import { useAssistantStatus } from "../sidebar/useSidebarZones";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import {
   MemberProjectModelDialog,
   ProjectModelDialog,
@@ -226,6 +239,8 @@ function GroupHeader(props: {
     return found ? getDisplayModelName(found) : formatModelSlugName(selection.model);
   };
   const archived = team.archivedAt !== null;
+  const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const homeProjectId = props.members[0]?.projectId;
   const homeProject = useProjects().find(
     (project) => project.environmentId === environmentId && project.id === homeProjectId,
@@ -277,11 +292,16 @@ function GroupHeader(props: {
             <AssistantCluster
               environmentId={environmentId}
               className="size-6"
-              faces={team.memberIds.map((id) => ({
-                key: id,
-                assistant:
-                  props.members.find((member) => member.id === id) ?? removedAssistantFace(id),
-              }))}
+              faces={team.memberIds.map((id) => {
+                const member = props.members.find((candidate) => candidate.id === id);
+                return {
+                  key: id,
+                  assistant: member ?? removedAssistantFace(id),
+                  ...(member === undefined
+                    ? {}
+                    : { mood: status.of(environmentId, member, limitLabel).mood }),
+                };
+              })}
             />
           </TooltipTrigger>
           <TooltipPopup side="bottom">Group info</TooltipPopup>
@@ -442,7 +462,171 @@ function ReplyLine(props: {
   );
 }
 
+/** The members with a task in a request, by their newest task's face; each opens its thread. */
+function RequestOwners(props: {
+  readonly environmentId: EnvironmentId;
+  readonly owners: ReadonlyArray<AssistantGroupTask>;
+  readonly assistants: ReadonlyMap<string, Assistant>;
+  readonly onOpenThread: (threadId: AssistantGroupTask["threadId"]) => void;
+}) {
+  if (props.owners.length === 0) return null;
+  return (
+    <span data-testid="group-request-owners" className="flex shrink-0 items-center gap-0.5">
+      {props.owners.map((task) => {
+        const member = props.assistants.get(task.ownerId);
+        const label = `${member?.name ?? "Removed member"} · ${ASSISTANT_GROUP_STATUS_LABEL[task.status]}`;
+        return (
+          <Tooltip key={task.ownerId}>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`${label}. Open thread`}
+                  onClick={() => props.onOpenThread(task.threadId)}
+                  className="flex size-6 cursor-pointer items-center justify-center rounded-full outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                />
+              }
+            >
+              <AssistantAvatar
+                assistant={member ?? removedAssistantFace(task.ownerId)}
+                environmentId={props.environmentId}
+                mood={ASSISTANT_GROUP_TASK_MOOD[task.status]}
+                className="size-5"
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="top">{label} · Open thread</TooltipPopup>
+          </Tooltip>
+        );
+      })}
+    </span>
+  );
+}
+
+/** A request's tasks as a tree: who handed what to whom, each with its state, time and thread. */
+function RequestTaskTree(props: {
+  readonly environmentId: EnvironmentId;
+  readonly tasks: ReadonlyArray<AssistantGroupTask>;
+  readonly assistants: ReadonlyMap<string, Assistant>;
+  readonly onOpenThread: (threadId: AssistantGroupTask["threadId"]) => void;
+}) {
+  // One task is already its own card; a tree starts with a hand-off.
+  if (props.tasks.length < 2) return null;
+  return (
+    <ul data-testid="group-task-tree" aria-label="Tasks" className="flex flex-col gap-0.5 text-xs">
+      {assistantGroupTaskTree(props.tasks).map(({ task, depth }) => {
+        const member = props.assistants.get(task.ownerId);
+        const open = ASSISTANT_GROUP_WORKING_TASK_STATUSES.some((status) => status === task.status);
+        return (
+          <li key={task.id} style={{ paddingInlineStart: `${depth * 1.25}rem` }}>
+            <button
+              type="button"
+              data-testid="group-task-tree-row"
+              onClick={() => props.onOpenThread(task.threadId)}
+              className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-left outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              <AssistantAvatar
+                assistant={member ?? removedAssistantFace(task.ownerId)}
+                environmentId={props.environmentId}
+                mood={ASSISTANT_GROUP_TASK_MOOD[task.status]}
+                className="size-4"
+              />
+              <span className="shrink-0 font-medium">{member?.name ?? "Removed member"}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                {task.instruction}
+              </span>
+              <span className="shrink-0 text-muted-foreground">
+                {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
+              </span>
+              <span className="shrink-0 text-muted-foreground/70 tabular-nums">
+                {open ? (
+                  <RelativeTime timestamp={task.createdAt} />
+                ) : (
+                  formatDuration(Date.parse(task.updatedAt) - Date.parse(task.createdAt))
+                )}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Who works on what: one line per member with open work, each opening that member's thread. */
+/** The requests that wait on the user in this tab, each one click from its place in the feed. */
+function WaitingStrip(props: {
+  readonly environmentId: EnvironmentId;
+  readonly items: ReadonlyArray<AssistantGroupWaitingItem>;
+  readonly assistants: ReadonlyMap<string, Assistant>;
+  readonly lead: Assistant | undefined;
+  readonly canResume: boolean;
+  readonly onOpen: (requestId: AssistantGroupWaitingItem["requestId"]) => void;
+  readonly onResume: (task: AssistantGroupTask) => void;
+}) {
+  if (props.items.length === 0) return null;
+  return (
+    <section
+      aria-label={`Waiting on you (${props.items.length})`}
+      data-testid="group-waiting"
+      data-glass-layer
+      className="chat-composer-lane border-b border-foreground/8 py-1.5"
+    >
+      <div className="chat-content-lane flex flex-col gap-0.5">
+        <h2 className="px-1.5 text-xs font-medium text-warning-foreground">
+          Waiting on you ({props.items.length})
+        </h2>
+        <ul className="flex max-h-28 flex-col overflow-y-auto">
+          {props.items.map((item) => {
+            const member =
+              item.assistantId === null ? props.lead : props.assistants.get(item.assistantId);
+            const why = assistantGroupWaitingWhy({
+              reason: item.reason,
+              taskReason: item.task?.reason ?? null,
+            });
+            return (
+              <li key={item.requestId} className="flex min-w-0 items-center gap-1">
+                <button
+                  type="button"
+                  data-testid="group-waiting-row"
+                  aria-label={`${item.title}. ${why}. Open request`}
+                  onClick={() => props.onOpen(item.requestId)}
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  {member === undefined ? null : (
+                    <AssistantAvatar
+                      assistant={member}
+                      environmentId={props.environmentId}
+                      className="size-4"
+                    />
+                  )}
+                  <span className="shrink-0 font-medium text-foreground">
+                    {member?.name ?? "Former member"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-foreground/80">{item.title}</span>
+                  <span className="shrink-0 text-muted-foreground @max-sm/group-chat:hidden">
+                    {why}
+                  </span>
+                </button>
+                {item.task === null || !props.canResume ? null : (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    data-testid="group-waiting-resume"
+                    onClick={() => props.onResume(item.task!)}
+                  >
+                    <PlayIcon />
+                    Resume
+                  </Button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 function MemberWorkStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly work: ReadonlyArray<AssistantGroupMemberWork>;
@@ -717,7 +901,7 @@ function FeedRow(props: {
         className="flex flex-col items-center gap-1.5 rounded-xl py-0.5"
       >
         <p className="text-center text-xs text-muted-foreground">{message.text}</p>
-        {cards.length > 0 ? <div className="w-full max-w-md">{cards}</div> : null}
+        {cards.length > 0 ? <div className="w-full">{cards}</div> : null}
       </div>
     );
   }
@@ -778,7 +962,7 @@ function FeedRow(props: {
               : `${props.lead.name} (lead) is choosing who answers…`}
           </p>
         ) : null}
-        {cards.length > 0 ? <div className="w-full max-w-md self-stretch">{cards}</div> : null}
+        {cards.length > 0 ? <div className="w-full self-stretch">{cards}</div> : null}
       </div>
     );
   }
@@ -864,11 +1048,13 @@ function RequestBody(props: {
   readonly canPick: boolean;
   readonly onPickProject: (project: GroupProjectOption) => void;
   readonly onReply: () => void;
+  readonly tree: ReactNode;
   readonly children: ReactNode;
 }) {
   const { block } = props;
   return (
     <div className="flex min-w-0 flex-col gap-3 border-t border-foreground/10 px-3 py-3">
+      {props.tree}
       {props.children}
       {block.status === "needs-project" && props.projects.length > 0 ? (
         <div
@@ -922,6 +1108,11 @@ function ProjectLabelText(props: { readonly label: string; readonly testId?: str
 }
 
 /** A request with its messages and cards, folded to its header when the user closes it. */
+/** A request the user was sent to: ringed for two seconds, then plain again. */
+const REQUEST_HIGHLIGHT =
+  "scroll-my-4 rounded-xl outline-none data-highlighted:ring-2 data-highlighted:ring-warning/60";
+const HIGHLIGHT_MS = 2000;
+
 function RequestBlock(props: {
   readonly block: AssistantGroupRequestBlock;
   readonly projectName: string | null;
@@ -933,6 +1124,11 @@ function RequestBlock(props: {
   readonly canPick: boolean;
   readonly onPickProject: (project: GroupProjectOption) => void;
   readonly onReply: () => void;
+  /** The owners' faces, each opening its thread; drawn beside the open header. */
+  readonly owners: ReactNode;
+  /** The same faces as a still mark, inside a folded line that is itself a button. */
+  readonly ownerFaces: ReactNode;
+  readonly tree: ReactNode;
   readonly children: ReactNode;
 }) {
   const { block } = props;
@@ -943,8 +1139,10 @@ function RequestBlock(props: {
         data-testid="group-request-block"
         data-request-id={block.requestId}
         aria-label={block.title}
+        tabIndex={-1}
         className={cn(
           "flex min-w-0 flex-col",
+          REQUEST_HIGHLIGHT,
           props.expanded && "rounded-xl border border-foreground/10",
         )}
       >
@@ -953,14 +1151,19 @@ function RequestBlock(props: {
           status={activity.status}
           label={activity.label}
           chip={
-            props.allChip === null ? null : (
-              <span
-                data-testid="group-request-chip"
-                className="flex max-w-28 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
-              >
-                <FolderIcon aria-hidden className="size-3 shrink-0" />
-                <ProjectLabelText label={props.allChip} />
-              </span>
+            props.allChip === null ? (
+              props.ownerFaces
+            ) : (
+              <>
+                {props.ownerFaces}
+                <span
+                  data-testid="group-request-chip"
+                  className="flex max-w-28 min-w-0 shrink-0 items-center gap-1 rounded-md bg-foreground/8 px-1.5 py-0.5 text-foreground/80"
+                >
+                  <FolderIcon aria-hidden className="size-3 shrink-0" />
+                  <ProjectLabelText label={props.allChip} />
+                </span>
+              </>
             )
           }
           onOpen={props.onToggle}
@@ -978,13 +1181,15 @@ function RequestBlock(props: {
         data-testid="group-request-block"
         data-request-id={block.requestId}
         aria-label={block.title}
-        className="min-w-0"
+        tabIndex={-1}
+        className={cn("min-w-0", REQUEST_HIGHLIGHT)}
       >
         <TaskEventActivityRow
           title={block.title}
           status={activity.status}
           label={activity.label}
           project={props.projectName}
+          chip={props.ownerFaces}
           onOpen={props.onToggle}
           action="Open request"
         />
@@ -996,42 +1201,49 @@ function RequestBlock(props: {
       data-testid="group-request-block"
       data-request-id={block.requestId}
       aria-label={block.title}
-      className="flex min-w-0 flex-col rounded-xl border border-foreground/10"
+      tabIndex={-1}
+      className={cn(
+        "flex min-w-0 flex-col rounded-xl border border-foreground/10",
+        REQUEST_HIGHLIGHT,
+      )}
     >
-      <button
-        type="button"
-        aria-expanded={props.expanded}
-        data-testid="group-request-header"
-        className="flex min-w-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        onClick={props.onToggle}
-      >
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 shrink-0 rotate-90 text-muted-foreground"
-        />
-        <span
-          className="min-w-0 flex-1 truncate text-sm font-semibold"
-          data-testid="group-request-title"
+      <div className="flex min-w-0 items-center gap-1 pe-2">
+        <button
+          type="button"
+          aria-expanded={props.expanded}
+          data-testid="group-request-header"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-xl px-3 py-2.5 text-left outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          onClick={props.onToggle}
         >
-          {block.title}
-        </span>
-        {props.projectName === null ? null : (
-          <span className="flex max-w-36 min-w-0 shrink items-center gap-1 text-xs text-muted-foreground @max-sm/group-chat:hidden">
-            <FolderIcon aria-hidden className="size-3 shrink-0" />
-            <ProjectLabelText label={props.projectName} testId="group-request-project" />
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 rotate-90 text-muted-foreground"
+          />
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-semibold"
+            data-testid="group-request-title"
+          >
+            {block.title}
           </span>
-        )}
-        <span
-          data-testid="group-request-status"
-          className={cn(
-            "flex shrink-0 items-center gap-1.5 text-xs font-medium",
-            STATUS_TONE[block.status],
+          {props.projectName === null ? null : (
+            <span className="flex max-w-36 min-w-0 shrink items-center gap-1 text-xs text-muted-foreground @max-sm/group-chat:hidden">
+              <FolderIcon aria-hidden className="size-3 shrink-0" />
+              <ProjectLabelText label={props.projectName} testId="group-request-project" />
+            </span>
           )}
-        >
-          <span aria-hidden className="size-1.5 rounded-full bg-current" />
-          {ASSISTANT_GROUP_REQUEST_STATUS_LABEL[block.status]}
-        </span>
-      </button>
+          <span
+            data-testid="group-request-status"
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 text-xs font-medium",
+              STATUS_TONE[block.status],
+            )}
+          >
+            <span aria-hidden className="size-1.5 rounded-full bg-current" />
+            {ASSISTANT_GROUP_REQUEST_STATUS_LABEL[block.status]}
+          </span>
+        </button>
+        {props.owners}
+      </div>
       <RequestBody {...props} />
     </section>
   );
@@ -1047,6 +1259,8 @@ function GroupTabs(props: {
   readonly tabs: ReadonlyArray<AssistantGroupTab>;
   readonly active: AssistantGroupTabKey;
   readonly projects: ReadonlyArray<EnvironmentProject>;
+  /** What a waiting tab's tooltip says, as the group's sidebar indicator does. */
+  readonly detail: (tab: AssistantGroupTab) => ReadonlyArray<string>;
   readonly onSelect: (key: AssistantGroupTabKey) => void;
 }) {
   return (
@@ -1068,7 +1282,7 @@ function GroupTabs(props: {
         >
           {props.tabs.map((tab) => {
             const project = props.projects.find((entry) => entry.id === tab.projectId);
-            return (
+            const toggle = (
               <Toggle key={tab.key} value={tab.key}>
                 {project === undefined ? null : (
                   <ProjectFavicon project={project} className="size-3.5" />
@@ -1086,6 +1300,19 @@ function GroupTabs(props: {
                 ) : null}
               </Toggle>
             );
+            if (!tab.waiting) return toggle;
+            return (
+              <Tooltip key={tab.key}>
+                <TooltipTrigger render={toggle} />
+                <TooltipPopup side="bottom">
+                  <div className="flex flex-col gap-0.5" data-testid="group-tab-detail">
+                    {props.detail(tab).map((line) => (
+                      <span key={line}>{line}</span>
+                    ))}
+                  </div>
+                </TooltipPopup>
+              </Tooltip>
+            );
           })}
         </ToggleGroup>
       </ScrollArea>
@@ -1096,6 +1323,8 @@ function GroupTabs(props: {
 /** What the composer reaches in the feed, which is remounted for each tab. */
 interface GroupFeedHandle {
   readonly jumpTo: (messageId: AssistantGroupMessage["id"]) => void;
+  /** Scrolls to a request, loading older pages until it shows or the history ends. */
+  readonly goToRequest: (requestId: string) => void;
   readonly followEnd: () => void;
 }
 
@@ -1134,6 +1363,8 @@ function GroupFeed(props: {
   const scrolledToNew = useRef(false);
   // A message to bring into view and flash once the render that shows it lands.
   const jumpTarget = useRef<string | null>(null);
+  // A request to bring into view and highlight once the render that shows it lands.
+  const seeking = useRef<string | null>(null);
   const [, setJumps] = useState(0);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [minimapStrips] = useState(() => new Map<string, HTMLSpanElement>());
@@ -1258,6 +1489,17 @@ function GroupFeed(props: {
     });
   });
 
+  const loadOlder = async () => {
+    if (chat === null || !chat.hasMore || loadingOlder) return;
+    const element = scroller.current;
+    setLoadingOlder(true);
+    const reply = await actions.olderThan(teamId, chat, scope);
+    setLoadingOlder(false);
+    if (!reply.ok) return failed("Could not load earlier messages", reply.message);
+    if (element !== null) anchor.current = { height: element.scrollHeight, top: element.scrollTop };
+    setPages((current) => [...current, reply.value]);
+  };
+
   // The feed follows new messages only while the user is at its end, and holds still while
   // an older page is added above, so what they were reading does not jump.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scroll position is DOM state
@@ -1288,6 +1530,20 @@ function GroupFeed(props: {
         );
       }
     }
+    if (seeking.current !== null) {
+      const target = element.querySelector(`[data-request-id="${CSS.escape(seeking.current)}"]`);
+      seeking.current = null;
+      if (target instanceof HTMLElement) {
+        scrolledToNew.current = true;
+        const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        target.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+        target.focus({ preventScroll: true });
+        target.dataset.highlighted = "";
+        window.setTimeout(() => delete target.dataset.highlighted, HIGHLIGHT_MS);
+      } else {
+        failed("Request not found", "It is no longer in this chat.");
+      }
+    }
     // Open on the first unread message when it is above the fold, else stay at the end.
     const divider = element.querySelector("[data-testid=group-new-divider]");
     if (divider !== null && !scrolledToNew.current) {
@@ -1299,17 +1555,6 @@ function GroupFeed(props: {
       }
     }
   });
-
-  const loadOlder = async () => {
-    if (chat === null || !chat.hasMore || loadingOlder) return;
-    const element = scroller.current;
-    setLoadingOlder(true);
-    const reply = await actions.olderThan(teamId, chat, scope);
-    setLoadingOlder(false);
-    if (!reply.ok) return failed("Could not load earlier messages", reply.message);
-    if (element !== null) anchor.current = { height: element.scrollHeight, top: element.scrollTop };
-    setPages((current) => [...current, reply.value]);
-  };
 
   const pickProject = async (block: AssistantGroupRequestBlock, project: GroupProjectOption) => {
     const reply = await actions.post({
@@ -1323,6 +1568,7 @@ function GroupFeed(props: {
   };
 
   const running = chat === null ? 0 : assistantGroupRunningCount(chat);
+  const blockTasks = (block: AssistantGroupRequestBlock) => block.rows.flatMap((row) => row.tasks);
   const scrollToEnd = () => {
     const element = scroller.current;
     if (element === null) return;
@@ -1344,8 +1590,29 @@ function GroupFeed(props: {
     jumpTarget.current = messageId;
     setJumps((count) => count + 1);
   };
+  const goToRequest = async (requestId: string) => {
+    if (chat === null) return;
+    const holds = (state: AssistantGroupChatState) =>
+      [...state.messages.values()].some((message) => message.requestId === requestId);
+    // ponytail: pages one by one; a jump far back would want a server read around the request.
+    let state = chat;
+    const loaded: AssistantGroupsHistoryResult[] = [];
+    while (!holds(state) && state.hasMore) {
+      const reply = await actions.olderThan(teamId, state, scope);
+      if (!reply.ok) return failed("Could not load earlier messages", reply.message);
+      loaded.push(reply.value);
+      state = applyAssistantGroupHistory(state, reply.value);
+    }
+    if (!holds(state)) return failed("Request not found", "It is no longer in this chat.");
+    if (loaded.length > 0) setPages((current) => [...current, ...loaded]);
+    setToggled((current) => new Map(current).set(requestId, true));
+    stickToBottom.current = false;
+    seeking.current = requestId;
+    setJumps((count) => count + 1);
+  };
   useImperativeHandle(props.handle, () => ({
     jumpTo,
+    goToRequest: (requestId) => void goToRequest(requestId),
     followEnd: () => {
       stickToBottom.current = true;
     },
@@ -1423,6 +1690,21 @@ function GroupFeed(props: {
   );
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <WaitingStrip
+        environmentId={environmentId}
+        items={
+          chat === null
+            ? []
+            : assistantGroupWaitingRequests(chat).filter((item) =>
+                assistantGroupInScope(item, scope),
+              )
+        }
+        assistants={byId}
+        lead={lead}
+        canResume={actions.canAct && !archived}
+        onOpen={(requestId) => void goToRequest(requestId)}
+        onResume={(task) => void taskAction(task, "resume")}
+      />
       <MemberWorkStrip
         environmentId={environmentId}
         work={chat === null ? [] : assistantGroupMemberWork(chat)}
@@ -1473,6 +1755,7 @@ function GroupFeed(props: {
               : items.map((item) => {
                   if (item.kind === "row") return feedRow(chat, item.row);
                   const { block } = item;
+                  const owners = assistantGroupRequestOwners(blockTasks(block));
                   const expanded =
                     toggled.get(block.requestId) ??
                     (!all &&
@@ -1500,6 +1783,36 @@ function GroupFeed(props: {
                       projects={groupProjects}
                       canPick={!archived && actions.canPost}
                       onPickProject={(project) => void pickProject(block, project)}
+                      owners={
+                        <RequestOwners
+                          environmentId={environmentId}
+                          owners={owners}
+                          assistants={byId}
+                          onOpenThread={openThread}
+                        />
+                      }
+                      ownerFaces={
+                        owners.length === 0 ? null : (
+                          <AssistantCluster
+                            environmentId={environmentId}
+                            className="size-4"
+                            faces={owners.map((task) => ({
+                              key: task.ownerId,
+                              assistant:
+                                byId.get(task.ownerId) ?? removedAssistantFace(task.ownerId),
+                              mood: ASSISTANT_GROUP_TASK_MOOD[task.status],
+                            }))}
+                          />
+                        )
+                      }
+                      tree={
+                        <RequestTaskTree
+                          environmentId={environmentId}
+                          tasks={blockTasks(block)}
+                          assistants={byId}
+                          onOpenThread={openThread}
+                        />
+                      }
                       onReply={() =>
                         props.onReply({
                           id: block.requestId,
@@ -1554,6 +1867,10 @@ function GroupFeed(props: {
 export function AssistantGroupChat(props: {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
+  /** A link's request to open, in its tab; `onFocused` drops it once handled. */
+  readonly focusRequest?: string | undefined;
+  readonly focusTab?: string | undefined;
+  readonly onFocused?: () => void;
 }) {
   const { environmentId, teamId } = props;
   const entries = useAssistantEntries();
@@ -1606,6 +1923,19 @@ export function AssistantGroupChat(props: {
     setReplyPick(target === null ? null : { tab: tabKey, value: target });
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   useShowGroupTab(environmentId, teamId, pending ? undefined : tabKey);
+  const { focusRequest, focusTab } = props;
+  const focused = useStableCallback(() => props.onFocused?.());
+  const wantedTab = tabs?.some((entry) => entry.key === focusTab) ? focusTab! : "all";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link's one-shot intent from the URL
+  useEffect(() => {
+    if (focusRequest === undefined || pending || live === null) return;
+    if (tabKey !== null && tabKey !== wantedTab) {
+      setSavedTab(wantedTab);
+      return;
+    }
+    feedHandle.current?.goToRequest(focusRequest);
+    focused();
+  }, [focusRequest, wantedTab, pending, live, tabKey, setSavedTab, focused]);
   const groupProjectIds = assistantGroupProjectIds(members, team?.projectIds ?? []);
   const projectName = (id: ProjectId) =>
     assistantGroupProjectLabel(
@@ -1730,7 +2060,28 @@ export function AssistantGroupChat(props: {
           </div>
         ) : null}
         {tabs === null || tab === null ? null : (
-          <GroupTabs tabs={tabs} active={tab.key} projects={projects} onSelect={setSavedTab} />
+          <GroupTabs
+            tabs={tabs}
+            active={tab.key}
+            projects={projects}
+            detail={(entry) =>
+              team.chat === undefined
+                ? []
+                : folderIndicatorDetail({
+                    chat: {
+                      ...team.chat,
+                      scopes: (team.chat.scopes ?? []).filter(
+                        (chatScope) =>
+                          entry.scope === undefined ||
+                          chatScope.projectId === entry.scope.projectId,
+                      ),
+                    },
+                    projects,
+                    groupProjectIds,
+                  })
+            }
+            onSelect={setSavedTab}
+          />
         )}
         {pending ? (
           <div className="min-h-0 flex-1" />
@@ -1785,6 +2136,7 @@ export function AssistantGroupChat(props: {
           onRestore={restore}
           history={sentByUser}
           messages={live?.messages}
+          state={live}
           onSend={send}
         />
       </>

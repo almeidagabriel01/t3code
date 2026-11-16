@@ -9,6 +9,8 @@ import {
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
+  assistantGroupComposerSession,
+  type AssistantGroupChatState,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
   assistantGroupFailedSendRouting,
@@ -28,6 +30,7 @@ import {
   resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
+import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   assistantGroupAddress,
@@ -45,6 +48,7 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { AtSignIcon, FolderIcon, ReplyIcon } from "lucide-react";
 import {
+  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -76,6 +80,8 @@ import { searchProviderSkills } from "~/providerSkillSearch";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
 import { useProject, useQuietThreadShell } from "~/state/entities";
+import { orchestrationEnvironment } from "~/state/orchestration";
+import { useEnvironmentQuery } from "~/state/query";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import {
   primaryServerKeybindingsAtom,
@@ -95,6 +101,7 @@ import {
   ComposerFilePreviewDialog,
 } from "../chat/ComposerAttachmentStrip";
 import { ComposerBanner } from "../chat/ComposerBanner";
+import { ComposerContextMeter } from "../chat/ComposerContextMeter";
 import {
   ComposerCommandMenu,
   composerSuggestionOptionId,
@@ -359,6 +366,56 @@ type RecipientsLineProps = Omit<
 };
 
 /**
+ * How full the context is of the session a reply lands in, read from the server once per thread
+ * and again whenever that member's task moves. Hidden for a new request, which opens fresh threads.
+ */
+function GroupContextMeter(props: {
+  readonly environmentId: EnvironmentId;
+  readonly state: AssistantGroupChatState | null;
+  readonly chat: AssistantGroupChatRef;
+  readonly text: string;
+  readonly members: ReadonlyArray<Assistant>;
+  readonly leadId: Assistant["id"] | null;
+}) {
+  const { environmentId, state, chat } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const replyId = chat.reply?.id ?? null;
+  const session = assistantGroupComposerSession({
+    state,
+    requestId: replyId === null ? null : (state?.messages.get(replyId)?.requestId ?? replyId),
+    text: props.text,
+    members: props.members,
+    leadId: props.leadId,
+    context,
+  });
+  const query = useEnvironmentQuery(
+    session === null
+      ? null
+      : orchestrationEnvironment.threadContextUsage({
+          environmentId,
+          input: { threadId: session.threadId },
+        }),
+  );
+  const { refresh } = query;
+  const moved = session?.updatedAt ?? null;
+  const readAt = useRef(moved);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the server's usage moves with the task
+  useEffect(() => {
+    if (moved === null || readAt.current === moved) return;
+    readAt.current = moved;
+    refresh();
+  }, [moved, refresh]);
+  const usage = query.data;
+  const snapshot =
+    session === null || usage == null
+      ? null
+      : deriveLatestContextWindowSnapshot([], usage.latestTurnUsage, usage.providerThread);
+  if (snapshot === null) return null;
+  const owner = props.members.find((member) => member.id === session!.ownerId)?.name ?? "member";
+  return <ComposerContextMeter usage={snapshot} owner={`Context of ${owner} in this request`} />;
+}
+
+/**
  * Who a draft reaches, under the composer. Only this line reads the lead's model and the
  * providers, so a provider update does not re-render the composer.
  */
@@ -489,6 +546,8 @@ export function GroupComposer(props: {
   readonly history: ReadonlyArray<{ readonly id: string; readonly text: string }>;
   /** The chat as loaded: a failed send whose post shows here landed. */
   readonly messages: ReadonlyMap<AssistantGroupMessageId, AssistantGroupMessage> | undefined;
+  /** The loaded chat, for the session whose context the meter shows. */
+  readonly state: AssistantGroupChatState | null;
   readonly onSend: (
     text: string,
     attachments: ReadonlyArray<ChatAttachment>,
@@ -1225,6 +1284,14 @@ export function GroupComposer(props: {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
+                        <GroupContextMeter
+                          environmentId={props.environmentId}
+                          state={props.state}
+                          chat={props.chat}
+                          text={prompt.value}
+                          members={props.members}
+                          leadId={props.leadId}
+                        />
                         <ComposerPrimaryActions
                           compact={false}
                           canOperateThread={!props.disabled}

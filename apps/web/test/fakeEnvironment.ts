@@ -62,6 +62,7 @@ import {
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ThreadContextUsage,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type ServerConfigStreamEvent,
@@ -144,6 +145,7 @@ const baseServerConfig: ServerConfig = {
     threadSnapshotPagination: true,
     threadResumeCompletionMarker: true,
     shellResumeCompletionMarker: true,
+    threadContextUsage: true,
   }),
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 };
@@ -784,7 +786,12 @@ export const fakeGroupChat = {
   conversations: [] as Array<Record<string, unknown>>,
   histories: [] as Array<Record<string, unknown>>,
   subscriptions: [] as Array<Record<string, unknown>>,
+  /** What `getThreadContextUsage` answers, by thread id. */
+  contextUsage: new Map<string, OrchestrationV2ThreadContextUsage>(),
 };
+handlers[ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage] = (input: {
+  readonly threadId: ThreadId;
+}) => Effect.succeed(fakeGroupChat.contextUsage.get(input.threadId) ?? null);
 const groupChatSubscribers = new Set<Queue.Queue<AssistantGroupsEvent>>();
 handlers[WS_METHODS.assistantGroupsSubscribe] = (input: Record<string, unknown>) => {
   fakeGroupChat.subscriptions.push(input);
