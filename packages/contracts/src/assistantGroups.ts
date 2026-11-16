@@ -58,9 +58,16 @@ export function assistantTransferList(paths: ReadonlyArray<string>): string {
   return paths.map((path) => `- [${path.split(/[\\/]/).pop() || path}](<${path}>)`).join("\n");
 }
 
-/** The paths of an {@link assistantTransferList}. */
+/** The paths of an {@link assistantTransferList}; read line by line, since a regex backtracks. */
 export function assistantTransferPaths(list: string): ReadonlyArray<string> {
-  return [...list.matchAll(/^- \[[^\n]*\]\(<([^>\n]+)>\)$/gm)].map((match) => match[1]!);
+  const paths: Array<string> = [];
+  for (const line of list.split("\n")) {
+    const opens = line.indexOf("](<");
+    if (!line.startsWith("- [") || !line.endsWith(">)") || opens < 3) continue;
+    const path = line.slice(opens + 3, -2);
+    if (path !== "" && !path.includes(">")) paths.push(path);
+  }
+  return paths;
 }
 
 export const ASSISTANT_GROUP_PARALLEL_LIMIT = 2;

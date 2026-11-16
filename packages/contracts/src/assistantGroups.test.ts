@@ -184,6 +184,7 @@ it.each([
     ["/s/x/report final.md", "C:\\s\\b.png"],
     "- [report final.md](</s/x/report final.md>)\n- [b.png](<C:\\s\\b.png>)",
   ],
+  [["/s/shot [1].png"], "- [shot [1].png](</s/shot [1].png>)"],
 ])("assistantTransferList(%j) round-trips through assistantTransferPaths", (paths, list) => {
   expect(assistantTransferList(paths)).toBe(list);
   expect(assistantTransferPaths(list)).toEqual(paths);
@@ -191,6 +192,8 @@ it.each([
 
 it("assistantTransferPaths ignores lines that are not file links", () => {
   expect(assistantTransferPaths("- [a](</s/a>)\nsee [b](</s/b>)\n- plain")).toEqual(["/s/a"]);
+  // A line of unclosed links once took a minute to reject; it must read in one pass.
+  expect(assistantTransferPaths(`- [${"](<".repeat(200_000)}\n- [a](</s/a>)`)).toEqual(["/s/a"]);
 });
 
 describe("group message attachments", () => {
