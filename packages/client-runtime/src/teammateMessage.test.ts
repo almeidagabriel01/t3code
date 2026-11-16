@@ -1,5 +1,4 @@
 import { ThreadId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveTeammateMessage, teammateMessagePlainText } from "./teammateMessage.ts";
@@ -35,12 +34,13 @@ Status: blocked
 Result: Back's run failed before it answered.
 </t3_reply>`;
 
-const agent = (
-  text: string,
-  senderThreadId = "assistant:lead:1",
-  id = "message:note",
-  createdAt = "2026-11-14T12:00:00.000Z",
-) => ({ id, role: "user", text, createdBy: "agent" as const, senderThreadId, createdAt });
+const agent = (text: string, senderThreadId = "assistant:lead:1", id = "message:note") => ({
+  id,
+  role: "user",
+  text,
+  createdBy: "agent" as const,
+  senderThreadId,
+});
 const replyId = "assistant-reply:message:ask";
 
 describe("resolveTeammateMessage", () => {
@@ -162,8 +162,9 @@ Status: done no lado deles; confere?`,
       ],
     ],
     [
-      "a note whose creation time is the DateTime clients hold",
-      { ...agent(fyi), createdAt: DateTime.makeUnsafe("2026-11-14T12:00:00.000Z") },
+      // Each environment updates on its own day, so no date decides; the server's marks do.
+      "a note from a server that does not attribute it yet, sent after this change",
+      { ...agent(fyi), createdAt: "2026-12-01T12:00:00.000Z" },
       [
         {
           kind: "request",
@@ -221,11 +222,6 @@ Status: done no lado deles; confere?`,
       "a group whose blocks answer another group",
       agent(group, "assistant:back:1", "assistant-reply:h"),
     ],
-    [
-      "an envelope written after messages carried their attribution",
-      agent(fyi, undefined, undefined, "2026-11-16T00:00:00.000Z"),
-    ],
-    ["an envelope with no creation time", { ...agent(fyi), createdAt: undefined }],
     [
       "a plain agent's reply that names an assistant (QA probe)",
       agent(

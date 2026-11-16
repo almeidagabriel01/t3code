@@ -8,7 +8,6 @@ import {
   type TeammateReplyStatus,
   teammateReplyStatus,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 
 /** One teammate's part of a message, ready to show: who, what, and the words without the envelope. */
 export interface TeammateMessagePart {
@@ -108,25 +107,15 @@ const GROUP_REPLY = new RegExp(
   "y",
 );
 
-/** Messages from here on carry `context.teammate`; an envelope in a newer message stays text. */
-const LEGACY_ENVELOPE_CUTOFF = Date.parse("2026-11-16T00:00:00.000Z");
-
 const replyMessageId = (requestId: string) => `assistant-reply:${requestId}`;
 
 /**
- * Messages stored before `context.teammate` existed: the envelope the server wrote, read back only
+ * Messages from a server without `context.teammate`: the envelope the server wrote, read back only
  * where the server's own marks prove it. The server wrapped every send of an assistant in its own
  * envelope from that assistant's thread, under ids it chose; any other text keeps its tags.
  */
 function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<TeammateMessageEntry> | null {
   const { text, senderThreadId, id } = message;
-  const createdAt =
-    message.createdAt === undefined
-      ? Number.NaN
-      : typeof message.createdAt === "string"
-        ? Date.parse(message.createdAt)
-        : DateTime.toEpochMillis(message.createdAt);
-  if (!(createdAt < LEGACY_ENVELOPE_CUTOFF)) return null;
   if (senderThreadId === undefined || assistantIdFromThreadId(senderThreadId) === null) return null;
   const single = SINGLE.exec(text);
   if (single !== null) {
@@ -188,7 +177,6 @@ interface TeammateSource {
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
   readonly senderThreadId?: string | undefined;
-  readonly createdAt?: string | DateTime.DateTime | undefined;
   readonly context?: Pick<OrchestrationMessageContext, "teammate"> | undefined;
 }
 
