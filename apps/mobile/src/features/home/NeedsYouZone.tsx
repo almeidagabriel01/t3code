@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   isAtomCommandInterrupted,
@@ -41,7 +42,7 @@ const QUESTION_OPTION_LIMIT = 4;
 interface ItemOrigin {
   readonly environmentId: string;
   readonly threadId: string;
-  readonly createdAt: string;
+  readonly createdAt: string | null;
   /** The assistant whose work this is; null for a project thread. */
   readonly assistant: Assistant | null;
   /** Set when the thread is an assistant's thread in a group. */
@@ -107,7 +108,9 @@ function ItemFrame(
         ) : (
           <View className="flex-1" />
         )}
-        <Text className={cn("text-xs", muted)}>{relativeTime(props.createdAt, nowMs)}</Text>
+        {props.createdAt === null ? null : (
+          <Text className={cn("text-xs", muted)}>{relativeTime(props.createdAt, nowMs)}</Text>
+        )}
       </View>
       <View className="flex-row items-center gap-2">
         <SymbolView name={props.icon} size={13} tintColorClassName={iconTint} type="monochrome" />
@@ -316,6 +319,19 @@ const DecisionItem = memo(function DecisionItem(
   );
 });
 
+/** Guest messages wait in the thread, where the owner sends or dismisses them. */
+const GuestItem = memo(function GuestItem(props: ItemOrigin) {
+  return (
+    <ItemFrame
+      {...props}
+      icon="person.badge.clock"
+      summary={GUEST_WAITING_LABEL}
+      error={null}
+      actions={null}
+    />
+  );
+});
+
 /** Everything that waits on the user, oldest first, answerable in place. Absent when empty. */
 export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?: boolean }) {
   const { items } = useSidebarZones();
@@ -355,16 +371,24 @@ export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?
               : null,
           sidebar,
         };
-        return item.decision !== null ? (
-          <DecisionItem key={item.key} {...origin} decision={item.decision} />
-        ) : (
-          <RequestItem
-            key={item.key}
-            {...origin}
-            kind={item.kind === "question" ? "question" : "approval"}
-            requestId={item.request!.id}
-          />
-        );
+        switch (item.kind) {
+          case "decision":
+            return <DecisionItem key={item.key} {...origin} decision={item.decision} />;
+          case "guest":
+            return <GuestItem key={item.key} {...origin} />;
+          case "approval":
+          case "question":
+            return (
+              <RequestItem
+                key={item.key}
+                {...origin}
+                kind={item.kind}
+                requestId={item.request.id}
+              />
+            );
+          default:
+            return item satisfies never;
+        }
       })}
       {items.length > SHOWN_LIMIT ? (
         <Pressable

@@ -289,7 +289,7 @@ describe("Assistant info", () => {
     expect(section("Groups")).toEqual(["Crew"]);
     expect(section("Access")).toEqual([
       "Tool access | access:read-only",
-      "Asks before acting",
+      "Asks before acting | On",
       `Model | ${formatModelSlugName("claude-opus-5-5")}`,
       "When it finds a problem | Fix small things",
       "Spending limit | $3 spent",
@@ -321,6 +321,7 @@ describe("Assistant info", () => {
     expect(section("Groups")).toEqual(["Crew | Lead"]);
     expect(section("Access")).toEqual([
       "Tool access | access:read-only",
+      "Asks before acting | Off",
       "When it finds a problem | Offer to fix",
     ]);
   });

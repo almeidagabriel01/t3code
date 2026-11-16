@@ -1,6 +1,7 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
@@ -107,7 +108,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   if (shell.pendingSubagentRequest != null) return true;
-  if ((shell.pendingGuestMessageCount ?? 0) > 0) return true;
+  if (guestWaitsOnUser(shell)) return true;
   const failedAt = failureEdgeAt(shell);
   return (
     failedAt !== undefined &&
@@ -149,7 +150,7 @@ export function canSnooze(
   if (request != null && request.kind !== "user_input") return false;
   if (shell.pendingSubagentRequest != null) return false;
   // A waiting guest message would wake it at once.
-  if ((shell.pendingGuestMessageCount ?? 0) > 0) return false;
+  if (guestWaitsOnUser(shell)) return false;
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }

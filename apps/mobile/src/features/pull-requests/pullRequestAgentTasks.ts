@@ -42,7 +42,14 @@ export function pullRequestAgentThreadActions(
     ...(canAsk ? [{ id: `${task}:new`, title: "Start a new thread", image: "plus" }] : []),
     ...active,
     ...(settled.length
-      ? [{ id: `${task}:settled`, title: "Settled threads", subactions: settled }]
+      ? [
+          {
+            id: `${task}:settled`,
+            title: "Settled threads",
+            image: "checkmark.circle",
+            subactions: settled,
+          },
+        ]
       : []),
   ];
 }

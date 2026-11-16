@@ -32,6 +32,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
     items: [
       {
         id: "environments",
+        icon: "server.rack",
         inline: true,
         title:
           selectedIds === null
@@ -58,6 +59,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
       },
       {
         id: "projects",
+        icon: "folder",
         inline: true,
         title: settingsProjectsLabel(selectedProjectGroups),
         items: [

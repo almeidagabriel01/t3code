@@ -76,7 +76,15 @@ const request = (
   createdAt: AT,
   owner,
   request: { id: `req-${threadId}`, kind: kind === "question" ? "user_input" : "command" },
-  decision: null,
+});
+
+const guest = (threadId: string): NeedsYouItem<Decision> => ({
+  key: `guest:env:${threadId}`,
+  kind: "guest",
+  environmentId: "env",
+  threadId,
+  createdAt: AT,
+  owner: { kind: "project" },
 });
 
 const decision = (threadId: string, options: number): NeedsYouItem<Decision> => ({
@@ -86,7 +94,6 @@ const decision = (threadId: string, options: number): NeedsYouItem<Decision> => 
   threadId,
   createdAt: AT,
   owner: { kind: "project" },
-  request: null,
   decision: {
     id: `d-${threadId}`,
     fromThreadId: threadId,
@@ -182,11 +189,13 @@ describe("NeedsYouSection", () => {
     expect(screen.container.textContent).toBe("");
   });
 
-  it("lists one card per approval, question and decision, oldest first, with their origin", async () => {
+  it("lists one card per approval, question, decision and waiting guest, oldest first, with their origin", async () => {
     setup();
     state.requests = { t1: approval("t1"), t2: question("t2", [{}]) };
+    const onOpenThread = vi.fn();
     await using screen = await render(
       <Section
+        onOpenThread={onOpenThread}
         items={[
           request("t1", "approval", { kind: "assistant", assistantKey: "env:ada", teamKey: null }),
           request("t2", "question", {
@@ -195,11 +204,12 @@ describe("NeedsYouSection", () => {
             teamKey: "env:t1",
           }),
           decision("t3", 2),
+          guest("t4"),
         ]}
       />,
     );
-    expect(cards(screen.container)).toEqual(["approval", "question", "decision"]);
-    expect(screen.getByTestId("sidebar-needs-you-header").element().textContent).toBe("Needs you3");
+    expect(cards(screen.container)).toEqual(["approval", "question", "decision", "guest"]);
+    expect(screen.getByTestId("sidebar-needs-you-header").element().textContent).toBe("Needs you4");
     const lines = [...screen.container.querySelectorAll('[data-testid="needs-you-item"]')].map(
       (card) => card.textContent,
     );
@@ -209,6 +219,15 @@ describe("NeedsYouSection", () => {
     expect(lines[1]).toContain("Which one 0?");
     expect(lines[2]).toContain("Thread t3· ProOps");
     expect(lines[2]).toContain("Ship it?");
+    // The guest's messages are sent or dismissed in the thread, so its card only opens it.
+    expect(lines[3]).toContain("Thread t4· ProOps");
+    expect(lines[3]).toContain("Guest waiting");
+    const guestCard = screen.container.querySelector('[data-kind="guest"]') as HTMLElement;
+    expect([...guestCard.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Open",
+    ]);
+    await userEvent.click(guestCard.querySelector("button")!);
+    expect(onOpenThread).toHaveBeenCalledWith({ environmentId: "env", threadId: "t4" });
   });
 
   it("approves and denies with the request's id", async () => {

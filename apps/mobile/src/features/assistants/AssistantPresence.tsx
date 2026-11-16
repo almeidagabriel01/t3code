@@ -114,6 +114,11 @@ const CHAT_PREFIX = "chat:";
 const INFO_PREFIX = "info:";
 const DISMISS_TASK = "task:dismiss";
 const RESTORE_TASK = "task:restore";
+const SECTION_IMAGE = {
+  needs: "exclamationmark.circle",
+  working: "hammer",
+  idle: "moon",
+} as const satisfies Record<AssistantPresenceSection, string>;
 
 type Sender = ReturnType<typeof assistantSenders>[number];
 type SenderLook = ReturnType<typeof assistantSenderLook>;
@@ -226,6 +231,7 @@ function senderActions(
   return {
     id: `assistant:${sender.assistantId}`,
     title: assistant?.name ?? "Assistant",
+    image: SECTION_IMAGE[section],
     // A native menu subtitle wraps past one line; the message badge already says "asks first".
     subtitle: assistantPresenceStatus(section, sender, false),
     subactions: [
@@ -243,6 +249,7 @@ function senderActions(
             {
               id: `access-group:${sender.assistantId}`,
               title: "Access",
+              image: "lock",
               displayInline: true,
               subactions: TOOL_ACCESS_OPTIONS.map((option) => ({
                 id: `${ACCESS_PREFIX}${sender.assistantId}|${option.value}`,
@@ -292,6 +299,7 @@ export function presenceMenuActions(
     ([id, title]) => ({
       id: `section:${id}`,
       title,
+      image: SECTION_IMAGE[id],
       displayInline: true,
       subactions: rows(id),
     }),

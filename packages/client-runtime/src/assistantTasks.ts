@@ -11,6 +11,7 @@ import {
   assistantTaskStatusOf,
   type AssistantTaskStatus,
 } from "@t3tools/shared/assistantTaskStatus";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 
 import type { assistantPresence, AssistantFace } from "./assistantRobot.ts";
 import type { EnvironmentThreadShell } from "./state/models.ts";
@@ -66,7 +67,7 @@ export function assistantTaskState(shell: TaskShell): AssistantTaskState {
       shell.hasPendingApprovals ||
       shell.hasPendingUserInput ||
       shell.pendingSubagentRequest != null ||
-      (shell.pendingGuestMessageCount ?? 0) > 0,
+      guestWaitsOnUser(shell),
     runtimeStatus: shell.runtime?.status ?? null,
   });
   // A usage limit waits for its reset or a provider switch, which runs the same thread again.

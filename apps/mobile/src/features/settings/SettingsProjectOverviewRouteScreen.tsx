@@ -42,6 +42,7 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import { leaveSettingsPage } from "./settings-navigation";
+import { PROJECT_OVERVIEW_COPY } from "./projectOverviewCopy";
 import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
 import { DEFAULT_SETTINGS_PAGE } from "../layout/workspace/workspace-tab-navigation";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
@@ -88,7 +89,7 @@ export function SettingsProjectOverviewRouteScreen() {
       .filter((project) => selectedEnvironmentIds.has(project.environmentId)) ?? [];
 
   return (
-    <SettingsScreen title="Projects" menus={[environmentMenu]}>
+    <SettingsScreen title={PROJECT_OVERVIEW_COPY.title} menus={[environmentMenu]}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -324,9 +325,11 @@ function ProjectOverviewContent(props: {
         </View>
       </View>
 
-      <SettingsSection title="Project">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.project.title}>
         <View className="gap-3 p-4">
-          <Text className="text-sm font-t3-medium text-foreground-muted">Name</Text>
+          <Text className="text-sm font-t3-medium text-foreground-muted">
+            {PROJECT_OVERVIEW_COPY.project.name}
+          </Text>
           <View className="flex-row items-center gap-3">
             <AppTextInput
               accessibilityLabel="Project name"
@@ -350,14 +353,14 @@ function ProjectOverviewContent(props: {
       </SettingsSection>
 
       {canOrganize ? (
-        <SettingsSection title="Organize">
+        <SettingsSection title={PROJECT_OVERVIEW_COPY.organize.title}>
           <SettingsSwitchRow
             icon="pin"
-            label="Pin"
+            label={PROJECT_OVERVIEW_COPY.organize.pin.title}
             subtitle={
               offline
-                ? "Connect every machine with this project to change this."
-                : "Pinned projects come first in project pickers."
+                ? PROJECT_OVERVIEW_COPY.organize.pin.offline
+                : PROJECT_OVERVIEW_COPY.organize.pin.description
             }
             value={props.group.pinned}
             disabled={isOrganizing || offline}
@@ -365,11 +368,15 @@ function ProjectOverviewContent(props: {
           />
           <SettingsActionRow
             icon="archivebox"
-            label={props.group.archived ? "Unarchive project" : "Archive project"}
+            label={
+              props.group.archived
+                ? PROJECT_OVERVIEW_COPY.organize.unarchive.title
+                : PROJECT_OVERVIEW_COPY.organize.archive.title
+            }
             description={
               props.group.archived
-                ? "Hidden from project pickers. Threads and files are kept."
-                : "Hides the project from project pickers. Threads and files are kept."
+                ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
+                : PROJECT_OVERVIEW_COPY.organize.archive.description
             }
             disabled={isOrganizing || offline}
             onPress={() => void organize({ archived: !props.group.archived })}
@@ -391,7 +398,7 @@ function ProjectOverviewContent(props: {
         />
       ))}
 
-      <SettingsSection title="Checkouts">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.checkouts.title}>
         {props.members.map((member, index) => {
           const environment = props.environments.find(
             (entry) => entry.environmentId === member.environmentId,
@@ -429,22 +436,22 @@ function ProjectOverviewContent(props: {
           );
         })}
       </SettingsSection>
-      <SettingsSection title="Danger">
+      <SettingsSection title={PROJECT_OVERVIEW_COPY.danger.title}>
         <SettingsActionRow
           icon="trash"
           label={
             props.hasOtherMembers
-              ? "Remove checkout"
+              ? PROJECT_OVERVIEW_COPY.danger.removeCheckout.title
               : props.members.length > 1
-                ? "Remove this project everywhere"
-                : "Remove project"
+                ? PROJECT_OVERVIEW_COPY.danger.removeEverywhere.title
+                : PROJECT_OVERVIEW_COPY.danger.remove.title
           }
           description={
             props.hasOtherMembers
-              ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+              ? PROJECT_OVERVIEW_COPY.danger.removeCheckout.description
               : props.members.length > 1
                 ? `Deletes all ${props.members.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : "Deletes the project entry and its threads. Files on disk are not touched."
+                : PROJECT_OVERVIEW_COPY.danger.remove.description
           }
           tone="danger"
           disabled={!canRemoveGroup || isRemoving}
@@ -470,7 +477,9 @@ function RemoveCheckoutAction(props: {
       onPress={props.onPress}
       className="self-start rounded-full border border-border bg-card px-3 py-1.5 disabled:opacity-40"
     >
-      <Text className="font-t3-medium text-xs text-danger-foreground">Remove checkout</Text>
+      <Text className="font-t3-medium text-xs text-danger-foreground">
+        {PROJECT_OVERVIEW_COPY.danger.removeCheckout.title}
+      </Text>
     </Pressable>
   );
 }

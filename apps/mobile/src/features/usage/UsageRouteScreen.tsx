@@ -45,14 +45,15 @@ import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { UsageBudgets } from "./UsageBudgets";
+import { USAGE_COPY } from "./usageCopy";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-  { value: "limits", label: "Limits" },
+  { value: "cost", label: USAGE_COPY.views.cost },
+  { value: "tokens", label: USAGE_COPY.views.tokens },
+  { value: "limits", label: USAGE_COPY.views.limits },
 ] as const satisfies readonly { value: UsageView; label: string }[];
 
 const WINDOW_OPTIONS = [
@@ -523,7 +524,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title={USAGE_COPY.providers}>
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
@@ -595,17 +596,17 @@ function TotalsSection(props: {
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals">
+    <SettingsSection title={USAGE_COPY.totals}>
       <View className="flex-row flex-wrap">
         <MetricCell
           columns={props.columns}
-          label="Processed tokens"
+          label={USAGE_COPY.metrics.processedTokens}
           value={formatTokens(merged.totalTokens)}
           detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
         />
         <MetricCell
           columns={props.columns}
-          label="Cache savings"
+          label={USAGE_COPY.metrics.cacheSavings}
           value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
             merged.costUsd > 0
@@ -615,25 +616,25 @@ function TotalsSection(props: {
         />
         <MetricCell
           columns={props.columns}
-          label="Cached input"
+          label={USAGE_COPY.metrics.cachedInput}
           value={formatTokens(merged.cachedInputTokens)}
           detail={`${formatPercent(cachedShare)} of observed input`}
         />
         <MetricCell
           columns={props.columns}
-          label="Uncached input"
+          label={USAGE_COPY.metrics.uncachedInput}
           value={formatTokens(merged.uncachedInputTokens)}
           detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
         />
         <MetricCell
           columns={props.columns}
-          label="Output"
+          label={USAGE_COPY.metrics.output}
           value={formatTokens(merged.outputTokens)}
           detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
         />
         <MetricCell
           columns={props.columns}
-          label="Unpriced"
+          label={USAGE_COPY.metrics.unpriced}
           value={formatPercent(merged.costQuality.unpricedShare)}
           detail="of records, excluded from cost"
         />
@@ -666,10 +667,10 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
   if (props.merged.costUsd <= 0) return null;
 
   return (
-    <SettingsSection title="Cost">
+    <SettingsSection title={USAGE_COPY.cost}>
       <View className={props.wide ? "flex-row" : undefined}>
         <View className={props.wide ? "min-w-0 flex-1" : undefined}>
-          <ShareBar label="By type" segments={byType} />
+          <ShareBar label={USAGE_COPY.byType} segments={byType} />
         </View>
         {speedCost.fast + speedCost.ultrafast > 0 ? (
           <View
@@ -680,7 +681,7 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
             }
           >
             <ShareBar
-              label="By speed"
+              label={USAGE_COPY.bySpeed}
               segments={bySpeed}
               aside={`${formatUsd(speedCost.premium)} premium`}
             />
@@ -761,7 +762,7 @@ function ModelsSection(props: {
   );
 
   return (
-    <SettingsSection title="By model">
+    <SettingsSection title={USAGE_COPY.byModel}>
       <View className="flex-row flex-wrap">
         {ordered.map((model, index) => (
           <View

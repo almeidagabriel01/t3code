@@ -1,4 +1,5 @@
 import { Button } from "../../components/ui/Button";
+import { ENVIRONMENTS_COPY } from "./environmentsCopy";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
 import { useAuth } from "@clerk/expo";
@@ -98,7 +99,9 @@ function CloudEnvironmentRowsContent(
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>
       {showHeader ? (
         <View className="px-1">
-          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">T3 Connect</Text>
+          <Text className="text-sm font-t3-bold uppercase text-foreground-muted">
+            {ENVIRONMENTS_COPY.cloudHeader}
+          </Text>
         </View>
       ) : null}
 

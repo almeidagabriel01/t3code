@@ -1,222 +1,90 @@
-import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
 import { foldSearchQuery, rankSearchItems, scoreSearchTerms } from "@t3tools/shared/paletteSearch";
 
+import { ARCHIVE_PAGE_LABELS } from "../archive/archiveCopy";
+import { ASSISTANTS_PAGE_LABELS } from "../assistants/settingsAssistantsCopy";
+import { ENVIRONMENTS_PAGE_LABELS } from "../connection/environmentsCopy";
+import { IMESSAGE_PAGE_LABELS } from "../imessage/imessageCopy";
+import { INTEGRATIONS_PAGE_LABELS } from "../integrations/integrationsCopy";
+import { KANBAN_PAGE_LABELS } from "../kanban/kanbanBoardCopy";
+import { NOTES_PAGE_LABELS } from "../notes/notesCopy";
+import { TELEGRAM_PAGE_LABELS } from "../telegram/telegramCopy";
+import { USAGE_PAGE_LABELS } from "../usage/usageCopy";
+import { ABOUT_PAGE_LABELS } from "./aboutCopy";
+import { ACCOUNT_PAGE_LABELS } from "./accountCopy";
+import { AGENT_TOOLS_PAGE_LABELS } from "./agentToolsCopy";
+import { APPEARANCE_PAGE_LABELS } from "./appearance/appearanceCopy";
+import { CHAT_PAGE_LABELS } from "./chatCopy";
 import type { SettingsPageTarget } from "./components/settings-page-targets";
+import { COMPUTER_USE_PAGE_LABELS } from "./computerUseCopy";
+import { DEVICES_PAGE_LABELS } from "./devicesCopy";
+import { KEYBOARD_PAGE_LABELS } from "./keyboardCopy";
+import { MAC_PERMISSIONS_PAGE_LABELS } from "./macPermissionsCopy";
+import { MEMORY_PAGE_LABELS } from "./memoryCopy";
+import { NAVIGATION_PAGE_LABELS } from "./navigationCopy";
+import { NOTIFICATIONS_PAGE_LABELS } from "./notificationsCopy";
+import { GENERAL_PAGE_LABELS } from "./projectGroupingCopy";
+import { PROJECTS_PAGE_LABELS } from "./projectOverviewCopy";
+import { PROVIDERS_PAGE_LABELS } from "./providerAccountsCopy";
+import { SCHEDULED_TASKS_PAGE_LABELS } from "./scheduledTasksCopy";
+import {
+  LABS_PAGE_LABELS,
+  MAINTENANCE_SERVER_PAGE_LABELS,
+  SOURCE_CONTROL_PAGE_LABELS,
+  THREADS_PAGE_LABELS,
+  WORKTREES_PAGE_LABELS,
+} from "./serverSettingsCopy";
+import { VOICE_PAGE_LABELS } from "./voiceCopy";
 
-/** What each page holds besides its row's label, so search finds a setting by its own name. */
-const SETTINGS_SEARCH_TERMS = {
-  account: ["sign in", "sign out", "login", "clerk", "connect"],
-  SettingsEnvironments: [
-    "servers",
-    "connections",
-    "pair",
-    "add environment",
-    "remote",
-    "tailscale",
-  ],
-  SettingsNotifications: ["push", "alerts", "live activity", "agent activity"],
-  SettingsAppearance: [
-    "theme",
-    "dark mode",
-    "light mode",
-    "colors",
-    "font size",
-    "text size",
-    "code",
-    "diffs",
-    "terminal",
-    "word break",
-    "math",
-    "tool calls in chat",
-    "hide tool calls",
-    "commands edits searches",
-    "work log",
-    "zen",
-    "final answers only",
-  ],
-  SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
-  SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],
-  SettingsVoice: [
-    "microphone",
-    "dictation",
-    "transcription",
-    "transcribe on",
-    "transcription model",
-    "this device",
-    "environment",
-    "on-device",
-    "audio input",
-    "preferred microphone",
-    "microphone order",
-    "bluetooth",
-  ],
-  SettingsScheduledTasks: ["automations", "schedule", "cron", "recurring", "webhook"],
-  SettingsProjectOverview: ["project", "overview", "checkouts", "delete project"],
-  SettingsOrganization: [
-    "project grouping",
-    "group projects",
-    "organization",
-    "sidebar",
-    "thread order",
-    "fixed order",
-    "new threads",
-    "last project",
-  ],
-  SettingsThreads: [
-    "new threads",
-    "default workspace",
-    "default permissions",
-    "project model",
-    "model by assistant",
-    "access",
-    "response streaming",
-    "preview browser",
-    "browser access",
-    "auto-settle",
-    "settle",
-    "snooze",
-    "usage limits",
-    "auto-resume",
-    "thread behavior",
-  ],
-  SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
-  SettingsKanban: ["kanban", "board", "cards", "tasks", "columns"],
-  SettingsAgentTools: ["mcp", "tools", "skills", "stdio", "headers", "rescan", "global"],
-  SettingsMemory: ["memory", "remember", "conversations", "import", "sharing", "agent access"],
-  SettingsAssistants: [
-    "assistants",
-    "jarvis",
-    "agents",
-    "personas",
-    "instructions",
-    "tool access",
-    "reset",
-  ],
-  SettingsIntegrations: [
-    "integrations",
-    "connect",
-    "sign in",
-    "oauth",
-    "mcp",
-    "token",
-    "google",
-    "linear",
-    "github",
-  ],
-  SettingsImessage: [
-    "imessage",
-    "messages",
-    "assistants",
-    "chat",
-    "full disk access",
-    "numbers",
-    "emails",
-  ],
-  SettingsTelegram: ["telegram", "bot", "botfather", "token", "user id", "assistants", "chat"],
-  SettingsDevices: [
-    "devices",
-    "device access",
-    "simulator",
-    "emulator",
-    "physical device",
-    "take over",
-    "hand back",
-    "agent",
-  ],
-  SettingsMacPermissions: [
-    "mac permissions",
-    "computer use",
-    "screen recording",
-    "accessibility",
-    "automation",
-    "screenshot",
-    "click",
-    "privacy",
-  ],
-  SettingsComputerUse: [
-    "computer use",
-    "windows",
-    "linux",
-    "wayland",
-    "x11",
-    "screenshot",
-    "click",
-    "keys",
-  ],
-  SettingsNotes: ["notes", "markdown", "ideas", "capture", "start work"],
-  SettingsArchive: ["archive", "archived", "restore", "unarchive"],
-  SettingsProviderAccounts: [
-    "provider accounts",
-    "codex",
-    "claude",
-    "cursor",
-    "opencode",
-    "sign in",
-    "login",
-    "auth",
-  ],
-  SettingsEnvironmentSourceControl: [
-    "git",
-    "pull requests",
-    "co-authors",
-    "agent credits",
-    "default branch",
-    "automatically pull",
-    "clone into host folders",
-    "ghq",
-  ],
-  SettingsWorktrees: [
-    "worktree",
-    "branch naming",
-    "branch prefix",
-    "submodules",
-    "start from remote",
-  ],
-  SettingsLabs: [
-    "beta",
-    "linked environments",
-    "link machine",
-    "fast worktree checkout",
-    "clone cache",
-  ],
-  SettingsEnvironmentMaintenance: [
-    "updates",
-    "provider updates",
-    "restart",
-    "manage environments",
-    "heavy work queue",
-    "resource manager",
-    "cpu",
-    "memory",
-    "slow down agent jobs",
-    "background priority",
-    // Web's row titles on this page, so a setting's own name finds it here too.
-    "this mac",
-    "linux pc",
-    "jobs at once on this mac",
-    "pause heavy work queue",
-    "cpu limit",
-    "keep memory free",
-    "slow down agent jobs when the mac is busy",
-    "over the limit for",
-    "claude code hook",
-    "power off idle simulators",
-    "heavy job notices",
-    ...Object.values(RUNNER_SETTING_COPY).map(({ title }) => title),
-  ],
-  SettingsAbout: [
-    "version",
-    "diagnostics",
-    "client storage",
-    "cache",
-    "legal",
-    "privacy",
-    "terms",
-    "open source licenses",
-  ],
-} satisfies Partial<Record<SettingsPageTarget | "account", readonly string[]>>;
+/** Pages a row of the Settings list opens without one of its own: their text joins the parent's. */
+type SubPage =
+  | "SettingsResourceManager"
+  | "SettingsProjectGrouping"
+  | "SettingsClientStorage"
+  | "SettingsDiagnostics"
+  | "SettingsOpenSourceLicenses"
+  | "SettingsUsage";
+
+/** The text each Settings list row's page draws, so search finds a setting by its own name. */
+export const SETTINGS_PAGE_LABELS: Record<
+  // `usage` is the Usage tab's row, listed here when the tab bar hides it.
+  Exclude<SettingsPageTarget, SubPage> | "account" | "usage",
+  readonly string[]
+> = {
+  account: ACCOUNT_PAGE_LABELS,
+  usage: USAGE_PAGE_LABELS,
+  SettingsEnvironments: ENVIRONMENTS_PAGE_LABELS,
+  SettingsNotifications: NOTIFICATIONS_PAGE_LABELS,
+  SettingsOrganization: GENERAL_PAGE_LABELS,
+  SettingsAppearance: APPEARANCE_PAGE_LABELS,
+  SettingsFollowUp: CHAT_PAGE_LABELS,
+  SettingsNavigation: NAVIGATION_PAGE_LABELS,
+  SettingsKeyboard: KEYBOARD_PAGE_LABELS,
+  SettingsVoice: VOICE_PAGE_LABELS,
+  SettingsProviderAccounts: PROVIDERS_PAGE_LABELS,
+  SettingsThreads: THREADS_PAGE_LABELS,
+  SettingsAgentTools: AGENT_TOOLS_PAGE_LABELS,
+  SettingsAssistants: ASSISTANTS_PAGE_LABELS,
+  SettingsIntegrations: INTEGRATIONS_PAGE_LABELS,
+  SettingsImessage: IMESSAGE_PAGE_LABELS,
+  SettingsTelegram: TELEGRAM_PAGE_LABELS,
+  SettingsMacPermissions: MAC_PERMISSIONS_PAGE_LABELS,
+  SettingsDevices: DEVICES_PAGE_LABELS,
+  SettingsComputerUse: COMPUTER_USE_PAGE_LABELS,
+  SettingsScheduledTasks: SCHEDULED_TASKS_PAGE_LABELS,
+  SettingsKanban: KANBAN_PAGE_LABELS,
+  SettingsNotes: NOTES_PAGE_LABELS,
+  SettingsMemory: MEMORY_PAGE_LABELS,
+  SettingsProjectOverview: PROJECTS_PAGE_LABELS,
+  SettingsEnvironmentSourceControl: SOURCE_CONTROL_PAGE_LABELS,
+  SettingsWorktrees: WORKTREES_PAGE_LABELS,
+  SettingsEnvironmentMaintenance: MAINTENANCE_SERVER_PAGE_LABELS,
+  SettingsLabs: LABS_PAGE_LABELS,
+  SettingsAbout: ABOUT_PAGE_LABELS,
+  SettingsArchive: ARCHIVE_PAGE_LABELS,
+};
+
 const termsById: ReadonlyMap<string, readonly string[]> = new Map(
-  Object.entries(SETTINGS_SEARCH_TERMS),
+  Object.entries(SETTINGS_PAGE_LABELS),
 );
 
 export interface SettingsSearchRow {
@@ -232,11 +100,16 @@ export interface SettingsSearchSection<Row extends SettingsSearchRow> {
 /**
  * Keeps the rows whose label, section, or page contents match `query`, in list order, and drops
  * sections left empty. Matching is the command palette's, so both searches agree.
+ * `dynamicLabels` adds text a page draws from live state, by row id.
  */
 export function filterSettingsSections<
   Row extends SettingsSearchRow,
   Section extends SettingsSearchSection<Row>,
->(sections: readonly Section[], query: string): Section[] {
+>(
+  sections: readonly Section[],
+  query: string,
+  dynamicLabels: Readonly<Record<string, readonly string[]>> = {},
+): Section[] {
   const normalizedQuery = foldSearchQuery(query);
   const rows = sections.flatMap((section) =>
     section.rows.map((row) => ({ row, section: section.title })),
@@ -246,7 +119,12 @@ export function filterSettingsSections<
         rankSearchItems(rows, ({ row, section }, options) =>
           scoreSearchTerms(
             normalizedQuery,
-            [row.label, ...(section ? [section] : []), ...(termsById.get(row.id) ?? [])],
+            [
+              row.label,
+              ...(section ? [section] : []),
+              ...(termsById.get(row.id) ?? []),
+              ...(dynamicLabels[row.id] ?? []),
+            ],
             options,
           ),
         ).map(({ item }) => item.row),

@@ -176,7 +176,11 @@ export function useIntegrationFlows(environmentId: EnvironmentId, state: Integra
   const runMenu = (action: IntegrationMenuAction, title: string) => {
     if (action.kind === "make-available") makeAvailable(action.detectedId);
     else if (action.kind === "disconnect") disconnect(action.name, title);
-    else open({ form: "token", catalogId: action.catalogId });
+    else
+      open({
+        form: action.kind === "use-token" ? "token" : "own-app",
+        catalogId: action.catalogId,
+      });
   };
 
   return {

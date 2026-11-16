@@ -26,6 +26,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useForgetMemory, useMemorySpace, useProjectMemoryScope } from "../memory/useProjectMemory";
+import { AssistantWorkUnavailable, useRefreshOnReconnect } from "./AssistantWorkUnavailable";
 
 const NO_ITEMS: ReadonlyArray<never> = [];
 
@@ -74,7 +75,9 @@ export function AssistantWorkMemorySection(props: {
     environmentId,
     new Set(assistant.threadId === null ? [] : [assistant.threadId]),
   );
-  const failed = [user, project, thread].some((query) => query.error !== null);
+  const queries = [user, project, thread];
+  const reachable = useRefreshOnReconnect(environmentId, queries);
+  const failed = queries.filter((query) => query.error !== null);
 
   return (
     <View className="gap-2">
@@ -91,13 +94,25 @@ export function AssistantWorkMemorySection(props: {
           Memory read permission is required to see what it remembers.
         </Text>
       ) : space === null ? (
-        <Text textRole="footnote" className="px-2 text-foreground-muted">
-          Memory is off or still getting ready on this server.
-        </Text>
-      ) : memories.length === 0 ? (
-        <Text textRole="footnote" className="px-2 text-foreground-muted">
-          {failed ? "Some memories could not be loaded." : "Nothing remembered yet."}
-        </Text>
+        reachable === false ? (
+          <AssistantWorkUnavailable what="its memories" />
+        ) : (
+          <Text textRole="footnote" className="px-2 text-foreground-muted">
+            Memory is off or still getting ready on this server.
+          </Text>
+        )
+      ) : failed.length > 0 ? (
+        <AssistantWorkUnavailable
+          what="some of its memories"
+          onRetry={() => failed.forEach((query) => query.refresh())}
+        />
+      ) : null}
+      {space === null || !canRead ? null : memories.length === 0 ? (
+        failed.length > 0 ? null : (
+          <Text textRole="footnote" className="px-2 text-foreground-muted">
+            Nothing remembered yet.
+          </Text>
+        )
       ) : (
         <ListSection>
           {memories.map((entry) => {

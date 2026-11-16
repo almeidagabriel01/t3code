@@ -5,6 +5,7 @@ import type {
   SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKey";
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import type { EnvironmentThreadShell } from "./models.ts";
 import { hasSidebarNotification } from "./threadAttention.ts";
 
@@ -282,7 +283,7 @@ function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
       lastVisitedAt: thread.lastVisitedAt,
       hasOpenDecision: thread.hasOpenDecision,
     }) ||
-    (thread.pendingGuestMessageCount ?? 0) > 0 ||
+    guestWaitsOnUser(thread) ||
     (thread.interactionMode === "plan" && thread.hasActionableProposedPlan === true)
   );
 }

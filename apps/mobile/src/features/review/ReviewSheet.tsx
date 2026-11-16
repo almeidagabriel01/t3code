@@ -73,9 +73,14 @@ function ReviewHeader(
   const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const presentation = useReviewHeaderPresentation(props);
-  const sectionAction = (section: ReviewSectionItem | null, title: string): AppBarMenuItem => ({
+  const sectionAction = (
+    section: ReviewSectionItem | null,
+    title: string,
+    icon: string,
+  ): AppBarMenuItem => ({
     id: section ? `section:${section.id}` : `unavailable:${title}`,
     title,
+    icon,
     disabled: section === null,
     selected: section !== null && section.id === props.selectedSection?.id,
     onPress: () => {
@@ -115,9 +120,13 @@ function ReviewHeader(
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
-                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                      sectionAction(
+                        props.sectionMenu.branchChanges,
+                        "Changes",
+                        "arrow.triangle.branch",
+                      ),
+                      sectionAction(props.sectionMenu.workingTree, "Uncommitted", "pencil"),
+                      sectionAction(props.sectionMenu.latestTurn, "Latest turn", "clock"),
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
@@ -125,6 +134,7 @@ function ReviewHeader(
                         {
                           id: "turns",
                           title: "Turn",
+                          icon: "list.number",
                           items: props.sectionMenu.turns.map((section) => ({
                             id: `section:${section.id}`,
                             title: section.title,

@@ -9,15 +9,65 @@ vi.mock("../connection/runtime", async () => {
 });
 vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
-  return { environmentServerConfigsAtom: Atom.make(new Map()) };
+  return {
+    environmentServerConfigsAtom: Atom.make(
+      new Map([["hub", { environment: { capabilities: { integrations: true } } }]]),
+    ),
+  };
 });
-vi.mock("./session", () => ({ environmentSession: {}, sessionHasScope: () => false }));
+vi.mock("./session", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const session = Atom.make(null);
+  return { environmentSession: { sessionStateAtom: () => session }, sessionHasScope: () => true };
+});
+// The live feed answers at once, as a server that already holds Linear in its catalog.
+const live = vi.hoisted(() => ({ subscribed: new Set<string>() }));
+vi.mock("@t3tools/client-runtime/state/integrations", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@t3tools/client-runtime/state/integrations")>();
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const state = {
+    catalog: [
+      {
+        id: "linear",
+        name: "Linear",
+        category: "dev",
+        description: "Linear tools",
+        auth: { kind: "oauth", registration: "dynamic" },
+        match: { urls: [], packages: [], names: [] },
+      },
+    ],
+    integrations: [],
+    detected: [],
+    detectionSources: [],
+  };
+  return {
+    createIntegrationsEnvironmentAtoms: (
+      runtime: Parameters<typeof actual.createIntegrationsEnvironmentAtoms>[0],
+    ) => ({
+      ...actual.createIntegrationsEnvironmentAtoms(runtime),
+      live: Atom.family(({ environmentId }: { environmentId: string }) =>
+        Atom.make((get) => {
+          live.subscribed.add(environmentId);
+          get.addFinalizer(() => live.subscribed.delete(environmentId));
+          return AsyncResult.success(state);
+        }),
+      ),
+    }),
+  };
+});
 vi.mock("./use-atom-command", () => ({ useAtomCommand: vi.fn() }));
 
 import { useAtomValue } from "@effect/atom-react";
+import { AtomRegistry } from "effect/reactivity";
 
 import { useAtomCommand } from "./use-atom-command";
-import { integrationReply, useIntegrationActions, useIntegrationsState } from "./integrations";
+import {
+  integrationReply,
+  useIntegrationActions,
+  useIntegrationSearchNames,
+  useIntegrationsState,
+} from "./integrations";
 
 describe("integrationReply", () => {
   it.each([
@@ -45,6 +95,31 @@ describe("useIntegrationsState", () => {
     vi.mocked(useAtomValue).mockReturnValueOnce(["hub"]).mockReturnValueOnce({ catalog: [] });
     expect(useIntegrationsState("hub" as never)).toEqual({ catalog: [] });
   });
+});
+
+describe("useIntegrationSearchNames", () => {
+  it.each([
+    { searching: true, names: ["Linear"], subscribed: ["hub"] },
+    { searching: false, names: [], subscribed: [] },
+  ])(
+    "searching $searching: subscribes $subscribed and finds $names without opening Integrations",
+    ({ searching, names, subscribed }) => {
+      const registry = AtomRegistry.make();
+      const unmounts: Array<() => void> = [];
+      vi.mocked(useAtomValue).mockImplementation((atom) => {
+        unmounts.push(registry.mount(atom as never));
+        return registry.get(atom as never);
+      });
+      try {
+        expect(useIntegrationSearchNames(searching)).toEqual(names);
+        expect([...live.subscribed]).toEqual(subscribed);
+      } finally {
+        for (const unmount of unmounts) unmount();
+        registry.dispose();
+        vi.mocked(useAtomValue).mockReset();
+      }
+    },
+  );
 });
 
 describe("useIntegrationActions", () => {

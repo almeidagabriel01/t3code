@@ -24,6 +24,7 @@ vi.mock("react-native", () => ({
     <div aria-label={props.accessibilityLabel}>{props.children}</div>
   ),
   Keyboard: { dismiss: vi.fn() },
+  useWindowDimensions: () => ({ width: 390, height: 844 }),
 }));
 vi.mock("react-native-svg", () => ({ default: Children, Path: () => null }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));

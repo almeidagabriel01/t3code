@@ -143,7 +143,8 @@ export type IntegrationPrimaryAction =
 export type IntegrationMenuAction =
   | { readonly kind: "make-available"; readonly label: string; readonly detectedId: string }
   | { readonly kind: "disconnect"; readonly label: string; readonly name: string }
-  | { readonly kind: "use-token"; readonly label: string; readonly catalogId: string };
+  | { readonly kind: "use-token"; readonly label: string; readonly catalogId: string }
+  | { readonly kind: "own-app"; readonly label: string; readonly catalogId: string };
 
 export interface IntegrationOriginChip {
   readonly origin: DetectedOrigin;
@@ -278,6 +279,9 @@ function catalogRow(
         : []),
       ...(tokenFallback && status !== "connected"
         ? [{ kind: "use-token" as const, label: "Use a token instead", catalogId: entry.id }]
+        : []),
+      ...(entry.auth.kind === "oauth" && entry.auth.registration === "own-app"
+        ? [{ kind: "own-app" as const, label: "Use your own app", catalogId: entry.id }]
         : []),
     ],
   };

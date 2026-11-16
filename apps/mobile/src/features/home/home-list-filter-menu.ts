@@ -56,6 +56,7 @@ export function buildHomeListFilterMenuItems(props: {
     {
       id: "environment",
       title: "Environment",
+      icon: "server.rack",
       items: [
         {
           id: "environment:all",
@@ -80,6 +81,7 @@ export function buildHomeListFilterMenuItems(props: {
     items.push({
       id: "project",
       title: "Project",
+      icon: "folder",
       items: [
         {
           id: "project:all",

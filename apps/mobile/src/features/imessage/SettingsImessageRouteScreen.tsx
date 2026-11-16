@@ -29,6 +29,8 @@ import {
   imessageStatusLabel,
   parseImessageHandle,
 } from "./imessagePresentation";
+import { CHANNEL_GOOD_TO_KNOW } from "../settings/components/channelCopy";
+import { IMESSAGE_COPY } from "./imessageCopy";
 
 const CALLING_CODE = imessageDefaultCallingCode([Intl.DateTimeFormat().resolvedOptions().locale]);
 
@@ -196,10 +198,10 @@ function ImessageEnvironment(props: {
   return (
     <View className="gap-5">
       {error ? <Hint tone="danger">{error}</Hint> : null}
-      <ListSection title={`Access${suffix}`}>
+      <ListSection title={`${IMESSAGE_COPY.access}${suffix}`}>
         <ListRowLayout
           icon="eye"
-          label={`Full Disk Access: ${access.label}`}
+          label={`${IMESSAGE_COPY.fullDiskAccess}: ${access.label}`}
           description={access.description}
         />
         <SettingsActionRow
@@ -208,7 +210,7 @@ function ImessageEnvironment(props: {
           onPress={() => imessage.checkAccess()}
         />
       </ListSection>
-      <ListSection title={`Connection${suffix}`}>
+      <ListSection title={`${IMESSAGE_COPY.connection}${suffix}`}>
         <ListRowLayout
           icon="bolt.horizontal.circle"
           label={imessageStatusLabel(settings)}
@@ -222,7 +224,7 @@ function ImessageEnvironment(props: {
         />
         <SettingsSwitchRow
           icon="text.bubble"
-          label="Use iMessage"
+          label={IMESSAGE_COPY.use}
           subtitle={blocker ?? undefined}
           value={settings.enabled}
           disabled={!imessage.canConfigure || blocker !== null}
@@ -234,9 +236,9 @@ function ImessageEnvironment(props: {
         disabled={!imessage.canConfigure}
       />
       <HandleSection
-        title="Chat with yourself"
-        footer="Your own numbers and emails. The assistant answers in the same chat, and each reply starts with its name."
-        fieldLabel="Your number or email"
+        title={IMESSAGE_COPY.self.title}
+        footer={IMESSAGE_COPY.self.footer}
+        fieldLabel={IMESSAGE_COPY.self.fieldLabel}
         addLabel="Add yours"
         icon="person.crop.circle"
         handles={settings.selfHandles}
@@ -246,9 +248,9 @@ function ImessageEnvironment(props: {
         onError={setError}
       />
       <HandleSection
-        title="Other accounts"
-        footer="Numbers and emails allowed to message the assistants, for when Messages on the Mac uses its own Apple ID."
-        fieldLabel="Allowed number or email"
+        title={IMESSAGE_COPY.others.title}
+        footer={IMESSAGE_COPY.others.footer}
+        fieldLabel={IMESSAGE_COPY.others.fieldLabel}
         addLabel="Add account"
         icon="person.2"
         handles={settings.allowedHandles}
@@ -256,16 +258,16 @@ function ImessageEnvironment(props: {
         onChange={(allowedHandles) => change({ allowedHandles })}
         onError={setError}
       />
-      <ListSection title="Good to know">
+      <ListSection title={CHANNEL_GOOD_TO_KNOW.title}>
         <ListRowLayout
           icon="list.number"
-          label="Approvals"
-          description="Approvals arrive as numbered choices. Reply with the number."
+          label={CHANNEL_GOOD_TO_KNOW.approvals.title}
+          description={CHANNEL_GOOD_TO_KNOW.approvals.description}
         />
         <ListRowLayout
           icon="bubble.left.and.bubble.right"
-          label="Limits"
-          description="Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
+          label={CHANNEL_GOOD_TO_KNOW.limits.title}
+          description={CHANNEL_GOOD_TO_KNOW.limits.description}
         />
       </ListSection>
     </View>
@@ -287,9 +289,7 @@ export function SettingsImessageRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
-          Talk to your assistants from Messages on the Mac running T3 Code. Start with @Name to pick
-          an assistant; Jarvis answers otherwise, and the chat stays with the last one picked. Send
-          @ on its own to list them. It works while T3 Code is running on that Mac.
+          {IMESSAGE_COPY.intro}
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

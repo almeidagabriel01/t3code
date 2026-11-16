@@ -2,6 +2,7 @@ import type { Assistant, AssistantTeam } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  assistantAskBeforeActingLabel,
   assistantGroupInfoSummary,
   assistantGroupMembers,
   assistantInfoGroups,
@@ -70,5 +71,14 @@ describe("group rows", () => {
       "gone:none:false",
     ]);
     expect(assistantGroupInfoSummary(rows.length, 2)).toBe("3 members · 2 running");
+  });
+});
+
+describe("assistantAskBeforeActingLabel", () => {
+  it.each([
+    { askBeforeActing: true, expected: "On" },
+    { askBeforeActing: false, expected: "Off" },
+  ])("$askBeforeActing reads $expected", ({ askBeforeActing, expected }) => {
+    expect(assistantAskBeforeActingLabel(askBeforeActing)).toBe(expected);
   });
 });

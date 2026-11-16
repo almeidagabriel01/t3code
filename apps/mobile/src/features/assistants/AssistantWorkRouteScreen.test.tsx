@@ -193,7 +193,7 @@ describe("AssistantWorkRouteScreen", () => {
     mocks.phase = phase;
     render();
     expect(container.textContent?.includes("This environment is disconnected")).toBe(disconnected);
-    expect(container.textContent?.includes("library")).toBe(!disconnected);
+    expect(container.textContent).toContain("library");
     expect(container.textContent?.includes("Ready to work")).toBe(!disconnected);
   });
 

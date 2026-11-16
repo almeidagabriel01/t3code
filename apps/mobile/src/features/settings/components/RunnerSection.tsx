@@ -42,6 +42,7 @@ import { SegmentedControl } from "../../../components/ui/SegmentedControl";
 import { useHeavyQueueState } from "../../../state/heavyQueue";
 import { SettingsActionRow } from "./SettingsActionRow";
 import { SettingsSection } from "./SettingsSection";
+import { RUNNER_SECTION_COPY } from "./runnerSectionCopy";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
 
 export type RunnerProjectKey = (typeof RUNNER_PROJECT_KEYS)[number];
@@ -368,7 +369,7 @@ export function RunnerSection(props: {
   const whereDisabled = props.disabledFor("runnerWhere");
   return (
     <>
-      <SettingsSection title="Runner">
+      <SettingsSection title={RUNNER_SECTION_COPY.runner.title}>
         <SettingsSwitchRow
           icon="desktopcomputer"
           label={RUNNER_SETTING_COPY.runnerEnabled.title}
@@ -380,7 +381,7 @@ export function RunnerSection(props: {
         {resetRow("runnerEnabled")}
       </SettingsSection>
       {shown("runnerWhere", "runnerLinuxCommands", "runnerMacOnly") ? (
-        <SettingsSection title="Where jobs run">
+        <SettingsSection title={RUNNER_SECTION_COPY.whereJobsRun.title}>
           <View
             className={whereDisabled ? "gap-2 px-4 py-3 opacity-45" : "gap-2 px-4 py-3"}
             pointerEvents={whereDisabled ? "none" : "auto"}
@@ -413,8 +414,8 @@ export function RunnerSection(props: {
         "runnerLinuxMemoryFloorPercent",
       ) ? (
         <SettingsSection
-          title="Linux PC"
-          footer="These apply to every project on this environment."
+          title={RUNNER_SECTION_COPY.linuxPc.title}
+          footer={RUNNER_SECTION_COPY.linuxPc.description}
         >
           <DraftField
             label={RUNNER_SETTING_COPY.runnerHost.title}
@@ -434,7 +435,7 @@ export function RunnerSection(props: {
         </SettingsSection>
       ) : null}
       {shown("runnerUnavailable", "runnerDropped", "runnerAskMinutes", "runnerDeadlineAction") ? (
-        <SettingsSection title="If Linux is unavailable">
+        <SettingsSection title={RUNNER_SECTION_COPY.linuxUnavailable.title}>
           {shown("runnerUnavailable")
             ? policy(
                 "runnerUnavailable",
@@ -468,11 +469,15 @@ export function RunnerSection(props: {
         "runnerSshTimeoutSeconds",
         "runnerStopWaitSeconds",
       ) ? (
-        <SettingsSection title="Connection checks">
+        <SettingsSection title={RUNNER_SECTION_COPY.connectionChecks.title}>
           <SettingsActionRow
             icon="stethoscope"
-            label={checksOpen ? "Hide connection checks" : "Show connection checks"}
-            description="How this Mac checks that Linux is reachable."
+            label={
+              checksOpen
+                ? RUNNER_SECTION_COPY.connectionChecks.hide
+                : RUNNER_SECTION_COPY.connectionChecks.show
+            }
+            description={RUNNER_SECTION_COPY.connectionChecks.description}
             onPress={() => setChecksOpen(!checksOpen)}
           />
           {checksOpen ? (

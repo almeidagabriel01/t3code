@@ -53,10 +53,6 @@ const MENU_ICONS = {
   "own-app": KeySquareIcon,
 } as const;
 
-export type IntegrationRowMenuAction =
-  | IntegrationMenuAction
-  | { readonly kind: "own-app"; readonly label: string };
-
 const ROW_CLASS = "flex min-w-0 items-center gap-3 px-3 py-2.5 @md/integrations:px-4";
 
 /**
@@ -67,8 +63,8 @@ export function IntegrationRow(props: {
   readonly row: IntegrationDirectoryRow;
   readonly onOpen: (() => void) | null;
   readonly action: ReactNode;
-  readonly menu: ReadonlyArray<IntegrationRowMenuAction>;
-  readonly onMenu: (action: IntegrationRowMenuAction) => void;
+  readonly menu: ReadonlyArray<IntegrationMenuAction>;
+  readonly onMenu: (action: IntegrationMenuAction) => void;
   readonly disabled: boolean;
 }) {
   const { row } = props;

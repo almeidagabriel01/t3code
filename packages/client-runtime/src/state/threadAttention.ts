@@ -1,3 +1,5 @@
+import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
+
 import { scopedThreadKey, scopeThreadRef } from "../environment/scoped.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
 
@@ -29,7 +31,7 @@ export function resolveSidebarThreadStatus(thread: ThreadStatusFields): SidebarT
     return "input";
   }
   // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
+  if (guestWaitsOnUser(thread)) {
     return "request";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {

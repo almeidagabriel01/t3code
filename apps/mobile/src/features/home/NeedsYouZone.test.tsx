@@ -14,6 +14,8 @@ const { mocks } = vi.hoisted(() => ({
       projectId: string;
       archivedAt: null;
       pendingRequest: Request | null;
+      pendingGuestMessageCount?: number;
+      oldestPendingGuestMessageAt: string | null;
     }>,
     decisions: [] as Array<{ environmentId: string; decision: Record<string, unknown> }>,
     detail: {} as Record<string, unknown>,
@@ -147,6 +149,7 @@ const shell = (id: string, pendingRequest: Request | null = null, title = id) =>
   projectId: "p1",
   archivedAt: null,
   pendingRequest,
+  oldestPendingGuestMessageAt: null,
 });
 const question = (id: string, options: Array<{ label: string; value?: string }>) => ({
   id,
@@ -220,7 +223,7 @@ describe("NeedsYouZone", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("lists one item per approval, question and decision, oldest first, with origin and summary", async () => {
+  it("lists one item per approval, question, decision and waiting guest, oldest first, with origin and summary", async () => {
     mocks.active = [
       { environmentId: "hub", assistant: { id: "ada", name: "Ada", threadId: null } },
     ];
@@ -228,6 +231,11 @@ describe("NeedsYouZone", () => {
     mocks.shells = [
       shell("plain", { id: "r-approve", kind: "command", createdAt: at(2) }, "Fix login"),
       shell("task", { id: "r-ask", kind: "user_input", createdAt: at(1) }),
+      {
+        ...shell("shared", null, "Review me"),
+        pendingGuestMessageCount: 1,
+        oldestPendingGuestMessageAt: at(4),
+      },
     ];
     mocks.decisions = [decision("d1", 2, at(3))];
     mocks.detail = {
@@ -245,9 +253,9 @@ describe("NeedsYouZone", () => {
       },
     };
     await render();
-    const [ask, approve, pick] = items();
-    expect(items()).toHaveLength(3);
-    expect(container.textContent).toContain("Needs you3");
+    const [ask, approve, pick, guest] = items();
+    expect(items()).toHaveLength(4);
+    expect(container.textContent).toContain("Needs you4");
     // An assistant's task shows the assistant; a project thread shows its title and project.
     expect(ask!.textContent).toContain("av:Ada");
     expect(ask!.textContent).toContain("Asked a question");
@@ -255,6 +263,17 @@ describe("NeedsYouZone", () => {
     expect(approve!.textContent).toContain("· Website");
     expect(approve!.textContent).toContain("rm -rf build");
     expect(pick!.textContent).toContain("Pick d1");
+    // The guest's messages are sent or dismissed in the thread, so its item only opens it.
+    expect(guest!.textContent).toContain("Review me");
+    expect(guest!.textContent).toContain("Guest waiting");
+    expect([...guest!.querySelectorAll("button[aria-label]")].map((b) => b.ariaLabel)).toEqual([
+      "Open",
+    ]);
+    await press("Open", guest);
+    expect(mocks.select).toHaveBeenCalledWith({
+      name: "Thread",
+      params: { environmentId: "hub", threadId: "shared" },
+    });
   });
 
   it("Approve and Deny answer that request; an error stays on the item", async () => {

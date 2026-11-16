@@ -81,6 +81,10 @@ export function environmentReachable(
   }
 }
 
+/** The edge a query that failed or hung while unreachable retries on; never while it stays up. */
+export const environmentReconnected = (previous: boolean | null, current: boolean | null) =>
+  previous !== true && current === true;
+
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":

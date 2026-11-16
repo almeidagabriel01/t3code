@@ -31,6 +31,20 @@ const requestEvent = (id: string, kind: string, status: string) =>
     },
   }) as never as OrchestrationV2DomainEvent;
 
+// Only the owner acts on a guest message, so it never wakes an assistant.
+const guestWaitingEvent = {
+  type: "thread.guest-share-updated",
+  threadId: thread,
+  payload: {
+    guestShare: {
+      guestName: "Sam",
+      messages: [
+        { id: "g1", text: "Hi", status: "pending", submittedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    },
+  },
+} as never as OrchestrationV2DomainEvent;
+
 const decision = (id: string, status: string, extra: Record<string, unknown> = {}) =>
   ({
     id,
@@ -54,6 +68,7 @@ const layer = (open: { readonly decision: boolean; readonly request: boolean }) 
           subscribeDomainEvents: Effect.succeed(
             Stream.fromIterable([
               requestEvent("r1", "command", "pending"),
+              guestWaitingEvent,
               requestEvent("r2", "dynamic_tool_call", "pending"),
               requestEvent("r1", "command", "resolved"),
             ]),
@@ -95,6 +110,8 @@ it.effect("changes open with what waits, then carry only what waits on the user"
     const changes = yield* Stream.runCollect((yield* NeedsUser.NeedsUser).changes);
     // The two sources interleave; each keeps its own order.
     const keys = changes.map((change) => `${change.type} ${change.wait.key}`);
+    // Every change is a request or a decision: the waiting guest opened nothing.
+    assert.lengthOf(keys, 5);
     assert.deepStrictEqual(
       keys.filter((key) => key.includes("request:")),
       ["opened request:r1", "resolved request:r1"],

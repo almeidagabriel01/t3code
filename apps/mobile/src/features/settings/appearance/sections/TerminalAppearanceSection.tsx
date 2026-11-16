@@ -5,6 +5,7 @@ import {
 } from "../../../../lib/appearancePreferences";
 import { SettingsSection } from "../../components/SettingsSection";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
+import { APPEARANCE_COPY } from "../appearanceCopy";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 import {
   AppearancePreviewSeparator,
@@ -21,13 +22,13 @@ export function TerminalAppearanceSection() {
   };
 
   return (
-    <SettingsSection title="Terminal">
+    <SettingsSection title={APPEARANCE_COPY.terminal.title}>
       <TerminalAppearancePreview fontSize={appearance.terminalFontSize} />
       <AppearancePreviewSeparator />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="terminal"
-        label="Custom font size"
+        label={APPEARANCE_COPY.terminal.customFontSize}
         onValueChange={handleToggleCustom}
         value={custom}
       />
@@ -35,7 +36,7 @@ export function TerminalAppearanceSection() {
         <FontSizeSliderRow
           disabled={!isReady}
           icon="textformat.size"
-          label="Font size"
+          label={APPEARANCE_COPY.terminal.fontSize}
           max={MAX_TERMINAL_FONT_SIZE}
           min={MIN_TERMINAL_FONT_SIZE}
           onChange={setTerminalFontSize}

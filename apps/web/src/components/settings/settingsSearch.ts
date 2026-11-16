@@ -14,7 +14,11 @@ import {
   COMPUTER_USE_HOST_INTRO,
   COMPUTER_USE_HOST_NOT_REPORTED,
 } from "@t3tools/client-runtime/state/mac-permissions";
-import { RUNNER_SETTING_COPY } from "@t3tools/client-runtime/state/runnerModel";
+import {
+  HEAVY_LIMIT_COPY,
+  HEAVY_NOTICES_COPY,
+  RUNNER_SETTING_COPY,
+} from "@t3tools/client-runtime/state/runnerModel";
 import { GLASS_SETTINGS_SEARCH_ITEMS } from "./settingsSearchGlassItems";
 import {
   PROVIDER_SETTINGS_COPY,
@@ -1536,14 +1540,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "heavy-work-cpu-ceiling",
     machine: "This Mac",
-    title: "CPU limit",
+    title: HEAVY_LIMIT_COPY.macCpuCeilingPercent.title,
+    description: HEAVY_LIMIT_COPY.macCpuCeilingPercent.description,
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue mac cpu limit ceiling busy percent room"],
   },
   {
     id: "heavy-work-memory-floor",
     machine: "This Mac",
-    title: "Keep memory free",
+    title: HEAVY_LIMIT_COPY.macMemoryFloorPercent.title,
+    description: HEAVY_LIMIT_COPY.macMemoryFloorPercent.description,
     to: "/settings/maintenance",
     searchTerms: ["heavy work queue mac memory ram free floor percent low"],
   },
@@ -1560,7 +1566,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-over-limit",
-    title: "Over the limit for",
+    title: HEAVY_LIMIT_COPY.heavyOverLimitSeconds.title,
+    description: HEAVY_LIMIT_COPY.heavyOverLimitSeconds.description,
     to: "/settings/maintenance",
     searchTerms: [
       "heavy work queue runner hybrid sustained spike seconds limit wait move linux mac",
@@ -1584,9 +1591,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "heavy-work-notices",
-    description:
-      "Toasts when a heavy job fails, gets stuck or runs on another machine than planned, on this Mac or Linux.",
-    title: "Heavy job notices",
+    title: HEAVY_NOTICES_COPY.title,
+    description: HEAVY_NOTICES_COPY.description,
     to: "/settings/maintenance",
     searchTerms: [
       "heavy work queue runner notices notifications toast alerts failed failure linux offline online moved machine mac",

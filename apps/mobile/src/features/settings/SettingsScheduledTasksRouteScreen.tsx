@@ -98,6 +98,7 @@ import {
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskDestinationLabel, useScheduledTaskEditor } from "./scheduled-task-editor";
+import { SCHEDULED_TASKS_COPY } from "./scheduledTasksCopy";
 import {
   discardScheduledTaskEditor,
   markScheduledTaskEditorSaved,
@@ -410,7 +411,7 @@ export function SettingsScheduledTasksRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Scheduled tasks"
+      title={SCHEDULED_TASKS_COPY.title}
       actions={[
         {
           accessibilityLabel: "New task",

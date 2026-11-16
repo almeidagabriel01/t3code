@@ -14,7 +14,6 @@ import {
   type DevicePlatform,
   type DeviceRow,
   type OutsideAppRow,
-  type ResourceSort,
   type ResourceTree,
   type ResourceUsage,
 } from "@t3tools/client-runtime/state/resourceTree";
@@ -42,13 +41,8 @@ import { useEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { RESOURCE_MANAGER_COPY } from "./resourceManagerCopy";
 import { HeavyRow, menuItem, useOpenThread, type Fact } from "./HeavyWork";
-
-export const RESOURCE_SORT_LABEL: Record<ResourceSort, string> = {
-  name: "Name",
-  cpu: "CPU",
-  memory: "Memory",
-};
 
 const APP_GROUP_ICON: Record<AppProcessGroup, AppSymbolName> = {
   main: "desktopcomputer",
@@ -306,8 +300,8 @@ export function OtherRow(props: { readonly usage: ResourceUsage; readonly cores:
   return (
     <UsageRow
       icon="ellipsis"
-      iconLabel="Other"
-      label="Other"
+      iconLabel={RESOURCE_MANAGER_COPY.other.title}
+      label={RESOURCE_MANAGER_COPY.other.title}
       usage={props.usage}
       cores={props.cores}
       facts={[OUTSIDE_NOTE]}
@@ -382,7 +376,7 @@ export function DeviceAndAppSections(props: {
     <>
       {devices.length === 0 ? null : (
         <SettingsSection
-          title="Devices"
+          title={RESOURCE_MANAGER_COPY.devices.title}
           trailing={sectionTrailing(devices.length, sumUsage(devices))}
         >
           <DeviceRows
@@ -395,7 +389,7 @@ export function DeviceAndAppSections(props: {
       )}
       {!props.live ? null : (
         <SettingsSection
-          title="T3 Code"
+          title={RESOURCE_MANAGER_COPY.t3Code.title}
           trailing={sectionTrailing(props.tree.app.length, appUsage)}
           collapsible={{
             expanded: appOpen,

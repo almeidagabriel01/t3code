@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { environmentReachable } from "@t3tools/client-runtime/connection";
 import { memoryProjectScope } from "@t3tools/client-runtime/memory-browsing";
 import { memoryLocalSpace } from "@t3tools/client-runtime/memory-presentation";
 import {
@@ -14,6 +15,7 @@ import { Keyboard } from "react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useProjects } from "../../state/entities";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { memoryEnvironment as memory } from "../../state/memory";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { memoryExpectedHeads } from "../settings/SettingsMemoryRouteScreen.logic";
@@ -26,9 +28,12 @@ export function useMemorySpace(
   const canSync = useAtomValue(memory.syncStatus.permissionAtom(environmentId));
   const getSync = useAtomCommand(memory.syncStatus, { reportFailure: false });
   const [space, setSpace] = useState<MemorySpaceId | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's memory space from the server
+  const reachable = environmentReachable(
+    useEnvironmentPresentation(environmentId).presentation?.connection,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's memory space from the server, again once it reconnects
   useEffect(() => {
-    if (!enabled || !canSync) return;
+    if (!enabled || !canSync || reachable === false) return;
     let current = true;
     void getSync({ environmentId, input: {} }).then((result) => {
       if (current && result._tag === "Success") setSpace(memoryLocalSpace(result.value));
@@ -36,7 +41,7 @@ export function useMemorySpace(
     return () => {
       current = false;
     };
-  }, [canSync, enabled, environmentId, getSync]);
+  }, [canSync, enabled, environmentId, getSync, reachable]);
   return space;
 }
 

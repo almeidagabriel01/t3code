@@ -93,17 +93,14 @@ function AssistantWork(props: {
       contentContainerClassName="gap-6 px-5 pt-4 pb-10"
     >
       <StatusSection environmentId={environmentId} assistant={assistant} reachable={reachable} />
-      {/* Routines, Memory and Library come from its server, which cannot answer now. */}
-      {reachable === false ? null : (
-        <AssistantWorkSections
-          environmentId={environmentId}
-          assistant={assistant}
-          modelSelection={shell?.modelSelection ?? null}
-          environmentLabel={
-            savedConnectionsById[environmentId]?.environmentLabel ?? String(environmentId)
-          }
-        />
-      )}
+      <AssistantWorkSections
+        environmentId={environmentId}
+        assistant={assistant}
+        modelSelection={shell?.modelSelection ?? null}
+        environmentLabel={
+          savedConnectionsById[environmentId]?.environmentLabel ?? String(environmentId)
+        }
+      />
     </ScrollView>
   );
 }

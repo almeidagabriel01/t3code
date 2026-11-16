@@ -16,6 +16,7 @@ import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { globalSkillsEnvironment } from "../../../state/globalSkills";
 import { serverEnvironment } from "../../../state/server";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { GLOBAL_SKILLS_COPY } from "../agentToolsCopy";
 
 /** Skills in the environment's T3 skills folder, offered to every provider as `$t3:<folder>`. */
 export function GlobalSkillsSection(props: {
@@ -76,11 +77,13 @@ export function GlobalSkillsSection(props: {
   return (
     <View className="gap-2">
       <ListSection
-        title={props.title ? `T3 skills · ${props.title}` : "T3 skills"}
+        title={
+          props.title ? `${GLOBAL_SKILLS_COPY.title} · ${props.title}` : GLOBAL_SKILLS_COPY.title
+        }
         footer={
           folder
             ? `Skills folder: ${folder}. Call a skill in a message with $t3:<folder-name>.`
-            : "Put a skill folder with a SKILL.md in this environment's skills folder, then rescan. Call it in a message with $t3:<folder-name>."
+            : GLOBAL_SKILLS_COPY.footer
         }
       >
         {published.map((skill) => (

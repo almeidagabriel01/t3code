@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { integrationDirectory } from "@t3tools/client-runtime/integrations";
 import { createIntegrationsEnvironmentAtoms } from "@t3tools/client-runtime/state/integrations";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -62,6 +63,26 @@ export function useIntegrationsState(
       ? integrationsFeedAtom(environmentId)
       : NO_STATE_ATOM,
   );
+}
+
+// The titles the Integrations screen draws; reading it subscribes every environment's live feed.
+const integrationSearchNamesAtom = Atom.make((get): readonly string[] =>
+  get(integrationsEnvironmentIdsAtom).flatMap((environmentId) => {
+    const state = get(integrationsFeedAtom(environmentId));
+    if (state === null) return [];
+    const { connected, available, other } = integrationDirectory(state, {
+      query: "",
+      category: null,
+    });
+    return [...connected, ...available, ...other].map((row) => row.title);
+  }),
+).pipe(Atom.withLabel("mobile-integration-search-names"));
+
+const NO_NAMES_ATOM = Atom.make<readonly string[]>([]);
+
+/** Integration names for search; the feeds stay subscribed only while `searching`. */
+export function useIntegrationSearchNames(searching: boolean): readonly string[] {
+  return useAtomValue(searching ? integrationSearchNamesAtom : NO_NAMES_ATOM);
 }
 
 /** `reason` feeds `integrationErrorMessage`; anything that is not an integration refusal reads as Error. */

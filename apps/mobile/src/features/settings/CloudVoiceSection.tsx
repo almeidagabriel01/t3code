@@ -1,4 +1,5 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { VOICE_COPY } from "./voiceCopy";
 import {
   CHATGPT_SPEECH_UNOFFICIAL_NOTE,
   chatGptSpeechStatusText,
@@ -65,13 +66,13 @@ export function CloudVoiceChoice({
   return (
     <>
       <ListChoiceRow
-        label="Cloud provider"
+        label={VOICE_COPY.cloudProvider.title}
         description={
           active
             ? `${CLOUD_SPEECH_LABELS[active.provider]}${active.provider === "openrouter" ? ` · ${active.model}` : ""}`
             : usable
-              ? "Your API key or ChatGPT subscription"
-              : "Not connected"
+              ? VOICE_COPY.cloudProvider.keyOrSubscription
+              : VOICE_COPY.cloudProvider.notConnected
         }
         selected={active !== null}
         disabled={!usable}
@@ -114,7 +115,7 @@ function ModelPicker({
   const delisted = current !== undefined && !models.some((model) => model.id === current);
   return (
     <ListSection
-      title="Model"
+      title={VOICE_COPY.cloudProvider.model}
       footer={
         delisted
           ? `OpenRouter no longer lists ${current}. Dictation stays off until you choose another model.`
@@ -200,7 +201,10 @@ function ChatGptSignInDetail({
       <Text className="px-2 text-sm text-foreground-muted">
         {cloudSpeechDisclosure("chatgpt", environment)}
       </Text>
-      <ListSection title="Codex sign-in" footer={CHATGPT_SPEECH_UNOFFICIAL_NOTE}>
+      <ListSection
+        title={VOICE_COPY.cloudProvider.codexSignIn}
+        footer={CHATGPT_SPEECH_UNOFFICIAL_NOTE}
+      >
         <View className="gap-2 px-4 py-3">
           <Text accessibilityRole="text" className="text-sm text-foreground">
             {chatGptSpeechStatusText(status, environment)}
@@ -362,24 +366,24 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
                 disabled={key === undefined || (!key && !canManage && !keyless) || saving}
                 description={
                   key === undefined
-                    ? "Update the environment to use this provider"
+                    ? VOICE_COPY.cloudProvider.updateEnvironment
                     : keyless
                       ? isActive
-                        ? "Tap to see the Codex sign-in status"
+                        ? VOICE_COPY.cloudProvider.seeSignInStatus
                         : key
-                          ? "Uses the Codex ChatGPT sign-in · no API key"
-                          : "Not ready · tap to see how to fix"
+                          ? VOICE_COPY.cloudProvider.usesCodexSignIn
+                          : VOICE_COPY.cloudProvider.notReady
                       : isActive && routed
                         ? `${activeModel} · Tap to change model${canManage ? " or key" : ""}`
                         : isActive && key && canManage
-                          ? "Tap to manage key"
+                          ? VOICE_COPY.cloudProvider.manageKey
                           : key
                             ? routed
-                              ? "API key saved · choose a model to use it"
-                              : "API key saved"
+                              ? VOICE_COPY.cloudProvider.keySavedChooseModel
+                              : VOICE_COPY.cloudProvider.keySaved
                             : canManage
-                              ? "Add an API key to use this provider"
-                              : "Ask an environment administrator to add an API key"
+                              ? VOICE_COPY.cloudProvider.addKey
+                              : VOICE_COPY.cloudProvider.askAdministrator
                 }
                 onPress={() => {
                   if (routed) return edit(provider, !isActive);
@@ -456,7 +460,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         ? (source?.invalidReferenceMessage ?? "Enter a valid API key.")
         : routed
           ? key && !credential
-            ? "Uses the API key saved on this environment. The model choice applies only to this device."
+            ? VOICE_COPY.cloudProvider.savedKeyFooter
             : `Anyone with dictation access to ${environment.label} can bill this key.`
           : editing.enable
             ? `Anyone with dictation access to ${environment.label} can bill this key.`
@@ -474,7 +478,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
               onChange={setModel}
             />
           ) : (
-            <ListSection title="Model">
+            <ListSection title={VOICE_COPY.cloudProvider.model}>
               <ListActionRow
                 label={
                   AsyncResult.isFailure(models)
@@ -488,7 +492,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
           )
         ) : null}
         {canManage ? (
-          <ListSection title="API key" footer={keyFooter}>
+          <ListSection title={VOICE_COPY.cloudProvider.apiKey} footer={keyFooter}>
             <View className="gap-3 px-4 py-3">
               {sources.length > 0 && (
                 <View className="flex-row flex-wrap gap-2">
@@ -592,7 +596,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
   })();
   return (
     <Sheet
-      title={editing ? CLOUD_SPEECH_LABELS[editing.provider] : "Cloud providers"}
+      title={editing ? CLOUD_SPEECH_LABELS[editing.provider] : VOICE_COPY.cloudProvider.sheetTitle}
       onClose={onClose}
       dismissDisabled={saving}
     >

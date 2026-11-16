@@ -17,6 +17,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SettingsSection } from "./components/SettingsSection";
 import { settled } from "../../lib/settled";
 import { SettingsActionRow } from "./components/SettingsActionRow";
+import { MEMORY_COPY } from "./memoryCopy";
 
 /** Only the binding version returned by the server authorizes a subsequent CAS. */
 export function MemoryProjectSettings({
@@ -127,7 +128,7 @@ export function MemoryProjectSettings({
     );
   }
   return (
-    <SettingsSection title="Project memory binding">
+    <SettingsSection title={MEMORY_COPY.projectBinding.title}>
       <Text className="p-3 text-sm text-foreground-muted">
         {binding?.projectKey?.kind === "explicit"
           ? "Using a shared project binding"
@@ -137,7 +138,7 @@ export function MemoryProjectSettings({
       </Text>
       <SettingsActionRow
         icon="link"
-        label="Create shared project binding"
+        label={MEMORY_COPY.projectBinding.createShared}
         disabled={!allowed || !binding || busy}
         onPress={() => void save("setExplicit")}
       />
@@ -165,7 +166,7 @@ export function MemoryProjectSettings({
       />
       <SettingsActionRow
         icon="arrow.uturn.backward"
-        label="Use repository binding"
+        label={MEMORY_COPY.projectBinding.repositoryBinding}
         disabled={!allowed || !binding || busy}
         onPress={() => void save("useRepository")}
       />
