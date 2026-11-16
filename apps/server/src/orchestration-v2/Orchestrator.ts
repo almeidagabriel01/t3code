@@ -10791,12 +10791,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Automatic completion deliveries cannot be edited.",
       });
     }
-    // The agent text and the shown text of a guest message must stay the guest's words.
-    if (queuedMessage.context?.guest !== undefined) {
+    // A guest's or an agent's message stays its author's words: an edit would put other words
+    // under their name.
+    if (queuedMessage.context?.guest !== undefined || queuedMessage.createdBy === "agent") {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "A guest's message cannot be edited. Cancel it instead.",
+        cause: `A ${queuedMessage.createdBy === "agent" ? "teammate's or agent's" : "guest's"} message cannot be edited. Cancel it instead.`,
       });
     }
     yield* ensureGoalCommandSupported(

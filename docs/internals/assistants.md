@@ -319,9 +319,11 @@ text, so an identical send within one session repeats the same request. Shells c
 The stored `text` is the envelope the model reads (`<t3_request>`/`<t3_reply>` and the system line),
 so clients never parse it: the same send puts `context.teammate` beside it (sender, request id,
 status, files and the bare body, one entry per reply of a group). The orchestrator keeps it only on
-`createdBy: "agent"` and drops it on a queued-message edit, so a client cannot claim to be a teammate.
-Messages from before it existed go through the one tolerant parser in `client-runtime`
-(`teammateMessage.ts`).
+`createdBy: "agent"`, and no one may edit an agent's or a guest's queued message, so a client cannot
+claim to be a teammate or rewrite one. Messages from before it existed go through one parser in
+`client-runtime` (`teammateMessage.ts`), which reads an envelope only where the server's own marks
+prove it (a date cutoff, an assistant sender the envelope names, the ids the server gave replies and
+group deliveries) and names the teammate from the directory, never from the tags.
 
 A send may name several assistants (`threadIds`). Each gets its own request row (`<group>:to:<thread>`)
 sharing a `group_id`, all opened before the first send so a fast reply never sees a group of one. Replies

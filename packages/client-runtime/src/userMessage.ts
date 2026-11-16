@@ -65,6 +65,18 @@ export function resolveUserMessageFileCards(message: {
   return remaining.trim() === "" ? files : null;
 }
 
+/** Whether the owner may rewrite a queued message: a guest's or an agent's keeps its author's words. */
+export function canEditQueuedMessage(
+  message:
+    | {
+        readonly createdBy?: OrchestrationV2Actor;
+        readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+      }
+    | undefined,
+): boolean {
+  return message?.createdBy !== "agent" && message?.context?.guest === undefined;
+}
+
 export function resolveUserMessagePresentation(message: {
   readonly id?: string;
   readonly role: string;

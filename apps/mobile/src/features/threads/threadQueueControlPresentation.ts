@@ -1,4 +1,7 @@
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  canEditQueuedMessage,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -22,11 +25,12 @@ export function resolveThreadQueueRowControls(input: {
   /** Something else holds the composer, such as an open question. */
   readonly editBlocked?: boolean;
   readonly isEditing?: boolean;
-  /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
-  readonly isGuestMessage?: boolean;
   readonly text: string;
-  /** The queued message; a teammate's shows their words, as its sent row will. */
-  readonly message?: Parameters<typeof resolveUserMessagePresentation>[0] | undefined;
+  /** The queued message; a teammate's shows their words, and only the owner's own can be edited. */
+  readonly message?:
+    | (Parameters<typeof resolveUserMessagePresentation>[0] &
+        Parameters<typeof canEditQueuedMessage>[0])
+    | undefined;
 }): ThreadQueueRowControls {
   const presentation = input.message ? resolveUserMessagePresentation(input.message) : null;
   const shownText = presentation?.teammate ? presentation.text : input.text;
@@ -38,7 +42,10 @@ export function resolveThreadQueueRowControls(input: {
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
     canEdit:
-      mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
+      mutationEnabled &&
+      !isEditing &&
+      canEditQueuedMessage(input.message) &&
+      input.editBlocked !== true,
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.

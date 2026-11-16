@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -195,7 +196,7 @@ it.effect("drops guest attribution that a client sends on its own message", () =
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("keeps teammate attribution only on an agent's send, and drops it on an edit", () =>
+it.effect("keeps teammate attribution only on an agent's send, which no edit rewrites", () =>
   Effect.gen(function* () {
     const orchestrator = yield* setup;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -228,6 +229,7 @@ it.effect("keeps teammate attribution only on an agent's send, and drops it on a
       });
     yield* send("forged", "user", false);
     yield* send("from-ada", "agent", true);
+    yield* send("mine", "user", true);
     const contextOf = (id: string) =>
       projections
         .getThreadProjection(threadId)
@@ -240,19 +242,35 @@ it.effect("keeps teammate attribution only on an agent's send, and drops it on a
     assert.isUndefined((yield* contextOf("forged"))?.teammate);
     assert.deepEqual((yield* contextOf("from-ada"))?.teammate, teammate);
 
-    const queued = (yield* projections.getThreadProjection(threadId)).runs.find(
-      (run) => run.status === "queued",
-    );
-    assert.isDefined(queued);
-    yield* orchestrator.dispatch({
-      type: "queued-run.edit",
-      commandId: CommandId.make("edit-teammate"),
-      threadId,
-      runId: queued.id,
-      text: "My own words",
-      context: { version: 1, records: [], teammate },
-    });
-    assert.isUndefined((yield* contextOf("from-ada"))?.teammate);
+    const queuedRunOf = (id: string) =>
+      projections
+        .getThreadProjection(threadId)
+        .pipe(
+          Effect.map((projection) =>
+            projection.runs.find(
+              (run) => run.status === "queued" && run.userMessageId === MessageId.make(id),
+            ),
+          ),
+        );
+    const edit = (id: string, runId: RunId) =>
+      orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`edit-${id}`),
+        threadId,
+        runId,
+        text: "My own words",
+        context: { version: 1, records: [], teammate },
+      });
+    // Rewriting a teammate's words would put new words under their name: cancel it instead.
+    const fromAda = yield* queuedRunOf("from-ada");
+    assert.isDefined(fromAda);
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(edit("from-ada", fromAda.id))));
+    assert.deepEqual((yield* contextOf("from-ada"))?.teammate, teammate);
+    // An edit cannot attach a teammate to the owner's own words either.
+    const mine = yield* queuedRunOf("mine");
+    assert.isDefined(mine);
+    yield* edit("mine", mine.id);
+    assert.isUndefined((yield* contextOf("mine"))?.teammate);
   }).pipe(Effect.provide(layerTest)),
 );
 

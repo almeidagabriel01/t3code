@@ -172,6 +172,9 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
 
   await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
+  // An agent's words stay theirs: the owner can cancel them, not rewrite them.
+  const edits = page.getByRole("button", { name: "Edit queued message", exact: true }).elements();
+  expect(edits.map((button) => (button as HTMLButtonElement).disabled)).toEqual([true, true, true]);
 });
 
 it("stays inside the timeline scroller instead of growing the chat column", async () => {
