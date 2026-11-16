@@ -237,8 +237,9 @@ change then adds a `change` chat row ("Ada added Bo"): never unread, not part of
 ## Tasks are ordinary threads with an owner
 
 A `t3_thread_launch` from an assistant thread writes an `assistant_tasks` row (thread, assistant,
-project, title) before the launch starts, so a run that ends fast still finds it; a failed launch
-takes it back. The thread stays a normal project thread: no flag on it, listed in project lists.
+project, title, and the conversation that launched it) before the launch starts, so a run that ends
+fast still finds it; a failed launch takes it back. The source conversation lets a client attribute
+a thread launched from a member's hidden group thread to that group task. The thread stays a normal project thread: no flag on it, listed in project lists.
 These follow the row, none of them a new mechanism:
 
 - `AssistantDirectory.taskOwner` (one primary-key lookup per ordinary turn start, the price of not

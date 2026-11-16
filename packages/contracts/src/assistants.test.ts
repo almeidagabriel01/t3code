@@ -376,8 +376,16 @@ describe("assistantTeamProblem", () => {
     expect(team).not.toHaveProperty("leaderId");
   });
 
-  it("an old snapshot without teams still decodes, with none", () => {
+  it("an old snapshot without teams, and a task without a source, still decode", () => {
     const decoded = decodeEvent({ type: "snapshot", assistants: [] });
     expect(decoded).toMatchObject({ type: "snapshot", teams: [], tasks: [] });
+    const task = {
+      threadId: "t1",
+      assistantId: "a",
+      projectId: "p1",
+      title: "Old",
+      createdAt: "2026-10-01T00:00:00.000Z",
+    };
+    expect(decodeEvent({ type: "taskUpserted", task })).toEqual({ type: "taskUpserted", task });
   });
 });
