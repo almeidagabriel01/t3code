@@ -377,7 +377,11 @@ describe("SettingsServerControlsRouteScreen", () => {
   it("passes the effective Runner mode to the heavy-work queue and saves its slow-down switch", () => {
     act(() => root.render(<SettingsEnvironmentMaintenanceRouteScreen />));
     const queue = container.querySelector<HTMLButtonElement>('[aria-label="heavy queue"]')!;
-    expect(JSON.parse(queue.dataset.runner!)).toEqual({ enabled: false, where: "mac" });
+    expect(JSON.parse(queue.dataset.runner!)).toEqual({
+      enabled: false,
+      where: "mac",
+      everything: DEFAULT_SERVER_SETTINGS.runnerLinuxEverything,
+    });
     act(() => queue.click());
     expect(mocks.updateSettings).toHaveBeenLastCalledWith({
       environmentId: "local",
