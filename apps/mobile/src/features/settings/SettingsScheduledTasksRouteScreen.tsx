@@ -1,6 +1,7 @@
 import {
   CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
   CONNECT_ENVIRONMENT_TO_CREATE_SCHEDULED_TASK,
+  emptyEnvironmentSelectionText,
 } from "@t3tools/client-runtime/settings-empty-selection";
 import {
   isRoutineTarget,
@@ -460,9 +461,10 @@ export function SettingsScheduledTasksRouteScreen() {
           ))
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
-            {availableTargets.length === 0
-              ? CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS
-              : "No environments match these filters. Change the filter above."}
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+              availableTargets.length > 0,
+            )}
           </Text>
         )}
       </ScrollView>

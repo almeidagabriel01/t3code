@@ -1,3 +1,4 @@
+import { allEnvironmentsLabel } from "@t3tools/client-runtime/settings-empty-selection";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform } from "react-native";
 
@@ -36,7 +37,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
         inline: true,
         title:
           selectedIds === null
-            ? "All environments"
+            ? allEnvironmentsLabel(availableTargets.length)
             : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
         items: [
           {

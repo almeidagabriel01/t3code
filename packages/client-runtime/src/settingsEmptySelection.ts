@@ -39,6 +39,11 @@ export function emptyEnvironmentSelectionText(
   return environmentsAvailable ? NO_MATCHING_ENVIRONMENTS : connectEnvironment;
 }
 
+/** An environment filter that narrows nothing; with no environment there is nothing to narrow. */
+export function allEnvironmentsLabel(environmentCount: number): string {
+  return environmentCount === 0 ? "No environments" : "All environments";
+}
+
 export type UsageSubject = "limits" | "usage";
 
 export function connectEnvironmentToSee(subject: UsageSubject): string {
