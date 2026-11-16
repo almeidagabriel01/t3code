@@ -46,6 +46,24 @@ export const heavyQueueLimitError = (key: HeavyQueueLimitKey, value: number): st
   return null;
 };
 
+/**
+ * A setting's range given the others, so an editor never offers a value the server refuses: a
+ * medium job's memory guess stays at or under a heavy job's.
+ */
+export const heavyQueueLimitRange = (
+  key: HeavyQueueLimitKey,
+  current: Readonly<Record<"unseenHeavyMegabytes" | "unseenMediumMegabytes", number>>,
+): { readonly min: number; readonly max: number } => {
+  const { min, max } = HEAVY_QUEUE_LIMITS[key];
+  if (key === "unseenMediumMegabytes") {
+    return { min, max: Math.max(min, Math.min(max, current.unseenHeavyMegabytes)) };
+  }
+  if (key === "unseenHeavyMegabytes") {
+    return { min: Math.min(max, Math.max(min, current.unseenMediumMegabytes)), max };
+  }
+  return { min, max };
+};
+
 const limit = (key: HeavyQueueLimitKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => heavyQueueLimitError(key, value) ?? true));
 

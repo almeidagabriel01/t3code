@@ -1,6 +1,6 @@
 import {
   HEAVY_QUEUE_DEFAULTS,
-  HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitRange,
   type EnvironmentId,
   type HeavyQueueState,
 } from "@t3tools/contracts";
@@ -321,6 +321,14 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
   });
 
+  it("keeps a medium job's guess at or under a heavy job's while editing either", async () => {
+    setup({ unseenHeavyMegabytes: 1536, unseenMediumMegabytes: 1024 });
+    const view = await mount();
+    expect(view.toggle("Memory guess for a new medium job").max).toBe("1536");
+    expect(view.toggle("Memory guess for a new heavy job").min).toBe("1024");
+    await view.unmount();
+  });
+
   it("groups job sizing apart and resets a changed size to its default", async () => {
     setup({ lightJobMegabytes: 256 });
     const view = await mount();
@@ -354,8 +362,9 @@ describe("HeavyQueueSection", () => {
     const field = view.toggle(label);
     expect(field).toMatchObject({
       value: String(next - 1),
-      min: String(HEAVY_QUEUE_LIMITS[key].min),
-      max: String(HEAVY_QUEUE_LIMITS[key].max),
+      // The two memory guesses bound each other; the test above pins those numbers.
+      min: String(heavyQueueLimitRange(key, mocks.state).min),
+      max: String(heavyQueueLimitRange(key, mocks.state).max),
       disabled: false,
     });
     await act(async () => {

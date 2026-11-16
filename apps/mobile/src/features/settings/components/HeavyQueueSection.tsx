@@ -11,6 +11,7 @@ import {
   HEAVY_QUEUE_ADMISSION_KEYS,
   HEAVY_QUEUE_DEFAULTS,
   HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitRange,
   type HeavyQueueAdmissionKey,
   type HeavyQueueLimitKey,
   type RunnerWhere,
@@ -112,7 +113,8 @@ export function HeavyQueueSection(props: {
   const setRule = (root: string) =>
     void setRuleCommand({ environmentId, input: { root, priority: null } });
   const limitRow = (row: (typeof LIMIT_ROWS)[number]) => {
-    const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
+    const { unit } = HEAVY_QUEUE_LIMITS[row.key];
+    const { min, max } = heavyQueueLimitRange(row.key, state);
     const copy = HEAVY_LIMIT_COPY[row.key];
     const usual = HEAVY_QUEUE_DEFAULTS[row.key];
     return (

@@ -160,6 +160,20 @@ it("changes the pause, the Mac limits and the other rows", async () => {
   expect(mocks.actions.setDeviceIdleMinutes).toHaveBeenCalledWith(0);
 });
 
+it("keeps a medium job's guess at or under a heavy job's while editing either", async () => {
+  setup({ unseenHeavyMegabytes: 1536, unseenMediumMegabytes: 1024 });
+  await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  for (const [label, typed, saved] of [
+    ["Memory guess for a new medium job", "4000", { unseenMediumMegabytes: 1536 }],
+    ["Memory guess for a new heavy job", "300", { unseenHeavyMegabytes: 1024 }],
+  ] as const) {
+    const field = screen.getByLabelText(label, { exact: true });
+    await field.fill(typed);
+    await field.element().blur();
+    expect(mocks.actions.setAdmissionLimits).toHaveBeenLastCalledWith(saved);
+  }
+});
+
 it("saves each job sizing field and resets a changed one to its default", async () => {
   setup({ lightJobMegabytes: 256 });
   await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked

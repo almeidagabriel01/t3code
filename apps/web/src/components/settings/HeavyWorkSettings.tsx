@@ -4,6 +4,7 @@ import {
   HEAVY_QUEUE_ADMISSION_KEYS,
   HEAVY_QUEUE_DEFAULTS,
   HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitRange,
   type EnvironmentId,
   type HeavyQueueAdmissionKey,
   type HeavyQueueLimitKey,
@@ -124,6 +125,7 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
           <UnitStepper
             title={searchableSetting(row.searchId).title}
             {...HEAVY_QUEUE_LIMITS[row.key]}
+            {...heavyQueueLimitRange(row.key, state)}
             value={state[row.key]}
             disabled={readOnly}
             onCommit={(next) => void setLimit(row.key, next)}
