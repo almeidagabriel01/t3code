@@ -692,6 +692,16 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
 };
 
 /** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
+/** Commands the file remembers runs of; the one run longest ago goes first. */
+const HISTORY_COMMANDS = 1000;
+
+const remember = <A>(book: Record<string, ReadonlyArray<A>>, signature: string, run: A) => {
+  const runs = [...(book[signature] ?? []), run].slice(-HISTORY_RUNS);
+  delete book[signature];
+  book[signature] = runs;
+  for (const old of Object.keys(book).slice(0, -HISTORY_COMMANDS)) delete book[old];
+};
+
 const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): QueueDoc => {
   const kept = new Set(after.entries.map((entry) => entry.id));
   const history: Record<string, ReadonlyArray<Run>> = { ...after.history };
@@ -704,9 +714,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      linuxHistory[signature] = [...(linuxHistory[signature] ?? []), { durationMs }].slice(
-        -HISTORY_RUNS,
-      );
+      remember(linuxHistory, signature, { durationMs });
     } else {
       if (gone.peakMemory === undefined) continue;
       const run = {
@@ -714,7 +722,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
         memoryBytes: gone.peakMemory,
         durationMs,
       };
-      history[signature] = [...(history[signature] ?? []), run].slice(-HISTORY_RUNS);
+      remember(history, signature, run);
     }
     changed = true;
   }
