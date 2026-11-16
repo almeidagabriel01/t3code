@@ -58,25 +58,49 @@ export function continuesAssistantSender(
   return sender !== null && sender === soleAssistant(previous);
 }
 
+/** The assistants speaking in a message: each teammate of a group's replies, else its sender. */
+export function messageAssistantIds(message: SenderMessage): ReadonlyArray<string> {
+  const fromParts = (resolveTeammateMessage(message) ?? []).flatMap(
+    (part) => assistantIdFromThreadId(part.threadId) ?? [],
+  );
+  if (fromParts.length > 0) return [...new Set(fromParts)];
+  const sender = messageAssistantId(message);
+  return sender === null ? [] : [sender];
+}
+
 /** Assistants that wrote into a thread, in the order they first spoke. */
 export function assistantSenders(
-  messages: ReadonlyArray<{ readonly id: string; readonly senderThreadId?: string | undefined }>,
+  messages: ReadonlyArray<SenderMessage & { readonly id: string }>,
   assistants: ReadonlyArray<Assistant>,
 ): ReadonlyArray<AssistantSender> {
   const byId = new Map<string, AssistantSender>();
   for (const message of messages) {
-    const assistantId = messageAssistantId(message);
-    if (assistantId === null) continue;
-    const previous = byId.get(assistantId);
-    byId.set(assistantId, {
-      assistantId,
-      assistant: assistants.find((candidate) => candidate.id === assistantId) ?? null,
-      firstMessageId: previous?.firstMessageId ?? message.id,
-      lastMessageId: message.id,
-      count: (previous?.count ?? 0) + 1,
-    });
+    for (const assistantId of messageAssistantIds(message)) {
+      const previous = byId.get(assistantId);
+      byId.set(assistantId, {
+        assistantId,
+        assistant: assistants.find((candidate) => candidate.id === assistantId) ?? null,
+        firstMessageId: previous?.firstMessageId ?? message.id,
+        lastMessageId: message.id,
+        count: (previous?.count ?? 0) + 1,
+      });
+    }
   }
   return [...byId.values()];
+}
+
+/** Message id to the assistants whose first words in the thread it holds. */
+export function assistantJoins(
+  messages: ReadonlyArray<SenderMessage & { readonly id: string }>,
+): ReadonlyMap<string, ReadonlyArray<string>> {
+  const joins = new Map<string, Array<string>>();
+  for (const sender of assistantSenders(messages, [])) {
+    joins.set(sender.firstMessageId, [
+      ...(joins.get(sender.firstMessageId) ?? []),
+      sender.assistantId,
+    ]);
+  }
+  return joins;
 }
 
 /**

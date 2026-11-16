@@ -5,6 +5,7 @@ import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
 import {
   ASSISTANT_ACCENTS,
   assistantAccent,
+  assistantJoins,
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenderLook,
@@ -16,15 +17,25 @@ import {
 
 const jarvis = { id: "jarvis", name: "Jarvis" } as Assistant;
 
+const sent = (id: string, senderThreadId?: string, text = "hi") => ({
+  id,
+  role: "user",
+  text,
+  createdBy: "agent" as const,
+  ...(senderThreadId === undefined ? {} : { senderThreadId }),
+});
+const groupReplies =
+  'Teammates answered your request; x\n<t3_reply from="Ada" threadId="assistant:ada:1" replyTo="a" status="answered">\nok\n</t3_reply>\n<t3_reply from="Bo" threadId="assistant:bo:1" replyTo="b" status="answered">\nok\n</t3_reply>';
+
 describe("assistantSenders", () => {
   it("groups an assistant's messages and skips everyone else's", () => {
     const senders = assistantSenders(
       [
-        { id: "m1" },
-        { id: "m2", senderThreadId: "assistant:jarvis:1" },
-        { id: "m3", senderThreadId: "worker-thread" },
-        { id: "m4", senderThreadId: "assistant:revisor:2" },
-        { id: "m5", senderThreadId: "assistant:jarvis:3" },
+        sent("m1"),
+        sent("m2", "assistant:jarvis:1"),
+        sent("m3", "worker-thread"),
+        sent("m4", "assistant:revisor:2"),
+        sent("m5", "assistant:jarvis:3"),
       ],
       [jarvis],
     );
@@ -43,6 +54,22 @@ describe("assistantSenders", () => {
         lastMessageId: "m4",
         count: 1,
       },
+    ]);
+  });
+
+  it("counts each teammate of a group's replies, not the one that delivered them", () => {
+    const messages = [
+      sent("m1", "assistant:ada:1"),
+      sent("m2", "assistant:bo:1", groupReplies),
+      sent("m3", "assistant:bo:1"),
+    ];
+    expect(assistantSenders(messages, []).map((s) => [s.assistantId, s.count])).toEqual([
+      ["ada", 2],
+      ["bo", 2],
+    ]);
+    expect([...assistantJoins(messages)]).toEqual([
+      ["m1", ["ada"]],
+      ["m2", ["bo"]],
     ]);
   });
 

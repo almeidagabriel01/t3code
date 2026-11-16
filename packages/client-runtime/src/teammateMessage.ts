@@ -73,7 +73,12 @@ function legacyEntry(
   const threadId = attributes.threadId;
   if (!name || !threadId) return null;
   const expects = attributes.expects_reply;
-  const status = attributes.status === "blocked" ? ("blocked" as const) : teammateReplyStatus(text);
+  const status =
+    kind !== "reply"
+      ? undefined
+      : attributes.status === "blocked"
+        ? ("blocked" as const)
+        : teammateReplyStatus(text);
   return {
     kind,
     name,
@@ -87,9 +92,16 @@ function legacyEntry(
   };
 }
 
-const SINGLE = /^<(t3_request|t3_reply)(\s[^>\n]*)?>\n([\s\S]*?)\n<\/\1>(?:\n([\s\S]*))?$/;
+// Quoted values may hold ">" and newlines: the server escapes only &, " and <.
+const ATTRIBUTES = String.raw`((?:\s+[\w-]+="[^"]*")*)\s*`;
+const SINGLE = new RegExp(
+  String.raw`^<(t3_request|t3_reply)${ATTRIBUTES}>\n([\s\S]*?)\n<\/\1>(?:\n([\s\S]*))?$`,
+);
 const GROUP_LEAD = /^Teammates answered your request;[^\n]*\n/;
-const GROUP_REPLY = /<t3_reply(\s[^>\n]*)?>\n([\s\S]*?)\n<\/t3_reply>(?:\n|$)/y;
+const GROUP_REPLY = new RegExp(
+  String.raw`<t3_reply${ATTRIBUTES}>\n([\s\S]*?)\n<\/t3_reply>(?:\n|$)`,
+  "y",
+);
 
 /** Messages stored before `context.teammate` existed: the envelope the server wrote, read back. */
 function parseLegacyEnvelope(text: string): ReadonlyArray<TeammateMessageEntry> | null {
@@ -119,12 +131,27 @@ function parseLegacyEnvelope(text: string): ReadonlyArray<TeammateMessageEntry> 
  * The teammates a user message comes from, or null for any other message. Reads the server's
  * attribution, else the envelope of an older agent send; anything it cannot read stays as text.
  */
-export function resolveTeammateMessage(message: {
+export function resolveTeammateMessage(
+  message: TeammateSource,
+): ReadonlyArray<TeammateMessagePart> | null {
+  const cached = resolved.get(message);
+  if (cached !== undefined) return cached;
+  const parts = resolveUncached(message);
+  resolved.set(message, parts);
+  return parts;
+}
+
+interface TeammateSource {
   readonly role: string;
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
   readonly context?: Pick<OrchestrationMessageContext, "teammate"> | undefined;
-}): ReadonlyArray<TeammateMessagePart> | null {
+}
+
+// Rows, presence and the timeline all ask about the same stored (immutable) message objects.
+const resolved = new WeakMap<TeammateSource, ReadonlyArray<TeammateMessagePart> | null>();
+
+function resolveUncached(message: TeammateSource): ReadonlyArray<TeammateMessagePart> | null {
   if (message.role !== "user") return null;
   const entries =
     message.context?.teammate?.entries ??
