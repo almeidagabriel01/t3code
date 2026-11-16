@@ -60,6 +60,14 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/about",
 ]);
 
+/** Pages that act on one environment at a time, so the menu offers no "All environments". */
+export const SETTINGS_SINGLE_ENVIRONMENT_PATHS: ReadonlySet<string> = new Set([
+  "/settings/providers",
+  "/settings/secrets",
+  "/settings/memory",
+  "/settings/integrations",
+]);
+
 interface SettingsScopeMenuProps {
   readonly value: SettingsScopeSearch;
   readonly groups: readonly SidebarProjectSnapshot[];
