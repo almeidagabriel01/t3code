@@ -683,6 +683,14 @@ describe("heavy queue file", () => {
     Queue.setLimit(dir, "lightJobMegabytes", 256);
     Queue.setLimit(dir, "headPatienceMinutes", 999);
     expect(sizing()).toEqual([256, 1536, 512, 1000, 60]);
+    // A medium job never needs more than a heavy one: rejected before writing, read as the heavy guess.
+    expect(() => Queue.setLimits(dir, { unseenMediumMegabytes: 2048 })).toThrow(/heavy job/);
+    expect(() => Queue.setLimits(dir, { unseenHeavyMegabytes: 256 })).toThrow(/heavy job/);
+    Queue.setLimits(dir, { unseenHeavyMegabytes: 4096, unseenMediumMegabytes: 2048 });
+    expect(sizing()).toEqual([256, 4096, 2048, 1000, 60]);
+    const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    NodeFS.writeFileSync(file, JSON.stringify({ ...doc, unseenHeavyMegabytes: 1024 }));
+    expect(sizing()).toEqual([256, 1024, 1024, 1000, 60]);
   });
 
   it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {

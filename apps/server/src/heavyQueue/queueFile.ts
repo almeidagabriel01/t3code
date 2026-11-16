@@ -12,6 +12,7 @@ import {
   HEAVY_QUEUE_DEFAULTS,
   heavyQueueLimitError,
   HEAVY_QUEUE_LIMITS,
+  HeavyQueueError,
   type HeavyQueueEntry,
   type HeavyQueueLimitKey,
   type HeavyQueueRule,
@@ -338,7 +339,11 @@ const loadDoc = (dir: string): QueueDoc => {
       heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
       lightJobMegabytes: limitOf(record, "lightJobMegabytes"),
       unseenHeavyMegabytes: limitOf(record, "unseenHeavyMegabytes"),
-      unseenMediumMegabytes: limitOf(record, "unseenMediumMegabytes"),
+      // A medium job never needs more than a heavy one, whatever an older or edited file says.
+      unseenMediumMegabytes: Math.min(
+        limitOf(record, "unseenMediumMegabytes"),
+        limitOf(record, "unseenHeavyMegabytes"),
+      ),
       historyCommands: limitOf(record, "historyCommands"),
       headPatienceMinutes: limitOf(record, "headPatienceMinutes"),
       runner: parseRunner(parsed?.runner),
@@ -1169,7 +1174,10 @@ export const setPaused = (dir: string, paused: boolean) =>
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
-/** Stores the queue settings given in one write, each clamped to its range; other keys are ignored. */
+/**
+ * Stores the queue settings given in one write, each clamped to its range; other keys are ignored.
+ * Throws, writing nothing, when the result would guess a medium job above a heavy one.
+ */
 export const setLimits = (
   dir: string,
   limits: Readonly<Partial<Record<HeavyQueueLimitKey, number>>>,
@@ -1182,7 +1190,14 @@ export const setLimits = (
       const { min, max } = HEAVY_QUEUE_LIMITS[key];
       set[key] = Math.max(min, Math.min(max, Math.floor(value)));
     }
-    return { doc: { ...doc, ...set }, result: undefined };
+    const next = { ...doc, ...set };
+    if (next.unseenMediumMegabytes > next.unseenHeavyMegabytes) {
+      throw new HeavyQueueError({
+        reason: "not-allowed",
+        message: `A medium job's memory guess can't be more than a heavy job's (${next.unseenHeavyMegabytes} MB).`,
+      });
+    }
+    return { doc: next, result: undefined };
   });
 
 export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>

@@ -579,6 +579,12 @@ describe("HeavyQueue", () => {
         // Reset sends the default back.
         yield* queue.setAdmissionLimits({ lightJobMegabytes: 512 });
         expect((yield* queue.state).lightJobMegabytes).toBe(512);
+        const above = yield* Effect.flip(queue.setAdmissionLimits({ unseenMediumMegabytes: 4096 }));
+        expect([above.reason, above.message]).toEqual([
+          "not-allowed",
+          "A medium job's memory guess can't be more than a heavy job's (1536 MB).",
+        ]);
+        expect((yield* queue.state).unseenMediumMegabytes).toBe(512);
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);
