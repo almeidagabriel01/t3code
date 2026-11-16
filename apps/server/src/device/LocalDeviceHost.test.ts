@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -538,7 +539,9 @@ describe("AgentDevice startup", () => {
       );
       expect((yield* host.summary).tools?.agent.runningVersion).toBe("0.0.1");
       yield* host.stop;
-      expect(runs.find((run) => run.args.includes("daemon"))?.args).toEqual([
+      const stop = runs.find((run) => run.args.includes("daemon"));
+      expect(stop?.timeout).toEqual(Duration.seconds(15));
+      expect(stop?.args).toEqual([
         path.join(
           baseDir,
           "tools",
