@@ -6,6 +6,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
+  isListedThreadLineage,
   isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
@@ -47,6 +48,7 @@ export interface SettlementPullRequest {
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUN_ENDS_BY_CWD_CAPACITY = 2_048;
+const HELD_BRANCH_RECHECK_MS = 10 * 60 * 1_000;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -195,6 +197,78 @@ export function isSnoozed(
   return !wokeOnError;
 }
 
+const FINISHED_SUBAGENT_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+// The parent holds the result, or gave up on it.
+const RESULT_TAKEN_STATES = new Set(["acknowledged", "delivered", "disposed"]);
+
+/** A manual unsettle holds until a run that ends after it. */
+function unsettledSinceLastRun(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "unsettledAt" | "latestRunCompletedAt"
+  >,
+): boolean {
+  const unsettledAtMs = toMillis(thread.unsettledAt);
+  if (unsettledAtMs === null) return false;
+  const completedAtMs = toMillis(thread.latestRunCompletedAt);
+  return completedAtMs === null || unsettledAtMs >= completedAtMs;
+}
+
+/**
+ * `now` settles at once; `own-pull-request` and `own-work` settle once the thread's own branch
+ * has no open pull request, or nothing unshipped at all.
+ */
+export type FinishedWorkSettlement = "now" | "own-pull-request" | "own-work";
+
+/** Both paths name one directory once `..`, trailing slashes and symlinks are resolved. */
+export const sameDirectory = Effect.fnUntraced(function* (left: string, right: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const canonical = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => path.resolve(target)));
+  return (yield* canonical(left)) === (yield* canonical(right));
+});
+
+/**
+ * Work nobody waits on any more settles without the inactivity timer: a subagent child whose
+ * parent took its result (or settled), and a dismissed assistant task. A pull request the child
+ * only inherited from its parent's checkout never holds it.
+ */
+export function finishedWorkSettlement(
+  thread: ProjectionStore.ProjectionSettlementCandidate,
+  nowMs: number,
+): FinishedWorkSettlement | null {
+  if (!isAutoSettlementCandidate(thread, nowMs) || unsettledSinceLastRun(thread)) return null;
+  const handoff = thread.subagentHandoff;
+  if (handoff !== null) {
+    const handedOff =
+      handoff.parentSettled ||
+      (handoff.status !== null &&
+        FINISHED_SUBAGENT_STATUSES.has(handoff.status) &&
+        (handoff.origin === "provider_native"
+          ? !handoff.parentRunActive && handoff.parentReadResult
+          : handoff.deliveryState === null || RESULT_TAKEN_STATES.has(handoff.deliveryState)));
+    if (!handedOff) return null;
+    return thread.worktreePath === null ? "now" : "own-pull-request";
+  }
+  if (thread.assistantTaskDismissed && isListedThreadLineage(thread.lineage)) {
+    return thread.worktreePath === null && thread.branch === null ? "now" : "own-work";
+  }
+  return null;
+}
+
+/** When the thread last did anything: a settlement records this, not when the rule noticed. */
+function lastActivityAt(thread: ProjectionStore.ProjectionSettlementCandidate): DateTime.Utc {
+  return DateTime.makeUnsafe(
+    latestMillis([
+      toMillis(thread.latestUserMessageAt),
+      toMillis(thread.latestRunRequestedAt),
+      toMillis(thread.latestRunStartedAt),
+      toMillis(thread.latestRunCompletedAt),
+    ]) ?? DateTime.toEpochMillis(thread.createdAt),
+  );
+}
+
 export function resolveAutoSettlementAt(input: {
   readonly thread: ProjectionStore.ProjectionSettlementCandidate;
   readonly pullRequest: SettlementPullRequest | null;
@@ -305,10 +379,19 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitManager.GitManager;
+  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+  // A held branch is read again only when its HEAD or its thread moved, or the check aged out
+  // (a pull request can merge with no local change).
+  const heldChecks = new Map<ThreadId, { readonly key: string; readonly checkedAtMs: number }>();
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const inSameDirectory = (left: string, right: string) =>
+    sameDirectory(left, right).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   // A shell merge or close sends no event, and the branch lookup caches an open pull request,
   // so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
@@ -331,18 +414,179 @@ export const make = Effect.gen(function* () {
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
 
+  const dispatchAutoSettle = Effect.fnUntraced(function* (
+    thread: ProjectionStore.ProjectionSettlementCandidate,
+    settledAt: DateTime.Utc,
+  ) {
+    const uuid = yield* random.uuidV4();
+    yield* orchestrator.dispatch({
+      type: "thread.auto-settle",
+      commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
+      threadId: thread.id,
+      snapshotAt: thread.updatedAt,
+      settledAt,
+    });
+  });
+
+  /**
+   * A branch the thread owns still holds work: an open pull request, or (`own-work`) anything
+   * unshipped. A branch no checkout has out counts as shipped only once its pull request ended.
+   */
+  const branchHoldsWork = Effect.fnUntraced(function* (
+    thread: ProjectionStore.ProjectionSettlementCandidate,
+    hold: Exclude<FinishedWorkSettlement, "now">,
+    projectRoot: string | undefined,
+  ) {
+    // A child in its parent's checkout leaves the branch and its pull request to the parent.
+    const parentWorktreePath = thread.subagentHandoff?.parentWorktreePath ?? null;
+    if (
+      thread.worktreePath !== null &&
+      parentWorktreePath !== null &&
+      (yield* inSameDirectory(thread.worktreePath, parentWorktreePath))
+    ) {
+      return false;
+    }
+    if (
+      settlementPullRequestLinks(thread.pullRequests ?? []).some(
+        (link) => link.snapshot?.state === "open",
+      )
+    ) {
+      return true;
+    }
+    const worktreePath =
+      thread.worktreePath !== null &&
+      (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => true)))
+        ? thread.worktreePath
+        : null;
+    if (hold === "own-pull-request") {
+      // A removed worktree leaves nothing to finish here.
+      if (worktreePath === null) return false;
+      const branch = thread.branch ?? (yield* git.status({ cwd: worktreePath })).refName;
+      if (branch === null) return false;
+      // status reads a failed lookup as "no pull request"; this lookup fails, so the child waits.
+      return (yield* git.branchPullRequest({ cwd: worktreePath, branch }))?.state === "open";
+    }
+    const cwd = worktreePath ?? projectRoot;
+    if (cwd === undefined) return true;
+    const status = yield* git.status({ cwd });
+    if (thread.branch !== null && status.refName !== thread.branch) {
+      const pullRequest = yield* git.branchPullRequest({ cwd, branch: thread.branch });
+      return pullRequest?.state !== "merged" && pullRequest?.state !== "closed";
+    }
+    const pullRequestState = status.pr?.state ?? null;
+    if (status.hasWorkingTreeChanges) return true;
+    return !(
+      pullRequestState === "merged" ||
+      pullRequestState === "closed" ||
+      (pullRequestState === null && status.aheadOfDefaultCount === 0)
+    );
+  });
+
+  const settleFinishedWork = Effect.fnUntraced(function* (
+    threads: ReadonlyArray<ProjectionStore.ProjectionSettlementCandidate>,
+    nowMs: number,
+  ) {
+    const settled = new Set<ThreadId>();
+    const finished = threads.flatMap((thread) => {
+      const settlement = finishedWorkSettlement(thread, nowMs);
+      return settlement === null ? [] : [{ thread, settlement }];
+    });
+    if (finished.length === 0) return settled;
+    const roots = new Map(
+      finished.some(({ settlement }) => settlement === "own-work")
+        ? (yield* projectStore.listShells()).map((project) => [project.id, project.workspaceRoot])
+        : [],
+    );
+    yield* Effect.forEach(
+      finished,
+      ({ thread, settlement }) =>
+        Effect.gen(function* () {
+          if (settlement !== "now") {
+            const projectRoot = roots.get(thread.projectId);
+            const cwd = thread.worktreePath ?? projectRoot;
+            const head =
+              cwd === undefined
+                ? null
+                : yield* gitDriver
+                    .execute({
+                      operation: "ThreadSettlementService.heldHead",
+                      cwd,
+                      args: ["rev-parse", "HEAD"],
+                    })
+                    .pipe(
+                      Effect.map((result) => result.stdout.trim()),
+                      Effect.orElseSucceed(() => null),
+                    );
+            const key =
+              head === null
+                ? null
+                : [cwd, head, DateTime.toEpochMillis(lastActivityAt(thread))].join("\u0000");
+            const previous = heldChecks.get(thread.id);
+            if (
+              key !== null &&
+              previous?.key === key &&
+              nowMs - previous.checkedAtMs < HELD_BRANCH_RECHECK_MS
+            ) {
+              return;
+            }
+            // A failed read holds the work (fail closed) and waits out the recheck like any other.
+            const holds = yield* branchHoldsWork(thread, settlement, projectRoot).pipe(
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("held branch check failed", {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  }).pipe(Effect.as(true)),
+              ),
+            );
+            if (holds) {
+              if (key !== null) heldChecks.set(thread.id, { key, checkedAtMs: nowMs });
+              return;
+            }
+            heldChecks.delete(thread.id);
+          }
+          yield* dispatchAutoSettle(thread, lastActivityAt(thread));
+          settled.add(thread.id);
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("settling finished work skipped", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { concurrency: 8, discard: true },
+    );
+    return settled;
+  });
+
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
     threadId?: ThreadId,
   ) {
+    const allCandidates = yield* projections.getSettlementCandidates(threadId);
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    if (mergedPullRequest !== null) heldChecks.clear();
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
+    const configured = autoSettlementConfigured(settings);
+    // Finished work settles without the inactivity timer, but only while auto-settle is on;
+    // children still follow a parent the user settled.
+    const settledFinished = yield* settleFinishedWork(
+      configured
+        ? allCandidates
+        : allCandidates.filter((thread) => thread.subagentHandoff?.parentSettled === true),
+      nowMs,
+    );
+    if (!configured) {
       // Nothing reads these marks while settlement is off.
       runEndedThreads.clear();
       shellClosedThreads.clear();
       return;
     }
-    const threads = yield* projections.getSettlementCandidates(threadId);
+    const threads = allCandidates.filter((thread) => !settledFinished.has(thread.id));
     // A thread this sweep no longer covers never reads its marks again.
     const covered = new Set(threads.map((thread) => thread.id));
     for (const marks of [runEndedThreads, shellClosedThreads]) {
@@ -352,7 +596,6 @@ export const make = Effect.gen(function* () {
     }
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
-    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
@@ -375,14 +618,7 @@ export const make = Effect.gen(function* () {
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
         });
         if (settledAt === null) return thread;
-        const uuid = yield* random.uuidV4();
-        yield* orchestrator.dispatch({
-          type: "thread.auto-settle",
-          commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
-          threadId: thread.id,
-          snapshotAt: thread.updatedAt,
-          settledAt,
-        });
+        yield* dispatchAutoSettle(thread, settledAt);
         return null;
       },
       (effect, thread) =>
@@ -645,6 +881,22 @@ export const make = Effect.gen(function* () {
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
       if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      // A subagent working in its parent's checkout leaves it to the parent.
+      const parentId = settled.lineage.parentThreadId;
+      if (
+        settled.lineage.relationshipToParent === "subagent" &&
+        parentId !== null &&
+        (yield* projections.getThread(parentId).pipe(
+          Effect.flatMap((parent) =>
+            parent.worktreePath === null
+              ? Effect.succeed(false)
+              : inSameDirectory(parent.worktreePath, worktreePath),
+          ),
+          Effect.orElseSucceed(() => true),
+        ))
+      ) {
+        return;
+      }
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
@@ -678,7 +930,8 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId);
+        // The parent's sweep covers its children, which settle with it.
+        return Effect.andThen(cleanUpSettledThread(event.threadId), enqueueThread(event.threadId));
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":

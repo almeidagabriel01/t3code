@@ -33,6 +33,7 @@ import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
+import { deliveredRunOf, taskStatusOf } from "./AssistantService.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
 
@@ -114,6 +115,44 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Leaves the assistant's list once the task is done and its result reached the assistant: its
+   * last run completed, nothing waits on the user, and the assistant's turn that read the notice
+   * of that run (or of one that already said the same) completed.
+   */
+  const dismissIfDelivered = Effect.fn("AssistantTaskReactor.dismissIfDelivered")(
+    function* (threadId: ThreadId) {
+      const task = yield* tasks.forThread(threadId);
+      if (Option.isNone(task) || task.value.dismissedAt !== null) return;
+      const owner = yield* needsUser.conversation(task.value.assistantId);
+      if (Option.isNone(owner)) return;
+      const shell = yield* engine.getThreadShell(threadId);
+      if (shell == null || shell.activeRunId !== null || taskStatusOf(shell) !== "done") return;
+      const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
+      const last = deliveredRunOf(runs);
+      if (last?.status !== "completed" || (yield* resumesOnItsOwn(last))) return;
+      const notice = yield* notices.told({ threadId: owner.value.threadId, run: last });
+      if (Option.isNone(notice)) return;
+      const { runs: ownerRuns } = yield* threads.getThreadRecords(owner.value.threadId, ["runs"]);
+      const read = ownerRuns.find((run) => run.userMessageId === notice.value);
+      if (read?.status !== "completed") return;
+      yield* tasks.autoDismiss(threadId, last.id);
+    },
+    Effect.catchCause((cause) => Effect.logWarning("assistant task dismissal skipped", { cause })),
+  );
+
+  /** The task an assistant's run read the notice of, when that notice is still the latest. */
+  const noticedTask = Effect.fn("AssistantTaskReactor.noticedTask")(function* (run: {
+    readonly threadId: ThreadId;
+    readonly userMessageId: string;
+  }) {
+    if (!run.userMessageId.startsWith(TASK_EVENT_MESSAGE_PREFIX)) return Option.none<ThreadId>();
+    const rows = yield* sql<{ readonly subject_thread_id: string }>`
+      SELECT subject_thread_id FROM assistant_task_notices
+      WHERE thread_id = ${run.threadId} AND message_id = ${run.userMessageId}`;
+    return Option.fromNullishOr(rows[0]?.subject_thread_id as ThreadId | undefined);
+  });
+
   const handle: AssistantTaskReactor["Service"]["handle"] = Effect.fn(
     "AssistantTaskReactor.handle",
   )(
@@ -121,6 +160,10 @@ const make = Effect.gen(function* () {
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       const run = event.payload;
       if (!TERMINAL.has(run.status)) return;
+      if (run.status === "completed") {
+        const noticed = yield* noticedTask(run);
+        if (Option.isSome(noticed)) yield* dismissIfDelivered(noticed.value);
+      }
       const task = yield* tasks.forThread(run.threadId);
       if (Option.isNone(task)) return;
       // Failures always report; a wrong read reports rather than staying silent.
@@ -162,6 +205,8 @@ const make = Effect.gen(function* () {
         createdBy: "agent",
         senderThreadId: run.threadId,
       });
+      // A notice the assistant already read can cover this run too.
+      if (run.status === "completed") yield* dismissIfDelivered(run.threadId);
     },
     (effect, event) =>
       effect.pipe(
@@ -252,6 +297,17 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  /** Tasks whose delivery completed while the server was down leave the list on start. */
+  const dismissDelivered = tasks.list.pipe(
+    Effect.flatMap((all) =>
+      Effect.forEach(
+        all.filter((task) => task.dismissedAt === null),
+        (task) => dismissIfDelivered(task.threadId),
+        { discard: true },
+      ),
+    ),
+  );
+
   /** Each loop restarts on its own failure, so one broken stream never stops the other. */
   const keepRunning = <E>(name: string, loop: Effect.Effect<void, E>) =>
     loop.pipe(
@@ -265,6 +321,7 @@ const make = Effect.gen(function* () {
       // Folding beside the streams, not before them, so no run that ends meanwhile is missed;
       // once per start, outside the retry, so a resubscribe never folds again.
       yield* forkParked(foldBacklogs);
+      yield* forkParked(dismissDelivered);
       yield* forkParked(
         keepRunning(
           "assistant task run stream",

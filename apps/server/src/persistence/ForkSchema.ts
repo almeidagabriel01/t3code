@@ -665,6 +665,10 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   if (!assistantTaskColumns.some((column) => column.name === "dismissed_at")) {
     yield* sql`ALTER TABLE assistant_tasks ADD COLUMN dismissed_at TEXT`;
   }
+  // The run whose delivered result dismissed the task: a Restore is never undone for that run.
+  if (!assistantTaskColumns.some((column) => column.name === "auto_dismissed_run_id")) {
+    yield* sql`ALTER TABLE assistant_tasks ADD COLUMN auto_dismissed_run_id TEXT`;
+  }
 
   // A group's shared chat: messages, one task per recipient, and each member's hidden thread.
   if (!teamColumns.some((column) => column.name === "archived_at")) {

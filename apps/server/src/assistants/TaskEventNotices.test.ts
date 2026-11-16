@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import { ProjectId, ThreadId, type OrchestrationV2Run } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -180,11 +181,21 @@ const projected = (
 it.effect("a run with no diff, no new commit and the same status wakes no one", () => {
   const h = harness();
   return Effect.gen(function* () {
+    const notices = yield* TaskEventNotices;
+    // Nothing was told before the first notice.
+    assert.isTrue(Option.isNone(yield* notices.told(notice(run("r1", { startedBy: "launch" })))));
     assert.strictEqual(yield* launched(h), "sent");
     // A background command's wake, a restart continuation, an idle compaction: no message of an agent.
     for (const id of ["r2", "r3", "r4"]) {
-      assert.strictEqual(yield* (yield* TaskEventNotices).send(notice(run(id))), "unchanged");
+      assert.strictEqual(yield* notices.send(notice(run(id))), "unchanged");
+      // The notice of r1 already said all of it, so reading r1's notice delivers this run too.
+      assert.deepStrictEqual(
+        yield* notices.told(notice(run(id))),
+        Option.some("assistant-task:r1"),
+      );
     }
+    h.state.files.set("checkpoint:r5", 2);
+    assert.isTrue(Option.isNone(yield* notices.told(notice(run("r5")))));
     assert.deepStrictEqual(
       h.sends.map((sent) => sent.messageId),
       ["assistant-task:r1"],
