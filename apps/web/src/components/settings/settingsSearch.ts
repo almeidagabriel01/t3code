@@ -2576,7 +2576,13 @@ export function searchSettings(
         right.rank - left.rank ||
         left.index - right.index,
     )
-    .map(({ item }) => item);
+    .map(({ item }) => item)
+    .filter((item, index, results) => {
+      // Rows drawn once per instance share a title and jump target; one result reaches them all.
+      const key = (candidate: SettingsSearchItem) =>
+        `${candidate.title}\u0000${candidate.to}\u0000${candidate.targetId ?? candidate.id}`;
+      return results.findIndex((other) => key(other) === key(item)) === index;
+    });
 }
 
 // These rows only exist with separate fonts on, so a search jump to one turns them on.

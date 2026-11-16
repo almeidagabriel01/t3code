@@ -342,6 +342,11 @@ describe("searchSettings", () => {
     expect(found.map((item) => [item.title, item.to])).toContainEqual([title, to]);
   });
 
+  it("shows rows that share a title, page and jump target once", () => {
+    const runtimes = searchSettings("runtime").filter((item) => item.title === "Runtime");
+    expect(runtimes).toHaveLength(1);
+  });
+
   it("finds every provider by its display name", () => {
     for (const name of Object.values(PROVIDER_DISPLAY_NAMES).filter((name) => name !== undefined)) {
       expect(searchSettings(name).map((item) => item.title)).toContain(name);
