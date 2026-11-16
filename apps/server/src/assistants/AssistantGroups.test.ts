@@ -4713,6 +4713,36 @@ it.effect("a file that cannot be copied for the member leaves the others in the 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.effect(
+  "a resend under its id returns the post its files went with, and a gone upload is refused by name",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const groups = yield* h.setup;
+      const dir = yield* storeUploads;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const input = {
+        teamId: TEAM,
+        text: "@ada look",
+        attachments: [imageUpload],
+        clientRequestId: "req-files",
+      };
+      const first = yield* groups.post(input, h.user);
+      // Its upload is gone, as after the 24h sweep: the id still finds the post it went with.
+      yield* fileSystem.remove(
+        resolveAttachmentPath({ attachmentsDir: dir, attachment: imageUpload })!,
+      );
+      const again = yield* groups.post(input, h.user);
+      const gone = yield* refusalError(
+        groups.post({ ...input, clientRequestId: "req-other" }, h.user),
+      );
+      assert.equal(again.message.id, first.message.id);
+      assert.include(gone.message, "Attachment 'shot.png' cannot be sent:");
+      assert.lengthOf(yield* h.messages, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
 it.effect("deleting a group removes the files its messages kept", () => {
   const h = harness();
   return Effect.gen(function* () {
