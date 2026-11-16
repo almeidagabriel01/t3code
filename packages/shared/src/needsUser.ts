@@ -1,6 +1,7 @@
 /**
- * What waits on the user, shared by the server's notices and every client's Needs you list so the
- * two never disagree.
+ * What waits on the user, shared by the server's notices and every client's Needs you list. The
+ * server's `NeedsUser` leaves waiting guests out on purpose: only the owner acts on them, so they
+ * never wake an assistant.
  */
 
 /** Kinds T3 answers itself; every other pending request waits on the user. */
