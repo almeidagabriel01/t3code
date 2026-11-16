@@ -1,8 +1,4 @@
-import {
-  assistantIdFromThreadId,
-  type AssistantTeamChat,
-  type AssistantTeamChatScope,
-} from "@t3tools/contracts";
+import { assistantIdFromThreadId, type AssistantTeamChat } from "@t3tools/contracts";
 import {
   decisionWaitsOnUser,
   guestWaitsOnUser,
@@ -424,25 +420,6 @@ export function zoneIndicatorLabel(
     case "unread":
       return `${indicator.count} unread`;
   }
-}
-
-/**
- * A group indicator's tooltip: its words, and for unread or waiting the tabs it comes from
- * (project titles, or General), so the user knows where to look before opening the chat.
- */
-export function folderIndicatorTooltip(indicator: ZoneIndicator, chat: FolderChat | null): string {
-  const label = zoneIndicatorLabel(indicator, "group");
-  const from =
-    indicator.kind === "unread"
-      ? (scope: AssistantTeamChatScope) => scope.unreadCount > 0
-      : indicator.kind === "needs"
-        ? (scope: AssistantTeamChatScope) => scope.waiting
-        : null;
-  if (from === null) return label;
-  const where = (chat?.scopes ?? [])
-    .filter(from)
-    .map((scope) => (scope.projectId === null ? "General" : (scope.title ?? "Removed project")));
-  return where.length === 0 ? label : `${label} in ${where.join(", ")}`;
 }
 
 /**

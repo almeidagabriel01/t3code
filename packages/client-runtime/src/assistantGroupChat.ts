@@ -170,18 +170,9 @@ export function assistantGroupFeed(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
   for (const task of tasks) {
-    let holder = answerOf.get(task.id) ?? task.requestMessageId;
-    // An open task of a request older than the loaded page sits under its request's first message,
-    // which the snapshot sends along, so what waits on the user is never off screen.
-    if (!state.messages.has(holder)) {
-      const root = state.requests.get(task.requestId ?? holder);
-      if (root === undefined) continue;
-      if (!messages.includes(root)) messages.push(root);
-      holder = root.id;
-    }
+    const holder = answerOf.get(task.id) ?? task.requestMessageId;
     byMessage.set(holder, [...(byMessage.get(holder) ?? []), task]);
   }
-  messages.sort((a, b) => a.seq - b.seq);
   return messages.map((message) => ({
     message,
     role: roleOf(message),
@@ -199,10 +190,6 @@ export type AssistantGroupRequestStatus =
   | "needs-you"
   | "done"
   | "cancelled";
-
-/** The request waits on the user: the chat opens on the first such one. */
-export const assistantGroupRequestWaitsOnUser = (status: AssistantGroupRequestStatus) =>
-  status === "needs-you" || status === "needs-project";
 
 export const ASSISTANT_GROUP_REQUEST_STATUS_LABEL: Record<AssistantGroupRequestStatus, string> = {
   routing: "Routing",
@@ -259,7 +246,7 @@ function requestStatus(
   // A member's conversation waiting on the user outranks the work around it.
   if (rows.some((row) => row.message.waiting?.resolved === false)) return "needs-you";
   if (tasks.some((task) => OPEN_STATUSES.has(task.status))) return "working";
-  if (assistantGroupTasksNeedUser(tasks)) return "needs-you";
+  if (assistantGroupTasksNeedUser(tasks.map((task) => task.status))) return "needs-you";
   if (tasks.length > 0) {
     return tasks.every((task) => task.status === "cancelled") ? "cancelled" : "done";
   }

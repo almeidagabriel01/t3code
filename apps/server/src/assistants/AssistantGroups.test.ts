@@ -819,36 +819,6 @@ it.effect.each<{
     scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
     cursors: {},
   },
-  ...(
-    [
-      ["paused by a hand-off limit", "paused", "root", "handoff_limit", true],
-      ["paused because the lead could not route it", "paused", "root", "routing_failed", true],
-      ["paused with no reason", "paused", "root", null, true],
-      ["stopped by the user", "paused", "root", "stopped", false],
-      ["paused by archiving the group", "paused", "root", "group_archived", false],
-      ["a paused reply", "paused", "reply", null, false],
-      ["a paused child", "paused", "child", "handoff_limit", true],
-      ["a failed root", "failed", "root", null, true],
-      ["a failed child, reported to its parent", "failed", "child", null, false],
-    ] as const
-  ).map(([what, status, kind, reason, waits]) => {
-    const scopes: Record<string, [number, boolean, number]> = {
-      p1: [1, waits, 0],
-      p2: [1, true, 0],
-      "": [1, true, 0],
-    };
-    return {
-      name: `a task ${what} ${waits ? "waits" : "does not wait"} on the user`,
-      steps: [
-        {
-          sql: `UPDATE assistant_group_tasks SET status = '${status}', kind = '${kind}',
-            reason = ${reason === null ? "NULL" : `'${reason}'`}`,
-        },
-      ],
-      scopes,
-      cursors: {},
-    };
-  }),
   {
     name: "a request asking its project waits only until work starts on it",
     steps: [{ sql: rootTask("gm:5", "running") }],

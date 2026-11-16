@@ -325,33 +325,6 @@ describe("group requests", () => {
       status: "needs-you",
     },
     {
-      name: "a task the user stopped",
-      tasks: [task("a", 1, { status: "paused", reason: "stopped" })],
-      extra: [],
-      status: "done",
-    },
-    {
-      name: "a task paused by archiving the group",
-      tasks: [task("a", 1, { status: "paused", reason: "group_archived" })],
-      extra: [],
-      status: "done",
-    },
-    {
-      name: "a task the lead could not route",
-      tasks: [task("a", 1, { status: "paused", reason: "routing_failed" })],
-      extra: [],
-      status: "needs-you",
-    },
-    {
-      name: "a failed child beside its completed parent",
-      tasks: [
-        task("a", 1, { status: "completed" }),
-        task("b", 1, { status: "failed", kind: "child", parentId: "a" as never }),
-      ],
-      extra: [],
-      status: "done",
-    },
-    {
       name: "a task held by a usage limit",
       tasks: [task("a", 1, { status: "usage_limited" })],
       extra: [],
@@ -402,32 +375,6 @@ describe("group requests", () => {
     });
     const [item] = assistantGroupRequestFeed(state);
     assert.strictEqual(item!.kind === "request" && item!.block.status, status);
-  });
-
-  it("shows an open task of a request older than the page under that request's first message", () => {
-    const state = start({
-      type: "snapshot",
-      messages: [inRequest(60, 60)],
-      tasks: [
-        task("old", 12, { status: "paused", reason: "routing_failed", requestId: "m12" as never }),
-      ],
-      hasMore: true,
-      requests: [inRequest(12, 12, { title: "Old request" })],
-    });
-    const blocks = assistantGroupRequestFeed(state).flatMap((item) =>
-      item.kind === "request" ? [item.block] : [],
-    );
-    assert.deepStrictEqual(
-      blocks.map((block) => [
-        block.requestId,
-        block.status,
-        block.rows.flatMap((row) => row.tasks.map((t) => t.id)),
-      ]),
-      [
-        ["m12", "needs-you", ["old"]],
-        ["m60", "routing", []],
-      ],
-    );
   });
 
   it("names a request by its title, else its text without mentions, else a placeholder", () => {

@@ -8,7 +8,6 @@ import {
   countsAsUnreadSql,
   needsUserTaskScopesSql,
   scopeNeedsUserSql,
-  taskWaitsOnUserSql,
   taskCountsByScopeSql,
   workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
@@ -926,15 +925,17 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
         -- Paused requests and failed root tasks count only after the newest boundary, as the chat
-        -- offers their actions there.
+        -- offers their actions there. A failed child is reported to its parent, which goes on; a
+        -- task the user stopped, or one an archive paused, waits on nobody.
         (SELECT COUNT(DISTINCT k.root_id) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
-          WHERE k.team_id = t.team_id AND k.status = 'paused' AND ${sql.literal(taskWaitsOnUserSql("k"))}
+          WHERE k.team_id = t.team_id AND k.kind <> 'reply' AND k.status = 'paused'
+            AND COALESCE(k.reason, '') NOT IN ('stopped', 'group_archived')
             AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
               WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS paused_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
-          WHERE k.team_id = t.team_id AND k.status = 'failed' AND ${sql.literal(taskWaitsOnUserSql("k"))}
+          WHERE k.team_id = t.team_id AND k.kind = 'root' AND k.status = 'failed'
             AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
               WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS failed_tasks,
         (SELECT json_group_array(g.thread_id) FROM (
