@@ -91,6 +91,14 @@ vi.mock("../../state/query", () => ({
           },
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.canRead }));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: { connection: { phase: "connected" } } }),
+}));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; onPress: () => void }) => (
+    <button onClick={props.onPress}>{props.label}</button>
+  ),
+}));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === mocks.forgetCommand
@@ -289,6 +297,9 @@ describe("AssistantWorkMemorySection", () => {
     mocks.failList = true;
     mocks.pages = {};
     await render(assistant({ scope: "project" }));
-    expect(container.textContent).toContain("Some memories could not be loaded.");
+    expect(container.textContent).toContain(
+      "The environment didn't respond, so some of its memories could not load.",
+    );
+    expect(container.textContent).toContain("Try again");
   });
 });

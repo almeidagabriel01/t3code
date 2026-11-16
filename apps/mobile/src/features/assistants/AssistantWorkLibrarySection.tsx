@@ -5,6 +5,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { useAssistantLibrary } from "../../state/assistants";
+import { AssistantWorkUnavailable, useRefreshOnReconnect } from "./AssistantWorkUnavailable";
 
 function sizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -18,6 +19,7 @@ export function AssistantWorkLibrarySection(props: {
   readonly assistant: Assistant;
 }) {
   const library = useAssistantLibrary(props.environmentId, props.assistant.id);
+  useRefreshOnReconnect(props.environmentId, [library]);
   const files = library.data?.files ?? [];
   return (
     <View className="gap-2">
@@ -30,9 +32,7 @@ export function AssistantWorkLibrarySection(props: {
         </Text>
       </View>
       {library.error !== null ? (
-        <Text textRole="footnote" className="px-2 text-danger-foreground">
-          Could not load its files.
-        </Text>
+        <AssistantWorkUnavailable what="its files" onRetry={library.refresh} />
       ) : files.length === 0 ? (
         <Text textRole="footnote" className="px-2 text-foreground-muted">
           {library.data === null ? "Loading its files." : "No files yet."}

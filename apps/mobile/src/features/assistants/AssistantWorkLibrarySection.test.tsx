@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const { mocks, Children } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
-  mocks: { library: { data: null, error: null } as { data: unknown; error: string | null } },
+  mocks: {
+    library: { data: null, error: null } as { data: unknown; error: string | null },
+    phase: "connected",
+    refresh: vi.fn(),
+  },
 }));
 vi.mock("react-native", () => ({ View: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
@@ -17,7 +21,17 @@ vi.mock("../../components/ui/ListRowLayout", () => ({
     </p>
   ),
 }));
-vi.mock("../../state/assistants", () => ({ useAssistantLibrary: () => mocks.library }));
+vi.mock("../../state/assistants", () => ({
+  useAssistantLibrary: () => ({ successResult: null, ...mocks.library, refresh: mocks.refresh }),
+}));
+vi.mock("../../state/presentation", () => ({
+  useEnvironmentPresentation: () => ({ presentation: { connection: { phase: mocks.phase } } }),
+}));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; onPress: () => void }) => (
+    <button onClick={props.onPress}>{props.label}</button>
+  ),
+}));
 
 import { AssistantWorkLibrarySection } from "./AssistantWorkLibrarySection";
 
@@ -32,6 +46,8 @@ const render = () =>
       />,
     ),
   );
+const button = (label: string) =>
+  Array.from(container.querySelectorAll("button")).find((entry) => entry.textContent === label)!;
 const file = (name: string, direction: "sent" | "received", from: string | null, size: number) => ({
   name,
   path: `/shared/${name}`,
@@ -45,6 +61,8 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   container = window.document.createElement("div");
   root = createRoot(container);
+  mocks.phase = "connected";
+  mocks.refresh = vi.fn();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -76,7 +94,7 @@ describe("AssistantWorkLibrarySection", () => {
     [
       "failed",
       { data: null, error: "Failed to fetch http://127.0.0.1:14729/x. Transport error" },
-      "Could not load its files.",
+      "The environment didn't respond, so its files could not load.",
     ],
   ] as const)("%s", (_name, library, message) => {
     mocks.library = library as never;
@@ -84,5 +102,19 @@ describe("AssistantWorkLibrarySection", () => {
     expect(container.textContent).toContain(message);
     expect(container.textContent).not.toMatch(/Transport|http/);
     expect(container.textContent).not.toContain("Showing the newest files.");
+  });
+
+  it("asks again by hand, and by itself only when its environment comes back", () => {
+    mocks.library = { data: null, error: "offline" };
+    mocks.phase = "offline";
+    render();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    act(() => button("Try again").click());
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    mocks.phase = "connected";
+    render();
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    render();
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
   });
 });
