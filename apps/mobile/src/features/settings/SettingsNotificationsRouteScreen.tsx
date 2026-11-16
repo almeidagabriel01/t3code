@@ -48,6 +48,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { NOTIFICATIONS_COPY } from "./notificationsCopy";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
 /**
@@ -134,7 +135,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS);
   const agentAwarenessSubtitle =
     Platform.OS === "android" && !agentAwarenessPushAvailable
-      ? "Install a newer app build to enable notifications"
+      ? NOTIFICATIONS_COPY.installNewerBuild
       : agentAwarenessPlatform.subtitle;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -422,10 +423,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
-        <SettingsSection title="Agent activity">
+        <SettingsSection title={NOTIFICATIONS_COPY.agentActivity}>
           <SettingsSwitchRow
             icon="bell.badge"
-            label="Device Notifications"
+            label={NOTIFICATIONS_COPY.deviceNotifications}
             disabled={
               !agentAwarenessPlatform.supported ||
               !agentAwarenessPushAvailable ||
@@ -450,9 +451,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             label={
               Platform.OS === "android"
                 ? supportsAndroidLiveUpdateSettings()
-                  ? "Agent Live Updates"
-                  : "Ongoing Agent Activity"
-                : "Live Activity Updates"
+                  ? NOTIFICATIONS_COPY.androidLiveUpdates
+                  : NOTIFICATIONS_COPY.androidOngoingActivity
+                : NOTIFICATIONS_COPY.liveActivityUpdates
             }
             subtitle={agentAwarenessSubtitle}
             value={
@@ -465,14 +466,14 @@ function ConfiguredSettingsNotificationsRouteScreen() {
           {liveActivityStatus === "signed-out" && canClearLiveActivitiesPreference ? (
             <SettingsRow
               icon="bolt.circle"
-              label="Turn off Live Activity preference"
+              label={NOTIFICATIONS_COPY.turnOffLiveActivity}
               onPress={() => void handleLiveActivitiesChange(false)}
             />
           ) : null}
           {supportsAndroidLiveUpdateSettings() ? (
             <SettingsRow
               icon="bolt.circle"
-              label="Live Update Settings"
+              label={NOTIFICATIONS_COPY.liveUpdateSettings}
               onPress={() => {
                 void openAndroidLiveUpdateSettings().catch(() => {
                   Dialog.alert(

@@ -1,7 +1,6 @@
 import type { EnvironmentId, SourceControlSignInPrompt } from "@t3tools/contracts";
 import {
   readHostCredentialSettings,
-  sourceControlClients,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -16,6 +15,7 @@ import { serverEnvironment } from "../../../state/server";
 import { sourceControlEnvironment } from "../../../state/sourceControl";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import type { SettingsTarget } from "../settings-environment-filter";
+import { APP_SIGN_IN_COPY, APP_SIGN_IN_HOSTS } from "./sourceControlSignInCopy";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
@@ -25,12 +25,6 @@ const failureMessage = (cause: Cause.Cause<unknown>) => {
 };
 
 const openUrl = (url: string) => void Linking.openURL(url).catch(() => undefined);
-
-const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
-  definition.credentials?.appSignIn === undefined
-    ? []
-    : [{ definition, appSignIn: definition.credentials.appSignIn }],
-);
 
 /**
  * Signing an environment in through a forge's own app, such as T3 Code for GitHub, on servers
@@ -42,7 +36,7 @@ export function SourceControlSignInSection(props: {
 }) {
   return (
     <>
-      {appSignInHosts.flatMap(({ definition, appSignIn }) =>
+      {APP_SIGN_IN_HOSTS.flatMap(({ definition, appSignIn }) =>
         props.environments.map((environment) => (
           <OfferedAppSignIn
             key={`${definition.kind}:${environment.environmentId}`}
@@ -194,12 +188,12 @@ function AppSignInRow(props: {
       label={props.label}
       value={
         signedIn
-          ? "Signed in"
+          ? APP_SIGN_IN_COPY.signedIn
           : pending === "starting"
-            ? "Starting…"
+            ? APP_SIGN_IN_COPY.starting
             : pending !== null
               ? `Enter ${pending.userCode}`
-              : "Sign in"
+              : APP_SIGN_IN_COPY.signIn
       }
       disabled={props.disabled}
       onPress={onPress}

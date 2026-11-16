@@ -42,6 +42,7 @@ import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
 import { useUsageLimitLabel } from "./useUsageLimitLabel";
+import { ASSISTANT_SECTION_TITLE, RESTORE_JARVIS_DESCRIPTION } from "./settingsAssistantsCopy";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -301,7 +302,7 @@ function RestoreJarvisRow(props: { readonly environmentId: EnvironmentId }) {
     <ListActionRow
       icon="arrow.uturn.backward"
       label="Restore Jarvis"
-      description="The default assistant was deleted. Brings him back."
+      description={RESTORE_JARVIS_DESCRIPTION}
       disabled={!flows.canAct}
       onPress={() => void flows.restoreDefault()}
     />
@@ -427,7 +428,7 @@ export function SettingsAssistantsRouteScreen() {
             ) : null}
             {sections.needs.length === 0 ? null : (
               <Section
-                title="Needs you"
+                title={ASSISTANT_SECTION_TITLE.needs}
                 count={sections.needs.length}
                 tone="text-warning-foreground"
               >
@@ -471,19 +472,22 @@ export function SettingsAssistantsRouteScreen() {
               </Section>
             ))}
             {sections.unassigned.length === 0 ? null : (
-              <Section title="Unassigned" count={sections.unassigned.length}>
+              <Section
+                title={ASSISTANT_SECTION_TITLE.unassigned}
+                count={sections.unassigned.length}
+              >
                 {sections.unassigned.map((entry) => card(entry, "unassigned"))}
               </Section>
             )}
             {archivedTeams.length === 0 ? null : (
-              <Section title="Archived groups" count={archivedTeams.length}>
+              <Section title={ASSISTANT_SECTION_TITLE.archivedGroups} count={archivedTeams.length}>
                 {archivedTeams.map((entry) => (
                   <ArchivedGroupRow key={`${entry.environmentId}:${entry.team.id}`} entry={entry} />
                 ))}
               </Section>
             )}
             {archived.length === 0 ? null : (
-              <Section title="Archived" count={archived.length}>
+              <Section title={ASSISTANT_SECTION_TITLE.archived} count={archived.length}>
                 {archived.map((entry) => card(entry, "archived"))}
               </Section>
             )}

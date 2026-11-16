@@ -34,17 +34,18 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
+import { SERVER_SETTINGS_COPY } from "../settings/serverSettingsCopy";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { HeavyCommandRows, HeavyWorkSection } from "./HeavyWork";
 import { MachineBar } from "./MachineBar";
+import { RESOURCE_MANAGER_COPY, RESOURCE_SORT_LABEL } from "./resourceManagerCopy";
 import {
   DeviceAndAppSections,
   DeviceRows,
   OtherRow,
   OutsideAppRows,
   ProjectSections,
-  RESOURCE_SORT_LABEL,
   sumUsage,
   usageText,
   type ResourceThreadInfo,
@@ -190,7 +191,7 @@ function EnvironmentResources(props: {
       <DeviceAndAppSections environmentId={environmentId} tree={tree} live={live} cores={cores} />
       {outsideCount === 0 ? null : (
         <SettingsSection
-          title="Outside T3"
+          title={RESOURCE_MANAGER_COPY.outsideT3.title}
           trailing={
             <Text textRole="footnote" className="text-foreground-muted tabular-nums">
               {`${outsideCount} · ${usageText(outside.total)}`}
@@ -226,10 +227,10 @@ export function ResourceManagerRouteScreen() {
   const [sort, setSort] = useState<ResourceSort>("memory");
   return (
     <SettingsScreen
-      title="Resource Manager"
+      title={SERVER_SETTINGS_COPY.resourceManager.title}
       menus={[
         {
-          title: "Sort",
+          title: RESOURCE_MANAGER_COPY.sort.title,
           icon: "arrow.up.arrow.down",
           items: SORTS.map((option) => ({
             id: option,

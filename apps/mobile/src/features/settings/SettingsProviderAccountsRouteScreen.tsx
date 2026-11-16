@@ -36,6 +36,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
+import { PROVIDER_ACCOUNTS_COPY } from "./providerAccountsCopy";
 
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
@@ -58,7 +59,9 @@ export function SettingsProviderAccountsRouteScreen() {
             <SettingsSection key={environment.environmentId} title={environment.label}>
               {!permittedEnvironments.has(environment.environmentId) ? (
                 <View className="gap-1 p-4">
-                  <Text className="text-base text-foreground">Limited permissions</Text>
+                  <Text className="text-base text-foreground">
+                    {PROVIDER_ACCOUNTS_COPY.limitedPermissions}
+                  </Text>
                   <Text className="text-sm text-foreground-muted">
                     {`This session can view ${environment.label}'s providers but can't change their settings.`}
                   </Text>
@@ -138,7 +141,7 @@ function ClaudeChromeRow({
     <View className="border-t border-border-subtle">
       <ListRow
         icon="safari"
-        label="Claude in Chrome"
+        label={PROVIDER_ACCOUNTS_COPY.claudeChrome}
         description={name}
         onPress={() =>
           navigation.navigate("SettingsClaudeChrome", {

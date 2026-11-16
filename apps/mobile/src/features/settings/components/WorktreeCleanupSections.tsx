@@ -2,7 +2,6 @@ import {
   MERGED_WORKTREE_DAYS,
   type ServerSettingsPatch,
   type WorktreeCleanupRules,
-  type WorktreeMergedCleanup,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup, worktreeCleanupDeletes } from "@t3tools/shared/projectSettings";
 import { useState } from "react";
@@ -13,44 +12,7 @@ import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import type { ScopedMobileSettingsTarget } from "../settings-scoped-server";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
-
-const MERGED_LABELS: Record<WorktreeMergedCleanup, string> = {
-  off: "Off",
-  "right-away": "Right away",
-  "after-days": "After",
-};
-
-const KEEP_WHEN_CHOICES = [
-  {
-    value: "any-local-files",
-    label: "Any local files",
-    description: "Includes ignored files, except node_modules.",
-  },
-  {
-    value: "uncommitted-changes",
-    label: "Uncommitted changes",
-    description: "Keeps edits and untracked files. Deletes ignored files, including .env.",
-  },
-  {
-    value: "tracked-changes",
-    label: "Edited tracked files",
-    description: "Deletes untracked and ignored files, including .env.",
-  },
-] as const;
-
-const PROJECT_MODES = [
-  {
-    mode: "inherit",
-    label: "Inherit",
-    description: "Use each machine's worktree cleanup settings.",
-  },
-  {
-    mode: "off",
-    label: "Off",
-    description: "Keep this project's worktrees until you delete them manually.",
-  },
-  { mode: "custom", label: "Custom", description: "Use these rules for this project." },
-] as const;
+import { WORKTREE_CLEANUP_COPY } from "./worktreeSettingsCopy";
 
 const MAX_DAYS = 3650;
 
@@ -115,7 +77,7 @@ function RetentionRows(props: {
       {typeof props.value === "number" ? (
         <DaysField
           key={props.value}
-          label="Days"
+          label={WORKTREE_CLEANUP_COPY.days}
           value={props.value}
           min={props.min}
           max={MAX_DAYS}
@@ -181,11 +143,11 @@ export function WorktreeCleanupSections(props: {
     <>
       {projectSelected ? (
         <SettingsSection
-          title="Automatic worktree cleanup"
+          title={WORKTREE_CLEANUP_COPY.projectModes.title}
           trailing={modesMixed ? mixedLabel : null}
           footer={props.managed("worktreeCleanup")}
         >
-          {PROJECT_MODES.map((choice, index) => (
+          {WORKTREE_CLEANUP_COPY.projectModes.choices.map((choice, index) => (
             <ListChoiceRow
               key={choice.mode}
               label={choice.label}
@@ -207,11 +169,8 @@ export function WorktreeCleanupSections(props: {
           <SettingsSection>
             <SettingsSwitchRow
               icon="trash"
-              label="Delete worktrees with deleted threads"
-              subtitle={describe(
-                "worktreeOnDelete",
-                "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.",
-              )}
+              label={WORKTREE_CLEANUP_COPY.onDelete.title}
+              subtitle={describe("worktreeOnDelete", WORKTREE_CLEANUP_COPY.onDelete.description)}
               value={mixed("worktreeOnDelete") ? null : rules.worktreeOnDelete}
               disabled={lock("worktreeOnDelete")}
               onValueChange={(worktreeOnDelete) => update({ worktreeOnDelete })}
@@ -219,20 +178,17 @@ export function WorktreeCleanupSections(props: {
           </SettingsSection>
           {mergedSupported ? (
             <SettingsSection
-              title="Delete merged worktrees"
+              title={WORKTREE_CLEANUP_COPY.merged.title}
               trailing={mixed("worktreeMerged") ? mixedLabel : null}
-              footer={describe(
-                "worktreeMerged",
-                "Remove worktrees whose commits are already in the default branch, merged locally or through a pull request.",
-              )}
+              footer={describe("worktreeMerged", WORKTREE_CLEANUP_COPY.merged.description)}
             >
               {(["off", "right-away", "after-days"] as const).map((option, index) => (
                 <ListChoiceRow
                   key={option}
                   label={
                     option === "after-days"
-                      ? `${MERGED_LABELS[option]} ${rules.worktreeMergedAfterDays} days`
-                      : MERGED_LABELS[option]
+                      ? `${WORKTREE_CLEANUP_COPY.merged.options[option]} ${rules.worktreeMergedAfterDays} days`
+                      : WORKTREE_CLEANUP_COPY.merged.options[option]
                   }
                   selected={!mixed("worktreeMerged") && rules.worktreeMerged === option}
                   separated={index > 0}
@@ -243,7 +199,7 @@ export function WorktreeCleanupSections(props: {
               {rules.worktreeMerged === "after-days" && !mixed("worktreeMerged") ? (
                 <DaysField
                   key={rules.worktreeMergedAfterDays}
-                  label="Days unused"
+                  label={WORKTREE_CLEANUP_COPY.merged.daysUnused}
                   value={rules.worktreeMergedAfterDays}
                   min={MERGED_WORKTREE_DAYS.minimum}
                   max={MERGED_WORKTREE_DAYS.maximum}
@@ -258,11 +214,8 @@ export function WorktreeCleanupSections(props: {
             </Text>
           )}
           <RetentionRows
-            label="Delete inactive worktrees"
-            description={describe(
-              "worktreeAfterDays",
-              "Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.",
-            )}
+            label={WORKTREE_CLEANUP_COPY.inactive.title}
+            description={describe("worktreeAfterDays", WORKTREE_CLEANUP_COPY.inactive.description)}
             value={mixed("worktreeAfterDays") ? undefined : rules.worktreeAfterDays}
             min={1}
             start={8}
@@ -271,10 +224,10 @@ export function WorktreeCleanupSections(props: {
           />
           {settledSupported ? (
             <RetentionRows
-              label="Delete settled worktrees"
+              label={WORKTREE_CLEANUP_COPY.settled.title}
               description={describe(
                 "worktreeSettledAfterDays",
-                "Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept.",
+                WORKTREE_CLEANUP_COPY.settled.description,
               )}
               value={mixed("worktreeSettledAfterDays") ? undefined : rules.worktreeSettledAfterDays}
               min={0}
@@ -287,10 +240,10 @@ export function WorktreeCleanupSections(props: {
             <SettingsSection>
               <SettingsSwitchRow
                 icon="internaldrive"
-                label="Delete the Linux copy too"
+                label={WORKTREE_CLEANUP_COPY.runnerCopy.title}
                 subtitle={describe(
                   "worktreeRunnerCopy",
-                  "When cleanup deletes a worktree, also delete its copy on the Runner's Linux machine.",
+                  WORKTREE_CLEANUP_COPY.runnerCopy.description,
                 )}
                 value={mixed("worktreeRunnerCopy") ? null : rules.worktreeRunnerCopy}
                 disabled={lock("worktreeRunnerCopy")}
@@ -299,11 +252,11 @@ export function WorktreeCleanupSections(props: {
             </SettingsSection>
           ) : null}
           <SettingsSection
-            title="Keep worktrees with"
+            title={WORKTREE_CLEANUP_COPY.keepWhen.title}
             trailing={mixed("worktreeKeepWhen") ? mixedLabel : null}
             footer={reason("worktreeKeepWhen")}
           >
-            {KEEP_WHEN_CHOICES.map((choice, index) => (
+            {WORKTREE_CLEANUP_COPY.keepWhen.choices.map((choice, index) => (
               <ListChoiceRow
                 key={choice.value}
                 label={choice.label}

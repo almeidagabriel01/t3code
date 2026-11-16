@@ -19,6 +19,7 @@ import { RowPressable } from "../../../components/ui/RowPressable";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { buildModelOptions } from "../../../lib/modelOptions";
 import { useEnvironmentServerConfig } from "../../../state/entities";
+import { FALLBACK_MODELS_COPY } from "./modelDefaultsCopy";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
@@ -48,13 +49,13 @@ export function FallbackModelsSection(props: {
     { id: "remove", title: "Remove", attributes: { destructive: true } },
   ];
   const footer = props.mixed
-    ? "These environments differ. Select one to edit its fallback models."
+    ? FALLBACK_MODELS_COPY.mixed
     : props.editable
-      ? "Tried in order for new threads when the default model's provider is out of usage."
-      : "Select one environment to edit its fallback models.";
+      ? FALLBACK_MODELS_COPY.editable
+      : FALLBACK_MODELS_COPY.readOnly;
 
   return (
-    <SettingsSection title="Fallback models" footer={footer}>
+    <SettingsSection title={FALLBACK_MODELS_COPY.title} footer={footer}>
       {props.mixed
         ? null
         : props.chain.map((selection, index) => {

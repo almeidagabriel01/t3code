@@ -31,6 +31,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useSettingsEnvironmentFilter } from "../settings/settings-environment-filter";
 import { IntegrationChip, IntegrationIcon } from "./IntegrationParts";
 import { connectedNoticeAtom, useIntegrationFlows } from "./useIntegrationFlows";
+import { INTEGRATIONS_SECTION_TITLE } from "./integrationsCopy";
 
 type Category = typeof IntegrationCategory.Type;
 type Flows = ReturnType<typeof useIntegrationFlows>;
@@ -237,17 +238,17 @@ function IntegrationsDirectory(props: {
           No integrations match your search.
         </Text>
       ) : null}
-      {section("Connected", directory.connected)}
-      {section("Available", directory.available)}
+      {section(INTEGRATIONS_SECTION_TITLE.connected, directory.connected)}
+      {section(INTEGRATIONS_SECTION_TITLE.available, directory.available)}
       {directory.other.length === 0 ? (
         <View className="flex-row items-center justify-between gap-3 ps-2">
           <Text textRole="footnote" className="font-t3-medium text-foreground-muted">
-            Other
+            {INTEGRATIONS_SECTION_TITLE.other}
           </Text>
           {addCustomServer}
         </View>
       ) : (
-        <ListSection title="Other" trailing={addCustomServer}>
+        <ListSection title={INTEGRATIONS_SECTION_TITLE.other} trailing={addCustomServer}>
           {directory.other.map((row) => (
             <IntegrationRow key={row.key} row={row} flows={flows} stacked={stacked} />
           ))}

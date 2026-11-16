@@ -92,6 +92,7 @@ import {
   validateMemoryDestination,
   type MemoryScreenParams,
 } from "./SettingsMemoryRouteScreen.logic";
+import { MEMORY_COPY } from "./memoryCopy";
 
 const operationId = () => MemoryOperationId.make(Crypto.randomUUID());
 const PAGE_SIZE = 30;
@@ -124,11 +125,6 @@ function Copy({ children }: { readonly children: React.ReactNode }) {
     </Text>
   );
 }
-const IMPORT_SCOPE_LABELS = {
-  user: "All projects",
-  project: "This project",
-  thread: "This thread",
-};
 const IMPORT_SCOPE_ICONS = {
   user: "person.crop.circle",
   project: "folder",
@@ -253,12 +249,12 @@ export function SettingsMemoryRouteScreen({
   const params = route.params;
   if (!validateMemoryDestination(params))
     return (
-      <SettingsScreen title="Memory">
+      <SettingsScreen title={MEMORY_COPY.title}>
         <Copy>This memory link is invalid. Open Memory from Settings.</Copy>
       </SettingsScreen>
     );
   return (
-    <SettingsScreen title="Memory">
+    <SettingsScreen title={MEMORY_COPY.title}>
       {params?.environmentId ? (
         <MemoryEnvironment
           key={JSON.stringify(params)}
@@ -277,14 +273,14 @@ function MemoryChooser() {
       contentInsetAdjustmentBehavior="automatic"
       contentContainerClassName={SCREEN_CONTENT}
     >
-      <Copy>Choose the environment whose memory you want to manage.</Copy>
+      <Copy>{MEMORY_COPY.chooser.intro}</Copy>
       {Object.values(savedConnectionsById).map((connection) => (
         <MemoryEnvironmentEntry
           key={connection.environmentId}
           environmentId={connection.environmentId}
         />
       ))}
-      <Copy>Missing an environment? Connect it or update its server to use Memory.</Copy>
+      <Copy>{MEMORY_COPY.chooser.missing}</Copy>
     </ScreenScrollView>
   );
 }
@@ -469,7 +465,7 @@ function MemoryConnected({
             onSharingRefresh={() => void load()}
             sync={status}
           />
-          <SettingsSection title="Memories">
+          <SettingsSection title={MEMORY_COPY.memories.title}>
             <Copy>
               {!readAllowed
                 ? "Memory read permission is required to view records."
@@ -579,16 +575,16 @@ function MemoryBrowser({
     selection.startsWith("project:") &&
     !projects.some((project) => `project:${project.id}` === selection);
   const scopePicker = (
-    <SettingsSection title="Memory scope">
+    <SettingsSection title={MEMORY_COPY.scope.title}>
       <Menu
-        title="Memory scope"
+        title={MEMORY_COPY.scope.title}
         actions={[
-          { id: "user", title: "User", state: selection === "user" ? "on" : "off" },
+          { id: "user", title: MEMORY_COPY.scope.user, state: selection === "user" ? "on" : "off" },
           ...(params.thread
             ? [
                 {
                   id: "thread",
-                  title: "Thread",
+                  title: MEMORY_COPY.scope.thread,
                   state: selection === "thread" ? ("on" as const) : ("off" as const),
                   attributes: { disabled: Boolean(params.project) && !canGetBinding },
                 },
@@ -612,12 +608,12 @@ function MemoryBrowser({
       >
         <SettingsRow
           icon="cube"
-          label="Memory scope"
+          label={MEMORY_COPY.scope.title}
           value={
             selection === "thread"
-              ? "Thread"
+              ? MEMORY_COPY.scope.thread
               : selection === "user"
-                ? "User"
+                ? MEMORY_COPY.scope.user
                 : projects.find((project) => `project:${project.id}` === selection)?.title
           }
         />
@@ -897,8 +893,8 @@ function ScopedMemoryBrowser({
           />
           {scopePicker}
           <SettingsSection
-            title="Import scope"
-            footer="Imports go to the scope selected here. Existing memories keep their scope."
+            title={MEMORY_COPY.importScope.title}
+            footer={MEMORY_COPY.importScope.footer}
           >
             {(["user", "project", "thread"] as const).map((kind) => {
               const chosen = scopeKind === kind;
@@ -906,7 +902,7 @@ function ScopedMemoryBrowser({
                 <Action
                   key={kind}
                   icon={chosen ? "checkmark.circle.fill" : IMPORT_SCOPE_ICONS[kind]}
-                  label={IMPORT_SCOPE_LABELS[kind]}
+                  label={MEMORY_COPY.importScope[kind]}
                   disabled={
                     kind === "project"
                       ? !binding?.projectKey || !projectExists
@@ -983,10 +979,7 @@ function ScopedMemoryBrowser({
               retireRef={retireImport}
             />
           ) : null}
-          <SettingsSection
-            title="Rules"
-            footer="Learned when you say what agents must always or never do. Only what you type becomes a rule."
-          >
+          <SettingsSection title={MEMORY_COPY.rules.title} footer={MEMORY_COPY.rules.footer}>
             {rules.length === 0 ? (
               <Copy>{rulesLoaded ? "No rules yet." : "Loading rules"}</Copy>
             ) : (
@@ -1055,12 +1048,12 @@ function ScopedMemoryBrowser({
               }}
             />
           ) : null}
-          <SettingsSection title="Memories">
+          <SettingsSection title={MEMORY_COPY.memories.title}>
             {!memoryEnabled ? (
               <Copy>Saved memories stay. Turn on memory to save new memories.</Copy>
             ) : null}
             {notice ? <Copy>{notice}</Copy> : null}
-            <Field label="Search memory" value={query} onChange={setQuery} />
+            <Field label={MEMORY_COPY.memories.search} value={query} onChange={setQuery} />
             <Action
               icon="magnifyingglass"
               label="Search"
@@ -1081,7 +1074,7 @@ function ScopedMemoryBrowser({
               />
             ) : null}
             <SettingsSwitchRow
-              label="Include quarantined"
+              label={MEMORY_COPY.memories.quarantined}
               value={quarantine}
               onValueChange={(value) => {
                 setQuarantine(value);
@@ -1896,7 +1889,7 @@ function MemoryStatusRows({ status }: { status: MemorySyncStatus }) {
   const processing = presentMemoryProcessing(status.processing, status.generationHold);
   const storage = presentMemoryStorage(status.storage);
   return (
-    <SettingsSection title="Memory status">
+    <SettingsSection title={MEMORY_COPY.status.title}>
       {[
         processing.coverage.label,
         storage.label,
@@ -1941,13 +1934,10 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
       )?.label) ??
     resolvedModel?.model;
   return (
-    <SettingsSection title="Memory">
-      <Copy>
-        This app summarizes finished conversations. Turning this off stops new summaries and keeps
-        saved memories.
-      </Copy>
+    <SettingsSection title={MEMORY_COPY.generation.title}>
+      <Copy>{MEMORY_COPY.generation.description}</Copy>
       <SettingsSwitchRow
-        label="Remember conversations"
+        label={MEMORY_COPY.generation.remember}
         value={config?.settings.memoryEnabled ?? true}
         disabled={!allowed || !config || busy}
         onValueChange={(value) => {
@@ -1972,7 +1962,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
         }}
       />
       <SettingsSwitchRow
-        label="Use a separate memory model"
+        label={MEMORY_COPY.generation.separateModel}
         subtitle={separate ? undefined : `Follows the text generation model · ${modelName ?? ""}`}
         value={separate}
         disabled={!allowed || !config || busy || !resolvedModel}
@@ -2001,7 +1991,7 @@ function MemoryGeneration({ environmentId }: { environmentId: EnvironmentId }) {
       {separate ? (
         <SettingsRow
           icon="brain"
-          label="Memory model"
+          label={MEMORY_COPY.generation.model}
           value={modelName}
           disabled={!allowed || busy}
           onPress={() => navigation.navigate("SettingsMemoryModel", { environmentId })}
@@ -2022,13 +2012,10 @@ function MemoryAgentAccess({ environmentId }: { environmentId: EnvironmentId }) 
   const pending = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   return (
-    <SettingsSection title="Agent memory access">
-      <Copy>
-        Allow agents in this environment to use memory. Sharing is managed separately. Turning this
-        on does not increase saved task access.
-      </Copy>
+    <SettingsSection title={MEMORY_COPY.agentAccess.title}>
+      <Copy>{MEMORY_COPY.agentAccess.description}</Copy>
       <SettingsSwitchRow
-        label="Allow agent memory access"
+        label={MEMORY_COPY.agentAccess.allow}
         value={config?.settings.enableAgentMemoryAccess ?? false}
         disabled={!allowed || !config || busy}
         onValueChange={(value) => {

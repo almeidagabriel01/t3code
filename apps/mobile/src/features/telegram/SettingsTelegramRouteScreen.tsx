@@ -24,6 +24,8 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { ChannelLanguageSection } from "../settings/components/ChannelLanguageSection";
 import { SettingsSwitchRow } from "../settings/components/SettingsSwitchRow";
 import { UndeliveredRepliesRow } from "../settings/components/UndeliveredRepliesRow";
+import { CHANNEL_GOOD_TO_KNOW } from "../settings/components/channelCopy";
+import { TELEGRAM_COPY } from "./telegramCopy";
 
 function Hint(props: { readonly children: string; readonly tone?: "danger" }) {
   return (
@@ -179,7 +181,7 @@ function TelegramEnvironment(props: {
   return (
     <View className="gap-5">
       {error ? <Hint tone="danger">{error}</Hint> : null}
-      <ListSection title={`Connection${suffix}`}>
+      <ListSection title={`${TELEGRAM_COPY.connection}${suffix}`}>
         <ListRowLayout
           icon="bolt.horizontal.circle"
           label={`${telegramStatusLabel(settings)}${
@@ -201,7 +203,7 @@ function TelegramEnvironment(props: {
         />
         <SettingsSwitchRow
           icon="paperplane"
-          label="Use Telegram"
+          label={TELEGRAM_COPY.use}
           subtitle={hint ?? undefined}
           value={settings.enabled}
           disabled={disabled || hint !== null}
@@ -210,19 +212,17 @@ function TelegramEnvironment(props: {
       </ListSection>
       <ChannelLanguageSection environmentId={props.environmentId} disabled={disabled} />
       <ListSection
-        title={`Bot token${suffix}`}
+        title={`${TELEGRAM_COPY.botToken}${suffix}`}
         footer={
-          settings.tokenConfigured
-            ? "The token is stored on the server and never shown again. Paste a new one to replace it."
-            : "Paste the token @BotFather gave you."
+          settings.tokenConfigured ? TELEGRAM_COPY.tokenFooterSaved : TELEGRAM_COPY.tokenFooterEmpty
         }
       >
         <ListRowLayout
           icon="key"
-          label={settings.tokenConfigured ? "Token saved" : "No token yet"}
+          label={settings.tokenConfigured ? TELEGRAM_COPY.tokenSaved : TELEGRAM_COPY.noToken}
         />
         <Field
-          label="Bot token"
+          label={TELEGRAM_COPY.botToken}
           icon="key"
           placeholder={settings.tokenConfigured ? "New bot token" : "123456789:ABC…"}
           value={token}
@@ -247,8 +247,8 @@ function TelegramEnvironment(props: {
       </ListSection>
       {settings.pendingSenders && settings.pendingSenders.length > 0 ? (
         <ListSection
-          title={`Waiting for approval${suffix}`}
-          footer="These people wrote to the bot. Their messages are not passed on until you allow them."
+          title={`${TELEGRAM_COPY.waiting.title}${suffix}`}
+          footer={TELEGRAM_COPY.waiting.footer}
         >
           {settings.pendingSenders.map((sender) => {
             const name = telegramSenderLabel(sender);
@@ -267,10 +267,7 @@ function TelegramEnvironment(props: {
           })}
         </ListSection>
       ) : null}
-      <ListSection
-        title="Who can write to the bot"
-        footer="Only these people are heard. Allow someone from the waiting list above, or add their Telegram user id here."
-      >
+      <ListSection title={TELEGRAM_COPY.allowed.title} footer={TELEGRAM_COPY.allowed.footer}>
         {settings.allowedUserIds.map((id) => (
           <ItemRow
             key={id}
@@ -284,7 +281,7 @@ function TelegramEnvironment(props: {
           />
         ))}
         <Field
-          label="Telegram user id"
+          label={TELEGRAM_COPY.allowed.fieldLabel}
           icon="person.badge.plus"
           placeholder="123456789"
           value={userId}
@@ -298,38 +295,38 @@ function TelegramEnvironment(props: {
           onPress={() => void addUserId()}
         />
       </ListSection>
-      <ListSection title="Set up a bot">
+      <ListSection title={TELEGRAM_COPY.setUp.title}>
         <ListRowLayout
           icon="questionmark.bubble"
-          label="1. Create the bot"
-          description="In Telegram, open @BotFather and send /newbot. Pick a name and a username; it replies with the bot token."
+          label={TELEGRAM_COPY.setUp.create.title}
+          description={TELEGRAM_COPY.setUp.create.description}
         />
         <ListRowLayout
           icon="bolt.circle"
-          label="2. Paste the token and turn it on"
-          description="Save the token above, then switch on Use Telegram."
+          label={TELEGRAM_COPY.setUp.token.title}
+          description={TELEGRAM_COPY.setUp.token.description}
         />
         <ListRowLayout
           icon="text.bubble"
-          label="3. Message the bot"
-          description="Open your bot, press Start and say hello. You then show up under Waiting for approval here."
+          label={TELEGRAM_COPY.setUp.message.title}
+          description={TELEGRAM_COPY.setUp.message.description}
         />
         <ListRowLayout
           icon="person.fill.checkmark"
-          label="4. Allow yourself"
-          description="Press Allow next to your name. Then send @ to see your assistants."
+          label={TELEGRAM_COPY.setUp.allow.title}
+          description={TELEGRAM_COPY.setUp.allow.description}
         />
       </ListSection>
-      <ListSection title="Good to know">
+      <ListSection title={CHANNEL_GOOD_TO_KNOW.title}>
         <ListRowLayout
           icon="list.number"
-          label="Approvals"
-          description="Approvals arrive as numbered choices. Reply with the number."
+          label={CHANNEL_GOOD_TO_KNOW.approvals.title}
+          description={CHANNEL_GOOD_TO_KNOW.approvals.description}
         />
         <ListRowLayout
           icon="bubble.left.and.bubble.right"
-          label="Limits"
-          description="Group chats and attachments are not supported, and more than 10 messages a minute from one person are held back."
+          label={CHANNEL_GOOD_TO_KNOW.limits.title}
+          description={CHANNEL_GOOD_TO_KNOW.limits.description}
         />
       </ListSection>
     </View>
@@ -351,9 +348,7 @@ export function SettingsTelegramRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         <Text textRole="footnote" className="px-4 text-foreground-muted">
-          Talk to your assistants from Telegram, on any computer. Start with @Name to pick an
-          assistant; Jarvis answers otherwise, and the chat stays with the last one picked. Send @
-          on its own to list them, or use the / menu in Telegram. It works while T3 Code is running.
+          {TELEGRAM_COPY.intro}
         </Text>
         {environmentIds.length === 0 ? (
           <EmptyState

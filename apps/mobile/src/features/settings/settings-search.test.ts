@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { MAINTENANCE_PAGE_LABELS } from "./components/heavyQueueCopy";
-import { filterSettingsSections } from "./settings-search";
+import { filterSettingsSections, SETTINGS_PAGE_LABELS } from "./settings-search";
 
 const SECTIONS = [
   { rows: [{ id: "usage", label: "Usage" }] },
@@ -47,8 +46,15 @@ describe("filterSettingsSections", () => {
       ]),
     },
     { query: "   ", expected: visible("") },
-    { query: "appear", expected: [["Interface", ["Appearance"]]] },
-    { query: "KEYBOARD", expected: [["Interface", ["Keyboard"]]] },
+    // Descriptions count too: Maintenance says new models "may not appear", Voice names the keyboard.
+    {
+      query: "appear",
+      expected: [
+        ["Interface", ["Appearance"]],
+        ["Server settings", ["Maintenance"]],
+      ],
+    },
+    { query: "KEYBOARD", expected: [["Interface", ["Keyboard", "Voice"]]] },
     { query: "dark mode", expected: [["Interface", ["Appearance"]]] },
     { query: "microphone", expected: [["Interface", ["Voice"]]] },
     { query: "agent credits", expected: [["Server settings", ["Source control"]]] },
@@ -76,8 +82,16 @@ describe("filterSettingsSections", () => {
     expect(visible(query)).toEqual(expected);
   });
 
-  it.each(MAINTENANCE_PAGE_LABELS)("finds Maintenance by the label it draws: %s", (label) => {
-    expect(visible(label).flatMap(([, rows]) => rows)).toContain("Maintenance");
+  const everyPage = [
+    { rows: Object.keys(SETTINGS_PAGE_LABELS).map((id) => ({ id, label: "Page" })) },
+  ];
+  it.each(
+    Object.entries(SETTINGS_PAGE_LABELS).flatMap(([page, labels]) =>
+      labels.map((label) => ({ page, label })),
+    ),
+  )("finds $page by the text it draws: $label", ({ page, label }) => {
+    const found = filterSettingsSections(everyPage, label).flatMap((section) => section.rows);
+    expect(found.map((row) => row.id)).toContain(page);
   });
 
   it("drops sections that start empty", () => {

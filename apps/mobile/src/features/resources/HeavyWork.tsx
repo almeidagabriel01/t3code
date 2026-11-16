@@ -64,6 +64,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { RESOURCE_MANAGER_COPY } from "./resourceManagerCopy";
 
 const PRIORITY_CHANGE_ROW: Record<PriorityChange, { icon: string; label: string }> = {
   "high-now": { icon: "bolt.horizontal.circle", label: "High priority now" },
@@ -849,7 +850,7 @@ export function HeavyWorkSection(props: {
   if (count === 0 && state.enabled && !state.paused) return null;
   return (
     <SettingsSection
-      title="Heavy work"
+      title={RESOURCE_MANAGER_COPY.heavyWork.title}
       trailing={
         <View className="flex-row items-center gap-3 pr-2">
           <Text textRole="footnote" className="text-foreground-muted tabular-nums">

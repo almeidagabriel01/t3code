@@ -1,4 +1,5 @@
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { ARCHIVE_COPY } from "./archiveCopy";
 import { Button } from "../../components/ui/Button";
 import type {
   EnvironmentProject,
@@ -62,7 +63,7 @@ function ArchivedThreadsHeader(props: {
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
   return (
     <AppBar
-      title="Archived threads"
+      title={ARCHIVE_COPY.title}
       onBack={() => navigation.goBack()}
       search={{
         value: props.searchQuery,
@@ -81,12 +82,12 @@ function ArchivedThreadsHeader(props: {
           items: [
             {
               id: "environment",
-              title: "Environment",
+              title: ARCHIVE_COPY.environment,
               icon: "server.rack",
               items: [
                 {
                   id: "environment:all",
-                  title: "All environments",
+                  title: ARCHIVE_COPY.allEnvironments,
                   selected: props.selectedEnvironmentId === null,
                   onPress: () => props.onEnvironmentChange(null),
                 },
@@ -100,18 +101,18 @@ function ArchivedThreadsHeader(props: {
             },
             {
               id: "sort",
-              title: "Sort by archived date",
+              title: ARCHIVE_COPY.sortByArchivedDate,
               icon: "arrow.up.arrow.down",
               items: [
                 {
                   id: "sort:newest",
-                  title: "Newest first",
+                  title: ARCHIVE_COPY.newestFirst,
                   selected: props.sortOrder === "newest",
                   onPress: () => props.onSortOrderChange("newest"),
                 },
                 {
                   id: "sort:oldest",
-                  title: "Oldest first",
+                  title: ARCHIVE_COPY.oldestFirst,
                   selected: props.sortOrder === "oldest",
                   onPress: () => props.onSortOrderChange("oldest"),
                 },

@@ -1,10 +1,11 @@
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
+import { WORKTREE_SNAPSHOTS_COPY } from "./maintenanceSectionsCopy";
 import { SettingsSection } from "./SettingsSection";
 
 const PRESET_DAYS = [7, 30, 90] as const;
 
 const snapshotRetentionLabel = (days: number | null) =>
-  days === null ? "Keep until I delete them" : `${days} days`;
+  days === null ? WORKTREE_SNAPSHOTS_COPY.keepForever : `${days} days`;
 
 /** How long the changes saved before cleanup removes a worktree stay restorable. */
 export function WorktreeSnapshotsSection(props: {
@@ -23,8 +24,8 @@ export function WorktreeSnapshotsSection(props: {
   ].sort((a, b) => (a ?? Infinity) - (b ?? Infinity));
   return (
     <SettingsSection
-      title="Worktree snapshots"
-      footer="Before cleanup removes a worktree it saves your uncommitted and untracked changes. Restore brings them back until they expire."
+      title={WORKTREE_SNAPSHOTS_COPY.title}
+      footer={WORKTREE_SNAPSHOTS_COPY.description}
     >
       {choices.map((days, index) => (
         <ListChoiceRow

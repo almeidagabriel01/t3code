@@ -14,6 +14,7 @@ import { RowPressable } from "../../../components/ui/RowPressable";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { buildModelOptions } from "../../../lib/modelOptions";
 import { useEnvironmentServerConfig } from "../../../state/entities";
+import { FOLDER_MODELS_COPY } from "./modelDefaultsCopy";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
@@ -42,13 +43,13 @@ export function FolderModelsSection(props: {
     return [option?.label ?? selection.model, option?.providerLabel].filter(Boolean).join(" · ");
   };
   const footer = props.mixed
-    ? "These environments differ. Select one to edit its folder models."
+    ? FOLDER_MODELS_COPY.mixed
     : props.editable
-      ? "Projects inside a folder start new threads with its model; a project's own setting still wins."
-      : "Select one environment to edit its folder models.";
+      ? FOLDER_MODELS_COPY.editable
+      : FOLDER_MODELS_COPY.readOnly;
 
   return (
-    <SettingsSection title="Model by folder" footer={footer}>
+    <SettingsSection title={FOLDER_MODELS_COPY.title} footer={footer}>
       {props.mixed
         ? null
         : props.rules.map((rule, index) => {
