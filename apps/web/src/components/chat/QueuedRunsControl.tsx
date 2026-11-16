@@ -250,10 +250,13 @@ export function QueuedRunsControl({
       </span>
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+          // A teammate's queued message previews their words, as its sent row will.
+          const presentation = item.message ? resolveUserMessagePresentation(item.message) : null;
+          const shownText = presentation?.teammate ? presentation.text : item.text;
+          const previewText = isAttachmentOnlyBootstrapPrompt(shownText)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
+                replaceComposerContextReferences(shownText, (reference) =>
                   reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
                 ),
               ).trim();
