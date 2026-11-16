@@ -1,4 +1,4 @@
-import { GitManagerError, SourceControlProviderKind } from "@t3tools/contracts";
+import { GitCommandError, GitManagerError, SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -564,7 +564,7 @@ interface HarnessOptions {
   readonly settings?: ContractServerSettings;
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
   readonly gitStatus?: GitManager.GitManager["Service"]["status"];
-  readonly gitHead?: (cwd: string) => Effect.Effect<string>;
+  readonly gitHead?: (cwd: string) => Effect.Effect<string, GitCommandError>;
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly unreadablePaths?: ReadonlyArray<string>;
@@ -2197,14 +2197,38 @@ describe("ThreadSettlementServiceV2 finished work", () => {
           worktreePath: "/worktrees/unshipped",
         });
         const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([task]),
+          snapshot: makeSnapshot([
+            task,
+            // Its worktree is gone: the branch is read, and remembered, in the project checkout.
+            childThread("task-worktree-gone", {
+              lineage: {
+                rootThreadId: ThreadId.make("task-worktree-gone"),
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              subagentHandoff: null,
+              assistantTaskDismissed: true,
+              worktreePath: "/worktrees/gone",
+              branch: "unmerged-branch",
+            }),
+          ]),
           settings: settlementOnMerge,
           existingWorktreePaths: ["/worktrees/unshipped"],
           gitStatus: (input) =>
             Ref.update(statusCalls, (count) => count + 1).pipe(
               Effect.andThen(vcsStatus({ aheadOfDefault: 1 })(input)),
             ),
-          gitHead: () => Ref.get(head),
+          gitHead: (cwd) =>
+            cwd === "/worktrees/gone"
+              ? Effect.fail(
+                  new GitCommandError({
+                    operation: "test",
+                    command: "git rev-parse HEAD",
+                    cwd,
+                    detail: "not a directory",
+                  }),
+                )
+              : Ref.get(head),
         });
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
@@ -2215,9 +2239,9 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             yield* service.drain;
             return yield* Ref.get(statusCalls);
           });
-          assert.strictEqual(yield* sweep, 1);
-          yield* Ref.set(head, "second");
           assert.strictEqual(yield* sweep, 2);
+          yield* Ref.set(head, "second");
+          assert.strictEqual(yield* sweep, 4);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
         }).pipe(Effect.provide(fixture.layer));
       }),

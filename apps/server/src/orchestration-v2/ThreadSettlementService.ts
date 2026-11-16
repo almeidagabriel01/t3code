@@ -427,6 +427,19 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  /** Where a held thread's branch is read: its worktree while it exists, else the project's. */
+  const heldCheckout = Effect.fnUntraced(function* (
+    thread: ProjectionStore.ProjectionSettlementCandidate,
+    projectRoot: string | undefined,
+  ) {
+    const worktreePath =
+      thread.worktreePath !== null &&
+      (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => true)))
+        ? thread.worktreePath
+        : null;
+    return { worktreePath, cwd: worktreePath ?? projectRoot };
+  });
+
   /**
    * A branch the thread owns still holds work: an open pull request, or (`own-work`) anything
    * unshipped. A branch no checkout has out counts as shipped only once its pull request ended.
@@ -434,7 +447,7 @@ export const make = Effect.gen(function* () {
   const branchHoldsWork = Effect.fnUntraced(function* (
     thread: ProjectionStore.ProjectionSettlementCandidate,
     hold: Exclude<FinishedWorkSettlement, "now">,
-    projectRoot: string | undefined,
+    { worktreePath, cwd }: Effect.Success<ReturnType<typeof heldCheckout>>,
   ) {
     // A child in its parent's checkout leaves the branch and its pull request to the parent.
     const parentWorktreePath = thread.subagentHandoff?.parentWorktreePath ?? null;
@@ -452,11 +465,6 @@ export const make = Effect.gen(function* () {
     ) {
       return true;
     }
-    const worktreePath =
-      thread.worktreePath !== null &&
-      (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => true)))
-        ? thread.worktreePath
-        : null;
     if (hold === "own-pull-request") {
       // A removed worktree leaves nothing to finish here.
       if (worktreePath === null) return false;
@@ -465,7 +473,6 @@ export const make = Effect.gen(function* () {
       // status reads a failed lookup as "no pull request"; this lookup fails, so the child waits.
       return (yield* git.branchPullRequest({ cwd: worktreePath, branch }))?.state === "open";
     }
-    const cwd = worktreePath ?? projectRoot;
     if (cwd === undefined) return true;
     const status = yield* git.status({ cwd });
     if (thread.branch !== null && status.refName !== thread.branch) {
@@ -501,8 +508,8 @@ export const make = Effect.gen(function* () {
       ({ thread, settlement }) =>
         Effect.gen(function* () {
           if (settlement !== "now") {
-            const projectRoot = roots.get(thread.projectId);
-            const cwd = thread.worktreePath ?? projectRoot;
+            const checkout = yield* heldCheckout(thread, roots.get(thread.projectId));
+            const { cwd } = checkout;
             const head =
               cwd === undefined
                 ? null
@@ -529,7 +536,7 @@ export const make = Effect.gen(function* () {
               return;
             }
             // A failed read holds the work (fail closed) and waits out the recheck like any other.
-            const holds = yield* branchHoldsWork(thread, settlement, projectRoot).pipe(
+            const holds = yield* branchHoldsWork(thread, settlement, checkout).pipe(
               Effect.catchCauseIf(
                 (cause) => !Cause.hasInterruptsOnly(cause),
                 (cause) =>
