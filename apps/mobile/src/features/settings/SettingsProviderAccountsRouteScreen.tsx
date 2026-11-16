@@ -41,7 +41,7 @@ import { PROVIDER_ACCOUNTS_COPY, providerName } from "./providerAccountsCopy";
 
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const accessByEnvironment = useEnvironmentsScopeAccess(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
@@ -54,7 +54,11 @@ export function SettingsProviderAccountsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            {availableTargets.length === 0
+              ? "Connect an environment to set up its providers."
+              : "No environments match this filter. Change the filter above."}
+          </Text>
         ) : (
           selectedTargets.map((environment) => {
             const access = accessByEnvironment.get(environment.environmentId);
