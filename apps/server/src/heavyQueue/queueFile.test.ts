@@ -1086,13 +1086,14 @@ describe("Runner in the queue file", () => {
       42,
       ["?:42:group"],
     ],
+    // Nothing new ran in the folder yet: the whole stop, by folder too, is still safe.
     [
       "never reported one, with no pgid file",
       { phase: "syncing" as const },
       null,
       "waiting",
       null,
-      [],
+      ["?:null"],
     ],
   ] as const)("a rerun forced onto Linux of a run that %s keeps its record", async (...row) => {
     const [, progress, pgid, status, pgidFile, stopped] = row;
@@ -1111,7 +1112,7 @@ describe("Runner in the queue file", () => {
       }),
     ]);
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status });
-    // Read while the record still holds the folder; with no pgid file the rerun goes ahead, as warned.
+    // Read while the record still holds the folder: stopped by its group, or wholly without one.
     const { stops, linux } = fakeLinux();
     const id = Queue.readDoc(dir).lostRuns[0]!.remote.id;
     await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, linux("stopped", pgidFile));

@@ -510,20 +510,16 @@ export const drainLostRuns = async (
         settleLostRun(dir, lost, false, claim);
         return;
       }
-      if (read === null) {
-        // No process group to stop it by: the rerun goes ahead, as forcing it warned.
-        settleLostRun(dir, lost, true);
-        continue;
-      }
+      // No group to stop it by, but nothing new ran in the folder yet: the whole stop is still safe.
+      if (read !== null) resolveLostPgid(dir, lost, read);
       pgid = read;
-      resolveLostPgid(dir, lost, read);
     }
     const result = await remote.stop(
       machine,
       environment,
       lost.remote.id,
       pgid,
-      lost.pgidOnly === true,
+      lost.pgidOnly === true && pgid !== null,
     );
     settleLostRun(dir, lost, confirmed(result), claim);
     if (result === "unreachable") return;
