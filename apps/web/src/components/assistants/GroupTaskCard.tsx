@@ -4,6 +4,8 @@ import {
   ASSISTANT_GROUP_STATUS_LABEL,
   assistantGroupTaskReasonLabel,
   assistantGroupWaitingReason,
+  assistantGroupWaitingThreadIds,
+  assistantGroupWaitingThreadsLabel,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import {
   assistantGroupTaskActions,
@@ -11,11 +13,14 @@ import {
   type AssistantGroupTask,
   type AssistantGroupTaskAction,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { MessageSquareIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
 import { useThreadShell } from "../../state/entities";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -64,6 +69,7 @@ export function GroupTaskCard(props: {
   const waiting =
     task.status === "usage_limited" ? limitLabel(task.resetAt) : assistantGroupWaitingReason(task);
   const reasonLabel = assistantGroupTaskReasonLabel(task);
+  const waitingThreadIds = assistantGroupWaitingThreadIds(task);
   return (
     <div
       data-testid="group-task-card"
@@ -110,6 +116,23 @@ export function GroupTaskCard(props: {
         <p data-testid="group-task-waiting" className="text-warning-foreground">
           {waiting}
         </p>
+      )}
+      {waitingThreadIds === null ? null : (
+        <div
+          data-testid="group-task-waiting-threads"
+          className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <span className="text-warning-foreground">
+            {assistantGroupWaitingThreadsLabel(waitingThreadIds.length)}
+          </span>
+          {waitingThreadIds.map((threadId) => (
+            <WaitingThreadLink
+              key={threadId}
+              environmentId={props.environmentId}
+              threadId={threadId}
+            />
+          ))}
+        </div>
       )}
       {reasonLabel === null ? null : <p className="text-muted-foreground">{reasonLabel}</p>}
       {needs === null ? null : (
@@ -162,5 +185,22 @@ export function GroupTaskCard(props: {
         </Button>
       </div>
     </div>
+  );
+}
+
+function WaitingThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const title = useThreadShell(ref)?.title.trim();
+  return (
+    <Link
+      to="/$environmentId/$threadId"
+      params={buildThreadRouteParams(ref)}
+      className="max-w-60 cursor-pointer truncate rounded-sm text-foreground/80 underline decoration-foreground/30 underline-offset-2 hover:text-foreground hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
+    >
+      {title || "Untitled thread"}
+    </Link>
   );
 }

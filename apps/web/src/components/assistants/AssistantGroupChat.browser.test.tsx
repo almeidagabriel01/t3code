@@ -632,6 +632,21 @@ it("shows a task's expected result and resources, and why a queued or limited on
   await expect.element(cards.nth(1).getByTestId("group-task-waiting")).not.toBeInTheDocument();
 });
 
+it("names and links the threads a waiting task opened, never their raw ids", async () => {
+  publishGroupChat(
+    [message(1)],
+    [task("launched", 1, { status: "waiting", reason: "threads:thread-a, thread-gone" })],
+  );
+  await using _screen = await openChat();
+  const line = main().getByTestId("group-task-waiting-threads");
+  await expect.element(line.getByText("Waiting on 2 threads")).toBeVisible();
+  const links = line.getByRole("link");
+  await expect.element(links.first()).toHaveTextContent("Thread thread-a");
+  await expect.element(links.first()).toHaveAttribute("href", expect.stringContaining("thread-a"));
+  await expect.element(links.nth(1)).toHaveTextContent("Untitled thread");
+  await expect.element(line).not.toHaveTextContent("thread-gone");
+});
+
 it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversation", async () => {
   publishGroupChat(
     [message(1)],
