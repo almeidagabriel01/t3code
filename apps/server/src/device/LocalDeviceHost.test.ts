@@ -536,6 +536,7 @@ describe("AgentDevice startup", () => {
           },
         },
       );
+      expect((yield* host.summary).tools?.agent.runningVersion).toBe("0.0.1");
       yield* host.stop;
       expect(runs.find((run) => run.args.includes("daemon"))?.args).toEqual([
         path.join(
@@ -573,6 +574,7 @@ describe("AgentDevice startup", () => {
           },
         },
       );
+      expect((yield* host.summary).tools?.agent.runningVersion).toBeNull();
       yield* host.stop;
       expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
       expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);

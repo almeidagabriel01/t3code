@@ -332,9 +332,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     ]);
     const running = yield* Ref.get(runningRef);
-    const daemon = running?.agentDevice
-      ? yield* readDaemonFile().pipe(Effect.option)
-      : Option.none();
+    const daemon = yield* readDaemonFile().pipe(Effect.option);
     const hubAlive = running
       ? yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false))
       : false;
