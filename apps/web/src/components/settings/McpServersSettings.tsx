@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { t3McpProviderName, type EnvironmentId, type T3McpServer } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { CONNECT_ENVIRONMENT_FOR_MCP_SERVERS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useState } from "react";
 import { randomUUID } from "~/lib/utils";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -56,10 +57,8 @@ export function McpServersSettings() {
         />
       ) : (
         <SettingsRow
-          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- no-environment state, not a setting
-          title="MCP servers"
-          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- no-environment state, not a setting
-          description="Connect an environment to manage its MCP servers."
+          title={settingCopy("mcp-servers").title}
+          description={CONNECT_ENVIRONMENT_FOR_MCP_SERVERS}
         />
       )}
     </SettingsSection>

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ServerProviderSkill } from "@t3tools/contracts";
 import { t3SkillsOf } from "@t3tools/client-runtime/state/global-skills";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { CONNECT_ENVIRONMENT_FOR_T3_SKILLS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useState } from "react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -38,10 +39,8 @@ export function GlobalSkillsSettings() {
         />
       ) : (
         <SettingsRow
-          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
-          title="T3 skills"
-          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- unavailable state, not a setting
-          description="Connect an environment to manage its T3 skills."
+          title={settingCopy("t3-skills").title}
+          description={CONNECT_ENVIRONMENT_FOR_T3_SKILLS}
         />
       )}
     </SettingsSection>

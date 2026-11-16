@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_KEYBINDINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useEnvironmentScope } from "../../state/session";
 import {
   useEnvironmentsWithScope,
@@ -1522,7 +1523,7 @@ export function KeybindingsSettingsPanel() {
       {showsPermissionNote ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
-            ? "Connect an environment to change keybindings."
+            ? CONNECT_ENVIRONMENT_FOR_KEYBINDINGS
             : "This connection can view keybindings but cannot change them."}
         </p>
       ) : showsUnavailableNote ? (

@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS } from "@t3tools/client-runtime/settings-empty-selection";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -534,7 +535,7 @@ export function ScheduledTasksSettings(target: {
                 <Clock3Icon />
               </EmptyMedia>
               <EmptyTitle>No environments available</EmptyTitle>
-              <EmptyDescription>Connect an environment to manage scheduled tasks.</EmptyDescription>
+              <EmptyDescription>{CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS}</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : environments.length > 1 ? (

@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_DIAGNOSTICS } from "@t3tools/client-runtime/settings-empty-selection";
 import { ProcessSignalActions } from "./ProcessSignalActions";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { environmentSession } from "../../state/session";
@@ -912,7 +913,7 @@ function DiagnosticsSettingsBody() {
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
           {environmentId === null
-            ? "Connect an environment to see diagnostics."
+            ? CONNECT_ENVIRONMENT_FOR_DIAGNOSTICS
             : diagnosticsAccess.isPending
               ? "Checking diagnostics access…"
               : diagnosticsAccess.error}

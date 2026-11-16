@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -10,6 +11,7 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsServerEnvironmentNotice,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { WorktreeCleanupSection, WorktreesDirectoryRow } from "./StorageSettings";
@@ -51,8 +53,18 @@ function StartFromRemoteRow() {
 }
 
 export function WorktreesSettingsPanel() {
-  const { scope } = useSettingsScope();
+  const { scope, environments } = useSettingsScope();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+
+  if (environments.length === 0) {
+    return (
+      <SettingsPageContainer>
+        <SettingsServerEnvironmentNotice>
+          {CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS}
+        </SettingsServerEnvironmentNotice>
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer>

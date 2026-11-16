@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
@@ -1581,8 +1582,7 @@ function ConnectionsSettingsContent({
           <SettingsRow
             // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
             title="No environment selected"
-            // oxlint-disable-next-line t3code/require-searchable-settings-copy -- empty state, not a setting
-            description="Connect an environment to view its settings and access."
+            description={CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS}
           />
         </SettingsSection>
       )}
