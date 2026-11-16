@@ -86,6 +86,7 @@ const reactTests = [
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/settings/SettingsAgentToolsRouteScreen.test.tsx",
+  "src/features/settings/SettingsProviderAccountsRouteScreen.test.tsx",
   "src/features/settings/components/McpServersSection.test.tsx",
   "src/features/settings/components/GlobalSkillsSection.test.tsx",
   "src/features/settings/components/FolderModelsSection.test.tsx",
