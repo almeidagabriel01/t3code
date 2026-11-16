@@ -697,18 +697,19 @@ handlers[WS_METHODS.assistantsSubscribe] = () =>
       return () => assistantSubscribers.delete(queue);
     },
   );
-/** A changed record gets a later `updatedAt`, as the server stamps every change; clients key on it. */
+/** A changed record's `updatedAt` only moves forward, as the server stamps every change; clients key on it. */
 function restamp<T extends { readonly id: string; readonly updatedAt: string }>(
   previous: ReadonlyArray<T>,
   next: ReadonlyArray<T>,
 ): T[] {
   const before = new Map(previous.map((record) => [record.id, record]));
+  const content = (record: T) => JSON.stringify({ ...record, updatedAt: null });
   return next.map((record) => {
     const prior = before.get(record.id);
-    if (prior?.updatedAt !== record.updatedAt || JSON.stringify(prior) === JSON.stringify(record)) {
-      return record;
-    }
-    return { ...record, updatedAt: new Date(Date.parse(record.updatedAt) + 1).toISOString() };
+    if (prior === undefined) return record;
+    if (content(prior) === content(record)) return prior;
+    const stamp = Math.max(Date.parse(prior.updatedAt), Date.parse(record.updatedAt)) + 1;
+    return { ...record, updatedAt: new Date(stamp).toISOString() };
   });
 }
 
