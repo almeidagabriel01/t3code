@@ -1,13 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { rankAssistants } from "@t3tools/client-runtime/assistantList";
-import { sortByAttention } from "@t3tools/client-runtime/attentionOrder";
 import { environmentReachable } from "@t3tools/client-runtime/connection";
 import {
   assistantIndicator,
   assistantStatusOf,
   countWaits,
-  folderAttention,
-  folderIndicator,
   teamsLayout,
   threadOwnerResolver,
   type ZoneIndicator,
@@ -90,27 +87,7 @@ export function useSidebarZones() {
   const ranked = rankAssistants(active, shells, (entry, presence) =>
     read(entry.environmentId, entry.assistant.id, presence),
   );
-  const laidOut = teamsLayout({ assistants: ranked, teams: activeTeams });
-  const waitsOf = ({ team, members }: (typeof laidOut.folders)[number]) =>
-    countWaits(items, {
-      assistantKeys: new Set(
-        members.map(({ entry }) => `${entry.environmentId}:${entry.assistant.id}`),
-      ),
-      teamKey: `${team.environmentId}:${team.team.id}`,
-    });
-  const layout = {
-    ...laidOut,
-    folders: sortByAttention(laidOut.folders, (folder) =>
-      folderAttention({
-        needsYou: waitsOf(folder),
-        members: folder.members.map(({ presence, activityAt }) => ({
-          mood: presence.mood,
-          activityAt,
-        })),
-        working: folder.team.team.chat?.working ?? false,
-      }),
-    ),
-  };
+  const layout = teamsLayout({ assistants: ranked, teams: activeTeams, items });
   const assistantIndicators = new Map<string, ZoneIndicator | null>();
   for (const { entry, presence } of ranked) {
     const key = `${entry.environmentId}:${entry.assistant.id}`;
@@ -122,18 +99,11 @@ export function useSidebarZones() {
       }),
     );
   }
-  const folderIndicators = new Map<string, ZoneIndicator | null>();
-  for (const folder of layout.folders) {
-    const { team, members } = folder;
-    folderIndicators.set(
-      `${team.environmentId}:${team.team.id}`,
-      folderIndicator({
-        needsYou: waitsOf(folder),
-        members: members.map(({ presence }) => ({ mood: presence.mood })),
-        chat: team.team.chat ?? null,
-      }),
-    );
-  }
+  const folderIndicators = new Map(
+    layout.folders.map(
+      ({ team, indicator }) => [`${team.environmentId}:${team.team.id}`, indicator] as const,
+    ),
+  );
   return {
     items,
     ownerOf,

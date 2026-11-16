@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/needsUser";
 
 import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
-import type { AttentionKey } from "./attentionOrder.ts";
+import { sortByAttention, type AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
   assistantPresence,
@@ -257,7 +257,11 @@ export function needsYouCards<D extends NeedsYouDecision>(
 
 export interface ZoneTeam {
   readonly environmentId: string;
-  readonly team: { readonly id: string; readonly memberIds: ReadonlyArray<string> };
+  readonly team: {
+    readonly id: string;
+    readonly memberIds: ReadonlyArray<string>;
+    readonly chat?: FolderChat | null | undefined;
+  };
 }
 
 export interface ZoneAssistant {
@@ -267,16 +271,28 @@ export interface ZoneAssistant {
 
 /**
  * Teams zone rows: each assistant once, in the first group (team order) that lists it, and the
- * rest in the ungrouped list. Input order is kept inside each list.
+ * rest in the ungrouped list, keeping input order. Folders follow `folderAttention`, ties in team
+ * order, and carry their `countWaits` so the indicator reads the same count.
  */
 export function teamsLayout<
-  A extends { readonly entry: ZoneAssistant },
+  A extends {
+    readonly entry: ZoneAssistant;
+    readonly presence: { readonly mood: AssistantMood };
+    readonly activityAt: number;
+  },
   T extends ZoneTeam,
 >(input: {
   readonly assistants: ReadonlyArray<A>;
   readonly teams: ReadonlyArray<T>;
+  /** The Needs you items. */
+  readonly items: ReadonlyArray<{ readonly owner: ThreadOwner }>;
 }): {
-  readonly folders: ReadonlyArray<{ readonly team: T; readonly members: ReadonlyArray<A> }>;
+  readonly folders: ReadonlyArray<{
+    readonly team: T;
+    readonly members: ReadonlyArray<A>;
+    readonly needsYou: number;
+    readonly indicator: ZoneIndicator | null;
+  }>;
   readonly ungrouped: ReadonlyArray<A>;
 } {
   const byKey = new Map(
@@ -294,10 +310,26 @@ export function teamsLayout<
       claimed.add(key);
       return true;
     });
-    return { team, members };
+    const needsYou = countWaits(input.items, {
+      assistantKeys: new Set(
+        members.map((item) => keyOf(item.entry.environmentId, item.entry.assistant.id)),
+      ),
+      teamKey: keyOf(team.environmentId, team.team.id),
+    });
+    const indicator = folderIndicator({
+      needsYou,
+      members: members.map(({ presence }) => ({ mood: presence.mood })),
+      chat: team.team.chat ?? null,
+    });
+    return { team, members, needsYou, indicator };
   });
   const ungrouped = [...byKey].flatMap(([key, item]) => (claimed.has(key) ? [] : [item]));
-  return { folders, ungrouped };
+  return {
+    folders: sortByAttention(folders, ({ members, indicator }) =>
+      folderAttention({ indicator, members }),
+    ),
+    ungrouped,
+  };
 }
 
 export type ZoneIndicator =
@@ -337,6 +369,12 @@ export function assistantIndicator(input: {
   return null;
 }
 
+type FolderChat = Pick<AssistantTeamChat, "scopes"> & {
+  readonly pausedTasks: number;
+  readonly failedTasks: number;
+  readonly unreadCount: number;
+};
+
 /**
  * A group folder's one indicator, from the members drawn inside it and the group's own threads:
  * needs you (a counted wait, or a tab the server flags as waiting), then failed, a member held by
@@ -346,13 +384,7 @@ export function folderIndicator(input: {
   /** From `countWaits` over the drawn members and the group's key. */
   readonly needsYou: number;
   readonly members: ReadonlyArray<{ readonly mood: AssistantMood }>;
-  readonly chat:
-    | (Pick<AssistantTeamChat, "scopes"> & {
-        readonly pausedTasks: number;
-        readonly failedTasks: number;
-        readonly unreadCount: number;
-      })
-    | null;
+  readonly chat: FolderChat | null;
 }): ZoneIndicator | null {
   if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
   if (assistantGroupChatWaiting(input.chat ?? undefined)) return { kind: "needs", count: 1 };
@@ -369,18 +401,20 @@ export function folderIndicator(input: {
   return null;
 }
 
-/** A group folder's place in the Teams zone, by the same order as its members. */
+/**
+ * A group folder's place in the Teams zone, read from its own indicator so the row never sorts
+ * as waiting or working while it shows something else.
+ */
 export function folderAttention(input: {
-  /** From `countWaits` over the drawn members and the group's key. */
-  readonly needsYou: number;
-  readonly members: ReadonlyArray<{ readonly mood: AssistantMood; readonly activityAt: number }>;
-  /** A task of the group itself is queued, running or waiting. */
-  readonly working: boolean;
+  readonly indicator: ZoneIndicator | null;
+  readonly members: ReadonlyArray<{ readonly activityAt: number }>;
 }): AttentionKey {
   const activityAt = Math.max(0, ...input.members.map((member) => member.activityAt));
-  if (input.needsYou > 0) return { tier: "needsYou", activityAt };
-  const working = input.working || input.members.some((member) => member.mood === "working");
-  return { tier: working ? "working" : "rest", activityAt };
+  const kind = input.indicator?.kind;
+  return {
+    tier: kind === "needs" ? "needsYou" : kind === "running" ? "working" : "rest",
+    activityAt,
+  };
 }
 
 export const ENVIRONMENT_DISCONNECTED_LABEL = "This environment is disconnected";

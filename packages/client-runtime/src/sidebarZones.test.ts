@@ -131,9 +131,14 @@ describe("needsYouItems", () => {
 });
 
 describe("teamsLayout", () => {
-  const item = (id: string) => ({ entry: { environmentId: "e", assistant: { id } } });
+  const item = (
+    id: string,
+    mood: "idle" | "working" | "needs" | "failed" = "idle",
+    activityAt = 0,
+  ) => ({ entry: { environmentId: "e", assistant: { id } }, presence: { mood }, activityAt });
   it("draws each assistant once, in the first group that lists it", () => {
     const layout = teamsLayout({
+      items: [],
       assistants: [item("jarvis"), item("ada"), item("bo"), item("cy")],
       teams: [
         { environmentId: "e", team: { id: "dev", memberIds: ["bo", "ada"] } },
@@ -152,6 +157,42 @@ describe("teamsLayout", () => {
       ["empty", []],
     ]);
     expect(layout.ungrouped.map((member) => member.entry.assistant.id)).toEqual(["jarvis"]);
+  });
+
+  it("orders folders by their own indicator: a wait, then running, then the latest activity", () => {
+    const chat = { pausedTasks: 0, failedTasks: 0, unreadCount: 0 };
+    const team = (id: string, memberIds: string[], extra: object = {}) => ({
+      environmentId: "e",
+      team: { id, memberIds, chat: { ...chat, ...extra } },
+    });
+    const waitingTab = { projectId: null, unreadCount: 0, waiting: true, readSeq: 0 };
+    const layout = teamsLayout({
+      items: [{ owner: { kind: "assistant" as const, assistantKey: "e:x", teamKey: "e:waits" } }],
+      assistants: [item("old", "idle", 1), item("new", "idle", 9), item("busy", "working", 2)],
+      teams: [
+        team("stale", ["old"]),
+        team("fresh", ["new"]),
+        team("busy", ["busy"]),
+        // A queued group task with no member working shows nothing, so it sorts with the rest.
+        team("queued", [], { working: true }),
+        team("tab", [], { scopes: [waitingTab] }),
+        team("waits", []),
+      ],
+    });
+    expect(
+      layout.folders.map(({ team, needsYou, indicator }) => [
+        team.team.id,
+        needsYou,
+        indicator?.kind ?? null,
+      ]),
+    ).toEqual([
+      ["tab", 0, "needs"],
+      ["waits", 1, "needs"],
+      ["busy", 0, "running"],
+      ["fresh", 0, null],
+      ["stale", 0, null],
+      ["queued", 0, null],
+    ]);
   });
 });
 
@@ -434,30 +475,16 @@ describe("assistantStatusOf", () => {
 });
 
 describe("folderAttention", () => {
-  const member = (mood: "idle" | "working" | "needs" | "failed", activityAt: number) => ({
-    mood,
-    activityAt,
-  });
   it.each([
-    ["a wait on the user", 1, [member("idle", 5)], false, { tier: "needsYou", activityAt: 5 }],
-    [
-      "a working member",
-      0,
-      [member("working", 2), member("idle", 9)],
-      false,
-      { tier: "working", activityAt: 9 },
-    ],
-    ["group chat work", 0, [member("idle", 4)], true, { tier: "working", activityAt: 4 }],
-    [
-      "nothing going on",
-      0,
-      [member("failed", 3), member("idle", 1)],
-      false,
-      { tier: "rest", activityAt: 3 },
-    ],
-    ["no members", 0, [], false, { tier: "rest", activityAt: 0 }],
-  ] as const)("%s", (_name, needsYou, members, working, expected) => {
-    expect(folderAttention({ needsYou, members, working })).toEqual(expected);
+    ["needs you", { kind: "needs", count: 1 }, [5], { tier: "needsYou", activityAt: 5 }],
+    ["running", { kind: "running", count: 1 }, [2, 9], { tier: "working", activityAt: 9 }],
+    ["failed", { kind: "failed" }, [3, 1], { tier: "rest", activityAt: 3 }],
+    ["unread", { kind: "unread", count: 4 }, [4], { tier: "rest", activityAt: 4 }],
+    ["nothing", null, [], { tier: "rest", activityAt: 0 }],
+  ] as const)("%s", (_name, indicator, activity, expected) => {
+    expect(
+      folderAttention({ indicator, members: activity.map((activityAt) => ({ activityAt })) }),
+    ).toEqual(expected);
   });
 });
 
