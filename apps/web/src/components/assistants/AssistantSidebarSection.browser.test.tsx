@@ -577,14 +577,14 @@ describe("AssistantSidebarSection", () => {
       tasks.map((task) => [task.getAttribute("aria-label"), task.getAttribute("data-state")]),
     ).toEqual([
       ["Add retry, Running", "running"],
+      ["Fix flaky test, Failed", "failed"],
+      ["Old chore, Done", "done"],
       [
         `Port docs, Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, "24-hour")}`,
         "usage_limited",
       ],
-      ["Fix flaky test, Failed", "failed"],
-      ["Old chore, Done", "done"],
     ]);
-    expect(tasks[3]?.getAttribute("aria-current")).toBe("page");
+    expect(tasks[2]?.getAttribute("aria-current")).toBe("page");
     // A running task offers no dismiss; a finished one does, and a dismissed one is gone.
     expect(screen.container.querySelector('[aria-label="Dismiss Add retry"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss Fix flaky test" }));
@@ -629,7 +629,7 @@ describe("AssistantSidebarSection", () => {
     expect(indicator(screen.container, "ada")).toBe("1 waiting on you");
     expect(indicator(screen.container, "jarvis")).toBe("1 running");
     expect(indicator(screen.container, "aprovador")).toBe("Failed");
-    expect(indicator(screen.container, "pesquisador")).toBeNull();
+    expect(indicator(screen.container, "pesquisador")).toBe("Usage limit");
     expect(
       [...screen.container.querySelectorAll('[data-testid="assistant-role"]')].map(
         (role) => role.textContent,

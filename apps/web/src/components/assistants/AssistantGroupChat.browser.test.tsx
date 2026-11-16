@@ -798,7 +798,7 @@ it("opens Group info from the header beside a usable chat, and closes it three w
   ]);
 
   await userEvent.fill(composer(), "still typing");
-  await expect.element(composer()).toHaveValue("still typing");
+  await expectComposer("still typing");
   await userEvent.click(trigger);
   await expect.element(panel).not.toBeInTheDocument();
 

@@ -66,14 +66,18 @@ vi.mock(import("~/state/entities"), async (original) => {
     }) as typeof base;
   return {
     ...actual,
+    // Until the first snapshot lands there is no real shell to copy, so nothing waits yet.
     useThreadShell: (ref) => {
-      const base = actual.useQuietThreadShells()[0]!;
+      const base = actual.useQuietThreadShells()[0];
       const real = actual.useThreadShell(ref);
-      return ref && waiting.has(ref.threadId) ? asWaiting(base, ref.threadId) : real;
+      return base && ref && waiting.has(ref.threadId) ? asWaiting(base, ref.threadId) : real;
     },
     useQuietThreadShells: () => {
       const real = actual.useQuietThreadShells();
-      return [...real, ...[...waiting].map((id) => asWaiting(real[0]!, id))];
+      const base = real[0];
+      return base === undefined
+        ? real
+        : [...real, ...[...waiting].map((id) => asWaiting(base, id))];
     },
   };
 });
