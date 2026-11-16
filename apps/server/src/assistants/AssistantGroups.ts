@@ -56,7 +56,15 @@ import {
   ThreadId,
   type DecisionId,
 } from "@t3tools/contracts";
-import { isQuietReply, withoutQuietToken } from "@t3tools/shared/assistantTaskEvents";
+import {
+  isQuietReply,
+  type TaskEventStatus,
+  withoutQuietToken,
+} from "@t3tools/shared/assistantTaskEvents";
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
@@ -109,6 +117,8 @@ import {
   childResultsText,
   groupTaskPacket,
   handOverText,
+  launchResultText,
+  launchResultsText,
   PACKET_SUMMARY_CHARS,
   type PacketMember,
 } from "./AssistantGroupPacket.ts";
@@ -190,6 +200,16 @@ const SETTLED: ReadonlyArray<AssistantGroupTaskStatus> = ["completed", "cancelle
 const DELIVERED: ReadonlySet<string> = new Set(["completed", "cancelled"]);
 const STOPPED_ROOT: ReadonlyArray<AssistantGroupTaskStatus> = ["paused", "failed", "cancelled"];
 const ENDED_RUN = new Set(["completed", "failed", "cancelled", "interrupted"]);
+/** A task waiting on threads launched from its conversation names them: `threads:<id>,<id>`. */
+const LAUNCH_REASON_PREFIX = "threads:";
+/** Launch chains are shallow; the cap only guards a malformed loop. */
+const MAX_LAUNCH_DEPTH = 8;
+const launchReason = (threadIds: ReadonlyArray<string>) =>
+  threadIds.length === 0 ? null : `${LAUNCH_REASON_PREFIX}${threadIds.join(",")}`;
+const launchesInReason = (reason: string | null) =>
+  reason?.startsWith(LAUNCH_REASON_PREFIX) === true
+    ? reason.slice(LAUNCH_REASON_PREFIX.length).split(",")
+    : [];
 
 /**
  * Candidate projects whose effective model inputs differ between two settings: the project's
@@ -571,10 +591,15 @@ export class AssistantGroups extends Context.Service<
       >;
     };
     /**
-     * Posts or resolves the notices of what a request's member conversations wait on the user for;
-     * a no-op for a thread that is no request's.
+     * Posts or resolves the notices of what a request's member conversations, and the threads
+     * launched from them, wait on the user for. False for a thread that is no request's.
      */
-    readonly syncWaitingThread: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly syncWaitingThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /**
+     * A thread launched from a request's conversation ended a run, or was dismissed or removed: the
+     * task waiting on it runs again once nothing else holds it. False when no request launched it.
+     */
+    readonly settleLaunch: (threadId: ThreadId) => Effect.Effect<boolean>;
     /** A member's run on a group thread ended or changed; moves its task along. */
     readonly handleRunEvent: (event: OrchestrationV2DomainEvent) => Effect.Effect<void>;
     /** Team and assistant changes: members leaving, groups archived or deleted. */
@@ -751,6 +776,43 @@ const make = Effect.gen(function* () {
   const unsettledChildren = (parentId: string) =>
     sql<TaskRow>`SELECT * FROM assistant_group_tasks
       WHERE parent_id = ${parentId} AND status NOT IN ${sql.in(SETTLED)}`;
+
+  /**
+   * Threads launched from these conversations, or from a thread launched from them, that were not
+   * dismissed, oldest first, each with the conversation its chain starts from.
+   */
+  const launchesFrom = (originIds: ReadonlyArray<string>) =>
+    originIds.length === 0
+      ? Effect.succeed([])
+      : sql<{ readonly thread_id: string; readonly origin_id: string; readonly title: string }>`
+          WITH RECURSIVE chain(thread_id, origin_id, depth) AS (
+            SELECT thread_id, launched_from_thread_id, 1 FROM assistant_tasks
+            WHERE launched_from_thread_id IN ${sql.in(originIds)}
+            UNION
+            SELECT t.thread_id, c.origin_id, c.depth + 1 FROM assistant_tasks t
+            JOIN chain c ON t.launched_from_thread_id = c.thread_id
+            WHERE c.depth < ${MAX_LAUNCH_DEPTH}
+          )
+          SELECT t.thread_id, MIN(c.origin_id) AS origin_id, t.title
+          FROM chain c JOIN assistant_tasks t ON t.thread_id = c.thread_id
+          WHERE t.dismissed_at IS NULL
+          GROUP BY t.thread_id ORDER BY t.created_at ASC, t.rowid ASC`;
+
+  /** The request conversation a launched thread's chain starts from, if any. */
+  const launchOrigin = Effect.fn("AssistantGroups.launchOrigin")(function* (threadId: string) {
+    const rows = yield* sql<ThreadRow>`
+      WITH RECURSIVE up(thread_id, depth) AS (
+        SELECT launched_from_thread_id, 1 FROM assistant_tasks WHERE thread_id = ${threadId}
+        UNION ALL
+        SELECT t.launched_from_thread_id, u.depth + 1 FROM assistant_tasks t
+        JOIN up u ON t.thread_id = u.thread_id
+        WHERE u.depth < ${MAX_LAUNCH_DEPTH}
+      )
+      SELECT r.team_id, r.assistant_id, r.thread_id, r.seen_seq, r.request_id
+      FROM up JOIN assistant_group_request_threads r ON r.thread_id = up.thread_id
+      ORDER BY up.depth ASC LIMIT 1`;
+    return rows[0];
+  });
 
   /**
    * The task a member is working on: the one its live run carries, which still names the member
@@ -1021,6 +1083,7 @@ const make = Effect.gen(function* () {
   /** Ends a task's live run, or disarms the continuation a usage-limited one waits for. */
   const haltTask = Effect.fn("AssistantGroups.haltTask")(function* (task: TaskRow) {
     if (task.status === "running") return yield* stopRun(task);
+    if (task.status === "waiting") return yield* stopLaunches(task);
     if (task.status !== "usage_limited") return;
     const threadId = (yield* wireTasks([task]))[0]!.threadId;
     yield* engine
@@ -1039,6 +1102,12 @@ const make = Effect.gen(function* () {
         ),
       );
   });
+
+  /**
+   * Stopping a task that waits on launched threads leaves those threads running for now: whether
+   * stopping the request stops them too is the user's decision still to make.
+   */
+  const stopLaunches = (_task: TaskRow): Effect.Effect<void> => Effect.void;
 
   /** Pauses a task that is in flight, ending its run first. */
   const pauseTask = Effect.fn("AssistantGroups.pauseTask")(function* (
@@ -1818,14 +1887,104 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** A parent that waited on its children runs again once they are all settled. */
-  const resumeParent = Effect.fn("AssistantGroups.resumeParent")(function* (child: TaskRow) {
-    if (child.parent_id === null) return;
-    const parent = yield* getTask(child.parent_id);
-    if (parent === undefined || parent.status !== "waiting") return;
-    if ((yield* unsettledChildren(parent.task_id)).length > 0) return;
+  /**
+   * How a thread launched from a request ended, or "live" while it still runs: a queued or active
+   * run, background work that wakes it, or a usage limit it continues after on its own. A thread
+   * removed, archived or unreadable (another environment's) has ended, so it never holds a request.
+   */
+  const launchState = Effect.fn("AssistantGroups.launchState")(function* (launch: {
+    readonly thread_id: string;
+    readonly title: string;
+  }) {
+    const threadId = launch.thread_id as ThreadId;
+    const read = yield* Effect.all([
+      engine.getThreadShell(threadId),
+      engine.getThreadRecords(threadId, ["runs"]),
+    ]).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("assistant groups: a launched thread could not be read", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.option,
+    );
+    const removed = { live: false, threadId, title: launch.title, status: null } as const;
+    if (Option.isNone(read)) return removed;
+    const [shell, { runs }] = read.value;
+    if (shell === null || shell.archivedAt !== null) return removed;
+    const title = shell.title;
+    if (runs.some((run) => (LIVE_RUN_STATUSES as ReadonlyArray<string>).includes(run.status))) {
+      return { live: true, threadId, title, status: null } as const;
+    }
+    if (
+      backgroundWorkHoldsCompletion(
+        (shell.pendingBackgroundTasks ?? []).filter((task) => !isPullRequestWatchTask(task)),
+      )
+    ) {
+      return { live: true, threadId, title, status: null } as const;
+    }
+    const last = latestExecutedRun(runs);
+    if (last === null || !ENDED_RUN.has(last.status)) return removed;
+    const limit = last.status === "failed" ? yield* usageLimitOf(last) : undefined;
+    if (limit?.resumes === true) return { live: true, threadId, title, status: null } as const;
+    return {
+      live: false,
+      threadId,
+      title,
+      status: last.status as TaskEventStatus,
+      runId: last.id,
+      limited: limit !== undefined,
+    } as const;
+  });
+
+  /**
+   * A waiting task runs again once nothing holds it: the subtasks it gave, and the threads launched
+   * from its conversation (down their chain). Until then its reason names the threads still live,
+   * and each one that ends adds its result to what the task reads when it runs. A thread stopped by
+   * a usage limit that does not continue fails the task, so the user decides.
+   */
+  const settleWait = Effect.fn("AssistantGroups.settleWait")(function* (task: TaskRow) {
+    if (task.status !== "waiting") return task;
+    const threadId = (yield* wireTasks([task]))[0]!.threadId;
+    const waitedOn = new Set(launchesInReason(task.reason));
+    const live: string[] = [];
+    const ended: string[] = [];
+    let limited = false;
+    for (const launch of yield* launchesFrom([threadId])) {
+      const state = yield* launchState(launch);
+      if (state.live) {
+        live.push(launch.thread_id);
+        continue;
+      }
+      // Only threads it waited on report: one that ended before the turn did was seen there.
+      if (!waitedOn.has(launch.thread_id)) continue;
+      const lastMessage =
+        state.status === null || !("runId" in state)
+          ? undefined
+          : yield* answerOf(state.threadId, state.runId);
+      ended.push(
+        launchResultText({
+          title: state.title,
+          threadId: state.threadId,
+          status: state.status,
+          lastMessage,
+        }),
+      );
+      limited ||= "limited" in state && state.limited;
+    }
+    const reported = [task.followup, ...ended].filter((part) => part != null && part !== "");
+    const followup = reported.length === 0 ? null : reported.join("\n\n");
+    if (limited) {
+      return yield* patchTask(task, { status: "failed", reason: "thread_usage_limit", followup });
+    }
+    const reason = launchReason(live);
+    if (live.length > 0 || (yield* unsettledChildren(task.task_id)).length > 0) {
+      if (reason === task.reason && followup === task.followup) return task;
+      return yield* patchTask(task, { reason, followup });
+    }
     const children = yield* sql<TaskRow>`
-      SELECT * FROM assistant_group_tasks WHERE parent_id = ${parent.task_id} ORDER BY rowid ASC`;
+      SELECT * FROM assistant_group_tasks WHERE parent_id = ${task.task_id} ORDER BY rowid ASC`;
     // ponytail: every child is listed again on a later wait; track what was reported if that grows.
     const results = yield* Effect.forEach(children, (row) =>
       nameOf(row.owner_id).pipe(
@@ -1836,13 +1995,23 @@ const make = Effect.gen(function* () {
         })),
       ),
     );
-    yield* patchTask(parent, {
+    return yield* patchTask(task, {
       status: "queued",
       reason: null,
-      revision: parent.revision + 1,
+      revision: task.revision + 1,
       result_text: null,
-      followup: childResultsText(results),
+      followup: [
+        ...(followup === null ? [] : [launchResultsText(followup)]),
+        ...(results.length === 0 ? [] : [childResultsText(results)]),
+      ].join("\n\n"),
     });
+  });
+
+  /** A parent that waited on its children runs again once nothing else holds it. */
+  const resumeParent = Effect.fn("AssistantGroups.resumeParent")(function* (child: TaskRow) {
+    if (child.parent_id === null) return;
+    const parent = yield* getTask(child.parent_id);
+    if (parent !== undefined) yield* settleWait(parent);
   });
 
   /** The model the lead would route on: its own conversation's, else the project's default. */
@@ -1957,9 +2126,12 @@ const make = Effect.gen(function* () {
     let next = task;
     for (const row of [top, ...below].filter((candidate) => branch.has(candidate.task_id))) {
       const chosen = row.task_id === task.task_id;
+      const waits = waitsForChildren(row);
       const done = yield* patchTask(row, {
-        status: waitsForChildren(row) ? "waiting" : "queued",
+        status: waits ? "waiting" : "queued",
         reason: null,
+        // A waiting task's followup collects what ends while it waits.
+        ...(waits ? { followup: null } : {}),
         owner_id: chosen ? ownerId : row.owner_id,
         revision: row.revision + 1,
         result_text: null,
@@ -2714,6 +2886,48 @@ const make = Effect.gen(function* () {
     return undefined;
   });
 
+  /**
+   * The usage limit a failed run stopped on, if any, and whether its thread continues it on its own
+   * at the reset or on a provider switch.
+   */
+  const usageLimitOf = Effect.fn("AssistantGroups.usageLimitOf")(function* (
+    run: OrchestrationV2Run,
+  ) {
+    const failure = latestRootProviderFailure(
+      run,
+      (yield* engine
+        .getThreadRecords(run.threadId, ["turnItems"], {
+          turnItemTypes: ["error"],
+          turnItemRunIds: [run.id],
+        })
+        .pipe(Effect.orElseSucceed(() => ({ turnItems: [] })))).turnItems,
+    );
+    if (failure?.class !== "usage_limit") return undefined;
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    return {
+      resetAt: failure.resetAt ?? null,
+      resumes: continuesAtReset(
+        failure.resetAt,
+        run.completedAt ? DateTime.toEpochMillis(run.completedAt) : nowMs,
+        nowMs,
+        yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.autoResumeLimitedThreads),
+          // Unread settings count as no auto-resume: a request is never held by a guess.
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
+    };
+  });
+
+  /** The threads launched from a conversation that still run, oldest first. */
+  const liveLaunches = Effect.fn("AssistantGroups.liveLaunches")(function* (threadId: string) {
+    const live: string[] = [];
+    for (const launch of yield* launchesFrom([threadId])) {
+      if ((yield* launchState(launch)).live) live.push(launch.thread_id);
+    }
+    return live;
+  });
+
   const finishRun = Effect.fn("AssistantGroups.finishRun")(function* (run: OrchestrationV2Run) {
     const task = yield* taskOfRun(run);
     if (task === undefined) return;
@@ -2728,46 +2942,39 @@ const make = Effect.gen(function* () {
     if (task.status !== "running" && !(task.status === "usage_limited" && isLimitContinuation(run)))
       return;
     const runner = (yield* threadRowOf(run.threadId))?.assistant_id;
-    const failure =
-      run.status === "failed"
-        ? latestRootProviderFailure(
-            run,
-            (yield* engine
-              .getThreadRecords(run.threadId, ["turnItems"], {
-                turnItemTypes: ["error"],
-                turnItemRunIds: [run.id],
-              })
-              .pipe(Effect.orElseSucceed(() => ({ turnItems: [] })))).turnItems,
-          )
-        : null;
-    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const limit = run.status === "failed" ? yield* usageLimitOf(run) : undefined;
     if (run.status === "interrupted") {
       yield* patchTask(task, { status: "paused", reason: "stopped" });
-    } else if (
-      failure?.class === "usage_limit" &&
-      continuesAtReset(
-        failure.resetAt,
-        run.completedAt ? DateTime.toEpochMillis(run.completedAt) : nowMs,
-        nowMs,
-        (yield* serverSettings.getSettings).autoResumeLimitedThreads,
-      )
-    ) {
+    } else if (limit?.resumes === true) {
       // Not settled: the thread continues it at the reset or on a provider switch.
-      yield* patchTask(task, { status: "usage_limited", reason: failure.resetAt ?? null });
+      yield* patchTask(task, { status: "usage_limited", reason: limit.resetAt });
     } else if (run.status !== "completed") {
       yield* patchTask(task, { status: "failed", reason: run.status });
       yield* resumeParent({ ...task, status: "failed" });
     } else if (runner !== undefined && runner !== task.owner_id) {
-      // Handed to someone else while it ran: the new owner takes it, nothing is posted.
-      yield* patchTask(task, {
+      // Handed to someone else while it ran: the new owner takes it, nothing is posted, and the
+      // threads this run launched now wait on the new owner's conversation.
+      const moved = yield* patchTask(task, {
         status: "queued",
         reason: null,
         revision: task.revision + 1,
         result_text: null,
       });
-    } else if ((yield* unsettledChildren(task.task_id)).length > 0) {
-      yield* patchTask(task, { status: "waiting", reason: null });
+      if ((yield* launchesFrom([run.threadId])).length > 0) {
+        yield* sql`
+          UPDATE assistant_tasks
+          SET launched_from_thread_id = ${(yield* wireTasks([moved]))[0]!.threadId}
+          WHERE launched_from_thread_id = ${run.threadId}
+            AND created_at >= ${DateTime.formatIso(run.requestedAt)}`;
+      }
     } else {
+      // Read under the lock: a thread whose run already ended holds nothing, and one that ends
+      // later finds this task waiting (`settleLaunch`).
+      const live = yield* liveLaunches(run.threadId);
+      if (live.length > 0 || (yield* unsettledChildren(task.task_id)).length > 0) {
+        yield* patchTask(task, { status: "waiting", reason: launchReason(live), followup: null });
+        return;
+      }
       const said = task.result_text?.trim() || (yield* answerOf(run.threadId, run.id));
       // A member woken by its subtasks may end quiet: a muted line, so the request never reads as waiting.
       const quiet = said !== undefined && isQuietReply(said);
@@ -2813,10 +3020,15 @@ const make = Effect.gen(function* () {
       ]),
     );
     const ownerOf = new Map(members.map((row) => [row.thread_id, row.assistant_id]));
+    // A thread a member launched for the request waits on the user in the request's block too.
+    for (const launch of yield* launchesFrom(members.map((row) => row.thread_id))) {
+      const owner = ownerOf.get(launch.origin_id);
+      if (owner !== undefined) ownerOf.set(launch.thread_id, owner);
+    }
     const waits = yield* threadsWaitingOnUser(
-      members.map((row) => ({
-        threadId: row.thread_id as ThreadId,
-        agent: names.get(row.assistant_id) ?? "A member",
+      [...ownerOf].map(([threadId, assistantId]) => ({
+        threadId: threadId as ThreadId,
+        agent: names.get(assistantId) ?? "A member",
       })),
     ).pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
@@ -2860,28 +3072,53 @@ const make = Effect.gen(function* () {
     "AssistantGroups.syncWaitingThread",
   )(
     function* (threadId) {
-      if (!isAssistantGroupThreadId(threadId)) return;
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const owner = yield* threadRowOf(threadId);
-          if (owner?.request_id == null) return;
-          yield* syncWaiting(owner.request_id);
-        }),
-      );
+      const owner = isAssistantGroupThreadId(threadId)
+        ? yield* threadRowOf(threadId)
+        : yield* launchOrigin(threadId);
+      if (owner?.request_id == null) return false;
+      yield* lock.withPermits(1)(syncWaiting(owner.request_id));
+      return true;
     },
     (effect) =>
       effect.pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("assistant groups: a waiting notice could not be synced", { cause }),
+          Effect.logWarning("assistant groups: a waiting notice could not be synced", {
+            cause,
+          }).pipe(Effect.as(false)),
         ),
       ),
   );
+
+  const settleLaunch: AssistantGroups["Service"]["settleLaunch"] = Effect.fn(
+    "AssistantGroups.settleLaunch",
+  )(function* (threadId) {
+    const origin = yield* launchOrigin(threadId).pipe(Effect.orDie);
+    if (origin?.request_id == null) return false;
+    const requestId = origin.request_id;
+    yield* lock
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const waiting = yield* sql<TaskRow>`
+            SELECT * FROM assistant_group_tasks
+            WHERE request_id = ${requestId} AND owner_id = ${origin.assistant_id}
+              AND status = 'waiting'
+            ORDER BY rowid ASC`;
+          for (const task of waiting) yield* settleWait(task);
+          yield* pump(origin.team_id);
+        }),
+      )
+      .pipe(quietly("a launched thread's end could not be settled"));
+    return true;
+  });
 
   const handleRunEvent: AssistantGroups["Service"]["handleRunEvent"] = Effect.fn(
     "AssistantGroups.handleRunEvent",
   )(
     function* (event) {
-      if (event.type === "runtime-request.updated") return yield* syncWaitingThread(event.threadId);
+      if (event.type === "runtime-request.updated") {
+        if (isAssistantGroupThreadId(event.threadId)) yield* syncWaitingThread(event.threadId);
+        return;
+      }
       if (event.type !== "run.created" && event.type !== "run.updated") return;
       if (!isAssistantGroupThreadId(event.payload.threadId)) return;
       if (
@@ -3954,6 +4191,7 @@ const make = Effect.gen(function* () {
     member: memberTools,
     handleRunEvent,
     syncWaitingThread,
+    settleLaunch,
     handleAssistantEvent,
     reconcile,
     followProjectModels,

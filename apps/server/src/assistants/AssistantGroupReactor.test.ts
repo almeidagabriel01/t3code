@@ -53,7 +53,7 @@ it.effect(
               syncWaitingThread: (threadId) =>
                 Effect.sync(() => void synced.push(threadId)).pipe(
                   Effect.andThen(Deferred.succeed(decided, undefined)),
-                  Effect.asVoid,
+                  Effect.as(true),
                 ),
               handleRunEvent: (event) =>
                 Effect.sync(() => void handled.push(event.type)).pipe(

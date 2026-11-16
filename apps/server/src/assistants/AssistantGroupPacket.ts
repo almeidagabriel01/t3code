@@ -1,4 +1,6 @@
-import type { AssistantGroupTaskKind } from "@t3tools/contracts";
+import type { AssistantGroupTaskKind, ThreadId } from "@t3tools/contracts";
+import { taskEventHeadline, type TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
+import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 /**
  * A packet's chat budget is about 28k characters: the request's newest unseen messages first until
@@ -180,6 +182,33 @@ export function childResultsText(
     ),
   ].join("\n");
 }
+
+const LAUNCH_LAST_MESSAGE_CHARS = 1_500;
+
+/** One launched thread that ended while its task waited: how, and its last message. */
+export function launchResultText(input: {
+  readonly title: string;
+  readonly threadId: ThreadId;
+  /** Null when it was deleted or archived, or could not be read. */
+  readonly status: TaskEventStatus | null;
+  readonly lastMessage: string | undefined;
+}): string {
+  if (input.status === null) {
+    const link = formatThreadLink(
+      { environmentId: null, threadId: input.threadId },
+      input.title.trim() || "Task",
+    );
+    return `Task ${link} was deleted or archived, or could not be read.`;
+  }
+  const headline = taskEventHeadline({ ...input, status: input.status });
+  return input.lastMessage === undefined
+    ? headline
+    : `${headline}\nIts last message:\n${clip(input.lastMessage, LAUNCH_LAST_MESSAGE_CHARS)}`;
+}
+
+/** What a task that waited on the threads it launched reads when they are all done. */
+export const launchResultsText = (results: string) =>
+  `The threads you launched for this request are done:\n\n${results}\n\nCheck each one's diff and run the tests, and send any fixes with t3_thread_send (never edit files here). Your answer to this task is what the group chat gets, so give it once the work is right.`;
 
 export const handOverText = (from: string, note: string) =>
   `${from} (a teammate, not the user) handed this task to you${note.trim() === "" ? "." : `: ${note.trim()}`}`;
