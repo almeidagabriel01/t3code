@@ -14,6 +14,7 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
 
@@ -52,6 +53,13 @@ it.effect("preserves binary input and admission frames through the real socket p
                 scopes: [AuthOrchestrationOperateScope],
               }),
           } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        ),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore, {
+            cookieName: "t3_session",
+            legacyCookieName: undefined,
+            awaitInvalidation: () => Effect.never,
+          }),
         ),
         Layer.provide(
           Layer.succeed(DeviceService.DeviceService, {

@@ -9,21 +9,26 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as SessionStore from "./SessionStore.ts";
 import * as AuthHttp from "./http.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -190,4 +195,44 @@ it.effect.each(["DPoP", "dpop"])("challenges a refused %s request with DPoP", (s
       (environment) => Effect.promise(() => environment.dispose()),
     );
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect(
+  "ends a revoked session's sockets and streamed bodies and leaves other sessions open",
+  () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const revoked = yield* sessions.issue({ subject: "revoked" });
+      const kept = yield* sessions.issue({ subject: "kept" });
+      const revokedSocket = yield* AuthHttp.untilSessionEnds(
+        Effect.succeed(revoked),
+        Effect.never,
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      const streamed = yield* AuthHttp.untilSessionEnds(
+        Effect.succeed(revoked),
+        Effect.succeed(HttpServerResponse.stream(Stream.never)),
+      );
+      if (streamed.body._tag !== "Stream") throw new Error("Expected a streamed body");
+      const revokedBody = yield* streamed.body.stream.pipe(
+        Stream.orDie,
+        Stream.runDrain,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const keptEnded = yield* Deferred.make<void>();
+      yield* AuthHttp.untilSessionEnds(Effect.succeed(kept), Effect.never).pipe(
+        Effect.andThen(Deferred.succeed(keptEnded, undefined)),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* sessions.revoke(revoked.sessionId);
+      yield* Fiber.join(revokedSocket);
+      yield* Fiber.join(revokedBody);
+      expect(yield* Deferred.isDone(keptEnded)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerEnvironmentAuth.pipe(
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );
