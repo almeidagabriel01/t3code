@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     setMacCpuCeilingPercent: vi.fn(),
     setMacMemoryFloorPercent: vi.fn(),
     setHeavyOverLimitSeconds: vi.fn(),
+    setAdmissionLimits: vi.fn(),
   },
 }));
 
@@ -40,7 +41,11 @@ vi.mock("./useScopedSettings", () => ({
 }));
 vi.mock("../statusBar/useKillTarget", () => ({ useHeavyQueueActions: () => mocks.actions }));
 vi.mock("./settingsLayout", () => ({
-  SettingResetButton: () => null,
+  SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
+    <button type="button" onClick={onClick}>
+      Reset {label}
+    </button>
+  ),
   useSettingsSearchTargetId: () => mocks.target,
   useSettingsSearchRevealedId: () => mocks.target,
   SettingsSection: ({ title, children }: { title: string; children: ReactNode }) => (
@@ -51,12 +56,14 @@ vi.mock("./settingsLayout", () => ({
     description,
     status,
     control,
+    resetAction,
     children,
   }: {
     title: ReactNode;
     description?: ReactNode;
     status?: ReactNode;
     control?: ReactNode;
+    resetAction?: ReactNode;
     children?: ReactNode;
   }) => (
     <div>
@@ -64,6 +71,7 @@ vi.mock("./settingsLayout", () => ({
       <p>{description}</p>
       <p>{status}</p>
       {control}
+      {resetAction}
       {children}
     </div>
   ),
@@ -81,6 +89,7 @@ const setup = (over: Partial<HeavyQueueState> = {}) => {
   mocks.actions.setMacCpuCeilingPercent.mockReset();
   mocks.actions.setMacMemoryFloorPercent.mockReset();
   mocks.actions.setHeavyOverLimitSeconds.mockReset();
+  mocks.actions.setAdmissionLimits.mockReset();
   mocks.target = null;
   mocks.actions.canChange = true;
   mocks.scope = { environmentIds: ["env"] };
@@ -149,6 +158,30 @@ it("changes the pause, the Mac limits and the other rows", async () => {
   await userEvent.click(idle);
   await userEvent.click(screen.getByRole("option", { name: "Off" }));
   expect(mocks.actions.setDeviceIdleMinutes).toHaveBeenCalledWith(0);
+});
+
+it("saves each job sizing field and resets a changed one to its default", async () => {
+  setup({ lightJobMegabytes: 256 });
+  await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  const sizing = screen.getByRole("group", { name: "Job sizing" });
+  await expect.element(sizing).toBeVisible();
+  await expect.element(screen.getByText(/unless it usually uses under 256 MB\./)).toBeVisible();
+  for (const [label, typed, saved] of [
+    ["Light job size", "300", { lightJobMegabytes: 300 }],
+    ["Memory guess for a new heavy job", "2048", { unseenHeavyMegabytes: 2048 }],
+    ["Memory guess for a new medium job", "1", { unseenMediumMegabytes: 128 }],
+    ["Commands remembered", "200", { historyCommands: 200 }],
+    ["Let smaller jobs pass for", "10", { headPatienceMinutes: 10 }],
+  ] as const) {
+    const field = sizing.getByLabelText(label, { exact: true });
+    await field.fill(typed);
+    await field.element().blur();
+    expect(mocks.actions.setAdmissionLimits).toHaveBeenLastCalledWith(saved);
+  }
+  // Only the changed field offers a reset, and it sends the default back.
+  expect(sizing.getByRole("button", { name: /^Reset / }).elements()).toHaveLength(1);
+  await userEvent.click(sizing.getByRole("button", { name: "Reset Light job size" }));
+  expect(mocks.actions.setAdmissionLimits).toHaveBeenLastCalledWith({ lightJobMegabytes: 512 });
 });
 
 it("hides the queue rows while the queue is off, and a search still reaches one with why", async () => {

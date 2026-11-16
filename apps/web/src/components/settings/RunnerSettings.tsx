@@ -234,7 +234,12 @@ function SegmentedRow<K extends ChoiceKey>({
   );
 }
 
-const UNIT_SUFFIX: Partial<Record<string, string>> = { percent: "%", seconds: "s" };
+const UNIT_SUFFIX: Partial<Record<string, string>> = {
+  percent: "%",
+  seconds: "s",
+  minutes: "min",
+  commands: "",
+};
 
 /** A whole-number stepper with its unit; commits only a changed integer. Null value reads "Mixed". */
 export function UnitStepper({
