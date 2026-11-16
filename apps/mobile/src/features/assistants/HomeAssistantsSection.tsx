@@ -159,6 +159,7 @@ function GroupMark(props: {
   readonly environmentId: AssistantTeamEntry["environmentId"];
   readonly members: ReadonlyArray<TeamsMember>;
   readonly kind: ZoneIndicator["kind"] | null;
+  readonly sidebar: boolean;
 }) {
   if (props.members.length === 0) {
     return (
@@ -179,13 +180,17 @@ function GroupMark(props: {
         }))}
       />
       {props.kind === null ? null : (
+        // A disc in the surface's own color cuts the dot out of the faces, like web's ring. A border
+        // would square off the fill on iOS.
         <View
           testID="group-dot"
           className={cn(
-            "absolute -right-0.5 -bottom-0.5 size-2 rounded-full",
-            INDICATOR_DOT[props.kind],
+            "absolute -right-1 -bottom-1 size-3 items-center justify-center rounded-full",
+            props.sidebar ? "bg-drawer" : "bg-screen",
           )}
-        />
+        >
+          <View className={cn("size-2 rounded-full", INDICATOR_DOT[props.kind])} />
+        </View>
       )}
     </View>
   );
@@ -532,6 +537,7 @@ const FolderRow = memo(function FolderRow(props: {
           environmentId={environmentId}
           members={props.members}
           kind={props.indicatorKind}
+          sidebar={props.sidebar}
         />
         <Text
           className={cn(
