@@ -1,4 +1,8 @@
 import {
+  CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+  CONNECT_ENVIRONMENT_TO_CREATE_SCHEDULED_TASK,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   isRoutineTarget,
   scheduledTaskWording,
 } from "@t3tools/client-runtime/scheduledTaskWording";
@@ -457,7 +461,7 @@ export function SettingsScheduledTasksRouteScreen() {
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to view and create scheduled tasks."
+              ? CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS
               : "No environments match these filters. Change the filter above."}
           </Text>
         )}
@@ -616,7 +620,7 @@ function SettingsScheduledTaskEditorScreen({ title: pageTitle }: { readonly titl
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
+              ? CONNECT_ENVIRONMENT_TO_CREATE_SCHEDULED_TASK
               : "No environments match the current filters. Change the filters to create a task."}
           </Text>
         )}

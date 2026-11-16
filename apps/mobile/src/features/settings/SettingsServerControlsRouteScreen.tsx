@@ -59,6 +59,13 @@ import { sameFallbackModels } from "@t3tools/shared/serverSettings";
 import { fallbackModelSelectionsOf } from "@t3tools/shared/usageLimits";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import {
+  CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   SERVER_SETTINGS_COPY,
   STREAMING_CHOICES,
   SUBMODULE_CHOICES,
@@ -72,6 +79,13 @@ const PAGE_TITLES: Record<SettingsPage, string> = {
   "source-control": "Source control",
   worktrees: "Worktrees",
   maintenance: "Maintenance",
+};
+
+const CONNECT_ENVIRONMENT: Record<SettingsPage, string> = {
+  threads: CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+  "source-control": CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+  worktrees: CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
+  maintenance: CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -154,6 +168,7 @@ function ServerSettingsDetail(props: {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const {
+    availableTargets,
     selectedTargets,
     selectedProjects,
     selectedProjectGroups,
@@ -292,7 +307,10 @@ function ServerSettingsDetail(props: {
           <Text className="px-2 text-base text-foreground-muted">
             {projectSelected
               ? "Select a project with a checkout on a connected environment."
-              : "Use the filter above to select a connected environment."}
+              : emptyEnvironmentSelectionText(
+                  CONNECT_ENVIRONMENT[props.page],
+                  availableTargets.length > 0,
+                )}
           </Text>
         ) : (
           <>

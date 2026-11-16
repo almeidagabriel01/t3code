@@ -45,6 +45,11 @@ vi.mock("./settings-environment-filter", () => ({
   }),
 }));
 
+import {
+  CONNECT_ENVIRONMENT_FOR_MCP_SERVERS_AND_SKILLS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+
 import { SettingsAgentToolsRouteScreen } from "./SettingsAgentToolsRouteScreen";
 
 async function text() {
@@ -73,8 +78,12 @@ describe("SettingsAgentToolsRouteScreen", () => {
   });
 
   it("explains an empty selection", async () => {
-    expect(await text()).toContain("Connect an environment");
+    expect(await text()).toBe(
+      emptyEnvironmentSelectionText(CONNECT_ENVIRONMENT_FOR_MCP_SERVERS_AND_SKILLS, false),
+    );
     mocks.available = [{ environmentId: "a", label: "Mac" }];
-    expect(await text()).toContain("No environments match");
+    expect(await text()).toBe(
+      emptyEnvironmentSelectionText(CONNECT_ENVIRONMENT_FOR_MCP_SERVERS_AND_SKILLS, true),
+    );
   });
 });

@@ -351,6 +351,10 @@
       "types": "./src/messageFold.ts",
       "default": "./src/messageFold.ts"
     },
+    "./settings-empty-selection": {
+      "types": "./src/settingsEmptySelection.ts",
+      "default": "./src/settingsEmptySelection.ts"
+    },
     "./scheduledTaskWording": {
       "types": "./src/scheduledTaskWording.ts",
       "default": "./src/scheduledTaskWording.ts"

@@ -16,6 +16,7 @@ const { mocks, Children } = vi.hoisted(() => ({
     selectedProjects: null as null | { id: string; environmentId: string }[],
     tasksByEnvironment: {} as Record<string, unknown[]>,
     phase: "connected" as string,
+    noEnvironment: false,
   },
 }));
 vi.mock("react-native", () => ({
@@ -129,8 +130,8 @@ vi.mock("../../state/presentation", () => ({
 }));
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    availableTargets: hubAndLab,
-    selectedTargets: hubAndLab,
+    availableTargets: mocks.noEnvironment ? [] : hubAndLab,
+    selectedTargets: mocks.noEnvironment ? [] : hubAndLab,
     selectedProjects: mocks.selectedProjects,
   }),
 }));
@@ -186,6 +187,7 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
 
+import { CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS } from "@t3tools/client-runtime/settings-empty-selection";
 import {
   SettingsScheduledTaskEditRouteScreen,
   SettingsScheduledTasksRouteScreen,
@@ -235,6 +237,7 @@ beforeEach(() => {
   mocks.selectedProjects = null;
   mocks.tasksByEnvironment = {};
   mocks.phase = "connected";
+  mocks.noEnvironment = false;
   mocks.navigate.mockReset();
   mocks.upsert.mockReset().mockResolvedValue({ _tag: "Success" });
 });
@@ -353,7 +356,7 @@ describe("scheduled task without a conversation", () => {
 });
 
 describe("scheduled tasks screen with several projects selected", () => {
-  it("lists the tasks of the union of the selected projects, on the environments that have one", () => {
+  it("lists the tasks of the union of the selected projects, on the environments that have one, or asks for one", () => {
     const titled = (id: string, projectId: string) => ({
       ...task(null),
       id,
@@ -375,5 +378,9 @@ describe("scheduled tasks screen with several projects selected", () => {
     expect(find("Edit Task three")).toBeUndefined();
     expect(container.querySelector('section[aria-label="Lab"]')).toBeNull();
     expect(find("Edit Task four")).toBeUndefined();
+
+    mocks.noEnvironment = true;
+    act(() => root.render(<SettingsScheduledTasksRouteScreen />));
+    expect(container.textContent).toContain(CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS);
   });
 });

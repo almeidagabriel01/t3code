@@ -1,5 +1,9 @@
 import * as Dialog from "../../components/ui/Dialog";
 import {
+  CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -41,7 +45,7 @@ import { PROVIDER_ACCOUNTS_COPY, providerName } from "./providerAccountsCopy";
 
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const accessByEnvironment = useEnvironmentsScopeAccess(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
@@ -54,7 +58,12 @@ export function SettingsProviderAccountsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+              availableTargets.length > 0,
+            )}
+          </Text>
         ) : (
           selectedTargets.map((environment) => {
             const access = accessByEnvironment.get(environment.environmentId);
