@@ -6,6 +6,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -16,6 +17,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 
+import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -85,7 +87,7 @@ const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(functio
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.layer", (it) => {
-  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+  it.effect.each(["revoke", "revokeAllExcept", "replace", "revokeFromAnotherProcess"] as const)(
     "invalidates every connection for a session on %s and leaves other sessions active",
     (operation) =>
       Effect.gen(function* () {
@@ -107,7 +109,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
           .pipe(Effect.forkScoped({ startImmediately: true }));
         if (operation === "revoke") yield* sessions.revoke(client.sessionId);
         else if (operation === "revokeAllExcept") yield* sessions.revokeAllExcept(owner.sessionId);
-        else yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        else if (operation === "replace")
+          yield* sessions.issue({ ...relaySessionInput, replaceSessionId: client.sessionId });
+        else {
+          // The CLI revokes through its own store: only the shared database sees it.
+          const repository = yield* AuthSessions.AuthSessionRepository;
+          yield* repository.revoke({ sessionId: client.sessionId, revokedAt: yield* DateTime.now });
+          // Well before the client's one-hour expiry.
+          yield* TestClock.adjust(Duration.minutes(1));
+        }
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);

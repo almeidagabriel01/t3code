@@ -408,7 +408,10 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /**
+     * Completes when a live socket's session is revoked (here or by another process sharing the
+     * database) or expires without a renewal for its DPoP key.
+     */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
@@ -427,6 +430,9 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
+// Another process (the `t3 auth` CLI) revokes in the shared database without reaching this
+// process's change events, so live sockets re-read their session row at least this often.
+const SESSION_RECHECK_INTERVAL_MS = 2_000;
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -1074,7 +1080,10 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
+            yield* Effect.raceFirst(
+              nextRemoval,
+              Effect.sleep(Duration.millis(Math.min(remaining, SESSION_RECHECK_INTERVAL_MS))),
+            );
             continue;
           }
           const successorId =
