@@ -54,7 +54,7 @@ import {
   useVisibleThreadShells,
 } from "../../state/entities";
 import { useAssistantEntries, useAssistantsEnvironmentIds } from "../../state/assistants";
-import { useIntegrationsEnvironmentIds } from "../../state/integrations";
+import { openIntegrationNames, useIntegrationsEnvironmentIds } from "../../state/integrations";
 import { useAutonomyPause } from "../../state/autonomy";
 import { useOpenAssistantEditor } from "../assistants/openAssistantEditor";
 import { useOpenAssistantTeam } from "../assistants/assistantTeamTarget";
@@ -261,7 +261,8 @@ export function CommandPalette(props: {
   const assistantEntries = useAssistantEntries();
   const assistants = assistantEntries.active;
   const hasAssistantsEnvironment = useAssistantsEnvironmentIds().length > 0;
-  const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
+  const integrationsEnvironmentIds = useIntegrationsEnvironmentIds();
+  const hasIntegrations = integrationsEnvironmentIds.length > 0;
   const autonomyPause = useAutonomyPause();
   const openAssistantEditor = useOpenAssistantEditor();
   const openAssistantTeam = useOpenAssistantTeam();
@@ -327,6 +328,8 @@ export function CommandPalette(props: {
       .filter((match) => match.source === "user" || match.source === "assistant")
       .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
+  // Joined so the items rebuild only when the names change, not on every keystroke.
+  const integrationNamesKey = openIntegrationNames(integrationsEnvironmentIds, query).join("\n");
   const items = useMemo(() => {
     const openPage = (target: SettingsPageTarget) => openSettings(navigation, target);
     const actions: CommandPaletteItem[] = [
@@ -463,7 +466,13 @@ export function CommandPalette(props: {
     }
     if (hasIntegrations) {
       actions.push(
-        settingsPageItem("integrations", "Integrations", "SettingsIntegrations", openPage),
+        settingsPageItem(
+          "integrations",
+          "Integrations",
+          "SettingsIntegrations",
+          openPage,
+          integrationNamesKey.split("\n").filter(Boolean),
+        ),
       );
     }
     const projectByKey = new Map(
@@ -595,6 +604,7 @@ export function CommandPalette(props: {
     props.pathname,
     hasAssistantsEnvironment,
     hasIntegrations,
+    integrationNamesKey,
     openAssistantTeam,
     autonomyPause,
     openAssistantEditor,

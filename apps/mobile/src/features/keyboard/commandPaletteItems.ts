@@ -38,18 +38,22 @@ const PAGE_TERMS: Partial<Record<SettingsPageTarget, readonly string[]>> = {
   SettingsUsage: USAGE_PAGE_LABELS,
 };
 
-/** An action that opens a Settings page, found by the text that page draws, as Settings search finds it. */
+/**
+ * An action that opens a Settings page, found by the text that page draws, as Settings search finds
+ * it. `liveLabels` adds text the page draws from live state.
+ */
 export function settingsPageItem(
   key: string,
   title: string,
   target: SettingsPageTarget,
   open: (target: SettingsPageTarget) => void,
+  liveLabels: readonly string[] = [],
 ): CommandPaletteItem {
   return {
     key,
     kind: "action",
     title,
-    searchTerms: PAGE_TERMS[target] ?? [],
+    searchTerms: [...(PAGE_TERMS[target] ?? []), ...liveLabels],
     run: () => open(target),
   };
 }

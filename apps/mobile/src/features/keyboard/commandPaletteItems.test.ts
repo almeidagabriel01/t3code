@@ -63,6 +63,34 @@ describe("filterCommandPaletteItems", () => {
   });
 });
 
+describe("palette actions", () => {
+  // The titles CommandPalette.tsx draws for actions that keep their own synonyms.
+  const titles = [
+    "New thread in…",
+    "New thread in Mobile app",
+    "Add project",
+    "Open settings",
+    "Triage an issue",
+    "Open Ada",
+    "New assistant",
+    "New assistant group",
+    "Describe an assistant",
+    "Assistant info",
+    "Group info",
+    "Go to file",
+    "Open terminal",
+    "Review changes",
+    "Copy PR link or thread",
+    "Pause assistant notifications",
+    "Turn on assistant notifications",
+  ];
+  const actions = titles.map((title) => item(title, title, "action"));
+
+  it.each(titles)("finds %s by its own title, without synonyms", (title) => {
+    expect(keys(filterCommandPaletteItems(actions, title, [], NOW))[0]).toBe(title);
+  });
+});
+
 describe("autonomyPauseItems", () => {
   it("offers pause or resume by the current state, and nothing without a server", () => {
     expect(autonomyPauseItems(null)).toEqual([]);
@@ -141,4 +169,17 @@ describe("settingsPageItem", () => {
   ])("finds $page by the text it draws: $query", ({ query, page }) => {
     expect(keys(filterCommandPaletteItems(pages, query, []))).toContain(page);
   });
+
+  it.each(["linear", "google"])(
+    "finds Integrations by a live name only when it has one: %s",
+    (query) => {
+      const open = () => {};
+      const live = [
+        settingsPageItem("i", "Integrations", "SettingsIntegrations", open, ["Linear", "Google"]),
+      ];
+      const none = [settingsPageItem("i", "Integrations", "SettingsIntegrations", open)];
+      expect(keys(filterCommandPaletteItems(live, query, []))).toEqual(["i"]);
+      expect(keys(filterCommandPaletteItems(none, query, []))).toEqual([]);
+    },
+  );
 });
