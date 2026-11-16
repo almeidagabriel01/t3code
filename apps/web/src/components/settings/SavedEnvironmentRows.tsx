@@ -320,6 +320,8 @@ export function SavedBackendListRow({
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
               onPairAgain={() => onPairAgain(environment)}
+              removing={isRemoving}
+              onRemove={() => onRemove(environment)}
             />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
