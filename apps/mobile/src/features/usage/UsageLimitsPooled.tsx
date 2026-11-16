@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
-import { selectEnvironmentToSee } from "@t3tools/client-runtime/settings-empty-selection";
+import {
+  connectEnvironmentToSee,
+  selectEnvironmentToSee,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
@@ -467,9 +470,11 @@ export function UsageLimitsSection({
       failedLabels.length === 0 &&
       externalLinks.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
-          {selected.size === 0
-            ? selectEnvironmentToSee("limits")
-            : "No provider on the selected environments reports subscription limits."}
+          {presentations.size === 0
+            ? connectEnvironmentToSee("limits")
+            : selected.size === 0
+              ? selectEnvironmentToSee("limits")
+              : "No provider on the selected environments reports subscription limits."}
         </Text>
       ) : null}
       {pools.map((pool) => {
