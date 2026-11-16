@@ -31,6 +31,10 @@ const { mocks, Children } = vi.hoisted(() => ({
 vi.mock("../../state/integrations", () => ({ useIntegrationsState: () => mocks.integrations }));
 vi.mock("../../state/entities", () => ({
   useEnvironmentServerConfig: () => ({ providers: mocks.providers }),
+  useProjects: () => [
+    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
+    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
+  ],
 }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks } }),
@@ -175,12 +179,6 @@ vi.mock("../../state/assistants", () => ({
   useAssistantSpend: () => ({ data: mocks.spend }),
   useAssistantSandbox: () => mocks.sandbox,
   useAssistantsEnvironmentIds: () => ["hub"],
-}));
-vi.mock("../../state/entities", () => ({
-  useProjects: () => [
-    { environmentId: "hub", id: "p1", title: "Alpha", workspaceRoot: "/a" },
-    { environmentId: "hub", id: "p2", title: "Beta", workspaceRoot: "/b" },
-  ],
 }));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
