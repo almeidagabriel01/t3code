@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
+import { formatDecisionExpiry } from "@t3tools/client-runtime/state/decisions";
+import {
+  GUEST_WAITING_LABEL,
+  needsYouCards,
+  type NeedsYouDue,
+} from "@t3tools/client-runtime/sidebarZones";
 import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   isAtomCommandInterrupted,
@@ -43,10 +48,14 @@ interface ItemOrigin {
   readonly environmentId: string;
   readonly threadId: string;
   readonly createdAt: string | null;
+  /** The decision's deadline; null for a request or a guest. */
+  readonly due: NeedsYouDue;
   /** The assistant whose work this is; null for a project thread. */
   readonly assistant: Assistant | null;
   /** Set when the thread is an assistant's thread in a group. */
   readonly teamName: string | null;
+  /** The thread title a decision carries, for a thread this client has not loaded. */
+  readonly threadTitle: string | null;
   readonly sidebar: boolean;
 }
 
@@ -75,9 +84,16 @@ function ItemFrame(
   const strong = props.sidebar ? "text-drawer-foreground" : "text-foreground";
   const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
   const iconTint = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
-  const origin = props.teamName ?? props.assistant?.name ?? thread?.title ?? "Thread";
+  const origin =
+    props.teamName ?? props.assistant?.name ?? thread?.title ?? props.threadTitle ?? "Thread";
   return (
-    <View testID="needs-you-item" className="gap-1.5 rounded-2xl px-2 py-2">
+    <View
+      testID="needs-you-item"
+      className={cn(
+        "gap-1.5 rounded-2xl px-2 py-2",
+        props.due?.soon === true && "border border-warning-border bg-warning",
+      )}
+    >
       <View className="min-h-6 flex-row items-center gap-2">
         {props.teamName !== null ? (
           <SymbolView
@@ -108,7 +124,16 @@ function ItemFrame(
         ) : (
           <View className="flex-1" />
         )}
-        {props.createdAt === null ? null : (
+        {props.due !== null ? (
+          <Text
+            className={cn(
+              "text-xs",
+              props.due.soon ? "font-t3-medium text-warning-foreground" : muted,
+            )}
+          >
+            {formatDecisionExpiry(props.due.at, nowMs)}
+          </Text>
+        ) : props.createdAt === null ? null : (
           <Text className={cn("text-xs", muted)}>{relativeTime(props.createdAt, nowMs)}</Text>
         )}
       </View>
@@ -332,12 +357,17 @@ const GuestItem = memo(function GuestItem(props: ItemOrigin) {
   );
 });
 
-/** Everything that waits on the user, oldest first, answerable in place. Absent when empty. */
+/**
+ * Everything that waits on the user, answerable in place: what expires within the hour first,
+ * then oldest first (`needsYouCards`). Absent when empty.
+ */
 export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?: boolean }) {
-  const { items } = useSidebarZones();
+  const { items: waits } = useSidebarZones();
   const { active, activeTeams } = useAssistantEntries();
   const [showAll, setShowAll] = useState(false);
-  if (items.length === 0) return null;
+  const nowMs = useNowMinuteMs();
+  if (waits.length === 0) return null;
+  const items = needsYouCards(waits, nowMs);
   const sidebar = props.sidebar === true;
   const assistantByKey = new Map(
     active.map((entry) => [`${entry.environmentId}:${entry.assistant.id}`, entry.assistant]),
@@ -361,6 +391,8 @@ export function NeedsYouZone(props: { readonly gutter: number; readonly sidebar?
           environmentId: item.environmentId,
           threadId: item.threadId,
           createdAt: item.createdAt,
+          due: item.due,
+          threadTitle: item.kind === "decision" ? item.decision.threadTitle || null : null,
           assistant:
             item.owner.kind === "assistant"
               ? (assistantByKey.get(item.owner.assistantKey) ?? null)

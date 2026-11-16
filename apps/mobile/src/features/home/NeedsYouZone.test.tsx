@@ -237,7 +237,14 @@ describe("NeedsYouZone", () => {
         oldestPendingGuestMessageAt: at(4),
       },
     ];
-    mocks.decisions = [decision("d1", 2, at(3))];
+    // Its thread is not loaded here, so the card names it by the title the decision carries.
+    const unloaded = decision("d1", 2, at(3));
+    mocks.decisions = [
+      {
+        ...unloaded,
+        decision: { ...unloaded.decision, fromThreadId: "gone", threadTitle: "Plan" },
+      },
+    ];
     mocks.detail = {
       plain: {
         approvals: [
@@ -263,6 +270,7 @@ describe("NeedsYouZone", () => {
     expect(approve!.textContent).toContain("· Website");
     expect(approve!.textContent).toContain("rm -rf build");
     expect(pick!.textContent).toContain("Pick d1");
+    expect(pick!.textContent).toContain("Plan");
     // The guest's messages are sent or dismissed in the thread, so its item only opens it.
     expect(guest!.textContent).toContain("Review me");
     expect(guest!.textContent).toContain("Guest waiting");

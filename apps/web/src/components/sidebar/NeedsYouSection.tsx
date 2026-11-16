@@ -1,6 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { GUEST_WAITING_LABEL, type NeedsYouItem } from "@t3tools/client-runtime/sidebarZones";
+import {
+  GUEST_WAITING_LABEL,
+  needsYouCards,
+  type NeedsYouCard as NeedsYouCardModel,
+  type NeedsYouItem,
+} from "@t3tools/client-runtime/sidebarZones";
+import { formatDecisionExpiry } from "@t3tools/client-runtime/state/decisions";
 import { buildPendingUserInputAnswers } from "@t3tools/client-runtime/state/pending-user-input";
 import {
   isAtomCommandInterrupted,
@@ -33,12 +39,13 @@ import { useEnvironmentScope } from "../../state/session";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { cn } from "../../lib/utils";
 import { AssistantAvatar } from "../assistants/assistantPresentation";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
-type Item = NeedsYouItem<Decision>;
+type Item = NeedsYouCardModel<Decision>;
 type Project = ProjectFaviconProject & { readonly title: string };
 
 const VISIBLE_ITEMS = 5;
@@ -79,9 +86,21 @@ function CardShell(props: {
   readonly error: string | null;
 }) {
   const nowMs = useNowMinuteMs();
+  const { createdAt, due } = props.item;
+  const soon = due?.soon === true;
   return (
-    <li className="list-none px-1 py-0.5" data-testid="needs-you-item" data-kind={props.item.kind}>
-      <div className="rounded-lg border border-foreground/10 px-2 py-1.5">
+    <li
+      className="list-none px-1 py-0.5"
+      data-testid="needs-you-item"
+      data-kind={props.item.kind}
+      data-due-soon={soon || undefined}
+    >
+      <div
+        className={cn(
+          "rounded-lg border px-2 py-1.5",
+          soon ? "border-warning/32 bg-warning-surface" : "border-foreground/10",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-1.5 text-xs">
           {props.origin}
           {props.projectName === null ? null : (
@@ -89,10 +108,18 @@ function CardShell(props: {
               · {props.projectName}
             </span>
           )}
-          <span className="ms-auto shrink-0 ps-1 text-muted-foreground tabular-nums">
-            {props.item.createdAt === null
-              ? null
-              : formatRelativeTimeLabel(props.item.createdAt, nowMs)}
+          <span
+            data-testid="needs-you-when"
+            className={cn(
+              "ms-auto shrink-0 ps-1 tabular-nums",
+              soon ? "font-medium text-warning-foreground" : "text-muted-foreground",
+            )}
+          >
+            {due !== null
+              ? formatDecisionExpiry(due.at, nowMs)
+              : createdAt === null
+                ? null
+                : formatRelativeTimeLabel(createdAt, nowMs)}
           </span>
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -384,18 +411,23 @@ const NeedsYouCard = memo(function NeedsYouCard(props: {
   }
 });
 
-/** Everything waiting on the user, oldest first, answerable in place. Absent while nothing waits. */
+/**
+ * Everything waiting on the user, answerable in place: what expires within the hour first, then
+ * oldest first (`needsYouCards`). Absent while nothing waits.
+ */
 export const NeedsYouSection = memo(function NeedsYouSection(props: {
-  readonly items: ReadonlyArray<Item>;
+  readonly items: ReadonlyArray<NeedsYouItem<Decision>>;
   readonly assistantByKey: ReadonlyMap<string, AssistantEntry>;
   readonly teamNameByKey: ReadonlyMap<string, string>;
   readonly projectOf: (environmentId: EnvironmentId, projectId: ProjectId) => Project | undefined;
   readonly onOpenThread: (threadRef: ScopedThreadRef) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const nowMs = useNowMinuteMs();
   if (props.items.length === 0) return null;
-  const shown = showAll ? props.items : props.items.slice(0, VISIBLE_ITEMS);
-  const more = props.items.length - shown.length;
+  const cards = needsYouCards(props.items, nowMs);
+  const shown = showAll ? cards : cards.slice(0, VISIBLE_ITEMS);
+  const more = cards.length - shown.length;
   return (
     <>
       <li
