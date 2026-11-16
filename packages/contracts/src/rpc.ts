@@ -578,6 +578,7 @@ import {
   HeavyQueueSetMacMemoryFloorPercentInput,
   HeavyQueueSetMacCpuCeilingPercentInput,
   HeavyQueueSetHeavyOverLimitSecondsInput,
+  HeavyQueueSetAdmissionLimitsInput,
   HeavyQueueSetPriorityInput,
   HeavyQueueSetPausedInput,
   HeavyQueueSetRuleInput,
@@ -895,6 +896,7 @@ export const WS_METHODS = {
   heavyQueueSetMacMemoryFloorPercent: "heavyQueue.setMacMemoryFloorPercent",
   heavyQueueSetMacCpuCeilingPercent: "heavyQueue.setMacCpuCeilingPercent",
   heavyQueueSetHeavyOverLimitSeconds: "heavyQueue.setHeavyOverLimitSeconds",
+  heavyQueueSetAdmissionLimits: "heavyQueue.setAdmissionLimits",
   heavyQueueSetPriority: "heavyQueue.setPriority",
   heavyQueueSetClaudeHook: "heavyQueue.setClaudeHook",
   heavyQueueSetDeviceIdleMinutes: "heavyQueue.setDeviceIdleMinutes",
@@ -2783,6 +2785,11 @@ const WsHeavyQueueSetHeavyOverLimitSecondsRpc = Rpc.make(
   },
 );
 
+const WsHeavyQueueSetAdmissionLimitsRpc = Rpc.make(WS_METHODS.heavyQueueSetAdmissionLimits, {
+  payload: HeavyQueueSetAdmissionLimitsInput,
+  error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
+});
+
 const WsHeavyQueueSetPriorityRpc = Rpc.make(WS_METHODS.heavyQueueSetPriority, {
   payload: HeavyQueueSetPriorityInput,
   error: Schema.Union([HeavyQueueError, EnvironmentAuthorizationError]),
@@ -3257,6 +3264,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsHeavyQueueSetMacMemoryFloorPercentRpc,
   WsHeavyQueueSetMacCpuCeilingPercentRpc,
   WsHeavyQueueSetHeavyOverLimitSecondsRpc,
+  WsHeavyQueueSetAdmissionLimitsRpc,
   WsHeavyQueueSetPriorityRpc,
   WsHeavyQueueSetClaudeHookRpc,
   WsHeavyQueueSetDeviceIdleMinutesRpc,

@@ -121,11 +121,20 @@ const MEMORY_REOPEN_POINTS = 5;
 /** Sustained swap-in above this is the machine paging work back in, not a blip. */
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 
-/** A head waiting this long stops anything from passing it. */
-const HEAD_PATIENCE_MS = 5 * 60_000;
+const MIB = 1024 ** 2;
 const GIB = 1024 ** 3;
-/** A command whose usual run stays under this may start while memory is short: it barely adds to it. */
-const LIGHT_BYTES = 512 * 1024 ** 2;
+
+/** How admission sizes jobs, kept in the queue file beside the Mac's limits. */
+export interface SizingLimits {
+  /** A command whose usual run stays under this may start while memory is short. */
+  readonly lightJobMegabytes: number;
+  /** What a command with no finished runs is taken to need. */
+  readonly unseenHeavyMegabytes: number;
+  readonly unseenMediumMegabytes: number;
+  /** A head waiting this long stops anything from passing it. */
+  readonly headPatienceMinutes: number;
+}
+type Guesses = Pick<SizingLimits, "unseenHeavyMegabytes" | "unseenMediumMegabytes">;
 
 type Kind = "exclusive" | "heavy" | "medium";
 
@@ -200,6 +209,7 @@ export const estimate = (
   history: History,
   entry: Pick<HeavyQueueEntry, "label" | "server">,
   cpuCount: number,
+  guesses: Guesses,
 ): Cost => {
   const runs = runsOf(history, entry);
   const medium = kindOf(entry) === "medium";
@@ -216,16 +226,20 @@ export const estimate = (
   }
   return {
     cpu: guessCpu,
-    memoryBytes: (medium ? 0.5 : 1.5) * GIB,
+    memoryBytes: (medium ? guesses.unseenMediumMegabytes : guesses.unseenHeavyMegabytes) * MIB,
     durationMs: null,
   };
 };
 
 /** Learned to stay small; a command never seen is not light. */
-const isLight = (history: History, entry: Pick<HeavyQueueEntry, "label" | "server">) =>
-  runsOf(history, entry).length > 0 && estimate(history, entry, 1).memoryBytes < LIGHT_BYTES;
+const isLight = (
+  input: Pick<PlanInput, "history" | keyof SizingLimits>,
+  entry: Pick<HeavyQueueEntry, "label" | "server">,
+) =>
+  runsOf(input.history, entry).length > 0 &&
+  estimate(input.history, entry, 1, input).memoryBytes < input.lightJobMegabytes * MIB;
 
-export interface PlanInput extends MacLimits {
+export interface PlanInput extends MacLimits, SizingLimits {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
   readonly maxRunning: number;
   /** False: the queue is off and every waiter starts, so nothing below applies. */
@@ -260,13 +274,13 @@ const pct = (sample: Sample) => Math.round((sample.busyCores / Math.max(1, sampl
  * `plan`'s check for the head, which Hybrid routing asks too.
  */
 export const jobVerdict = (
-  input: Pick<PlanInput, "history" | "holding" | keyof MacLimits>,
+  input: Pick<PlanInput, "history" | "holding" | keyof MacLimits | keyof Guesses>,
   sample: Sample,
   entry: Pick<HeavyQueueEntry, "label" | "server">,
 ) => {
   const floorPercent = input.macMemoryFloorPercent + (input.holding ? MEMORY_REOPEN_POINTS : 0);
   const floor = (floorPercent / 100) * sample.totalMemoryBytes;
-  const cost = estimate(input.history, entry, sample.cpuCount);
+  const cost = estimate(input.history, entry, sample.cpuCount, input);
   if (sample.availableMemoryBytes - cost.memoryBytes < floor) {
     return {
       cost,
@@ -348,7 +362,7 @@ export const plan = (input: PlanInput): Plan => {
   const verdict = (entry: HeavyQueueEntry): { hold: HeavyQueueHold | null; why: string } => {
     const job = jobVerdict(input, sample, entry);
     if (machine === null) return job;
-    if (machine !== "cpu" && !critical && isLight(input.history, entry) && job.hold !== "job-cpu") {
+    if (machine !== "cpu" && !critical && isLight(input, entry) && job.hold !== "job-cpu") {
       return { hold: null, why: "" };
     }
     return { hold: machine, why: heavyHoldText(machine, sample, input.maxRunning) };
@@ -358,7 +372,7 @@ export const plan = (input: PlanInput): Plan => {
 
   // A later job that fits passes a head that does not, until the head has waited its patience.
   const tried: Record<string, string> = {};
-  if (now - Date.parse(head.createdAt) < HEAD_PATIENCE_MS) {
+  if (now - Date.parse(head.createdAt) < input.headPatienceMinutes * 60_000) {
     for (const waiter of waiting.slice(1)) {
       if (kindOf(waiter) === "exclusive") continue;
       const fit = verdict(waiter);

@@ -105,6 +105,7 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
       WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
       WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+      WS_METHODS.heavyQueueSetAdmissionLimits,
       WS_METHODS.heavyQueueStopCommand,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);

@@ -645,19 +645,64 @@ describe("heavy queue file", () => {
       return [macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds];
     };
     expect(limits()).toEqual([20, 70, 20]);
+    const sizing = () => {
+      const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = Queue.readDoc(dir);
+      const { historyCommands, headPatienceMinutes } = Queue.readDoc(dir);
+      return [
+        lightJobMegabytes,
+        unseenHeavyMegabytes,
+        unseenMediumMegabytes,
+        historyCommands,
+        headPatienceMinutes,
+      ];
+    };
+    expect(sizing()).toEqual([512, 1536, 512, 1000, 5]);
     NodeFS.writeFileSync(
       file,
       JSON.stringify({
         macMemoryFloorPercent: 90,
         macCpuCeilingPercent: "70",
         heavyOverLimitSeconds: 45,
+        lightJobMegabytes: 1,
+        historyCommands: "50",
       }),
     );
     expect(limits()).toEqual([20, 70, 45]);
+    expect(sizing()).toEqual([512, 1536, 512, 1000, 5]);
     Queue.setLimit(dir, "macMemoryFloorPercent", 2);
     Queue.setLimit(dir, "macCpuCeilingPercent", 85.7);
     Queue.setLimit(dir, "heavyOverLimitSeconds", 9_999);
     expect(limits()).toEqual([5, 85, 300]);
+    Queue.setLimit(dir, "lightJobMegabytes", 256);
+    Queue.setLimit(dir, "headPatienceMinutes", 999);
+    expect(sizing()).toEqual([256, 1536, 512, 1000, 60]);
+  });
+
+  it("forgets the oldest commands beyond the stored history size", () => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    Queue.setLimit(dir, "historyCommands", 50);
+    const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    doc.history = Object.fromEntries(
+      Array.from({ length: 80 }, (_, n) => [`old ${n}`, [{ memoryBytes: 1, durationMs: 1 }]]),
+    );
+    NodeFS.writeFileSync(file, JSON.stringify(doc));
+    Queue.enqueue(dir, { ...entry("r"), label: "vp run build" });
+    Queue.tryStart(dir, "r");
+    Queue.recordSample(
+      dir,
+      {
+        at: 1_800_000_000_000,
+        busyCores: 0,
+        cpuCount: 4,
+        availableMemoryBytes: 1,
+        totalMemoryBytes: 1,
+      },
+      { r: { cpu: 1, memoryBytes: 10 } },
+    );
+    Queue.remove(dir, "r");
+    const commands = Object.keys(Queue.readDoc(dir).history);
+    expect([commands.length, commands[0], commands.at(-1)]).toEqual([50, "old 31", "vp run build"]);
   });
 
   it("counts the Mac over its limits for routing only once readings stay there for the window", () => {

@@ -194,6 +194,7 @@ describe("heavy queue client guards", () => {
       WS_METHODS.heavyQueueSetMacMemoryFloorPercent,
       WS_METHODS.heavyQueueSetMacCpuCeilingPercent,
       WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
+      WS_METHODS.heavyQueueSetAdmissionLimits,
       WS_METHODS.heavyQueueStopCommand,
     ])
       expect(clientRpcRequiredScopes(method, {})).toEqual(["terminal:operate"]);

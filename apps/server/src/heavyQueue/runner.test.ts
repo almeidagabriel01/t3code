@@ -5,7 +5,12 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { heavyHoldText, type HeavyQueueEntry, type RunnerProjectConfig } from "@t3tools/contracts";
+import {
+  HEAVY_QUEUE_DEFAULTS,
+  heavyHoldText,
+  type HeavyQueueEntry,
+  type RunnerProjectConfig,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_MACHINE_CONFIG,
@@ -104,8 +109,7 @@ const input = (
   },
   lastStartAt: null,
   holding: false,
-  macMemoryFloorPercent: 20,
-  macCpuCeilingPercent: 70,
+  ...HEAVY_QUEUE_DEFAULTS,
   now: NOW,
   contextOf: (cwd) => ({
     config: { ...DEFAULT_PROJECT_CONFIG, runnerEnabled: true, ...config },

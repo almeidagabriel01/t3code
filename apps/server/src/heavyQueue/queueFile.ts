@@ -151,6 +151,12 @@ interface QueueDoc {
   readonly macMemoryFloorPercent: number;
   readonly macCpuCeilingPercent: number;
   readonly heavyOverLimitSeconds: number;
+  readonly lightJobMegabytes: number;
+  readonly unseenHeavyMegabytes: number;
+  readonly unseenMediumMegabytes: number;
+  /** Commands the file remembers runs of; the one run longest ago goes first. */
+  readonly historyCommands: number;
+  readonly headPatienceMinutes: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
@@ -329,6 +335,11 @@ const loadDoc = (dir: string): QueueDoc => {
       macMemoryFloorPercent: limitOf(record, "macMemoryFloorPercent"),
       macCpuCeilingPercent: limitOf(record, "macCpuCeilingPercent"),
       heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
+      lightJobMegabytes: limitOf(record, "lightJobMegabytes"),
+      unseenHeavyMegabytes: limitOf(record, "unseenHeavyMegabytes"),
+      unseenMediumMegabytes: limitOf(record, "unseenMediumMegabytes"),
+      historyCommands: limitOf(record, "historyCommands"),
+      headPatienceMinutes: limitOf(record, "headPatienceMinutes"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
       copyRemovals: Array.isArray(parsed?.copyRemovals)
@@ -507,6 +518,10 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     holding: doc.holding,
     macMemoryFloorPercent: doc.macMemoryFloorPercent,
     macCpuCeilingPercent: doc.macCpuCeilingPercent,
+    lightJobMegabytes: doc.lightJobMegabytes,
+    unseenHeavyMegabytes: doc.unseenHeavyMegabytes,
+    unseenMediumMegabytes: doc.unseenMediumMegabytes,
+    headPatienceMinutes: doc.headPatienceMinutes,
     now,
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
@@ -748,20 +763,23 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
   return { doc, result: "ok" };
 };
 
-/** Commands the file remembers runs of; the one run longest ago goes first. */
-const HISTORY_COMMANDS = 1000;
-
 /** A history to write into: no prototype, so any signature (`__proto__` too) is a plain key. */
 const writable = <A>(book: Readonly<Record<string, A>>): Record<string, A> =>
   Object.assign(Object.create(null) as Record<string, A>, book);
 
-const remember = <A>(book: Record<string, ReadonlyArray<A>>, signature: string, run: A) => {
+/** Keeps at most `commands` commands; the one run longest ago goes first. */
+const remember = <A>(
+  book: Record<string, ReadonlyArray<A>>,
+  signature: string,
+  run: A,
+  commands: number,
+) => {
   const runs = [...(Object.hasOwn(book, signature) ? book[signature]! : []), run].slice(
     -HISTORY_RUNS,
   );
   delete book[signature];
   book[signature] = runs;
-  for (const old of Object.keys(book).slice(0, -HISTORY_COMMANDS)) delete book[old];
+  for (const old of Object.keys(book).slice(0, -commands)) delete book[old];
 };
 
 /** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
@@ -777,7 +795,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      remember(linuxHistory, signature, { durationMs });
+      remember(linuxHistory, signature, { durationMs }, after.historyCommands);
     } else {
       if (gone.peakMemory === undefined) continue;
       const run = {
@@ -785,7 +803,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
         memoryBytes: gone.peakMemory,
         durationMs,
       };
-      remember(history, signature, run);
+      remember(history, signature, run, after.historyCommands);
     }
     changed = true;
   }
@@ -937,7 +955,7 @@ export const recordSample = (
       .reduce((sum, entry) => {
         const full = Math.max(
           entry.peakCpu ?? 0,
-          estimate(doc.history, entry, reading.cpuCount).cpu,
+          estimate(doc.history, entry, reading.cpuCount, doc).cpu,
         );
         // An unread job counts as using nothing now, so restoring waits rather than flaps.
         return sum + Math.max(0, full - (entry.cpu ?? 0));

@@ -566,6 +566,19 @@ describe("HeavyQueue", () => {
           macCpuCeilingPercent: 90,
           heavyOverLimitSeconds: 60,
         });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 512,
+          headPatienceMinutes: 5,
+        });
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 256, headPatienceMinutes: 30 });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 256,
+          unseenHeavyMegabytes: 1536,
+          headPatienceMinutes: 30,
+        });
+        // Reset sends the default back.
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 512 });
+        expect((yield* queue.state).lightJobMegabytes).toBe(512);
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);

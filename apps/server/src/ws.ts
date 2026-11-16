@@ -2732,6 +2732,8 @@ export const layerWsRpc = (
           heavyQueue.setMacCpuCeilingPercent(macCpuCeilingPercent),
         [WS_METHODS.heavyQueueSetHeavyOverLimitSeconds]: ({ heavyOverLimitSeconds }) =>
           heavyQueue.setHeavyOverLimitSeconds(heavyOverLimitSeconds),
+        [WS_METHODS.heavyQueueSetAdmissionLimits]: (limits) =>
+          heavyQueue.setAdmissionLimits(limits),
         [WS_METHODS.heavyQueueSetRule]: ({ root, priority }) => heavyQueue.setRule(root, priority),
         [WS_METHODS.heavyQueueRoute]: ({ id, runner, force }) =>
           heavyQueue.route(id, runner, force === true),

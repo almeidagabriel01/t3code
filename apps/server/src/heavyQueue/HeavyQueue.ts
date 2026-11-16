@@ -5,7 +5,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - An entry id needs no Effect service.
 import * as NodeCrypto from "node:crypto";
 import {
+  HEAVY_QUEUE_ADMISSION_KEYS,
   HeavyQueueError,
+  type HeavyQueueSetAdmissionLimitsInput,
   type HeavyQueueState,
   type HeavyRunner,
   type HeavyRunnerLinux,
@@ -91,6 +93,9 @@ export class HeavyQueue extends Context.Service<
     readonly setMacCpuCeilingPercent: (percent: number) => Effect.Effect<void, HeavyQueueError>;
     /** How long readings must stay past a limit, or back under it, before routing follows. */
     readonly setHeavyOverLimitSeconds: (seconds: number) => Effect.Effect<void, HeavyQueueError>;
+    readonly setAdmissionLimits: (
+      limits: HeavyQueueSetAdmissionLimitsInput,
+    ) => Effect.Effect<void, HeavyQueueError>;
     readonly setPaused: (paused: boolean) => Effect.Effect<void, HeavyQueueError>;
     /** Off starts every heavy job at once, waiting ones included; on restores the rules for new arrivals. */
     readonly setEnabled: (enabled: boolean) => Effect.Effect<void, HeavyQueueError>;
@@ -247,6 +252,8 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     const { doc, plan } = QueueFile.readPlan(dir, now);
     const { entries, enabled, paused, rules, maxRunning, sample, deviceIdleMinutes } = doc;
     const { macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds } = doc;
+    const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = doc;
+    const { historyCommands, headPatienceMinutes } = doc;
     const fresh = sample !== null && now - sample.at <= SAMPLE_FRESH_MS;
     const estimates: Record<string, NonNullable<HeavyQueueState["estimates"]>[string]> = {};
     for (const entry of entries) {
@@ -258,7 +265,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       ) {
         continue;
       }
-      const usual = estimate(doc.history, entry, 1);
+      const usual = estimate(doc.history, entry, 1, doc);
       // A guessed CPU would read as learned, so a command whose CPU was never read shows none.
       const cpu = learnedCpu(doc.history, entry);
       if (usual.durationMs !== null) {
@@ -282,6 +289,11 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       macMemoryFloorPercent,
       macCpuCeilingPercent,
       heavyOverLimitSeconds,
+      lightJobMegabytes,
+      unseenHeavyMegabytes,
+      unseenMediumMegabytes,
+      historyCommands,
+      headPatienceMinutes,
       reasons: plan.reasons,
       // The label sits beside the CPU reading, so it never says "room" over a busy one.
       room: plan.room && (!fresh || hasHeadroom(sample, doc)),
@@ -387,6 +399,15 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
     ),
     setHeavyOverLimitSeconds: Effect.fn("HeavyQueue.setHeavyOverLimitSeconds")((seconds: number) =>
       change(() => QueueFile.setLimit(dir, "heavyOverLimitSeconds", seconds)),
+    ),
+    setAdmissionLimits: Effect.fn("HeavyQueue.setAdmissionLimits")(
+      (limits: HeavyQueueSetAdmissionLimitsInput) =>
+        change(() => {
+          for (const key of HEAVY_QUEUE_ADMISSION_KEYS) {
+            const value = limits[key];
+            if (value !== undefined) QueueFile.setLimit(dir, key, value);
+          }
+        }),
     ),
     setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
       change(() => QueueFile.setPaused(dir, paused)),
