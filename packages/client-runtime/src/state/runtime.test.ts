@@ -1114,6 +1114,36 @@ describe("environment query lifecycle", () => {
     ),
   );
 
+  it.effect.each([true, false])(
+    "reads a thread's context usage with server support %s",
+    (supported) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const usage = {
+            latestTurnUsage: { usedTokens: 1_000, updatedAt: "2026-11-16T00:00:00.000Z" },
+            providerThread: null,
+          };
+          const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+            rpcSession: {
+              initialConfig: Effect.succeed({ threadContextUsage: supported }),
+              client: {
+                [ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage]: () => Effect.succeed(usage),
+              },
+            } as unknown as RpcSession.RpcSession,
+          });
+          const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+            EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+          >;
+          const atom = createOrchestrationEnvironmentAtoms(runtime).threadContextUsage({
+            environmentId: QUERY_ENVIRONMENT.environmentId,
+            input: { threadId: ThreadId.make("member") },
+          });
+          const registry = yield* mountEnvironmentQuery(atom);
+          expect(yield* readEnvironmentQuery(registry, atom)).toEqual(supported ? usage : null);
+        }),
+      ),
+  );
+
   it.effect("re-checks thread titles when one of their threads leaves the shell", () =>
     Effect.scoped(
       Effect.gen(function* () {
