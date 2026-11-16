@@ -12,6 +12,7 @@ import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
 import { parseLine, type Word } from "./shellLine.ts";
+import { claimLostRun, readDoc, resolveLostPgid, settleLostRun } from "./queueFile.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
@@ -21,6 +22,7 @@ import {
   installFailure,
   platformFailures,
   remoteOutcome,
+  remotePgidScript,
   remoteStopScript,
   removeCopyScript,
   sshArgs,
@@ -444,8 +446,9 @@ export const stopRemote = async (
   environment: Env,
   id: string,
   pgid: number | null,
+  pgidOnly = false,
 ): Promise<StopResult> => {
-  const script = remoteStopScript(id, pgid, machine.runnerStopWaitSeconds);
+  const script = remoteStopScript(id, pgid, machine.runnerStopWaitSeconds, pgidOnly);
   const result = await ssh(
     machine,
     environment,
@@ -459,6 +462,69 @@ export const stopRemote = async (
 };
 
 export const confirmed = (result: StopResult) => result !== "alive" && result !== "unreachable";
+
+/** The pgid file of run `id` there: its process group, null with none, or "unreachable". */
+export const readRemotePgid = async (
+  machine: RunnerMachineConfig,
+  environment: Env,
+  id: string,
+): Promise<number | null | "unreachable"> => {
+  const result = await ssh(
+    machine,
+    environment,
+    remotePgidScript(id),
+    machine.runnerSshTimeoutSeconds * 1000 + 5000,
+  );
+  const said = result.stdout.trim().split("\n").pop() ?? "";
+  if (result.code !== 0) return "unreachable";
+  if (said === "none") return null;
+  const pgid = /^pgid (\d+)$/.exec(said)?.[1];
+  if (pgid === undefined) return "unreachable";
+  // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
+  return Number(pgid) > 1 ? Number(pgid) : null;
+};
+
+/**
+ * Keeps stopping the runs Linux took with it until it confirms each one ended, whether or not its
+ * job still waits. Each heartbeat that reaches Linux calls it. Stops at the first unreachable answer.
+ */
+export const drainLostRuns = async (
+  dir: string,
+  machine: RunnerMachineConfig,
+  environment: Env,
+  remote: { readonly stop: typeof stopRemote; readonly readPgid: typeof readRemotePgid } = {
+    stop: stopRemote,
+    readPgid: readRemotePgid,
+  },
+) => {
+  // Past the ssh timeout and both stop waits, the claiming process's stop has ended.
+  const holdMs = (machine.runnerSshTimeoutSeconds + 2 * machine.runnerStopWaitSeconds + 5) * 1000;
+  for (const lost of readDoc(dir).lostRuns) {
+    const claim = Date.now() + holdMs;
+    if (!claimLostRun(dir, lost, claim)) continue;
+    let pgid = lost.remote.pgid;
+    if (lost.pgidOnly === true && pgid === null) {
+      // Its record still holds the folder, so the pgid file there is still the lost run's.
+      const read = await remote.readPgid(machine, environment, lost.remote.id);
+      if (read === "unreachable") {
+        settleLostRun(dir, lost, false, claim);
+        return;
+      }
+      // No group to stop it by, but nothing new ran in the folder yet: the whole stop is still safe.
+      if (read !== null) resolveLostPgid(dir, lost, read);
+      pgid = read;
+    }
+    const result = await remote.stop(
+      machine,
+      environment,
+      lost.remote.id,
+      pgid,
+      lost.pgidOnly === true && pgid !== null,
+    );
+    settleLostRun(dir, lost, confirmed(result), claim);
+    if (result === "unreachable") return;
+  }
+};
 
 export interface LinuxRunOptions {
   readonly remoto: string;

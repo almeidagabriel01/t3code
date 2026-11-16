@@ -288,6 +288,13 @@ function mayRunOn(
 }
 
 /** "Run on this Mac" / "Run on Linux" for a row, with the confirmation a running job needs. */
+/** What forcing a rerun does while Linux has not confirmed the earlier run stopped. */
+const RUNNER_UNCONFIRMED_RERUN: Record<HeavyRunner, string> = {
+  mac: "Linux has not confirmed the earlier run stopped. Running it again now may run it twice. Run it anyway?",
+  linux:
+    "Linux hasn't confirmed the earlier run stopped. T3 stops it before this run starts there; if it can't, this run waits until the earlier one ends. Run it anyway?",
+};
+
 export function routeActions(
   entry: HeavyQueueEntry,
   state: Pick<HeavyQueueState, "linux" | "routes" | "macOnly">,
@@ -307,11 +314,24 @@ export function routeActions(
     const confirm = running
       ? `Stop this job and run it again on ${RUNNER_NAME[runner]}? Work it has done so far is lost.`
       : entry.unconfirmed === true
-        ? "Linux has not confirmed the earlier run stopped. Running it again now may run it twice. Run it anyway?"
+        ? RUNNER_UNCONFIRMED_RERUN[runner]
         : null;
     actions.push({ runner, label, confirm, force: !running && entry.unconfirmed === true });
   }
   return actions;
+}
+
+/**
+ * A question's answers: both places, even the one it heads for. Linux takes a run it has not
+ * confirmed stopped only once it confirms; this Mac, which never shares that run's folder, at once.
+ * The row's own action forces Linux.
+ */
+export function askAnswers(
+  entry: HeavyQueueEntry,
+  state: Pick<HeavyQueueState, "linux" | "routes" | "macOnly">,
+): ReadonlyArray<RouteAction> {
+  const { route: _route, unconfirmed: _unconfirmed, ...unpinned } = entry;
+  return routeActions(unpinned, state);
 }
 
 export interface MoveAllAction {

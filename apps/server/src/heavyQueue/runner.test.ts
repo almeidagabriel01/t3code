@@ -23,6 +23,7 @@ import {
   planRoutes,
   platformFailures,
   remoteOutcome,
+  remotePgidScript,
   remoteStopScript,
   removeCopyScript,
   runnerCopyId,
@@ -959,6 +960,100 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     },
   );
 
+  // The PC went away: Linux was marked offline after the drop. Its policy acts at once, before
+  // Linux can confirm the run stopped, and Linux coming back does not undo it; only a rerun waits
+  // for the confirmation. A blip that never took Linux offline still goes back by itself.
+  const BLIP: LinuxHealth = { ...ONLINE, okAt: NOW - 100 };
+  const BACK: LinuxHealth = { ...BLIP, backOnlineAt: NOW - 100 };
+  const PC = { "back before offline": BLIP, "still offline": OFFLINE, "back after offline": BACK };
+  it.each([
+    ["agent", "back before offline", "linux-wait", "linux-start"],
+    ["agent", "still offline", "cancel", "cancel"],
+    ["agent", "back after offline", "cancel", "cancel"],
+    ["ask", "back before offline", "linux-wait", "linux-start"],
+    ["ask", "still offline", "ask", "ask"],
+    ["ask", "back after offline", "ask", "ask"],
+    ["mac", "back before offline", "linux-wait", "linux-start"],
+    ["mac", "still offline", "mac-wait", "mac-start"],
+    ["mac", "back after offline", "mac-wait", "mac-start"],
+  ] as const)(
+    "dropped under %s, PC %s: %s until Linux confirms the run stopped, then %s",
+    (policy, pc, unconfirmed, confirmed) => {
+      for (const [hold, outcome] of [
+        [true, unconfirmed],
+        [false, confirmed],
+      ] as const) {
+        const entry = job("a", "vp test run", {
+          dropped: true,
+          linuxFailedAt: NOW - 5000,
+          ...(hold ? { unconfirmed: true } : {}),
+        });
+        const plan = planRoutes(
+          input([entry], { runnerWhere: "linux", runnerDropped: policy }, { health: PC[pc] }),
+        );
+        expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+        if (outcome === "ask") expect(plan.asks.a).toBe("dropped");
+        if (hold) expect(plan.admits).toEqual({});
+        if (outcome === "cancel") {
+          expect(plan.cancels.a).toBe(
+            hold
+              ? "Linux couldn't run this: Linux dropped it mid-run, and hasn't confirmed it stopped there"
+              : "Linux couldn't run this: Linux dropped it mid-run",
+          );
+        }
+        if (hold && outcome === "mac-wait") {
+          expect(plan.reasons.a).toBe(
+            "Linux dropped it mid-run: running here once Linux confirms it stopped",
+          );
+        }
+      }
+    },
+  );
+
+  // A question asked while the PC was away is the one decision: no second question, and its
+  // deadline action reruns only once Linux confirms the run stopped.
+  it.each([
+    ["open, PC back and confirmed", 60_000, "mac", BACK, false, "linux-wait"],
+    ["expired → Mac, PC still away", -1, "mac", OFFLINE, true, "mac-wait"],
+    ["expired → Mac, PC back and confirmed", -1, "mac", BACK, false, "mac-start"],
+    ["expired → Cancel, PC still away", -1, "cancel", OFFLINE, true, "cancel"],
+    ["expired → Wait, PC still away", -1, "wait", OFFLINE, true, "linux-wait"],
+    ["expired → Wait, PC back and confirmed", -1, "wait", BACK, false, "linux-start"],
+  ] as const)("a drop's question %s: %s", (_, deadline, action, health, hold, outcome) => {
+    const entry = job("a", "vp test run", {
+      dropped: true,
+      linuxFailedAt: NOW - 5000,
+      ask: { reason: "dropped", deadlineAt: ago(-deadline) },
+      ...(hold ? { unconfirmed: true } : {}),
+    });
+    const plan = planRoutes(
+      input(
+        [entry],
+        { runnerWhere: "linux", runnerDropped: "ask", runnerDeadlineAction: action },
+        { health },
+      ),
+    );
+    expect(plan.asks).toEqual({});
+    expect(plan.cancels.a !== undefined ? "cancel" : outcomeOf(plan, "a")).toBe(outcome);
+    if (hold) expect(plan.admits).toEqual({});
+  });
+
+  // A sync the PC took with it never ran there: "When Linux is offline" acts the same way.
+  it.each([
+    ["mac", "still offline", "mac-wait"],
+    ["ask", "still offline", "ask"],
+    ["wait", "still offline", "linux-wait"],
+    ["mac", "back before offline", "linux-wait"],
+  ] as const)("a lost sync under %s, PC %s, before Linux confirms: %s", (policy, pc, outcome) => {
+    const entry = job("a", "vp test run", { linuxFailedAt: NOW - 5000, unconfirmed: true });
+    const plan = planRoutes(
+      input([entry], { runnerWhere: "linux", runnerUnavailable: policy }, { health: PC[pc] }),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "ask") expect(plan.asks.a).toBe("unavailable");
+    expect(plan.admits).toEqual({});
+  });
+
   // An environment failure repeats on every run while Linux stays as it was: under Wait it goes
   // back only once Linux has been offline and come back since, or when the user sends it there.
   it.each([
@@ -1067,10 +1162,22 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     expect(plan.reasons.a).toBe("waiting for Linux to come back");
   });
 
-  it("an unconfirmed drop reruns nowhere until Linux confirms it stopped", () => {
-    const plan = planRoutes(input([job("a", "vp test run", { unconfirmed: true })]));
-    expect(plan.admits).toEqual({});
-    expect(plan.reasons.a).toMatch(/confirming it stopped/);
+  // Its lost run holds back only Linux, through its record: work bound for this Mac runs at once,
+  // so a Runner turned off, which confirms nothing, never strands it.
+  it.each([
+    ["bound for Linux", "linux-wait", "vp test run", {}, {}],
+    ["with the Runner off", "mac-start", "vp test run", { runnerEnabled: false }, {}],
+    ["answered for this Mac", "mac-start", "vp test run", {}, { route: "mac" as const }],
+    ["tied to this Mac", "mac-start", "xcodebuild test", {}, {}],
+  ] as const)("an unconfirmed drop %s: %s", (_, outcome, label, config, extra) => {
+    const plan = planRoutes(
+      input([job("a", label, { unconfirmed: true, ...extra })], {
+        runnerWhere: "linux",
+        ...config,
+      }),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "linux-wait") expect(plan.reasons.a).toMatch(/confirming it stopped/);
   });
 
   it("before the first heartbeat a Linux job waits instead of asking", () => {
@@ -1607,6 +1714,18 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
+    const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
+    expect(group).toContain('kill -TERM -- "-$p"');
+    expect(group).not.toMatch(/pkill|pgrep|\.pgid/);
+    expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
+    // `kill -- -1` would reach every process there.
+    for (const pgid of [0, 1, -3, 1.5]) {
+      expect(() => remoteStopScript("app-1a2b3c4d", pgid, 5)).toThrow(/Unsafe process group/);
+    }
+    expect(fold("phase=running pgid=1").pgid).toBeNull();
+    expect(() => remotePgidScript("a'; rm -rf ~; '")).toThrow(/Unsafe/);
+    expect(remotePgidScript("app-1a2b3c4d")).toContain('"runs/app-1a2b3c4d.pgid"');
   });
 });
 

@@ -563,7 +563,7 @@ describe("HeavyWorkSection", () => {
     expect(mocks.actions.cancel).toHaveBeenCalledWith("w", false);
   });
 
-  it("answers a dropped, unconfirmed job pinned to Linux with the rerun confirmation", async () => {
+  it("answers a dropped, unconfirmed job pinned to Linux without forcing a rerun", async () => {
     setup(
       [
         entry("d", {
@@ -581,11 +581,7 @@ describe("HeavyWorkSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "Wait for Linux" }));
     expect(mocks.actions.route).toHaveBeenCalledWith(
       "d",
-      expect.objectContaining({
-        runner: "linux",
-        confirm: expect.stringContaining("may run it twice"),
-        force: true,
-      }),
+      expect.objectContaining({ runner: "linux", confirm: null, force: false }),
     );
   });
 

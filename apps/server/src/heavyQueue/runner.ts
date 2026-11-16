@@ -655,6 +655,15 @@ const linuxUpFor = (health: LinuxHealth, entry: HeavyQueueEntry) => {
   return (since ?? 0) > linuxFailedAt;
 };
 
+/** Linux counted offline after this job lost it: the PC went away, not a blip. */
+const wentAway = (health: LinuxHealth, entry: HeavyQueueEntry) =>
+  entry.linuxFailedAt !== undefined &&
+  (health.online === false || (health.backOnlineAt ?? 0) > entry.linuxFailedAt);
+
+/** A run the PC took with it: "If a Linux run fails" decides, and Linux's return undoes nothing. */
+const lostWithPc = (health: LinuxHealth, entry: HeavyQueueEntry) =>
+  entry.dropped === true && wentAway(health, entry);
+
 /** Runs that may lose the link before a job counts Linux unavailable: one past going offline. */
 export const linkAttempts = (machine: RunnerMachineConfig) =>
   Math.max(2, machine.runnerOfflineAfterFailures) + 1;
@@ -672,6 +681,7 @@ const linkRetry = (
   const { linuxFailedAt } = entry;
   const { linkFailures = 1, failure } = entry as QueuedEntry;
   if (linuxFailedAt === undefined || failure !== undefined || health.online === false) return null;
+  if (lostWithPc(health, entry)) return null;
   if (linkFailures >= linkAttempts(machine)) return null;
   const backoffMs = machine.runnerSshTimeoutSeconds * 1000 * 2 ** (linkFailures - 1);
   return now >= linuxFailedAt + backoffMs ? "retry" : "wait";
@@ -708,6 +718,8 @@ export interface RoutePlanInput extends PlanInput {
   readonly health: LinuxHealth;
   /** Some project uses the Runner: Mac rows then say why they stay. */
   readonly runnerOn?: boolean;
+  /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
+  readonly lostCwds?: ReadonlyArray<string>;
 }
 
 interface LinuxBusy {
@@ -741,12 +753,18 @@ const askExpired = (entry: HeavyQueueEntry, now: number) =>
   entry.ask !== undefined && Date.parse(entry.ask.deadlineAt) <= now;
 
 /**
- * A drop keeps its policy until it resolves: "Run on this Mac" and an unanswered question are
- * not undone by the next good heartbeat. Waiting (chosen, or an expired question) ends the hold.
+ * A failed run keeps its policy until it resolves: "Run on this Mac" and an unanswered question
+ * are not undone by the next good heartbeat. Waiting (chosen, or an expired question) ends the
+ * hold. A blip that never took Linux offline is no failure: that run goes back by itself.
  */
-const dropHolds = (entry: HeavyQueueEntry, config: RunnerProjectConfig, now: number) =>
+const dropHolds = (
+  entry: HeavyQueueEntry,
+  config: RunnerProjectConfig,
+  health: LinuxHealth,
+  now: number,
+) =>
   entry.dropped === true &&
-  (entry as QueuedEntry).failure !== undefined &&
+  ((entry as QueuedEntry).failure !== undefined || lostWithPc(health, entry)) &&
   entry.route === undefined &&
   (config.runnerDropped === "mac" ||
     config.runnerDropped === "agent" ||
@@ -795,6 +813,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const linuxRunning = running.filter((entry) => entry.runner === "linux");
   const macRunning = running.filter((entry) => entry.runner !== "linux");
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
+  const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
   let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
@@ -855,6 +874,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     if (linuxFree <= 0) {
       return { kind: "slots", why: `all ${machine.runnerLinuxSlots} Linux slots are busy` };
     }
+    // Its stop check there would end the new run too, in the same folder.
+    if (lostWorktrees.has(worktree)) {
+      return {
+        kind: "worktree",
+        why: "Linux hasn't confirmed an earlier run of this worktree stopped",
+      };
+    }
     if (busyWorktrees.has(worktree)) {
       return { kind: "worktree", why: "this worktree is already running on Linux" };
     }
@@ -873,11 +899,46 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   /** Start now skips Linux's wait, but not a run of the same worktree that `remoto` would serialize. */
   const startsOnLinux = (entry: HeavyQueueEntry, busy: LinuxBusy) =>
     entry.forced === true && busy.kind !== "worktree";
-  /** Tell the agent: a job Linux dropped or couldn't run ends with that, never rerunning here. */
-  const tellAgent = (entry: HeavyQueueEntry) => {
+  /**
+   * "When Linux is offline" or "If a Linux run fails", with its question and deadline. A run Linux
+   * hasn't confirmed stopped reruns nowhere yet, but every other choice acts now.
+   */
+  const follow = (entry: HeavyQueueEntry, config: RunnerProjectConfig) => {
+    const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
+    const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
     const { failure } = entry as QueuedEntry;
-    routes[entry.id] = "linux";
-    cancels[entry.id] = `Linux couldn't run this: ${failure ?? "Linux dropped it mid-run"}`;
+    const what =
+      failure !== undefined
+        ? `Linux couldn't run this: ${failure}`
+        : reason === "dropped"
+          ? "Linux dropped it mid-run"
+          : "Linux is unavailable";
+    const unconfirmed = entry.unconfirmed === true;
+    const runHere = (why: string) => {
+      if (!unconfirmed) return toMac(entry, why);
+      routes[entry.id] = "mac";
+      reasons[entry.id] = `${what}: running here once Linux confirms it stopped`;
+    };
+    const cancel = (why: string) => {
+      routes[entry.id] = "linux";
+      cancels[entry.id] = unconfirmed ? `${why}, and hasn't confirmed it stopped there` : why;
+    };
+    // Tell the agent: a job Linux dropped or couldn't run ends with that, never rerunning here.
+    if (policy === "agent") return cancel(`Linux couldn't run this: ${failure ?? what}`);
+    if (policy === "mac") return runHere(`${what}: running here`);
+    if (policy === "wait") return toLinux(entry, `${what}: waiting for it`);
+    if (entry.ask === undefined) {
+      asks[entry.id] = reason;
+      return toLinux(entry, `${what}: asking you`);
+    }
+    if (!askExpired(entry, now)) return toLinux(entry, `${what}: waiting for your answer`);
+    if (config.runnerDeadlineAction === "mac") {
+      return runHere(`${what} and nobody answered: running here`);
+    }
+    if (config.runnerDeadlineAction === "wait") {
+      return toLinux(entry, `${what}: no answer, waiting for it`);
+    }
+    cancel(`${what} and nobody answered in time: canceled`);
   };
   const toLinuxNow = (entry: HeavyQueueEntry, worktree: string) => {
     routes[entry.id] = "linux";
@@ -895,18 +956,31 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   for (const entry of waiting) {
     const context = input.contextOf(entry.cwd);
     const { config, worktree } = context;
+    const { intent, reason: why } = intentOf(entry, context);
     if (entry.unconfirmed === true) {
+      // This Mac never shares the lost run's folder, whose record holds back only Linux: work bound
+      // here runs now, so a Runner turned off, which confirms nothing, never strands it.
+      if (intent === "mac") {
+        toMac(entry, why);
+        continue;
+      }
+      // The PC went away with the run: its policy acts now. After a blip, or once the user chose,
+      // it just waits to confirm.
+      if (entry.route === undefined && wentAway(health, entry)) {
+        follow(entry, config);
+        continue;
+      }
       routes[entry.id] = entry.route ?? "linux";
       reasons[entry.id] = "Linux dropped it mid-run: confirming it stopped there before rerunning";
       continue;
     }
-    const { intent, reason: why } = intentOf(entry, context);
     if (intent === "mac") {
       toMac(entry, why);
       continue;
     }
     const retry = linkRetry(health, entry, machine, now);
-    const up = (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, now);
+    const up =
+      (linuxUpFor(health, entry) || retry === "retry") && !dropHolds(entry, config, health, now);
     // A lost link is Linux's: the job waits for it while it retries. A strained Mac holds only a
     // start here, which its own plan does.
     if (!up && retry === "wait" && !paused) {
@@ -984,44 +1058,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
       toLinux(entry, "waiting for Linux to come back");
       continue;
     }
-    const reason: HeavyRunnerAskReason = entry.dropped === true ? "dropped" : "unavailable";
-    const policy = reason === "dropped" ? config.runnerDropped : config.runnerUnavailable;
-    const { failure } = entry as QueuedEntry;
-    const what =
-      failure !== undefined
-        ? `Linux couldn't run this: ${failure}`
-        : reason === "dropped"
-          ? "Linux dropped it mid-run"
-          : "Linux is unavailable";
-    if (policy === "agent") {
-      tellAgent(entry);
-      continue;
-    }
-    if (policy === "mac") {
-      toMac(entry, `${what}: running here`);
-      continue;
-    }
-    if (policy === "wait") {
-      toLinux(entry, `${what}: waiting for it`);
-      continue;
-    }
-    if (entry.ask === undefined) {
-      asks[entry.id] = reason;
-      toLinux(entry, `${what}: asking you`);
-      continue;
-    }
-    if (!askExpired(entry, now)) {
-      toLinux(entry, `${what}: waiting for your answer`);
-      continue;
-    }
-    if (config.runnerDeadlineAction === "mac")
-      toMac(entry, `${what} and nobody answered: running here`);
-    else if (config.runnerDeadlineAction === "wait") {
-      toLinux(entry, `${what}: no answer, waiting for it`);
-    } else {
-      routes[entry.id] = "linux";
-      cancels[entry.id] = `${what} and nobody answered in time: canceled`;
-    }
+    follow(entry, config);
   }
 
   if (!queueOn) {
@@ -1100,6 +1137,8 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
   const phase = fields.phase;
   const int = (value: string | undefined) =>
     value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
+  const group = int(fields.pgid);
   return {
     syncing: progress.syncing || phase === "syncing",
     running: progress.running || phase === "running",
@@ -1109,7 +1148,7 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
       typeof fields.id === "string" && /^[A-Za-z0-9._-]+$/.test(fields.id)
         ? fields.id
         : progress.id,
-    pgid: int(fields.pgid) ?? progress.pgid,
+    pgid: group !== null && group > 1 ? group : progress.pgid,
     exit: int(fields.exit) ?? progress.exit,
     missing:
       typeof fields.missing === "string" && fields.missing !== ""
@@ -1188,20 +1227,38 @@ export const HEARTBEAT_COMMAND = "cat /proc/loadavg; nproc; free -b";
  * folder. TERM, up to `waitSeconds` for it to go, then KILL. Prints `gone` when nothing ran,
  * `stopped` or `killed` when it is gone now, and `alive` (exit 1) when it survived.
  */
-export const remoteStopScript = (id: string, pgid: number | null, waitSeconds: number) => {
+export const remoteStopScript = (
+  id: string,
+  pgid: number | null,
+  waitSeconds: number,
+  pgidOnly = false,
+) => {
   if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`Unsafe run id: ${id}`);
-  // `[r]uns/…` keeps the pattern from matching the shell running this very script.
+  if (pgid !== null && !(Number.isSafeInteger(pgid) && pgid > 1)) {
+    throw new Error(`Unsafe process group: ${pgid}`);
+  }
+  if (pgidOnly && pgid === null) throw new Error("A stop by process group needs one");
+  // `[r]uns/…` keeps the pattern from matching the shell running this very script. A rerun owns the
+  // folder under `pgidOnly`: neither the pattern nor the pgid file it rewrites names the lost run.
   const pattern = `[r]uns/${id}( |/|$)`;
+  const byFolder = (command: string) => (pgidOnly ? "" : ` ${command};`);
   return [
-    `p=${pgid ?? ""}; [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`,
-    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null || pgrep -f '${pattern}' >/dev/null; }`,
+    `p=${pgid ?? ""};${pgidOnly ? "" : ` [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`}`,
+    `case "$p" in *[!0-9]*|0|1) p= ;; esac`,
+    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null${pgidOnly ? "" : ` || pgrep -f '${pattern}' >/dev/null`}; }`,
     `alive || { echo gone; exit 0; }`,
-    `{ [ -n "$p" ] && kill -TERM -- "-$p"; pkill -TERM -f '${pattern}'; } 2>/dev/null`,
+    `{ [ -n "$p" ] && kill -TERM -- "-$p";${byFolder(`pkill -TERM -f '${pattern}'`)} } 2>/dev/null`,
     `i=0; while alive && [ "$i" -lt ${Math.max(1, Math.floor(waitSeconds))} ]; do sleep 1; i=$((i+1)); done`,
     `alive || { echo stopped; exit 0; }`,
-    `{ [ -n "$p" ] && kill -KILL -- "-$p"; pkill -KILL -f '${pattern}'; } 2>/dev/null; sleep 1`,
+    `{ [ -n "$p" ] && kill -KILL -- "-$p";${byFolder(`pkill -KILL -f '${pattern}'`)} } 2>/dev/null; sleep 1`,
     `if alive; then echo alive; exit 1; else echo killed; fi`,
   ].join("\n");
+};
+
+/** Prints `pgid <n>` from run `id`'s pgid file there, or `none` when it has none. */
+export const remotePgidScript = (id: string) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`Unsafe run id: ${id}`);
+  return `p=$(cat "runs/${id}.pgid" 2>/dev/null); case "$p" in ''|*[!0-9]*|0|1) echo none ;; *) echo "pgid $p" ;; esac`;
 };
 
 export const INSTALL_FAILED = "Dependency install on Linux failed";

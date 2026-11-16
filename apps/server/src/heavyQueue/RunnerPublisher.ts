@@ -28,7 +28,7 @@ import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as QueueFile from "./queueFile.ts";
 import { runnerCopyId, type RunnerBlock } from "./runner.ts";
-import { checkLinux, removeRunnerCopy } from "./runnerExec.ts";
+import { checkLinux, drainLostRuns, removeRunnerCopy } from "./runnerExec.ts";
 
 const pick = <K extends string>(
   source: Readonly<Record<string, unknown>>,
@@ -155,6 +155,12 @@ export const layer = (dir: string = QueueFile.defaultQueueDir(), check = checkLi
           try: () => QueueFile.recordHealth(dir, reading),
           catch: (cause) => new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
         }).pipe(Effect.ignore);
+        if (reading.ok && QueueFile.readDoc(dir).lostRuns.length > 0)
+          yield* Effect.tryPromise({
+            try: () => drainLostRuns(dir, block.machine, process.env),
+            catch: (cause) =>
+              new HeavyQueueError({ reason: "unavailable", message: String(cause) }),
+          }).pipe(Effect.ignore({ log: true }));
         if (reading.ok && !removalsBlocked && QueueFile.readDoc(dir).copyRemovals.length > 0)
           yield* Effect.tryPromise({
             try: () => drainCopyRemovals(dir, block.machine, process.env),

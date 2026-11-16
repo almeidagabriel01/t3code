@@ -3,6 +3,7 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -56,6 +57,7 @@ import {
   nextHealth,
   planRoutes,
   runnerConfigFor,
+  runnerCopyId,
   startFolder,
   UNKNOWN_HEALTH,
   type HealthCheck,
@@ -156,6 +158,8 @@ interface QueueDoc {
   readonly results: ReadonlyArray<JobResult>;
   /** Linux copies of removed worktrees still to delete, waiting for the host to come back. */
   readonly copyRemovals: ReadonlyArray<CopyRemoval>;
+  /** Linux runs not yet confirmed stopped, kept past their job's end until a heartbeat confirms. */
+  readonly lostRuns: ReadonlyArray<LostRun>;
   /** Recent transitions that may need a notice, newest last. */
   readonly events: ReadonlyArray<HeavyEventRecord>;
   /** Daemons outside any job tree that T3 lowered to background CPU priority, to restore later. */
@@ -175,6 +179,22 @@ export interface CopyRemoval {
   /** The removed worktree; a checkout recreated there syncs to the same copy again. */
   readonly path: string;
   readonly at: number;
+}
+
+/** A run Linux took with it: its job may be gone, but its worktree starts nothing there yet. */
+export interface LostRun {
+  /** One attempt's record: an entry rerun beside it may leave another for the same folder. */
+  readonly key: string;
+  readonly entryId: string;
+  readonly cwd: string;
+  readonly remote: { readonly id: string; readonly pgid: number | null };
+  /**
+   * A rerun forced onto Linux took its folder: stopped by its own process group only, never by the
+   * folder name or the pgid file the rerun rewrites. Until that group is known, the folder waits.
+   */
+  readonly pgidOnly?: true;
+  /** One process stops it at a time: a late stop would also end the next run in that folder. */
+  readonly stoppingUntil?: number;
 }
 
 interface JobResult {
@@ -207,12 +227,17 @@ const EMPTY_DOC: QueueDoc = {
   runner: null,
   linux: UNKNOWN_HEALTH,
   copyRemovals: [],
+  lostRuns: [],
   events: [],
   slowedDaemons: [],
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** A stored process group, or null: 0 or 1 is never a run's own, and `kill -- -1` reaches all. */
+const realPgid = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 1 ? value : null;
 
 /** A stored queue setting, or its default when it is missing or out of range. */
 const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey) => {
@@ -263,6 +288,7 @@ const loadDoc = (dir: string): QueueDoc => {
       events?: unknown;
       linux?: unknown;
       copyRemovals?: unknown;
+      lostRuns?: unknown;
       slowedDaemons?: unknown;
       results?: unknown;
     } | null;
@@ -270,7 +296,14 @@ const loadDoc = (dir: string): QueueDoc => {
     return {
       // Keys this version does not know stay in the file for the versions that do.
       ...(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}),
-      entries: Array.isArray(parsed?.entries) ? (parsed.entries as HeavyQueueEntry[]) : [],
+      entries: Array.isArray(parsed?.entries)
+        ? (parsed.entries as HeavyQueueEntry[]).map((entry) => {
+            if (!isObject(entry.remote) || entry.remote.pgid === undefined) return entry;
+            const { pgid, ...remote } = entry.remote;
+            const real = realPgid(pgid);
+            return { ...entry, remote: real === null ? remote : { ...remote, pgid: real } };
+          })
+        : [],
       enabled: parsed?.enabled !== false,
       paused: parsed?.paused === true,
       rules: Array.isArray(parsed?.rules) ? (parsed.rules as HeavyQueueRule[]) : [],
@@ -307,6 +340,22 @@ const loadDoc = (dir: string): QueueDoc => {
               typeof entry.path === "string" &&
               typeof entry.at === "number",
           )
+        : [],
+      lostRuns: Array.isArray(record?.lostRuns)
+        ? record.lostRuns
+            .filter(
+              (value: unknown): value is LostRun =>
+                isObject(value) &&
+                typeof value.entryId === "string" &&
+                typeof value.cwd === "string" &&
+                isObject(value.remote) &&
+                typeof value.remote.id === "string",
+            )
+            .map((lost) => ({
+              ...lost,
+              key: typeof lost.key === "string" ? lost.key : `${lost.entryId}:${lost.remote.id}`,
+              remote: { ...lost.remote, pgid: realPgid(lost.remote.pgid) },
+            }))
         : [],
       events: parseLog(parsed?.events),
       results: Array.isArray(record?.results)
@@ -351,6 +400,8 @@ export type StartResult =
       readonly workers: number | null;
       readonly runner?: "linux";
       readonly ungated?: true;
+      /** Why a job bound for Linux starts on this Mac instead, for the agent that waits on it. */
+      readonly reason?: string;
     }
   | {
       readonly status: "waiting";
@@ -461,6 +512,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
+    lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -528,6 +580,13 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       unconfirmed: _unconfirmed,
       ...rest
     }: QueuedEntry = entry;
+    const record = startRecord(
+      entry,
+      intentOf(entry, contextOf(doc)(entry.cwd)).intent,
+      admit.runner,
+      now,
+    );
+    const displacedWhy = record?.kind === "displaced" ? decision.reasons[id] : undefined;
     const started: HeavyQueueEntry = {
       ...rest,
       startedAt: new Date(now).toISOString(),
@@ -554,16 +613,14 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Only a gated Mac start makes the next Mac waiter let it ramp up.
         lastStartAt: gated ? now : doc.lastStartAt,
         holding: decision.holding,
-        events: withRecord(
-          doc.events,
-          startRecord(entry, intentOf(entry, contextOf(doc)(entry.cwd)).intent, admit.runner, now),
-        ),
+        events: withRecord(doc.events, record),
       },
       result: {
         status: "started",
         workers,
         ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
         ...(admit.ungated ? { ungated: true as const } : {}),
+        ...(displacedWhy === undefined ? {} : { reason: displacedWhy }),
       },
     };
   }
@@ -1160,11 +1217,28 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
       if ((target.runner ?? "mac") === runner) return { doc, result: "ok" };
       return update((entry) => ({ ...entry, requeue: runner }));
     }
-    if (target.unconfirmed === true && !force) return { doc, result: "unconfirmed" };
-    return update(({ ask: _ask, unconfirmed: _unconfirmed, forced: _forced, ...entry }) => ({
-      ...entry,
-      route: runner,
-    }));
+    if (target.unconfirmed === true && !force) {
+      if (target.ask === undefined) return { doc, result: "unconfirmed" };
+      // An answer for Linux runs there once Linux confirms the run stopped; this Mac takes it now.
+      return update(({ ask: _ask, forced: _forced, ...entry }) => ({ ...entry, route: runner }));
+    }
+    const routed = update(
+      ({ ask: _ask, unconfirmed: _unconfirmed, forced: _forced, ...entry }) => ({
+        ...entry,
+        route: runner,
+      }),
+    );
+    if (runner === "mac" || target.unconfirmed !== true) return routed;
+    // Forced onto Linux, the rerun takes the folder: only its process group may still be stopped.
+    return {
+      ...routed,
+      doc: {
+        ...routed.doc,
+        lostRuns: routed.doc.lostRuns.map((lost) =>
+          lost.entryId === id ? { ...lost, pgidOnly: true as const } : lost,
+        ),
+      },
+    };
   });
 
 /**
@@ -1251,29 +1325,109 @@ export const requeue = (
       retrying || kept !== undefined
         ? null
         : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    const remote = next.unconfirmed === true ? lostRemoteOf(target) : null;
+    const lost: ReadonlyArray<LostRun> =
+      remote === null
+        ? []
+        : [{ key: NodeCrypto.randomUUID(), entryId: id, cwd: target.cwd, remote }];
     return {
       doc: {
         ...doc,
         entries: [...active, again, ...waiters],
         events: withRecord(doc.events, record),
+        lostRuns: [...doc.lostRuns, ...lost],
       },
       result: true,
     };
   });
 
-/** The remote run is confirmed stopped: the entry may run again. */
-export const confirmStopped = (dir: string, id: string) =>
-  mutate(dir, (doc) => ({
-    doc: {
-      ...doc,
-      entries: doc.entries.map((entry) => {
-        if (entry.id !== id) return entry;
-        const { unconfirmed: _unconfirmed, ...rest } = entry;
-        return rest;
-      }),
+/**
+ * The run's folder there: as `remoto` reported it, else as `remoto` names it from its real
+ * checkout root, or its real folder outside one (`pwd -P`), for a run lost before it reported one.
+ */
+const lostRemoteOf = (entry: HeavyQueueEntry): LostRun["remote"] => {
+  if (entry.remote !== undefined) return { id: entry.remote.id, pgid: entry.remote.pgid ?? null };
+  const folder = gitRootOf(entry.cwd) ?? entry.cwd;
+  let real = folder;
+  try {
+    real = NodeFS.realpathSync(folder);
+  } catch {
+    // Gone since: its own path is the best guess at what `remoto` saw.
+  }
+  const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+  return { id: runnerCopyId(real, sha1), pgid: null };
+};
+
+/** Keeps its worktree off Linux: all but a forced rerun's record whose process group is known. */
+const holdsFolder = (lost: LostRun) => lost.pgidOnly !== true || lost.remote.pgid === null;
+
+const withLost = (doc: QueueDoc, key: string, change: (lost: LostRun) => LostRun | null) => ({
+  ...doc,
+  lostRuns: doc.lostRuns.flatMap((lost) => {
+    if (lost.key !== key) return [lost];
+    const next = change(lost);
+    return next === null ? [] : [next];
+  }),
+});
+
+/** Claims stopping one lost run until `until`; false while another process holds it, or it is gone. */
+export const claimLostRun = (dir: string, lost: LostRun, until: number, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const held = doc.lostRuns.find((each) => each.key === lost.key);
+      if (held === undefined || (held.stoppingUntil ?? 0) > now) return { doc, result: false };
+      return {
+        doc: withLost(doc, lost.key, (each) => ({ ...each, stoppingUntil: until })),
+        result: true,
+      };
     },
+    now,
+  );
+
+/** The process group a forced rerun's lost run had, read before anything new ran in its folder. */
+export const resolveLostPgid = (dir: string, lost: LostRun, pgid: number) =>
+  mutate(dir, (doc) => ({
+    doc: withLost(doc, lost.key, (each) => ({ ...each, remote: { ...each.remote, pgid } })),
     result: undefined,
   }));
+
+/**
+ * Ends a stop of a lost run. Confirmed (or nothing left to stop by): the record goes, and its
+ * entry, once no other run of it is lost, may run again. Not: the claim made at `claim` is freed,
+ * so the next heartbeat tries again; a newer claim stays.
+ */
+export const settleLostRun = (
+  dir: string,
+  lost: Pick<LostRun, "key" | "entryId">,
+  stopped: boolean,
+  claim?: number,
+) =>
+  mutate(dir, (doc) => {
+    if (!stopped) {
+      return {
+        doc: withLost(doc, lost.key, (each) => {
+          if (each.stoppingUntil !== claim) return each;
+          const { stoppingUntil: _until, ...free } = each;
+          return free;
+        }),
+        result: undefined,
+      };
+    }
+    const settled = withLost(doc, lost.key, () => null);
+    const stillLost = settled.lostRuns.some((each) => each.entryId === lost.entryId);
+    return {
+      doc: {
+        ...settled,
+        entries: settled.entries.map((entry) => {
+          if (stillLost || entry.id !== lost.entryId || entry.startedAt !== null) return entry;
+          const { unconfirmed: _unconfirmed, ...rest } = entry;
+          return rest;
+        }),
+      },
+      result: undefined,
+    };
+  });
 
 /** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
 export const scriptReader =

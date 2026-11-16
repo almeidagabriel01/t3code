@@ -31,7 +31,6 @@ import {
   answerBashCall,
   claimHealthCheck,
   configFor,
-  confirmStopped,
   defaultQueueDir,
   enqueue,
   finish,
@@ -65,6 +64,7 @@ import {
   changedInputs,
   checkLinux,
   confirmed,
+  drainLostRuns,
   resolveRemoto,
   startLinuxRun,
   stopRemote,
@@ -737,7 +737,10 @@ const waitForStart = async (
       process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
-    if (start.status === "started") return start;
+    if (start.status === "started") {
+      if (start.reason !== undefined) process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
+      return start;
+    }
     const shown = `${start.position}|${start.running?.id ?? ""}|${start.runner ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
       lastShown = shown;
@@ -763,10 +766,22 @@ const checkLinuxIfStale = (dir: string, environment: NodeJS.ProcessEnv) => {
   const staleMs = (machine.runnerHeartbeatSeconds + machine.runnerSshTimeoutSeconds) * 1000;
   if (!claimHealthCheck(dir, staleMs)) return;
   healthCheckRunning = true;
-  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
-    healthCheckRunning = false;
-    recordHealth(dir, check);
-  });
+  void checkLinux(linkMachine(machine, doc.sample), environment)
+    .then(async (check) => {
+      recordHealth(dir, check);
+      if (check.ok && readDoc(dir).lostRuns.length > 0) {
+        await drainLostRuns(dir, machine, environment);
+      }
+    })
+    .catch(logCheckFailure)
+    .finally(() => {
+      healthCheckRunning = false;
+    });
+};
+
+/** A heartbeat's own failure is only noted: it never ends the command waiting beside it. */
+const logCheckFailure = (error: unknown) => {
+  process.stderr.write(`[t3 heavy] Linux check failed: ${String(error)}\n`);
 };
 
 /**
@@ -778,10 +793,12 @@ const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   if (!claimHealthCheck(dir, (machine.runnerHeartbeatSeconds * 1000) / 2)) return;
   healthCheckRunning = true;
-  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
-    healthCheckRunning = false;
-    recordHealth(dir, check);
-  });
+  void checkLinux(linkMachine(machine, doc.sample), environment)
+    .then((check) => recordHealth(dir, check))
+    .catch(logCheckFailure)
+    .finally(() => {
+      healthCheckRunning = false;
+    });
 };
 
 /** Its runs that lost the link so far, this one included. */
@@ -972,7 +989,6 @@ const runLinuxAttempt = async (
     const clean = await confirmGone();
     process.stderr.write(`[t3 heavy] moved by the user; waiting to run on ${runnerName(moved)}.\n`);
     requeue(dir, id, { route: moved, ...(clean ? {} : { unconfirmed: true }) });
-    if (!clean) await confirmLater(dir, id, machine, environment, remote!);
     return { kind: "requeued" };
   }
   if (outcome === null || outcome.kind === "finished") {
@@ -1002,7 +1018,6 @@ const runLinuxAttempt = async (
       linkFailures: linkFailuresOf(dir, id),
       ...(clean ? {} : { unconfirmed: true }),
     });
-    if (!clean) await confirmLater(dir, id, machine, environment, remote!);
     return { kind: "requeued" };
   }
   process.stderr.write(
@@ -1016,7 +1031,6 @@ const runLinuxAttempt = async (
     linkFailures: linkFailuresOf(dir, id),
     ...(clean ? {} : { unconfirmed: true }),
   });
-  if (!clean && remote !== null) await confirmLater(dir, id, machine, environment, remote);
   return { kind: "requeued" };
 };
 
@@ -1216,24 +1230,4 @@ const endLine = (dir: string, id: string, outcome: PartOutcome): never => {
   NodeFS.writeFileSync(outcomePath(dir, id), JSON.stringify(outcome));
   process.kill(0, "SIGTERM");
   process.exit(LINUX_UNAVAILABLE_EXIT);
-};
-
-/**
- * Keeps trying, once per heartbeat interval, to confirm a run ended there, so the entry never
- * reruns while it may still be running. The user can force a rerun from T3 meanwhile.
- */
-const confirmLater = async (
-  dir: string,
-  id: string,
-  machine: RunnerMachineConfig,
-  environment: NodeJS.ProcessEnv,
-  remote: { readonly id: string; readonly pgid: number | null },
-) => {
-  while (readDoc(dir).entries.find((entry) => entry.id === id)?.unconfirmed === true) {
-    await pause(machine.runnerHeartbeatSeconds * 1000);
-    if (confirmed(await stopRemote(machine, environment, remote.id, remote.pgid))) {
-      confirmStopped(dir, id);
-      process.stderr.write("[t3 heavy] Linux confirmed the earlier run stopped.\n");
-    }
-  }
 };
