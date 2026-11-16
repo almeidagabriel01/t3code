@@ -1,3 +1,4 @@
+import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import type { SidebarThreadStatus } from "@t3tools/client-runtime/state/thread-attention";
 import {
   AlarmClockIcon,
@@ -72,7 +73,7 @@ export function resolveSidebarTopStatus(input: {
     case "input":
       return { label: "Input", icon: "input", className: "text-warning-foreground" };
     case "request":
-      return { label: "Request", icon: "request", className: "text-guest-foreground" };
+      return { label: GUEST_WAITING_LABEL, icon: "request", className: "text-guest-foreground" };
     case "limited":
       return { label: "Limited", icon: "failed", className: "text-warning-foreground" };
     case "failed":

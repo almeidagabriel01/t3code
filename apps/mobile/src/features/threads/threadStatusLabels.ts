@@ -1,5 +1,6 @@
 import { ASSISTANT_GROUP_STATUS_LABEL } from "@t3tools/client-runtime/assistantGroupChat";
 import type { AssistantAttention } from "@t3tools/client-runtime/assistantList";
+import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import type { ThreadListV2Status } from "./threadListV2";
 
@@ -24,7 +25,7 @@ export const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLa
     iconTintClassName: "accent-adaptive-indigo-600-300",
   },
   request: {
-    label: "Request",
+    label: GUEST_WAITING_LABEL,
     icon: "person.crop.circle",
     className: "text-adaptive-fuchsia-600-300",
     iconTintClassName: "accent-adaptive-fuchsia-600-300",
