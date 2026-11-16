@@ -511,21 +511,38 @@ describe("admission plan", () => {
     expect(plan({ ...base, paused: true, entries: reordered }).admit).toBe("f1");
   });
 
-  it("asks for a higher memory level to reopen after blocking, so admission does not flap", () => {
+  it("asks for a higher memory level to reopen after pressure, so admission does not flap", () => {
     const entries = [entry("r", "vp run build", 60_000), entry("a", "vp run build")];
     const history = { "vp run build": [run(2, 4, 60_000)] };
     // 11.9 - 4 GiB sits above the 20% floor (6.4) but below the 25% reopen level (8).
     const tight = { ...calm, availableMemoryBytes: 11.9 * GIB };
     expect(plan({ ...base, history, entries, sample: tight, holding: false }).admit).toBe("a");
     expect(plan({ ...base, history, entries, sample: tight, holding: true }).admit).toBeNull();
-    const blocked = plan({
+    const pressed = plan({ ...base, history, entries, sample: { ...calm, pressureLevel: 2 } });
+    expect(pressed).toMatchObject({ holding: true, room: false });
+    // A job too big to fit raises nothing, so a small one behind it still passes next time.
+    const big = plan({
       ...base,
       history,
       entries,
       sample: { ...calm, availableMemoryBytes: 9 * GIB },
     });
-    expect(blocked.holding).toBe(true);
-    expect(blocked.room).toBe(false);
+    expect(big).toMatchObject({ holding: false, room: false, hold: "job-memory" });
+  });
+
+  it("28% free on 16 GB: a small job keeps passing a head too big to fit, plan after plan", () => {
+    const entries = [
+      entry("r", "vp run build", 60_000),
+      entry("big", "vp run build"),
+      entry("small", "vp run typecheck"),
+    ];
+    const history = { "vp run build": [run(2, 4, 60_000)] };
+    const first = plan({ ...base, history, entries, sample: sixteen });
+    expect(first.admit).toBe("small");
+    // Each waiter plans again under the lock with what the last plan stored.
+    expect(plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admit).toBe(
+      "small",
+    );
   });
 });
 

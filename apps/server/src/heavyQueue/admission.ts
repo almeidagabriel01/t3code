@@ -113,7 +113,10 @@ const SETTLE_MS = 15_000;
 export const SAMPLE_FRESH_MS = 15_000;
 /** Headroom has to hold this long before another job is admitted. */
 const HEADROOM_MS = 6_000;
-/** Once blocked, memory has to recover this many points past the floor so admission does not flap. */
+/**
+ * After memory pressure or swapping held admission, memory has to recover this many points past the
+ * floor so admission does not flap. A job too big to fit raises nothing: smaller ones still pass it.
+ */
 const MEMORY_REOPEN_POINTS = 5;
 /** Sustained swap-in above this is the machine paging work back in, not a blip. */
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
@@ -220,7 +223,7 @@ export interface PlanInput extends MacLimits {
   readonly history: History;
   readonly sample: Sample | null;
   readonly lastStartAt: number | null;
-  /** Admission was blocked last time, so memory must reach the higher reopen level. */
+  /** Pressure or swapping held admission last time, so memory must reach the higher reopen level. */
   readonly holding: boolean;
   readonly now: number;
 }
@@ -340,7 +343,6 @@ export const plan = (input: PlanInput): Plan => {
   };
   const headVerdict = verdict(head);
   if (headVerdict.hold === null) return finish(head.id, null, true, false);
-  const held = headVerdict.hold === "job-memory" || headVerdict.hold === "job-cpu" || holding;
 
   // A later job that fits passes a head that does not, until the head has waited its patience.
   const tried: Record<string, string> = {};
@@ -349,10 +351,10 @@ export const plan = (input: PlanInput): Plan => {
       if (kindOf(waiter) === "exclusive") continue;
       const fit = verdict(waiter);
       if (fit.hold === null) {
-        return finish(waiter.id, headVerdict.hold, false, held, headVerdict.why, tried);
+        return finish(waiter.id, headVerdict.hold, false, holding, headVerdict.why, tried);
       }
       tried[waiter.id] = fit.why;
     }
   }
-  return finish(null, headVerdict.hold, false, held, headVerdict.why, tried);
+  return finish(null, headVerdict.hold, false, holding, headVerdict.why, tried);
 };

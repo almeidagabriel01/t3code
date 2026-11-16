@@ -505,29 +505,27 @@ describe("HeavyQueue", () => {
               ),
             }),
           );
-          // 4.6 of 16 GB free: a never-seen build (1.5 GB) cuts into what is kept spare, a typecheck (0.5 GB) does not.
-          const tight = { ...MAC_28, availableMemoryBytes: 4.6 * GIB };
-          Queue.recordSample(dir, { ...tight, at: LATER - 8_000 }, {});
-          Queue.recordSample(dir, { ...tight, at: LATER }, {});
+          // 28% of 16 GB free: a never-seen build (1.5 GB) would cut into the 20% kept spare, a typecheck (0.5 GB) does not.
+          Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: LATER }, {});
           const started = () =>
             Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
           for (const id of ["big", "small", "small2"]) Queue.tryStart(dir, id, LATER);
           expect(started()).toEqual(["holder", "small"]);
           // Once the start settles, the head says what it needs.
-          Queue.recordSample(dir, { ...tight, at: LATER + 8_000 }, {});
-          Queue.recordSample(dir, { ...tight, at: LATER + 16_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: LATER + 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: LATER + 16_000 }, {});
           yield* TestClock.setTime(LATER + 16_000);
           expect((yield* queue.state).reasons["big"]).toBe(
-            // Held once, it keeps five points more spare until it starts.
-            "needs ~1.5 GB; 4.6 GB free, 4.0 GB kept spare",
+            "needs ~1.5 GB; 4.5 GB free, 3.2 GB kept spare",
           );
 
           // Past its patience the head lets nothing by, and starts once the Mac frees up.
           const patient = LATER + 5 * 60_000;
           yield* TestClock.setTime(patient);
           Queue.remove(dir, "small");
-          Queue.recordSample(dir, { ...tight, at: patient - 8_000 }, {});
-          Queue.recordSample(dir, { ...tight, at: patient }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: patient - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, at: patient }, {});
           for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
           expect(started()).toEqual(["holder"]);
           Queue.remove(dir, holder.id);
