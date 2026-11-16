@@ -6,6 +6,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry, RunnerProjectConfig } from "@t3tools/contracts";
+import { vi } from "vite-plus/test";
+
+// Counts the queue file's writes; every call goes through to the real rename.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
 
 import * as Queue from "./queueFile.ts";
 import {
@@ -694,6 +701,23 @@ describe("heavy queue file", () => {
     ] as const) {
       expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
     }
+  });
+
+  it("sets several settings in one write, each clamped, ignoring unknown keys", () => {
+    const dir = tempDir();
+    Queue.setLimit(dir, "macCpuCeilingPercent", 80);
+    const writes = vi.mocked(NodeFS.renameSync).mock.calls.length;
+    Queue.setLimits(dir, {
+      lightJobMegabytes: 256,
+      headPatienceMinutes: 999,
+      ...({ __proto__: 1, maxRunning: 9 } as object),
+    });
+    expect(vi.mocked(NodeFS.renameSync).mock.calls.length - writes).toBe(1);
+    const doc = Queue.readDoc(dir);
+    expect([doc.lightJobMegabytes, doc.headPatienceMinutes, doc.macCpuCeilingPercent]).toEqual([
+      256, 60, 80,
+    ]);
+    expect(doc.maxRunning).toBe(Queue.readDoc(tempDir()).maxRunning);
   });
 
   it("forgets the oldest commands beyond the stored history size", () => {

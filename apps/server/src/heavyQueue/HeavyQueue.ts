@@ -5,7 +5,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - An entry id needs no Effect service.
 import * as NodeCrypto from "node:crypto";
 import {
-  HEAVY_QUEUE_ADMISSION_KEYS,
   HeavyQueueError,
   type HeavyQueueSetAdmissionLimitsInput,
   type HeavyQueueState,
@@ -401,13 +400,7 @@ const make = Effect.fn("HeavyQueue.make")(function* (dir: string, claudeSettings
       change(() => QueueFile.setLimit(dir, "heavyOverLimitSeconds", seconds)),
     ),
     setAdmissionLimits: Effect.fn("HeavyQueue.setAdmissionLimits")(
-      (limits: HeavyQueueSetAdmissionLimitsInput) =>
-        change(() => {
-          for (const key of HEAVY_QUEUE_ADMISSION_KEYS) {
-            const value = limits[key];
-            if (value !== undefined) QueueFile.setLimit(dir, key, value);
-          }
-        }),
+      (limits: HeavyQueueSetAdmissionLimitsInput) => change(() => QueueFile.setLimits(dir, limits)),
     ),
     setPaused: Effect.fn("HeavyQueue.setPaused")((paused: boolean) =>
       change(() => QueueFile.setPaused(dir, paused)),

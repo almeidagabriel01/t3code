@@ -1169,15 +1169,24 @@ export const setPaused = (dir: string, paused: boolean) =>
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
-/** Stores a queue setting, clamped to its range. */
-export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+/** Stores the queue settings given in one write, each clamped to its range; other keys are ignored. */
+export const setLimits = (
+  dir: string,
+  limits: Readonly<Partial<Record<HeavyQueueLimitKey, number>>>,
+) =>
   mutate(dir, (doc) => {
-    const { min, max } = HEAVY_QUEUE_LIMITS[key];
-    return {
-      doc: { ...doc, [key]: Math.max(min, Math.min(max, Math.floor(value))) },
-      result: undefined,
-    };
+    const set: Partial<Record<HeavyQueueLimitKey, number>> = {};
+    for (const key of Object.keys(HEAVY_QUEUE_LIMITS) as ReadonlyArray<HeavyQueueLimitKey>) {
+      const value = limits[key];
+      if (value === undefined) continue;
+      const { min, max } = HEAVY_QUEUE_LIMITS[key];
+      set[key] = Math.max(min, Math.min(max, Math.floor(value)));
+    }
+    return { doc: { ...doc, ...set }, result: undefined };
   });
+
+export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+  setLimits(dir, { [key]: value });
 
 export const setDeviceIdleMinutes = (dir: string, minutes: number) =>
   mutate(dir, (doc) => ({
