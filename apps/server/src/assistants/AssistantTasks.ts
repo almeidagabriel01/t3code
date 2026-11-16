@@ -17,6 +17,7 @@ interface TaskRow {
   readonly title: string;
   readonly created_at: string;
   readonly dismissed_at?: string | null;
+  readonly auto_dismissed_run_id?: string | null;
 }
 
 const toTask = (row: TaskRow): AssistantTask => ({
@@ -45,6 +46,11 @@ export class AssistantTasks extends Context.Service<
       threadId: ThreadId,
       dismissedAt: string | null,
     ) => Effect.Effect<Option.Option<AssistantTask>>;
+    /**
+     * Dismisses a task once its run's result reached its assistant. Once per run, so a Restore
+     * holds until another run delivers. True when it dismissed.
+     */
+    readonly autoDismiss: (threadId: ThreadId, runId: string) => Effect.Effect<boolean>;
     readonly list: Effect.Effect<ReadonlyArray<AssistantTask>>;
     /** One assistant's tasks, newest first. */
     readonly listFor: (
@@ -91,6 +97,17 @@ const make = Effect.gen(function* () {
       const stored = yield* forThread(threadId);
       if (Option.isSome(stored)) yield* PubSub.publish(changes, stored.value);
       return stored;
+    }, Effect.orDie),
+    autoDismiss: Effect.fn("AssistantTasks.autoDismiss")(function* (threadId, runId) {
+      const rows = yield* sql<TaskRow>`
+        UPDATE assistant_tasks SET dismissed_at = ${yield* nowIso}, auto_dismissed_run_id = ${runId}
+        WHERE thread_id = ${threadId} AND dismissed_at IS NULL
+          AND (auto_dismissed_run_id IS NULL OR auto_dismissed_run_id != ${runId})
+        RETURNING *`;
+      const dismissed = rows[0];
+      if (dismissed === undefined) return false;
+      yield* PubSub.publish(changes, toTask(dismissed));
+      return true;
     }, Effect.orDie),
     list: sql<TaskRow>`SELECT * FROM assistant_tasks ORDER BY created_at ASC, thread_id ASC`.pipe(
       Effect.map((rows) => rows.map(toTask)),

@@ -116,7 +116,8 @@ export interface AssistantTaskList {
 
 const TASK_LIST_CAP = 50;
 
-const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
+/** The task chip the clients show, read from the task thread's shell. */
+export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
   const parked =
     backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
   const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);

@@ -290,6 +290,13 @@ These follow the row, none of them a new mechanism:
 - Dismissing a task only sets `dismissed_at` on the row (`AssistantService.dismissTask`, refused while
   the thread has an active run); lists drop dismissed rows in `assistantTaskRows`, while the task
   badge on the thread still reads the row, which is where a dismissed task is restored.
+- The reactor dismisses a task itself once its result reached the owner: its last run completed with
+  nothing waiting on the user, and the owner's run started by the notice that covers that run
+  (`TaskEventNotices.told`: that run's notice, or an earlier one it adds nothing to) completed. It
+  checks on the task's run end, on the owner's run end and on start, and dismisses once per run
+  (`auto_dismissed_run_id`), so a Restore holds until another run delivers. A dismissed task with
+  nothing left on its branch then settles (`ThreadSettlementService.finishedWorkSettlement`), and so
+  do subagent children whose parent took their result or settled.
 
 The project check is the existing `projectScopeRefusal` at `t3_thread_launch`; a refused launch never
 reaches the link.
