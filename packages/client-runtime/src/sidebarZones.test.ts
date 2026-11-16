@@ -1,3 +1,4 @@
+import { AssistantId, ProjectId, type AssistantTeamChatScope } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,6 +8,7 @@ import {
   countWaits,
   folderAttention,
   folderIndicator,
+  folderIndicatorDetail,
   needsYouCards,
   needsYouDue,
   needsYouItems,
@@ -266,6 +268,86 @@ describe("indicators", () => {
   ] as const)("a folder shows %s", (_name, needsYou, moods, folderChat, expected) => {
     expect(
       folderIndicator({ needsYou, members: moods.map((mood) => ({ mood })), chat: folderChat }),
+    ).toEqual(expected);
+  });
+
+  const scope = (
+    projectId: string | null,
+    extra: Partial<AssistantTeamChatScope> = {},
+  ): AssistantTeamChatScope => ({
+    projectId: projectId === null ? null : ProjectId.make(projectId),
+    unreadCount: 0,
+    waiting: false,
+    readSeq: 0,
+    ...extra,
+  });
+  const ada = AssistantId.make("ada");
+  it.each([
+    ["nothing", [], []],
+    [
+      "a paused request with its title and why",
+      [
+        scope(null, {
+          waiting: true,
+          waitingRequest: {
+            requestId: "m1",
+            title: "jungle-gaming: 2 bugs",
+            reason: "paused",
+            taskReason: "routing_failed",
+            assistantId: ada,
+          },
+        }),
+      ],
+      ["Needs you · General: jungle-gaming: 2 bugs (The lead could not route this)"],
+    ],
+    [
+      "each reason in words",
+      [
+        scope("p1", {
+          waiting: true,
+          waitingRequest: { requestId: "m1", title: "A", reason: "wait", assistantId: ada },
+        }),
+        scope("p2", {
+          waiting: true,
+          waitingRequest: { requestId: "m2", title: "B", reason: "failed", assistantId: ada },
+        }),
+        scope(null, {
+          waiting: true,
+          waitingRequest: { requestId: "m3", title: "C", reason: "project", assistantId: null },
+        }),
+      ],
+      [
+        "Needs you · t3code: A (Waiting for your answer)",
+        "Needs you · Removed project: B (Failed)",
+        "Needs you · General: C (Needs a project)",
+      ],
+    ],
+    [
+      "an older server's tab without its request",
+      [scope("p1", { waiting: true })],
+      ["Needs you · t3code"],
+    ],
+    [
+      "needs you, then running, then unread, at most four and +N",
+      [
+        scope(null, { unreadCount: 31, openTasks: 1 }),
+        scope("p1", { waiting: true, unreadCount: 2, openTasks: 3 }),
+      ],
+      [
+        "Needs you · t3code",
+        "1 running · General",
+        "3 running · t3code",
+        "31 unread · General",
+        "+1",
+      ],
+    ],
+  ] as const)("a folder's detail for %s", (_name, scopes, expected) => {
+    expect(
+      folderIndicatorDetail({
+        chat: { scopes: [...scopes], removedProjectIds: [ProjectId.make("p2")] },
+        projects: [{ id: ProjectId.make("p1"), title: "t3code" }],
+        groupProjectIds: [ProjectId.make("p1")],
+      }),
     ).toEqual(expected);
   });
 
