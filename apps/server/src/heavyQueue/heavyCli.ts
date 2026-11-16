@@ -35,6 +35,7 @@ import {
   enqueue,
   finish,
   gitRootOf,
+  syncedInCopy,
   modeFor,
   readDoc,
   recordFault,
@@ -55,6 +56,7 @@ import {
   movedPart,
   NEEDS_GIT,
   needsGit,
+  programTie,
   outsideTie,
   shellTextOf,
   startFolder,
@@ -1073,6 +1075,9 @@ const runLinuxPart = async (
     return endLine(dir, id, { kind: "mac", reason: `Runs outside a git checkout: ${cwd}` });
   }
   if (needsGit([program, ...args])) return endLine(dir, id, { kind: "mac", reason: NEEDS_GIT });
+  // Expanded now, so a program a variable named (`$PY -m pytest`) is judged too.
+  const local = programTie([program, ...args], cwd, root, syncedInCopy);
+  if (local !== null) return endLine(dir, id, { kind: "mac", reason: local });
   // A `sh -c` text goes whole: judged again expanded, so it never names a folder Linux lacks.
   const text = shellTextOf([program, ...args]);
   if (text !== undefined) {
@@ -1080,6 +1085,7 @@ const runLinuxPart = async (
       config: configFor(doc, cwd),
       home,
       rootOf: gitRootOf,
+      synced: syncedInCopy,
     });
     if (verdict.eligibility === "mac-only" || verdict.eligibility === "exclusive") {
       return endLine(dir, id, { kind: "mac", reason: verdict.reason! });

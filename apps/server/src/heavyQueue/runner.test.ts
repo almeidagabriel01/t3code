@@ -23,6 +23,7 @@ import {
   mayPublish,
   nextHealth,
   NEEDS_GIT,
+  PYTHON_HERE,
   NO_PROGRESS,
   parseHeartbeat,
   planRoutes,
@@ -150,6 +151,8 @@ describe("routing matrix", () => {
     eligible: "vp test run",
     exclusive: "xcrun simctl boot iPhone",
     "mac-only": "vp test run --project ios -- xcodebuild",
+    // A venv made on this Mac: Linux rebuilds no Python environment.
+    python: ".venv/bin/pytest -q",
     "not-listed": "vp run build",
   } as const;
   const linuxRunningIn = { full: 2, "same-worktree": 1, stale: 1 } as Record<string, number>;
@@ -1323,6 +1326,44 @@ describe("patterns and eligibility", () => {
     ["make -C", "not-listed", "Not on the Can run on Linux list: make"],
   ])("%s is %s by default", (label, eligibility, reason) => {
     expect(eligibilityOf({ label, cwd: "/w" }, at)).toEqual({ eligibility, reason });
+  });
+
+  // The Linux copy rebuilds `node_modules` from a lockfile, and nothing else that git ignores.
+  const copy = {
+    ...at,
+    config: { ...DEFAULT_PROJECT_CONFIG, runnerLinuxEverything: true },
+    synced: (path: string) => !/^\/w\/(\.venv|dist|nolock\/node_modules)\//.test(path),
+  };
+  it.each([
+    [".venv/bin/pytest -q", "mac-only", PYTHON_HERE],
+    ["pytest tests", "mac-only", PYTHON_HERE],
+    ["python3 -m pytest", "mac-only", PYTHON_HERE],
+    ["uv run pytest", "mac-only", PYTHON_HERE],
+    ["remoto pytest", "mac-only", PYTHON_HERE],
+    [
+      "source .venv/bin/activate && vp test run",
+      "mac-only",
+      "Sets up its shell here first: source .venv/bin/activate",
+    ],
+    [". ./env.sh; vp test run", "mac-only", "Sets up its shell here first: . ./env.sh"],
+    ["node dist/cli.js test", "mac-only", "Uses a file the Linux copy doesn't have: dist/cli.js"],
+    ["./dist/run-tests", "mac-only", "Uses a file the Linux copy doesn't have: dist/run-tests"],
+    ["node_modules/.bin/vitest run", "linux", null],
+    [
+      "nolock/node_modules/.bin/vitest run",
+      "mac-only",
+      "Uses a file the Linux copy doesn't have: nolock/node_modules/.bin/vitest",
+    ],
+    ["node -e 'process.exit(0)' && vp test run", "linux", null],
+    ["vp test run /w/src/a.test.ts", "linux", null],
+    [
+      "vp test run /Users/me/other/a.test.ts",
+      "mac-only",
+      "Uses a file outside the project: /Users/me/other/a.test.ts",
+    ],
+    ["cd /w/apps/web && vp test run src/a.test.ts", "linux", null],
+  ])("%s is %s from the Linux copy", (label, eligibility, reason) => {
+    expect(eligibilityOf({ label, cwd: "/w" }, copy)).toEqual({ eligibility, reason });
   });
 
   // Every mode, even with nothing on Always on this Mac and everything allowed on Linux.

@@ -678,6 +678,24 @@ describe("heavy queue file", () => {
     expect(sizing()).toEqual([256, 1536, 512, 1000, 60]);
   });
 
+  it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {
+    const repo = NodeFS.realpathSync(tempDir());
+    NodeChildProcess.spawnSync("git", ["init", "-q", repo]);
+    NodeFS.writeFileSync(NodePath.join(repo, ".gitignore"), "dist/\n.venv/\nnode_modules/\n");
+    NodeFS.mkdirSync(NodePath.join(repo, "web"));
+    NodeFS.writeFileSync(NodePath.join(repo, "web", "pnpm-lock.yaml"), "");
+    for (const [path, synced] of [
+      ["src/a.test.ts", true],
+      ["dist/cli.js", false],
+      [".venv/bin/pytest", false],
+      ["web/node_modules/.bin/vitest", true],
+      ["node_modules/.bin/vitest", false],
+      ["tools/node_modules/.bin/x", false],
+    ] as const) {
+      expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
+    }
+  });
+
   it("forgets the oldest commands beyond the stored history size", () => {
     const dir = tempDir();
     const file = NodePath.join(dir, "queue.json");

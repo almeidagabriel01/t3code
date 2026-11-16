@@ -3,6 +3,7 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -491,6 +492,34 @@ export const gitRootOf = (cwd: string) => {
   return found;
 };
 
+const LOCKFILES = ["pnpm-lock.yaml", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock"];
+const syncedPaths = new Map<string, boolean>();
+
+/**
+ * Whether `remoto`'s copy of `path`'s checkout has it. It leaves out what git ignores, but
+ * reinstalls a `node_modules` from a lockfile between the checkout and it.
+ */
+export const syncedInCopy = (path: string): boolean => {
+  let found = syncedPaths.get(path);
+  if (found !== undefined) return found;
+  const root = gitRootOf(NodePath.dirname(path));
+  const modules = /^(.*?)[\\/]node_modules([\\/]|$)/.exec(path)?.[1];
+  if (root === null) found = true;
+  else if (modules !== undefined) {
+    found = false;
+    for (let dir = modules; dir.length >= root.length; dir = NodePath.dirname(dir)) {
+      if (LOCKFILES.some((name) => NodeFS.existsSync(NodePath.join(dir, name)))) found = true;
+      if (found || dir === root) break;
+    }
+  } else {
+    // Exit 0 is ignored; an error (1 is "not ignored") counts as there.
+    const check = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "-q", "--", path]);
+    found = check.status !== 0;
+  }
+  syncedPaths.set(path, found);
+  return found;
+};
+
 const contextOf =
   (doc: QueueDoc) =>
   (cwd: string): WorkContext => ({
@@ -498,6 +527,7 @@ const contextOf =
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
+    synced: syncedInCopy,
   });
 
 /** Some project uses the Runner, so jobs can wait on either machine. */

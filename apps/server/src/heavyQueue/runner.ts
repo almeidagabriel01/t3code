@@ -272,6 +272,51 @@ const alwaysMac = (part: Part): boolean => {
   return INSTALLS.test(first) || INSTALLS.test(second) || DEV_SERVER.test(script);
 };
 
+const PYTHON = /^(python[\d.]*|pytest|py\.test|pip[\d.]*|poetry|pipenv|tox|nox|uvx?)$/;
+const INTERPRETERS = new Set([
+  "node",
+  "bun",
+  "deno",
+  "tsx",
+  "ts-node",
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+]);
+const INLINE_CODE = /^-(c|e|p|-eval|-print)$/;
+export const PYTHON_HERE = "Python runs here: the Linux copy has no Python environment";
+
+/**
+ * Why a work part's program can't run from the Linux copy of `root`: Python, whose environment is
+ * never rebuilt there, or a program or interpreted script in a file that copy lacks. Words program
+ * first; null when it can.
+ */
+export const programTie = (
+  values: ReadonlyArray<string>,
+  cwd: string,
+  root: string,
+  synced: WorkContext["synced"],
+): string | null => {
+  const [program = "", ...args] = values;
+  const name = programName(program);
+  if (PYTHON.test(name)) return PYTHON_HERE;
+  if (synced === undefined) return null;
+  const script =
+    INTERPRETERS.has(name) && !args.some((arg) => INLINE_CODE.test(arg))
+      ? args.find((arg) => !arg.startsWith("-"))
+      : undefined;
+  // A bare program name comes from PATH, which Linux has its own of.
+  for (const file of [program.includes("/") ? program : undefined, script]) {
+    if (file === undefined) continue;
+    const path = resolvePath(cwd, file);
+    if (inside(path, root) && !synced(path)) {
+      return `Uses a file the Linux copy doesn't have: ${path.slice(root.length + 1)}`;
+    }
+  }
+  return null;
+};
+
 /**
  * Why one part of the work must run on this Mac, or null when Linux can run it from `cwd`. What
  * only the shell knows (a variable set elsewhere, `$(…)`, `cd $d`) passes here: `linux-part`
@@ -283,6 +328,7 @@ const tieOf = (
   vars: ReadonlyMap<string, string | null>,
   rootOf: (cwd: string) => string | null,
   config: RunnerProjectConfig,
+  synced: WorkContext["synced"],
 ): string | null => {
   const text = part.values.slice(part.remoteAt).join(" ");
   const pattern = config.runnerMacOnly.find((each) => matchesAny(text, [each]));
@@ -306,6 +352,15 @@ const tieOf = (
   // `remoto` syncs the checkout it runs from, so each part is judged against its own.
   const root = rootOf(cwd);
   if (root === null) return `Runs outside a git checkout: ${cwd}`;
+  const program = programTie(
+    part.command.words
+      .slice(part.programAt)
+      .map((word) => literalValue(word, vars, cwd) ?? word.value),
+    cwd,
+    root,
+    synced,
+  );
+  if (program !== null) return program;
   for (const word of part.command.words.slice(part.programAt + 1)) {
     // A script is judged by its text, which travels with the job.
     if (word.value === part.script?.word) continue;
@@ -384,7 +439,7 @@ export const bodyVerdict = (
   body: string,
   cwd: string,
   root: string | null,
-  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
   where?: RunnerWhere,
 ): Verdict => {
   const verdict = eligibilityOf(
@@ -411,7 +466,7 @@ const DECLARES = new Set(["export", "declare", "local", "readonly"]);
  */
 export const eligibilityOf = (
   entry: Pick<QueuedEntry, "label" | "line" | "server" | "cwd" | "where" | "scripts">,
-  context: Pick<WorkContext, "config" | "home" | "rootOf">,
+  context: Pick<WorkContext, "config" | "home" | "rootOf" | "synced">,
 ): Verdict => {
   const line = lineOf(entry);
   if (kindOf(entry) === "exclusive") {
@@ -436,9 +491,14 @@ export const eligibilityOf = (
     return cwds.get(key)!;
   };
   let notListed: string | null = null;
+  // What a sourced file sets up lives in this Mac's shell; Linux runs the work without it.
+  let sourced: string | null = null;
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
+    if (work.has(part) && sourced !== null) {
+      return { eligibility: "mac-only", reason: `Sets up its shell here first: ${sourced}` };
+    }
     if (work.has(part)) {
       // A part naming a folder in another checkout runs from there (`linux-part` does the same).
       const moved =
@@ -453,7 +513,7 @@ export const eligibilityOf = (
               rootOf,
             );
       const at = moved?.cwd ?? cwd;
-      const tie = tieOf(part, at, vars, rootOf, config);
+      const tie = tieOf(part, at, vars, rootOf, config, context.synced);
       if (tie !== null) return { eligibility: "mac-only", reason: tie };
       const text = part.values.slice(part.remoteAt).join(" ");
       if (part.script?.body === null) return { eligibility: "mac-only", reason: UNREADABLE_SCRIPT };
@@ -484,6 +544,7 @@ export const eligibilityOf = (
     // A substitution runs in its own subshell: its folder and variables end with it.
     if (command.substituted) continue;
     const first = part.values[0];
+    if (first === "source" || first === ".") sourced ??= part.values.join(" ");
     if (first === "cd" || first === "pushd" || first === "popd") {
       const args = command.words.slice(1).filter((word) => !/^-[LPe@]+$/.test(word.value));
       const target =
@@ -705,6 +766,11 @@ export const linkMachine = (machine: RunnerMachineConfig, sample: Sample | null)
 
 export interface WorkContext {
   readonly config: RunnerProjectConfig;
+  /**
+   * Whether the Linux copy of `path`'s checkout has it: git-ignored files stay here, except a
+   * `node_modules` its lockfile rebuilds there. Absent, every file counts as there.
+   */
+  readonly synced?: (path: string) => boolean;
   /** Two jobs of one worktree never run on Linux together: `remoto` would serialize them. */
   readonly worktree: string;
   readonly home: string;
