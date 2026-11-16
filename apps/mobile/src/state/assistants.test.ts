@@ -14,6 +14,10 @@ vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentServerConfigsAtom: Atom.make(new Map()) };
 });
+vi.mock("./presentation", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentPresentations: { presentationsAtom: Atom.make(new Map()) } };
+});
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentThreadShells: { quietThreadShellsAtom: Atom.make([]) } };
