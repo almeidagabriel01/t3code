@@ -2173,7 +2173,7 @@ describe("ThreadSettlementServiceV2 finished work", () => {
           assert.strictEqual(yield* failedLookups, 1);
           assert.notInclude(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
-            "own-worktree-lookup-failed",
+            ThreadId.make("own-worktree-lookup-failed"),
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
