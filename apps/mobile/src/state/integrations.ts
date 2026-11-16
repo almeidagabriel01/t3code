@@ -68,13 +68,15 @@ export function useIntegrationsState(
 
 /**
  * The integration names the Integrations screen draws, from feeds a screen already opened. It peeks
- * the registry instead of reading the atom, so search never opens a stream to index. The peek is
- * invisible to the React Compiler, so `query` keys it: it reruns on every search.
+ * the registry instead of reading the atom, so search never opens a stream to index. Not a hook: a
+ * compiled caller memoizes it on its arguments, so `query` makes it rerun on every search.
  */
-export function useOpenIntegrationNames(query: string): readonly string[] {
-  const ids = useAtomValue(integrationsEnvironmentIdsAtom);
+export function openIntegrationNames(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  query: string,
+): readonly string[] {
   if (query.trim() === "") return [];
-  return ids.flatMap((environmentId) => {
+  return environmentIds.flatMap((environmentId) => {
     const live = integrationsEnvironment.live({ environmentId, input: null });
     const node: AtomRegistry.Node<Atom.Type<typeof live>> | undefined = appAtomRegistry
       .getNodes()
