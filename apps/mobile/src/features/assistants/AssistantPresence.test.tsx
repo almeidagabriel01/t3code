@@ -427,7 +427,7 @@ it("a teammate's message shows its role, status, thread and folds when long", ()
   expect(text()).toContain("6:43 PM");
   const button = (label: string) =>
     [...view.container.querySelectorAll("button")].find((each) => each.textContent === label)!;
-  act(() => button("Show full message").click());
+  act(() => button("Show more").click());
   expect(text()).toContain("Show less");
   act(() => button("Open thread").click());
   expect(mocks.openLinked).toHaveBeenCalledWith({

@@ -24,10 +24,10 @@ import type {
   TeammateReplyStatus,
   ThreadId,
 } from "@t3tools/contracts";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
-import Animated, { LinearTransition, ReduceMotion } from "react-native-reanimated";
 
+import { FoldableContent } from "../../components/FoldableContent";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import {
@@ -40,6 +40,7 @@ import {
 import { useThreadShell } from "../../state/entities";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
+import { ASSISTANT_FOLDED_HEIGHT } from "../threads/assistantMessageFold";
 import { useOpenLinkedThread } from "../threads/useOpenLinkedThread";
 import * as Dialog from "../../components/ui/Dialog";
 import { accentWash, presenceBadgeLabel } from "./assistantPresenceLabels";
@@ -59,9 +60,6 @@ const STATUS_CHIP = {
   partial: { text: "text-warning-foreground", wash: "#f59e0b" },
   blocked: { text: "text-danger-foreground", wash: "#ef4444" },
 } satisfies Record<TeammateReplyStatus, { readonly text: string; readonly wash: string }>;
-
-const COLLAPSED_BODY_HEIGHT = 320;
-const FOLD_TRANSITION = LinearTransition.duration(260).reduceMotion(ReduceMotion.System);
 
 /**
  * Who wrote in this agent's conversation: the assistant's own avatar, name, role and access, in its
@@ -86,18 +84,16 @@ export function AssistantFeedMessage(props: {
 }) {
   const { active, archived } = useAssistantEntries();
   const openLinkedThread = useOpenLinkedThread();
-  const [expanded, setExpanded] = useState(false);
   const assistant =
     [...active, ...archived].find(
       (entry) =>
         entry.environmentId === props.environmentId && entry.assistant.id === props.assistantId,
     )?.assistant ?? null;
-  const name = assistant?.name ?? props.fallbackName ?? "Assistant";
+  const name = assistant?.name || props.fallbackName || "Assistant";
   const accent = assistantAccent(props.assistantId);
   const face = assistant ?? removedAssistantFace(props.assistantId);
   const access = assistant ? toolAccessLabel(assistant.toolAccess) : null;
   const badge = presenceBadgeLabel(access, assistant?.askBeforeActing === true, assistant?.role);
-  const collapsed = props.long === true && !expanded;
   const status =
     props.status === undefined ? null : (
       <View
@@ -155,26 +151,9 @@ export function AssistantFeedMessage(props: {
               borderColor: accentWash(accent, 0.28),
             }}
           >
-            <Animated.View
-              // Only a foldable body animates; other rows skip layout tracking in the list.
-              layout={props.long ? FOLD_TRANSITION : undefined}
-              style={collapsed ? { maxHeight: COLLAPSED_BODY_HEIGHT, overflow: "hidden" } : null}
-            >
+            <FoldableContent foldable={props.long === true} foldedHeight={ASSISTANT_FOLDED_HEIGHT}>
               {props.children}
-            </Animated.View>
-            {props.long ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded }}
-                hitSlop={8}
-                onPress={() => setExpanded((value) => !value)}
-                className="mt-1.5 min-h-8 items-end justify-center active:opacity-70"
-              >
-                <Text className="font-t3-medium text-xs text-foreground-secondary">
-                  {expanded ? "Show less" : "Show full message"}
-                </Text>
-              </Pressable>
-            ) : null}
+            </FoldableContent>
           </View>
           {props.threadId || props.timestampLabel ? (
             <View className="flex-row items-center gap-3 ps-1">

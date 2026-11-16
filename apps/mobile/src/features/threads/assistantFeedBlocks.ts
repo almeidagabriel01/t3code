@@ -2,10 +2,8 @@ import {
   assistantJoins,
   continuesAssistantSender,
 } from "@t3tools/client-runtime/assistantPresence";
-import {
-  teammateMessageIsLong,
-  type TeammateMessagePart,
-} from "@t3tools/client-runtime/teammateMessage";
+import { isLongMessage } from "@t3tools/client-runtime/messageFold";
+import type { TeammateMessagePart } from "@t3tools/client-runtime/teammateMessage";
 import { assistantIdFromThreadId, assistantTransferList } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 
@@ -83,7 +81,7 @@ export function assistantFeedBlocks(input: {
       joined: joins?.includes(assistantId) ?? false,
       showTimestamp: index === parts.length - 1,
       continues: parts.length === 1 && continued,
-      long: teammateMessageIsLong(text),
+      long: isLongMessage(text),
     };
   });
 }

@@ -2,13 +2,12 @@ import { assistantIdFromThreadId, assistantTransferList, ThreadId } from "@t3too
 import { assistantAccent } from "@t3tools/client-runtime/assistantPresence";
 import {
   TEAMMATE_STATUS_LABEL,
-  teammateMessageIsLong,
   type TeammateMessagePart,
 } from "@t3tools/client-runtime/teammateMessage";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
-import { use, useState } from "react";
+import { use } from "react";
 
 import { cn } from "~/lib/utils";
 import { useAssistantEntries } from "../../state/assistants";
@@ -20,9 +19,9 @@ import {
 } from "../assistants/assistantPresentation";
 import ChatMarkdown from "../ChatMarkdown";
 import { Badge } from "../ui/badge";
-import { Button, InlineButton } from "../ui/button";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { findRevealRef } from "./markdownFindContext";
+import { CollapsibleMessageBody } from "./CollapsibleMessageBody";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
@@ -32,8 +31,6 @@ const STATUS_BADGE_VARIANT = {
   partial: "warning",
   blocked: "error",
 } as const;
-
-const COLLAPSED_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2.5rem), transparent)";
 
 /** The assistant behind a part, live from the directory so renames and role changes show. */
 function useTeammate(threadId: string) {
@@ -59,7 +56,7 @@ export function TeammateMessageRow({ row }: { row: Extract<TimelineRow, { kind: 
   const parts: ReadonlyArray<TeammateMessagePart> = presentation.teammate ?? [
     {
       kind: "request",
-      name: "Assistant",
+      name: "",
       handle: "",
       threadId: senderThreadId ?? "",
       requestId: "",
@@ -128,7 +125,7 @@ function TeammatePartBlock(props: {
   const ctx = use(TimelineRowCtx);
   const { part } = props;
   const { assistantId, assistant, face } = useTeammate(props.threadId);
-  const name = assistant?.name ?? part.name;
+  const name = assistant?.name || part.name || "Assistant";
   const accent = assistantAccent(assistantId);
   const role = assistant?.role ? assistant.role : "assistant";
   const access = assistant ? toolAccessLabel(assistant.toolAccess) : null;
@@ -213,30 +210,11 @@ function TeammatePartBlock(props: {
   );
 }
 
-/** Long messages open on their first screen and expand once, smoothly, on request. */
 function TeammateMessageBody({ text, files }: { text: string; files: ReadonlyArray<string> }) {
   const ctx = use(TimelineRowCtx);
-  const [expanded, setExpanded] = useState(false);
-  const revealRef = findRevealRef(() => setExpanded(true));
-  const canCollapse = teammateMessageIsLong(text);
-  const collapsed = canCollapse && !expanded;
   return (
-    <div>
-      <div
-        ref={revealRef}
-        className={cn(
-          "overflow-hidden text-sm leading-relaxed [interpolate-size:allow-keywords] motion-safe:transition-[height] motion-safe:duration-300 motion-safe:ease-out",
-          collapsed ? "h-80" : "h-auto",
-        )}
-        data-thread-find-text="true"
-        data-thread-find-fold={collapsed ? "" : undefined}
-        data-teammate-collapsed={collapsed ? "true" : "false"}
-        style={
-          collapsed
-            ? { WebkitMaskImage: COLLAPSED_FADE_MASK, maskImage: COLLAPSED_FADE_MASK }
-            : undefined
-        }
-      >
+    <CollapsibleMessageBody text={text}>
+      <div className="text-sm leading-relaxed">
         <ChatMarkdown
           text={text}
           cwd={ctx.markdownCwd}
@@ -258,20 +236,6 @@ function TeammateMessageBody({ text, files }: { text: string; files: ReadonlyArr
           </div>
         )}
       </div>
-      {canCollapse ? (
-        <div className="mt-1.5 flex justify-end">
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost-muted"
-            aria-expanded={expanded}
-            data-scroll-anchor-ignore
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {expanded ? "Show less" : "Show full message"}
-          </Button>
-        </div>
-      ) : null}
-    </div>
+    </CollapsibleMessageBody>
   );
 }

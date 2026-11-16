@@ -181,12 +181,3 @@ export function teammateMessagePlainText(parts: ReadonlyArray<TeammateMessagePar
     ? parts[0]!.text
     : parts.map((part) => `${part.name}:\n${part.text}`).join("\n\n");
 }
-
-// Agent-written markdown runs longer than a person's note; fold only what overflows a screen.
-const LONG_MESSAGE_LINES = 28;
-const LONG_MESSAGE_CHARS = 1_800;
-
-/** Whether a teammate's words open folded, with the rest a tap away. */
-export function teammateMessageIsLong(text: string): boolean {
-  return text.length > LONG_MESSAGE_CHARS || text.split("\n").length > LONG_MESSAGE_LINES;
-}

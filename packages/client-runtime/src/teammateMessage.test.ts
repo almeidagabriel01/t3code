@@ -1,11 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  resolveTeammateMessage,
-  teammateMessageIsLong,
-  teammateMessagePlainText,
-} from "./teammateMessage.ts";
+import { resolveTeammateMessage, teammateMessagePlainText } from "./teammateMessage.ts";
 
 const lead = 'from="Pessoal Lead" handle="pessoal-lead" threadId="assistant:lead:1"';
 const fyi = `<t3_request ${lead} expects_reply="false">
@@ -240,12 +236,4 @@ Status: done no lado deles; confere?`,
     ]);
     expect(teammateMessagePlainText(parts!)).toBe("Status: done");
   });
-});
-
-it.each([
-  ["a short reply", "Status: done\nShipped.", false],
-  ["a long paragraph", "word ".repeat(400), true],
-  ["many short lines", Array.from({ length: 30 }, (_, i) => `- item ${i}`).join("\n"), true],
-])("teammateMessageIsLong: %s", (_name, text, expected) => {
-  expect(teammateMessageIsLong(text)).toBe(expected);
 });
