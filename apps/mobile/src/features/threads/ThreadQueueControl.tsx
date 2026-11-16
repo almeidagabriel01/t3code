@@ -232,6 +232,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         </Text>
       ) : null}
       {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+        const presentation = message ? resolveUserMessagePresentation(message) : null;
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
@@ -242,7 +243,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
-          text,
+          // A teammate's queued message shows their words, as its sent row will.
+          text: presentation?.teammate ? presentation.text : text,
         });
         const title = queuedRowTitle({
           message,
