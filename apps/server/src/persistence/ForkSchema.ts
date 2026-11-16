@@ -871,6 +871,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_scope_idx ON assistant_group_messages(team_id, request_project_id, seq)`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_open_wait_idx ON assistant_group_messages(team_id) WHERE wait_key IS NOT NULL AND wait_resolved_at IS NULL`;
   yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_asks_project_idx ON assistant_group_messages(team_id, request_project_id) WHERE asks_project = 1`;
+  // The newest boundary, which every stopped-task count reads, without walking the chat back to it.
+  yield* sql`CREATE INDEX IF NOT EXISTS assistant_group_messages_boundary_idx ON assistant_group_messages(team_id, seq) WHERE kind = 'boundary'`;
   // How far the user has read one tab of a group: scope is the project id, or '' for General.
   yield* sql`
     CREATE TABLE IF NOT EXISTS assistant_group_read_cursors (

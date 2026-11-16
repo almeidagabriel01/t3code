@@ -3,7 +3,7 @@ import {
   type AssistantId,
   type AssistantTeam,
   type AssistantTeamId,
-  AssistantTeamChatWaitingReason,
+  AssistantTeamChatWaitingRequest,
   ModelSelection,
   type ProjectId,
   type ThreadId,
@@ -60,8 +60,9 @@ const decodeScopes = Schema.decodeOption(
           Schema.NullOr(
             Schema.Struct({
               requestId: Schema.String,
-              title: Schema.String,
-              reason: AssistantTeamChatWaitingReason,
+              title: Schema.NullOr(Schema.String),
+              text: Schema.String,
+              reason: AssistantTeamChatWaitingRequest.fields.reason,
               taskReason: Schema.NullOr(Schema.String),
               assistantId: Schema.NullOr(Schema.String),
             }),
@@ -72,6 +73,12 @@ const decodeScopes = Schema.decodeOption(
   ),
 );
 
+const clipTitle = (title: string) => {
+  const chars = Array.from(title);
+  const max = ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS;
+  return chars.length <= max ? title : `${chars.slice(0, max - 1).join("")}…`;
+};
+
 /** A request's title until the lead names it: its first line, without the @mentions it opens with. */
 export const requestTitleFromText = (text: string) => {
   const line =
@@ -79,9 +86,7 @@ export const requestTitleFromText = (text: string) => {
       .split("\n")
       .find((candidate) => candidate.trim() !== "")
       ?.trim() ?? "";
-  const chars = Array.from(line.replace(/^(?:@\S+[\s,]+)+/u, "") || line);
-  const max = ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS;
-  return chars.length <= max ? chars.join("") : `${chars.slice(0, max - 1).join("")}…`;
+  return clipTitle(line.replace(/^(?:@\S+[\s,]+)+/u, "") || line);
 };
 
 const ModelSelectionJson = Schema.fromJsonString(ModelSelection);
@@ -149,7 +154,10 @@ export const toAssistantTeam = (row: AssistantTeamRow): AssistantTeam => ({
                 : {
                     waitingRequest: {
                       requestId: scope.waitingRequest.requestId,
-                      title: requestTitleFromText(scope.waitingRequest.title),
+                      title:
+                        scope.waitingRequest.title === null
+                          ? requestTitleFromText(scope.waitingRequest.text)
+                          : clipTitle(scope.waitingRequest.title),
                       reason: scope.waitingRequest.reason,
                       ...(scope.waitingRequest.taskReason === null
                         ? {}

@@ -703,6 +703,12 @@ it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)
       assert.isTrue(
         openWaits.some((row) => row.detail.includes("assistant_group_messages_open_wait_idx")),
       );
+      const boundary = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN SELECT b.seq FROM assistant_group_messages b
+        WHERE b.team_id = 'g1' AND b.kind = 'boundary' ORDER BY b.seq DESC LIMIT 1`;
+      assert.isTrue(
+        boundary.some((row) => row.detail.includes("assistant_group_messages_boundary_idx")),
+      );
     }).pipe(Effect.provide(database)),
 );
 

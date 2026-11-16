@@ -181,6 +181,15 @@ it.effect("a tab waits on the user exactly when the contract says its request do
       toAssistantTeam(untitled!).chat?.scopes?.[0]?.waitingRequest?.title,
       `${"y".repeat(79)}…`,
     );
+    // A title the lead gave is kept as written, only clipped.
+    yield* sql`UPDATE assistant_group_messages SET title = ${`@ada fix ${"z".repeat(90)}`}
+      WHERE message_id = ${waits!.message_id}`;
+    const [named] = yield* sql<AssistantTeamRow>`
+      SELECT * FROM assistant_team_state WHERE team_id = ${waits!.team_id}`;
+    assert.equal(
+      toAssistantTeam(named!).chat?.scopes?.[0]?.waitingRequest?.title,
+      `@ada fix ${"z".repeat(70)}…`,
+    );
     // The rule itself, apart from any SQL: what the user stopped, an archive paused, a reply, or
     // a failed child (reported to its parent) waits on no one.
     const one = (
