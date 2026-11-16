@@ -9,7 +9,7 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
-  assistantGroupSendToRestore,
+  assistantGroupFailedSendRouting,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
@@ -68,7 +68,11 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
-import { GroupAttachmentChips, useGroupAttachments } from "./GroupAttachments";
+import {
+  clearGroupAttachments,
+  GroupAttachmentChips,
+  useGroupAttachments,
+} from "./GroupAttachments";
 import { AssistantAvatar } from "./assistantPresentation";
 import type { GroupProjectModel } from "./useGroupProjectModel";
 
@@ -85,8 +89,11 @@ const outgoings = createAssistantGroupOutgoingStore<
       readonly text: string;
     }
 >();
-/** For tests: each starts with no outgoing messages. */
-export const clearGroupOutgoings = () => outgoings.clear();
+/** For tests: each starts with no outgoing messages or files. */
+export const clearGroupOutgoings = () => {
+  outgoings.clear();
+  clearGroupAttachments();
+};
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
 const EDITOR_MAX_LINES = 6;
@@ -473,8 +480,10 @@ export function GroupComposer(props: {
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
   const attached = useGroupAttachments(
+    groupKey,
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),
+    new Set(outgoing.flatMap((entry) => entry.attachmentIds)),
   );
   // A file still uploading or failed holds the send, so it is never dropped without the user knowing.
   const canSend =
@@ -540,11 +549,19 @@ export function GroupComposer(props: {
     props.onLanded(sent);
   };
   const seenSend = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send coming into view takes its routing back; the outgoing store is outside React
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send trades its routing with the chat's; the outgoing store is outside React
   useLayoutEffect(() => {
-    const { seen, restore } = assistantGroupSendToRestore(seenSend.current, shown, props.tab);
-    seenSend.current = seen;
-    if (restore?.routing != null) props.onRestore(restore.routing);
+    const routing = assistantGroupFailedSendRouting(
+      seenSend.current,
+      shown,
+      props.tab,
+      props.routing,
+    );
+    seenSend.current = routing.seen;
+    if (routing.restore !== null) props.onRestore(routing.restore);
+    else if (shown !== null && routing.keep !== null) {
+      setOutgoing(shown.tab, { ...shown, routing: routing.keep });
+    }
     if (props.messages === undefined) return;
     for (const entry of outgoing) {
       const live = getComposerDraftSnapshot(outgoingKey(entry.tab)).text;

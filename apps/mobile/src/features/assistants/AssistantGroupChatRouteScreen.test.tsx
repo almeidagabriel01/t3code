@@ -1618,6 +1618,23 @@ describe("group attachments", () => {
     });
     expect(chips()).toHaveLength(0);
     expect(mocks.release).toHaveBeenCalledWith("hub", ["pending-shot.png", "pending-sheet.pdf"]);
+
+    // A send whose reply was lost keeps its files when the chat closes, so its resend carries them
+    // under the same id.
+    mocks.release.mockClear();
+    mocks.pick.mockResolvedValue({ files: [draft("note.pdf")], error: null });
+    await click("Add attachment:Choose Files");
+    await type("@ada again");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    act(() => root.unmount());
+    root = createRoot(container);
+    render();
+    expect([chips().length, mocks.release.mock.calls]).toEqual([1, []]);
+    await click("Send");
+    const [sent, resent] = mocks.post.mock.calls.slice(-2).map(([input]) => input);
+    expect([resent, mocks.requestIds.at(-1)]).toEqual([sent, mocks.requestIds.at(-2)]);
+    expect(resent).toEqual(expect.objectContaining({ attachments: [expect.anything()] }));
   });
 
   it("removes an uploaded file's pending upload, and retries a failed one from its chip", async () => {
@@ -1945,6 +1962,20 @@ describe("requests", () => {
     render();
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
     expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
+    // A reply cancelled on a failed send stays cancelled after another tab: it is a new message.
+    await click("Reply to request Review");
+    await type("again");
+    await click("Send");
+    await click("Cancel reply");
+    await click(TAB.alpha);
+    await click(TAB.beta);
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    await click("Send");
+    const [failed, again] = mocks.requestIds.slice(-2);
+    expect([mocks.post.mock.lastCall?.[0]?.replyToMessageId, again === failed]).toEqual([
+      undefined,
+      false,
+    ]);
   });
 
   it("says how many tasks run in the whole group, even in a tab whose stream holds none", () => {
