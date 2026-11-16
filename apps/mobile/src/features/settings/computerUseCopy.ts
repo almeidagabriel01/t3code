@@ -17,4 +17,8 @@ export const COMPUTER_USE_PAGE_LABELS: readonly string[] = [
   COMPUTER_USE_HOST_INTRO,
   COMPUTER_USE_HOST_NOT_REPORTED,
   ...Object.values(COMPUTER_USE_CAPABILITY_LABELS),
+  // The Linux display servers and the input it drives.
+  "wayland",
+  "x11",
+  "keys",
 ];

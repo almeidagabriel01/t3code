@@ -21,4 +21,7 @@ export const ABOUT_PAGE_LABELS: readonly string[] = [
   ...Object.values(ABOUT_COPY),
   ...Object.values(CLIENT_STORAGE_COPY),
   ...DIAGNOSTICS_PAGE_LABELS,
+  // The documents its Legal page opens.
+  "privacy",
+  "terms",
 ];

@@ -93,4 +93,6 @@ export const VOICE_PAGE_LABELS: readonly string[] = [
   CHATGPT_SPEECH_UNOFFICIAL_NOTE,
   VOICE_COPY.modelsPage.title,
   ...Object.values(MICROPHONE_COPY).flatMap((copy) => Object.values(copy)),
+  // The common name for dictation on this device.
+  "on-device",
 ];

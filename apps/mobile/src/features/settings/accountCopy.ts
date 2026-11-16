@@ -6,4 +6,6 @@ export const ACCOUNT_PAGE_LABELS: readonly string[] = [
   // Clerk's native sheet draws these, out of reach of a copy constant.
   "sign in",
   "sign out",
+  // What users call signing in to T3.
+  "login",
 ];

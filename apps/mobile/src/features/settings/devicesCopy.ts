@@ -32,4 +32,7 @@ export const DEVICES_PAGE_LABELS: readonly string[] = [
     label,
     description,
   ]),
+  // The actions on each device row, whose labels name the device.
+  "take over",
+  "hand back",
 ];

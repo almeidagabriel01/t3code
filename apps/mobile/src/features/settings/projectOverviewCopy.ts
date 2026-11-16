@@ -54,4 +54,6 @@ export const PROJECTS_PAGE_LABELS: readonly string[] = [
   copy.danger.removeEverywhere.title,
   copy.danger.remove.title,
   copy.danger.remove.description,
+  // The page's name on web.
+  "overview",
 ];

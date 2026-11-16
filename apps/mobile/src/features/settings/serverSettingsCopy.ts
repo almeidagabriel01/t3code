@@ -166,6 +166,8 @@ export const THREADS_PAGE_LABELS: readonly string[] = [
   ...Object.values(FALLBACK_MODELS_COPY),
   ...Object.values(FOLDER_MODELS_COPY),
   ...Object.values(AUTO_SETTLE_COPY).flatMap((entry) => Object.values(entry)),
+  // The page's old name for what its rows set.
+  "thread behavior",
 ];
 
 export const SOURCE_CONTROL_PAGE_LABELS: readonly string[] = [
@@ -229,6 +231,8 @@ export const MAINTENANCE_SERVER_PAGE_LABELS: readonly string[] = [
   ...Object.values(RUNNER_DEADLINE_LABEL),
   ...Object.values(RUNNER_SECTION_COPY).flatMap((entry) => Object.values(entry)),
   ...RESOURCE_MANAGER_LABELS,
+  // Its heavy queue slows agent jobs so other work on the machine keeps priority.
+  "background priority",
 ];
 
 export const LABS_PAGE_LABELS: readonly string[] = Object.values(LABS_COPY).flatMap((entry) =>

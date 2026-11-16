@@ -71,4 +71,7 @@ export const APPEARANCE_PAGE_LABELS: readonly string[] = [
   toolCalls.title,
   ...TOOL_CALL_VISIBILITY_OPTIONS.map(({ label }) => label),
   toolCalls.footer,
+  // Common names for the color scheme and the tool call visibility rows.
+  "colors",
+  "work log",
 ];

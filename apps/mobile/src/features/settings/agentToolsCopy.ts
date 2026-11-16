@@ -31,4 +31,7 @@ export const AGENT_TOOLS_PAGE_LABELS: readonly string[] = [
     typeof copy === "string" ? [copy] : Object.values(copy),
   ),
   ...Object.values(GLOBAL_SKILLS_COPY),
+  // What these servers give agents, and the skills folder's scope.
+  "tools",
+  "global",
 ];

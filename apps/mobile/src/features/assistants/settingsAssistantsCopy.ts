@@ -118,4 +118,9 @@ export const ASSISTANTS_PAGE_LABELS: readonly string[] = [
     `Notify on ${AUTONOMY_CHANNEL_LABELS[channel as keyof typeof AUTONOMY_CHANNEL_LABELS]}`,
     description,
   ]),
+  // The built-in assistant and what each assistant's editor sets.
+  "jarvis",
+  "personas",
+  "instructions",
+  "tool access",
 ];

@@ -8,4 +8,9 @@ export const ARCHIVE_COPY = {
   oldestFirst: "Oldest first",
 } as const;
 
-export const ARCHIVE_PAGE_LABELS: readonly string[] = Object.values(ARCHIVE_COPY);
+export const ARCHIVE_PAGE_LABELS: readonly string[] = [
+  ...Object.values(ARCHIVE_COPY),
+  // The actions on each archived thread row.
+  "restore",
+  "unarchive",
+];

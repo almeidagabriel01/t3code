@@ -36,7 +36,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
-import { PROVIDER_ACCOUNTS_COPY } from "./providerAccountsCopy";
+import { PROVIDER_ACCOUNTS_COPY, providerName } from "./providerAccountsCopy";
 
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
@@ -136,7 +136,7 @@ function ClaudeChromeRow({
   readonly provider: ServerProvider;
 }) {
   const navigation = useNavigation();
-  const name = provider.displayName ?? provider.driver;
+  const name = providerName(provider);
   return (
     <View className="border-t border-border-subtle">
       <ListRow
@@ -265,7 +265,7 @@ function ProviderAccount({
       />
     );
   }
-  const name = provider.displayName ?? provider.driver;
+  const name = providerName(provider);
   const email = signedIn && !active && provider.enabled ? provider.auth.email?.trim() : undefined;
   const methods = state?.methods ?? [];
   // The status line says why a provider that is missing or turned off can't sign in.

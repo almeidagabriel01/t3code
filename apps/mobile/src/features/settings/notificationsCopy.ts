@@ -11,4 +11,9 @@ export const NOTIFICATIONS_COPY = {
   unavailableOnPlatform: "Unavailable on this platform",
 } as const;
 
-export const NOTIFICATIONS_PAGE_LABELS: readonly string[] = Object.values(NOTIFICATIONS_COPY);
+export const NOTIFICATIONS_PAGE_LABELS: readonly string[] = [
+  ...Object.values(NOTIFICATIONS_COPY),
+  // The platform's names for what this page turns on.
+  "push",
+  "alerts",
+];

@@ -11,4 +11,7 @@ export const MAC_PERMISSIONS_COPY = {
 export const MAC_PERMISSIONS_PAGE_LABELS: readonly string[] = [
   ...Object.values(MAC_PERMISSIONS_COPY),
   ...MAC_PERMISSION_ROWS.flatMap(({ label, description }) => [label, description]),
+  // macOS lists these under Privacy & Security; computer use needs them.
+  "privacy",
+  "computer use",
 ];

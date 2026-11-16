@@ -61,4 +61,8 @@ export const GENERAL_PAGE_LABELS: readonly string[] = [
   GENERAL_COPY.threadOrder.title,
   ...optionText(THREAD_ORDER_OPTIONS),
   ...Object.values(GENERAL_COPY.newThreads),
+  // Grouping and thread order arrange the sidebar; web names this page Organization.
+  "group projects",
+  "organization",
+  "sidebar",
 ];

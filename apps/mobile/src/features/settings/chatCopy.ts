@@ -29,4 +29,6 @@ export const CHAT_PAGE_LABELS: readonly string[] = [
   ...FOLLOW_UP_OPTIONS.flatMap(({ label, description }) => [label, description]),
   CHAT_COPY.footer("Ctrl"),
   CHAT_COPY.footer("Command"),
+  // What the queued messages this page configures are called.
+  "follow-ups",
 ];

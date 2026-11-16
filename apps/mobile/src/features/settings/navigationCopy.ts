@@ -15,4 +15,8 @@ export const NAVIGATION_COPY = {
 export const NAVIGATION_PAGE_LABELS: readonly string[] = [
   ...Object.values(NAVIGATION_COPY),
   ...Object.values(NAVIGATION_TAB_LABELS),
+  // The tabs this page orders and hides fill the tablet sidebar.
+  "reorder",
+  "hide tabs",
+  "sidebar",
 ];

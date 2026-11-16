@@ -33,4 +33,11 @@ export const ENVIRONMENTS_PAGE_LABELS: readonly string[] = [
   ENVIRONMENTS_COPY.cloudHeader,
   ...Object.values(ENVIRONMENTS_COPY.pullRequestRouting),
   ...PULL_REQUEST_ROUTING_OPTIONS.flatMap(({ label, description }) => [label, description]),
+  // Adding one pairs a server; its routes (Tailscale, LAN, relay) show per environment.
+  "servers",
+  "connections",
+  "pair",
+  "add environment",
+  "remote",
+  "tailscale",
 ];

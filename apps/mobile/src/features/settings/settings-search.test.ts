@@ -94,6 +94,36 @@ describe("filterSettingsSections", () => {
     expect(found.map((row) => row.id)).toContain(page);
   });
 
+  // Names users type for a page that it does not draw: server-provided rows and what it does.
+  it.each([
+    { query: "login", page: "account" },
+    { query: "tailscale", page: "SettingsEnvironments" },
+    { query: "push", page: "SettingsNotifications" },
+    { query: "colors", page: "SettingsAppearance" },
+    { query: "sidebar", page: "SettingsNavigation" },
+    { query: "on-device", page: "SettingsVoice" },
+    { query: "cron", page: "SettingsScheduledTasks" },
+    { query: "overview", page: "SettingsProjectOverview" },
+    { query: "group projects", page: "SettingsOrganization" },
+    { query: "thread behavior", page: "SettingsThreads" },
+    { query: "follow-ups", page: "SettingsFollowUp" },
+    { query: "cards", page: "SettingsKanban" },
+    { query: "tools", page: "SettingsAgentTools" },
+    { query: "jarvis", page: "SettingsAssistants" },
+    { query: "oauth", page: "SettingsIntegrations" },
+    { query: "take over", page: "SettingsDevices" },
+    { query: "privacy", page: "SettingsMacPermissions" },
+    { query: "wayland", page: "SettingsComputerUse" },
+    { query: "markdown", page: "SettingsNotes" },
+    { query: "unarchive", page: "SettingsArchive" },
+    { query: "codex", page: "SettingsProviderAccounts" },
+    { query: "background priority", page: "SettingsEnvironmentMaintenance" },
+    { query: "terms", page: "SettingsAbout" },
+  ])("finds $page by a name users type: $query", ({ query, page }) => {
+    const found = filterSettingsSections(everyPage, query).flatMap((section) => section.rows);
+    expect(found.map((row) => row.id)).toContain(page);
+  });
+
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
   });
