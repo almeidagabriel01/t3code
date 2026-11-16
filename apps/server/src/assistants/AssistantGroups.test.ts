@@ -5944,7 +5944,29 @@ it.effect(
       yield* sql`UPDATE assistant_group_tasks SET request_id = NULL
         WHERE task_id = ${paused.tasks[0]!.id}`;
       yield* groups.taskAction({ taskId: paused.tasks[0]!.id, action: "cancel" });
-      assert.include(settled(), requestThreadId("beto", TEAM, paused.message.id));
+      const betoThread = requestThreadId("beto", TEAM, paused.message.id);
+      assert.include(settled(), betoThread);
+
+      // Only a held conversation settles on a later run end: a user's turn in a closed request,
+      // or a background wake in one marked active, leaves the thread as it is.
+      const laterRunEnd = (threadId: string) =>
+        groups.handleRunEvent({
+          type: "run.updated",
+          payload: {
+            id: `run:later:${threadId}`,
+            threadId,
+            userMessageId: "later",
+            status: "completed",
+          },
+        } as never as OrchestrationV2DomainEvent);
+      const before = settled().length;
+      h.fakeThreads.get(cyThread)!.settledOverride = null;
+      yield* laterRunEnd(cyThread);
+      assert.isNull(h.fakeThreads.get(cyThread)!.settledOverride);
+      h.fakeThreads.get(betoThread)!.settledOverride = "active" as never;
+      yield* laterRunEnd(betoThread);
+      assert.equal(h.fakeThreads.get(betoThread)!.settledOverride, "active");
+      assert.lengthOf(settled(), before);
     }).pipe(Effect.provide(h.layer));
   },
 );

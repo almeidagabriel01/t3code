@@ -345,6 +345,7 @@ interface ThreadRow {
   readonly request_id: string | null;
   readonly followed_model_selection?: string | null;
   readonly pending_model_selection?: string | null;
+  readonly settle_held_at?: string | null;
   readonly restore_model_selection?: string | null;
   readonly aimed_model_selection?: string | null;
 }
@@ -1367,10 +1368,12 @@ const make = Effect.gen(function* () {
   /**
    * A request with every task delivered or cancelled settles its members' threads (closing idle
    * terminals and watches). Paused or failed work, or a request waiting on the user, stays active.
-   * Delivered is not finished: a conversation whose subagents or launched threads still run waits.
+   * Delivered is not finished: a conversation whose subagents or launched threads still run is held,
+   * and `heldOnly` (a later run end) settles only held ones, never one the user brought back.
    */
   const closeRequestIfDone = Effect.fn("AssistantGroups.closeRequestIfDone")(function* (
     requestId: string | null,
+    heldOnly = false,
   ) {
     if (requestId === null) return;
     // A task from before requests had ids (request_id NULL) belongs to its request message's.
@@ -1380,9 +1383,37 @@ const make = Effect.gen(function* () {
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
     const settling: Array<ThreadRow> = [];
     for (const row of yield* requestThreads(requestId)) {
-      if (!(yield* stillWorking(row.thread_id as ThreadId))) settling.push(row);
+      const heldAt = row.settle_held_at ?? null;
+      if (heldOnly && heldAt === null) continue;
+      if (heldAt !== null && (yield* keptActiveSince(row.thread_id as ThreadId, heldAt))) {
+        yield* releaseHold(row.thread_id);
+      } else if (!(yield* stillWorking(row.thread_id as ThreadId))) {
+        settling.push(row);
+      } else if (heldAt === null) {
+        yield* sql`
+          UPDATE assistant_group_request_threads SET settle_held_at = ${yield* nowIso}
+          WHERE thread_id = ${row.thread_id}`;
+      }
     }
     yield* settleThreads(settling);
+  });
+
+  const releaseHold = (threadId: string) =>
+    sql`UPDATE assistant_group_request_threads SET settle_held_at = NULL WHERE thread_id = ${threadId}`;
+
+  /** Pinned, or marked active after the hold: the user keeps it, so no later run settles it. */
+  const keptActiveSince = Effect.fn("AssistantGroups.keptActiveSince")(function* (
+    threadId: ThreadId,
+    heldAt: string,
+  ) {
+    const thread = yield* inspectThread(threadId);
+    if (thread === undefined) return false;
+    if (thread.pinnedAt != null) return true;
+    return (
+      thread.settledOverride === "active" &&
+      thread.unsettledAt != null &&
+      DateTime.toEpochMillis(thread.unsettledAt) > Date.parse(heldAt)
+    );
   });
 
   const stillWorking = Effect.fn("AssistantGroups.stillWorking")(function* (threadId: ThreadId) {
@@ -1404,7 +1435,7 @@ const make = Effect.gen(function* () {
     yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const owner = yield* threadRowOf(source);
-        if (owner !== undefined) yield* closeRequestIfDone(owner.request_id);
+        if (owner !== undefined) yield* closeRequestIfDone(owner.request_id, true);
       }),
     );
   });
@@ -1429,6 +1460,7 @@ const make = Effect.gen(function* () {
           byOwnAgent: false,
         })
         .pipe(
+          Effect.andThen(releaseHold(row.thread_id)),
           Effect.catchCause((cause) =>
             Effect.logDebug("assistant groups: request thread not settled yet", {
               threadId: row.thread_id,
@@ -1444,6 +1476,8 @@ const make = Effect.gen(function* () {
     requestId: string | null,
   ) {
     if (requestId === null) return;
+    yield* sql`
+      UPDATE assistant_group_request_threads SET settle_held_at = NULL WHERE request_id = ${requestId}`;
     for (const row of yield* requestThreads(requestId)) {
       const thread = yield* inspectThread(row.thread_id as ThreadId);
       if (thread?.settledOverride !== "settled" || thread.archivedAt !== null) continue;
@@ -2928,7 +2962,7 @@ const make = Effect.gen(function* () {
             const owner = yield* threadRowOf(event.payload.threadId);
             if (owner?.request_id == null) return;
             yield* applyPendingModel(owner.thread_id);
-            yield* closeRequestIfDone(owner.request_id);
+            yield* closeRequestIfDone(owner.request_id, true);
             yield* pump(owner.team_id);
           }),
         );
