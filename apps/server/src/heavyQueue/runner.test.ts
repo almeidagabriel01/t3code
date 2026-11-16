@@ -1390,6 +1390,36 @@ describe("patterns and eligibility", () => {
           { "./tools/check": "#!/usr/bin/env python3\nprint(1)" },
         ],
         ["./tools/check.sh", "linux", null, { "./tools/check.sh": "#!/bin/sh\nvp test run" }],
+        // What sets up this Mac's shell holds the work after it, like `source`.
+        [
+          'eval "$(direnv export bash)" && vp test run',
+          "mac-only",
+          // `eval` already makes the whole line unreadable, so it stays here too.
+          "Couldn't read this command safely (eval)",
+        ],
+        ["nvm use 22 && vp test run", "mac-only", "Sets up its shell here first: nvm use 22"],
+        ["fnm use && vp test run", "mac-only", "Sets up its shell here first: fnm use"],
+        [
+          "pyenv shell 3.12 && vp test run",
+          "mac-only",
+          "Sets up its shell here first: pyenv shell 3.12",
+        ],
+        [
+          "conda activate app && vp test run",
+          "mac-only",
+          "Sets up its shell here first: conda activate app",
+        ],
+        [
+          "rbenv shell 3.3 && vp test run",
+          "mac-only",
+          "Sets up its shell here first: rbenv shell 3.3",
+        ],
+        [
+          "direnv exec . vp test run",
+          "mac-only",
+          "Sets up its shell here first: direnv exec . vp test run",
+        ],
+        ["nvm ls && vp test run", "linux", null],
       ] as ReadonlyArray<
         readonly [string, string, string | null, Readonly<Record<string, string | null>>?]
       >

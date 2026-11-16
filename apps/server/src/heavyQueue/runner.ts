@@ -470,6 +470,25 @@ const literalValue = (word: Word, vars: ReadonlyMap<string, string | null>, cwd:
 
 const DECLARES = new Set(["export", "declare", "local", "readonly"]);
 
+/** Subcommands that change this shell's environment, by program; `source` and `.` always do. */
+const SHELL_SETUP: Readonly<Record<string, RegExp>> = {
+  nvm: /^use$/,
+  fnm: /^(use|env)$/,
+  pyenv: /^(shell|activate)$/,
+  rbenv: /^shell$/,
+  nodenv: /^shell$/,
+  conda: /^activate$/,
+  mamba: /^activate$/,
+  micromamba: /^activate$/,
+  direnv: /^exec$/,
+};
+
+/** A part that prepares this Mac's shell for what follows: Linux would run that work without it. */
+const setsUpShell = ([first = "", second = ""]: ReadonlyArray<string>) =>
+  first === "source" ||
+  first === "." ||
+  (Object.hasOwn(SHELL_SETUP, first) && SHELL_SETUP[first]!.test(second));
+
 /**
  * Whether Linux can run a job, and why not. Only the work parts leave (heavy commands and
  * `remoto` calls); the rest of the line runs here, so only they are judged, each from the folder
@@ -506,6 +525,7 @@ export const eligibilityOf = (
   for (const part of parts) {
     const { command } = part;
     const cwd = cwdAt(command.scope);
+    if (setsUpShell(part.values)) sourced ??= part.values.join(" ");
     if (work.has(part) && sourced !== null) {
       return { eligibility: "mac-only", reason: `Sets up its shell here first: ${sourced}` };
     }
@@ -554,7 +574,6 @@ export const eligibilityOf = (
     // A substitution runs in its own subshell: its folder and variables end with it.
     if (command.substituted) continue;
     const first = part.values[0];
-    if (first === "source" || first === ".") sourced ??= part.values.join(" ");
     if (first === "cd" || first === "pushd" || first === "popd") {
       const args = command.words.slice(1).filter((word) => !/^-[LPe@]+$/.test(word.value));
       const target =
