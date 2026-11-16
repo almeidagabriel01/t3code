@@ -75,11 +75,13 @@ describe("assistantSenders", () => {
       { ...sent("m2", "assistant:bo:1"), ...groupReplies },
       sent("m3", "assistant:bo:1"),
     ];
+    // Only a sent message brings someone in; an answer that names a sender thread does not.
+    const answer = { ...sent("m0", "assistant:cy:1"), role: "assistant" };
     expect(assistantSenders(messages, []).map((s) => [s.assistantId, s.count])).toEqual([
       ["ada", 2],
       ["bo", 2],
     ]);
-    expect([...assistantJoins(messages)]).toEqual([
+    expect([...assistantJoins([answer, ...messages])]).toEqual([
       ["m1", ["ada"]],
       ["m2", ["bo"]],
     ]);

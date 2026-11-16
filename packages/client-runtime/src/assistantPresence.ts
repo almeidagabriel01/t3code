@@ -92,7 +92,8 @@ export function assistantJoins(
   messages: ReadonlyArray<SenderMessage & { readonly id: string }>,
 ): ReadonlyMap<string, ReadonlyArray<string>> {
   const joins = new Map<string, Array<string>>();
-  for (const sender of assistantSenders(messages, [])) {
+  const sent = messages.filter((message) => message.role === "user");
+  for (const sender of assistantSenders(sent, [])) {
     joins.set(sender.firstMessageId, [
       ...(joins.get(sender.firstMessageId) ?? []),
       sender.assistantId,
