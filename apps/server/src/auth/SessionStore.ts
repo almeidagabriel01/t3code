@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
@@ -430,9 +431,8 @@ export class SessionStore extends Context.Service<
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
-// Another process (the `t3 auth` CLI) revokes in the shared database without reaching this
-// process's change events, so live sockets re-read their session row at least this often.
-const SESSION_RECHECK_INTERVAL_MS = 2_000;
+// How often one watcher per store checks whether another process (the `t3 auth` CLI) wrote.
+const EXTERNAL_WRITE_CHECK_INTERVAL = Duration.seconds(2);
 
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
@@ -509,6 +509,8 @@ const make = Effect.gen(function* () {
   // Newest session per DPoP key. A live socket moves to it at expiry, so a
   // client that renews its short-lived token keeps its socket.
   const latestSessionByProofKey = new Map<string, AuthSessionId>();
+  // Sessions with a live socket waiting in awaitInvalidation, counted per waiter.
+  const watchedSessions = new Map<AuthSessionId, number>();
   const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
@@ -1053,6 +1055,21 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         // Subscribe before reading: revocation can race with the WebSocket upgrade.
         const subscription = yield* PubSub.subscribe(changesPubSub);
+        const chain: Array<AuthSessionId> = [];
+        const follow = (id: AuthSessionId) => {
+          chain.push(id);
+          watchedSessions.set(id, (watchedSessions.get(id) ?? 0) + 1);
+        };
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const id of chain) {
+              const remaining = (watchedSessions.get(id) ?? 0) - 1;
+              if (remaining > 0) watchedSessions.set(id, remaining);
+              else watchedSessions.delete(id);
+            }
+          }),
+        );
+        follow(sessionId);
         const readRow = (id: AuthSessionId) =>
           authSessions
             .getById({ sessionId: id })
@@ -1066,7 +1083,6 @@ const make = Effect.gen(function* () {
         // Revoking any session the socket has used closes it. Events only wake this loop
         // and the rows decide: revocations are written before they are published, and
         // clientRemoved also reports an expired session losing its last socket.
-        const chain = [sessionId];
         const nextRemoval = Effect.gen(function* () {
           while (true) {
             const change = yield* PubSub.take(subscription);
@@ -1080,10 +1096,7 @@ const make = Effect.gen(function* () {
           const now = yield* DateTime.now;
           const remaining = current.expiresAt.epochMilliseconds - now.epochMilliseconds;
           if (remaining > 0) {
-            yield* Effect.raceFirst(
-              nextRemoval,
-              Effect.sleep(Duration.millis(Math.min(remaining, SESSION_RECHECK_INTERVAL_MS))),
-            );
+            yield* Effect.raceFirst(nextRemoval, Effect.sleep(Duration.millis(remaining)));
             continue;
           }
           const successorId =
@@ -1100,12 +1113,54 @@ const make = Effect.gen(function* () {
           ) {
             return;
           }
-          chain.push(successorId);
+          follow(successorId);
           current = successor.value;
         }
       }),
     );
   });
+
+  const republishExternalRevocations = Effect.fn("SessionStore.republishExternalRevocations")(
+    function* () {
+      yield* Effect.forEach(
+        Array.from(watchedSessions.keys()),
+        (sessionId) =>
+          authSessions
+            .getById({ sessionId })
+            .pipe(
+              Effect.flatMap((row) =>
+                Option.isNone(row) || row.value.revokedAt !== null
+                  ? emitRemoved(sessionId)
+                  : Effect.void,
+              ),
+            ),
+        { discard: true },
+      );
+    },
+  );
+
+  // Revocations committed by another process skip this process's change events. One watcher
+  // notices any outside commit and republishes the revoked sessions that live sockets wait on.
+  // A failed first read only costs one extra re-read on the first check.
+  let externalWriteVersion = yield* authSessions
+    .readExternalWriteVersion()
+    .pipe(Effect.orElseSucceed(() => -1));
+  yield* Effect.gen(function* () {
+    const version = yield* authSessions.readExternalWriteVersion();
+    if (version === externalWriteVersion) return;
+    // Advance only after republishing, so a failed re-read retries on the next check.
+    if (watchedSessions.size > 0) yield* republishExternalRevocations();
+    externalWriteVersion = version;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to check for sessions revoked by another process.").pipe(
+        Effect.annotateLogs({ cause }),
+      ),
+    ),
+    Effect.repeat(Schedule.spaced(EXTERNAL_WRITE_CHECK_INTERVAL)),
+    Effect.delay(EXTERNAL_WRITE_CHECK_INTERVAL),
+    Effect.forkScoped,
+  );
 
   return SessionStore.of({
     cookieName,
