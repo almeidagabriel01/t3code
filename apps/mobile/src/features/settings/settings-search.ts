@@ -8,6 +8,7 @@ import { INTEGRATIONS_PAGE_LABELS } from "../integrations/integrationsCopy";
 import { KANBAN_PAGE_LABELS } from "../kanban/kanbanBoardCopy";
 import { NOTES_PAGE_LABELS } from "../notes/notesCopy";
 import { TELEGRAM_PAGE_LABELS } from "../telegram/telegramCopy";
+import { USAGE_PAGE_LABELS } from "../usage/usageCopy";
 import { ABOUT_PAGE_LABELS } from "./aboutCopy";
 import { ACCOUNT_PAGE_LABELS } from "./accountCopy";
 import { AGENT_TOOLS_PAGE_LABELS } from "./agentToolsCopy";
@@ -45,10 +46,12 @@ type SubPage =
 
 /** The text each Settings list row's page draws, so search finds a setting by its own name. */
 export const SETTINGS_PAGE_LABELS: Record<
-  Exclude<SettingsPageTarget, SubPage> | "account",
+  // `usage` is the Usage tab's row, listed here when the tab bar hides it.
+  Exclude<SettingsPageTarget, SubPage> | "account" | "usage",
   readonly string[]
 > = {
   account: ACCOUNT_PAGE_LABELS,
+  usage: USAGE_PAGE_LABELS,
   SettingsEnvironments: ENVIRONMENTS_PAGE_LABELS,
   SettingsNotifications: NOTIFICATIONS_PAGE_LABELS,
   SettingsOrganization: GENERAL_PAGE_LABELS,

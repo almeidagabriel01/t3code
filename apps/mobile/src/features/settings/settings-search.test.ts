@@ -62,11 +62,18 @@ describe("filterSettingsSections", () => {
       query: "server settings",
       expected: [["Server settings", ["Provider accounts", "Source control", "Maintenance"]]],
     },
+    // Usage's Limits tab lists a row per signed-in account.
     {
       query: "accounts",
-      expected: [["Server settings", ["Provider accounts"]]],
+      expected: [
+        [null, ["Usage"]],
+        ["Server settings", ["Provider accounts"]],
+      ],
     },
     { query: "usage", expected: [[null, ["Usage"]]] },
+    // The Usage tab's row, listed here when the tab bar hides it, finds what the tab draws.
+    { query: "cache savings", expected: [[null, ["Usage"]]] },
+    { query: "processed tokens", expected: [[null, ["Usage"]]] },
     ...[
       "CPU limit",
       "Keep memory free",
