@@ -82,6 +82,23 @@ describe("resolveTeammateMessage", () => {
       ],
     ],
     [
+      "a request from a thread that is not an assistant's",
+      agent(fyi.replace("assistant:lead:1", "thread:lead"), "thread:lead"),
+      [
+        {
+          kind: "request",
+          name: "Pessoal Lead",
+          handle: "pessoal-lead",
+          threadId: "thread:lead",
+          requestId: "",
+          expectsReply: false,
+          status: undefined,
+          files: [],
+          text: "Lista **única**.\n\n- item",
+        },
+      ],
+    ],
+    [
       "a reply, unescaping its sender and dropping the status line the chip shows",
       agent(reply, "assistant:qa:1"),
       [
@@ -166,8 +183,8 @@ Status: done no lado deles; confere?`,
     ["a group with text after its replies", agent(`${group}\nextra`, "assistant:back:1")],
     ["a group without replies", agent(group.split("\n")[0]!, "assistant:back:1")],
     ["an envelope naming another teammate's thread", agent(reply)],
-    ["an envelope from a thread that is not an assistant's", agent(fyi, "thread:lead")],
-    ["a group from a thread that is not an assistant's", agent(group, "thread:back")],
+    ["an envelope from a thread it does not name", agent(fyi, "thread:lead")],
+    ["a group none of its teammates sent", agent(group, "assistant:lead:1")],
     ["an envelope with no sender thread", { role: "user", text: fyi, createdBy: "agent" as const }],
     ["an empty message", agent("")],
   ])("leaves %s as text", (_name, message) => {

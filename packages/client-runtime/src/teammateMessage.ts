@@ -1,5 +1,4 @@
 import {
-  assistantIdFromThreadId,
   assistantTransferPaths,
   splitAssistantTransferText,
   type OrchestrationMessageContext,
@@ -107,14 +106,13 @@ const GROUP_REPLY = new RegExp(
 
 /**
  * Messages stored before `context.teammate` existed: the envelope the server wrote, read back. The
- * server always sent it from the teammate's own (assistant) thread, so any other agent writing the
- * same tags stays text instead of passing as that teammate.
+ * server sent it from a thread the envelope names, so tags naming another thread stay text.
  */
 function parseLegacyEnvelope(
   text: string,
   senderThreadId: string | undefined,
 ): ReadonlyArray<TeammateMessageEntry> | null {
-  if (senderThreadId === undefined || assistantIdFromThreadId(senderThreadId) === null) return null;
+  if (senderThreadId === undefined) return null;
   const single = SINGLE.exec(text);
   if (single !== null) {
     const kind = single[1] === "t3_request" ? "request" : "reply";
@@ -134,7 +132,11 @@ function parseLegacyEnvelope(
     if (GROUP_REPLY.lastIndex >= text.length) break;
   }
   // Anything the blocks do not account for means this is not the server's envelope: keep it whole.
-  return entries.length > 0 && GROUP_REPLY.lastIndex >= text.length ? entries : null;
+  return entries.length > 0 &&
+    GROUP_REPLY.lastIndex >= text.length &&
+    entries.some((entry) => entry.threadId === senderThreadId)
+    ? entries
+    : null;
 }
 
 /**
