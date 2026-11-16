@@ -1827,6 +1827,13 @@ describe("assistant group tabs", () => {
   const reply = { id: "m1" };
   const sentWith = { reply, projectPick: null, modelPick: null };
   const cancelled = { ...sentWith, reply: null as typeof reply | null };
+  const opus = {
+    ...sentWith,
+    modelPick: {
+      tab: "project:p1" as const,
+      value: { instanceId: "claude", model: "opus" } as ModelSelection,
+    },
+  };
   const held = (
     requestId: string,
     failed: boolean,
@@ -1844,6 +1851,7 @@ describe("assistant group tabs", () => {
     ["coming back after another tab", "B", held("A", true), cancelled, sentWith, null],
     ["failed in view, as it went", "A", held("A", true), { ...sentWith }, null, null],
     ["failed in view, its reply cancelled", "A", held("A", true), cancelled, null, cancelled],
+    ["failed in view, another model picked", "A", held("A", true), opus, null, opus],
     [
       "coming back after a cancel kept",
       "B",
