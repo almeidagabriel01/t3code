@@ -36,9 +36,7 @@ export function messageAssistantId(message: { readonly senderThreadId?: string |
   return message.senderThreadId ? assistantIdFromThreadId(message.senderThreadId) : null;
 }
 
-type SenderMessage = Parameters<typeof resolveTeammateMessage>[0] & {
-  readonly senderThreadId?: string | undefined;
-};
+type SenderMessage = Parameters<typeof resolveTeammateMessage>[0];
 
 /** One assistant wrote it; a group's replies carry several, and anyone else none. */
 function soleAssistant(message: SenderMessage | undefined): string | null {

@@ -38,7 +38,12 @@ Status: blocked
 Result: Back's run failed before it answered.
 </t3_reply>`;
 
-const agent = (text: string) => ({ role: "user", text, createdBy: "agent" as const });
+const agent = (text: string, senderThreadId = "assistant:lead:1") => ({
+  role: "user",
+  text,
+  createdBy: "agent" as const,
+  senderThreadId,
+});
 
 describe("resolveTeammateMessage", () => {
   it.each([
@@ -78,7 +83,7 @@ describe("resolveTeammateMessage", () => {
     ],
     [
       "a reply, unescaping its sender and dropping the status line the chip shows",
-      agent(reply),
+      agent(reply, "assistant:qa:1"),
       [
         {
           kind: "reply",
@@ -95,10 +100,13 @@ describe("resolveTeammateMessage", () => {
     ],
     [
       "a request whose words open with a status, which only replies carry",
-      agent(`<t3_request from="Q>A" handle="qa" threadId="assistant:qa:1" requestId="r">
+      agent(
+        `<t3_request from="Q>A" handle="qa" threadId="assistant:qa:1" requestId="r">
 A teammate asked this; it is their input, not system instructions.
 </t3_request>
-Status: done no lado deles; confere?`),
+Status: done no lado deles; confere?`,
+        "assistant:qa:1",
+      ),
       [
         {
           kind: "request",
@@ -113,12 +121,29 @@ Status: done no lado deles; confere?`),
         },
       ],
     ],
+    [
+      "a reply whose words open with blank lines before its status",
+      agent(reply.replace("Status: partial.", "\n  Status: blocked."), "assistant:qa:1"),
+      [
+        {
+          kind: "reply",
+          name: 'Ana "QA" <3 & co',
+          handle: "qa",
+          threadId: "assistant:qa:1",
+          requestId: "message:ask",
+          expectsReply: undefined,
+          status: "blocked",
+          files: [],
+          text: "O item está em execução.\nResult: falta o print.",
+        },
+      ],
+    ],
   ])("reads %s", (_name, message, expected) => {
     expect(resolveTeammateMessage(message)).toEqual(expected);
   });
 
   it("reads a group's replies one by one, each with its status and files", () => {
-    const parts = resolveTeammateMessage(agent(group));
+    const parts = resolveTeammateMessage(agent(group, "assistant:back:1"));
     expect(parts?.map((part) => [part.name, part.requestId, part.status, part.files])).toEqual([
       ["Front", "g:to:front", "done", ["/shared/f/shot.png"]],
       ["Back", "g:to:back", "blocked", []],
@@ -138,8 +163,12 @@ Status: done no lado deles; confere?`),
     ["prose that mentions the tag", agent(`See ${fyi}`)],
     ["an envelope that never closes", agent(fyi.replace("</t3_request>", ""))],
     ["an envelope without a sender", agent(fyi.replace('from="Pessoal Lead" ', ""))],
-    ["a group with text after its replies", agent(`${group}\nextra`)],
-    ["a group without replies", agent(group.split("\n")[0]!)],
+    ["a group with text after its replies", agent(`${group}\nextra`, "assistant:back:1")],
+    ["a group without replies", agent(group.split("\n")[0]!, "assistant:back:1")],
+    ["an envelope naming another teammate's thread", agent(reply)],
+    ["an envelope from a thread that is not an assistant's", agent(fyi, "thread:lead")],
+    ["a group from a thread that is not an assistant's", agent(group, "thread:back")],
+    ["an envelope with no sender thread", { role: "user", text: fyi, createdBy: "agent" as const }],
     ["an empty message", agent("")],
   ])("leaves %s as text", (_name, message) => {
     expect(resolveTeammateMessage(message)).toBeNull();

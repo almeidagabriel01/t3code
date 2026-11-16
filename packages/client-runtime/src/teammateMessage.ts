@@ -1,4 +1,5 @@
 import {
+  assistantIdFromThreadId,
   assistantTransferPaths,
   splitAssistantTransferText,
   type OrchestrationMessageContext,
@@ -28,8 +29,9 @@ export const TEAMMATE_STATUS_LABEL = {
   blocked: "Blocked",
 } satisfies Record<TeammateReplyStatus, string>;
 
+// One leading class, not `\s*[>*_-]*\s*`: adjacent optional runs backtrack quadratically on blank text.
 const LEADING_STATUS =
-  /^\s*[>*_-]*\s*status[\s*_]*:[\s*_]*(?:done|partial|blocked)\b[\s*_]*[.:;,–—-]?[ \t]*\r?\n?/i;
+  /^[\s>*_-]*status[\s*_]*:[\s*_]*(?:done|partial|blocked)\b[\s*_]*[.:;,–—-]?[ \t]*\r?\n?/i;
 
 function toPart(entry: TeammateMessageEntry): TeammateMessagePart {
   const status =
@@ -103,14 +105,22 @@ const GROUP_REPLY = new RegExp(
   "y",
 );
 
-/** Messages stored before `context.teammate` existed: the envelope the server wrote, read back. */
-function parseLegacyEnvelope(text: string): ReadonlyArray<TeammateMessageEntry> | null {
+/**
+ * Messages stored before `context.teammate` existed: the envelope the server wrote, read back. The
+ * server always sent it from the teammate's own (assistant) thread, so any other agent writing the
+ * same tags stays text instead of passing as that teammate.
+ */
+function parseLegacyEnvelope(
+  text: string,
+  senderThreadId: string | undefined,
+): ReadonlyArray<TeammateMessageEntry> | null {
+  if (senderThreadId === undefined || assistantIdFromThreadId(senderThreadId) === null) return null;
   const single = SINGLE.exec(text);
   if (single !== null) {
     const kind = single[1] === "t3_request" ? "request" : "reply";
     const { files } = splitAssistantTransferText(single[3]!);
     const entry = legacyEntry(kind, single[2] ?? "", single[4] ?? "", files);
-    return entry === null ? null : [entry];
+    return entry === null || entry.threadId !== senderThreadId ? null : [entry];
   }
   const lead = GROUP_LEAD.exec(text);
   if (lead === null) return null;
@@ -145,6 +155,7 @@ interface TeammateSource {
   readonly role: string;
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
+  readonly senderThreadId?: string | undefined;
   readonly context?: Pick<OrchestrationMessageContext, "teammate"> | undefined;
 }
 
@@ -155,7 +166,9 @@ function resolveUncached(message: TeammateSource): ReadonlyArray<TeammateMessage
   if (message.role !== "user") return null;
   const entries =
     message.context?.teammate?.entries ??
-    (message.createdBy === "agent" ? parseLegacyEnvelope(message.text) : null);
+    (message.createdBy === "agent"
+      ? parseLegacyEnvelope(message.text, message.senderThreadId)
+      : null);
   return entries === null || entries.length === 0 ? null : entries.map(toPart);
 }
 

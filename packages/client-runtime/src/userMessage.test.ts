@@ -205,7 +205,13 @@ describe("resolveUserMessagePresentation", () => {
       '<t3_reply from="Ada" handle="ada" threadId="assistant:ada:1" replyTo="m">\nA teammate answered.\n</t3_reply>\nStatus: done\nShipped.';
     for (const creationSource of ["mcp", "server"] as const) {
       expect(
-        resolveUserMessagePresentation({ role: "user", createdBy: "agent", creationSource, text }),
+        resolveUserMessagePresentation({
+          role: "user",
+          createdBy: "agent",
+          creationSource,
+          senderThreadId: "assistant:ada:1",
+          text,
+        }),
       ).toMatchObject({
         text: "Shipped.",
         attribution: creationSource === "mcp" ? "agent" : "t3code",
