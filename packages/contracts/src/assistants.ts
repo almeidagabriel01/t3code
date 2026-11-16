@@ -320,12 +320,47 @@ const AssistantTeamName = TrimmedNonEmptyString.check(
  * A group of assistants that may message each other in any direction. The optional lead only
  * routes a group request that mentions nobody; it gains no permission.
  */
+/**
+ * Why a request waits on the user: a member's open wait (an approval, a question, a decision), a
+ * task paused without the user asking, a failed task, or the lead asking which project. A reason
+ * from a newer server reads as `paused`.
+ */
+export const AssistantTeamChatWaitingReason = Schema.Literals([
+  "wait",
+  "paused",
+  "failed",
+  "project",
+]);
+export type AssistantTeamChatWaitingReason = typeof AssistantTeamChatWaitingReason.Type;
+
+export const ASSISTANT_TEAM_CHAT_WAITING_TITLE_MAX_CHARS = 80;
+
+/** The oldest request of a tab that waits on the user, so an indicator leads to it. */
+export const AssistantTeamChatWaitingRequest = Schema.Struct({
+  /** The request's first message id (an `AssistantGroupMessageId`). */
+  requestId: TrimmedNonEmptyString,
+  title: Schema.String,
+  reason: AssistantTeamChatWaitingReason.pipe(
+    Schema.catchDecoding(() => Effect.succeedSome("paused" as const)),
+  ),
+  /** For `paused` and `failed`: the task's own reason, such as `routing_failed`; absent when none. */
+  taskReason: Schema.optionalKey(Schema.String),
+  /** The member whose wait or task it is; null for the lead's project question. */
+  assistantId: Schema.NullOr(AssistantId),
+});
+export type AssistantTeamChatWaitingRequest = typeof AssistantTeamChatWaitingRequest.Type;
+
 /** The chat counters of a group, kept on the team so a sidebar row needs no second fetch. */
 export const AssistantTeamChatScope = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
   unreadCount: Schema.Int,
-  /** An open wait on the user, or the lead asking which project, in this tab. */
+  /**
+   * A request of this tab waits on the user: an open wait, a task paused without the user asking
+   * or a failed root task (after the newest boundary), or the lead asking which project.
+   */
   waiting: Schema.Boolean,
+  /** The oldest such request, while `waiting`; absent from older servers. */
+  waitingRequest: Schema.optionalKey(AssistantTeamChatWaitingRequest),
   /** The tab's read position: its own, else the group's. */
   readSeq: Schema.Int,
   /** The project's title, kept after it is deleted; absent for General and unknown projects. */
