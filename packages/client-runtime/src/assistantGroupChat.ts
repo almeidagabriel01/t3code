@@ -653,7 +653,8 @@ export function assistantGroupHeldAttachments(
 
 /**
  * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
- * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed. It holds
+ * whatever the failure was: a resend that never left may follow an unconfirmed post the server has.
  */
 export function assistantGroupSendRequestId(
   failed: { readonly requestId: string; readonly sendKey: string } | null,

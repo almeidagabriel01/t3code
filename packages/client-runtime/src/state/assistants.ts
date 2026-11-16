@@ -310,31 +310,13 @@ export function assistantGroupPostFailure(cause: Cause.Cause<unknown>): {
   return { message: ASSISTANT_GROUP_POST_UNCONFIRMED, reason: "unconfirmed" };
 }
 
-/** A group send the composer holds: the id it went under and what it carried. */
+/** A group send the composer holds: the id it went under and the text it sent. */
 export interface AssistantGroupHeldSend {
   readonly failed: boolean;
   readonly requestId: string;
   /** The text it sent, trimmed. */
   readonly text: string;
-  readonly attachmentIds: ReadonlyArray<string>;
   readonly error: string | null;
-}
-
-/**
- * The id a resend of a failed send goes under, or null for a new one. It holds while the text and
- * files are what it sent, however the failure read: the server may hold an unconfirmed post, a
- * resend that never left may follow one, and an id the server never stored posts as new.
- */
-export function assistantGroupResendRequestId(
-  held: AssistantGroupHeldSend | null,
-  text: string,
-  attachmentIds: ReadonlyArray<string>,
-): string | null {
-  if (held === null || !held.failed || held.text !== text.trim()) return null;
-  const same =
-    held.attachmentIds.length === attachmentIds.length &&
-    held.attachmentIds.every((id, index) => id === attachmentIds[index]);
-  return same ? held.requestId : null;
 }
 
 /**

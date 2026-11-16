@@ -20,7 +20,6 @@ import {
   applyAssistantsEvent,
   assistantGroupLandedSend,
   assistantGroupPostFailure,
-  assistantGroupResendRequestId,
   assistantForTaskThread,
   assistantForThread,
   selectAssistantTasks,
@@ -331,30 +330,9 @@ describe("a group send held after it failed", () => {
     failed: true,
     requestId: "A",
     text: "@ada hi",
-    attachmentIds: ["f1"],
     error: ASSISTANT_GROUP_POST_UNCONFIRMED,
     ...overrides,
   });
-  it.each([
-    ["nothing held", null, "@ada hi", ["f1"], null],
-    ["one still on its way", held({ failed: false }), "@ada hi", ["f1"], null],
-    ["the same text and files", held(), "@ada hi", ["f1"], "A"],
-    ["typed and deleted back to the same text", held({ error: null }), "@ada hi", ["f1"], "A"],
-    ["the same text with spaces around it", held(), "  @ada hi\n", ["f1"], "A"],
-    [
-      "resent once more after a resend that never left",
-      held({ error: ASSISTANT_GROUP_POST_NOT_SENT }),
-      "@ada hi",
-      ["f1"],
-      "A",
-    ],
-    ["changed text", held(), "@ada hi!", ["f1"], null],
-    ["a file removed", held(), "@ada hi", [], null],
-    ["a file added", held(), "@ada hi", ["f1", "f2"], null],
-  ] as const)("resends %s under its id", (_name, sent, text, files, expected) => {
-    assert.strictEqual(assistantGroupResendRequestId(sent, text, files), expected);
-  });
-
   const message = (clientRequestId?: string) =>
     (clientRequestId === undefined ? {} : { clientRequestId }) as Pick<
       AssistantGroupMessage,

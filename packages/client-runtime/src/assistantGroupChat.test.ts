@@ -1800,6 +1800,8 @@ describe("assistant group tabs", () => {
   it.each([
     ["a first send", null, sent, "fresh"],
     ["a failed message sent again unchanged", sent, sent, "first"],
+    // The id is picked as the send goes, so edits that end on the sent text keep it.
+    ["typed and deleted back to the same text", sent, [...sent], "first"],
     ["changed text", sent, ["hi!", ["f1"], "p1", { model: "opus" }, null], "fresh"],
     ["another file", sent, ["hi", ["f1", "f2"], "p1", { model: "opus" }, null], "fresh"],
     ["another project", sent, ["hi", ["f1"], "p2", { model: "opus" }, null], "fresh"],
@@ -1810,6 +1812,13 @@ describe("assistant group tabs", () => {
       before === null ? null : assistantGroupSendRequestId(null, before, () => "first");
     const next = assistantGroupSendRequestId(failed, now, () => "fresh");
     assert.strictEqual(next.requestId, expected);
+  });
+
+  it("keeps an unconfirmed post's id through a resend that never left", () => {
+    const unconfirmed = assistantGroupSendRequestId(null, sent, () => "A");
+    const notSent = assistantGroupSendRequestId(unconfirmed, sent, () => "B");
+    const again = assistantGroupSendRequestId(notSent, sent, () => "C");
+    assert.deepStrictEqual([notSent.requestId, again.requestId], ["A", "A"]);
   });
 
   it("keeps each tab's outgoing message until that tab replaces or clears it", () => {
