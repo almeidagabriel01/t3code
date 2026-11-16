@@ -268,7 +268,7 @@ function mayRunOn(
 const RUNNER_UNCONFIRMED_RERUN: Record<HeavyRunner, string> = {
   mac: "Linux has not confirmed the earlier run stopped. Running it again now may run it twice. Run it anyway?",
   linux:
-    "Linux has not confirmed the earlier run stopped. T3 ends it by its process group before this run goes ahead there; if Linux never recorded one, both may run at once. Run it anyway?",
+    "Linux hasn't confirmed the earlier run stopped. T3 stops it before this run starts there; if it can't, this run waits until the earlier one ends. Run it anyway?",
 };
 
 export function routeActions(
