@@ -185,6 +185,7 @@ describe("KanbanGlobalBoard", () => {
       parentCardId: null,
       attachments: [],
       coverAttachmentId: null,
+      problem: null,
       archivedAt: null,
     } as unknown as KanbanCard;
     const board = {
