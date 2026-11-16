@@ -291,12 +291,13 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
           }
         >
           <AssistantAvatar assistant={assistant} mood={props.mood} className="size-5 shrink-0" />
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          {/* The role keeps 3rem or wraps onto the clipped second line, never showing as a sliver. */}
+          <span className="flex h-5 min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 overflow-hidden">
             <span className="max-w-full shrink-0 truncate">{assistant.name}</span>
             {assistant.role === "" ? null : (
               <span
                 data-testid="assistant-role"
-                className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground @max-[14rem]/assistant-row:hidden"
+                className="min-w-12 flex-1 truncate text-xs font-normal text-muted-foreground @max-[14rem]/assistant-row:hidden"
               >
                 {assistant.role}
               </span>

@@ -44,6 +44,7 @@ import { AssistantAvatar } from "../assistants/assistantPresentation";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 type Item = NeedsYouCardModel<Decision>;
 type Project = ProjectFaviconProject & { readonly title: string };
@@ -136,6 +137,33 @@ function CardShell(props: {
         )}
       </div>
     </li>
+  );
+}
+
+/** An answer at most as wide as the card: a longer label ends in an ellipsis and reads whole in the tooltip. */
+function OptionButton(props: {
+  readonly label: string;
+  readonly recommended?: boolean;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="micro"
+            variant={props.recommended === true ? "default" : "outline"}
+            disabled={props.disabled}
+            onClick={props.onClick}
+            className="max-w-full"
+          />
+        }
+      >
+        <span className="truncate">{props.label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -264,15 +292,12 @@ function RequestCard(
         <>
           {optionButtons
             ? question.options.map((option) => (
-                <Button
+                <OptionButton
                   key={option.value ?? option.label}
-                  size="micro"
-                  variant="outline"
+                  label={option.label}
                   disabled={answer.busy}
                   onClick={() => send({ selectedOptionValues: [option.value ?? option.label] })}
-                >
-                  {option.label}
-                </Button>
+                />
               ))
             : null}
           {freeText ? (
@@ -321,10 +346,10 @@ function DecisionCard(props: CardProps & { readonly decision: Decision }) {
         <>
           {actions.canAct
             ? decision.options.slice(0, MAX_DECISION_BUTTONS).map((option) => (
-                <Button
+                <OptionButton
                   key={option.id}
-                  size="micro"
-                  variant={option.id === decision.recommended ? "default" : "outline"}
+                  label={option.label}
+                  recommended={option.id === decision.recommended}
                   disabled={answer.busy}
                   onClick={() =>
                     void answer.run(async () => {
@@ -332,9 +357,7 @@ function DecisionCard(props: CardProps & { readonly decision: Decision }) {
                       return reply.ok ? null : reply.message;
                     })
                   }
-                >
-                  {option.label}
-                </Button>
+                />
               ))
             : null}
           <OpenButton onOpen={props.onOpen} />
