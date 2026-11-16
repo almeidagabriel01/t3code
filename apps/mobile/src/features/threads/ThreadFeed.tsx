@@ -2771,13 +2771,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const assistantFeed = useMemo(
-    () =>
-      assistantFeedIndex(
-        props.feed.map((entry) => (entry.type === "message" ? entry.message : null)),
-      ),
-    [props.feed],
-  );
+  const assistantFeed = useMemo(() => assistantFeedIndex(props.feed), [props.feed]);
   const terminalAssistantMessageIds = (() => {
     const terminalIdsByTurn = new Map<RunId, string>();
     for (const entry of props.feed) {

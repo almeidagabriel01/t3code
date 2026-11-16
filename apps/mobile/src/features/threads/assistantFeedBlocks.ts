@@ -31,11 +31,16 @@ export interface AssistantFeedIndex {
   readonly continued: ReadonlySet<string>;
 }
 
-/** Who joins where and which messages continue a run, for one feed (null entries break runs). */
-export function assistantFeedIndex(feed: ReadonlyArray<FeedMessage | null>): AssistantFeedIndex {
+/** Who joins where and which messages continue a run, for one feed (other rows break runs). */
+export function assistantFeedIndex(
+  feed: ReadonlyArray<{ readonly type: string; readonly message?: FeedMessage }>,
+): AssistantFeedIndex {
+  const messages = feed.map((entry) =>
+    entry.type === "message" && entry.message ? entry.message : null,
+  );
   return {
-    joins: assistantJoins(feed.filter((message) => message !== null)),
-    continued: assistantContinuedMessageIds(feed),
+    joins: assistantJoins(messages.filter((message) => message !== null)),
+    continued: assistantContinuedMessageIds(messages),
   };
 }
 

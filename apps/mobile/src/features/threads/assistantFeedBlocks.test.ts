@@ -127,16 +127,19 @@ describe("assistantFeedBlocks", () => {
 
 it("assistantFeedIndex: joins on first messages, continues only back-to-back runs", () => {
   const from = (id: string, assistant: string) => ({
-    id,
-    role: "user",
-    text: "hi",
-    createdBy: "agent" as const,
-    senderThreadId: `assistant:${assistant}:1`,
+    type: "message",
+    message: {
+      id,
+      role: "user",
+      text: "hi",
+      createdBy: "agent" as const,
+      senderThreadId: `assistant:${assistant}:1`,
+    },
   });
   const index = assistantFeedIndex([
     from("a1", "ada"),
     from("a2", "ada"),
-    null,
+    { type: "activity-group" },
     from("a3", "ada"),
     from("b1", "bo"),
     from("b2", "bo"),
