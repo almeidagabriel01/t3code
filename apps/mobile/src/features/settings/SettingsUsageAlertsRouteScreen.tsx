@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import {
+  connectEnvironmentToSee,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   usageLimitAlertLabel,
@@ -40,7 +44,7 @@ import { USAGE_ALERTS_COPY } from "./usageAlertsCopy";
 
 export function SettingsUsageAlertsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
-  const { selectedTargets } = useSettingsEnvironmentFilter();
+  const { availableTargets, selectedTargets } = useSettingsEnvironmentFilter();
   const supported = (target: SettingsTarget) =>
     target.serverConfig.environment.capabilities.usageLimitAlerts === true;
   const targets = selectedTargets.filter(supported);
@@ -55,7 +59,12 @@ export function SettingsUsageAlertsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            {emptyEnvironmentSelectionText(
+              connectEnvironmentToSee("limits"),
+              availableTargets.length > 0,
+            )}
+          </Text>
         ) : targets.length === 0 ? (
           <EmptyState
             variant="plain"
