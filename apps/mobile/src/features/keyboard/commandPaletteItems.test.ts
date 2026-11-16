@@ -6,6 +6,7 @@ import {
   assistantInfoItems,
   autonomyPauseItems,
   filterCommandPaletteItems,
+  PALETTE_ACTION_TITLES,
   settingsPageItem,
   type CommandPaletteItem,
 } from "./commandPaletteItems";
@@ -64,31 +65,17 @@ describe("filterCommandPaletteItems", () => {
 });
 
 describe("palette actions", () => {
-  // The titles CommandPalette.tsx draws for actions that keep their own synonyms.
-  const titles = [
-    "New thread in…",
-    "New thread in Mobile app",
-    "Add project",
-    "Open settings",
-    "Triage an issue",
-    "Open Ada",
-    "New assistant",
-    "New assistant group",
-    "Describe an assistant",
-    "Assistant info",
-    "Group info",
-    "Go to file",
-    "Open terminal",
-    "Review changes",
-    "Copy PR link or thread",
-    "Pause assistant notifications",
-    "Turn on assistant notifications",
-  ];
-  const actions = titles.map((title) => item(title, title, "action"));
+  // The titles CommandPalette.tsx draws, from the constant it reads: each must find its own action.
+  const actions = Object.entries(PALETTE_ACTION_TITLES).map(([key, title]) =>
+    item(key, typeof title === "function" ? title("Mobile app") : title, "action"),
+  );
 
-  it.each(titles)("finds %s by its own title, without synonyms", (title) => {
-    expect(keys(filterCommandPaletteItems(actions, title, [], NOW))[0]).toBe(title);
-  });
+  it.each(actions.map(({ key, title }) => ({ key, title })))(
+    "finds $key by its own title, $title, ahead of every other action",
+    ({ key, title }) => {
+      expect(keys(filterCommandPaletteItems(actions, title, [], NOW))[0]).toBe(key);
+    },
+  );
 });
 
 describe("autonomyPauseItems", () => {

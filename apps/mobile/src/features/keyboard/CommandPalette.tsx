@@ -83,6 +83,7 @@ import {
   autonomyPauseItems,
   filterCommandPaletteItems,
   nextPaletteIndex,
+  PALETTE_ACTION_TITLES,
   assistantInfoItems,
   settingsPageItem,
   type CommandPaletteItem,
@@ -336,21 +337,21 @@ export function CommandPalette(props: {
       {
         key: "newTask",
         kind: "action",
-        title: "New thread in…",
+        title: PALETTE_ACTION_TITLES.newTask,
         searchTerms: ["new task", "chat", "create", "project"],
         run: () => runCommand("newTask"),
       },
       {
         key: "addProject",
         kind: "action",
-        title: "Add project",
+        title: PALETTE_ACTION_TITLES.addProject,
         searchTerms: ["folder", "clone", "repository", "git"],
         run: () => navigation.navigate("AddProject"),
       },
       {
         key: "settings",
         kind: "action",
-        title: "Open settings",
+        title: PALETTE_ACTION_TITLES.settings,
         // What macOS and most apps call settings.
         searchTerms: ["preferences", "configuration"],
         run: () => selectTab("settings"),
@@ -391,7 +392,7 @@ export function CommandPalette(props: {
       actions.push({
         key: "triage",
         kind: "action",
-        title: "Triage an issue",
+        title: PALETTE_ACTION_TITLES.triage,
         // Mobile has no triage hero, so name the machine before it starts.
         detail: `On ${savedConnectionsById[triageEnvironmentId]?.environmentLabel ?? "this machine"}`,
         searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
@@ -406,7 +407,7 @@ export function CommandPalette(props: {
       actions.push({
         key: `assistant:${environmentId}:${assistant.id}`,
         kind: "action",
-        title: `Open ${assistant.name}`,
+        title: PALETTE_ACTION_TITLES.openAssistant(assistant.name),
         ...(multipleAssistantEnvironments
           ? { detail: savedConnectionsById[environmentId]?.environmentLabel ?? environmentId }
           : {}),
@@ -440,7 +441,7 @@ export function CommandPalette(props: {
       actions.push({
         key: "newAssistant",
         kind: "action",
-        title: "New assistant",
+        title: PALETTE_ACTION_TITLES.newAssistant,
         searchTerms: ["assistant", "new", "create", "add"],
         run: () => openAssistantEditor(firstAssistant.environmentId, null),
       });
@@ -448,14 +449,14 @@ export function CommandPalette(props: {
         {
           key: "newAssistantGroup",
           kind: "action",
-          title: "New assistant group",
+          title: PALETTE_ACTION_TITLES.newAssistantGroup,
           searchTerms: ["assistant", "group", "team", "new", "create"],
           run: () => openAssistantTeam.edit(firstAssistant.environmentId, null),
         },
         {
           key: "describeAssistant",
           kind: "action",
-          title: "Describe an assistant",
+          title: PALETTE_ACTION_TITLES.describeAssistant,
           searchTerms: ["assistant", "group", "build", "create", "describe"],
           run: () => navigation.navigate("SettingsAssistantDescribe"),
         },
@@ -485,7 +486,7 @@ export function CommandPalette(props: {
       actions.unshift({
         key: "newThread",
         kind: "action",
-        title: `New thread in ${activeProject.title}`,
+        title: PALETTE_ACTION_TITLES.newThreadIn(activeProject.title),
         searchTerms: ["new task", "chat", "create"],
         run: () =>
           selectDetail({
@@ -506,16 +507,16 @@ export function CommandPalette(props: {
     }
     if (activeThreadRef) {
       const threadActions = [
-        ["files", "Go to file", ["open", "files", "browse", "search"]],
-        ["terminal", "Open terminal", ["shell", "console"]],
-        ["review", "Review changes", ["diff", "git", "pull request"]],
-        ["copyThreadReference", "Copy PR link or thread", ["reference", "clipboard"]],
+        ["files", ["open", "files", "browse", "search"]],
+        ["terminal", ["shell", "console"]],
+        ["review", ["diff", "git", "pull request"]],
+        ["copyThreadReference", ["reference", "clipboard"]],
       ] as const;
       actions.push(
-        ...threadActions.map(([command, title, searchTerms]) => ({
+        ...threadActions.map(([command, searchTerms]) => ({
           key: command,
           kind: "action" as const,
-          title,
+          title: PALETTE_ACTION_TITLES[command],
           searchTerms,
           run: () => runCommand(command),
         })),

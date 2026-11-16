@@ -32,6 +32,27 @@ export interface CommandPaletteItem {
   readonly run: () => void;
 }
 
+/** The titles the palette draws for its own actions, each findable by itself. */
+export const PALETTE_ACTION_TITLES = {
+  newTask: "New thread in…",
+  newThreadIn: (project: string) => `New thread in ${project}`,
+  addProject: "Add project",
+  settings: "Open settings",
+  triage: "Triage an issue",
+  openAssistant: (name: string) => `Open ${name}`,
+  newAssistant: "New assistant",
+  newAssistantGroup: "New assistant group",
+  describeAssistant: "Describe an assistant",
+  assistantInfo: "Assistant info",
+  groupInfo: "Group info",
+  files: "Go to file",
+  terminal: "Open terminal",
+  review: "Review changes",
+  copyThreadReference: "Copy PR link or thread",
+  pauseAssistantNotifications: "Pause assistant notifications",
+  resumeAssistantNotifications: "Turn on assistant notifications",
+} as const;
+
 const PAGE_TERMS: Partial<Record<SettingsPageTarget, readonly string[]>> = {
   ...SETTINGS_PAGE_LABELS,
   SettingsResourceManager: RESOURCE_MANAGER_LABELS,
@@ -69,8 +90,8 @@ export function autonomyPauseItems(
           key: "toggle-assistant-notifications",
           kind: "action",
           title: pause.enabled
-            ? "Pause assistant notifications"
-            : "Turn on assistant notifications",
+            ? PALETTE_ACTION_TITLES.pauseAssistantNotifications
+            : PALETTE_ACTION_TITLES.resumeAssistantNotifications,
           searchTerms: [
             "assistant",
             "notifications",
@@ -124,7 +145,7 @@ export function assistantInfoItems<
           {
             key: "assistantInfo",
             kind: "action" as const,
-            title: "Assistant info",
+            title: PALETTE_ACTION_TITLES.assistantInfo,
             searchTerms: ["assistant", "info", "projects", "access", assistant.assistant.name],
             run: () => input.openAssistant(assistant),
           },
@@ -135,7 +156,7 @@ export function assistantInfoItems<
           {
             key: "groupInfo",
             kind: "action" as const,
-            title: "Group info",
+            title: PALETTE_ACTION_TITLES.groupInfo,
             searchTerms: ["group", "info", "members", "team", team.team.name],
             run: () => input.openGroup(team),
           },
