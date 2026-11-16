@@ -82,11 +82,11 @@ export function queuedMessageEditRefusal(
 ): string | null {
   if (message === undefined) return null;
   if (message.context?.guest !== undefined) {
-    return "A guest's message cannot be edited. Cancel it instead.";
+    return "A guest's message cannot be edited. Remove it instead.";
   }
   return resolveTeammateMessage(message) === null
     ? null
-    : "A teammate's message cannot be edited. Cancel it instead.";
+    : "A teammate's message cannot be edited. Remove it instead.";
 }
 
 export function resolveUserMessagePresentation(message: {
