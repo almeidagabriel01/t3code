@@ -28,6 +28,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     selectAllProjects: vi.fn(),
     toggleProject: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
+    available: [] as ReturnType<typeof environment>[],
     readOnly: new Set<string>(),
     projectSelected: false,
     projectIds: ["project"],
@@ -249,6 +250,7 @@ vi.mock("./settings-environment-filter", () => ({
     selectAll: mocks.selectAll,
     selectAllProjects: mocks.selectAllProjects,
     toggleProject: mocks.toggleProject,
+    availableTargets: mocks.available,
     selectedTargets: mocks.targets,
     selectedProjectGroups: mocks.projectSelected
       ? [
@@ -272,7 +274,15 @@ vi.mock("./settings-environment-filter", () => ({
 }));
 
 import {
+  CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   SettingsEnvironmentMaintenanceRouteScreen,
+  SettingsEnvironmentSourceControlRouteScreen,
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
@@ -311,6 +321,7 @@ beforeEach(() => {
   container = document.createElement("div");
   root = createRoot(container);
   mocks.targets = [environment("local", "Local")];
+  mocks.available = mocks.targets;
   mocks.projectSelected = false;
   mocks.projectIds = ["project"];
   mocks.projectModels = null;
@@ -363,6 +374,36 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(mocks.updateSettings).toHaveBeenCalledOnce();
     await act(async () => pending.resolve(AsyncResult.success(undefined)));
   });
+
+  it.each(
+    (
+      [
+        [
+          CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+          () => <SettingsThreadsRouteScreen route={{} as never} />,
+        ],
+        [
+          CONNECT_ENVIRONMENT_FOR_SOURCE_CONTROL_SETTINGS,
+          () => <SettingsEnvironmentSourceControlRouteScreen />,
+        ],
+        [CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS, () => <SettingsWorktreesRouteScreen />],
+        [
+          CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+          () => <SettingsEnvironmentMaintenanceRouteScreen />,
+        ],
+      ] as const
+    ).flatMap(([page, screen]) =>
+      [true, false].map((environmentsAvailable) => [page, environmentsAvailable, screen] as const),
+    ),
+  )(
+    'explains an empty selection with "%s" (environments available: %s)',
+    (page, available, screen) => {
+      mocks.available = available ? [environment("local", "Local")] : [];
+      mocks.targets = [];
+      act(() => root.render(screen()));
+      expect(container.textContent).toBe(emptyEnvironmentSelectionText(page, available));
+    },
+  );
 
   it("scopes Settings to the project a link names, once", () => {
     const route = { params: { environmentId: "local", projectId: "linked" } } as never;

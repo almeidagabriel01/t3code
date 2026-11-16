@@ -1,3 +1,7 @@
+import {
+  CONNECT_ENVIRONMENT_FOR_MCP_SERVERS_AND_SKILLS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -40,9 +44,10 @@ export function SettingsAgentToolsRouteScreen() {
           ))
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
-            {availableTargets.length === 0
-              ? "Connect an environment to manage its MCP servers and skills."
-              : "No environments match this filter. Change the filter above."}
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_MCP_SERVERS_AND_SKILLS,
+              availableTargets.length > 0,
+            )}
           </Text>
         )}
       </ScrollView>

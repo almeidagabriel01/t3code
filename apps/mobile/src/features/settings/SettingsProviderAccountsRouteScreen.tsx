@@ -1,5 +1,9 @@
 import * as Dialog from "../../components/ui/Dialog";
 import {
+  CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+  emptyEnvironmentSelectionText,
+} from "@t3tools/client-runtime/settings-empty-selection";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
@@ -55,9 +59,10 @@ export function SettingsProviderAccountsRouteScreen() {
       >
         {selectedTargets.length === 0 ? (
           <Text className="text-foreground-muted">
-            {availableTargets.length === 0
-              ? "Connect an environment to set up its providers."
-              : "No environments match this filter. Change the filter above."}
+            {emptyEnvironmentSelectionText(
+              CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+              availableTargets.length > 0,
+            )}
           </Text>
         ) : (
           selectedTargets.map((environment) => {

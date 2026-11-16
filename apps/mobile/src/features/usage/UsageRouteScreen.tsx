@@ -1,3 +1,7 @@
+import {
+  connectEnvironmentToSee,
+  selectEnvironmentToSee,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -302,8 +306,8 @@ function UsageScreen(props: {
                 ) : selectedEnvironments.length === 0 ? (
                   <Text className="py-16 text-center text-base text-foreground-muted">
                     {environments.length === 0
-                      ? "Connect an environment to see usage."
-                      : "Select an environment to see usage."}
+                      ? connectEnvironmentToSee("usage")
+                      : selectEnvironmentToSee("usage")}
                   </Text>
                 ) : !canReadDiagnostics ? (
                   <View className="gap-2 py-16">
