@@ -40,7 +40,7 @@ export type TeamsRow =
       /** The `sidebarAssistantsExpandedGroups` key. */
       readonly key: string;
       readonly team: AssistantTeamEntry;
-      readonly memberCount: number;
+      readonly members: ReadonlyArray<AssistantEntry>;
       readonly expanded: boolean;
       readonly indicator: ZoneIndicator | null;
     }
@@ -170,7 +170,7 @@ export function useAssistantSidebarModel(zones: SidebarZones) {
                 kind: "folder",
                 key,
                 team,
-                memberCount: members.length,
+                members: members.map((ranked) => ranked.entry),
                 expanded,
                 indicator: indicators.folder.get(`${team.environmentId}:${team.team.id}`) ?? null,
               },

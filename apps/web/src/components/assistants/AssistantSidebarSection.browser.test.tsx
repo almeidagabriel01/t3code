@@ -309,7 +309,7 @@ const folders = (container: HTMLElement) =>
   [...container.querySelectorAll('[data-testid="sidebar-assistant-fold"]')].map((folder) => [
     folder.querySelector('[data-testid="group-name"]')?.textContent,
     folder.querySelector('[data-testid="zone-indicator"]')?.getAttribute("aria-label") ??
-      folder.querySelector('[data-testid="group-status"]')?.textContent ??
+      folder.querySelector('[data-testid="group-status"]')?.getAttribute("aria-label") ??
       null,
   ]);
 
@@ -639,8 +639,8 @@ describe("AssistantSidebarSection", () => {
     );
     await using screen = await render(element());
     expect(names(screen.container)).toEqual(["ada", "jarvis", "pedro", "aprovador", "pesquisador"]);
-    expect(indicator(screen.container, "ada")).toBe("1 waiting on you");
-    expect(indicator(screen.container, "jarvis")).toBe("1 running");
+    expect(indicator(screen.container, "ada")).toBe("Needs you");
+    expect(indicator(screen.container, "jarvis")).toBe("Working");
     expect(indicator(screen.container, "aprovador")).toBe("Failed");
     expect(indicator(screen.container, "pesquisador")).toBe("Usage limit");
     expect(
@@ -694,7 +694,7 @@ describe("AssistantSidebarSection", () => {
     expect(screen.container.textContent).not.toMatch(/Show (all|less)/);
   });
 
-  it("draws each group as a folder after the ungrouped assistants, with no faces", async () => {
+  it("draws each group as a folder after the ungrouped assistants, with its members' faces", async () => {
     setup(["Ada", "Bob", "Cid", "Jarvis"], {
       moods: { [threadOf("Ada")]: "working", [threadOf("Bob")]: "working" },
     });
@@ -705,7 +705,7 @@ describe("AssistantSidebarSection", () => {
     await using screen = await render(element());
     expect(folders(screen.container)).toEqual([
       ["Growth marketing and partnerships", "2 running"],
-      ["Quiet", "empty"],
+      ["Quiet", "No members yet"],
     ]);
     // Folded groups draw no members; only the ungrouped assistant has a row, above the folders.
     expect(names(screen.container)).toEqual(["jarvis"]);
@@ -719,7 +719,9 @@ describe("AssistantSidebarSection", () => {
       "sidebar-assistant-fold",
       "sidebar-assistant-fold",
     ]);
-    expect(screen.container.querySelector('[data-testid="group-avatars"]')).toBeNull();
+    expect(
+      screen.container.querySelectorAll('[data-testid="group-mark"] [data-assistant-cluster="3"]'),
+    ).toHaveLength(1);
     expect(screen.container.querySelector('button[aria-label="Show Quiet members"]')).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Show Growth marketing and partnerships members" }),
@@ -763,18 +765,24 @@ describe("AssistantSidebarSection", () => {
       name: "needs you over everything",
       moods: { [threadOf("Ada")]: "needs", [threadOf("Bob")]: "working" },
       chat: { failedTasks: 1, pausedTasks: 1, unreadCount: 3 },
-      shown: "1 waiting on you",
+      shown: "Needs you",
+    },
+    {
+      name: "running over failed and paused",
+      moods: { [threadOf("Bob")]: "working" },
+      chat: { failedTasks: 1, pausedTasks: 2 },
+      shown: "1 running",
     },
     {
       name: "failed over paused",
-      moods: { [threadOf("Bob")]: "working" },
+      moods: {},
       chat: { failedTasks: 1, pausedTasks: 2 },
       shown: "Failed",
     },
     {
-      name: "paused over running",
-      moods: { [threadOf("Bob")]: "working" },
-      chat: { pausedTasks: 2 },
+      name: "paused over unread",
+      moods: {},
+      chat: { pausedTasks: 2, unreadCount: 3 },
       shown: "2 paused",
     },
     {
@@ -788,7 +796,7 @@ describe("AssistantSidebarSection", () => {
       name: "needs you from the group's own thread",
       moods: { "assistant:ada:g-0123456789abcdef": "needs" },
       chat: { threadIds: ["assistant:ada:g-0123456789abcdef"] },
-      shown: "1 waiting on you",
+      shown: "Needs you",
     },
   ])("shows one folder indicator: $name", async ({ moods, chat, shown }) => {
     setup(["Ada", "Bob"], { moods: moods as Record<string, "working" | "needs" | "failed"> });

@@ -12,6 +12,7 @@ import {
   needsYouItems,
   teamsLayout,
   threadOwnerResolver,
+  zoneIndicatorLabel,
   type ZoneShell,
 } from "./sidebarZones.ts";
 
@@ -168,11 +169,19 @@ describe("teamsLayout", () => {
     const waitingTab = { projectId: null, unreadCount: 0, waiting: true, readSeq: 0 };
     const layout = teamsLayout({
       items: [{ owner: { kind: "assistant" as const, assistantKey: "e:x", teamKey: "e:waits" } }],
-      assistants: [item("old", "idle", 1), item("new", "idle", 9), item("busy", "working", 2)],
+      assistants: [
+        item("old", "idle", 1),
+        item("new", "idle", 9),
+        item("busy", "working", 2),
+        item("broke", "failed", 1),
+        item("mends", "working", 3),
+      ],
       teams: [
         team("stale", ["old"]),
         team("fresh", ["new"]),
         team("busy", ["busy"]),
+        // One member working outranks another that failed: the group is working.
+        team("mixed", ["broke", "mends"]),
         // A queued group task with no member working shows nothing, so it sorts with the rest.
         team("queued", [], { working: true }),
         team("tab", [], { scopes: [waitingTab] }),
@@ -188,6 +197,7 @@ describe("teamsLayout", () => {
     ).toEqual([
       ["tab", 0, "needs"],
       ["waits", 1, "needs"],
+      ["mixed", 0, "running"],
       ["busy", 0, "running"],
       ["fresh", 0, null],
       ["stale", 0, null],
@@ -227,22 +237,23 @@ describe("indicators", () => {
       { ...chat, scopes: [{ projectId: null, unreadCount: 0, waiting: true, readSeq: 0 }] },
       { kind: "needs", count: 1 },
     ],
-    ["a failed member", 0, ["failed", "working"], chat, { kind: "failed" }],
+    [
+      "a working member over a failed one, a limit and paused tasks",
+      0,
+      ["failed", "limited", "working"],
+      { ...chat, failedTasks: 1, pausedTasks: 1 },
+      { kind: "running", count: 1 },
+    ],
+    ["a failed member", 0, ["failed", "idle"], chat, { kind: "failed" }],
     [
       "a usage-limited member",
       0,
-      ["limited", "working"],
+      ["limited", "idle"],
       { ...chat, pausedTasks: 1 },
       { kind: "limited" },
     ],
     ["a failed group task", 0, ["idle"], { ...chat, failedTasks: 1 }, { kind: "failed" }],
-    [
-      "paused group tasks",
-      0,
-      ["working"],
-      { ...chat, pausedTasks: 2 },
-      { kind: "paused", count: 2 },
-    ],
+    ["paused group tasks", 0, ["idle"], { ...chat, pausedTasks: 2 }, { kind: "paused", count: 2 }],
     [
       "working members",
       0,
@@ -268,6 +279,20 @@ describe("indicators", () => {
     [1, "idle", null],
   ] as const)("an assistant with %i waits and mood %s shows %o", (needsYou, mood, expected) => {
     expect(assistantIndicator({ needsYou, mood })).toEqual(expected);
+  });
+
+  it.each([
+    [{ kind: "needs", count: 1 }, "Needs you", "Needs you"],
+    [{ kind: "needs", count: 3 }, "3 need you", "3 need you"],
+    [{ kind: "failed" }, "Failed", "Failed"],
+    [{ kind: "limited" }, "Usage limit", "Usage limit"],
+    [{ kind: "paused", count: 2 }, "2 paused", "2 paused"],
+    [{ kind: "running", count: 1 }, "Working", "1 running"],
+    [{ kind: "running", count: 2 }, "Working", "2 running"],
+    [{ kind: "unread", count: 4 }, "4 unread", "4 unread"],
+  ] as const)("%o reads %s on an assistant and %s on a group", (indicator, assistant, group) => {
+    expect(zoneIndicatorLabel(indicator, "assistant")).toBe(assistant);
+    expect(zoneIndicatorLabel(indicator, "group")).toBe(group);
   });
 
   const presence = (mood: "idle" | "working" | "needs" | "failed", detail = "Idle") => ({
