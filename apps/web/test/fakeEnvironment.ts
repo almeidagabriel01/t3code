@@ -697,12 +697,34 @@ handlers[WS_METHODS.assistantsSubscribe] = () =>
       return () => assistantSubscribers.delete(queue);
     },
   );
+/** A changed record gets a later `updatedAt`, as the server stamps every change; clients key on it. */
+function restamp<T extends { readonly id: string; readonly updatedAt: string }>(
+  previous: ReadonlyArray<T>,
+  next: ReadonlyArray<T>,
+): T[] {
+  const before = new Map(previous.map((record) => [record.id, record]));
+  return next.map((record) => {
+    const prior = before.get(record.id);
+    if (prior?.updatedAt !== record.updatedAt || JSON.stringify(prior) === JSON.stringify(record)) {
+      return record;
+    }
+    return { ...record, updatedAt: new Date(Date.parse(record.updatedAt) + 1).toISOString() };
+  });
+}
+
 /** Replaces the assistants, including for a subscription an earlier screen left open. */
 export function publishAssistants(items: Assistant[], teams: AssistantTeam[] = []): void {
-  fakeAssistants.items = items;
-  fakeAssistants.teams = teams;
+  fakeAssistants.items = restamp(fakeAssistants.items, items);
+  fakeAssistants.teams = restamp(fakeAssistants.teams, teams);
   for (const queue of assistantSubscribers) {
-    Effect.runSync(Queue.offer(queue, { type: "snapshot", assistants: items, teams, tasks: [] }));
+    Effect.runSync(
+      Queue.offer(queue, {
+        type: "snapshot",
+        assistants: fakeAssistants.items,
+        teams: fakeAssistants.teams,
+        tasks: [],
+      }),
+    );
   }
 }
 
