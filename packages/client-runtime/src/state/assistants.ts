@@ -317,12 +317,15 @@ export interface AssistantGroupHeldSend {
   /** The text it sent, trimmed. */
   readonly text: string;
   readonly error: string | null;
+  /** The reply and picks it went with; null once a landing let go of them. */
+  readonly routing: unknown;
 }
 
 /**
  * What a failed send does once the chat holds its post, which then landed and only lost its reply:
- * settle as a sent one, or, when the user edited it since, keep their text and drop the warning.
- * Null while it has not landed. A send on its way settles from its own reply.
+ * settle as a sent one, or, when the user edited it since, keep their text and let go of the
+ * warning and the routing, once. Null while it has not landed. A send on its way settles from its
+ * own reply.
  */
 export function assistantGroupLandedSend(
   held: AssistantGroupHeldSend,
@@ -331,7 +334,7 @@ export function assistantGroupLandedSend(
 ): "settle" | "clear-warning" | null {
   if (!held.failed) return null;
   const edited = liveText.trim() !== held.text;
-  if (edited && held.error === null) return null;
+  if (edited && held.error === null && held.routing === null) return null;
   for (const message of messages) {
     if (message.clientRequestId === held.requestId) return edited ? "clear-warning" : "settle";
   }

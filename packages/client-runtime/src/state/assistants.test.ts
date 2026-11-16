@@ -331,6 +331,7 @@ describe("a group send held after it failed", () => {
     requestId: "A",
     text: "@ada hi",
     error: ASSISTANT_GROUP_POST_UNCONFIRMED,
+    routing: {},
     ...overrides,
   });
   const message = (clientRequestId?: string) =>
@@ -343,8 +344,15 @@ describe("a group send held after it failed", () => {
     ["in the chat, its text as sent", held(), "@ada hi", [message(), message("A")], "settle"],
     ["in the chat, its text edited since", held(), "@ada hi!", [message("A")], "clear-warning"],
     [
-      "in the chat, edited and warned no more",
+      "in the chat, edited before it showed: its routing still goes",
       held({ error: null }),
+      "@ada hi!",
+      [message("A")],
+      "clear-warning",
+    ],
+    [
+      "in the chat, edited and let go of",
+      held({ error: null, routing: null }),
       "@ada hi!",
       [message("A")],
       null,
