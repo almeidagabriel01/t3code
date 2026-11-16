@@ -125,6 +125,7 @@ const card = (
     checklist: [],
     linkedThreadIds: [],
     blockedBy: [],
+    problem: null,
     archivedAt: null,
     ...extra,
   }) as KanbanCard;
