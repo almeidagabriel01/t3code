@@ -200,6 +200,7 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
   Effect.gen(function* () {
     const orchestrator = yield* setup;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sentText = "<t3_reply>…</t3_reply>\nStatus: done";
     const teammate = {
       entries: [
         {
@@ -210,8 +211,8 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
           requestId: "message:ask",
           status: "done" as const,
           files: [],
-          bodyStart: 23,
-          bodyEnd: 35,
+          bodyStart: sentText.indexOf("Status: done"),
+          bodyEnd: sentText.length,
         },
       ],
     };
@@ -221,7 +222,7 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
         commandId: CommandId.make(id),
         threadId,
         messageId: MessageId.make(id),
-        text: "<t3_reply>…</t3_reply>\nStatus: done",
+        text: sentText,
         context: { version: 1, records: [], teammate },
         attachments: [],
         dispatchMode: { type: queued ? "queue_after_active" : "defer_start" },

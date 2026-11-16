@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  ASSISTANT_TRANSFER_HEADING,
+  assistantTransferList,
   ProjectId,
   type TeammateMessageAttribution,
   ThreadId,
@@ -179,13 +181,27 @@ it.effect("sends the grouped notice from the reactor when the blocked run is the
       requestId: "message:g:b",
       recipientThreadId: other,
       senderThreadId: asker,
-      text: "Status: done B",
+      // A wide character and a file list: the stored range must stop at the words, in UTF-16.
+      text: `Status: done B 🚀\n\n${ASSISTANT_TRANSFER_HEADING}\n${assistantTransferList(["/shared/r.txt"])}`,
     });
     assert.equal((yield* requests.settle("message:g:b")).kind, "held");
     yield* reactor.handle(runEvent("failed", "message:g:a"));
     assert.equal(sends.length, 1);
     assert.equal(sends[0]!.messageId, "assistant-reply:message:g");
-    assert.include(sends[0]!.text as string, "Status: done B");
-    assert.include(sends[0]!.text as string, 'status="blocked"');
+    const text = sends[0]!.text as string;
+    assert.include(text, 'status="blocked"');
+    assert.deepEqual(
+      (sends[0]!.teammate as TeammateMessageAttribution).entries.map((entry) => [
+        entry.status,
+        text.slice(entry.bodyStart, entry.bodyEnd).split("\n")[0],
+        entry.files,
+      ]),
+      [
+        ["blocked", "Status: blocked", []],
+        ["done", "Status: done B 🚀", ["/shared/r.txt"]],
+      ],
+    );
+    const last = (sends[0]!.teammate as TeammateMessageAttribution).entries[1]!;
+    assert.equal(text.slice(last.bodyStart, last.bodyEnd), "Status: done B 🚀");
   }).pipe(Effect.provide(layer));
 });

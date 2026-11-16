@@ -49,11 +49,12 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
+  const adaText = "<t3_reply>model-facing envelope</t3_reply>\nStatus: done\nShipped.";
   const ada = {
     role: "user",
     createdBy: "agent" as const,
     senderThreadId: "assistant:ada:1",
-    text: "<t3_reply>model-facing envelope</t3_reply>\nStatus: done\nShipped.",
+    text: adaText,
     context: {
       teammate: {
         entries: [
@@ -64,8 +65,8 @@ describe("threadQueueControlPresentation", () => {
             threadId: ThreadId.make("assistant:ada:1"),
             requestId: "m",
             files: [],
-            bodyStart: 43,
-            bodyEnd: 64,
+            bodyStart: adaText.indexOf("Status: done"),
+            bodyEnd: adaText.length,
           },
         ],
       },
