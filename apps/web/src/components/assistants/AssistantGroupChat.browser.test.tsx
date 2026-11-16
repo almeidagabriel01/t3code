@@ -738,6 +738,12 @@ it("stops, resumes, reassigns and cancels tasks, and opens the owner's conversat
     ],
   );
   await using screen = await openChat();
+  // Only open work is listed at the top: Ada runs, Bo's paused task waits on the user instead.
+  const work = main().getByTestId("group-member-work-row");
+  await expect.element(work.first()).toBeVisible();
+  expect(work.elements().map((row) => row.textContent)).toEqual([
+    expect.stringMatching(/^AdaRunning/),
+  ]);
   const cards = main().getByTestId("group-task-card");
   await userEvent.click(cards.first().getByRole("button", { name: "Stop" }));
   await eventually(() =>

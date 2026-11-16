@@ -16,6 +16,9 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupRunningCount,
+  assistantGroupMemberWork,
+  ASSISTANT_GROUP_STATUS_LABEL,
+  type AssistantGroupMemberWork,
   assistantGroupTabAfterSend,
   assistantGroupLandedPick,
   assistantGroupComposerProjects,
@@ -121,6 +124,7 @@ import {
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "../chat/MessagesTimeline.logic";
 import { TaskEventActivityRow } from "../chat/TaskEventActivityRow";
+import { ScrollToEndButton } from "../chat/TimelineOverlays";
 import { TimelineMinimap } from "../chat/TimelineMinimap";
 import type { TimelineMinimapItem } from "../chat/timelineMinimapItems";
 import { forwardWheelToTimeline } from "../chat/timelineMinimapWheel";
@@ -168,7 +172,8 @@ import {
   type GroupSendResult,
   type GroupSendRouting,
 } from "./GroupComposer";
-import { GroupMentionChip, type GroupMentionProject } from "./GroupMentionChip";
+import { GroupMentionChip, GroupProjectChip, type GroupMentionProject } from "./GroupMentionChip";
+import { RelativeTime } from "../RelativeTime";
 import {
   MemberProjectModelDialog,
   ProjectModelDialog,
@@ -396,9 +401,11 @@ function Who(props: {
   readonly member: Assistant | undefined;
   readonly fallback: string;
   readonly createdAt: string;
+  /** Where the message's request runs, so a notification reads back to its project. */
+  readonly project: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-baseline gap-1.5 text-xs">
+    <div className="flex min-w-0 items-center gap-1.5 text-xs">
       <span className="truncate font-semibold text-foreground">
         {props.member?.name ?? props.fallback}
       </span>
@@ -410,6 +417,7 @@ function Who(props: {
       <time dateTime={props.createdAt} className="shrink-0 text-muted-foreground/70 tabular-nums">
         {timeFormat.format(new Date(props.createdAt))}
       </time>
+      {props.project}
     </div>
   );
 }
@@ -432,6 +440,58 @@ function ReplyLine(props: {
       <span className="max-w-[50%] shrink-0 truncate font-medium">{props.author}</span>{" "}
       <span className="min-w-0 truncate">{assistantGroupMessageExcerpt(props.target.text)}</span>
     </button>
+  );
+}
+
+/** Who works on what: one line per member with open work, each opening that member's thread. */
+function MemberWorkStrip(props: {
+  readonly environmentId: EnvironmentId;
+  readonly work: ReadonlyArray<AssistantGroupMemberWork>;
+  readonly assistants: ReadonlyMap<string, Assistant>;
+  readonly projectChip: (projectId: ProjectId | null) => ReactNode;
+  readonly onOpenThread: (threadId: AssistantGroupTask["threadId"]) => void;
+}) {
+  if (props.work.length === 0) return null;
+  return (
+    <div
+      data-testid="group-member-work"
+      data-glass-layer
+      className="chat-composer-lane border-b border-foreground/8 py-1.5"
+    >
+      <ul aria-label="Members at work" className="chat-content-lane flex flex-wrap gap-x-2 gap-y-1">
+        {props.work.map(({ task, projectId }) => {
+          const member = props.assistants.get(task.ownerId);
+          return (
+            <li key={task.id} className="min-w-0">
+              <button
+                type="button"
+                data-testid="group-member-work-row"
+                onClick={() => props.onOpenThread(task.threadId)}
+                className="flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                {member === undefined ? null : (
+                  <AssistantAvatar
+                    assistant={member}
+                    environmentId={props.environmentId}
+                    className="size-4"
+                  />
+                )}
+                <span className="truncate font-medium text-foreground">
+                  {member?.name ?? "Former member"}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
+                </span>
+                {props.projectChip(projectId)}
+                <span className="shrink-0 text-muted-foreground/70 tabular-nums">
+                  <RelativeTime timestamp={task.updatedAt} />
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -530,6 +590,8 @@ function FeedRow(props: {
   readonly projects: ReadonlyArray<GroupMentionProject>;
   /** The request project's root, for file links. */
   readonly cwd: string | undefined;
+  /** The request's project chip; null outside a request or without a project. */
+  readonly projectChip: ReactNode;
   readonly timestampFormat: TimestampFormat;
   readonly lead: Assistant | undefined;
   readonly canAct: boolean;
@@ -615,6 +677,7 @@ function FeedRow(props: {
         task={task}
         environmentId={props.environmentId}
         owner={props.row.role === "answer" ? undefined : props.assistants.get(task.ownerId)}
+        project={props.projectChip}
         reassignTo={props.members.filter((member) => member.id !== task.ownerId)}
         canAct={props.canAct}
         onAction={(action, ownerId) => props.onTaskAction(task, action, ownerId)}
@@ -680,6 +743,7 @@ function FeedRow(props: {
               />
             )}
             {label}
+            {props.projectChip}
           </span>
         )}
         {replyLine}
@@ -736,7 +800,12 @@ function FeedRow(props: {
         />
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Who member={author} fallback={name} createdAt={message.createdAt} />
+        <Who
+          member={author}
+          fallback={name}
+          createdAt={message.createdAt}
+          project={props.projectChip}
+        />
         {replyLine === null ? null : <div className="-ms-1.5">{replyLine}</div>}
         {answered === undefined ? null : (
           <WorkedForFold
@@ -1258,6 +1327,15 @@ function GroupFeed(props: {
     else stickToBottom.current = true;
   };
 
+  const running = chat === null ? 0 : assistantGroupRunningCount(chat);
+  const scrollToEnd = () => {
+    const element = scroller.current;
+    if (element === null) return;
+    stickToBottom.current = true;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    element.scrollTo({ top: element.scrollHeight, behavior: still ? "auto" : "smooth" });
+  };
+
   /** Brings a message into view, opening its request. */
   const jumpTo = (messageId: AssistantGroupMessage["id"]) => {
     const holder = requestBlocks.find(
@@ -1302,6 +1380,14 @@ function GroupFeed(props: {
     const projectId = assistantGroupRequestProject(state, message.requestId);
     return projects.find((project) => project.id === projectId)?.workspaceRoot;
   };
+  const projectChip = (projectId: ProjectId | null) =>
+    projectId === null ? null : (
+      <GroupProjectChip
+        environmentId={environmentId}
+        projectId={projectId}
+        label={projectName(projectId)}
+      />
+    );
   const feedRow = (state: AssistantGroupChatState, row: AssistantGroupFeedRow) => (
     <Fragment key={row.message.id}>
       {row.message.seq === newSeq ? <NewDivider /> : null}
@@ -1313,6 +1399,7 @@ function GroupFeed(props: {
         members={members}
         projects={mentionProjects}
         cwd={requestRoot(state, row.message)}
+        projectChip={projectChip(assistantGroupRequestProject(state, row.message.requestId))}
         timestampFormat={timestampFormat}
         lead={lead}
         canAct={actions.canAct}
@@ -1341,10 +1428,17 @@ function GroupFeed(props: {
   );
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <MemberWorkStrip
+        environmentId={environmentId}
+        work={chat === null ? [] : assistantGroupMemberWork(chat)}
+        assistants={byId}
+        projectChip={projectChip}
+        onOpenThread={openThread}
+      />
       <div
         ref={bindScroller}
         data-testid="group-feed"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-y-none px-3 @xl/group-chat:px-6"
+        className="chat-composer-lane min-h-0 flex-1 overflow-y-auto overscroll-y-none"
         onScroll={(event) => {
           const element = event.currentTarget;
           stickToBottom.current =
@@ -1433,6 +1527,13 @@ function GroupFeed(props: {
           </div>
         </div>
       </div>
+      {atBottom ? null : (
+        <ScrollToEndButton
+          bottom={4}
+          summary={running === 0 ? null : `${running} running`}
+          onScrollToEnd={scrollToEnd}
+        />
+      )}
       <TimelineMinimap
         items={minimapItems}
         hasPersistentGutter={minimap.persistentGutter}

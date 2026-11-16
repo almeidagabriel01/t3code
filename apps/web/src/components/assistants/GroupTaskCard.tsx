@@ -13,6 +13,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { MessageSquareIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { useThreadShell } from "../../state/entities";
@@ -46,6 +47,8 @@ export function GroupTaskCard(props: {
   readonly environmentId: EnvironmentId;
   /** Shown when the card is not under its owner's own message. */
   readonly owner?: Assistant | undefined;
+  /** The request's project chip, so a card read alone says where it runs. */
+  readonly project?: ReactNode;
   /** Active members that can take the task over, without its owner. */
   readonly reassignTo: ReadonlyArray<Assistant>;
   readonly canAct: boolean;
@@ -87,6 +90,7 @@ export function GroupTaskCard(props: {
           <span aria-hidden className="size-1.5 rounded-full bg-current" />
           {ASSISTANT_GROUP_STATUS_LABEL[task.status]}
         </span>
+        {props.project}
         <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">
           <RelativeTime timestamp={task.updatedAt} />
         </span>

@@ -1579,6 +1579,33 @@ export const assistantGroupRunningTasks = (
 export const assistantGroupRunningCount = (state: AssistantGroupChatState): number =>
   assistantGroupRunningTasks(state).length;
 
+/** A member at work: its newest open task, where it runs, and since when it is in that state. */
+export interface AssistantGroupMemberWork {
+  readonly task: AssistantGroupTask;
+  readonly projectId: ProjectId | null;
+}
+
+/** One line per member with open work, its newest task, most recently changed first. */
+export function assistantGroupMemberWork(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupMemberWork> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of state.tasks.values()) {
+    if (!OPEN_STATUSES.has(task.status)) continue;
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt < task.updatedAt) newest.set(task.ownerId, task);
+  }
+  return [...newest.values()]
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map((task) => ({
+      task,
+      projectId: assistantGroupRequestProject(
+        state,
+        task.requestId ?? state.messages.get(task.requestMessageId)?.requestId,
+      ),
+    }));
+}
+
 /** The divider's wording, for a boundary message's `new` or `compact` text. */
 export function assistantGroupBoundaryLabel(message: Pick<AssistantGroupMessage, "text">): string {
   return message.text === "compact" ? "Context compacted" : "New conversation started";

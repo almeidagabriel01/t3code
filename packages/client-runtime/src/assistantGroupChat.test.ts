@@ -53,6 +53,7 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupLatestSeq,
+  assistantGroupMemberWork,
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupReadStep,
@@ -1337,6 +1338,37 @@ describe("read position", () => {
     assert.deepStrictEqual(
       assistantGroupFinished(previous, next, projects).map((notice) => [notice.tab, notice.body]),
       expected as unknown as string[][],
+    );
+  });
+});
+
+describe("assistantGroupMemberWork", () => {
+  it("lists each member once by its newest open task, with the request's project", () => {
+    const at = (minute: number) => `2026-11-01T00:0${minute}:00.000Z`;
+    const state = start({
+      type: "snapshot",
+      messages: [message(1, { requestId: "m1" as never, projectId: "p1" as ProjectId })],
+      tasks: [
+        task("ada-old", 1, { status: "queued", updatedAt: at(1) }),
+        task("ada-new", 1, { status: "running", updatedAt: at(3) }),
+        task("bob", 9, {
+          ownerId: "bob" as AssistantId,
+          status: "usage_limited",
+          updatedAt: at(2),
+          requestId: "m9" as never,
+        }),
+        task("cy", 1, { ownerId: "cy" as AssistantId, status: "completed", updatedAt: at(4) }),
+        task("di", 1, { ownerId: "di" as AssistantId, status: "paused", updatedAt: at(5) }),
+      ],
+      hasMore: true,
+      requests: [message(9, { requestId: "m9" as never })],
+    });
+    assert.deepStrictEqual(
+      assistantGroupMemberWork(state).map((work) => [work.task.id, work.projectId]),
+      [
+        ["ada-new", "p1"],
+        ["bob", null],
+      ],
     );
   });
 });

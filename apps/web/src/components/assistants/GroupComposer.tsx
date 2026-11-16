@@ -773,226 +773,228 @@ export function GroupComposer(props: {
     "this project";
 
   return (
-    <div className="flex flex-col gap-1.5 px-3 pt-2 pb-3 @xl/group-chat:px-6">
-      <ComposerSurface.Shell>
-        <ComposerSurface.Host>
-          <div
-            ref={shellRef}
-            data-chat-composer-form="true"
-            className="min-w-0"
-            onDragOver={(event) => {
-              if (props.disabled || !hasFiles(event)) return;
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={(event) => {
-              const next = event.relatedTarget;
-              if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
-                setDragging(false);
-              }
-            }}
-            onDrop={onDrop}
-          >
-            <ReplyQuote
-              quote={props.replyingTo}
-              onJump={props.onJumpToReply}
-              onCancel={() => {
-                props.onClearReply();
-                editorRef.current?.focus();
+    <div className="chat-composer-lane pt-2 pb-3">
+      <div className="chat-content-lane flex flex-col gap-1.5">
+        <ComposerSurface.Shell>
+          <ComposerSurface.Host>
+            <div
+              ref={shellRef}
+              data-chat-composer-form="true"
+              className="min-w-0"
+              onDragOver={(event) => {
+                if (props.disabled || !hasFiles(event)) return;
+                event.preventDefault();
+                setDragging(true);
               }}
-            />
-            <div className="relative">
-              <ComposerSurface.Main>
-                <div
-                  data-testid="group-composer-surface"
-                  className={cn(
-                    "rounded-2xl transition-[background-color] duration-200",
-                    dragging && "bg-accent/45 ring-1 ring-inset ring-primary/70",
-                  )}
-                >
-                  <div ref={setMenuAnchor} className="relative px-4 pt-3.5 pb-2 sm:pt-4">
-                    {menuOpen ? (
-                      <ComposerCommandMenuLayer anchor={menuAnchor}>
-                        <ComposerCommandMenu
-                          listId={listId}
-                          items={items}
-                          resolvedTheme={resolvedTheme}
-                          isLoading={false}
-                          triggerKind={null}
-                          listLabel={memberAt !== null ? "Mention" : "Projects"}
-                          activeItemId={items[chosen]?.id ?? null}
-                          onHighlightedItemChange={(id) => {
-                            const index = items.findIndex((item) => item.id === id);
-                            if (index >= 0) setHighlight(index);
-                          }}
-                          onSelect={(item) => pick(items.indexOf(item))}
-                        />
-                      </ComposerCommandMenuLayer>
-                    ) : null}
-                    <GroupAttachmentChips
-                      items={attached.items}
-                      onRemove={attached.remove}
-                      onRetry={attached.retry}
-                    />
-                    <ComposerPromptEditorTiptap
-                      draftKey={props.draftKey}
-                      editorRef={editorRef}
-                      ariaLabel="Message the group"
-                      suggestionListId={listId}
-                      activeSuggestionId={
-                        menuOpen && items[chosen]
-                          ? composerSuggestionOptionId(listId, items[chosen].id)
-                          : undefined
-                      }
-                      richTextEnabled={richText}
-                      value={prompt.value}
-                      cursor={prompt.cursor}
-                      contextRecords={NO_CONTEXT_RECORDS}
-                      skills={NO_SKILLS}
-                      disabled={
-                        props.disabled || speech.freezesEditor || (sending && shown !== null)
-                      }
-                      placeholder={
-                        props.disabledReason ??
-                        "Message the group. @ picks who gets it, # picks a project."
-                      }
-                      groupMentions={{
-                        ...assistantGroupMentionTargets(props.members, projectRefs),
-                        render: (kind, value) => (
-                          <GroupMentionChip
-                            kind={kind}
-                            value={value}
-                            members={props.members}
-                            projects={projectRefs}
-                            environmentId={props.environmentId}
-                          />
-                        ),
-                      }}
-                      onChange={(value, cursor, expanded, adjacent) => {
-                        setPrompt(value, cursor, expanded);
-                        setBesideChip(adjacent);
-                        setHighlight(0);
-                        setError(null);
-                      }}
-                      onCommandKeyDown={onCommandKey}
-                      onPaste={onPaste}
-                    />
-                  </div>
+              onDragLeave={(event) => {
+                const next = event.relatedTarget;
+                if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                  setDragging(false);
+                }
+              }}
+              onDrop={onDrop}
+            >
+              <ReplyQuote
+                quote={props.replyingTo}
+                onJump={props.onJumpToReply}
+                onCancel={() => {
+                  props.onClearReply();
+                  editorRef.current?.focus();
+                }}
+              />
+              <div className="relative">
+                <ComposerSurface.Main>
                   <div
-                    data-testid="group-composer-controls"
-                    // A narrow composer keeps its labels as icons, and voice and send hold the right
-                    // edge outside the wrap, so the controls never take a third line.
-                    className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
+                    data-testid="group-composer-surface"
+                    className={cn(
+                      "rounded-2xl transition-[background-color] duration-200",
+                      dragging && "bg-accent/45 ring-1 ring-inset ring-primary/70",
+                    )}
                   >
-                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-                      {/* A long project name shrinks beside attach instead of taking a line alone. */}
-                      <div className="flex min-w-0 items-center gap-1">
-                        <ComposerAttachButton
-                          addComposerAttachments={async (files) => {
-                            attached.add(files);
-                            return false;
-                          }}
-                          focusComposer={() => editorRef.current?.focus()}
-                          disabled={props.disabled || attached.full || sending}
-                        />
-                        {projectPicker}
-                      </div>
-                      <div className="flex min-w-0 items-center gap-1">
-                        {modelProjectId === null ? null : (
-                          <GroupProjectModelPicker
-                            environmentId={props.environmentId}
-                            projectId={modelProjectId}
-                            projectLabel={modelProjectLabel}
-                            teamDefault={props.teamDefault}
-                            disabled={props.disabled}
-                            onError={setError}
-                            message={props.messageModel}
+                    <div ref={setMenuAnchor} className="relative px-4 pt-3.5 pb-2 sm:pt-4">
+                      {menuOpen ? (
+                        <ComposerCommandMenuLayer anchor={menuAnchor}>
+                          <ComposerCommandMenu
+                            listId={listId}
+                            items={items}
+                            resolvedTheme={resolvedTheme}
+                            isLoading={false}
+                            triggerKind={null}
+                            listLabel={memberAt !== null ? "Mention" : "Projects"}
+                            activeItemId={items[chosen]?.id ?? null}
+                            onHighlightedItemChange={(id) => {
+                              const index = items.findIndex((item) => item.id === id);
+                              if (index >= 0) setHighlight(index);
+                            }}
+                            onSelect={(item) => pick(items.indexOf(item))}
                           />
-                        )}
-                        <Menu>
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <MenuTrigger
-                                  disabled={props.disabled || props.members.length === 0}
-                                  render={<ComposerControl size="xs" aria-label="Mention" />}
-                                />
-                              }
-                            >
-                              <AtSignIcon className="size-3" />
-                              <span data-composer-control-label>Mention</span>
-                            </TooltipTrigger>
-                            <TooltipPopup side="top">Mention a member</TooltipPopup>
-                          </Tooltip>
-                          <MenuPopup align="start" side="top">
-                            <MenuGroup>
-                              <MenuGroupLabel>Mention</MenuGroupLabel>
-                              {assistantGroupMentionOptions("", props.members).map((option) => (
-                                <MenuItem
-                                  key={option.kind === "everyone" ? "everyone" : option.member.id}
-                                  onClick={() => insertFromMenu(option)}
-                                >
-                                  <MentionOptionLabel
-                                    option={option}
-                                    environmentId={props.environmentId}
-                                    leadId={props.leadId}
-                                  />
-                                </MenuItem>
-                              ))}
-                            </MenuGroup>
-                          </MenuPopup>
-                        </Menu>
-                      </div>
+                        </ComposerCommandMenuLayer>
+                      ) : null}
+                      <GroupAttachmentChips
+                        items={attached.items}
+                        onRemove={attached.remove}
+                        onRetry={attached.retry}
+                      />
+                      <ComposerPromptEditorTiptap
+                        draftKey={props.draftKey}
+                        editorRef={editorRef}
+                        ariaLabel="Message the group"
+                        suggestionListId={listId}
+                        activeSuggestionId={
+                          menuOpen && items[chosen]
+                            ? composerSuggestionOptionId(listId, items[chosen].id)
+                            : undefined
+                        }
+                        richTextEnabled={richText}
+                        value={prompt.value}
+                        cursor={prompt.cursor}
+                        contextRecords={NO_CONTEXT_RECORDS}
+                        skills={NO_SKILLS}
+                        disabled={
+                          props.disabled || speech.freezesEditor || (sending && shown !== null)
+                        }
+                        placeholder={
+                          props.disabledReason ??
+                          "Message the group. @ picks who gets it, # picks a project."
+                        }
+                        groupMentions={{
+                          ...assistantGroupMentionTargets(props.members, projectRefs),
+                          render: (kind, value) => (
+                            <GroupMentionChip
+                              kind={kind}
+                              value={value}
+                              members={props.members}
+                              projects={projectRefs}
+                              environmentId={props.environmentId}
+                            />
+                          ),
+                        }}
+                        onChange={(value, cursor, expanded, adjacent) => {
+                          setPrompt(value, cursor, expanded);
+                          setBesideChip(adjacent);
+                          setHighlight(0);
+                          setError(null);
+                        }}
+                        onCommandKeyDown={onCommandKey}
+                        onPaste={onPaste}
+                      />
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <ComposerPrimaryActions
-                        compact={false}
-                        canOperateThread={!props.disabled}
-                        pendingAction={null}
-                        isRunning={false}
-                        canInterrupt={false}
-                        voiceInputActive={speech.blocksSubmission}
-                        isSendBusy={sending}
-                        sendDisabledReason={canSend || !hasContent ? null : sendDisabledReason}
-                        isEnvironmentUnavailable={false}
-                        isPreparingWorktree={false}
-                        hasSendableContent={hasContent && canSend}
-                        onSubmitMessage={submit}
-                        onPreviousPendingQuestion={() => {}}
-                        onInterrupt={() => {}}
-                      >
-                        <TextFieldSpeechControls
-                          speech={speech}
-                          disabled={props.disabled || sending}
-                        />
-                      </ComposerPrimaryActions>
+                    <div
+                      data-testid="group-composer-controls"
+                      // A narrow composer keeps its labels as icons, and voice and send hold the right
+                      // edge outside the wrap, so the controls never take a third line.
+                      className="flex min-w-0 items-end gap-1 px-2 pb-2 @max-md/composer-surface:[&_[data-composer-control-label]]:hidden @max-md/composer-surface:[&_[data-composer-control-mark]]:block"
+                    >
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+                        {/* A long project name shrinks beside attach instead of taking a line alone. */}
+                        <div className="flex min-w-0 items-center gap-1">
+                          <ComposerAttachButton
+                            addComposerAttachments={async (files) => {
+                              attached.add(files);
+                              return false;
+                            }}
+                            focusComposer={() => editorRef.current?.focus()}
+                            disabled={props.disabled || attached.full || sending}
+                          />
+                          {projectPicker}
+                        </div>
+                        <div className="flex min-w-0 items-center gap-1">
+                          {modelProjectId === null ? null : (
+                            <GroupProjectModelPicker
+                              environmentId={props.environmentId}
+                              projectId={modelProjectId}
+                              projectLabel={modelProjectLabel}
+                              teamDefault={props.teamDefault}
+                              disabled={props.disabled}
+                              onError={setError}
+                              message={props.messageModel}
+                            />
+                          )}
+                          <Menu>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <MenuTrigger
+                                    disabled={props.disabled || props.members.length === 0}
+                                    render={<ComposerControl size="xs" aria-label="Mention" />}
+                                  />
+                                }
+                              >
+                                <AtSignIcon className="size-3" />
+                                <span data-composer-control-label>Mention</span>
+                              </TooltipTrigger>
+                              <TooltipPopup side="top">Mention a member</TooltipPopup>
+                            </Tooltip>
+                            <MenuPopup align="start" side="top">
+                              <MenuGroup>
+                                <MenuGroupLabel>Mention</MenuGroupLabel>
+                                {assistantGroupMentionOptions("", props.members).map((option) => (
+                                  <MenuItem
+                                    key={option.kind === "everyone" ? "everyone" : option.member.id}
+                                    onClick={() => insertFromMenu(option)}
+                                  >
+                                    <MentionOptionLabel
+                                      option={option}
+                                      environmentId={props.environmentId}
+                                      leadId={props.leadId}
+                                    />
+                                  </MenuItem>
+                                ))}
+                              </MenuGroup>
+                            </MenuPopup>
+                          </Menu>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <ComposerPrimaryActions
+                          compact={false}
+                          canOperateThread={!props.disabled}
+                          pendingAction={null}
+                          isRunning={false}
+                          canInterrupt={false}
+                          voiceInputActive={speech.blocksSubmission}
+                          isSendBusy={sending}
+                          sendDisabledReason={canSend || !hasContent ? null : sendDisabledReason}
+                          isEnvironmentUnavailable={false}
+                          isPreparingWorktree={false}
+                          hasSendableContent={hasContent && canSend}
+                          onSubmitMessage={submit}
+                          onPreviousPendingQuestion={() => {}}
+                          onInterrupt={() => {}}
+                        >
+                          <TextFieldSpeechControls
+                            speech={speech}
+                            disabled={props.disabled || sending}
+                          />
+                        </ComposerPrimaryActions>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </ComposerSurface.Main>
+                </ComposerSurface.Main>
+              </div>
             </div>
-          </div>
-        </ComposerSurface.Host>
-      </ComposerSurface.Shell>
-      {shownError === null ? (
-        <GroupRecipientsLine
-          environmentId={props.environmentId}
-          text={prompt.value}
-          members={props.members}
-          lead={lead}
-          projects={projectRefs}
-          projectId={props.projectId}
-          chat={props.chat}
-        />
-      ) : (
-        <p
-          role="alert"
-          data-testid="group-composer-alert"
-          className="min-h-4 px-1 text-xs text-destructive-foreground"
-        >
-          {shownError}
-        </p>
-      )}
+          </ComposerSurface.Host>
+        </ComposerSurface.Shell>
+        {shownError === null ? (
+          <GroupRecipientsLine
+            environmentId={props.environmentId}
+            text={prompt.value}
+            members={props.members}
+            lead={lead}
+            projects={projectRefs}
+            projectId={props.projectId}
+            chat={props.chat}
+          />
+        ) : (
+          <p
+            role="alert"
+            data-testid="group-composer-alert"
+            className="min-h-4 px-1 text-xs text-destructive-foreground"
+          >
+            {shownError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
