@@ -134,6 +134,9 @@ export function SettingsEnvironmentsRouteScreen() {
           onToggle={openEnvironment}
           opensDetails
           onReconnect={onReconnectEnvironment}
+          onPairAgain={(environmentId) =>
+            navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
+          }
           onRemove={onRemoveEnvironmentPress}
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={handleUpdateEnvironment}

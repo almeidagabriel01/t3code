@@ -191,6 +191,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 expanded={connectionExpanded}
                 onToggle={() => setConnectionExpanded((value) => !value)}
                 onReconnect={connections.onReconnectEnvironment}
+                onPairAgain={() =>
+                  navigation.navigate("SettingsEnvironmentNew", { routeFor: environmentId })
+                }
                 onRemove={connections.onRemoveEnvironmentPress}
                 onSetEnabled={connections.onSetEnvironmentEnabled}
                 onUpdate={connections.onUpdateEnvironment}
