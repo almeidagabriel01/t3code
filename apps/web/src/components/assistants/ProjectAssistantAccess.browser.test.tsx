@@ -67,6 +67,13 @@ vi.mock("../../state/assistants", () => ({
   }),
 }));
 
+const checkout = (environmentId: string, id: string) => ({
+  environmentId: environmentId as never,
+  id: id as never,
+  environmentLabel: "Mac",
+  workspaceRoot: `/code/${id}`,
+});
+
 const open = () =>
   render(<ProjectAssistantAccess environmentId={"env" as never} projectId={"p1" as never} />);
 
@@ -121,14 +128,26 @@ describe("ProjectAssistantAccess", () => {
 
   it("shows the Settings section only for environments with assistants", async () => {
     await using _screen = await render(
-      <ProjectAssistantAccessSettings
-        members={[
-          { environmentId: "env" as never, id: "p1" as never },
-          { environmentId: "bare" as never, id: "p2" as never },
-        ]}
-      />,
+      <ProjectAssistantAccessSettings members={[checkout("env", "p1"), checkout("bare", "p2")]} />,
     );
     await expect.element(page.getByText("Assistants with access")).toBeVisible();
     expect(page.getByRole("checkbox", { name: "has" }).all()).toHaveLength(1);
+    expect(page.getByText("/code/p1").all()).toHaveLength(0);
+  });
+
+  it("joins checkouts with the same access and names the one that differs", async () => {
+    state.teamUpdates = [];
+    await using _screen = await render(
+      <ProjectAssistantAccessSettings
+        members={[checkout("env", "p7"), checkout("env", "p1"), checkout("env", "p8")]}
+      />,
+    );
+    expect(page.getByRole("checkbox", { name: "lacks" }).all()).toHaveLength(2);
+    await expect.element(page.getByText("/code/p1")).toBeVisible();
+    await expect.element(page.getByText("/code/p8")).toBeVisible();
+    await userEvent.click(page.getByRole("checkbox", { name: "lacks" }).first());
+    await vi.waitFor(() =>
+      expect(state.teamUpdates).toEqual([{ teamId: "lacks", addProjectIds: ["p7", "p8"] }]),
+    );
   });
 });
