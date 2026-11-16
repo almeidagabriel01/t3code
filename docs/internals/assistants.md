@@ -102,7 +102,8 @@ all scoped to one request. When every task of a request is completed or cancelle
 settled (`settleThread`). A delivered task is not finished work: a thread still at work (its own
 subagents or delegates, or a thread it launched, found by `assistant_tasks.source_thread_id`) is held
 (`settle_held_at`). A later run end settles only held threads, never one already settled and then
-reopened, and never one pinned or marked active since the hold. The wait is one level deep: a thread
+reopened. Pinning it, marking it active or a message from the user releases the hold, and from then
+only the user or inactivity settles it. The wait is one level deep: a thread
 that a launched thread launched does not hold the conversation. A task opening again in it
 un-settles them first and drops the holds. Paused, failed and project-waiting requests never settle.
 `assistant_group_threads` holds the per-group threads of chats from before requests; they stay for

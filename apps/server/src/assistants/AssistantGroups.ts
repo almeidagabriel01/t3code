@@ -1401,6 +1401,22 @@ const make = Effect.gen(function* () {
   const releaseHold = (threadId: string) =>
     sql`UPDATE assistant_group_request_threads SET settle_held_at = NULL WHERE thread_id = ${threadId}`;
 
+  /** The user writing in a held conversation brings it back, like marking it active. */
+  const releaseHoldOnUserTurn = Effect.fn("AssistantGroups.releaseHoldOnUserTurn")(function* (run: {
+    readonly threadId: ThreadId;
+    readonly userMessageId: MessageId;
+  }) {
+    const held = yield* sql<{ readonly settle_held_at: string | null }>`
+      SELECT settle_held_at FROM assistant_group_request_threads WHERE thread_id = ${run.threadId}`;
+    if (held[0]?.settle_held_at == null) return;
+    const { messages } = yield* threads
+      .getThreadRecords(run.threadId, ["messages"], { messageIds: [run.userMessageId] })
+      .pipe(Effect.orElseSucceed(() => ({ messages: [] })));
+    if (messages.some((message) => message.createdBy === "user")) {
+      yield* releaseHold(run.threadId);
+    }
+  });
+
   /** Pinned, or marked active after the hold: the user keeps it, so no later run settles it. */
   const keptActiveSince = Effect.fn("AssistantGroups.keptActiveSince")(function* (
     threadId: ThreadId,
@@ -1451,6 +1467,7 @@ const make = Effect.gen(function* () {
         thread.archivedAt !== null ||
         thread.settledOverride === "settled"
       ) {
+        yield* releaseHold(row.thread_id);
         continue;
       }
       yield* threads
@@ -2956,6 +2973,9 @@ const make = Effect.gen(function* () {
       ) {
         // The user's own turn or a background wake in a request thread: a task may be waiting for
         // it to end, and work that held the request's settle may have ended with it.
+        if (event.type === "run.created") {
+          yield* lock.withPermits(1)(releaseHoldOnUserTurn(event.payload));
+        }
         if (!ENDED_RUN.has(event.payload.status)) return;
         return yield* lock.withPermits(1)(
           Effect.gen(function* () {

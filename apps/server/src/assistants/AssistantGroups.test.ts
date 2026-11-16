@@ -291,9 +291,16 @@ const harness = (options: Options = {}) => {
         })) as never,
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadRecords: ((threadId: string) => {
+      // A message the test names `user:…` is the user's own; any other is the agent's.
+      getThreadRecords: ((threadId: string, _fields: unknown, filter?: Record<string, unknown>) => {
         const thread = fakeThreads.get(threadId);
-        return thread === undefined ? Effect.fail(new Boom()) : Effect.succeed({ thread });
+        const messages = ((filter?.messageIds ?? []) as ReadonlyArray<string>).map((id) => ({
+          id,
+          createdBy: id.startsWith("user:") ? "user" : "agent",
+        }));
+        return thread === undefined
+          ? Effect.fail(new Boom())
+          : Effect.succeed({ thread, messages });
       }) as never,
       // Like the Orchestrator: a thread with a live run refuses to settle.
       settleThread: ((input: { threadId: string; commandId: string }) => {
@@ -5967,6 +5974,47 @@ it.effect(
       yield* laterRunEnd(betoThread);
       assert.equal(h.fakeThreads.get(betoThread)!.settledOverride, "active");
       assert.lengthOf(settled(), before);
+
+      // A conversation held by a thread it launched: the user writing in it brings it back, so the
+      // end of that turn leaves it active though the launched work is done by then.
+      const fourth = yield* groups.post({ teamId: TEAM, text: "@ada four" }, h.user);
+      const adaThread = requestThreadId("ada", TEAM, fourth.message.id);
+      const launched = ThreadId.make("thread:held");
+      yield* (yield* Tasks.AssistantTasks).link({
+        threadId: launched,
+        assistantId: "ada" as AssistantId,
+        projectId: p1,
+        title: "Held",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        sourceThreadId: ThreadId.make(adaThread),
+      });
+      h.shells.set(launched, {
+        status: "running",
+        activityRunStatus: null,
+        pendingRuntimeRequest: null,
+        pendingBackgroundTasks: [],
+      });
+      yield* h.finish(
+        h.sent.findIndex((send) => send.threadId === adaThread),
+        "completed",
+        "On it",
+      );
+      assert.notInclude(settled(), adaThread);
+      const userTurn = (type: "run.created" | "run.updated", status: string) =>
+        groups.handleRunEvent({
+          type,
+          payload: {
+            id: "run:user:direct",
+            threadId: adaThread,
+            userMessageId: "user:direct",
+            status,
+          },
+        } as never as OrchestrationV2DomainEvent);
+      yield* userTurn("run.created", "queued");
+      h.shells.delete(launched);
+      yield* userTurn("run.updated", "completed");
+      assert.notInclude(settled(), adaThread);
+      assert.isNull(h.fakeThreads.get(adaThread)!.settledOverride);
     }).pipe(Effect.provide(h.layer));
   },
 );
