@@ -2566,6 +2566,7 @@ export function searchSettings(
   if (normalizedQuery.length === 0) return [];
   const queryTokens = normalizedQuery.split(" ");
 
+  const seen = new Set<string>();
   return settingsForThisPlatform(items)
     .flatMap((item, index) => {
       const title = normalizeSearchText(item.title);
@@ -2599,12 +2600,12 @@ export function searchSettings(
         right.rank - left.rank ||
         left.index - right.index,
     )
-    .map(({ item }) => item)
-    .filter((item, index, results) => {
+    .flatMap(({ item }) => {
       // Rows drawn once per instance share a title and jump target; one result reaches them all.
-      const key = (candidate: SettingsSearchItem) =>
-        `${candidate.title}\u0000${candidate.to}\u0000${candidate.targetId ?? candidate.id}`;
-      return results.findIndex((other) => key(other) === key(item)) === index;
+      const key = `${item.title}\u0000${item.to}\u0000${item.targetId ?? item.id}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [item];
     });
 }
 
