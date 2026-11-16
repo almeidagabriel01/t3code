@@ -111,7 +111,13 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       guestMessageId,
       text: "Why not keep the old cache?",
     });
-    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
+    const waiting = yield* projections.getThreadShell(threadId);
+    assert.equal(waiting?.pendingGuestMessageCount, 1);
+    assert.equal(
+      waiting?.oldestPendingGuestMessageAt,
+      (yield* projections.getThreadProjection(threadId)).thread.guestShare?.messages[0]
+        ?.submittedAt,
+    );
 
     yield* sendGuestMessage(orchestrator, "send-1");
     const projection = yield* projections.getThreadProjection(threadId);
@@ -131,7 +137,9 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       shareId,
     });
     assert.lengthOf(projection.runs, 1);
-    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 0);
+    const resolved = yield* projections.getThreadShell(threadId);
+    assert.equal(resolved?.pendingGuestMessageCount, 0);
+    assert.isNull(resolved?.oldestPendingGuestMessageAt);
 
     // A second owner device clicking Send must not start another turn.
     assert.isTrue(Exit.isFailure(yield* Effect.exit(sendGuestMessage(orchestrator, "send-2"))));
