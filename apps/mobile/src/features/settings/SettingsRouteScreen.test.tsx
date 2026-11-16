@@ -13,6 +13,7 @@ const { Children, mocks } = vi.hoisted(() => ({
     integrationIds: [] as string[],
     query: "",
     searching: [] as boolean[],
+    selectedTargets: [] as { environmentId: string }[],
   },
 }));
 
@@ -29,6 +30,7 @@ vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ b
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({}),
   useNavigationState: () => null,
+  useRoute: () => ({ name: "Settings" }),
 }));
 vi.mock("@clerk/expo", () => ({ useAuth: () => ({}), useUser: () => ({}) }));
 vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
@@ -96,19 +98,49 @@ vi.mock("./components/SettingsSection", async () => ({
   SettingsSection: Children,
   SettingsSidebarContext: (await import("react")).createContext(null),
 }));
-vi.mock("./components/SettingsRow", () => ({
-  SettingsRow: (props: { label: string; value?: string; target?: string; icon?: unknown }) => (
-    <i
-      data-label={props.label}
-      data-value={props.value}
-      data-target={props.target}
-      data-icon={String(props.icon)}
-    />
+vi.mock("./settings-navigation", () => ({ openSettings: () => {} }));
+vi.mock("uniwind", () => ({ useResolveClassNames: () => ({}) }));
+vi.mock("../../components/ui/AppSymbol", () => ({
+  SymbolView: (props: { name: string }) => <b data-symbol={props.name} />,
+}));
+vi.mock("../../components/ui/RowPressable", () => ({
+  RowPressable: (props: {
+    disabled?: boolean;
+    accessibilityState?: { disabled?: boolean };
+    children: ReactNode;
+  }) => (
+    <button
+      disabled={props.disabled}
+      data-a11y-disabled={String(props.accessibilityState?.disabled)}
+    >
+      {props.children}
+    </button>
   ),
 }));
+vi.mock("../../components/ui/ListRowLayout", () => ({
+  ListRowLayout: (props: { disabled?: boolean; accessory?: ReactNode }) => (
+    <s data-dimmed={String(Boolean(props.disabled))}>{props.accessory}</s>
+  ),
+}));
+// The real row draws inside, so its disabled state and chevron are what a user gets.
+vi.mock("./components/SettingsRow", async (importOriginal) => {
+  const { SettingsRow } = await importOriginal<typeof import("./components/SettingsRow")>();
+  return {
+    SettingsRow: (props: Parameters<typeof SettingsRow>[0]) => (
+      <i
+        data-label={props.label}
+        data-value={props.value}
+        data-target={props.target}
+        data-icon={String(props.icon)}
+      >
+        <SettingsRow {...props} />
+      </i>
+    ),
+  };
+});
 vi.mock("./settings-environment-filter", () => ({
   useSettingsEnvironmentFilter: () => ({
-    selectedTargets: [local],
+    selectedTargets: mocks.selectedTargets,
     selectedProjectKeys: mocks.selectedProjectKeys,
     selectedProjectGroups: mocks.selectedProjectGroups,
   }),
@@ -135,6 +167,7 @@ beforeEach(() => {
   mocks.integrationIds = [];
   mocks.query = "";
   mocks.searching = [];
+  mocks.selectedTargets = [local];
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -187,5 +220,43 @@ describe("Integrations row of the Settings list", () => {
         node.getAttribute("data-label"),
       ),
     ).toEqual(["Integrations"]);
+  });
+});
+
+describe("Server pages of the Settings list", () => {
+  const serverPages = [
+    ["Providers", "person.crop.circle"],
+    ["Threads", "text.bubble"],
+    ["MCP servers & skills", "hammer"],
+    ["Source control", "arrow.triangle.branch"],
+    ["Worktrees", "square.on.square"],
+    ["Maintenance", "arrow.clockwise"],
+  ] as const;
+  const rowState = (label: string) => {
+    const row = container.querySelector<HTMLElement>(`[data-label="${label}"]`)!;
+    return {
+      icon: row.dataset.icon,
+      disabled: row.querySelector("button")!.disabled,
+      announcedDisabled: row.querySelector("button")!.dataset.a11yDisabled,
+      dimmed: row.querySelector("s")!.dataset.dimmed,
+      chevron: row.querySelector('[data-symbol="chevron.right"]') !== null,
+    };
+  };
+
+  it.each([
+    ["with no environment, look and read as disabled, without a chevron", [], true],
+    ["with an environment, open their page", [local], false],
+  ] as const)("%s", (_name, targets, off) => {
+    mocks.selectedTargets = [...targets];
+    act(() => root.render(<WorkspaceSettingsList />));
+    for (const [label, icon] of serverPages) {
+      expect(rowState(label)).toEqual({
+        icon,
+        disabled: off,
+        announcedDisabled: String(off),
+        dimmed: String(off),
+        chevron: !off,
+      });
+    }
   });
 });
