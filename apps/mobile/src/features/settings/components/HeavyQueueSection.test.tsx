@@ -310,6 +310,17 @@ describe("HeavyQueueSection", () => {
     await linux.unmount();
   });
 
+  it("resets a changed Mac limit to its default, like the sizes", async () => {
+    setup({ macCpuCeilingPercent: 85 });
+    const view = await mount();
+    await act(async () => view.button("Use the default (70%)").click());
+    expect(mocks.commands.setMacCpuCeilingPercent).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { macCpuCeilingPercent: 70 },
+    });
+    await view.unmount();
+  });
+
   it("groups job sizing apart and resets a changed size to its default", async () => {
     setup({ lightJobMegabytes: 256 });
     const view = await mount();

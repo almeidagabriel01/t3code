@@ -136,7 +136,7 @@ export function HeavyQueueSection(props: {
             </View>
           }
         />
-        {isAdmission(row.key) && state[row.key] !== usual ? (
+        {state[row.key] !== usual ? (
           <SettingsActionRow
             icon="arrow.uturn.backward"
             label={`Use the default (${usual}${UNIT[unit]})`}
