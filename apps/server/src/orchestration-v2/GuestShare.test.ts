@@ -216,14 +216,14 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
         },
       ],
     };
-    const send = (id: string, createdBy: "user" | "agent", queued: boolean) =>
+    const send = (id: string, createdBy: "user" | "agent", queued: boolean, fromTeammate = true) =>
       orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(id),
         threadId,
         messageId: MessageId.make(id),
         text: sentText,
-        context: { version: 1, records: [], teammate },
+        context: { version: 1, records: [], ...(fromTeammate ? { teammate } : {}) },
         attachments: [],
         dispatchMode: { type: queued ? "queue_after_active" : "defer_start" },
         createdBy,
@@ -232,6 +232,8 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
     yield* send("forged", "user", false);
     yield* send("from-ada", "agent", true);
     yield* send("mine", "user", true);
+    // A scheduled task's or another agent's prompt is nobody's words but the owner's to change.
+    yield* send("from-schedule", "agent", true, false);
     const contextOf = (id: string) =>
       projections
         .getThreadProjection(threadId)
@@ -273,6 +275,18 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
     assert.isDefined(mine);
     yield* edit("mine", mine.id);
     assert.isUndefined((yield* contextOf("mine"))?.teammate);
+    const fromSchedule = yield* queuedRunOf("from-schedule");
+    assert.isDefined(fromSchedule);
+    yield* edit("from-schedule", fromSchedule.id);
+    const edited = yield* projections
+      .getThreadProjection(threadId)
+      .pipe(
+        Effect.map((projection) =>
+          projection.messages.find((message) => message.id === MessageId.make("from-schedule")),
+        ),
+      );
+    assert.equal(edited?.text, "My own words");
+    assert.isUndefined(edited?.context?.teammate);
   }).pipe(Effect.provide(layerTest)),
 );
 

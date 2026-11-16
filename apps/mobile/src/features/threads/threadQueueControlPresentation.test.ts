@@ -112,7 +112,6 @@ describe("threadQueueControlPresentation", () => {
       },
     ],
     ["a teammate's", ada],
-    ["another agent's", { role: "user", text: "Ship it", createdBy: "agent" as const }],
   ])("lets the owner cancel %s queued message but not rewrite it", (_name, message) => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
@@ -124,6 +123,19 @@ describe("threadQueueControlPresentation", () => {
 
     expect(controls.canEdit).toBe(false);
     expect(controls.canDismiss).toBe(true);
+  });
+
+  it("lets the owner rewrite a scheduled task's or another agent's queued prompt", () => {
+    const message = { role: "user", text: "Ship it", createdBy: "agent" as const };
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      text: message.text,
+      message,
+    });
+
+    expect(controls.canEdit).toBe(true);
   });
 });
 

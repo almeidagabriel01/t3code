@@ -64,16 +64,26 @@ export function resolveUserMessageFileCards(message: {
   return remaining.trim() === "" ? files : null;
 }
 
-/** Whether the owner may rewrite a queued message: a guest's or an agent's keeps its author's words. */
+/**
+ * Whether the owner may rewrite a queued message: a guest's or a teammate's keeps its author's
+ * words; any other prompt, a scheduled task's included, is the owner's to change.
+ */
 export function canEditQueuedMessage(
   message:
-    | {
-        readonly createdBy?: OrchestrationV2Actor;
-        readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
-      }
+    | (Parameters<typeof resolveTeammateMessage>[0] & {
+        readonly context?:
+          | {
+              readonly guest?: GuestMessageAttribution | undefined;
+              readonly teammate?: OrchestrationMessageContext["teammate"];
+            }
+          | undefined;
+      })
     | undefined,
 ): boolean {
-  return message?.createdBy !== "agent" && message?.context?.guest === undefined;
+  return (
+    message === undefined ||
+    (message.context?.guest === undefined && resolveTeammateMessage(message) === null)
+  );
 }
 
 export function resolveUserMessagePresentation(message: {
