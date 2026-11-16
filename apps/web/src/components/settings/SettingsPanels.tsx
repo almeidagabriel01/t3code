@@ -1,3 +1,7 @@
+import {
+  CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
 import { DetectProblemsSettingsRow } from "./DetectProblemsSettings";
@@ -116,6 +120,7 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsServerEnvironmentNotice,
 } from "./settingsLayout";
 import { searchableSetting, settingCopy } from "./settingsSearch";
 import { GENERAL_SETTINGS_COPY } from "./settingsSearchGeneralItems";
@@ -1792,7 +1797,7 @@ export function ThreadsSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, target, scope } = useSettingsScope();
+  const { environment, environments, connectedEnvironments, target, scope } = useSettingsScope();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
@@ -1846,6 +1851,16 @@ export function ThreadsSettingsPanel() {
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+
+  if (environments.length === 0) {
+    return (
+      <SettingsPageContainer>
+        <SettingsServerEnvironmentNotice>
+          {CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS}
+        </SettingsServerEnvironmentNotice>
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer>
@@ -1946,100 +1961,97 @@ export function ThreadsSettingsPanel() {
         />
       </SettingsSection>
 
-      {hasServerTargets ? (
-        <SettingsSection id="auto-settle" title={settingCopy("threads-section-auto-settle").title}>
-          <SettingsRow
-            serverScoped
-            settingKeys={["sidebarAutoSettleOnMerge"]}
-            {...searchableSetting("auto-settle-merged-threads")}
-            resetAction={
-              settings.sidebarAutoSettleOnMerge !==
-              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
-                <SettingResetButton
-                  label="auto-settle on merge"
-                  onClick={() =>
-                    updateSettings({
-                      sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <ScopedSwitch
-                settingKeys={["sidebarAutoSettleOnMerge"]}
-                checked={settings.sidebarAutoSettleOnMerge}
-                onCheckedChange={(checked) =>
-                  updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+      <SettingsSection id="auto-settle" title={settingCopy("threads-section-auto-settle").title}>
+        <SettingsRow
+          serverScoped
+          settingKeys={["sidebarAutoSettleOnMerge"]}
+          {...searchableSetting("auto-settle-merged-threads")}
+          resetAction={
+            settings.sidebarAutoSettleOnMerge !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
+              <SettingResetButton
+                label="auto-settle on merge"
+                onClick={() =>
+                  updateSettings({
+                    sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+                  })
                 }
-                aria-label="Auto-settle merged threads"
               />
-            }
-          />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["sidebarAutoSettleOnMerge"]}
+              checked={settings.sidebarAutoSettleOnMerge}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+              }
+              aria-label="Auto-settle merged threads"
+            />
+          }
+        />
 
+        <SettingsRow
+          serverScoped
+          settingKeys={["sidebarAutoSettleAfterDays"]}
+          {...searchableSetting("auto-settle-inactive-threads")}
+          resetAction={
+            settings.sidebarAutoSettleAfterDays !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+              <SettingResetButton
+                label="auto-settle"
+                onClick={() =>
+                  updateSettings({
+                    sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["sidebarAutoSettleAfterDays"]}
+              checked={settings.sidebarAutoSettleAfterDays !== null}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                })
+              }
+              aria-label="Auto-settle inactive threads"
+            />
+          }
+        />
+        {settings.sidebarAutoSettleAfterDays !== null ? (
           <SettingsRow
             serverScoped
             settingKeys={["sidebarAutoSettleAfterDays"]}
-            {...searchableSetting("auto-settle-inactive-threads")}
-            resetAction={
-              settings.sidebarAutoSettleAfterDays !==
-              DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
-                <SettingResetButton
-                  label="auto-settle"
-                  onClick={() =>
-                    updateSettings({
-                      sidebarAutoSettleAfterDays:
-                        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-                    })
-                  }
-                />
-              ) : null
-            }
+            {...settingCopy("days-before-auto-settle")}
             control={
-              <ScopedSwitch
-                settingKeys={["sidebarAutoSettleAfterDays"]}
-                checked={settings.sidebarAutoSettleAfterDays !== null}
-                onCheckedChange={(checked) =>
-                  updateSettings({
-                    sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
-                  })
-                }
-                aria-label="Auto-settle inactive threads"
+              <AutoSettleDaysInput
+                value={settings.sidebarAutoSettleAfterDays}
+                onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
               />
             }
           />
-          {settings.sidebarAutoSettleAfterDays !== null ? (
-            <SettingsRow
-              serverScoped
-              settingKeys={["sidebarAutoSettleAfterDays"]}
-              {...settingCopy("days-before-auto-settle")}
-              control={
-                <AutoSettleDaysInput
-                  value={settings.sidebarAutoSettleAfterDays}
-                  onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
-                />
-              }
-            />
-          ) : null}
-          {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
-            <SettingsRow
-              serverScoped
-              settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-              {...settingCopy("keep-threads-with-pull-requests")}
-              control={
-                <ScopedSwitch
-                  settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-                  checked={settings.sidebarAutoSettleKeepPullRequests}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
-                  }
-                  aria-label="Keep threads with a PR"
-                />
-              }
-            />
-          ) : null}
-        </SettingsSection>
-      ) : null}
+        ) : null}
+        {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
+          <SettingsRow
+            serverScoped
+            settingKeys={["sidebarAutoSettleKeepPullRequests"]}
+            {...settingCopy("keep-threads-with-pull-requests")}
+            control={
+              <ScopedSwitch
+                settingKeys={["sidebarAutoSettleKeepPullRequests"]}
+                checked={settings.sidebarAutoSettleKeepPullRequests}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
+                }
+                aria-label="Keep threads with a PR"
+              />
+            }
+          />
+        ) : null}
+      </SettingsSection>
 
       <SettingsSection
         id="text-generation"
@@ -2050,7 +2062,7 @@ export function ThreadsSettingsPanel() {
           settingKeys={["textGenerationModelSelection"]}
           {...searchableSetting("text-generation-model")}
           resetAction={
-            hasServerTargets && isTextGenerationModelDirty ? (
+            isTextGenerationModelDirty ? (
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
@@ -2063,11 +2075,8 @@ export function ThreadsSettingsPanel() {
             ) : null
           }
           control={
-            !hasServerTargets ? (
-              <span className="text-sm text-muted-foreground">
-                Connect an environment to choose its text generation model.
-              </span>
-            ) : !hasTextGenerationProvider ? (
+            // While reconnecting the providers are unknown, so show nothing rather than "none available".
+            !hasServerTargets ? null : !hasTextGenerationProvider ? (
               <span className="text-sm text-muted-foreground">
                 No text generation providers available.
               </span>
@@ -2208,93 +2217,95 @@ export function ThreadsSettingsPanel() {
 export function MaintenanceSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const { scope, environment, environments } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
-  const hasServerTargets = connectedEnvironments.length > 0;
+  const hasEnvironments = environments.length > 0;
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="updates" title={settingCopy("maintenance-section-updates").title}>
-        <SettingsRow
-          serverScoped
-          settingKeys={["enableProviderUpdateChecks"]}
-          {...searchableSetting("provider-update-checks")}
-          resetAction={
-            settings.enableProviderUpdateChecks !==
-            DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
-              <SettingResetButton
-                label="provider update checks"
-                onClick={() =>
-                  updateSettings({
-                    enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
+      {hasEnvironments ? (
+        <>
+          <SettingsSection id="updates" title={settingCopy("maintenance-section-updates").title}>
+            <SettingsRow
+              serverScoped
               settingKeys={["enableProviderUpdateChecks"]}
-              checked={settings.enableProviderUpdateChecks}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
+              {...searchableSetting("provider-update-checks")}
+              resetAction={
+                settings.enableProviderUpdateChecks !==
+                DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
+                  <SettingResetButton
+                    label="provider update checks"
+                    onClick={() =>
+                      updateSettings({
+                        enableProviderUpdateChecks:
+                          DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+                      })
+                    }
+                  />
+                ) : null
               }
-              aria-label="Check provider versions"
+              control={
+                <ScopedSwitch
+                  settingKeys={["enableProviderUpdateChecks"]}
+                  checked={settings.enableProviderUpdateChecks}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
+                  }
+                  aria-label="Check provider versions"
+                />
+              }
             />
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("continue-threads-after-server-update")}
-          serverScoped
-          settingKeys={["continueThreadsAfterServerUpdate"]}
-          status={
-            !hasServerTargets
-              ? "All selected connected environments must support restart continuation."
-              : undefined
-          }
-          resetAction={
-            hasServerTargets &&
-            settings.continueThreadsAfterServerUpdate !==
-              DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
-              <SettingResetButton
-                label="continue threads after restarts"
-                onClick={() =>
-                  updateSettings({
-                    continueThreadsAfterServerUpdate:
-                      DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <ScopedSwitch
+            <SettingsRow
+              {...searchableSetting("continue-threads-after-server-update")}
+              serverScoped
               settingKeys={["continueThreadsAfterServerUpdate"]}
-              checked={settings.continueThreadsAfterServerUpdate}
-              disabled={!hasServerTargets}
-              onCheckedChange={(checked) =>
-                updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
+              resetAction={
+                settings.continueThreadsAfterServerUpdate !==
+                DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
+                  <SettingResetButton
+                    label="continue threads after restarts"
+                    onClick={() =>
+                      updateSettings({
+                        continueThreadsAfterServerUpdate:
+                          DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+                      })
+                    }
+                  />
+                ) : null
               }
-              aria-label="Continue threads after restarts"
+              control={
+                <ScopedSwitch
+                  settingKeys={["continueThreadsAfterServerUpdate"]}
+                  checked={settings.continueThreadsAfterServerUpdate}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
+                  }
+                  aria-label="Continue threads after restarts"
+                />
+              }
             />
-          }
-        />
-      </SettingsSection>
+          </SettingsSection>
 
-      <SettingsSection id="background" title={settingCopy("background-activity").title}>
-        <BackgroundActivitySettingsRow />
-        <KeepAwakeSettingsRow />
-      </SettingsSection>
+          <SettingsSection id="background" title={settingCopy("background-activity").title}>
+            <BackgroundActivitySettingsRow />
+            <KeepAwakeSettingsRow />
+          </SettingsSection>
 
-      <HeavyWorkSettingsSection />
+          <HeavyWorkSettingsSection />
 
-      <RunnerSettingsSection />
+          <RunnerSettingsSection />
 
-      <StorageCleanupSections />
+          <StorageCleanupSections />
+        </>
+      ) : (
+        <SettingsServerEnvironmentNotice>
+          {CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS}
+        </SettingsServerEnvironmentNotice>
+      )}
 
       <SettingsSection id="diagnostics-section" title={settingCopy("diagnostics").title}>
-        <DetectProblemsSettingsRow />
+        {hasEnvironments ? <DetectProblemsSettingsRow /> : null}
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={

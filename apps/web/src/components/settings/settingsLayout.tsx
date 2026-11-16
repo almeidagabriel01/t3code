@@ -37,6 +37,7 @@ import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePag
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { settingCopy } from "./settingsSearch";
 import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import {
   isProjectScopedSettingKey,
@@ -288,6 +289,24 @@ export function SettingsSection({
         {children}
       </SettingsGroup>
     </section>
+  );
+}
+
+/** Stands in for a page's server sections while no environment is connected. */
+export function SettingsServerEnvironmentNotice({
+  id,
+  children,
+}: {
+  id?: string;
+  children: string;
+}) {
+  return (
+    <SettingsSection
+      {...(id === undefined ? {} : { id })}
+      title={settingCopy("source-control-server-environment").title}
+    >
+      <p className="px-4 py-3 text-sm text-muted-foreground">{children}</p>
+    </SettingsSection>
   );
 }
 
