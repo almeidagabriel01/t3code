@@ -47,6 +47,7 @@ export interface SettlementPullRequest {
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const RUN_ENDS_BY_CWD_CAPACITY = 2_048;
+const HELD_BRANCH_RECHECK_MS = 10 * 60 * 1_000;
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -377,6 +378,10 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitManager.GitManager;
+  const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+  // A held branch is read again only when its HEAD or its thread moved, or the check aged out
+  // (a pull request can merge with no local change).
+  const heldChecks = new Map<ThreadId, { readonly key: string; readonly checkedAtMs: number }>();
   const pullRequests = yield* PullRequestService.PullRequestService;
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -495,11 +500,39 @@ export const make = Effect.gen(function* () {
       finished,
       ({ thread, settlement }) =>
         Effect.gen(function* () {
-          if (
-            settlement !== "now" &&
-            (yield* branchHoldsWork(thread, settlement, roots.get(thread.projectId)))
-          ) {
-            return;
+          if (settlement !== "now") {
+            const projectRoot = roots.get(thread.projectId);
+            const cwd = thread.worktreePath ?? projectRoot;
+            const head =
+              cwd === undefined
+                ? null
+                : yield* gitDriver
+                    .execute({
+                      operation: "ThreadSettlementService.heldHead",
+                      cwd,
+                      args: ["rev-parse", "HEAD"],
+                    })
+                    .pipe(
+                      Effect.map((result) => result.stdout.trim()),
+                      Effect.orElseSucceed(() => null),
+                    );
+            const key =
+              head === null
+                ? null
+                : [cwd, head, DateTime.toEpochMillis(lastActivityAt(thread))].join("\u0000");
+            const previous = heldChecks.get(thread.id);
+            if (
+              key !== null &&
+              previous?.key === key &&
+              nowMs - previous.checkedAtMs < HELD_BRANCH_RECHECK_MS
+            ) {
+              return;
+            }
+            if (yield* branchHoldsWork(thread, settlement, projectRoot)) {
+              if (key !== null) heldChecks.set(thread.id, { key, checkedAtMs: nowMs });
+              return;
+            }
+            heldChecks.delete(thread.id);
           }
           yield* dispatchAutoSettle(thread, lastActivityAt(thread));
           settled.add(thread.id);
@@ -524,6 +557,7 @@ export const make = Effect.gen(function* () {
   ) {
     const allCandidates = yield* projections.getSettlementCandidates(threadId);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    if (mergedPullRequest !== null) heldChecks.clear();
     // Finished work settles whatever the inactivity and merge settings say.
     const settledFinished = yield* settleFinishedWork(allCandidates, nowMs);
     const settings = yield* settingsService.getSettings;

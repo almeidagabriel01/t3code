@@ -34,9 +34,11 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
@@ -562,6 +564,7 @@ interface HarnessOptions {
   readonly settings?: ContractServerSettings;
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
   readonly gitStatus?: GitManager.GitManager["Service"]["status"];
+  readonly gitHead?: (cwd: string) => Effect.Effect<string>;
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly unreadablePaths?: ReadonlyArray<string>;
@@ -708,6 +711,20 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       status: (input) =>
         options.gitStatus?.(input) ?? Effect.die(new Error(`Unexpected git status: ${input.cwd}`)),
       invalidateStatus: (cwd) => Ref.update(invalidatedCwds, (cwds) => [...cwds, cwd]),
+    }),
+    Layer.mock(GitVcsDriver.GitVcsDriver)({
+      execute: (input) =>
+        input.args[0] === "rev-parse"
+          ? (options.gitHead?.(input.cwd) ?? Effect.succeed("head")).pipe(
+              Effect.map((stdout) => ({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout: `${stdout}\n`,
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              })),
+            )
+          : Effect.die(new Error(`Unexpected git: ${input.args.join(" ")}`)),
     }),
     Layer.mock(PullRequestService.PullRequestService)({
       summary: pullRequestSummary,
@@ -2110,6 +2127,50 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             native?.settledAt === undefined ? null : DateTime.formatIso(native.settledAt),
             DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000)),
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a held branch's status once while its HEAD and activity stay the same", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const statusCalls = yield* Ref.make(0);
+        const head = yield* Ref.make("first");
+        const task = childThread("task-unshipped", {
+          lineage: {
+            rootThreadId: ThreadId.make("task-unshipped"),
+            parentThreadId: null,
+            relationshipToParent: null,
+          },
+          subagentHandoff: null,
+          assistantTaskDismissed: true,
+          worktreePath: "/worktrees/unshipped",
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([task]),
+          settings: settlementOff,
+          existingWorktreePaths: ["/worktrees/unshipped"],
+          gitStatus: (input) =>
+            Ref.update(statusCalls, (count) => count + 1).pipe(
+              Effect.andThen(vcsStatus({ aheadOfDefault: 1 })(input)),
+            ),
+          gitHead: () => Ref.get(head),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const sweep = Effect.gen(function* () {
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.snapshotReads);
+            yield* service.drain;
+            return yield* Ref.get(statusCalls);
+          });
+          assert.strictEqual(yield* sweep, 1);
+          yield* Ref.set(head, "second");
+          assert.strictEqual(yield* sweep, 2);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
