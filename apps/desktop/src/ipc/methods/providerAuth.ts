@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   receiveCodexAuthCallback,
@@ -7,6 +8,7 @@ import {
 } from "../../app/CodexAuthCallback.ts";
 import * as IntegrationCallback from "../../app/IntegrationCallback.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
