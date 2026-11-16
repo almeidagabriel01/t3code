@@ -18,6 +18,7 @@ import {
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
   sourceControlHostSettingsSearchId,
+  type SettingsSearchAvailability,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -56,6 +57,26 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
     to: "/settings/general",
   },
 ];
+
+const EVERYTHING_AVAILABLE = {
+  hasCloudPublicConfig: true,
+  hasEnvironment: true,
+  hasProviderSettingsEnvironment: true,
+  canManageLocalBackend: true,
+  isWslSettingsRowVisible: true,
+  hasThreadAutoSettlement: true,
+  managedTunnelActive: true,
+  hasPeerLinkHost: true,
+  hasMemory: true,
+  hasIntegrations: true,
+  hasImessage: true,
+  hasTelegram: true,
+  hasMacProviderSettingsEnvironment: true,
+  hasComputerUseHostEnvironment: true,
+  hasFastWorktreeCheckoutEnvironment: true,
+  hasTextGeneratorsEnvironment: true,
+  hasPrimaryEnvironment: true,
+} satisfies Required<SettingsSearchAvailability>;
 
 describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {
@@ -287,6 +308,33 @@ describe("searchSettings", () => {
     ] as const) {
       expect(searchSettings(title)[0]?.id, title).toBe(id);
     }
+  });
+
+  // One row per area whose rows used to draw text the index never saw.
+  it.each([
+    { query: "runtime", title: "Runtime", to: "/settings/providers" },
+    { query: "account", title: "Account", to: "/settings/providers" },
+    { query: "budget", title: "Budget (USD)", to: "/settings/providers" },
+    { query: "warn at", title: "Warn at (%)", to: "/settings/providers" },
+    { query: "turns yellow", title: "Warn at (%)", to: "/settings/providers" },
+    { query: "cursor account", title: "Cursor account", to: "/settings/providers" },
+    { query: "manage servers", title: "Manage servers", to: "/settings/providers" },
+    { query: "fallback models", title: "Fallback models", to: "/settings/threads" },
+    { query: "model by folder", title: "Model by folder", to: "/settings/threads" },
+    { query: "when a task is done", title: "When a task is done", to: "/settings/assistants" },
+    { query: "stuck after", title: "Stuck after", to: "/settings/assistants" },
+    { query: "agent memory access", title: "Allow agent memory access", to: "/settings/memory" },
+    { query: "reconcile sync", title: "Reconcile sync", to: "/settings/memory" },
+    { query: "tool output", title: "Summarize old tool output", to: "/settings/maintenance" },
+    { query: "reclaim", title: "Reclaim freed database space", to: "/settings/maintenance" },
+    { query: "cleanup instructions", title: "Cleanup instructions", to: "/settings/voice" },
+    { query: "pinned projects", title: "Pin", to: "/settings/projects" },
+    { query: "board to configure", title: "Board to configure", to: "/settings/kanban" },
+    { query: "scheduled tasks", title: "Scheduled tasks", to: "/settings/scheduled-tasks" },
+    { query: "first run on the phone", title: "First run on the phone", to: "/settings/devices" },
+  ] as const)("finds the $title row by $query", ({ query, title, to }) => {
+    const found = searchSettings(query, filterAvailableSettingsSearchItems(EVERYTHING_AVAILABLE));
+    expect(found.map((item) => [item.title, item.to])).toContainEqual([title, to]);
   });
 
   it("keeps catalog result ids unique", () => {
