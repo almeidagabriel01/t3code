@@ -23,6 +23,8 @@ import { StartTruncatedPath } from "../StartTruncatedPath";
 import { AssistantAvatar } from "./assistantPresentation";
 import { SettingsSection } from "../settings/settingsLayout";
 import { searchableSetting } from "../settings/settingsSearch";
+import { settingsScopeEnvironmentAddress } from "../settings/settingsScopeAxis";
+import { useEnvironments } from "../../state/environments";
 
 function AccessRow(props: {
   readonly label: string;
@@ -179,6 +181,7 @@ export function ProjectAssistantAccess(props: {
 
 function AccessBlockTitle(props: {
   readonly title: ProjectAccessBlockTitle;
+  readonly address: string;
   readonly checkouts: ReadonlyArray<{
     readonly environmentLabel: string | null;
     readonly workspaceRoot: string;
@@ -190,6 +193,9 @@ function AccessBlockTitle(props: {
         <h3 className="text-sm font-medium">
           {props.checkouts[0]?.environmentLabel ?? "Environment"}
         </h3>
+      ) : null}
+      {props.title.address ? (
+        <span className="truncate text-xs text-muted-foreground">{props.address}</span>
       ) : null}
       {props.title.path
         ? props.checkouts.map((checkout) => (
@@ -220,8 +226,13 @@ export function ProjectAssistantAccessSettings(props: {
   }>;
 }) {
   const { active, teams } = useAssistantEntries();
+  const { environments } = useEnvironments();
   const blocks = projectAccessBlocks(props.members, active, teams);
   if (blocks.length === 0) return null;
+  const addressOf = (environmentId: EnvironmentId) => {
+    const environment = environments.find((entry) => entry.environmentId === environmentId);
+    return environment ? settingsScopeEnvironmentAddress(environment) : environmentId;
+  };
   return (
     <SettingsSection
       {...searchableSetting("assistants-with-access")}
@@ -233,7 +244,11 @@ export function ProjectAssistantAccessSettings(props: {
           className="flex flex-col gap-3 px-3 py-3 sm:px-4"
         >
           {block.title === null ? null : (
-            <AccessBlockTitle title={block.title} checkouts={block.checkouts} />
+            <AccessBlockTitle
+              title={block.title}
+              address={addressOf(block.environmentId)}
+              checkouts={block.checkouts}
+            />
           )}
           <ProjectAssistantAccess
             environmentId={block.environmentId}

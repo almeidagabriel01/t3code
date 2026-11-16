@@ -10803,7 +10803,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `A ${author} message cannot be edited. Cancel it instead.`,
+        cause: `A ${author} message cannot be edited. Remove it instead.`,
       });
     }
     yield* ensureGoalCommandSupported(

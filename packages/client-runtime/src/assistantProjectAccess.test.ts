@@ -97,7 +97,20 @@ describe("ownProjectsWith", () => {
 
 describe("projectAccessBlocks", () => {
   const at = (environmentId: string, ...ids: ReadonlyArray<string>) =>
-    ids.map((id) => ({ environmentId: environmentId as never, id: P(id) }));
+    ids.map((id) => ({
+      environmentId: environmentId as never,
+      id: P(id),
+      environmentLabel: (environmentId === "mac2" ? "mac" : environmentId) as string | null,
+      workspaceRoot: `/${environmentId === "mac2" ? "mac" : environmentId}/${id}`,
+    }));
+  const unnamed = (environmentId: string, id: string) => ({
+    ...at(environmentId, id)[0]!,
+    environmentLabel: null,
+  });
+  const elsewhere = (environmentId: string, id: string) => ({
+    ...at(environmentId, id)[0]!,
+    workspaceRoot: `/elsewhere/${id}`,
+  });
   const entries = (environmentId: string) => ({
     assistants: [ana, bo, jarvis].map((assistant) => ({
       environmentId: environmentId as never,
@@ -109,6 +122,10 @@ describe("projectAccessBlocks", () => {
   const both = {
     assistants: [...mac.assistants, ...entries("pc").assistants],
     teams: [...mac.teams, ...entries("pc").teams],
+  };
+  const sameHost = {
+    assistants: [...both.assistants, ...entries("mac2").assistants],
+    teams: [...both.teams, ...entries("mac2").teams],
   };
 
   it.each([
@@ -124,8 +141,8 @@ describe("projectAccessBlocks", () => {
       at("mac", "p3", "p4"),
       mac,
       [
-        { ids: ["p3"], title: { environment: false, path: true } },
-        { ids: ["p4"], title: { environment: false, path: true } },
+        { ids: ["p3"], title: { environment: false, path: true, address: false } },
+        { ids: ["p4"], title: { environment: false, path: true, address: false } },
       ],
     ],
     [
@@ -133,8 +150,8 @@ describe("projectAccessBlocks", () => {
       [...at("mac", "p3"), ...at("pc", "p3")],
       both,
       [
-        { ids: ["p3"], title: { environment: true, path: false } },
-        { ids: ["p3"], title: { environment: true, path: false } },
+        { ids: ["p3"], title: { environment: true, path: false, address: false } },
+        { ids: ["p3"], title: { environment: true, path: false, address: false } },
       ],
     ],
     [
@@ -142,9 +159,38 @@ describe("projectAccessBlocks", () => {
       [...at("mac", "p4", "p3"), ...at("pc", "p1"), ...at("mac", "p5")],
       both,
       [
-        { ids: ["p4", "p5"], title: { environment: true, path: true } },
-        { ids: ["p3"], title: { environment: true, path: true } },
-        { ids: ["p1"], title: { environment: true, path: false } },
+        { ids: ["p4", "p5"], title: { environment: true, path: true, address: false } },
+        { ids: ["p3"], title: { environment: true, path: true, address: false } },
+        { ids: ["p1"], title: { environment: true, path: false, address: false } },
+      ],
+    ],
+    [
+      "two environments named alike, and a third named apart",
+      [...at("mac", "p3"), elsewhere("mac2", "p3"), ...at("pc", "p3")],
+      sameHost,
+      [
+        { ids: ["p3"], title: { environment: true, path: true, address: false } },
+        { ids: ["p3"], title: { environment: true, path: true, address: false } },
+        { ids: ["p3"], title: { environment: true, path: false, address: false } },
+      ],
+    ],
+    [
+      "two environments with the same name and path",
+      [...at("mac", "p3"), ...at("mac2", "p3"), ...at("pc", "p3")],
+      sameHost,
+      [
+        { ids: ["p3"], title: { environment: true, path: true, address: true } },
+        { ids: ["p3"], title: { environment: true, path: true, address: true } },
+        { ids: ["p3"], title: { environment: true, path: false, address: false } },
+      ],
+    ],
+    [
+      "two environments without a name",
+      [unnamed("mac", "p3"), unnamed("pc", "p3")],
+      both,
+      [
+        { ids: ["p3"], title: { environment: true, path: true, address: false } },
+        { ids: ["p3"], title: { environment: true, path: true, address: false } },
       ],
     ],
     [

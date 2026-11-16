@@ -27,6 +27,16 @@ export const CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS =
   "Connect an environment to view its settings and access.";
 export const CONNECT_ENVIRONMENT_FOR_VOICE_MODEL = "Connect an environment first.";
 
+// The picked environment exists but is not connected, so the page names it.
+export const reconnectEnvironmentForSettings = (environment: string) =>
+  `Reconnect ${environment} to change its settings.`;
+export const reconnectEnvironmentForProviders = (environment: string) =>
+  `Reconnect ${environment} to set up its providers.`;
+export const reconnectEnvironmentForSecretProviders = (environment: string) =>
+  `Reconnect ${environment} to manage its secret providers.`;
+export const reconnectEnvironmentForScheduledTasks = (environment: string) =>
+  `Reconnect ${environment} to view its scheduled tasks.`;
+
 /** @public Mobile reads it through `emptyEnvironmentSelectionText`. */
 export const NO_MATCHING_ENVIRONMENTS =
   "No environments match this filter. Change the filter above.";
@@ -37,6 +47,11 @@ export function emptyEnvironmentSelectionText(
   environmentsAvailable: boolean,
 ): string {
   return environmentsAvailable ? NO_MATCHING_ENVIRONMENTS : connectEnvironment;
+}
+
+/** An environment filter that narrows nothing; with no environment there is nothing to narrow. */
+export function allEnvironmentsLabel(environmentCount: number): string {
+  return environmentCount === 0 ? "No environments" : "All environments";
 }
 
 export type UsageSubject = "limits" | "usage";

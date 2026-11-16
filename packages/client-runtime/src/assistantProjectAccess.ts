@@ -146,14 +146,19 @@ export function ownProjectsWith(
 export interface AccessCheckout {
   readonly environmentId: EnvironmentId;
   readonly id: ProjectId;
+  /** The name the block title shows; environments on one host often share it. */
+  readonly environmentLabel: string | null;
+  readonly workspaceRoot: string;
 }
 
 /** What a block's title names; null when the project shows only one block. */
 export interface ProjectAccessBlockTitle {
   /** The blocks span environments, so each names its own. */
   readonly environment: boolean;
-  /** Its environment has other blocks, so the checkout paths tell them apart. */
+  /** Another block shows the same environment name, so the checkout paths tell them apart. */
   readonly path: boolean;
+  /** Another environment shows the same name and paths, so only its address tells them apart. */
+  readonly address: boolean;
 }
 
 /**
@@ -175,7 +180,10 @@ export function projectAccessBlocks<
   readonly projectIds: ReadonlyArray<ProjectId>;
   readonly title: ProjectAccessBlockTitle | null;
 }> {
-  const blocks = new Map<string, { environmentId: EnvironmentId; checkouts: Array<C> }>();
+  const blocks = new Map<
+    string,
+    { environmentId: EnvironmentId; environmentLabel: string | null; checkouts: Array<C> }
+  >();
   for (const checkout of checkouts) {
     const access = projectAccess(
       checkout.id,
@@ -194,21 +202,38 @@ export function projectAccessBlocks<
     ]);
     const block = blocks.get(key);
     if (block) block.checkouts.push(checkout);
-    else blocks.set(key, { environmentId: checkout.environmentId, checkouts: [checkout] });
+    else
+      blocks.set(key, {
+        environmentId: checkout.environmentId,
+        environmentLabel: checkout.environmentLabel,
+        checkouts: [checkout],
+      });
   }
-  const list = [...blocks.values()];
-  const environments = new Set(list.map((block) => block.environmentId));
-  return list.map((block) => ({
+  const list = [...blocks.values()].map((block) => ({
     ...block,
-    projectIds: block.checkouts.map((checkout) => checkout.id),
-    title:
-      list.length === 1
-        ? null
-        : {
-            environment: environments.size > 1,
-            path: list.some(
-              (other) => other !== block && other.environmentId === block.environmentId,
-            ),
-          },
+    paths: block.checkouts.map((checkout) => checkout.workspaceRoot).join("\n"),
   }));
+  const environments = new Set(list.map((block) => block.environmentId));
+  return list.map(({ environmentLabel, paths, ...block }) => {
+    const sameName = list.filter(
+      (other) =>
+        other.checkouts !== block.checkouts &&
+        (other.environmentId === block.environmentId ||
+          other.environmentLabel === environmentLabel),
+    );
+    return {
+      ...block,
+      projectIds: block.checkouts.map((checkout) => checkout.id),
+      title:
+        list.length === 1
+          ? null
+          : {
+              environment: environments.size > 1,
+              path: sameName.length > 0,
+              address: sameName.some(
+                (other) => other.environmentId !== block.environmentId && other.paths === paths,
+              ),
+            },
+    };
+  });
 }

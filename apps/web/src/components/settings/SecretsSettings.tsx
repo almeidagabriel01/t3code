@@ -1,4 +1,7 @@
-import { CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS } from "@t3tools/client-runtime/settings-empty-selection";
+import {
+  CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS,
+  reconnectEnvironmentForSecretProviders,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -62,7 +65,7 @@ export function SecretsSettingsPanel() {
       ) : (
         <SettingsServerEnvironmentNotice id={searchableSetting("secret-providers").id}>
           {environment
-            ? `Reconnect ${environment.label} to manage its secret providers.`
+            ? reconnectEnvironmentForSecretProviders(environment.label)
             : CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS}
         </SettingsServerEnvironmentNotice>
       )}

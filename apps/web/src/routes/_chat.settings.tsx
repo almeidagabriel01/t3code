@@ -1,3 +1,4 @@
+import { reconnectEnvironmentForSettings } from "@t3tools/client-runtime/settings-empty-selection";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
@@ -13,7 +14,10 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
-import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+import {
+  SETTINGS_DEVICE_ONLY_PATHS,
+  SETTINGS_SINGLE_ENVIRONMENT_PATHS,
+} from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
@@ -99,7 +103,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {reconnectEnvironmentForSettings(scope.label)}
         </p>
       </SettingsPageContainer>
     );
@@ -146,12 +150,7 @@ function SettingsRouteLayout() {
   return (
     <SettingsScopeProvider
       search={rawSearch}
-      singleEnvironment={
-        pathname === "/settings/providers" ||
-        pathname === "/settings/secrets" ||
-        pathname === "/settings/memory" ||
-        pathname === "/settings/integrations"
-      }
+      singleEnvironment={SETTINGS_SINGLE_ENVIRONMENT_PATHS.has(pathname)}
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({

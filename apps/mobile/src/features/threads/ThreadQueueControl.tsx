@@ -287,6 +287,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       id: "remove",
                       title: "Remove",
                       attributes: { disabled: !controls.canDismiss, destructive: true },
+                      image: "trash",
                     },
                   ]}
                   onPressAction={({ nativeEvent }) => {

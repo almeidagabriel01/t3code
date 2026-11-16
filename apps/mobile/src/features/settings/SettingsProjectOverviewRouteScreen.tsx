@@ -31,6 +31,7 @@ import {
 import {
   readEnvironmentScope,
   useEnvironmentScope,
+  useEnvironmentsScopeAccess,
   useEnvironmentsWithScope,
 } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -153,6 +154,15 @@ function ProjectOverviewContent(props: {
   const canRemoveGroup = props.members.every((member) =>
     removableEnvironments.has(member.environmentId),
   );
+  const removeAccess = useEnvironmentsScopeAccess(props.members, AuthOrchestrationOperateScope);
+  const removeAccesses = props.members.map((member) => removeAccess.get(member.environmentId));
+  // Only a settled refusal is shown; "unknown" means the session is still loading.
+  const removeBlockedReason =
+    canRemoveGroup || removeAccesses.includes("unknown")
+      ? null
+      : removeAccesses.includes("missing")
+        ? PROJECT_OVERVIEW_COPY.danger.noPermission
+        : PROJECT_OVERVIEW_COPY.organize.offline;
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project name update",
@@ -359,7 +369,7 @@ function ProjectOverviewContent(props: {
             label={PROJECT_OVERVIEW_COPY.organize.pin.title}
             subtitle={
               offline
-                ? PROJECT_OVERVIEW_COPY.organize.pin.offline
+                ? PROJECT_OVERVIEW_COPY.organize.offline
                 : PROJECT_OVERVIEW_COPY.organize.pin.description
             }
             value={props.group.pinned}
@@ -374,9 +384,11 @@ function ProjectOverviewContent(props: {
                 : PROJECT_OVERVIEW_COPY.organize.archive.title
             }
             description={
-              props.group.archived
-                ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
-                : PROJECT_OVERVIEW_COPY.organize.archive.description
+              offline
+                ? PROJECT_OVERVIEW_COPY.organize.offline
+                : props.group.archived
+                  ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
+                  : PROJECT_OVERVIEW_COPY.organize.archive.description
             }
             disabled={isOrganizing || offline}
             onPress={() => void organize({ archived: !props.group.archived })}
@@ -388,6 +400,9 @@ function ProjectOverviewContent(props: {
         members={props.members}
         environmentLabel={(environmentId) =>
           props.environments.find((entry) => entry.environmentId === environmentId)?.label
+        }
+        environmentAddress={(environmentId) =>
+          props.environments.find((entry) => entry.environmentId === environmentId)?.displayUrl
         }
       />
 
@@ -415,7 +430,12 @@ function ProjectOverviewContent(props: {
                   {environment.displayUrl}
                 </Text>
               ) : null}
-              <Text className="text-sm leading-normal text-foreground-muted" selectable>
+              <Text
+                className="text-sm leading-normal text-foreground-muted"
+                numberOfLines={1}
+                ellipsizeMode="head"
+                selectable
+              >
                 {member.workspaceRoot}
               </Text>
               {props.members.length > 1 || props.hasOtherMembers ? (
@@ -440,11 +460,12 @@ function ProjectOverviewContent(props: {
                 : PROJECT_OVERVIEW_COPY.danger.remove.title
           }
           description={
-            props.hasOtherMembers
+            removeBlockedReason ??
+            (props.hasOtherMembers
               ? PROJECT_OVERVIEW_COPY.danger.removeCheckout.description
               : props.members.length > 1
                 ? `Deletes all ${props.members.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                : PROJECT_OVERVIEW_COPY.danger.remove.description
+                : PROJECT_OVERVIEW_COPY.danger.remove.description)
           }
           tone="danger"
           disabled={!canRemoveGroup || isRemoving}
