@@ -54,7 +54,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "subagentHandoff" | "assistantTaskDismissed"
+  >;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -102,6 +105,8 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     snoozedUntil: null,
     snoozedAt: null,
     pinnedAt: null,
+    subagentHandoff: null,
+    assistantTaskDismissed: false,
     ...overrides,
   };
 }
@@ -555,6 +560,7 @@ interface HarnessOptions {
   readonly snapshot: SettlementSnapshot;
   readonly settings?: ContractServerSettings;
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
+  readonly gitStatus?: GitManager.GitManager["Service"]["status"];
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly unreadablePaths?: ReadonlyArray<string>;
@@ -669,7 +675,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           Effect.map((snapshot) =>
             threadId === undefined
               ? snapshot.threads
-              : snapshot.threads.filter((thread) => thread.id === threadId),
+              : snapshot.threads.filter(
+                  (thread) => thread.id === threadId || thread.lineage.parentThreadId === threadId,
+                ),
           ),
         ),
       getThread: (threadId) => {
@@ -696,6 +704,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     Layer.mock(GitManager.GitManager)({
       branchPullRequest,
+      status: (input) =>
+        options.gitStatus?.(input) ?? Effect.die(new Error(`Unexpected git status: ${input.cwd}`)),
       invalidateStatus: (cwd) => Ref.update(invalidatedCwds, (cwds) => [...cwds, cwd]),
     }),
     Layer.mock(PullRequestService.PullRequestService)({
@@ -1565,6 +1575,39 @@ describe("ThreadSettlementServiceV2 terminals", () => {
     ),
   );
 
+  it.effect("leaves the settle script to the parent when a child shares its checkout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const parent = appThread("parent-thread", null, "/worktrees/parent");
+        const asChild = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread => ({
+          ...thread,
+          lineage: {
+            parentThreadId: parent.id,
+            relationshipToParent: "subagent",
+            rootThreadId: parent.id,
+          },
+        });
+        const shared = asChild(appThread("shared-child", "settled", "/worktrees/parent"));
+        const own = asChild(appThread("own-child", "settled", "/worktrees/child"));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [parent, shared, own],
+          existingWorktreePaths: ["/worktrees/parent", "/worktrees/child"],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(settledEvent(shared));
+          yield* fixture.publishEvent(settledEvent(own));
+          const run = yield* Queue.take(fixture.scriptRuns);
+          assert.strictEqual(run.threadId, own.id);
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: shared.id });
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the settle script for a thread re-engaged while its shells close", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1700,4 +1743,333 @@ describe("isSnoozed", () => {
       }),
     ).toBeNull();
   });
+});
+
+function handoff(
+  overrides: Partial<ProjectionStore.ProjectionSubagentHandoff> = {},
+): ProjectionStore.ProjectionSubagentHandoff {
+  return {
+    origin: "provider_native",
+    status: "completed",
+    deliveryState: null,
+    parentSettled: false,
+    parentRunActive: false,
+    sharesParentWorktree: true,
+    ...overrides,
+  };
+}
+
+function childThread(id: string, overrides: Partial<SettlementShell> = {}): SettlementShell {
+  return makeThread(id, {
+    // Finished minutes ago: this rule never waits on the inactivity window.
+    updatedAt: DateTime.makeUnsafe(Date.parse(NOW) - 60_000),
+    latestUserMessageAt: DateTime.makeUnsafe(Date.parse(NOW) - 10 * 60_000),
+    latestRunCompletedAt: DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000),
+    lineage: {
+      rootThreadId: ThreadId.make("parent"),
+      parentThreadId: ThreadId.make("parent"),
+      relationshipToParent: "subagent",
+    },
+    subagentHandoff: handoff(),
+    ...overrides,
+  });
+}
+
+function vcsStatus(input: {
+  readonly dirty?: boolean;
+  readonly aheadOfDefault?: number;
+  readonly pr?: "open" | "merged" | "closed";
+}): GitManager.GitManager["Service"]["status"] {
+  return () =>
+    Effect.succeed({
+      isRepo: true,
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature",
+      hasWorkingTreeChanges: input.dirty ?? false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: input.aheadOfDefault ?? 0,
+      pr:
+        input.pr === undefined
+          ? null
+          : {
+              number: 42,
+              title: "Pull request",
+              url: "https://example.test/owner/repository/pull/42",
+              baseRef: "main",
+              headRef: "feature",
+              state: input.pr,
+            },
+    });
+}
+
+describe("finishedWorkSettlement", () => {
+  const nowMs = Date.parse(NOW);
+  const running = { activityRunStatus: "running" } as const;
+  it.each([
+    ["a native child its parent's turn already took back", {}, "now"],
+    [
+      "a native child whose parent's turn is still reading it",
+      { subagentHandoff: handoff({ parentRunActive: true }) },
+      null,
+    ],
+    [
+      "a delegated child whose result reached the parent",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "delivered" }) },
+      "now",
+    ],
+    [
+      "a delegated child the parent acknowledged",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "acknowledged" }) },
+      "now",
+    ],
+    [
+      "a delegated child whose result is still on its way",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "pending" }) },
+      null,
+    ],
+    [
+      "a delegated child whose result the parent is reading",
+      { subagentHandoff: handoff({ origin: "app_owned", deliveryState: "claimed" }) },
+      null,
+    ],
+    [
+      "a child whose subagent record is still running",
+      { subagentHandoff: handoff({ status: "running" }) },
+      null,
+    ],
+    ["a running child", running, null],
+    [
+      "a child waiting on the user",
+      {
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request"),
+          kind: "permission",
+          createdAt: DateTime.makeUnsafe(NOW),
+        },
+      },
+      null,
+    ],
+    [
+      "a running child of a settled parent",
+      { ...running, subagentHandoff: handoff({ status: "running", parentSettled: true }) },
+      null,
+    ],
+    [
+      "an idle child of a settled parent, delivered or not",
+      {
+        subagentHandoff: handoff({
+          origin: "app_owned",
+          deliveryState: "pending",
+          parentSettled: true,
+        }),
+      },
+      "now",
+    ],
+    ["a child the user unsettled", { settledOverride: "active" }, null],
+    [
+      "a child unsettled after its last run, before a new one ends",
+      { unsettledAt: DateTime.makeUnsafe(nowMs - 60_000) },
+      null,
+    ],
+    [
+      "a child unsettled before its last run ended",
+      { unsettledAt: DateTime.makeUnsafe(nowMs - 30 * 60_000) },
+      "now",
+    ],
+    ["a pinned child", { pinnedAt: DateTime.makeUnsafe(NOW) }, null],
+    [
+      "a child in its parent's checkout, whatever pull request the branch has",
+      { worktreePath: "/worktrees/parent", branch: "feature" },
+      "now",
+    ],
+    [
+      "a child in its own worktree",
+      {
+        worktreePath: "/worktrees/child",
+        subagentHandoff: handoff({ sharesParentWorktree: false }),
+      },
+      "own-pull-request",
+    ],
+    [
+      "a dismissed assistant task in its own worktree",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+        worktreePath: "/worktrees/task",
+      },
+      "own-work",
+    ],
+    [
+      "a dismissed assistant task in the project checkout",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+      },
+      "now",
+    ],
+    [
+      "an assistant task still in the list",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+      },
+      null,
+    ],
+  ] satisfies ReadonlyArray<
+    readonly [
+      string,
+      Partial<SettlementShell>,
+      ThreadSettlementService.FinishedWorkSettlement | null,
+    ]
+  >)("%s", (_name, overrides, expected) => {
+    expect(
+      ThreadSettlementService.finishedWorkSettlement(childThread("child", overrides), nowMs),
+    ).toBe(expected);
+  });
+});
+
+describe("ThreadSettlementServiceV2 finished work", () => {
+  const settlementOff = {
+    ...DEFAULT_SERVER_SETTINGS,
+    sidebarAutoSettleAfterDays: null,
+    sidebarAutoSettleOnMerge: false,
+  };
+
+  it.effect("settles finished children and dismissed tasks with the inactivity rules off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const taskLineage = (id: string) => ({
+          rootThreadId: ThreadId.make(id),
+          parentThreadId: null,
+          relationshipToParent: null,
+        });
+        const threads = [
+          childThread("native-done"),
+          childThread("delegated-pending", {
+            subagentHandoff: handoff({ origin: "app_owned", deliveryState: "pending" }),
+          }),
+          childThread("own-worktree-open-pr", {
+            worktreePath: "/worktrees/open",
+            subagentHandoff: handoff({ sharesParentWorktree: false }),
+          }),
+          childThread("own-worktree-merged-pr", {
+            worktreePath: "/worktrees/merged",
+            subagentHandoff: handoff({ sharesParentWorktree: false }),
+          }),
+          childThread("task-unshipped", {
+            lineage: taskLineage("task-unshipped"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/unshipped",
+          }),
+          childThread("task-dirty", {
+            lineage: taskLineage("task-dirty"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/dirty",
+          }),
+          childThread("task-shipped", {
+            lineage: taskLineage("task-shipped"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            worktreePath: "/worktrees/shipped",
+          }),
+        ];
+        const statuses: Record<string, GitManager.GitManager["Service"]["status"]> = {
+          "/worktrees/open": vcsStatus({ pr: "open" }),
+          "/worktrees/merged": vcsStatus({ pr: "merged", aheadOfDefault: 2 }),
+          "/worktrees/unshipped": vcsStatus({ aheadOfDefault: 1 }),
+          "/worktrees/dirty": vcsStatus({ dirty: true, pr: "merged" }),
+          "/worktrees/shipped": vcsStatus({ pr: "merged" }),
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(threads),
+          settings: settlementOff,
+          existingWorktreePaths: Object.keys(statuses),
+          gitStatus: (input) => statuses[input.cwd]!(input),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+            new Set(["native-done", "own-worktree-merged-pr", "task-shipped"]),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles a parent's idle children when it settles, never a running one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const parent = makeThread("parent", { settledOverride: "settled" });
+        const waiting = handoff({ origin: "app_owned", deliveryState: "pending" });
+        const idle = childThread("idle-child", { subagentHandoff: waiting });
+        const busy = childThread("busy-child", {
+          activityRunStatus: "running",
+          subagentHandoff: { ...waiting, status: "running" },
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([idle, busy]),
+          settings: settlementOff,
+          currentThreads: [],
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          // The projection now reads the parent as settled.
+          const parentSettled = { ...waiting, parentSettled: true };
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([
+              { ...idle, subagentHandoff: parentSettled },
+              { ...busy, subagentHandoff: { ...parentSettled, status: "running" } },
+            ]),
+          );
+          yield* fixture.publishEvent({
+            type: "thread.settled",
+            id: EventId.make("event:parent-settled"),
+            threadId: parent.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: {
+              ...parent,
+              createdBy: "user",
+              creationSource: "web",
+              lastVisitedAt: null,
+              deletedAt: null,
+              settledAt: DateTime.makeUnsafe(NOW),
+            },
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [idle.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
 });
