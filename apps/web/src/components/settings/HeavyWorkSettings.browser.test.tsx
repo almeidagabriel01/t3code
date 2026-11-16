@@ -174,6 +174,15 @@ it("keeps a medium job's guess at or under a heavy job's while editing either", 
   }
 });
 
+it("resets a memory guess only as far as the other one allows", async () => {
+  setup({ unseenHeavyMegabytes: 256, unseenMediumMegabytes: 200 });
+  await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked
+  await userEvent.click(
+    screen.getByRole("button", { name: "Reset Memory guess for a new medium job" }),
+  );
+  expect(mocks.actions.setAdmissionLimits).toHaveBeenLastCalledWith({ unseenMediumMegabytes: 256 });
+});
+
 it("saves each job sizing field and resets a changed one to its default", async () => {
   setup({ lightJobMegabytes: 256 });
   await using screen = await render(<HeavyWorkSettingsSection />, { router: false }); // rows are mocked

@@ -9,7 +9,7 @@ import {
 import {
   type EnvironmentId,
   HEAVY_QUEUE_ADMISSION_KEYS,
-  HEAVY_QUEUE_DEFAULTS,
+  heavyQueueLimitDefault,
   HEAVY_QUEUE_LIMITS,
   heavyQueueLimitRange,
   type HeavyQueueAdmissionKey,
@@ -116,7 +116,7 @@ export function HeavyQueueSection(props: {
     const { unit } = HEAVY_QUEUE_LIMITS[row.key];
     const { min, max } = heavyQueueLimitRange(row.key, state);
     const copy = HEAVY_LIMIT_COPY[row.key];
-    const usual = HEAVY_QUEUE_DEFAULTS[row.key];
+    const usual = heavyQueueLimitDefault(row.key, state);
     return (
       <View key={row.key}>
         <ListRowLayout

@@ -64,6 +64,15 @@ export const heavyQueueLimitRange = (
   return { min, max };
 };
 
+/** The default a reset sends: as close to the shipped value as the other limits allow. */
+export const heavyQueueLimitDefault = (
+  key: HeavyQueueLimitKey,
+  current: Parameters<typeof heavyQueueLimitRange>[1],
+): number => {
+  const { min, max } = heavyQueueLimitRange(key, current);
+  return Math.min(max, Math.max(min, HEAVY_QUEUE_DEFAULTS[key]));
+};
+
 const limit = (key: HeavyQueueLimitKey) =>
   Schema.Int.check(Schema.makeFilter((value: number) => heavyQueueLimitError(key, value) ?? true));
 

@@ -2,8 +2,8 @@ import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/hea
 import { heavyLimitDescription, heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
 import {
   HEAVY_QUEUE_ADMISSION_KEYS,
-  HEAVY_QUEUE_DEFAULTS,
   HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitDefault,
   heavyQueueLimitRange,
   type EnvironmentId,
   type HeavyQueueAdmissionKey,
@@ -113,11 +113,11 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
         description={heavyLimitDescription(row.key, state.lightJobMegabytes)}
         status={row.status}
         resetAction={
-          state[row.key] === HEAVY_QUEUE_DEFAULTS[row.key] ? undefined : (
+          state[row.key] === heavyQueueLimitDefault(row.key, state) ? undefined : (
             <SettingResetButton
               label={searchableSetting(row.searchId).title}
               disabled={readOnly}
-              onClick={() => void setLimit(row.key, HEAVY_QUEUE_DEFAULTS[row.key])}
+              onClick={() => void setLimit(row.key, heavyQueueLimitDefault(row.key, state))}
             />
           )
         }

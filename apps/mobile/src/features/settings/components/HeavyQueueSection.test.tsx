@@ -329,6 +329,17 @@ describe("HeavyQueueSection", () => {
     await view.unmount();
   });
 
+  it("resets a memory guess only as far as the other one allows", async () => {
+    setup({ unseenHeavyMegabytes: 256, unseenMediumMegabytes: 200 });
+    const view = await mount();
+    await act(async () => view.button("Use the default (256 MB)").click());
+    expect(mocks.commands.setAdmissionLimits).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { unseenMediumMegabytes: 256 },
+    });
+    await view.unmount();
+  });
+
   it("groups job sizing apart and resets a changed size to its default", async () => {
     setup({ lightJobMegabytes: 256 });
     const view = await mount();
