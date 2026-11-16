@@ -46,7 +46,8 @@ const LIMIT_ROWS: ReadonlyArray<{
   {
     key: "macMemoryFloorPercent",
     searchId: "heavy-work-memory-floor",
-    description: "A new heavy job waits while less than this much of this Mac's memory is free.",
+    description:
+      "A new heavy job waits while less than this much of this Mac's memory is free, unless it usually uses under 512 MB.",
   },
   {
     key: "heavyOverLimitSeconds",

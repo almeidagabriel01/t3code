@@ -501,10 +501,53 @@ describe("heavy queue file", () => {
     expect(unread).not.toHaveProperty("cpu");
   });
 
+  it.each(["__proto__", "constructor"])(
+    "a command labelled %s is one more key: the history keeps its shape and its other commands",
+    (label) => {
+      const dir = tempDir();
+      const sample = {
+        at: 1,
+        busyCores: 0,
+        cpuCount: 4,
+        availableMemoryBytes: 1,
+        totalMemoryBytes: 2,
+      };
+      for (const [id, name, memoryBytes] of [
+        ["other", "vp run build", 10],
+        ["hostile", label, 20],
+        ["after", "vp run lint", 30],
+      ] as const) {
+        Queue.enqueue(dir, { ...entry(id), label: name });
+        Queue.tryStart(dir, id);
+        Queue.recordSample(dir, sample, { [id]: { cpu: 1, memoryBytes } });
+        Queue.remove(dir, id);
+      }
+      const doc = Queue.readDoc(dir);
+      expect(Object.keys(doc.history)).toEqual(["vp run build", label, "vp run lint"]);
+      expect(doc.history["vp run build"]?.map((run) => run.memoryBytes)).toEqual([10]);
+      expect(Object.getOwnPropertyDescriptor(doc.history, label)?.value).toHaveLength(1);
+      // Reading it back (plans, estimates, Linux's usual time) never throws.
+      Queue.enqueue(dir, { ...entry("next"), label });
+      expect(() => Queue.readPlan(dir)).not.toThrow();
+      expect(Queue.usualMs(doc, { ...entry("x"), label }, "linux")).toBeNull();
+    },
+  );
+
   it("keeps only the last runs per command and ignores finished entries without samples", () => {
     const dir = tempDir();
     const GIB = 1024 ** 3;
-    for (let i = 0; i < 7; i += 1) {
+    for (let i = 0; i < 8; i += 1) {
+      if (i === 7) {
+        // A thousand commands at most: the one run longest ago is forgotten first.
+        const file = NodePath.join(dir, "queue.json");
+        const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+        const old = Array.from({ length: 1000 }, (_, n) => [
+          `old ${n}`,
+          [{ memoryBytes: 1, durationMs: 1 }],
+        ]);
+        doc.history = { ...Object.fromEntries(old), ...doc.history };
+        NodeFS.writeFileSync(file, JSON.stringify(doc));
+      }
       Queue.enqueue(dir, { ...entry(`r${i}`), label: "vp run build" });
       Queue.tryStart(dir, `r${i}`);
       Queue.recordSample(
@@ -525,9 +568,12 @@ describe("heavy queue file", () => {
       Queue.tryStart(dir, "nosample");
       Queue.remove(dir, "nosample");
     }
-    const runs = Queue.readDoc(dir).history["vp run build"] ?? [];
-    expect(runs.map((r) => r.cpu)).toEqual([2, 3, 4, 5, 6]);
-    expect(Queue.readDoc(dir).history["vp run lint"]).toBeUndefined();
+    const { history } = Queue.readDoc(dir);
+    expect((history["vp run build"] ?? []).map((r) => r.cpu)).toEqual([3, 4, 5, 6, 7]);
+    expect(history["vp run lint"]).toBeUndefined();
+    const commands = Object.keys(history);
+    expect(commands).toHaveLength(1000);
+    expect([commands[0], commands.at(-1)]).toEqual(["old 1", "vp run build"]);
   });
 
   it("admits only after headroom held for a steady window, and a pressured sample breaks it", () => {

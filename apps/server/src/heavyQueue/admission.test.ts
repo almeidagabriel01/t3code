@@ -38,6 +38,13 @@ const calm = {
   totalMemoryBytes: 32 * GIB,
   headroomSince: NOW - 10_000,
 };
+/** The live Mac: 16 GB with 28% free and the CPU quiet. */
+const sixteen = {
+  ...calm,
+  availableMemoryBytes: 0.28 * 16 * GIB,
+  totalMemoryBytes: 16 * GIB,
+  pressureLevel: 1,
+};
 const base: Omit<PlanInput, "entries"> = {
   maxRunning: 3,
   enabled: true,
@@ -84,26 +91,42 @@ describe("command kinds and signatures", () => {
     expect(kindOf({ label: "Open iPhone", server: true })).toBe("exclusive");
   });
 
-  it("drops flags and paths so runs of one command share a signature", () => {
+  it("keeps a test run's target, so one file never shares the suite's runs", () => {
     expect(signatureOf("vp test run src/a.test.ts --watch")).toBe(
+      signatureOf("cd /w && vp test run src/a.test.ts"),
+    );
+    expect(signatureOf("vp test run src/a.test.ts")).toBe("vp test run src/a.test.ts");
+    // Any worktree, folder or redirection: the same file is the same command.
+    expect(
+      signatureOf("cd /w/x-1/apps/server && vp test run /w/x-1/apps/server/src/a.test.ts 2>&1"),
+    ).toBe("vp test run src/a.test.ts");
+    expect(signatureOf('vp test run src/a.test.ts > "$S/out.txt"')).toBe(
+      "vp test run src/a.test.ts",
+    );
+    // Only a test run's target counts: every commit of other files is one command.
+    expect(signatureOf("git commit apps/a.ts apps/b.ts")).toBe(signatureOf("git commit apps/c.ts"));
+    expect(signatureOf("vp test run src/a.test.ts")).not.toBe(signatureOf("vp test run"));
+    expect(signatureOf("vp test run src/a.test.ts")).not.toBe(
       signatureOf("vp test run src/b/c.test.ts"),
     );
-    expect(signatureOf("vp test run src/a.test.ts")).toBe("vp test run");
   });
 
-  it("estimates from the worst recent run and the median duration, else by kind; unread CPU never counts", () => {
+  it("estimates from the median run and the most CPU, else by kind; unread CPU never counts", () => {
     const history = {
       "vp run build": [run(2, 3, 30_000), run(6, 5, 60_000), run(3, 4, 90_000)],
     };
     expect(estimate(history, { label: "vp run build" }, 10)).toEqual({
       cpu: 6,
-      memoryBytes: 5 * GIB,
+      memoryBytes: 4 * GIB,
       durationMs: 60_000,
     });
     expect(estimate({}, { label: "vp run build" }, 10)).toMatchObject({
       cpu: 4,
-      memoryBytes: 4 * GIB,
+      memoryBytes: 1.5 * GIB,
       durationMs: null,
+    });
+    expect(estimate({}, { label: "vp run typecheck" }, 10)).toMatchObject({
+      memoryBytes: 0.5 * GIB,
     });
     expect(estimate({}, { label: "vp run typecheck" }, 1)).toMatchObject({ cpu: 1 });
     // A run whose CPU was never read (absent, or 0 in older files) teaches memory and time only.
@@ -156,7 +179,7 @@ describe("admission plan", () => {
       admit: "a",
     },
     {
-      name: "kernel pressure level 2 holds a second job even with 29% free",
+      name: "kernel pressure level 2 holds a job never seen (not known to be light) even with 29% free",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
       change: {
         sample: { ...calm, availableMemoryBytes: 0.29 * 32 * GIB, pressureLevel: 2 },
@@ -245,9 +268,12 @@ describe("admission plan", () => {
       reason: { a: "no load reading yet" },
     },
     {
-      name: "memory short for the predicted peak",
+      name: "memory short for the usual run",
       entries: [entry("r", "vp run build", 60_000), entry("a", "vp run build")],
-      change: { sample: { ...calm, availableMemoryBytes: 9 * GIB } },
+      change: {
+        sample: { ...calm, availableMemoryBytes: 9 * GIB },
+        history: { "vp run build": [run(2, 4, 60_000)] },
+      },
       admit: null,
       hold: "job-memory",
       reason: { a: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare" },
@@ -278,10 +304,10 @@ describe("admission plan", () => {
     },
     {
       name: "history lowers the prediction so a small job fits where the default would not",
-      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run bundle")],
       change: {
         sample: { ...calm, availableMemoryBytes: 7.5 * GIB },
-        history: { "vp run typecheck": [run(0.5, 0.3, 10_000)] },
+        history: { "vp run bundle": [run(0.5, 0.3, 10_000)] },
       },
       admit: "a",
     },
@@ -322,35 +348,76 @@ describe("admission plan", () => {
       hold: "job-memory",
     },
     {
-      name: "no backfill when the small job would outlast the wait",
-      entries: [
-        entry("r", "vp run build", 290_000),
-        entry("head", "vp run build"),
-        entry("small", "vp run typecheck"),
-      ],
-      change: {
-        sample: { ...calm, availableMemoryBytes: 9 * GIB },
-        history: {
-          "vp run build": [run(2, 4, 300_000)],
-          "vp run typecheck": [run(0.5, 0.3, 60_000)],
-        },
-      },
-      admit: null,
-      hold: "job-memory",
-    },
-    {
-      name: "no backfill when the running job's length is unknown",
+      name: "a job without history passes a head that does not fit, whatever anyone's length",
       entries: [
         entry("r", "vp run build", 60_000),
         entry("head", "vp run build"),
+        entry("mid", "vp run build"),
         entry("small", "vp run typecheck"),
       ],
       change: {
         sample: { ...calm, availableMemoryBytes: 9 * GIB },
-        history: { "vp run typecheck": [run(0.5, 0.3, 1_000)] },
+        history: { "vp run build": [run(2, 4, 300_000)] },
+      },
+      admit: "small",
+      hold: "job-memory",
+      reason: {
+        head: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
+        mid: "needs ~4.0 GB; 9.0 GB free, 6.4 GB kept spare",
+      },
+    },
+    {
+      name: "28% free on 16 GB: a test that usually stays small starts beside a running one",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp test run x.test.ts")],
+      change: {
+        sample: sixteen,
+        history: {
+          "vp test run x.test.ts": [run(1, 0.06, 5_000), run(1, 0.2, 5_000), run(1, 3.1, 5_000)],
+        },
+      },
+      admit: "a",
+    },
+    {
+      name: "28% free on 16 GB: a medium job never seen starts on the smaller guess",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: { sample: sixteen },
+      admit: "a",
+    },
+    {
+      name: "under pressure a light job behind a heavy head starts; the head keeps waiting",
+      entries: [
+        entry("r", "vp run build", 60_000),
+        entry("head", "vp run build"),
+        entry("light", "vp run lint"),
+      ],
+      change: {
+        sample: { ...sixteen, pressureLevel: 2 },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+      },
+      admit: "light",
+      hold: "pressure",
+      reason: { head: "memory pressure high" },
+    },
+    {
+      name: "critical memory pressure holds even a light job",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...sixteen, pressureLevel: 4 },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
       },
       admit: null,
-      hold: "job-memory",
+      hold: "pressure",
+      reason: { a: "memory pressure critical" },
+    },
+    {
+      name: "a busy CPU holds even a light job",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...sixteen, busyCores: 9.5 },
+        history: { "vp run lint": [run(0.5, 0.1, 5_000)] },
+      },
+      admit: null,
+      hold: "cpu",
     },
     {
       name: "aging: a head that waited long stops all backfill",
@@ -464,15 +531,38 @@ describe("admission plan", () => {
     expect(plan({ ...base, paused: true, entries: reordered }).admit).toBe("f1");
   });
 
-  it("asks for a higher memory level to reopen after blocking, so admission does not flap", () => {
+  it("asks for a higher memory level to reopen after pressure, so admission does not flap", () => {
     const entries = [entry("r", "vp run build", 60_000), entry("a", "vp run build")];
+    const history = { "vp run build": [run(2, 4, 60_000)] };
     // 11.9 - 4 GiB sits above the 20% floor (6.4) but below the 25% reopen level (8).
     const tight = { ...calm, availableMemoryBytes: 11.9 * GIB };
-    expect(plan({ ...base, entries, sample: tight, holding: false }).admit).toBe("a");
-    expect(plan({ ...base, entries, sample: tight, holding: true }).admit).toBeNull();
-    const blocked = plan({ ...base, entries, sample: { ...calm, availableMemoryBytes: 9 * GIB } });
-    expect(blocked.holding).toBe(true);
-    expect(blocked.room).toBe(false);
+    expect(plan({ ...base, history, entries, sample: tight, holding: false }).admit).toBe("a");
+    expect(plan({ ...base, history, entries, sample: tight, holding: true }).admit).toBeNull();
+    const pressed = plan({ ...base, history, entries, sample: { ...calm, pressureLevel: 2 } });
+    expect(pressed).toMatchObject({ holding: true, room: false });
+    // A job too big to fit raises nothing, so a small one behind it still passes next time.
+    const big = plan({
+      ...base,
+      history,
+      entries,
+      sample: { ...calm, availableMemoryBytes: 9 * GIB },
+    });
+    expect(big).toMatchObject({ holding: false, room: false, hold: "job-memory" });
+  });
+
+  it("28% free on 16 GB: a small job keeps passing a head too big to fit, plan after plan", () => {
+    const entries = [
+      entry("r", "vp run build", 60_000),
+      entry("big", "vp run build"),
+      entry("small", "vp run typecheck"),
+    ];
+    const history = { "vp run build": [run(2, 4, 60_000)] };
+    const first = plan({ ...base, history, entries, sample: sixteen });
+    expect(first.admit).toBe("small");
+    // Each waiter plans again under the lock with what the last plan stored.
+    expect(plan({ ...base, history, entries, sample: sixteen, holding: first.holding }).admit).toBe(
+      "small",
+    );
   });
 });
 
@@ -499,7 +589,13 @@ describe("the Mac's limits are settings", () => {
     const entries = [entry("r", "vp run build", 60_000), entry("a", "vp run build")];
     // 15.9 - 4 GiB is 37% of 32: above a 35% floor, below its 40% reopen point.
     const tight = { ...calm, availableMemoryBytes: 15.9 * GIB };
-    const floor = { ...base, macMemoryFloorPercent: 35, entries, sample: tight };
+    const floor = {
+      ...base,
+      history: { "vp run build": [run(2, 4, 60_000)] },
+      macMemoryFloorPercent: 35,
+      entries,
+      sample: tight,
+    };
     expect(plan(floor).admit).toBe("a");
     expect(plan({ ...floor, holding: true }).hold).toBe("job-memory");
     const busy = plan({

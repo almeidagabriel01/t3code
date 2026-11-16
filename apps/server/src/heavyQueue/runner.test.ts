@@ -1658,8 +1658,8 @@ describe("Linux copy of a removed worktree", () => {
 });
 
 describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", () => {
-  /** 6 of 16 GiB free with 20% kept: a 4 GiB job does not fit, a 1.5 GiB one does. */
-  const TIGHT = { ...CALM, availableMemoryBytes: 6 * GIB, totalMemoryBytes: 16 * GIB };
+  /** 4.2 of 16 GiB free with 20% kept: a 1.5 GiB job does not fit, a 0.5 GiB one does. */
+  const TIGHT = { ...CALM, availableMemoryBytes: 4.2 * GIB, totalMemoryBytes: 16 * GIB };
   it.each([
     {
       name: "it fits",
@@ -1753,7 +1753,7 @@ describe("Hybrid takes a job from the Mac when the Mac's own verdict holds it", 
     );
     expect(plan.routes.a).toBe("mac");
     expect(plan.reasons.a).toBe(
-      "Hybrid: shorter queue here · needs ~4.0 GB; 6.0 GB free, 3.2 GB kept spare",
+      "Hybrid: shorter queue here · needs ~1.5 GB; 4.2 GB free, 3.2 GB kept spare",
     );
   });
 });

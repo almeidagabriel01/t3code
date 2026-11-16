@@ -44,7 +44,8 @@ const LIMIT_ROWS = [
     key: "macMemoryFloorPercent",
     icon: "internaldrive",
     label: "Keep memory free",
-    description: "A new job waits while less than this share of this Mac's memory is free.",
+    description:
+      "A new job waits while less than this share of this Mac's memory is free, unless it usually uses under 512 MB.",
   },
   {
     key: "heavyOverLimitSeconds",

@@ -98,9 +98,12 @@ export type History = Readonly<Record<string, ReadonlyArray<Run>>>;
 /** Linux runs by command: only their time, since their usage is measured on the PC, not here. */
 export type LinuxHistory = Readonly<Record<string, ReadonlyArray<{ readonly durationMs: number }>>>;
 
+const median = (values: ReadonlyArray<number>) =>
+  values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)] ?? null;
+
 /** The middle run's time, or null without runs. */
 export const medianDuration = (runs: ReadonlyArray<{ readonly durationMs: number }>) =>
-  runs.map((run) => run.durationMs).toSorted((a, b) => a - b)[Math.floor(runs.length / 2)] ?? null;
+  median(runs.map((run) => run.durationMs));
 
 export const DEFAULT_MAX_RUNNING = 3;
 export const HISTORY_RUNS = 5;
@@ -110,7 +113,10 @@ const SETTLE_MS = 15_000;
 export const SAMPLE_FRESH_MS = 15_000;
 /** Headroom has to hold this long before another job is admitted. */
 const HEADROOM_MS = 6_000;
-/** Once blocked, memory has to recover this many points past the floor so admission does not flap. */
+/**
+ * After memory pressure or swapping held admission, memory has to recover this many points past the
+ * floor so admission does not flap. A job too big to fit raises nothing: smaller ones still pass it.
+ */
 const MEMORY_REOPEN_POINTS = 5;
 /** Sustained swap-in above this is the machine paging work back in, not a blip. */
 export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
@@ -118,6 +124,8 @@ export const SWAP_IN_LIMIT = 20 * 1024 ** 2;
 /** A head waiting this long stops anything from passing it. */
 const HEAD_PATIENCE_MS = 5 * 60_000;
 const GIB = 1024 ** 3;
+/** A command whose usual run stays under this may start while memory is short: it barely adds to it. */
+const LIGHT_BYTES = 512 * 1024 ** 2;
 
 type Kind = "exclusive" | "heavy" | "medium";
 
@@ -140,14 +148,35 @@ export const kindOf = (
   return "heavy";
 };
 
-/** `vp test run src/a.test.ts --watch` and `cd x && vp test run src/b.test.ts` share `vp test run`. */
-export const signatureOf = (label: string): string =>
-  (heavySegment(label) ?? label)
-    .split(/\s+/)
-    .filter((word) => word !== "" && !word.startsWith("-") && !/[\\/]|\.\w{1,5}$/.test(word))
-    .slice(0, 4)
-    .join(" ")
-    .toLowerCase();
+const REDIRECT = /^\d*[<>]/;
+const TEST_RUN = /^(test|vitest|jest|playwright|pytest)$/;
+
+/**
+ * The command's first words, plus the file or folder a test run names (its last two segments, so
+ * any worktree and `cd` share it): one test file never shares the suite's runs. Flags and
+ * redirections never count, and other paths (a commit's files) would only split one command.
+ */
+export const signatureOf = (label: string): string => {
+  const all = (heavySegment(label) ?? label).split(/\s+/).filter((word) => word !== "");
+  const words = all.filter(
+    (word, at) =>
+      !word.startsWith("-") && !REDIRECT.test(word) && !/^\d*[<>]+&?$/.test(all[at - 1] ?? ""),
+  );
+  const isPath = (word: string) => /[\\/]|\.\w{1,5}$/.test(word);
+  const command = words.filter((word) => !isPath(word)).slice(0, 4);
+  const path = command.some((word) => TEST_RUN.test(word)) ? words.find(isPath) : undefined;
+  const target = path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/");
+  return [...command, ...(target === undefined ? [] : [target])].join(" ").toLowerCase();
+};
+
+/** A command's recorded runs. Own keys only: a label such as `constructor` names no runs. */
+export const runsOf = <A>(
+  book: Readonly<Record<string, ReadonlyArray<A>>>,
+  entry: Pick<HeavyQueueEntry, "label">,
+): ReadonlyArray<A> => {
+  const signature = signatureOf(entry.label);
+  return Object.hasOwn(book, signature) ? book[signature]! : [];
+};
 
 interface Cost {
   readonly cpu: number;
@@ -161,7 +190,7 @@ interface Cost {
  * for runs whose processes the monitor never saw, so only a positive reading counts.
  */
 export const learnedCpu = (history: History, entry: Pick<HeavyQueueEntry, "label">) => {
-  const cpus = (history[signatureOf(entry.label)] ?? []).flatMap((run) =>
+  const cpus = runsOf(history, entry).flatMap((run) =>
     typeof run.cpu === "number" && run.cpu > 0 ? [run.cpu] : [],
   );
   return cpus.length === 0 ? undefined : Math.max(...cpus);
@@ -172,22 +201,29 @@ export const estimate = (
   entry: Pick<HeavyQueueEntry, "label" | "server">,
   cpuCount: number,
 ): Cost => {
-  const runs = history[signatureOf(entry.label)] ?? [];
+  const runs = runsOf(history, entry);
   const medium = kindOf(entry) === "medium";
   const guessCpu = Math.min(medium ? 2 : 4, Math.max(1, cpuCount));
-  if (runs.length > 0) {
+  // The usual run, not the worst: admission starts one job per settle window, so a run that
+  // outgrows it shows in the next reading before anything else starts.
+  const memoryBytes = median(runs.map((run) => run.memoryBytes));
+  if (memoryBytes !== null) {
     return {
       cpu: learnedCpu(history, entry) ?? guessCpu,
-      memoryBytes: Math.max(...runs.map((run) => run.memoryBytes)),
+      memoryBytes,
       durationMs: medianDuration(runs),
     };
   }
   return {
     cpu: guessCpu,
-    memoryBytes: (medium ? 1.5 : 4) * GIB,
+    memoryBytes: (medium ? 0.5 : 1.5) * GIB,
     durationMs: null,
   };
 };
+
+/** Learned to stay small; a command never seen is not light. */
+const isLight = (history: History, entry: Pick<HeavyQueueEntry, "label" | "server">) =>
+  runsOf(history, entry).length > 0 && estimate(history, entry, 1).memoryBytes < LIGHT_BYTES;
 
 export interface PlanInput extends MacLimits {
   readonly entries: ReadonlyArray<HeavyQueueEntry>;
@@ -198,7 +234,7 @@ export interface PlanInput extends MacLimits {
   readonly history: History;
   readonly sample: Sample | null;
   readonly lastStartAt: number | null;
-  /** Admission was blocked last time, so memory must reach the higher reopen level. */
+  /** Pressure or swapping held admission last time, so memory must reach the higher reopen level. */
   readonly holding: boolean;
   readonly now: number;
 }
@@ -267,6 +303,8 @@ export const plan = (input: PlanInput): Plan => {
     room: boolean,
     holding: boolean,
     headReason?: string,
+    /** Waiters behind the head that were tried and did not fit, with their own reason. */
+    tried: Readonly<Record<string, string>> = {},
   ): Plan => {
     const why =
       headReason ??
@@ -276,7 +314,7 @@ export const plan = (input: PlanInput): Plan => {
     const reasons: Record<string, string> = {};
     for (const waiter of waiting) {
       if (waiter.id === admit) continue;
-      reasons[waiter.id] = waiter.id === head.id ? why : "waiting its turn";
+      reasons[waiter.id] = waiter.id === head.id ? why : (tried[waiter.id] ?? "waiting its turn");
     }
     return { admit, reasons, room, holding, hold: admit === head.id ? null : hold };
   };
@@ -301,35 +339,34 @@ export const plan = (input: PlanInput): Plan => {
     return finish(null, "no-reading", false, input.holding);
   }
   const limit = machineHold(sample, input);
-  if (limit === "pressure" || limit === "swap-in") return finish(null, limit, false, true);
-  if (limit !== null) return finish(null, limit, false, input.holding);
-  if (sample.headroomSince === null || now - sample.headroomSince < HEADROOM_MS) {
-    return finish(null, "steadying", false, input.holding);
-  }
+  const steady = sample.headroomSince !== null && now - sample.headroomSince >= HEADROOM_MS;
+  const machine = limit ?? (steady ? null : ("steadying" as const));
+  const holding = limit === "pressure" || limit === "swap-in" ? true : input.holding;
 
-  const verdict = (entry: HeavyQueueEntry) => jobVerdict(input, sample, entry);
+  // Short memory holds back only what would add to it; a busy CPU or critical pressure, everyone.
+  const critical = (sample.pressureLevel ?? 0) >= 4;
+  const verdict = (entry: HeavyQueueEntry): { hold: HeavyQueueHold | null; why: string } => {
+    const job = jobVerdict(input, sample, entry);
+    if (machine === null) return job;
+    if (machine !== "cpu" && !critical && isLight(input.history, entry) && job.hold !== "job-cpu") {
+      return { hold: null, why: "" };
+    }
+    return { hold: machine, why: heavyHoldText(machine, sample, input.maxRunning) };
+  };
   const headVerdict = verdict(head);
   if (headVerdict.hold === null) return finish(head.id, null, true, false);
 
-  // Backfill: a later, smaller job may go only if it fits and ends before the head would fit.
-  const waited = now - Date.parse(head.createdAt);
-  const remaining = running.map((entry) => {
-    const duration = estimate(input.history, entry, sample.cpuCount).durationMs;
-    return duration === null ? null : Math.max(0, duration - (now - Date.parse(entry.startedAt!)));
-  });
-  const headWait = remaining.includes(null) ? null : Math.min(...(remaining as number[]));
-  if (waited < HEAD_PATIENCE_MS && headWait !== null) {
+  // A later job that fits passes a head that does not, until the head has waited its patience.
+  const tried: Record<string, string> = {};
+  if (now - Date.parse(head.createdAt) < HEAD_PATIENCE_MS) {
     for (const waiter of waiting.slice(1)) {
       if (kindOf(waiter) === "exclusive") continue;
-      const candidate = verdict(waiter);
-      if (
-        candidate.hold === null &&
-        candidate.cost.durationMs !== null &&
-        candidate.cost.durationMs <= headWait
-      ) {
-        return finish(waiter.id, headVerdict.hold, false, true, headVerdict.why);
+      const fit = verdict(waiter);
+      if (fit.hold === null) {
+        return finish(waiter.id, headVerdict.hold, false, holding, headVerdict.why, tried);
       }
+      tried[waiter.id] = fit.why;
     }
   }
-  return finish(null, headVerdict.hold, false, true, headVerdict.why);
+  return finish(null, headVerdict.hold, false, holding, headVerdict.why, tried);
 };

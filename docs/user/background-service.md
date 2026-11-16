@@ -90,15 +90,18 @@ place in the whole queue.
 
 - **Slots.** Settings → Maintenance → **Heavy work** → **This Mac** sets how many
   jobs run at once on this Mac (default 3; 1 is strictly one at a time). The next
-  job starts only when this Mac has room for what that command used in its last
-  runs here, and a few
-  seconds after the previous start so its real load shows first. A later,
-  shorter job may go ahead of one that does not fit yet, but only if it will
-  finish before that one fits. Simulators, emulators and the dev app run alone.
+  job starts only when this Mac has room for what that command usually uses in
+  its runs here (the same test file counts as one command), and a few seconds
+  after the previous start so its real load shows first. A later job that fits
+  goes ahead of one that does not fit yet; after five minutes of waiting, the
+  job in front lets nothing pass until it starts. Simulators, emulators and the
+  dev app run alone.
   Running jobs are never stopped to relieve pressure.
 - **Memory pressure.** On macOS, a second job waits while the system reports
   memory pressure or is swapping heavily, whatever the free percentage says;
-  memory held by running simulators and emulators counts as used. A lone job
+  memory held by running simulators and emulators counts as used. Only a
+  command whose runs here stayed under 512 MB still starts then, and not even
+  that while the pressure is critical. A lone job
   always starts. Each job's test runners and build tools get as many workers as
   the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
   `node --test`, Gradle, xcodebuild, `swift build`, cargo and `cmake --build`.
@@ -107,7 +110,8 @@ place in the whole queue.
   `make` runs one job at a time unless you pass `-j`, so it is left as is.
 - **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
   much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
-  while either is crossed, and memory must recover 5 points past the floor
+  while the CPU limit is crossed; below the memory floor only a command that
+  stayed under 512 MB starts. After memory pressure or swapping held the queue, memory must recover 5 points past the floor
   before the next one starts. A job's usage includes the build daemons it uses,
   such as Gradle's, so the queue learns what a build really costs.
 - **Slow down agent jobs when the Mac is busy.** On macOS, once this Mac stays
