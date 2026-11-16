@@ -286,6 +286,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
   "line.3.horizontal.decrease.circle.fill": IconFilterFilled,
+  lock: IconLock,
   macmini: IconServer,
   macstudio: IconDeviceDesktop,
   magnifyingglass: IconSearch,

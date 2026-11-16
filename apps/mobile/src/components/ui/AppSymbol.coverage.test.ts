@@ -70,12 +70,12 @@ describe("menu symbols", () => {
     expect([...new Set(missing)]).toEqual([]);
   });
 
-  // Android renders menu `image` names through this map; a missing name shows no icon at all.
+  // Android menus draw `image` only from the SF-keyed map; a Material name or a missing one shows no icon.
   it("every menu image has an Android icon", () => {
     const map = NodeFS.readFileSync(
       NodePath.join(SRC, "components/ui/AppSymbol.android.tsx"),
       "utf8",
-    );
+    ).split("const ANDROID_ICON_BY_MATERIAL_NAME")[0]!;
     const mapped = new Set(
       [...map.matchAll(/^\s+"?([a-z0-9._]+)"?:\s*Icon\w+,$/gm)].map((match) => match[1]),
     );
