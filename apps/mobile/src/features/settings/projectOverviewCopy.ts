@@ -3,9 +3,9 @@ export const PROJECT_OVERVIEW_COPY = {
   project: { title: "Project", name: "Name" },
   organize: {
     title: "Organize",
+    offline: "Connect every machine with this project to change this.",
     pin: {
       title: "Pin",
-      offline: "Connect every machine with this project to change this.",
       description: "Pinned projects come first in project pickers.",
     },
     archive: {
@@ -41,7 +41,7 @@ export const PROJECTS_PAGE_LABELS: readonly string[] = [
   copy.project.name,
   copy.organize.title,
   copy.organize.pin.title,
-  copy.organize.pin.offline,
+  copy.organize.offline,
   copy.organize.pin.description,
   copy.organize.archive.title,
   copy.organize.archive.description,

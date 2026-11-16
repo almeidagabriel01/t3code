@@ -359,7 +359,7 @@ function ProjectOverviewContent(props: {
             label={PROJECT_OVERVIEW_COPY.organize.pin.title}
             subtitle={
               offline
-                ? PROJECT_OVERVIEW_COPY.organize.pin.offline
+                ? PROJECT_OVERVIEW_COPY.organize.offline
                 : PROJECT_OVERVIEW_COPY.organize.pin.description
             }
             value={props.group.pinned}
@@ -374,9 +374,11 @@ function ProjectOverviewContent(props: {
                 : PROJECT_OVERVIEW_COPY.organize.archive.title
             }
             description={
-              props.group.archived
-                ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
-                : PROJECT_OVERVIEW_COPY.organize.archive.description
+              offline
+                ? PROJECT_OVERVIEW_COPY.organize.offline
+                : props.group.archived
+                  ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
+                  : PROJECT_OVERVIEW_COPY.organize.archive.description
             }
             disabled={isOrganizing || offline}
             onPress={() => void organize({ archived: !props.group.archived })}
@@ -415,7 +417,12 @@ function ProjectOverviewContent(props: {
                   {environment.displayUrl}
                 </Text>
               ) : null}
-              <Text className="text-sm leading-normal text-foreground-muted" selectable>
+              <Text
+                className="text-sm leading-normal text-foreground-muted"
+                numberOfLines={1}
+                ellipsizeMode="head"
+                selectable
+              >
                 {member.workspaceRoot}
               </Text>
               {props.members.length > 1 || props.hasOtherMembers ? (
