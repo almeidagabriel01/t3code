@@ -359,6 +359,10 @@
       "types": "./src/assistantWork.ts",
       "default": "./src/assistantWork.ts"
     },
+    "./attentionOrder": {
+      "types": "./src/attentionOrder.ts",
+      "default": "./src/attentionOrder.ts"
+    },
     "./assistantList": {
       "types": "./src/assistantList.ts",
       "default": "./src/assistantList.ts"

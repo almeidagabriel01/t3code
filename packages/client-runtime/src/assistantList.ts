@@ -3,6 +3,7 @@ import {
   assistantPresence,
   type AssistantPresence,
 } from "./assistantRobot.ts";
+import { attentionTierOfMood, sortByAttention } from "./attentionOrder.ts";
 import { resolveSidebarThreadStatus } from "./state/threadAttention.ts";
 
 type RankShell = NonNullable<Parameters<typeof assistantPresence>[0]> & {
@@ -31,10 +32,7 @@ export interface RankedAssistant<E extends RankableAssistant> {
 /** Others shown beside the active ones before "Show all". */
 const RECENT_ASSISTANT_LIMIT = 5;
 
-const rankOf = (mood: AssistantPresence["mood"]) =>
-  mood === "needs" ? 0 : mood === "working" ? 1 : 2;
-
-/** Needs you first, then working, then the rest by latest activity, falling back to name. */
+/** In `sortByAttention` order, falling back to name. */
 export function rankAssistants<E extends RankableAssistant>(
   entries: ReadonlyArray<E>,
   shells: ReadonlyArray<RankShell>,
@@ -43,26 +41,24 @@ export function rankAssistants<E extends RankableAssistant>(
     presence,
 ): Array<RankedAssistant<E>> {
   const byThread = new Map(shells.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]));
-  return entries
-    .map((entry) => {
-      const { assistant, environmentId } = entry;
-      const own =
-        assistant.threadId === null
-          ? null
-          : (byThread.get(`${environmentId}:${assistant.threadId}`) ?? null);
-      const presence = statusOf(
-        entry,
-        assistantPresence(own, assistantGroupThreadsOf(shells, environmentId, assistant.id)),
-      );
-      const parsed = own === null ? Number.NaN : Date.parse(own.updatedAt);
-      return { entry, presence, activityAt: Number.isNaN(parsed) ? 0 : parsed };
-    })
-    .sort(
-      (a, b) =>
-        rankOf(a.presence.mood) - rankOf(b.presence.mood) ||
-        b.activityAt - a.activityAt ||
-        a.entry.assistant.name.localeCompare(b.entry.assistant.name),
+  const ranked = entries.map((entry) => {
+    const { assistant, environmentId } = entry;
+    const own =
+      assistant.threadId === null
+        ? null
+        : (byThread.get(`${environmentId}:${assistant.threadId}`) ?? null);
+    const presence = statusOf(
+      entry,
+      assistantPresence(own, assistantGroupThreadsOf(shells, environmentId, assistant.id)),
     );
+    const parsed = own === null ? Number.NaN : Date.parse(own.updatedAt);
+    return { entry, presence, activityAt: Number.isNaN(parsed) ? 0 : parsed };
+  });
+  return sortByAttention(
+    ranked,
+    ({ presence, activityAt }) => ({ tier: attentionTierOfMood(presence.mood), activityAt }),
+    (a, b) => a.entry.assistant.name.localeCompare(b.entry.assistant.name),
+  );
 }
 
 /** Every active assistant plus the most recent others; `hidden` counts what "Show all" reveals. */

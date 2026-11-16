@@ -7,6 +7,7 @@ import type {
 import { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/orderKey";
 import { guestWaitsOnUser } from "@t3tools/shared/needsUser";
 import type { EnvironmentThreadShell } from "./models.ts";
+import { compareAttention, type AttentionKey, type AttentionTier } from "../attentionOrder.ts";
 import { hasSidebarNotification } from "./threadAttention.ts";
 
 export interface ThreadSortInput {
@@ -292,9 +293,9 @@ function activeThreadNeedsUser(thread: ActiveSortInput): boolean {
 const WORKING_RUNTIME = new Set(["preparing", "queued", "starting", "running", "waiting", "idle"]);
 
 /** Recent activity leads with what needs you or finished unseen, then running agents, then the rest. */
-function activeThreadActivityRank(thread: ActiveSortInput): 0 | 1 | 2 {
-  if (activeThreadNeedsUser(thread)) return 0;
-  return thread.runtime != null && WORKING_RUNTIME.has(thread.runtime.status) ? 1 : 2;
+function activeThreadAttentionTier(thread: ActiveSortInput): AttentionTier {
+  if (activeThreadNeedsUser(thread)) return "needsYou";
+  return thread.runtime != null && WORKING_RUNTIME.has(thread.runtime.status) ? "working" : "rest";
 }
 
 // Only a message the user sent counts; latestUserMessageAt also advances on wakes.
@@ -320,18 +321,21 @@ export function sortActiveThreadsByOrderKey<T extends ActiveSortInput>(
   if (threads.length < 2) return [...threads];
   const activity = order === "activity";
   const timestamps = new Map<T, number>();
+  const attention = new Map<T, AttentionKey>();
   for (const thread of threads) {
-    if (activity) timestamps.set(thread, activeThreadActivityTimestampMs(thread));
-    else if (thread.activeOrderKey == null) {
+    if (activity) {
+      attention.set(thread, {
+        tier: activeThreadAttentionTier(thread),
+        activityAt: activeThreadActivityTimestampMs(thread),
+      });
+    } else if (thread.activeOrderKey == null) {
       timestamps.set(thread, activeThreadAnchorTimestampMs(thread));
     }
   }
   return [...threads].sort((left, right) => {
     let comparison = 0;
     if (activity) {
-      comparison =
-        activeThreadActivityRank(left) - activeThreadActivityRank(right) ||
-        timestamps.get(right)! - timestamps.get(left)!;
+      comparison = compareAttention(attention.get(left)!, attention.get(right)!);
     } else {
       const leftKey = left.activeOrderKey;
       const rightKey = right.activeOrderKey;

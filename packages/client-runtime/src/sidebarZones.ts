@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/needsUser";
 
 import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
+import { sortByAttention, type AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
   assistantPresence,
@@ -120,6 +121,8 @@ export interface NeedsYouDecision {
   readonly createdAt: string;
   readonly notice?: true | undefined;
   readonly approvalRequestId?: string | undefined;
+  readonly title?: string | undefined;
+  readonly expiresAt?: string | undefined;
 }
 
 export type NeedsYouItem<D extends NeedsYouDecision = NeedsYouDecision> = {
@@ -195,9 +198,70 @@ function compareOldestFirst(a: string | null, b: string | null): number {
   return a.localeCompare(b);
 }
 
+/** A wait that expires within this window is drawn as urgent. */
+const NEEDS_YOU_DUE_SOON_MS = 60 * 60 * 1000;
+
+export type NeedsYouDue = { readonly at: string; readonly soon: boolean } | null;
+
+/** When a wait expires, and whether that is under an hour away (or past); null without a deadline. */
+export function needsYouDue(expiresAt: string | null | undefined, nowMs: number): NeedsYouDue {
+  if (expiresAt == null) return null;
+  const at = Date.parse(expiresAt);
+  if (Number.isNaN(at)) return null;
+  return { at: expiresAt, soon: at - nowMs < NEEDS_YOU_DUE_SOON_MS };
+}
+
+/** Who asks, for the card's first line: a group, an assistant, or the thread itself. */
+export type NeedsYouFrom =
+  | { readonly kind: "group"; readonly teamKey: string; readonly assistantKey: string }
+  | { readonly kind: "assistant"; readonly assistantKey: string }
+  | { readonly kind: "thread" };
+
+const needsYouFrom = (owner: ThreadOwner): NeedsYouFrom =>
+  owner.kind === "project"
+    ? { kind: "thread" }
+    : owner.teamKey === null
+      ? { kind: "assistant", assistantKey: owner.assistantKey }
+      : { kind: "group", teamKey: owner.teamKey, assistantKey: owner.assistantKey };
+
+export type NeedsYouCard<D extends NeedsYouDecision = NeedsYouDecision> = NeedsYouItem<D> & {
+  readonly from: NeedsYouFrom;
+  /** The decision's own title; null for a request or a guest, which the client titles itself. */
+  readonly title: string | null;
+  readonly due: NeedsYouDue;
+};
+
+/**
+ * The Needs you cards both clients draw: who asks, the title and the deadline. Waits that expire
+ * within the hour come first, soonest first; the rest keep the `needsYouItems` order.
+ */
+export function needsYouCards<D extends NeedsYouDecision>(
+  items: ReadonlyArray<NeedsYouItem<D>>,
+  nowMs: number,
+): ReadonlyArray<NeedsYouCard<D>> {
+  const cards = items.map((item): NeedsYouCard<D> => ({
+    ...item,
+    from: needsYouFrom(item.owner),
+    title: item.kind === "decision" ? (item.decision.title ?? null) : null,
+    due: item.kind === "decision" ? needsYouDue(item.decision.expiresAt, nowMs) : null,
+  }));
+  const dueAt = (card: NeedsYouCard<D>) => (card.due?.soon ? Date.parse(card.due.at) : Infinity);
+  // Infinity - Infinity is NaN, which falls through to the `needsYouItems` rule.
+  return cards.sort(
+    (a, b) =>
+      dueAt(a) - dueAt(b) ||
+      compareOldestFirst(a.createdAt, b.createdAt) ||
+      a.key.localeCompare(b.key),
+  );
+}
+
 export interface ZoneTeam {
   readonly environmentId: string;
-  readonly team: { readonly id: string; readonly memberIds: ReadonlyArray<string> };
+  readonly team: {
+    readonly id: string;
+    readonly memberIds: ReadonlyArray<string>;
+    readonly chat?: FolderChat | null | undefined;
+  };
 }
 
 export interface ZoneAssistant {
@@ -207,16 +271,28 @@ export interface ZoneAssistant {
 
 /**
  * Teams zone rows: each assistant once, in the first group (team order) that lists it, and the
- * rest in the ungrouped list. Input order is kept inside each list.
+ * rest in the ungrouped list, keeping input order. Folders follow `folderAttention`, ties in team
+ * order, and carry their `countWaits` so the indicator reads the same count.
  */
 export function teamsLayout<
-  A extends { readonly entry: ZoneAssistant },
+  A extends {
+    readonly entry: ZoneAssistant;
+    readonly presence: { readonly mood: AssistantMood };
+    readonly activityAt: number;
+  },
   T extends ZoneTeam,
 >(input: {
   readonly assistants: ReadonlyArray<A>;
   readonly teams: ReadonlyArray<T>;
+  /** The Needs you items. */
+  readonly items: ReadonlyArray<{ readonly owner: ThreadOwner }>;
 }): {
-  readonly folders: ReadonlyArray<{ readonly team: T; readonly members: ReadonlyArray<A> }>;
+  readonly folders: ReadonlyArray<{
+    readonly team: T;
+    readonly members: ReadonlyArray<A>;
+    readonly needsYou: number;
+    readonly indicator: ZoneIndicator | null;
+  }>;
   readonly ungrouped: ReadonlyArray<A>;
 } {
   const byKey = new Map(
@@ -234,10 +310,26 @@ export function teamsLayout<
       claimed.add(key);
       return true;
     });
-    return { team, members };
+    const needsYou = countWaits(input.items, {
+      assistantKeys: new Set(
+        members.map((item) => keyOf(item.entry.environmentId, item.entry.assistant.id)),
+      ),
+      teamKey: keyOf(team.environmentId, team.team.id),
+    });
+    const indicator = folderIndicator({
+      needsYou,
+      members: members.map(({ presence }) => ({ mood: presence.mood })),
+      chat: team.team.chat ?? null,
+    });
+    return { team, members, needsYou, indicator };
   });
   const ungrouped = [...byKey].flatMap(([key, item]) => (claimed.has(key) ? [] : [item]));
-  return { folders, ungrouped };
+  return {
+    folders: sortByAttention(folders, ({ members, indicator }) =>
+      folderAttention({ indicator, members }),
+    ),
+    ungrouped,
+  };
 }
 
 export type ZoneIndicator =
@@ -277,6 +369,12 @@ export function assistantIndicator(input: {
   return null;
 }
 
+type FolderChat = Pick<AssistantTeamChat, "scopes"> & {
+  readonly pausedTasks: number;
+  readonly failedTasks: number;
+  readonly unreadCount: number;
+};
+
 /**
  * A group folder's one indicator, from the members drawn inside it and the group's own threads:
  * needs you (a counted wait, or a tab the server flags as waiting), then failed, a member held by
@@ -286,13 +384,7 @@ export function folderIndicator(input: {
   /** From `countWaits` over the drawn members and the group's key. */
   readonly needsYou: number;
   readonly members: ReadonlyArray<{ readonly mood: AssistantMood }>;
-  readonly chat:
-    | (Pick<AssistantTeamChat, "scopes"> & {
-        readonly pausedTasks: number;
-        readonly failedTasks: number;
-        readonly unreadCount: number;
-      })
-    | null;
+  readonly chat: FolderChat | null;
 }): ZoneIndicator | null {
   if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
   if (assistantGroupChatWaiting(input.chat ?? undefined)) return { kind: "needs", count: 1 };
@@ -307,6 +399,22 @@ export function folderIndicator(input: {
   if (running > 0) return { kind: "running", count: running };
   if ((input.chat?.unreadCount ?? 0) > 0) return { kind: "unread", count: input.chat!.unreadCount };
   return null;
+}
+
+/**
+ * A group folder's place in the Teams zone, read from its own indicator so the row never sorts
+ * as waiting or working while it shows something else.
+ */
+export function folderAttention(input: {
+  readonly indicator: ZoneIndicator | null;
+  readonly members: ReadonlyArray<{ readonly activityAt: number }>;
+}): AttentionKey {
+  const activityAt = Math.max(0, ...input.members.map((member) => member.activityAt));
+  const kind = input.indicator?.kind;
+  return {
+    tier: kind === "needs" ? "needsYou" : kind === "running" ? "working" : "rest",
+    activityAt,
+  };
 }
 
 export const ENVIRONMENT_DISCONNECTED_LABEL = "This environment is disconnected";

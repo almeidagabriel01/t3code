@@ -2,7 +2,6 @@ import { rankAssistants } from "@t3tools/client-runtime/assistantList";
 import {
   assistantIndicator,
   countWaits,
-  folderIndicator,
   teamsLayout,
   type ZoneIndicator,
 } from "@t3tools/client-runtime/sidebarZones";
@@ -30,37 +29,23 @@ export function useSidebarZones() {
   const { ownerOf, ownedThreadKeys } = useThreadOwnership();
   const { items, read } = useAssistantStatus();
   return useMemo(() => {
-    const waits = (assistantKeys: ReadonlySet<string>, teamKey?: string) =>
-      countWaits(items, teamKey === undefined ? { assistantKeys } : { assistantKeys, teamKey });
     const assistantIndicators = new Map<string, ZoneIndicator | null>();
     const ranked = rankAssistants(active, shells, (entry, presence) =>
       read(entry.environmentId, entry.assistant.id, presence),
     ).map((item) => {
       const key = assistantKeyOf(item.entry);
       const indicator = assistantIndicator({
-        needsYou: waits(new Set([key])),
+        needsYou: countWaits(items, { assistantKeys: new Set([key]) }),
         mood: item.presence.mood,
       });
       assistantIndicators.set(key, indicator);
       return { ...item, key, indicator };
     });
-    // Waiting on the user, then working, then the rest by activity: the order the indicators show.
-    const order = (indicator: ZoneIndicator | null) =>
-      indicator?.kind === "needs" ? 0 : indicator?.kind === "running" ? 1 : 2;
-    const ordered = [...ranked].sort((a, b) => order(a.indicator) - order(b.indicator));
-    const layout = teamsLayout({ assistants: ordered, teams: activeTeams });
+    const layout = teamsLayout({ assistants: ranked, teams: activeTeams, items });
     const folderIndicators = new Map(
-      layout.folders.map(({ team, members }) => {
-        const teamKey = `${team.environmentId}:${team.team.id}`;
-        return [
-          teamKey,
-          folderIndicator({
-            needsYou: waits(new Set(members.map((member) => member.key)), teamKey),
-            members: members.map((member) => ({ mood: member.presence.mood })),
-            chat: team.team.chat ?? null,
-          }),
-        ] as const;
-      }),
+      layout.folders.map(
+        ({ team, indicator }) => [`${team.environmentId}:${team.team.id}`, indicator] as const,
+      ),
     );
     return {
       items,

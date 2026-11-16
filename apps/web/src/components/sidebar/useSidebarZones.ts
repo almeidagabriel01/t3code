@@ -5,7 +5,6 @@ import {
   assistantIndicator,
   assistantStatusOf,
   countWaits,
-  folderIndicator,
   teamsLayout,
   threadOwnerResolver,
   type ZoneIndicator,
@@ -88,7 +87,7 @@ export function useSidebarZones() {
   const ranked = rankAssistants(active, shells, (entry, presence) =>
     read(entry.environmentId, entry.assistant.id, presence),
   );
-  const layout = teamsLayout({ assistants: ranked, teams: activeTeams });
+  const layout = teamsLayout({ assistants: ranked, teams: activeTeams, items });
   const assistantIndicators = new Map<string, ZoneIndicator | null>();
   for (const { entry, presence } of ranked) {
     const key = `${entry.environmentId}:${entry.assistant.id}`;
@@ -100,23 +99,11 @@ export function useSidebarZones() {
       }),
     );
   }
-  const folderIndicators = new Map<string, ZoneIndicator | null>();
-  for (const { team, members } of layout.folders) {
-    const teamKey = `${team.environmentId}:${team.team.id}`;
-    folderIndicators.set(
-      teamKey,
-      folderIndicator({
-        needsYou: countWaits(items, {
-          assistantKeys: new Set(
-            members.map(({ entry }) => `${entry.environmentId}:${entry.assistant.id}`),
-          ),
-          teamKey,
-        }),
-        members: members.map(({ presence }) => ({ mood: presence.mood })),
-        chat: team.team.chat ?? null,
-      }),
-    );
-  }
+  const folderIndicators = new Map(
+    layout.folders.map(
+      ({ team, indicator }) => [`${team.environmentId}:${team.team.id}`, indicator] as const,
+    ),
+  );
   return {
     items,
     ownerOf,

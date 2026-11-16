@@ -5,7 +5,10 @@ import {
   assistantStatus,
   assistantStatusOf,
   countWaits,
+  folderAttention,
   folderIndicator,
+  needsYouCards,
+  needsYouDue,
   needsYouItems,
   teamsLayout,
   threadOwnerResolver,
@@ -128,9 +131,14 @@ describe("needsYouItems", () => {
 });
 
 describe("teamsLayout", () => {
-  const item = (id: string) => ({ entry: { environmentId: "e", assistant: { id } } });
+  const item = (
+    id: string,
+    mood: "idle" | "working" | "needs" | "failed" = "idle",
+    activityAt = 0,
+  ) => ({ entry: { environmentId: "e", assistant: { id } }, presence: { mood }, activityAt });
   it("draws each assistant once, in the first group that lists it", () => {
     const layout = teamsLayout({
+      items: [],
       assistants: [item("jarvis"), item("ada"), item("bo"), item("cy")],
       teams: [
         { environmentId: "e", team: { id: "dev", memberIds: ["bo", "ada"] } },
@@ -149,6 +157,42 @@ describe("teamsLayout", () => {
       ["empty", []],
     ]);
     expect(layout.ungrouped.map((member) => member.entry.assistant.id)).toEqual(["jarvis"]);
+  });
+
+  it("orders folders by their own indicator: a wait, then running, then the latest activity", () => {
+    const chat = { pausedTasks: 0, failedTasks: 0, unreadCount: 0 };
+    const team = (id: string, memberIds: string[], extra: object = {}) => ({
+      environmentId: "e",
+      team: { id, memberIds, chat: { ...chat, ...extra } },
+    });
+    const waitingTab = { projectId: null, unreadCount: 0, waiting: true, readSeq: 0 };
+    const layout = teamsLayout({
+      items: [{ owner: { kind: "assistant" as const, assistantKey: "e:x", teamKey: "e:waits" } }],
+      assistants: [item("old", "idle", 1), item("new", "idle", 9), item("busy", "working", 2)],
+      teams: [
+        team("stale", ["old"]),
+        team("fresh", ["new"]),
+        team("busy", ["busy"]),
+        // A queued group task with no member working shows nothing, so it sorts with the rest.
+        team("queued", [], { working: true }),
+        team("tab", [], { scopes: [waitingTab] }),
+        team("waits", []),
+      ],
+    });
+    expect(
+      layout.folders.map(({ team, needsYou, indicator }) => [
+        team.team.id,
+        needsYou,
+        indicator?.kind ?? null,
+      ]),
+    ).toEqual([
+      ["tab", 0, "needs"],
+      ["waits", 1, "needs"],
+      ["busy", 0, "running"],
+      ["fresh", 0, null],
+      ["stale", 0, null],
+      ["queued", 0, null],
+    ]);
   });
 });
 
@@ -426,6 +470,108 @@ describe("assistantStatusOf", () => {
     expect([status.of("e", qa).detail, status.of("e", bo).detail]).toEqual([
       "This environment is disconnected",
       "This environment is disconnected",
+    ]);
+  });
+});
+
+describe("folderAttention", () => {
+  it.each([
+    ["needs you", { kind: "needs", count: 1 }, [5], { tier: "needsYou", activityAt: 5 }],
+    ["running", { kind: "running", count: 1 }, [2, 9], { tier: "working", activityAt: 9 }],
+    ["failed", { kind: "failed" }, [3, 1], { tier: "rest", activityAt: 3 }],
+    ["unread", { kind: "unread", count: 4 }, [4], { tier: "rest", activityAt: 4 }],
+    ["nothing", null, [], { tier: "rest", activityAt: 0 }],
+  ] as const)("%s", (_name, indicator, activity, expected) => {
+    expect(
+      folderAttention({ indicator, members: activity.map((activityAt) => ({ activityAt })) }),
+    ).toEqual(expected);
+  });
+});
+
+describe("needsYouDue", () => {
+  const now = Date.parse("2026-01-01T12:00:00.000Z");
+  it.each([
+    ["no deadline", undefined, null],
+    ["an unreadable deadline", "soon", null],
+    [
+      "more than an hour away",
+      "2026-01-01T13:00:00.001Z",
+      { at: "2026-01-01T13:00:00.001Z", soon: false },
+    ],
+    [
+      "exactly an hour away",
+      "2026-01-01T13:00:00.000Z",
+      { at: "2026-01-01T13:00:00.000Z", soon: false },
+    ],
+    [
+      "under an hour away",
+      "2026-01-01T12:59:59.999Z",
+      { at: "2026-01-01T12:59:59.999Z", soon: true },
+    ],
+    ["already past", "2026-01-01T11:00:00.000Z", { at: "2026-01-01T11:00:00.000Z", soon: true }],
+  ] as const)("%s", (_name, expiresAt, expected) => {
+    expect(needsYouDue(expiresAt, now)).toEqual(expected);
+  });
+});
+
+describe("needsYouCards", () => {
+  const now = Date.parse("2026-01-01T12:00:00.000Z");
+  type Item = Parameters<typeof needsYouCards>[0][number];
+  const item = (
+    key: string,
+    createdAt: string | null,
+    owner: Item["owner"],
+    decision: { readonly title: string; readonly expiresAt?: string } | "guest" | null = null,
+  ): Item => {
+    const base = { key, environmentId: "e", threadId: "t", createdAt, owner };
+    if (decision === "guest") return { ...base, kind: "guest" };
+    if (decision === null)
+      return { ...base, kind: "approval", request: { id: key, kind: "command" } };
+    return {
+      ...base,
+      kind: "decision",
+      decision: {
+        id: key,
+        status: "open",
+        fromThreadId: "t",
+        createdAt: createdAt ?? "",
+        ...decision,
+      },
+    };
+  };
+
+  it("names who asks and puts what expires within the hour first, then oldest first, a timeless guest last", () => {
+    const cards = needsYouCards(
+      [
+        item("guest", null, { kind: "project" }, "guest"),
+        item(
+          "assistant",
+          "2026-01-01T07:00:00.000Z",
+          { kind: "assistant", assistantKey: "e:bo", teamKey: null },
+          { title: "Pick a name", expiresAt: "2026-01-02T00:00:00.000Z" },
+        ),
+        item("old-request", "2026-01-01T08:00:00.000Z", { kind: "project" }),
+        item(
+          "group",
+          "2026-01-01T09:00:00.000Z",
+          { kind: "assistant", assistantKey: "e:ada", teamKey: "e:dev" },
+          { title: "Ship it?", expiresAt: "2026-01-01T12:40:00.000Z" },
+        ),
+        item(
+          "sooner",
+          "2026-01-01T10:00:00.000Z",
+          { kind: "project" },
+          { title: "Now", expiresAt: "2026-01-01T12:10:00.000Z" },
+        ),
+      ],
+      now,
+    );
+    expect(cards.map((card) => [card.key, card.from, card.title, card.due?.soon ?? null])).toEqual([
+      ["sooner", { kind: "thread" }, "Now", true],
+      ["group", { kind: "group", teamKey: "e:dev", assistantKey: "e:ada" }, "Ship it?", true],
+      ["assistant", { kind: "assistant", assistantKey: "e:bo" }, "Pick a name", false],
+      ["old-request", { kind: "thread" }, null, null],
+      ["guest", { kind: "thread" }, null, null],
     ]);
   });
 });
