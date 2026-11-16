@@ -5,6 +5,7 @@ import {
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
   assistantGroupCountsAsUnread,
   assistantGroupFinishedScopes,
+  assistantGroupTaskNeedsUser,
   assistantGroupTasksNeedUser,
   assistantGroupInstructionBody,
   assistantGroupMentions,
@@ -17,6 +18,7 @@ import {
   type AssistantTeam,
   type AssistantTeamChat,
   type AssistantTeamChatScope,
+  type AssistantTeamChatWaitingReason,
   type AssistantGroupMessage,
   type AssistantGroupScope,
   type AssistantGroupMessageId,
@@ -318,7 +320,7 @@ export function assistantGroupRequestProject(
 export type AssistantGroupTabKey = "all" | "general" | `project:${string}`;
 
 /** The tab of a project's requests; General for those with none. */
-function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
+export function assistantGroupTabKey(projectId: ProjectId | null): AssistantGroupTabKey {
   return projectId === null ? "general" : `project:${projectId}`;
 }
 
@@ -1441,6 +1443,103 @@ export function assistantGroupTaskReasonLabel(
   if (task.status === "failed") return (known && FAILURE_REASON_LABEL[known]) || null;
   if (task.status === "cancelled") return (known && CANCEL_REASON_LABEL[known]) || null;
   return null;
+}
+
+/** Why a request waits on the user, as the folder tooltip and the "Waiting on you" strip say it. */
+export function assistantGroupWaitingWhy(request: {
+  readonly reason: AssistantTeamChatWaitingReason;
+  readonly taskReason?: string | null | undefined;
+}): string {
+  switch (request.reason) {
+    case "wait":
+      return "Waiting for your answer";
+    case "project":
+      return "Needs a project";
+    case "failed":
+    case "paused":
+      return (
+        assistantGroupTaskReasonLabel({
+          status: request.reason,
+          reason: request.taskReason ?? null,
+        }) ?? (request.reason === "failed" ? "Failed" : "Paused")
+      );
+  }
+}
+
+export interface AssistantGroupWaitingItem {
+  readonly requestId: AssistantGroupMessageId;
+  readonly title: string;
+  readonly projectId: ProjectId | null;
+  readonly reason: AssistantTeamChatWaitingReason;
+  /** The member whose wait or task it is; null for the lead's project question. */
+  readonly assistantId: AssistantId | null;
+  /** The paused or failed task the user resumes; null for a wait or a project question. */
+  readonly task: AssistantGroupTask | null;
+}
+
+/**
+ * The requests that wait on the user, oldest first, one item each, by the rule the server's
+ * `waiting` follows: an open wait, the lead asking for a project, or tasks that need the user
+ * (paused or failed ones before the newest boundary no longer count). Open tasks come with the
+ * snapshot, so a request whose messages are not loaded is listed too.
+ */
+export function assistantGroupWaitingRequests(
+  state: AssistantGroupChatState,
+): ReadonlyArray<AssistantGroupWaitingItem> {
+  const rootOf = (requestId: AssistantGroupMessageId) =>
+    state.messages.get(requestId) ?? state.requests.get(requestId) ?? null;
+  const item = (
+    requestId: AssistantGroupMessageId,
+    rest: Pick<AssistantGroupWaitingItem, "reason" | "assistantId" | "task">,
+  ): AssistantGroupWaitingItem => {
+    const root = rootOf(requestId);
+    return { requestId, title: titleOf(root), projectId: root?.projectId ?? null, ...rest };
+  };
+  const found = new Map<AssistantGroupMessageId, AssistantGroupWaitingItem>();
+  const tasksOf = new Map<AssistantGroupMessageId, AssistantGroupTask[]>();
+  for (const task of state.tasks.values()) {
+    const requestId = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (requestId === undefined) continue;
+    tasksOf.set(requestId, [...(tasksOf.get(requestId) ?? []), task]);
+  }
+  let boundarySeq = 0;
+  const messages = [...state.messages.values()].sort((a, b) => a.seq - b.seq);
+  for (const message of messages) {
+    if (message.kind === "boundary") boundarySeq = message.seq;
+    const requestId = message.requestId;
+    if (requestId === undefined || found.has(requestId)) continue;
+    if (message.waiting?.resolved === false) {
+      found.set(
+        requestId,
+        item(requestId, { reason: "wait", assistantId: message.assistantId ?? null, task: null }),
+      );
+    } else if (
+      message.asksProject === true &&
+      rootOf(requestId)?.projectId === undefined &&
+      !tasksOf.has(requestId)
+    ) {
+      found.set(requestId, item(requestId, { reason: "project", assistantId: null, task: null }));
+    }
+  }
+  for (const [requestId, tasks] of tasksOf) {
+    if (found.has(requestId) || !assistantGroupTasksNeedUser(tasks)) continue;
+    const rootSeq = rootOf(requestId)?.seq;
+    if (rootSeq !== undefined && rootSeq < boundarySeq) continue;
+    const task = tasks
+      .filter((entry) => assistantGroupTaskNeedsUser(entry, tasks))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]!;
+    found.set(
+      requestId,
+      item(requestId, {
+        reason: task.status === "failed" ? "failed" : "paused",
+        assistantId: task.ownerId,
+        task,
+      }),
+    );
+  }
+  const seqOf = (requestId: AssistantGroupMessageId) =>
+    rootOf(requestId)?.seq ?? Number.POSITIVE_INFINITY;
+  return [...found.values()].sort((a, b) => seqOf(a.requestId) - seqOf(b.requestId));
 }
 
 /** Why a queued task is held back by a resource: "waiting for <resource> (used by <member>)". */
