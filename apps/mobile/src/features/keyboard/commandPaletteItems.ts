@@ -15,6 +15,7 @@ import {
 import { RESOURCE_MANAGER_LABELS } from "../resources/resourceManagerCopy";
 import type { SettingsPageTarget } from "../settings/components/settings-page-targets";
 import { SETTINGS_PAGE_LABELS } from "../settings/settings-search";
+import { USAGE_PAGE_LABELS } from "../usage/usageCopy";
 import { parseActiveGroupChatPath, parseActiveThreadPath } from "./hardwareKeyboardCommands";
 
 export interface CommandPaletteItem {
@@ -34,8 +35,7 @@ export interface CommandPaletteItem {
 const PAGE_TERMS: Partial<Record<SettingsPageTarget, readonly string[]>> = {
   ...SETTINGS_PAGE_LABELS,
   SettingsResourceManager: RESOURCE_MANAGER_LABELS,
-  // Usage has no copy module yet; these name its limits and per-account sections.
-  SettingsUsage: ["limits", "accounts", "quota"],
+  SettingsUsage: USAGE_PAGE_LABELS,
 };
 
 /** An action that opens a Settings page, found by the text that page draws, as Settings search finds it. */

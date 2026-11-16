@@ -121,6 +121,7 @@ describe("settingsPageItem", () => {
       ["SettingsArchive", "Archived threads"],
       ["SettingsAssistants", "Assistants"],
       ["SettingsIntegrations", "Integrations"],
+      ["SettingsUsage", "Usage"],
     ] as const
   ).map(([target, title]) => settingsPageItem(target, title, target, () => {}));
 
@@ -133,6 +134,10 @@ describe("settingsPageItem", () => {
     { query: "jarvis", page: "SettingsAssistants" },
     { query: "team", page: "SettingsAssistants" },
     { query: "oauth", page: "SettingsIntegrations" },
+    { query: "limits", page: "SettingsUsage" },
+    { query: "processed tokens", page: "SettingsUsage" },
+    { query: "cache savings", page: "SettingsUsage" },
+    { query: "by model", page: "SettingsUsage" },
   ])("finds $page by the text it draws: $query", ({ query, page }) => {
     expect(keys(filterCommandPaletteItems(pages, query, []))).toContain(page);
   });
