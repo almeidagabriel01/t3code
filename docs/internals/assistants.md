@@ -99,8 +99,9 @@ recipient, and each member works a request in its own hidden thread for that req
 request's project, `assistant:<assistantId>:g-<hash>` (`assistant_group_request_threads`). Requests
 never share a thread, so a packet, `history`, `#seq` quotes, stopped-task lists and hand-off counts are
 all scoped to one request. When every task of a request is completed or cancelled its threads are
-settled (`settleThread`, retried when a cancelled run ends); a task opening again in it un-settles
-them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
+settled (`settleThread`). A delivered task is not finished work: a thread still at work (its own
+subagents or delegates, or a thread it launched, found by `assistant_tasks.source_thread_id`)
+settles when the run that ends that work does. A task opening again in it un-settles them first. Paused, failed and project-waiting requests never settle. `assistant_group_threads` holds
 the per-group threads of chats from before requests; they stay for history and for runs that started
 on them, and `threadRowOf` reads both tables. The suffix is a hash because team ids
 may hold `:`; look the group up in the table, never parse it out of the id. The table is also the only
