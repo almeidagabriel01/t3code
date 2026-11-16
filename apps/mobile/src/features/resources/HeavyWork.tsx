@@ -23,6 +23,7 @@ import {
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   ASK_TITLE,
+  askAnswers,
   askRemaining,
   moveAllActions,
   RUNNER_NAME,
@@ -378,26 +379,20 @@ export function HeavyRow(props: {
   );
 }
 
-const ASK_MAC: RouteAction = {
-  runner: "mac",
-  label: RUNNER_POLICY_LABEL.mac,
-  confirm: null,
-  force: false,
-};
-const ASK_WAIT: RouteAction = {
-  runner: "linux",
-  label: RUNNER_POLICY_LABEL.wait,
-  confirm: null,
-  force: false,
-};
+const ASK_CHOICE = {
+  mac: { icon: "laptopcomputer", label: RUNNER_POLICY_LABEL.mac },
+  linux: { icon: "hourglass", label: RUNNER_POLICY_LABEL.wait },
+} as const;
 
 function RunnerAskRows(props: {
   readonly entry: HeavyQueueEntry;
   readonly ask: NonNullable<HeavyQueueEntry["ask"]>;
+  readonly state: HeavyQueueState;
   readonly actions: QueueActions;
 }) {
   const { entry, actions } = props;
   const now = useNow(1000);
+  const answers = askAnswers(entry, props.state);
   return (
     <>
       <ListRowLayout
@@ -406,18 +401,15 @@ function RunnerAskRows(props: {
         description="Choose where it runs before the time runs out."
         detail={askRemaining(props.ask.deadlineAt, now)}
       />
-      <SettingsActionRow
-        icon="laptopcomputer"
-        label={ASK_MAC.label}
-        disabled={!actions.canRoute}
-        onPress={() => actions.route(entry, ASK_MAC)}
-      />
-      <SettingsActionRow
-        icon="hourglass"
-        label={ASK_WAIT.label}
-        disabled={!actions.canRoute}
-        onPress={() => actions.route(entry, ASK_WAIT)}
-      />
+      {answers.map((action) => (
+        <SettingsActionRow
+          key={action.runner}
+          icon={ASK_CHOICE[action.runner].icon}
+          label={ASK_CHOICE[action.runner].label}
+          disabled={!actions.canRoute}
+          onPress={() => actions.route(entry, action)}
+        />
+      ))}
       <SettingsActionRow
         icon="xmark"
         label="Cancel"
@@ -614,7 +606,7 @@ function QueueRow(props: {
       menu={<RowMenuButton label={`Actions for ${name}`} actions={menu} onAction={run} />}
     >
       {entry.ask === undefined ? null : (
-        <RunnerAskRows entry={entry} ask={entry.ask} actions={actions} />
+        <RunnerAskRows entry={entry} ask={entry.ask} state={state} actions={actions} />
       )}
     </HeavyRow>
   );

@@ -209,7 +209,7 @@ vi.mock("../../components/ui/RowMenuButton", () => ({
 }));
 vi.mock("../settings/components/SettingsActionRow", () => ({
   SettingsActionRow: (props: { label: string; disabled?: boolean; onPress: () => void }) => (
-    <button disabled={props.disabled} onClick={props.onPress}>
+    <button data-action-row disabled={props.disabled} onClick={props.onPress}>
       {props.label}
     </button>
   ),
@@ -748,18 +748,26 @@ describe("HeavyWorkSection", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("confirms before running an unconfirmed ask on this Mac, and forces it", async () => {
+  // Built from askAnswers, as on the web: only where it may run, never a rerun before Linux confirms.
+  it.each([
+    ["an unconfirmed drop", { unconfirmed: true }, {}, ["Run on this Mac", "Wait for Linux"]],
+    ["Mac-only work", {}, { macOnly: ["a"] }, ["Run on this Mac"]],
+    ["a server slot", { server: true }, {}, []],
+    ["no Runner reported", {}, { linux: null }, []],
+  ] as const)("answers the question of %s only with the places it may run", async (...test) => {
+    const [, extra, over, labels] = test;
     const ask = { reason: "dropped" as const, deadlineAt: NOW };
-    setup([entry("a", { ask, unconfirmed: true })], { linux: LINUX });
+    setup([entry("a", { ask, ...extra })], { linux: LINUX, ...over });
     const view = await mount();
-    await act(async () => view.button("Run on this Mac").click());
-    expect(mocks.commands.route).not.toHaveBeenCalled();
-    expect(mocks.alert.mock.calls[0]![1]).toContain("may run it twice");
-    alertButtons(0).find((b) => b.text === "Run on this Mac")!.onPress!();
-    expect(mocks.commands.route).toHaveBeenCalledWith({
-      environmentId: "env",
-      input: { id: "a", runner: "mac", force: true },
-    });
+    const answers = [...view.host.querySelectorAll<HTMLElement>("button[data-action-row]")].filter(
+      (button) => button.textContent !== "Cancel",
+    );
+    expect(answers.map((button) => button.textContent)).toEqual(labels);
+    await act(async () => answers[0]?.click());
+    expect(mocks.alert).not.toHaveBeenCalled();
+    expect(mocks.commands.route?.mock.calls.map(([call]) => call.input) ?? []).toEqual(
+      labels.length === 0 ? [] : [{ id: "a", runner: "mac", force: false }],
+    );
     await view.unmount();
   });
 
