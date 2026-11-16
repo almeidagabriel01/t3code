@@ -15,11 +15,13 @@ import {
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupTabPick,
   assistantGroupProjectLabel,
   type AssistantGroupProjectPick,
+  type AssistantGroupTabPick,
   assistantGroupTabView,
   type AssistantGroupChatState,
   type AssistantGroupTab,
@@ -125,8 +127,10 @@ import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
   type GroupComposerProject,
-  type GroupReplyTarget,
+  type GroupLandedSend,
+  type GroupReply,
   type GroupSendResult,
+  type GroupSendRouting,
 } from "./GroupComposer";
 import { GroupProjectTabs } from "./GroupProjectTabs";
 import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
@@ -909,8 +913,6 @@ type GroupFeedHandle = {
   readonly scrollToEnd: () => void;
 };
 
-type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessage["id"] };
-
 /**
  * One tab's messages: its own pages, folds, New line and read marker. The screen keys it by tab,
  * so none of that leaks between tabs; the composer stays outside so a draft survives a switch.
@@ -1310,14 +1312,20 @@ export function AssistantGroupChatRouteScreen({
   );
   const live = useAssistantGroupChat(environmentId, teamId, scope);
   const feed = useRef<GroupFeedHandle>(null);
-  const [replyTo, setReplyTo] = useState<GroupReply | null>(null);
+  // The reply being written, for the tab it was opened in.
+  const [replyPick, setReplyPick] = useState<AssistantGroupTabPick<GroupReply> | null>(null);
   // The composer's own project pick, until a send or another tab.
   const [projectPick, setProjectPick] = useState<AssistantGroupProjectPick | null>(null);
   // Bumped by Clear history, so the feed drops the pages it loaded before.
   const [clears, setClears] = useState(0);
   const [tabsHeight, setTabsHeight] = useState(0);
-  // Another tab, chosen or not (the saved one loading, a removed one), drops both picks for good.
+  // Another tab, chosen or not (the saved one loading, a removed one), drops the picks for good,
+  // and an open reply, which would answer a request out of view; the draft itself stays.
   if (assistantGroupTabPick(projectPick, tabKey) !== projectPick) setProjectPick(null);
+  if (assistantGroupTabPick(replyPick, tabKey) !== replyPick) setReplyPick(null);
+  const replyTo = assistantGroupTabPick(replyPick, tabKey)?.value ?? null;
+  const setReplyTo = (target: GroupReply | null) =>
+    setReplyPick(target === null ? null : { tab: tabKey, value: target });
 
   const composerProject = assistantGroupComposerProject({
     pick: projectPick,
@@ -1338,15 +1346,38 @@ export function AssistantGroupChatRouteScreen({
   const [modelPick, setModelPick] = useAtom(groupMessageModelAtom(teamId));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen and cannot be set while rendering
   useEffect(() => {
-    if (assistantGroupTabPick(modelPick, tabKey) !== modelPick) setModelPick(null);
+    // From the atom as it is now: a failed send coming into view may have just restored its pick.
+    if (assistantGroupTabPick(modelPick, tabKey) !== modelPick) {
+      setModelPick((current) => assistantGroupTabPick(current, tabKey));
+    }
   }, [modelPick, tabKey, setModelPick]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen; leaving the group drops it
   useEffect(() => () => setModelPick(null), [setModelPick]);
 
+  // One way a send lands, by its reply or by the chat showing its post.
+  const landed = (sent: GroupLandedSend) => {
+    // What the user changed while the post was on its way stays: a new reply, pick or tab.
+    setReplyPick((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setProjectPick((current) =>
+      assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
+    );
+    setModelPick((current) => assistantGroupLandedPick(current, sent.routing?.modelPick ?? null));
+    feed.current?.scrollToEnd();
+    // A request that lands in another project's tab would vanish from this one: follow it.
+    if (tabs !== null && sent.tab !== null) {
+      const from = sent.tab;
+      savedTab.save((saved) => assistantGroupTabAfterSend(tabs, from, saved, sent.projectId));
+    }
+  };
+  const restore = (routing: GroupSendRouting) => {
+    setReplyPick(routing.reply);
+    setProjectPick(routing.projectPick);
+    setModelPick(routing.modelPick);
+  };
+
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
     savedTab.save(next.key);
-    setReplyTo(null);
   };
 
   const send = async (
@@ -1366,19 +1397,7 @@ export function AssistantGroupChatRouteScreen({
         ? {}
         : { modelSelection: projectModel.messageModel }),
     });
-    if (reply.ok) {
-      // What the user changed while the post was on its way stays: a new reply, pick or tab.
-      setReplyTo((current) => (current === replyTo ? null : current));
-      setProjectPick((current) => (current === projectPick ? null : current));
-      setModelPick((current) => (current === modelPick ? null : current));
-      feed.current?.scrollToEnd();
-      // A request that lands in another project's tab would vanish from this one: follow it.
-      const landed = replyTo?.projectId ?? projectId ?? null;
-      if (tabs !== null && tab !== null) {
-        savedTab.save((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed));
-      }
-      return { ok: true };
-    }
+    if (reply.ok) return { ok: true };
     return {
       ok: false,
       message:
@@ -1643,6 +1662,10 @@ export function AssistantGroupChatRouteScreen({
             : () => feed.current?.jump(replyTo.id)
         }
         onClearReply={() => setReplyTo(null)}
+        routing={{ reply: replyPick, projectPick, modelPick }}
+        onLanded={landed}
+        onRestore={restore}
+        messages={live?.messages}
         onSend={send}
       />
     </KeyboardAvoidingView>

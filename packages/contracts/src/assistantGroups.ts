@@ -142,6 +142,8 @@ export const AssistantGroupMessage = Schema.Struct({
   asksProject: Schema.optionalKey(Schema.Literal(true)),
   /** On a member's answer: how long its run worked; absent on older answers and servers. */
   workedMs: Schema.optionalKey(NonNegativeInt),
+  /** The `clientRequestId` it was posted under; absent when it had none and from older servers. */
+  clientRequestId: Schema.optionalKey(Schema.String),
   createdAt: IsoDateTime,
 });
 export type AssistantGroupMessage = typeof AssistantGroupMessage.Type;

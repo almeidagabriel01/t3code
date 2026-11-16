@@ -387,6 +387,7 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
       }),
   ...(row.asks_project === 1 ? { asksProject: true } : {}),
   ...(row.worked_ms === null ? {} : { workedMs: row.worked_ms }),
+  ...(row.client_request_id === null ? {} : { clientRequestId: row.client_request_id }),
   createdAt: row.created_at,
 });
 
