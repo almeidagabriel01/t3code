@@ -31,7 +31,8 @@ const reply = (name: string, threadId: string) => ({
   threadId: ThreadId.make(threadId),
   requestId: `g:to:${name}`,
   files: [],
-  text: "ok",
+  bodyStart: 0,
+  bodyEnd: 2,
 });
 const groupReplies = {
   context: {

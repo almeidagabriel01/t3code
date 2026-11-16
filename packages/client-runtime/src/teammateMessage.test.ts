@@ -259,30 +259,42 @@ Status: done no lado deles; confere?`,
     expect(resolveTeammateMessage(message)).toBeNull();
   });
 
-  it("prefers the server's attribution and keeps a reply that is only its status", () => {
-    const parts = resolveTeammateMessage({
-      role: "user",
-      text: "<t3_reply>whatever the model read</t3_reply>",
-      createdBy: "agent",
-      context: {
-        teammate: {
-          entries: [
-            {
-              kind: "reply",
-              name: "Ada",
-              handle: "ada",
-              threadId: ThreadId.make("assistant:ada:1"),
-              requestId: "message:ask",
-              files: [],
-              text: "Status: done",
-            },
-          ],
-        },
+  const stored = (text: string, bodyStart: number, bodyEnd: number) => ({
+    role: "user",
+    text,
+    createdBy: "agent" as const,
+    context: {
+      teammate: {
+        entries: [
+          {
+            kind: "reply" as const,
+            name: "Ada",
+            handle: "ada",
+            threadId: ThreadId.make("assistant:ada:1"),
+            requestId: "message:ask",
+            files: [],
+            bodyStart,
+            bodyEnd,
+          },
+        ],
       },
-    });
+    },
+  });
+  const envelope = "<t3_reply>whatever the model read</t3_reply>\nStatus: done";
+
+  it("prefers the server's attribution, cutting the words from the text, and keeps a reply that is only its status", () => {
+    const parts = resolveTeammateMessage(stored(envelope, envelope.length - 12, envelope.length));
     expect(parts?.map((part) => [part.name, part.status, part.text])).toEqual([
       ["Ada", "done", "Status: done"],
     ]);
     expect(teammateMessagePlainText(parts!)).toBe("Status: done");
+  });
+
+  it.each([
+    ["past the end of the text", envelope.length - 12, envelope.length + 1],
+    ["inverted", envelope.length, envelope.length - 12],
+    ["before the start of the text", -1, 4],
+  ])("leaves the text whole when the stored range is %s", (_name, bodyStart, bodyEnd) => {
+    expect(resolveTeammateMessage(stored(envelope, bodyStart, bodyEnd))).toBeNull();
   });
 });

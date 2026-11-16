@@ -34,7 +34,10 @@ export const TEAMMATE_STATUS_LABEL = {
 const LEADING_STATUS =
   /^[\s>*_-]*status[\s*_]*:[\s*_]*(?:done|partial|blocked)\b(?:[ \t]*\([^)\n]*\))?[\s*_]*[.:;,–—-]?[ \t]*\r?\n?/i;
 
-function toPart(entry: TeammateMessageEntry): TeammateMessagePart {
+/** An entry with its words in hand, from the server's offsets or an older envelope's tags. */
+type ReadEntry = Omit<TeammateMessageEntry, "bodyStart" | "bodyEnd"> & { readonly text: string };
+
+function toPart(entry: ReadEntry): TeammateMessagePart {
   const status =
     entry.status ?? (entry.kind === "reply" ? teammateReplyStatus(entry.text) : undefined);
   const shown = status === undefined ? entry.text : entry.text.replace(LEADING_STATUS, "");
@@ -71,7 +74,7 @@ function legacyEntry(
   rawAttributes: string,
   text: string,
   filesList: string | null,
-): TeammateMessageEntry | null {
+): ReadEntry | null {
   const attributes = attributesOf(rawAttributes);
   const name = attributes.from?.trim();
   const threadId = attributes.threadId;
@@ -114,7 +117,7 @@ const replyMessageId = (requestId: string) => `assistant-reply:${requestId}`;
  * where the server's own marks prove it. The server wrapped every send of an assistant in its own
  * envelope from that assistant's thread, under ids it chose; any other text keeps its tags.
  */
-function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<TeammateMessageEntry> | null {
+function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<ReadEntry> | null {
   const { text, senderThreadId, id } = message;
   if (senderThreadId === undefined || assistantIdFromThreadId(senderThreadId) === null) return null;
   const single = SINGLE.exec(text);
@@ -131,7 +134,7 @@ function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<TeammateMes
   const lead = GROUP_LEAD.exec(text);
   if (lead === null || id === undefined || !id.startsWith(replyMessageId(""))) return null;
   const groupId = id.slice(replyMessageId("").length);
-  const entries: Array<TeammateMessageEntry> = [];
+  const entries: Array<ReadEntry> = [];
   GROUP_REPLY.lastIndex = lead[0].length;
   for (let match = GROUP_REPLY.exec(text); match !== null; match = GROUP_REPLY.exec(text)) {
     const { body, files } = splitAssistantTransferText(match[2]!);
@@ -185,10 +188,27 @@ const resolved = new WeakMap<TeammateSource, ReadonlyArray<TeammateMessagePart> 
 
 function resolveUncached(message: TeammateSource): ReadonlyArray<TeammateMessagePart> | null {
   if (message.role !== "user") return null;
+  const teammate = message.context?.teammate;
   const entries =
-    message.context?.teammate?.entries ??
-    (message.createdBy === "agent" ? parseLegacyEnvelope(message) : null);
+    teammate !== undefined
+      ? readStoredEntries(message.text, teammate.entries)
+      : message.createdBy === "agent"
+        ? parseLegacyEnvelope(message)
+        : null;
   return entries === null || entries.length === 0 ? null : entries.map(toPart);
+}
+
+/** Each entry's words, cut from the text; a range the text does not hold leaves it whole. */
+function readStoredEntries(
+  text: string,
+  entries: ReadonlyArray<TeammateMessageEntry>,
+): ReadonlyArray<ReadEntry> | null {
+  const read: Array<ReadEntry> = [];
+  for (const { bodyStart, bodyEnd, ...entry } of entries) {
+    if (bodyStart < 0 || bodyStart > bodyEnd || bodyEnd > text.length) return null;
+    read.push({ ...entry, text: text.slice(bodyStart, bodyEnd) });
+  }
+  return read;
 }
 
 /** Plain text for copy, previews and search: each teammate's words under their name. */

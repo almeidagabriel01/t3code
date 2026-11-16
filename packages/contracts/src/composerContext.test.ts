@@ -257,7 +257,8 @@ describe("OrchestrationMessageContext", () => {
     requestId: "message:1",
     status: "partial",
     files: [],
-    text: "Status: partial",
+    bodyStart: 0,
+    bodyEnd: 15,
   };
 
   it("keeps a teammate entry and drops only a status it does not know", () => {
@@ -273,7 +274,7 @@ describe("OrchestrationMessageContext", () => {
       teammate: { entries: [{ ...teammateEntry, status: "waiting" }] },
     });
     expect(future.teammate?.entries[0]?.status).toBeUndefined();
-    expect(future.teammate?.entries[0]?.text).toBe("Status: partial");
+    expect(future.teammate?.entries[0]?.bodyEnd).toBe(15);
   });
 
   it("decodes an unknown teammate shape as absent instead of failing the message", () => {

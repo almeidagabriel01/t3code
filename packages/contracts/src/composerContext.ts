@@ -320,7 +320,9 @@ export const TeammateMessageEntry = Schema.Struct({
   status: ForwardCompatibleOptional(TeammateReplyStatus),
   /** Shared-folder copies sent with it, as absolute paths. */
   files: Schema.Array(Schema.String),
-  text: Schema.String,
+  /** Its words, as UTF-16 offsets into the message `text`: stored once, beside the envelope. */
+  bodyStart: NonNegativeInt,
+  bodyEnd: NonNegativeInt,
 });
 export type TeammateMessageEntry = typeof TeammateMessageEntry.Type;
 

@@ -53,7 +53,7 @@ describe("threadQueueControlPresentation", () => {
     role: "user",
     createdBy: "agent" as const,
     senderThreadId: "assistant:ada:1",
-    text: "<t3_reply>model-facing envelope</t3_reply>",
+    text: "<t3_reply>model-facing envelope</t3_reply>\nStatus: done\nShipped.",
     context: {
       teammate: {
         entries: [
@@ -64,7 +64,8 @@ describe("threadQueueControlPresentation", () => {
             threadId: ThreadId.make("assistant:ada:1"),
             requestId: "m",
             files: [],
-            text: "Status: done\nShipped.",
+            bodyStart: 43,
+            bodyEnd: 64,
           },
         ],
       },

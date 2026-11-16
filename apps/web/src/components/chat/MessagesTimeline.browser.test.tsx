@@ -1163,48 +1163,58 @@ describe("MessagesTimeline agent messages", () => {
       files: [],
       text,
     });
-    const teammate = (...entries: Array<ReturnType<typeof entry>>) => ({
-      context: { version: 1 as const, records: [], teammate: { entries } },
-    });
+    // The words follow the envelope in the text; each entry stores where its own sit.
+    const teammate = (...entries: Array<ReturnType<typeof entry>>) => {
+      let text = envelope;
+      const stored = entries.map(({ text: body, ...rest }) => {
+        text += "\n";
+        const bodyStart = text.length;
+        text += body;
+        return { ...rest, bodyStart, bodyEnd: text.length };
+      });
+      return { text, context: { version: 1 as const, records: [], teammate: { entries: stored } } };
+    };
+    const group = teammate(
+      entry(
+        "reply",
+        "Front",
+        "assistant:front:1",
+        "Status: done\n## Shipped\n\n- the **new** row",
+        "done",
+      ),
+      entry(
+        "reply",
+        "Back",
+        "assistant:back:1",
+        "Result: Back's run failed before it answered.",
+        "blocked",
+      ),
+    );
+    const request = teammate(
+      entry(
+        "request",
+        "Lead",
+        "assistant:lead:1",
+        Array.from({ length: 40 }, (_, index) => `- item ${index}`).join("\n"),
+      ),
+    );
     await using screen = await renderTimeline(
       [
         message(
-          envelope,
+          group.text,
           {
             createdBy: "agent",
             senderThreadId: ThreadId.make("assistant:back:1"),
-            ...teammate(
-              entry(
-                "reply",
-                "Front",
-                "assistant:front:1",
-                "Status: done\n## Shipped\n\n- the **new** row",
-                "done",
-              ),
-              entry(
-                "reply",
-                "Back",
-                "assistant:back:1",
-                "Result: Back's run failed before it answered.",
-                "blocked",
-              ),
-            ),
+            context: group.context,
           },
           "g",
         ),
         message(
-          envelope,
+          request.text,
           {
             createdBy: "agent",
             senderThreadId: ThreadId.make("assistant:lead:1"),
-            ...teammate(
-              entry(
-                "request",
-                "Lead",
-                "assistant:lead:1",
-                Array.from({ length: 40 }, (_, index) => `- item ${index}`).join("\n"),
-              ),
-            ),
+            context: request.context,
           },
           "r",
         ),

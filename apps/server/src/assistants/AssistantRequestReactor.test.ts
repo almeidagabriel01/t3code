@@ -95,7 +95,8 @@ it.effect(
         status: "blocked",
         files: [],
       });
-      assert.isTrue(entry!.text.startsWith("Status: blocked"));
+      const text = sends[0]!.text as string;
+      assert.isTrue(text.slice(entry!.bodyStart, entry!.bodyEnd).startsWith("Status: blocked"));
       assert.equal(others.length, 0);
     }).pipe(Effect.provide(layer));
   },

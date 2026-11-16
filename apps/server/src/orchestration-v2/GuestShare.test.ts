@@ -210,7 +210,8 @@ it.effect("keeps teammate attribution only on an agent's send, which no edit rew
           requestId: "message:ask",
           status: "done" as const,
           files: [],
-          text: "Status: done",
+          bodyStart: 23,
+          bodyEnd: 35,
         },
       ],
     };

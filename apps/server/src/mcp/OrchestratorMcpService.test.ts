@@ -4309,7 +4309,13 @@ describe("OrchestratorMcpService assistant requests", () => {
         assert.include(replies[0]!.text, "Status: done B");
         assert.include(replies[0]!.text, 'status="answered"');
         assert.deepEqual(
-          replies[0]!.teammate?.entries.map((e) => [e.kind, e.name, e.threadId, e.status, e.text]),
+          replies[0]!.teammate?.entries.map((e) => [
+            e.kind,
+            e.name,
+            e.threadId,
+            e.status,
+            replies[0]!.text.slice(e.bodyStart, e.bodyEnd),
+          ]),
           [
             ["reply", "Helper", helperId, "done", "Status: done A"],
             ["reply", "Helper", helper2Id, "done", "Status: done B"],
@@ -4382,7 +4388,9 @@ describe("OrchestratorMcpService assistant requests", () => {
           assert.deepEqual(again.paths, first.paths);
           assert.include((yield* Ref.get(sent))[0]!.text, `](<${copied}>)`);
           assert.deepEqual((yield* Ref.get(sent))[0]!.teammate?.entries[0]?.files, [copied]);
-          assert.equal((yield* Ref.get(sent))[0]!.teammate?.entries[0]?.text, "read this");
+          const sentRequest = (yield* Ref.get(sent))[0]!;
+          const stored = sentRequest.teammate!.entries[0]!;
+          assert.equal(sentRequest.text.slice(stored.bodyStart, stored.bodyEnd), "read this");
 
           const answer = yield* mcp.sendToThread(scopeOf(helperId), {
             threadId: askerId,
@@ -4485,7 +4493,8 @@ describe("OrchestratorMcpService assistant requests", () => {
               requestId: first.messageId,
               expectsReply: true,
               files: [],
-              text: "status?",
+              bodyStart: request!.text.length - "status?".length,
+              bodyEnd: request!.text.length,
             },
           ],
         });
@@ -4510,7 +4519,8 @@ describe("OrchestratorMcpService assistant requests", () => {
             requestId: first.messageId,
             status: "done",
             files: [],
-            text: "Status: done",
+            bodyStart: replies[0]!.text.length - "Status: done".length,
+            bodyEnd: replies[0]!.text.length,
           },
         ]);
       }).pipe(Effect.provide(layer));

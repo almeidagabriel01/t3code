@@ -212,7 +212,8 @@ describe("resolveUserMessagePresentation", () => {
           threadId: ThreadId.make("assistant:ada:1"),
           requestId: "m",
           files: [],
-          text: "Status: done\nShipped.",
+          bodyStart: text.indexOf("Status: done"),
+          bodyEnd: text.length,
         },
       ],
     };
