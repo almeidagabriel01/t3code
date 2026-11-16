@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   expanded: [] as string[],
   showAll: false,
   updated: {} as Record<string, string>,
+  created: {} as Record<string, string>,
   moods: {} as Record<string, "working" | "needs" | "failed" | "limited">,
   queued: {} as Record<string, number>,
   settled: new Set<string>(),
@@ -73,6 +74,7 @@ const shellFor = (threadId: string) => {
       state.tasks.find((task) => task.threadId === threadId)?.title ??
       (threadId.includes(":g-") ? "Task · Growth" : threadId),
     updatedAt: state.updated[threadId] ?? "2020-01-01T00:00:00.000Z",
+    createdAt: state.created[threadId] ?? "2020-01-01T00:00:00.000Z",
     environmentId: "env",
     lastVisitedAt: null,
     hasPendingApprovals: mood === "needs",
@@ -201,6 +203,7 @@ function setup(
     expanded?: string[];
     showAll?: boolean;
     updated?: Record<string, string>;
+    created?: Record<string, string>;
     moods?: Record<string, "working" | "needs" | "failed" | "limited">;
     queued?: Record<string, number>;
   } = {},
@@ -211,6 +214,7 @@ function setup(
   state.expanded = options.expanded ?? [];
   state.showAll = options.showAll ?? false;
   state.updated = options.updated ?? {};
+  state.created = options.created ?? {};
   state.moods = options.moods ?? {};
   state.queued = options.queued ?? {};
   state.update.mockClear();
@@ -557,7 +561,16 @@ describe("AssistantSidebarSection", () => {
   });
 
   it("lists an assistant's tasks under it with their state, and opens one on click", async () => {
-    setup(["Jarvis"], { moods: { "task-1": "working", "task-2": "failed", "task-5": "limited" } });
+    // Running leads despite being oldest; the rest go newest first, not by id.
+    setup(["Jarvis"], {
+      moods: { "task-1": "working", "task-2": "failed", "task-5": "limited" },
+      created: {
+        "task-1": "2026-10-01T00:00:00.000Z",
+        "task-2": "2026-10-02T00:00:00.000Z",
+        "task-3": "2026-10-03T00:00:00.000Z",
+        "task-5": "2026-10-04T00:00:00.000Z",
+      },
+    });
     state.tasks = [
       { threadId: "task-1", title: "Add retry", createdAt: "2026-11-01T00:00:00.000Z" },
       { threadId: "task-5", title: "Port docs", createdAt: "2026-11-01T00:00:00.000Z" },
@@ -577,12 +590,12 @@ describe("AssistantSidebarSection", () => {
       tasks.map((task) => [task.getAttribute("aria-label"), task.getAttribute("data-state")]),
     ).toEqual([
       ["Add retry, Running", "running"],
-      ["Fix flaky test, Failed", "failed"],
-      ["Old chore, Done", "done"],
       [
         `Port docs, Limit until ${formatUpcomingTimestamp(LIMIT_RESET_AT, "24-hour")}`,
         "usage_limited",
       ],
+      ["Old chore, Done", "done"],
+      ["Fix flaky test, Failed", "failed"],
     ]);
     expect(tasks[2]?.getAttribute("aria-current")).toBe("page");
     // A running task offers no dismiss; a finished one does, and a dismissed one is gone.
