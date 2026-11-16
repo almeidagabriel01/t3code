@@ -20,6 +20,7 @@ export const PROJECT_OVERVIEW_COPY = {
   checkouts: { title: "Checkouts" },
   danger: {
     title: "Danger",
+    noPermission: "This connection cannot remove this project on every machine.",
     removeCheckout: {
       title: "Remove checkout",
       description:

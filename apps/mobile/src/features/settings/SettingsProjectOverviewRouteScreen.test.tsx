@@ -68,6 +68,7 @@ vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
   useEnvironmentsWithScope: () => new Set(["local"]),
+  useEnvironmentsScopeAccess: () => new Map([["local", "granted"]]),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.deleteProject }));
 vi.mock("../../state/olderSettledShelf", () => ({ readUnloadedThreadCount: () => 0 }));
