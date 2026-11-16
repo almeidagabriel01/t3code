@@ -5,6 +5,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, FolderOpenIcon } from "lucide-react";
 import { SortableContext, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
+import type { SidebarSortingStrategy } from "../Sidebar.drag";
 import { CSS } from "@dnd-kit/utilities";
 import { useState, type ComponentProps, type MouseEvent, type ReactNode } from "react";
 
@@ -34,6 +35,7 @@ import type { useSidebarProjectLayout } from "./useSidebarProjectLayout";
 import { SIDEBAR_SORTABLE_DRAG_DISABLED, SIDEBAR_SORTABLE_DRAG_ENABLED } from "./SidebarThreadRow";
 import {
   SidebarDragBoundary,
+  SidebarDragReserve,
   SidebarSectionPlaceholder,
   SortableSidebarMarker,
 } from "./SidebarListMarkers";
@@ -106,7 +108,7 @@ type ProjectGroupProps = {
   portCounts: ReadonlyMap<string, number>;
   first: boolean;
   drag: SidebarProjectDrag | null;
-  dragSortingStrategy: SortingStrategy;
+  dragSortingStrategy: SidebarSortingStrategy;
   threadByKey: ReadonlyMap<string, EnvironmentThreadShell>;
   subagentChildrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
   renderThreadRow: (
@@ -150,6 +152,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
   const attachList = (node: HTMLUListElement) => onListAttach(scope, node);
   const drag = props.drag?.projectKey === scope ? props.drag : null;
   const from = drag?.from ?? null;
+  const itemIds = items.map(sidebarListItemId);
   const dragTargetSection = drag?.targetSection ?? null;
   const openCount = (section: SidebarSection) =>
     items.filter((item) => item.kind === "thread" && item.section === section).length;
@@ -374,7 +377,7 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
         </span>
       </div>
       <StableSortableContext
-        items={items.map(sidebarListItemId)}
+        items={itemIds}
         strategy={drag === null ? idleSortingStrategy : props.dragSortingStrategy}
       >
         <ul ref={attachList} role="presentation" className="relative flex flex-col gap-px">
@@ -388,6 +391,9 @@ function SidebarProjectGroup(props: ProjectGroupProps) {
             </li>
           ) : null}
         </ul>
+        {drag === null ? null : (
+          <SidebarDragReserve ids={itemIds} strategy={props.dragSortingStrategy} />
+        )}
       </StableSortableContext>
     </li>
   );

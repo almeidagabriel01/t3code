@@ -377,8 +377,8 @@ type FolderChat = Pick<AssistantTeamChat, "scopes"> & {
 
 /**
  * A group folder's one indicator, from the members drawn inside it and the group's own threads:
- * needs you (a counted wait, or a tab the server flags as waiting), then failed, a member held by
- * a usage limit, paused, running N, then unread messages.
+ * needs you (a counted wait, or a tab the server flags as waiting), then running N (one working
+ * member makes the group working), failed, a member held by a usage limit, paused, then unread.
  */
 export function folderIndicator(input: {
   /** From `countWaits` over the drawn members and the group's key. */
@@ -388,6 +388,8 @@ export function folderIndicator(input: {
 }): ZoneIndicator | null {
   if (input.needsYou > 0) return { kind: "needs", count: input.needsYou };
   if (assistantGroupChatWaiting(input.chat ?? undefined)) return { kind: "needs", count: 1 };
+  const running = input.members.filter((member) => member.mood === "working").length;
+  if (running > 0) return { kind: "running", count: running };
   if (
     (input.chat?.failedTasks ?? 0) > 0 ||
     input.members.some((member) => member.mood === "failed")
@@ -395,10 +397,29 @@ export function folderIndicator(input: {
     return { kind: "failed" };
   if (input.members.some((member) => member.mood === "limited")) return { kind: "limited" };
   if ((input.chat?.pausedTasks ?? 0) > 0) return { kind: "paused", count: input.chat!.pausedTasks };
-  const running = input.members.filter((member) => member.mood === "working").length;
-  if (running > 0) return { kind: "running", count: running };
   if ((input.chat?.unreadCount ?? 0) > 0) return { kind: "unread", count: input.chat!.unreadCount };
   return null;
+}
+
+/** The words every screen shows for an indicator; an assistant reads Working, a group N running. */
+export function zoneIndicatorLabel(
+  indicator: ZoneIndicator,
+  subject: "assistant" | "group",
+): string {
+  switch (indicator.kind) {
+    case "needs":
+      return indicator.count === 1 ? "Needs you" : `${indicator.count} need you`;
+    case "failed":
+      return "Failed";
+    case "limited":
+      return "Usage limit";
+    case "paused":
+      return `${indicator.count} paused`;
+    case "running":
+      return subject === "assistant" ? "Working" : `${indicator.count} running`;
+    case "unread":
+      return `${indicator.count} unread`;
+  }
 }
 
 /**

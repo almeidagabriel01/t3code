@@ -2,7 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import { assistantGroupFoldKey, visibleAssistants } from "@t3tools/client-runtime/assistantList";
 import { assistantFace, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { assistantSectionThreadKeys } from "@t3tools/client-runtime/assistantTasks";
-import type { ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
+import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -29,7 +29,7 @@ import type { ThreadListV2ThreadListItem } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useSidebarZones, type TeamsMember } from "../home/useSidebarZones";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster } from "./assistantPresentation";
 import {
   AssistantTaskRows,
   assistantShelfKey,
@@ -143,43 +143,79 @@ export function useAssistantSectionJumpThreads(
 }
 
 const INDICATOR_DOT = {
-  needs: "bg-warning",
+  needs: "bg-warning-foreground",
   failed: "bg-adaptive-rose-600-400",
-  limited: "bg-warning",
+  limited: "bg-warning-foreground",
   paused: "bg-foreground-muted",
   running: "bg-adaptive-sky-600-400",
+  unread: "bg-primary",
 } as const;
 
-function indicatorLabel(indicator: ZoneIndicator, assistant: boolean): string {
-  switch (indicator.kind) {
-    case "needs":
-      return indicator.count === 1 ? "Needs you" : `${indicator.count} need you`;
-    case "failed":
-      return "Failed";
-    case "limited":
-      return "Usage limit";
-    case "paused":
-      return `${indicator.count} paused`;
-    case "running":
-      return assistant ? "Working" : `${indicator.count} running`;
-    case "unread":
-      return `${indicator.count} unread`;
+const indicatorLabel = (indicator: ZoneIndicator, assistant: boolean) =>
+  zoneIndicatorLabel(indicator, assistant ? "assistant" : "group");
+
+/** A group's faces with its status as a still dot in the corner; dashed when it has no members. */
+function GroupMark(props: {
+  readonly environmentId: AssistantTeamEntry["environmentId"];
+  readonly members: ReadonlyArray<TeamsMember>;
+  readonly kind: ZoneIndicator["kind"] | null;
+  readonly sidebar: boolean;
+}) {
+  if (props.members.length === 0) {
+    return (
+      <View
+        testID="group-status"
+        className="size-5 rounded-md border border-dashed border-foreground-muted"
+      />
+    );
   }
+  return (
+    <View testID="group-mark">
+      <AssistantCluster
+        size={20}
+        environmentId={props.environmentId}
+        faces={props.members.map(({ entry }) => ({
+          key: entry.assistant.id,
+          assistant: entry.assistant,
+        }))}
+      />
+      {props.kind === null ? null : (
+        // A disc in the surface's own color cuts the dot out of the faces, like web's ring. A border
+        // would square off the fill on iOS.
+        <View
+          testID="group-dot"
+          className={cn(
+            "absolute -right-1 -bottom-1 size-3 items-center justify-center rounded-full",
+            props.sidebar ? "bg-drawer" : "bg-screen",
+          )}
+        >
+          <View className={cn("size-2 rounded-full", INDICATOR_DOT[props.kind])} />
+        </View>
+      )}
+    </View>
+  );
 }
 
-/** One static status mark: a dot with a short word, or the unread count. Nothing animates. */
+/**
+ * One static status mark: a dot with its words. An assistant's unread count, and a narrow
+ * folder's, is a numbered pill; a narrow folder's other states are the dot alone. Nothing animates.
+ */
 function IndicatorBadge(props: {
   readonly kind: ZoneIndicator["kind"];
   readonly count: number;
   readonly assistant: boolean;
   readonly sidebar: boolean;
+  readonly narrow?: boolean;
 }) {
-  const indicator = { kind: props.kind, count: props.count } as ZoneIndicator;
-  if (props.kind === "unread") {
+  const label = indicatorLabel(
+    { kind: props.kind, count: props.count } as ZoneIndicator,
+    props.assistant,
+  );
+  if (props.kind === "unread" && (props.assistant || props.narrow === true)) {
     return (
       <View
         testID="zone-indicator"
-        accessibilityLabel={indicatorLabel(indicator, props.assistant)}
+        accessibilityLabel={label}
         className="min-w-5 items-center rounded-full bg-primary px-1.5 py-px"
       >
         <Text className="text-2xs font-t3-bold text-primary-foreground">
@@ -189,23 +225,32 @@ function IndicatorBadge(props: {
     );
   }
   return (
-    <View testID="zone-indicator" className="shrink-0 flex-row items-center gap-1">
+    <View
+      testID="zone-indicator"
+      accessibilityLabel={label}
+      className="shrink-0 flex-row items-center gap-1"
+    >
       <View className={cn("size-2 rounded-full", INDICATOR_DOT[props.kind])} />
-      <Text
-        className={cn(
-          "text-xs",
-          props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
-        )}
-        numberOfLines={1}
-      >
-        {indicatorLabel(indicator, props.assistant)}
-      </Text>
+      {props.narrow === true ? null : (
+        <Text
+          className={cn(
+            "text-xs",
+            props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
+          )}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      )}
     </View>
   );
 }
 
 /** The row's role text gives way below this width (14rem), so the name stays whole. */
 const ROLE_MIN_ROW_WIDTH = 224;
+/** Below this a folder's words (status, empty caption) give way, so the group's name stays readable. */
+const FOLDER_WORDS_MIN_ROW_WIDTH = 320;
+const EMPTY_GROUP_LABEL = "No members yet";
 /** Below this the role would show as a couple of letters; the tooltip-less row drops it instead. */
 const META_MIN_WIDTH = 56;
 
@@ -424,11 +469,23 @@ function AssistantBlock(props: {
   );
 }
 
-/** A group folder: the chevron shows its members, the name opens its chat. No faces. */
+/** Members arrive in a fresh array on every update; the row redraws only when one of them changes. */
+function sameFolderProps<P extends { readonly members: ReadonlyArray<TeamsMember> }>(a: P, b: P) {
+  return (Object.keys(a) as Array<keyof P>).every((key) =>
+    key === "members"
+      ? a.members.length === b.members.length &&
+        a.members.every(
+          (member, index) => member.entry.assistant === b.members[index]!.entry.assistant,
+        )
+      : a[key] === b[key],
+  );
+}
+
+/** A group folder: the chevron shows its members, the name opens its chat. */
 const FolderRow = memo(function FolderRow(props: {
   readonly environmentId: AssistantTeamEntry["environmentId"];
   readonly team: AssistantTeamEntry["team"];
-  readonly memberCount: number;
+  readonly members: ReadonlyArray<TeamsMember>;
   readonly expanded: boolean;
   readonly foldKey: string;
   readonly indicatorKind: ZoneIndicator["kind"] | null;
@@ -443,10 +500,14 @@ const FolderRow = memo(function FolderRow(props: {
   const { environmentId, team } = props;
   const unread = team.chat?.unreadCount ?? 0;
   const mutedIcon = props.sidebar ? "accent-drawer-foreground-muted" : "accent-icon-subtle";
-  const muted = props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted";
-  const empty = props.memberCount === 0;
+  const empty = props.members.length === 0;
+  const [rowWidth, setRowWidth] = useState(Number.POSITIVE_INFINITY);
+  const narrow = rowWidth < FOLDER_WORDS_MIN_ROW_WIDTH;
   return (
-    <View className="flex-row items-center">
+    <View
+      className="flex-row items-center"
+      onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}
+    >
       {empty ? (
         <View className="size-9" />
       ) : (
@@ -468,30 +529,47 @@ const FolderRow = memo(function FolderRow(props: {
       )}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={team.name}
+        accessibilityLabel={empty ? `${team.name}, ${EMPTY_GROUP_LABEL}` : team.name}
         onPress={() => openTeam.chat(environmentId, team.id)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 pr-2 active:opacity-70"
       >
+        <GroupMark
+          environmentId={environmentId}
+          members={props.members}
+          kind={props.indicatorKind}
+          sidebar={props.sidebar}
+        />
         <Text
           className={cn(
-            "min-w-0 flex-1 text-base font-t3-medium",
+            // An empty group's caption takes only the room its name leaves.
+            "min-w-0 text-base font-t3-medium",
+            empty ? "shrink" : "flex-1",
             props.sidebar ? "text-drawer-foreground" : "text-foreground",
           )}
           numberOfLines={1}
         >
           {team.name}
         </Text>
+        {empty && !narrow ? (
+          <Text
+            testID="group-empty-caption"
+            className={cn(
+              "min-w-0 flex-1 text-right text-xs",
+              props.sidebar ? "text-drawer-foreground-muted" : "text-foreground-muted",
+            )}
+            numberOfLines={1}
+          >
+            {EMPTY_GROUP_LABEL}
+          </Text>
+        ) : null}
         {props.indicatorKind !== null ? (
           <IndicatorBadge
             kind={props.indicatorKind}
             count={props.indicatorCount}
             assistant={false}
             sidebar={props.sidebar}
+            narrow={narrow}
           />
-        ) : empty ? (
-          <Text testID="group-status" className={cn("text-xs", muted)}>
-            empty
-          </Text>
         ) : null}
       </Pressable>
       <RowMenuButton
@@ -534,7 +612,7 @@ const FolderRow = memo(function FolderRow(props: {
       />
     </View>
   );
-});
+}, sameFolderProps);
 
 /** The Teams zone: ungrouped assistants first, then one folder per group. */
 export function HomeAssistantsSection(props: {
@@ -663,7 +741,7 @@ export function HomeAssistantsSection(props: {
               <FolderRow
                 environmentId={folder.team.environmentId}
                 team={folder.team.team}
-                memberCount={folder.members.length}
+                members={folder.members}
                 expanded={folder.expanded}
                 foldKey={folder.foldKey}
                 indicatorKind={folder.indicator?.kind ?? null}

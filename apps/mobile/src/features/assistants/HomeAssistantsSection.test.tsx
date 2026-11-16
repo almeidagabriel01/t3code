@@ -394,6 +394,9 @@ vi.mock("./assistantPresentation", () => ({
   AssistantAvatar: (props: { assistant: { name: string }; mood?: string }) => (
     <i>{`av:${props.assistant.name}:${props.mood ?? "-"}`}</i>
   ),
+  AssistantCluster: (props: { faces: ReadonlyArray<unknown> }) => (
+    <i data-testid="assistant-cluster" data-faces={props.faces.length} />
+  ),
 }));
 vi.mock("./useAssistantFlows", () => ({
   useAssistantFlows: () => ({
@@ -723,16 +726,26 @@ describe("HomeAssistantsSection", () => {
     // Ops lists only a0, already drawn in Finance: it is empty here and has no chevron.
     expect(byLabel("Show Ops members")).toBeNull();
     expect(byLabel("Hide Ops members")).toBeNull();
-    expect(container.querySelector('[data-testid="group-status"]')?.textContent).toBe("empty");
-    expect(container.querySelector('[data-testid="group-avatars"]')).toBeNull();
+    expect(container.querySelector('[data-testid="group-status"]')).not.toBeNull();
+    expect(byLabel("Ops, No members yet")).not.toBeNull();
+    expect(container.querySelectorAll('[data-testid="group-mark"]')).toHaveLength(1);
+    const caption = () => container.querySelector('[data-testid="group-empty-caption"]');
+    expect(caption()?.textContent).toBe("No members yet");
+    // A narrow row keeps the words for the screen reader only.
+    mocks.metaWidth = 300;
+    act(() => root.unmount());
+    root = createRoot(container);
+    await render(true, new Map(), { renderThread: renderThread as never });
+    expect(caption()).toBeNull();
+    expect(byLabel("Ops, No members yet")).not.toBeNull();
   });
 
   it.each([
     ["needs you", { pending: true, failed: 1, paused: 2, running: true, unread: 3 }, "Needs you"],
-    ["failed", { pending: false, failed: 1, paused: 2, running: true, unread: 3 }, "Failed"],
-    ["paused", { pending: false, failed: 0, paused: 2, running: true, unread: 3 }, "2 paused"],
-    ["running", { pending: false, failed: 0, paused: 0, running: true, unread: 3 }, "1 running"],
-    ["unread", { pending: false, failed: 0, paused: 0, running: false, unread: 3 }, "3"],
+    ["running", { pending: false, failed: 1, paused: 2, running: true, unread: 3 }, "1 running"],
+    ["failed", { pending: false, failed: 1, paused: 2, running: false, unread: 3 }, "Failed"],
+    ["paused", { pending: false, failed: 0, paused: 2, running: false, unread: 3 }, "2 paused"],
+    ["unread", { pending: false, failed: 0, paused: 0, running: false, unread: 3 }, "3 unread"],
   ] as const)("a folder shows one indicator, %s first", (_name, state, label) => {
     mocks.active = [bot(0, { threadId: "assistant:a0:1" }), bot(1)];
     mocks.teams = [
@@ -874,15 +887,16 @@ describe("HomeAssistantsSection", () => {
       [...container.querySelectorAll('[data-testid="zone-indicator"]')]
         .map((n) => n.textContent)
         .sort(),
-    ).toEqual(["99+", "Needs you"]);
+    ).toEqual(["120 unread", "Needs you"]);
     expect(container.querySelectorAll('[aria-label="menu:Mark as read"]')).toHaveLength(1);
     const unread = container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="menu:Mark as unread"]',
     );
-    expect([unread[0]!.disabled, unread[1]!.disabled]).toEqual([false, true]);
+    // Empty waits on the user, so it sorts above Quiet.
+    expect([unread[0]!.disabled, unread[1]!.disabled]).toEqual([true, false]);
     await act(async () => byLabel("menu:Mark as read")?.click());
     expect(mocks.markRead).toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
-    await act(async () => unread[0]!.click());
+    await act(async () => unread[1]!.click());
     expect(mocks.markUnread).toHaveBeenCalledWith(expect.objectContaining({ id: "g2" }));
   });
 

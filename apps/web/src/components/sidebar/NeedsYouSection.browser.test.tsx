@@ -205,7 +205,7 @@ describe("NeedsYouSection", () => {
           }),
           decision("t3", 2),
           guest("t4"),
-        ]}
+        ].map((item, minute) => ({ ...item, createdAt: `2026-01-01T00:0${minute}:00.000Z` }))}
       />,
     );
     expect(cards(screen.container)).toEqual(["approval", "question", "decision", "guest"]);

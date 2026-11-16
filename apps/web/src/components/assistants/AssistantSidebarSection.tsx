@@ -1,6 +1,6 @@
 import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
+import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
@@ -9,12 +9,14 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  CircleDashedIcon,
   CirclePauseIcon,
   ClockAlertIcon,
   EllipsisIcon,
   InfoIcon,
   MailIcon,
   MailOpenIcon,
+  MessageCircleQuestionIcon,
   MessageSquareTextIcon,
   MessagesSquareIcon,
   PencilIcon,
@@ -41,7 +43,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openAssistantInfo } from "./assistantInfoState";
-import { AssistantAvatar } from "./assistantPresentation";
+import { AssistantAvatar, AssistantCluster } from "./assistantPresentation";
 import {
   assistantFoldKey,
   AssistantTaskRows,
@@ -71,19 +73,40 @@ const ICON_BUTTON = cn(
 
 type IndicatorKind = ZoneIndicator["kind"];
 
-const INDICATOR_LABEL: Record<IndicatorKind, (count: number) => string> = {
-  needs: (count) => `${count} waiting on you`,
-  failed: () => "Failed",
-  limited: () => "Usage limit",
-  paused: (count) => `${count} paused`,
-  running: (count) => `${count} running`,
-  unread: (count) => `${count} unread`,
-};
+const indicatorLabel = (kind: IndicatorKind, count: number, subject: "assistant" | "group") =>
+  zoneIndicatorLabel({ kind, count } as ZoneIndicator, subject);
+
+const INDICATOR_ICON = {
+  needs: MessageCircleQuestionIcon,
+  running: CircleDashedIcon,
+  failed: CircleAlertIcon,
+  limited: ClockAlertIcon,
+  paused: CirclePauseIcon,
+  unread: MailIcon,
+} as const;
+
+const INDICATOR_TONE = {
+  needs: "text-warning-foreground",
+  running: "text-info-foreground",
+  failed: "text-destructive-foreground",
+  limited: "text-warning-foreground",
+  paused: "text-warning-foreground",
+  unread: "text-info-foreground",
+} as const;
+
+const INDICATOR_DOT = {
+  needs: "bg-warning",
+  running: "bg-info",
+  failed: "bg-destructive",
+  limited: "bg-warning",
+  paused: "bg-muted-foreground",
+  unread: "bg-info",
+} as const;
 
 /** A row's one status, drawn still: a dot or an icon, and the count as text. */
 function ZoneIndicatorMark(props: { readonly kind: IndicatorKind; readonly count: number }) {
   const { kind, count } = props;
-  const label = INDICATOR_LABEL[kind](count);
+  const label = indicatorLabel(kind, count, "assistant");
   if (kind === "unread") {
     return (
       <Badge
@@ -268,12 +291,13 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
           }
         >
           <AssistantAvatar assistant={assistant} mood={props.mood} className="size-5 shrink-0" />
-          <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          {/* The role keeps 3rem or wraps onto the clipped second line, never showing as a sliver. */}
+          <span className="flex h-5 min-w-0 flex-1 flex-wrap items-baseline gap-x-1.5 overflow-hidden">
             <span className="max-w-full shrink-0 truncate">{assistant.name}</span>
             {assistant.role === "" ? null : (
               <span
                 data-testid="assistant-role"
-                className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground @max-[14rem]/assistant-row:hidden"
+                className="min-w-12 flex-1 truncate text-xs font-normal text-muted-foreground @max-[14rem]/assistant-row:hidden"
               >
                 {assistant.role}
               </span>
@@ -386,10 +410,97 @@ const AssistantRow = memo(function AssistantRow(props: AssistantRowProps) {
   );
 }, sameAssistantRowProps);
 
+/** A group's faces with its status as a still dot in the corner; dashed when it has no members. */
+function GroupMark(props: {
+  readonly environmentId: EnvironmentId;
+  readonly members: ReadonlyArray<AssistantEntry>;
+  readonly kind: IndicatorKind | null;
+}) {
+  if (props.members.length === 0) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label="No members yet"
+              data-testid="group-status"
+              className="size-5 shrink-0 rounded-md border border-dashed border-foreground/24"
+            />
+          }
+        />
+        <TooltipPopup side="top">No members yet</TooltipPopup>
+      </Tooltip>
+    );
+  }
+  return (
+    <span data-testid="group-mark" className="relative flex shrink-0">
+      <AssistantCluster
+        faces={props.members.map(({ assistant }) => ({ key: assistant.id, assistant }))}
+        environmentId={props.environmentId}
+      />
+      {props.kind === null ? null : (
+        <span
+          aria-hidden
+          data-testid="group-dot"
+          data-kind={props.kind}
+          className={cn(
+            "absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar",
+            INDICATOR_DOT[props.kind],
+          )}
+        />
+      )}
+    </span>
+  );
+}
+
+/** A group's one status: icon and words, or the icon alone with its words in a tooltip when narrow. */
+function FolderIndicator(props: { readonly kind: IndicatorKind; readonly count: number }) {
+  const label = indicatorLabel(props.kind, props.count, "group");
+  const Icon = INDICATOR_ICON[props.kind];
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            data-testid="zone-indicator"
+            data-kind={props.kind}
+            className={cn(
+              "flex min-w-0 shrink-0 items-center gap-1 text-xs font-normal tabular-nums",
+              INDICATOR_TONE[props.kind],
+            )}
+          />
+        }
+      >
+        <Icon aria-hidden className="size-3.5 shrink-0" />
+        <span aria-hidden className="hidden whitespace-nowrap @[16rem]/folder:inline">
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/** Members arrive in a fresh array on every update; the row redraws only when one of them changes. */
+function sameFolderProps<P extends { readonly members: ReadonlyArray<AssistantEntry> }>(
+  a: P,
+  b: P,
+) {
+  return (Object.keys(a) as Array<keyof P>).every((key) =>
+    key === "members"
+      ? a.members.length === b.members.length &&
+        a.members.every((member, index) => member.assistant === b.members[index]!.assistant)
+      : a[key] === b[key],
+  );
+}
+
 /** A group as a folder: the chevron shows its members, the name opens its chat. */
 const FolderRow = memo(function FolderRow(props: {
   readonly entry: AssistantTeamEntry;
-  readonly memberCount: number;
+  readonly members: ReadonlyArray<AssistantEntry>;
   readonly expanded: boolean;
   readonly indicatorKind: IndicatorKind | null;
   readonly indicatorCount: number;
@@ -403,13 +514,13 @@ const FolderRow = memo(function FolderRow(props: {
   const foldKey = `group:${environmentId}:${teamId}`;
   const unread = team.chat?.unreadCount ?? 0;
   const open = () => props.onOpenGroup(environmentId, teamId);
-  const empty = props.memberCount === 0;
+  const empty = props.members.length === 0;
   return (
     <li className="list-none py-px">
       <div
         data-testid="sidebar-assistant-fold"
         className={cn(
-          "flex h-8 w-full items-center gap-1 rounded-md ps-1 pe-(--sidebar-row-content-inset) text-sm font-medium text-sidebar-foreground hover:bg-sidebar-row-hover",
+          "@container/folder flex h-8 w-full items-center gap-1 rounded-md ps-1 pe-(--sidebar-row-content-inset) text-sm font-medium text-sidebar-foreground hover:bg-sidebar-row-hover",
           props.active && "bg-sidebar-row-active",
         )}
       >
@@ -430,6 +541,11 @@ const FolderRow = memo(function FolderRow(props: {
             />
           </button>
         )}
+        <GroupMark
+          environmentId={environmentId}
+          members={props.members}
+          kind={props.indicatorKind}
+        />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -447,17 +563,10 @@ const FolderRow = memo(function FolderRow(props: {
           >
             <span className="min-w-0 truncate">{team.name}</span>
           </TooltipTrigger>
-          <TooltipPopup side="top">{`Open ${team.name}`}</TooltipPopup>
+          <TooltipPopup side="top">{team.name}</TooltipPopup>
         </Tooltip>
-        {empty ? (
-          <span
-            data-testid="group-status"
-            className="shrink-0 text-xs font-normal text-muted-foreground"
-          >
-            empty
-          </span>
-        ) : props.indicatorKind === null ? null : (
-          <ZoneIndicatorMark kind={props.indicatorKind} count={props.indicatorCount} />
+        {props.indicatorKind === null ? null : (
+          <FolderIndicator kind={props.indicatorKind} count={props.indicatorCount} />
         )}
         <Menu>
           <MenuTrigger
@@ -516,7 +625,7 @@ const FolderRow = memo(function FolderRow(props: {
       </div>
     </li>
   );
-});
+}, sameFolderProps);
 
 const toggleGroup = (expandedKeys: ReadonlyArray<string>, foldKey: string) =>
   void updateClientSettings({
@@ -633,7 +742,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
             <FolderRow
               key={row.key}
               entry={row.team}
-              memberCount={row.memberCount}
+              members={row.members}
               expanded={row.expanded}
               indicatorKind={row.indicator?.kind ?? null}
               indicatorCount={
