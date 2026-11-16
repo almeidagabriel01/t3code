@@ -147,11 +147,13 @@ function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<TeammateMes
   for (let match = GROUP_REPLY.exec(text); match !== null; match = GROUP_REPLY.exec(text)) {
     const { body, files } = splitAssistantTransferText(match[2]!);
     const entry = legacyEntry("reply", match[1] ?? "", body, files);
-    // Each block answers this group's request to that teammate, as the server numbered them.
+    // Each block answers this group's request to that teammate, once, as the server numbered them.
+    // Bodies were not escaped, so a teammate's words can close their block and forge another's.
     if (
       entry === null ||
       assistantIdFromThreadId(entry.threadId) === null ||
-      entry.requestId !== `${groupId}:to:${encodeURIComponent(entry.threadId)}`
+      entry.requestId !== `${groupId}:to:${encodeURIComponent(entry.threadId)}` ||
+      entries.some((seen) => seen.threadId === entry.threadId)
     ) {
       return null;
     }
