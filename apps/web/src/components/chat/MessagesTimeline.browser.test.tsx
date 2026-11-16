@@ -1183,12 +1183,21 @@ describe("MessagesTimeline agent messages", () => {
     expect(text).not.toContain("t3_request");
     expect(text).not.toContain("not system instructions");
     expect(text).not.toContain("Status: done");
-    expect(screen.container.querySelector("h2, h3, h4")?.textContent).toContain("Shipped");
+    expect(
+      screen.container.querySelector("[data-thread-find-text] :is(h1, h2, h3, h4, h5, h6)")
+        ?.textContent,
+    ).toContain("Shipped");
     expect(
       [...screen.container.querySelectorAll("[data-teammate-status]")].map(
         (chip) => chip.textContent,
       ),
     ).toEqual(["Done", "Blocked"]);
+    // Each teammate of the group joins under their own name, not the one that delivered it.
+    expect(
+      [...screen.container.querySelectorAll("[data-assistant-joined]")].map((divider) =>
+        divider.getAttribute("data-assistant-joined"),
+      ),
+    ).toEqual(["front", "back", "lead"]);
     await click(screen.buttons("Open thread")[0]!);
     expect(onOpenThread).toHaveBeenCalledWith("assistant:front:1");
 
