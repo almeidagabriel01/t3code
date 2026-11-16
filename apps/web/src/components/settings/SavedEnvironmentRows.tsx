@@ -317,6 +317,7 @@ export function SavedBackendListRow({
               attempt={connectionState.attempt}
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
+              onPairAgain={() => onAddRoute(environment)}
             />
           ) : null}
           {serverUpdateState.status !== "idle" ? (
