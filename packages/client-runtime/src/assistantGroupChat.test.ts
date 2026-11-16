@@ -83,6 +83,8 @@ import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
   type AssistantGroupTabKey,
+  assistantGroupWaitingRequests,
+  assistantGroupWaitingWhy,
 } from "./assistantGroupChat.ts";
 
 const message = (seq: number, overrides: Partial<AssistantGroupMessage> = {}) =>
@@ -1401,6 +1403,76 @@ describe("assistantGroupComposerSession", () => {
       context,
     });
     assert.strictEqual<string | null>(session?.id ?? null, expected);
+  });
+});
+
+describe("assistantGroupWaitingRequests", () => {
+  const beto = "beto" as AssistantId;
+  const at = (seq: number, request: number, overrides: Partial<AssistantGroupMessage> = {}) =>
+    message(seq, { requestId: `m${request}` as never, ...overrides });
+  const waits = { threadId: "assistant:beto:g-1" as ThreadId, resolved: false };
+  const read = (state: AssistantGroupChatState) =>
+    assistantGroupWaitingRequests(state).map((item) => [
+      item.requestId,
+      item.reason,
+      item.assistantId,
+      item.task?.id ?? null,
+    ]);
+
+  it("lists waits, project questions and tasks that need the user, oldest first", () => {
+    const state = start({
+      type: "snapshot",
+      messages: [
+        at(2, 2),
+        at(3, 2, { author: "assistant", assistantId: beto, waiting: waits }),
+        at(4, 4),
+        at(5, 4, { kind: "notice", author: "assistant", asksProject: true }),
+        at(6, 6),
+        at(7, 7),
+        at(8, 8),
+      ],
+      tasks: [
+        // Off the page: the snapshot still carries its task and its request's first message.
+        task("t1", 1, { requestId: "m1" as never, status: "paused", reason: "routing_failed" }),
+        task("t6", 6, { status: "paused", reason: "stopped" }),
+        task("t7", 7, { ownerId: beto, status: "failed" }),
+        task("t8", 8, { status: "paused", reason: "routing_failed" }),
+        task("t8-busy", 8, { status: "running" }),
+      ],
+      hasMore: true,
+      requests: [at(1, 1, { title: "Old bug" })],
+    });
+    assert.deepStrictEqual(read(state), [
+      ["m1", "paused", "ada", "t1"],
+      ["m2", "wait", beto, null],
+      ["m4", "project", null, null],
+      ["m7", "failed", beto, "t7"],
+    ]);
+    assert.strictEqual(assistantGroupWaitingRequests(state)[0]!.title, "Old bug");
+  });
+
+  it("drops tasks before the newest boundary, but not an open wait", () => {
+    const state = start(
+      snapshot(
+        [
+          at(1, 1),
+          at(2, 2),
+          at(3, 2, { author: "assistant", assistantId: beto, waiting: waits }),
+          message(4, { kind: "boundary" }),
+        ],
+        [task("t1", 1, { status: "paused", reason: "routing_failed" })],
+      ),
+    );
+    assert.deepStrictEqual(read(state), [["m2", "wait", beto, null]]);
+  });
+
+  it.each([
+    [{ reason: "wait" }, "Waiting for your answer"],
+    [{ reason: "project" }, "Needs a project"],
+    [{ reason: "paused" }, "Paused"],
+    [{ reason: "failed" }, "Failed"],
+  ] as const)("%o reads %s", (request, expected) => {
+    assert.strictEqual(assistantGroupWaitingWhy(request), expected);
   });
 });
 
