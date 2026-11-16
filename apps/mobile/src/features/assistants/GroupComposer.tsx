@@ -614,7 +614,11 @@ export function GroupComposer(props: {
     setSelection({ start: 0, end: 0 });
     const result = await props.onSend(message, attached.ready, projectId, requestId);
     if (result.ok) settle(sent);
-    else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    else {
+      // What the user changed while it was on its way is what its resend goes with.
+      const latest = outgoings.get(groupKey).find((entry) => entry.requestId === sent.requestId);
+      setOutgoing(sent.tab, { ...(latest ?? sent), failed: true, error: result.message });
+    }
   };
 
   const send = async () => {

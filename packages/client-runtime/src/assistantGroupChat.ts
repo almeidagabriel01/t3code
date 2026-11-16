@@ -689,9 +689,9 @@ const sameRouting = <Reply>(
   left.modelPick === right.modelPick;
 
 /**
- * As the open tab's failed send comes into view, the chat takes its routing back (`restore`), or
- * a resend would go under a new id; while it shows, the user's changes become it (`keep`), so a
- * cancelled reply stays cancelled. `seen`: the request id the tab showed last; keep the result's.
+ * As the open tab's send comes into view, on its way or failed, the chat takes its routing back
+ * (`restore`), or a resend would go under a new id; while it shows, the user's changes become it
+ * (`keep`), so a cancelled reply stays cancelled. `seen`: the request id the tab showed last.
  */
 export function assistantGroupFailedSendRouting<
   Reply,
@@ -711,7 +711,7 @@ export function assistantGroupFailedSendRouting<
 } {
   const own = shown !== null && shown.tab === tab ? shown : null;
   const next = own?.requestId ?? null;
-  const held = own?.failed === true ? own.routing : null;
+  const held = own?.routing ?? null;
   if (held === null) return { seen: next, restore: null, keep: null };
   if (next !== seen) return { seen: next, restore: held, keep: null };
   return { seen: next, restore: null, keep: sameRouting(held, current) ? null : current };

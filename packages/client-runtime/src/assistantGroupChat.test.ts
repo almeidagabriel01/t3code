@@ -1860,7 +1860,8 @@ describe("assistant group tabs", () => {
       cancelled,
       null,
     ],
-    ["on its way", null, held("A", false), cancelled, null, null],
+    ["on its way, coming into view", null, held("A", false), cancelled, sentWith, null],
+    ["on its way, its reply cancelled", "A", held("A", false), cancelled, null, cancelled],
     ["landed and kept for its edits", "A", held("A", true, null), cancelled, null, null],
   ] as const)("a failed send's routing: %s", (_name, seen, shown, current, restore, keep) => {
     assert.deepStrictEqual(assistantGroupFailedSendRouting(seen, shown, "project:p1", current), {

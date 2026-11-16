@@ -1976,6 +1976,22 @@ describe("requests", () => {
       undefined,
       false,
     ]);
+    // So does one cancelled while its send was on its way and failed in another tab.
+    let fail = (_: { ok: false; message: string; reason: "unconfirmed" }) => {};
+    mocks.post.mockReturnValueOnce(new Promise((resolve) => (fail = resolve)));
+    await click("Reply to request Review");
+    await click("Send");
+    await click("Cancel reply");
+    await click(TAB.alpha);
+    await act(async () => fail({ ok: false, message: "unconfirmed", reason: "unconfirmed" }));
+    await click(TAB.beta);
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    await click("Send");
+    const [onItsWay, after] = mocks.requestIds.slice(-2);
+    expect([mocks.post.mock.lastCall?.[0]?.replyToMessageId, after === onItsWay]).toEqual([
+      undefined,
+      false,
+    ]);
   });
 
   it("says how many tasks run in the whole group, even in a tab whose stream holds none", () => {

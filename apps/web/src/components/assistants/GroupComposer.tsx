@@ -608,7 +608,13 @@ export function GroupComposer(props: {
     setError(null);
     const result = await props.onSend(value.trim(), attached.ready, requestId);
     if (result.ok) settle(sent);
-    else setOutgoing(sent.tab, { ...sent, failed: true, error: result.message });
+    else {
+      // What the user changed while it was on its way is what its resend goes with.
+      const latest = outgoings
+        .get(props.draftKey)
+        .find((entry) => entry.requestId === sent.requestId);
+      setOutgoing(sent.tab, { ...(latest ?? sent), failed: true, error: result.message });
+    }
     // The editor is read-only while its text is on its way; the user types on once it settles.
     window.requestAnimationFrame(() => {
       if (document.activeElement === document.body) editorRef.current?.focusAtEnd();
