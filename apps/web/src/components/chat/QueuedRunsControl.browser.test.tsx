@@ -204,11 +204,11 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
   // A teammate's words stay theirs: the owner can cancel them, not rewrite them. Any other agent's
   // prompt, a scheduled task's included, is the owner's to change.
   const edits = page.getByRole("button", { name: "Edit queued message", exact: true }).elements();
-  expect(edits.map((button) => (button as HTMLButtonElement).disabled)).toEqual([
-    false,
-    false,
-    false,
-    true,
+  expect(edits.map((button) => button.getAttribute("aria-disabled"))).toEqual([
+    null,
+    null,
+    null,
+    "true",
   ]);
 });
 

@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -69,7 +70,7 @@ function QueuedRunSender(props: {
   readonly environmentId: EnvironmentId;
   readonly message: QueuedRunMessage;
 }) {
-  const { attribution, scheduledTaskId } = resolveUserMessagePresentation(props.message);
+  const { attribution, scheduledTaskId, teammate } = resolveUserMessagePresentation(props.message);
   const senderThreadId = attribution === "agent" ? props.message.senderThreadId : undefined;
   const senderShell = useQuietThreadShell(
     senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
@@ -89,7 +90,10 @@ function QueuedRunSender(props: {
       : attribution === "agent"
         ? {
             icon: "bubble.left.and.bubble.right" as const,
-            label: senderShell?.title.trim() || "Agent",
+            label:
+              (teammate && teammateMessageSummary(teammate).names) ||
+              senderShell?.title.trim() ||
+              "Agent",
           }
         : attribution === "t3code"
           ? { icon: null, label: "Sent by T3 Code" }
@@ -275,6 +279,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     {
                       id: "edit",
                       title: "Edit",
+                      ...(controls.editRefusal === null ? {} : { subtitle: controls.editRefusal }),
                       attributes: { disabled: !controls.canEdit },
                       image: "pencil",
                     },
@@ -294,7 +299,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     accessibilityHint={
                       controls.canEdit
                         ? "Opens this message in the composer for editing"
-                        : (editBlockedReason ?? undefined)
+                        : (controls.editRefusal ?? editBlockedReason ?? undefined)
                     }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}

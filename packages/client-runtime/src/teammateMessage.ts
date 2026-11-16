@@ -8,6 +8,7 @@ import {
   type TeammateReplyStatus,
   teammateReplyStatus,
 } from "@t3tools/contracts";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 /** One teammate's part of a message, ready to show: who, what, and the words without the envelope. */
 export interface TeammateMessagePart {
@@ -216,4 +217,24 @@ export function teammateMessagePlainText(parts: ReadonlyArray<TeammateMessagePar
   return parts.length === 1
     ? parts[0]!.text
     : parts.map((part) => `${part.name || "Assistant"}:\n${part.text}`).join("\n\n");
+}
+
+/** A teammate message in one row: who sent it, and the first sender's opening line. */
+export function teammateMessageSummary(parts: ReadonlyArray<TeammateMessagePart>): {
+  readonly names: string;
+  readonly line: string;
+} {
+  const words = assistantCitationsToPlainText(parts[0]?.text ?? "");
+  return {
+    // Older envelopes carry no name; the caller falls back to the sender's thread.
+    names: parts
+      .map((part) => part.name)
+      .filter((name) => name !== "")
+      .join(", "),
+    line:
+      words
+        .split(/\r?\n/)
+        .find((line) => line.trim() !== "")
+        ?.trim() ?? "",
+  };
 }

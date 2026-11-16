@@ -71,7 +71,7 @@ export function TeammateMessageRow({ row }: { row: Extract<TimelineRow, { kind: 
       className={cn("flex flex-col gap-3", row.continuesSender && "-mt-1.5")}
       data-user-message-attribution="assistant"
     >
-      {parts.map((part, index) => (
+      {parts.map((part) => (
         <TeammatePartBlock
           key={`${part.kind}:${part.threadId}:${part.requestId}`}
           part={part}
@@ -81,7 +81,7 @@ export function TeammateMessageRow({ row }: { row: Extract<TimelineRow, { kind: 
           continues={row.continuesSender === true && parts.length === 1}
           // Older single sends name no thread of their own; the message's sender is that thread.
           threadId={part.threadId || senderThreadId || ""}
-          createdAt={index === parts.length - 1 ? row.message.createdAt : undefined}
+          createdAt={row.message.createdAt}
           copyText={parts.length === 1 ? presentation.text : part.text}
           timestampFormat={ctx.timestampFormat}
         />
@@ -118,7 +118,7 @@ function TeammatePartBlock(props: {
   joinedAt: string;
   continues: boolean;
   threadId: string;
-  createdAt: string | undefined;
+  createdAt: string;
   copyText: string;
   timestampFormat: Parameters<typeof formatDayAwareTimestamp>[1];
 }) {
@@ -192,16 +192,14 @@ function TeammatePartBlock(props: {
                 Open thread
               </InlineButton>
             ) : null}
-            {props.createdAt === undefined ? null : (
-              <Tooltip>
-                <TooltipTrigger render={<p className="text-xs tabular-nums" />}>
-                  {formatDayAwareTimestamp(props.createdAt, props.timestampFormat)}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {formatChatTimestampTooltip(props.createdAt, props.timestampFormat)}
-                </TooltipPopup>
-              </Tooltip>
-            )}
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-xs tabular-nums" />}>
+                {formatDayAwareTimestamp(props.createdAt, props.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(props.createdAt, props.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
             {props.copyText ? <MessageCopyButton text={props.copyText} variant="ghost" /> : null}
           </div>
         </div>

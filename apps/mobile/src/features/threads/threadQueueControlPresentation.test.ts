@@ -73,17 +73,44 @@ describe("threadQueueControlPresentation", () => {
     },
   };
 
-  it("shows a teammate's queued message as their words, not the envelope", () => {
-    const controls = resolveThreadQueueRowControls({
-      busy: false,
-      canPromoteToSteer: false,
-      canSendNow: true,
-      text: ada.text,
-      message: ada,
-    });
-
-    expect(controls.displayText).toBe("Shipped.");
+  const groupText = "<t3_reply>model-facing envelope</t3_reply>\nAPI pronta.\nTestes ok.";
+  const groupEntry = (name: string, body: string) => ({
+    kind: "reply" as const,
+    name,
+    handle: name.toLowerCase(),
+    threadId: ThreadId.make(`assistant:${name.toLowerCase()}:1`),
+    requestId: `g:to:${name}`,
+    files: [],
+    bodyStart: groupText.indexOf(body),
+    bodyEnd: groupText.indexOf(body) + body.length,
   });
+  const group = {
+    role: "user",
+    createdBy: "agent" as const,
+    senderThreadId: "assistant:bruno:1",
+    text: groupText,
+    context: {
+      teammate: { entries: [groupEntry("Bruno", "API pronta."), groupEntry("Ana", "Testes ok.")] },
+    },
+  };
+
+  it.each([
+    ["one teammate's", ada, "Shipped."],
+    ["a group's", group, "API pronta."],
+  ])(
+    "shows %s queued message as the first one's words, not the envelope",
+    (_name, message, shown) => {
+      const controls = resolveThreadQueueRowControls({
+        busy: false,
+        canPromoteToSteer: false,
+        canSendNow: true,
+        text: message.text,
+        message,
+      });
+
+      expect(controls.displayText).toBe(shown);
+    },
+  );
 
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
@@ -103,6 +130,7 @@ describe("threadQueueControlPresentation", () => {
   it.each([
     [
       "a guest's",
+      "A guest's message cannot be edited. Cancel it instead.",
       {
         role: "user",
         text: "Why?",
@@ -111,8 +139,8 @@ describe("threadQueueControlPresentation", () => {
         },
       },
     ],
-    ["a teammate's", ada],
-  ])("lets the owner cancel %s queued message but not rewrite it", (_name, message) => {
+    ["a teammate's", "A teammate's message cannot be edited. Cancel it instead.", ada],
+  ])("lets the owner cancel %s queued message but not rewrite it", (_name, reason, message) => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,
@@ -122,6 +150,7 @@ describe("threadQueueControlPresentation", () => {
     });
 
     expect(controls.canEdit).toBe(false);
+    expect(controls.editRefusal).toBe(reason);
     expect(controls.canDismiss).toBe(true);
   });
 

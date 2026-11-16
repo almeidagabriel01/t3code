@@ -65,10 +65,10 @@ export function resolveUserMessageFileCards(message: {
 }
 
 /**
- * Whether the owner may rewrite a queued message: a guest's or a teammate's keeps its author's
- * words; any other prompt, a scheduled task's included, is the owner's to change.
+ * Why the owner may not rewrite a queued message, or null when they may: a guest's or a
+ * teammate's keeps its author's words; any other prompt, a scheduled task's included, is theirs.
  */
-export function canEditQueuedMessage(
+export function queuedMessageEditRefusal(
   message:
     | (Parameters<typeof resolveTeammateMessage>[0] & {
         readonly context?:
@@ -79,11 +79,14 @@ export function canEditQueuedMessage(
           | undefined;
       })
     | undefined,
-): boolean {
-  return (
-    message === undefined ||
-    (message.context?.guest === undefined && resolveTeammateMessage(message) === null)
-  );
+): string | null {
+  if (message === undefined) return null;
+  if (message.context?.guest !== undefined) {
+    return "A guest's message cannot be edited. Cancel it instead.";
+  }
+  return resolveTeammateMessage(message) === null
+    ? null
+    : "A teammate's message cannot be edited. Cancel it instead.";
 }
 
 export function resolveUserMessagePresentation(message: {

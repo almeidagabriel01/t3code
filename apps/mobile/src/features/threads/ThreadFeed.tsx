@@ -1690,7 +1690,7 @@ function renderFeedEntry(
               joinedAtLabel={block.joined ? timestampLabel : null}
               status={block.status}
               threadId={block.threadId}
-              timestampLabel={block.showTimestamp ? timestampLabel : undefined}
+              timestampLabel={timestampLabel}
               continues={block.continues}
               long={block.long}
             >
