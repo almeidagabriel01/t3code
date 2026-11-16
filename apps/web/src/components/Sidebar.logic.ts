@@ -1,4 +1,5 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { GUEST_WAITING_LABEL } from "@t3tools/client-runtime/sidebarZones";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   resolveThreadWorkingStartedAt,
@@ -652,7 +653,7 @@ export interface ThreadStatusPill {
     | "Pending Approval"
     | "Awaiting Input"
     | "Decision"
-    | "Guest Request"
+    | typeof GUEST_WAITING_LABEL
     | "Waiting"
     | "Plan Ready";
   colorClass: string;
@@ -1193,7 +1194,7 @@ export function resolveThreadStatusPill(input: {
 
   if (guestWaitsOnUser(thread)) {
     return {
-      label: "Guest Request",
+      label: GUEST_WAITING_LABEL,
       colorClass: "text-guest-foreground",
       dotClass: "bg-guest",
       pulse: false,
