@@ -5,6 +5,7 @@ import {
   RPC_REQUIRED_SCOPES,
   rpcRequiredScopes,
 } from "./clientRpcPermissions.ts";
+import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { WS_METHODS } from "./rpc.ts";
 
@@ -149,6 +150,19 @@ describe("assistant client guards", () => {
       WS_METHODS.assistantSandboxSubscribe,
     ])
       expect(Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)).toBe(false);
+  });
+});
+
+describe("thread context usage", () => {
+  it("is a plain thread read", () => {
+    expect(
+      rpcRequiredScopes(ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage, {
+        threadId: "thread:1",
+      }),
+    ).toEqual(["orchestration:read"]);
+    expect(
+      Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, ORCHESTRATION_V2_WS_METHODS.getThreadContextUsage),
+    ).toBe(false);
   });
 });
 
