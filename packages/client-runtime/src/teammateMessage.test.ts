@@ -1,7 +1,12 @@
 import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveTeammateMessage, teammateMessagePlainText } from "./teammateMessage.ts";
+import {
+  resolveTeammateMessage,
+  type TeammateMessagePart,
+  teammateMessagePlainText,
+  teammateMessageSummary,
+} from "./teammateMessage.ts";
 
 const lead = 'from="Pessoal Lead" handle="pessoal-lead" threadId="assistant:lead:1"';
 const fyi = `<t3_request ${lead} expects_reply="false">
@@ -296,5 +301,37 @@ Status: done no lado deles; confere?`,
     ["before the start of the text", -1, 4],
   ])("leaves the text whole when the stored range is %s", (_name, bodyStart, bodyEnd) => {
     expect(resolveTeammateMessage(stored(envelope, bodyStart, bodyEnd))).toBeNull();
+  });
+});
+
+describe("teammateMessageSummary", () => {
+  const part = (name: string, text: string): TeammateMessagePart => ({
+    kind: "reply",
+    name,
+    handle: name.toLowerCase(),
+    threadId: `assistant:${name.toLowerCase()}:1`,
+    requestId: "g",
+    expectsReply: undefined,
+    status: "done",
+    files: [],
+    text,
+  });
+
+  it.each([
+    [
+      "one teammate",
+      [part("Bruno Backend", "\nAPI pronta.\nDetalhes")],
+      "Bruno Backend",
+      "API pronta.",
+    ],
+    [
+      "a group, named in order, led by the first one's words",
+      [part("Bruno Backend", "API pronta."), part("Ana QA", "Testes ok.")],
+      "Bruno Backend, Ana QA",
+      "API pronta.",
+    ],
+    ["an older envelope without a name", [part("", "Feito.")], "", "Feito."],
+  ])("folds %s to its names and opening line", (_name, parts, names, line) => {
+    expect(teammateMessageSummary(parts)).toEqual({ names, line });
   });
 });

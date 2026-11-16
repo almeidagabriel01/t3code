@@ -41,6 +41,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
+import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 
 export interface EditQueuedRunRequest {
@@ -432,6 +433,7 @@ function QueuedMessage(props: {
       : null,
   );
   const taskEvent = props.message ? taskEventActivity(props.message) : null;
+  const teammate = presentation?.teammate ? teammateMessageSummary(presentation.teammate) : null;
   const fold =
     attribution === "automation"
       ? {
@@ -442,10 +444,12 @@ function QueuedMessage(props: {
       : attribution === "agent"
         ? {
             icon: MessagesSquareIcon,
-            label: senderShell?.title.trim() || "Agent",
+            label: teammate?.names || senderShell?.title.trim() || "Agent",
             summary: taskEvent
               ? `${taskEvent.title} · ${taskEvent.label}`
-              : (props.previewText.split(/\r?\n/).find((line) => line.trim()) ?? ""),
+              : (teammate?.line ??
+                props.previewText.split(/\r?\n/).find((line) => line.trim()) ??
+                ""),
           }
         : null;
   const bodyVisible = fold === null || expanded;

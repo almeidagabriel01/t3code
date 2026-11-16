@@ -1,3 +1,4 @@
+import { teammateMessageSummary } from "@t3tools/client-runtime/teammateMessage";
 import {
   canEditQueuedMessage,
   resolveUserMessagePresentation,
@@ -26,14 +27,16 @@ export function resolveThreadQueueRowControls(input: {
   readonly editBlocked?: boolean;
   readonly isEditing?: boolean;
   readonly text: string;
-  /** The queued message; a teammate's shows their words, and a teammate's or a guest's stays theirs. */
+  /** The queued message; a teammate's shows the first one's words, and a teammate's or a guest's stays theirs. */
   readonly message?:
     | (Parameters<typeof resolveUserMessagePresentation>[0] &
         Parameters<typeof canEditQueuedMessage>[0])
     | undefined;
 }): ThreadQueueRowControls {
   const presentation = input.message ? resolveUserMessagePresentation(input.message) : null;
-  const shownText = presentation?.teammate ? presentation.text : input.text;
+  const shownText = presentation?.teammate
+    ? teammateMessageSummary(presentation.teammate).line
+    : input.text;
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
 
