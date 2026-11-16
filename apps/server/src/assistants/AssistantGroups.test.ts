@@ -798,16 +798,16 @@ it.effect.each<{
     cursors: {},
   },
   {
-    name: "a stopped task waits on the user in its tab, read or not",
+    name: "a task paused before the newest boundary no longer waits, read or not",
     steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'paused'" }, { read: {} }],
     readSeq: 7,
-    scopes: { p1: [0, true, 7], p2: [0, true, 7], "": [0, true, 7] },
+    scopes: { p1: [0, false, 7], p2: [0, true, 7], "": [0, true, 7] },
     cursors: {},
   },
   {
-    name: "a failed task waits on the user too",
+    name: "nor does a task failed before it",
     steps: [{ sql: "UPDATE assistant_group_tasks SET status = 'failed'" }],
-    scopes: { p1: [1, true, 0], p2: [1, true, 0], "": [1, true, 0] },
+    scopes: { p1: [1, false, 0], p2: [1, true, 0], "": [1, true, 0] },
     cursors: {},
   },
   {

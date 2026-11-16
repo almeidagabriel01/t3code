@@ -706,6 +706,7 @@ const REQUEST_STATUS_TONE: Record<AssistantGroupRequestStatus, GroupStatusTone> 
   "needs-project": "attention",
   working: "active",
   "needs-you": "attention",
+  stopped: "quiet",
   done: "done",
   cancelled: "quiet",
 };

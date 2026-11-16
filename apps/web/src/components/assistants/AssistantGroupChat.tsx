@@ -852,6 +852,7 @@ const STATUS_TONE: Record<AssistantGroupRequestStatus, string> = {
   "needs-project": "text-warning-foreground",
   working: "text-info-foreground",
   "needs-you": "text-warning-foreground",
+  stopped: "text-muted-foreground",
   done: "text-success-foreground",
   cancelled: "text-muted-foreground",
 };

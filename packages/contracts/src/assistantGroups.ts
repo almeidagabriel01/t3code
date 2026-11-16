@@ -185,21 +185,42 @@ export const ASSISTANT_GROUP_WORKING_TASK_STATUSES = [
   "usage_limited",
 ] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
 
-/** A stopped task: its request waits on the user once none of its tasks is still working. */
+/** A stopped task the user can still act on: resume, reassign or cancel. */
 export const ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES = [
   "paused",
   "failed",
 ] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
 
+/** Pauses that are the user's own doing (a stop, an archive): such a task waits on no one. */
+export const ASSISTANT_GROUP_SELF_PAUSE_REASONS = ["stopped", "group_archived"] as const;
+
 const isOneOf = (list: ReadonlyArray<string>, value: string) => list.includes(value);
 
-/** A request's tasks are the user's to act on. The server's chat counters mirror this rule. */
-export function assistantGroupTasksNeedUser(
-  statuses: ReadonlyArray<AssistantGroupTaskStatus>,
+type NeedsUserTask = Pick<AssistantGroupTask, "id" | "parentId" | "kind" | "status" | "reason">;
+
+/**
+ * One task of a request is the user's to act on: a pause the user did not cause, on a task that is
+ * not a reply and whose parent is not paused (resuming the parent resumes it), or a failed root (a
+ * failed child is reported to its parent). The server's counters and notices mirror this.
+ */
+export function assistantGroupTaskNeedsUser(
+  task: NeedsUserTask,
+  requestTasks: ReadonlyArray<NeedsUserTask>,
 ): boolean {
+  if (task.status === "failed") return task.kind === "root";
   return (
-    !statuses.some((status) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, status)) &&
-    statuses.some((status) => isOneOf(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES, status))
+    task.status === "paused" &&
+    task.kind !== "reply" &&
+    !isOneOf(ASSISTANT_GROUP_SELF_PAUSE_REASONS, task.reason ?? "") &&
+    !requestTasks.some((parent) => parent.id === task.parentId && parent.status === "paused")
+  );
+}
+
+/** A request's tasks wait on the user: none still works and one needs them. */
+export function assistantGroupTasksNeedUser(tasks: ReadonlyArray<NeedsUserTask>): boolean {
+  return (
+    !tasks.some((task) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, task.status)) &&
+    tasks.some((task) => assistantGroupTaskNeedsUser(task, tasks))
   );
 }
 
