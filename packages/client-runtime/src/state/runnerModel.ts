@@ -290,6 +290,18 @@ export function routeActions(
   return actions;
 }
 
+/**
+ * A question's answers: both places, even the one it heads for. An answer never reruns a run Linux
+ * has not confirmed stopped; it runs there once Linux confirms, and the row's own action forces.
+ */
+export function askAnswers(
+  entry: HeavyQueueEntry,
+  state: Pick<HeavyQueueState, "linux" | "routes" | "macOnly">,
+): ReadonlyArray<RouteAction> {
+  const { route: _route, unconfirmed: _unconfirmed, ...unpinned } = entry;
+  return routeActions(unpinned, state);
+}
+
 export interface MoveAllAction {
   readonly runner: HeavyRunner;
   readonly label: string;

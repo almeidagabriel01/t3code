@@ -743,7 +743,8 @@ describe("Runner in the queue file", () => {
 
   it.each([
     ["cancel", "canceled", "Linux is unavailable and nobody answered in time: canceled"],
-    ["mac", "started", undefined],
+    // The agent hears why its Linux job runs here.
+    ["mac", "started", "Linux is unavailable and nobody answered: running here"],
     ["wait", "waiting", "Linux is unavailable: no answer, waiting for it"],
   ] as const)("a flapping link keeps the first deadline, then %s", (action, status, reason) => {
     const dir = queueWith(
@@ -804,16 +805,30 @@ describe("Runner in the queue file", () => {
     );
   });
 
-  it("Tell the agent ends a job Linux dropped, without a nobody-answered notice", () => {
-    const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })), false);
-    Queue.enqueue(dir, test("a", { dropped: true, linuxFailedAt: NOW - 1000 }));
-    expect(Queue.tryStart(dir, "a", NOW)).toEqual({
-      status: "canceled",
-      reason: "Linux couldn't run this: Linux dropped it mid-run",
-    });
-    expect(Queue.read(dir)).toEqual([]);
-    expect(Queue.readDoc(dir).events).toEqual([]);
-  });
+  // With the PC gone, the agent hears at once, even before Linux can confirm the run stopped.
+  it.each([
+    [false, "Linux couldn't run this: Linux dropped it mid-run"],
+    [
+      true,
+      "Linux couldn't run this: Linux dropped it mid-run, and hasn't confirmed it stopped there",
+    ],
+  ] as const)(
+    "Tell the agent ends a job Linux dropped (unconfirmed %s), without a nobody-answered notice",
+    (unconfirmed, reason) => {
+      const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })), false);
+      Queue.enqueue(
+        dir,
+        test("a", {
+          dropped: true,
+          linuxFailedAt: NOW - 1000,
+          ...(unconfirmed ? { unconfirmed } : {}),
+        }),
+      );
+      expect(Queue.tryStart(dir, "a", NOW)).toEqual({ status: "canceled", reason });
+      expect(Queue.read(dir)).toEqual([]);
+      expect(Queue.readDoc(dir).events).toEqual([]);
+    },
+  );
 
   it("logs a Linux-bound job that starts here, and the failure it then exits with", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerUnavailable: "mac" })), false);
@@ -949,9 +964,17 @@ describe("Runner in the queue file", () => {
     },
   );
 
-  it("forcing a rerun clears the unconfirmed hold", () => {
-    const dir = queueWith(block());
-    Queue.enqueue(dir, test("a", { unconfirmed: true }));
+  it("an answer to a drop's question waits for Linux to confirm; forcing a rerun clears the hold", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "ask" })), false);
+    const ask = { reason: "dropped" as const, deadlineAt: new Date(NOW + 60_000).toISOString() };
+    Queue.enqueue(
+      dir,
+      test("a", { dropped: true, linuxFailedAt: NOW - 1000, unconfirmed: true, ask }),
+    );
+    expect(Queue.route(dir, "a", "mac")).toBe("ok");
+    expect(Queue.read(dir)[0]).toMatchObject({ route: "mac", unconfirmed: true });
+    expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
     expect(Queue.route(dir, "a", "mac", true)).toBe("ok");
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
   });

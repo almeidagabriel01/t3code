@@ -394,13 +394,10 @@ const ASK_WAIT: RouteAction = {
 function RunnerAskRows(props: {
   readonly entry: HeavyQueueEntry;
   readonly ask: NonNullable<HeavyQueueEntry["ask"]>;
-  readonly routes: ReadonlyArray<RouteAction>;
   readonly actions: QueueActions;
 }) {
   const { entry, actions } = props;
   const now = useNow(1000);
-  // Running here may need the confirmation routeActions gives a run Linux has not confirmed stopped.
-  const mac = props.routes.find((action) => action.runner === "mac") ?? ASK_MAC;
   return (
     <>
       <ListRowLayout
@@ -413,7 +410,7 @@ function RunnerAskRows(props: {
         icon="laptopcomputer"
         label={ASK_MAC.label}
         disabled={!actions.canRoute}
-        onPress={() => actions.route(entry, mac)}
+        onPress={() => actions.route(entry, ASK_MAC)}
       />
       <SettingsActionRow
         icon="hourglass"
@@ -617,7 +614,7 @@ function QueueRow(props: {
       menu={<RowMenuButton label={`Actions for ${name}`} actions={menu} onAction={run} />}
     >
       {entry.ask === undefined ? null : (
-        <RunnerAskRows entry={entry} ask={entry.ask} routes={routes} actions={actions} />
+        <RunnerAskRows entry={entry} ask={entry.ask} actions={actions} />
       )}
     </HeavyRow>
   );

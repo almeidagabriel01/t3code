@@ -351,6 +351,8 @@ export type StartResult =
       readonly workers: number | null;
       readonly runner?: "linux";
       readonly ungated?: true;
+      /** Why a job bound for Linux starts on this Mac instead, for the agent that waits on it. */
+      readonly reason?: string;
     }
   | {
       readonly status: "waiting";
@@ -528,6 +530,13 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
       unconfirmed: _unconfirmed,
       ...rest
     }: QueuedEntry = entry;
+    const record = startRecord(
+      entry,
+      intentOf(entry, contextOf(doc)(entry.cwd)).intent,
+      admit.runner,
+      now,
+    );
+    const displacedWhy = record?.kind === "displaced" ? decision.reasons[id] : undefined;
     const started: HeavyQueueEntry = {
       ...rest,
       startedAt: new Date(now).toISOString(),
@@ -554,16 +563,14 @@ const decideStart = (doc: QueueDoc, id: string, now: number): Decided<StartResul
         // Only a gated Mac start makes the next Mac waiter let it ramp up.
         lastStartAt: gated ? now : doc.lastStartAt,
         holding: decision.holding,
-        events: withRecord(
-          doc.events,
-          startRecord(entry, intentOf(entry, contextOf(doc)(entry.cwd)).intent, admit.runner, now),
-        ),
+        events: withRecord(doc.events, record),
       },
       result: {
         status: "started",
         workers,
         ...(admit.runner === "linux" ? { runner: "linux" as const } : {}),
         ...(admit.ungated ? { ungated: true as const } : {}),
+        ...(displacedWhy === undefined ? {} : { reason: displacedWhy }),
       },
     };
   }
@@ -1149,7 +1156,11 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
       if ((target.runner ?? "mac") === runner) return { doc, result: "ok" };
       return update((entry) => ({ ...entry, requeue: runner }));
     }
-    if (target.unconfirmed === true && !force) return { doc, result: "unconfirmed" };
+    if (target.unconfirmed === true && !force) {
+      if (target.ask === undefined) return { doc, result: "unconfirmed" };
+      // Its question's answer runs once Linux confirms the run stopped; only `force` reruns now.
+      return update(({ ask: _ask, forced: _forced, ...entry }) => ({ ...entry, route: runner }));
+    }
     return update(({ ask: _ask, unconfirmed: _unconfirmed, forced: _forced, ...entry }) => ({
       ...entry,
       route: runner,

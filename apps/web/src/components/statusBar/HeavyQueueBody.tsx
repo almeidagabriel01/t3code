@@ -31,6 +31,7 @@ import {
 } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   ASK_TITLE,
+  askAnswers,
   askRemaining,
   moveAllActions,
   routeActions,
@@ -285,9 +286,7 @@ function AskPrompt({
   readonly now: number;
 }) {
   const title = ASK_TITLE[ask.reason];
-  // Unpinned, so the runner it already heads for is offered too, with any rerun confirmation.
-  const { route: _route, ...unpinned } = entry;
-  const answers = routeActions(unpinned, state);
+  const answers = askAnswers(entry, state);
   return (
     <div
       role="group"

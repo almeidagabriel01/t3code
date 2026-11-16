@@ -7,6 +7,7 @@ import {
   heavyModeLine,
   linuxLine,
   moveAllActions,
+  askAnswers,
   routeActions,
   RUNNER_SETTING_COPY,
   RUNNER_WHERE_DESCRIPTION,
@@ -184,9 +185,19 @@ describe("a row's runner", () => {
     expect(routeActions(entry(), offline).map((a) => a.runner)).toEqual(["mac", "linux"]);
   });
 
-  it("an unconfirmed drop reruns only with a warning and force", () => {
+  it("an unconfirmed drop reruns only with a warning and force; its question's answer waits instead", () => {
     const [mac] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
+    const ask = { reason: "dropped" as const, deadlineAt: "2026-01-01T00:00:00.000Z" };
+    // Pinned or not, the question offers both places, and neither reruns before Linux confirms.
+    for (const route of [undefined, "linux" as const]) {
+      expect(
+        askAnswers(entry({ unconfirmed: true, ask, ...(route ? { route } : {}) }), state),
+      ).toEqual([
+        { runner: "mac", label: "Run on this Mac", confirm: null, force: false },
+        { runner: "linux", label: "Run on Linux", confirm: null, force: false },
+      ]);
+    }
   });
 });
 

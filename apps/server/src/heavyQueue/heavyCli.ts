@@ -686,8 +686,11 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
 
   const readHost = makeHostReader();
   const environment = process.env;
+  let confirming: Promise<void> | undefined;
   while (true) {
     const start = await waitForStart(dir, id, readHost, environment);
+    // Never beside the stop check of the run it lost: that check matches this run's folder there.
+    await confirming;
     const doc = readDoc(dir);
     const self = doc.entries.find((entry) => entry.id === id);
     const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
@@ -710,6 +713,7 @@ export const runHeavyCli = async (argv: ReadonlyArray<string>): Promise<void> =>
             (handler) => (onSignal = handler),
           );
     if (outcome.kind === "exit") process.exit(outcome.code);
+    confirming = outcome.confirming;
     onSignal = (signal) => process.exit(WAITING_EXIT[signal]);
   }
 };
@@ -737,7 +741,10 @@ const waitForStart = async (
       process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
       process.exit(LINUX_UNAVAILABLE_EXIT);
     }
-    if (start.status === "started") return start;
+    if (start.status === "started") {
+      if (start.reason !== undefined) process.stderr.write(`[t3 heavy] ${start.reason}.\n`);
+      return start;
+    }
     const shown = `${start.position}|${start.running?.id ?? ""}|${start.runner ?? ""}|${start.paused ?? ""}|${start.reason ?? ""}`;
     if (shown !== lastShown) {
       lastShown = shown;
@@ -789,7 +796,10 @@ const linkFailuresOf = (dir: string, id: string) =>
   ((readDoc(dir).entries.find((entry) => entry.id === id) as QueuedEntry | undefined)
     ?.linkFailures ?? 0) + 1;
 
-type Attempt = { readonly kind: "exit"; readonly code: number } | { readonly kind: "requeued" };
+type Attempt =
+  | { readonly kind: "exit"; readonly code: number }
+  /** `confirming` settles once Linux confirmed (or nobody waits for) the run it lost. */
+  | { readonly kind: "requeued"; readonly confirming?: Promise<void> };
 type SignalHook = (handler: (signal: (typeof SIGNALS)[number]) => void) => void;
 
 const requeueOf = (dir: string, id: string) =>
@@ -972,8 +982,10 @@ const runLinuxAttempt = async (
     const clean = await confirmGone();
     process.stderr.write(`[t3 heavy] moved by the user; waiting to run on ${runnerName(moved)}.\n`);
     requeue(dir, id, { route: moved, ...(clean ? {} : { unconfirmed: true }) });
-    if (!clean) await confirmLater(dir, id, machine, environment, remote!);
-    return { kind: "requeued" };
+    return {
+      kind: "requeued",
+      ...(clean ? {} : { confirming: confirmLater(dir, id, machine, environment, remote!) }),
+    };
   }
   if (outcome === null || outcome.kind === "finished") {
     return { kind: "exit", code: exitCodeOf(exit.code, exit.signal) };
@@ -1002,8 +1014,10 @@ const runLinuxAttempt = async (
       linkFailures: linkFailuresOf(dir, id),
       ...(clean ? {} : { unconfirmed: true }),
     });
-    if (!clean) await confirmLater(dir, id, machine, environment, remote!);
-    return { kind: "requeued" };
+    return {
+      kind: "requeued",
+      ...(clean ? {} : { confirming: confirmLater(dir, id, machine, environment, remote!) }),
+    };
   }
   process.stderr.write(
     "[t3 heavy] Linux dropped the connection mid-run; confirming the run stopped there.\n",
@@ -1016,8 +1030,12 @@ const runLinuxAttempt = async (
     linkFailures: linkFailuresOf(dir, id),
     ...(clean ? {} : { unconfirmed: true }),
   });
-  if (!clean && remote !== null) await confirmLater(dir, id, machine, environment, remote);
-  return { kind: "requeued" };
+  return {
+    kind: "requeued",
+    ...(clean || remote === null
+      ? {}
+      : { confirming: confirmLater(dir, id, machine, environment, remote) }),
+  };
 };
 
 /**
@@ -1220,7 +1238,8 @@ const endLine = (dir: string, id: string, outcome: PartOutcome): never => {
 
 /**
  * Keeps trying, once per heartbeat interval, to confirm a run ended there, so the entry never
- * reruns while it may still be running. The user can force a rerun from T3 meanwhile.
+ * reruns while it may still be running. It runs beside the wait, so a policy that reruns nothing
+ * (Tell the agent, a question, Cancel) still acts meanwhile. The user can force a rerun from T3.
  */
 const confirmLater = async (
   dir: string,
@@ -1229,8 +1248,11 @@ const confirmLater = async (
   environment: NodeJS.ProcessEnv,
   remote: { readonly id: string; readonly pgid: number | null },
 ) => {
-  while (readDoc(dir).entries.find((entry) => entry.id === id)?.unconfirmed === true) {
+  const waiting = () => readDoc(dir).entries.find((entry) => entry.id === id)?.unconfirmed === true;
+  while (waiting()) {
     await pause(machine.runnerHeartbeatSeconds * 1000);
+    // A forced rerun cleared it meanwhile: a stop now would hit that run, in the same folder there.
+    if (!waiting()) return;
     if (confirmed(await stopRemote(machine, environment, remote.id, remote.pgid))) {
       confirmStopped(dir, id);
       process.stderr.write("[t3 heavy] Linux confirmed the earlier run stopped.\n");
