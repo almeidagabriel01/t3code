@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/needsUser";
 
 import { assistantGroupChatWaiting } from "./assistantGroupChat.ts";
+import type { AttentionKey } from "./attentionOrder.ts";
 import type { AssistantWorkSite } from "./assistantLiveWork.ts";
 import {
   assistantPresence,
@@ -120,6 +121,8 @@ export interface NeedsYouDecision {
   readonly createdAt: string;
   readonly notice?: true | undefined;
   readonly approvalRequestId?: string | undefined;
+  readonly title?: string | undefined;
+  readonly expiresAt?: string | undefined;
 }
 
 export type NeedsYouItem<D extends NeedsYouDecision = NeedsYouDecision> = {
@@ -193,6 +196,63 @@ export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(i
 function compareOldestFirst(a: string | null, b: string | null): number {
   if (a === null || b === null) return Number(a === null) - Number(b === null);
   return a.localeCompare(b);
+}
+
+/** A wait that expires within this window is drawn as urgent. */
+const NEEDS_YOU_DUE_SOON_MS = 60 * 60 * 1000;
+
+export type NeedsYouDue = { readonly at: string; readonly soon: boolean } | null;
+
+/** When a wait expires, and whether that is under an hour away (or past); null without a deadline. */
+export function needsYouDue(expiresAt: string | null | undefined, nowMs: number): NeedsYouDue {
+  if (expiresAt == null) return null;
+  const at = Date.parse(expiresAt);
+  if (Number.isNaN(at)) return null;
+  return { at: expiresAt, soon: at - nowMs < NEEDS_YOU_DUE_SOON_MS };
+}
+
+/** Who asks, for the card's first line: a group, an assistant, or the thread itself. */
+export type NeedsYouFrom =
+  | { readonly kind: "group"; readonly teamKey: string; readonly assistantKey: string }
+  | { readonly kind: "assistant"; readonly assistantKey: string }
+  | { readonly kind: "thread" };
+
+const needsYouFrom = (owner: ThreadOwner): NeedsYouFrom =>
+  owner.kind === "project"
+    ? { kind: "thread" }
+    : owner.teamKey === null
+      ? { kind: "assistant", assistantKey: owner.assistantKey }
+      : { kind: "group", teamKey: owner.teamKey, assistantKey: owner.assistantKey };
+
+export type NeedsYouCard<D extends NeedsYouDecision = NeedsYouDecision> = NeedsYouItem<D> & {
+  readonly from: NeedsYouFrom;
+  /** The decision's own title; null for a request or a guest, which the client titles itself. */
+  readonly title: string | null;
+  readonly due: NeedsYouDue;
+};
+
+/**
+ * The Needs you cards both clients draw: who asks, the title and the deadline. Waits that expire
+ * within the hour come first, soonest first; the rest keep the `needsYouItems` order.
+ */
+export function needsYouCards<D extends NeedsYouDecision>(
+  items: ReadonlyArray<NeedsYouItem<D>>,
+  nowMs: number,
+): ReadonlyArray<NeedsYouCard<D>> {
+  const cards = items.map((item): NeedsYouCard<D> => ({
+    ...item,
+    from: needsYouFrom(item.owner),
+    title: item.kind === "decision" ? (item.decision.title ?? null) : null,
+    due: item.kind === "decision" ? needsYouDue(item.decision.expiresAt, nowMs) : null,
+  }));
+  const dueAt = (card: NeedsYouCard<D>) => (card.due?.soon ? Date.parse(card.due.at) : Infinity);
+  // Infinity - Infinity is NaN, which falls through to the `needsYouItems` rule.
+  return cards.sort(
+    (a, b) =>
+      dueAt(a) - dueAt(b) ||
+      compareOldestFirst(a.createdAt, b.createdAt) ||
+      a.key.localeCompare(b.key),
+  );
 }
 
 export interface ZoneTeam {
@@ -307,6 +367,20 @@ export function folderIndicator(input: {
   if (running > 0) return { kind: "running", count: running };
   if ((input.chat?.unreadCount ?? 0) > 0) return { kind: "unread", count: input.chat!.unreadCount };
   return null;
+}
+
+/** A group folder's place in the Teams zone, by the same order as its members. */
+export function folderAttention(input: {
+  /** From `countWaits` over the drawn members and the group's key. */
+  readonly needsYou: number;
+  readonly members: ReadonlyArray<{ readonly mood: AssistantMood; readonly activityAt: number }>;
+  /** A task of the group itself is queued, running or waiting. */
+  readonly working: boolean;
+}): AttentionKey {
+  const activityAt = Math.max(0, ...input.members.map((member) => member.activityAt));
+  if (input.needsYou > 0) return { tier: "needsYou", activityAt };
+  const working = input.working || input.members.some((member) => member.mood === "working");
+  return { tier: working ? "working" : "rest", activityAt };
 }
 
 export const ENVIRONMENT_DISCONNECTED_LABEL = "This environment is disconnected";
