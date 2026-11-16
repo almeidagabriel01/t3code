@@ -1,4 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
+import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProjectAccess";
 import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
+import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
@@ -28,6 +31,7 @@ import {
 import { useParams } from "@tanstack/react-router";
 import { memo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
+import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
 import { updateClientSettings } from "../../hooks/useSettings";
 import type { AssistantEntry, AssistantTeamEntry } from "../../state/assistants";
@@ -37,6 +41,7 @@ import { resolveSidebarNotificationDotClass, resolveThreadLastVisitedAt } from "
 import { SidebarNotificationDot } from "../sidebar/SidebarNotificationDot";
 import { SubagentRows } from "../sidebar/SidebarSubagentRows";
 import { JumpHintBadge } from "../sidebar/JumpHintBadge";
+import { settingsScopeEnvironmentAddress } from "../settings/settingsScopeAxis";
 import { startThreadDrag } from "../threadDrag";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -655,10 +660,22 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
   const routeEnvironmentId = useParams({ strict: false, select: (params) => params.environmentId });
   const routeTeamId = useParams({ strict: false, select: (params) => params.teamId });
   const [describing, setDescribing] = useState(false);
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   if (!enabled || empty) return null;
-  const environmentCount = new Set(
-    rows.flatMap((row) => (row.kind === "assistant" ? [row.entry.environmentId] : [])),
-  ).size;
+  const environmentLabel = teamsEnvironmentLabels(
+    props.model.entries,
+    new Map(
+      [...props.environmentLabelById].map(([id, label]) => {
+        const environmentId = id as EnvironmentId;
+        const entry = catalog.entries.get(environmentId);
+        const displayUrl = entry === undefined ? null : connectionCatalogDisplayUrl(entry);
+        return [
+          environmentId,
+          { label, address: settingsScopeEnvironmentAddress({ environmentId, label, displayUrl }) },
+        ] as const;
+      }),
+    ),
+  );
   const routeRowThreadKey = props.routeRowThreadKey ?? props.routeThreadKey;
   const toggle = () => void updateClientSettings({ sidebarAssistantsCollapsed: !collapsed });
   const onToggleGroup = (foldKey: string) => toggleGroup(expandedGroups, foldKey);
@@ -795,11 +812,7 @@ export const AssistantSidebarSection = memo(function AssistantSidebarSection(pro
             }
             item={row.item}
             nested={row.nested}
-            environmentLabel={
-              environmentCount > 1
-                ? (props.environmentLabelById.get(row.entry.environmentId) ?? null)
-                : null
-            }
+            environmentLabel={environmentLabel(row.entry.environmentId, row.entry.assistant.id)}
             isActive={chatKey !== null && chatKey === props.routeThreadKey}
             activeThreadKey={hasTasks(row.item) ? props.routeThreadKey : null}
             onOpen={props.onOpenThread}

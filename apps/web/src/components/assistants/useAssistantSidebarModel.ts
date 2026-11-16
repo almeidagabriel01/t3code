@@ -216,6 +216,10 @@ export function useAssistantSidebarModel(zones: SidebarZones) {
     /** Active assistants, for the collapsed header's count. */
     count: layout.ungrouped.length + layout.folders.reduce((sum, f) => sum + f.members.length, 0),
     empty: layout.ungrouped.length === 0 && layout.folders.length === 0,
+    /** Every listed assistant, folded or not, so their labels do not change as groups open. */
+    entries: [...layout.ungrouped, ...layout.folders.flatMap((folder) => folder.members)].map(
+      (member) => member.entry,
+    ),
     rows,
     threadKeys,
   };
