@@ -148,6 +148,7 @@ export interface AccessCheckout {
   readonly id: ProjectId;
   /** The name the block title shows; environments on one host often share it. */
   readonly environmentLabel: string | null;
+  readonly workspaceRoot: string;
 }
 
 /** What a block's title names; null when the project shows only one block. */
@@ -156,6 +157,8 @@ export interface ProjectAccessBlockTitle {
   readonly environment: boolean;
   /** Another block shows the same environment name, so the checkout paths tell them apart. */
   readonly path: boolean;
+  /** Another environment shows the same name and paths, so only its address tells them apart. */
+  readonly address: boolean;
 }
 
 /**
@@ -206,22 +209,31 @@ export function projectAccessBlocks<
         checkouts: [checkout],
       });
   }
-  const list = [...blocks.values()];
-  const environments = new Set(list.map((block) => block.environmentId));
-  return list.map(({ environmentLabel, ...block }) => ({
+  const list = [...blocks.values()].map((block) => ({
     ...block,
-    projectIds: block.checkouts.map((checkout) => checkout.id),
-    title:
-      list.length === 1
-        ? null
-        : {
-            environment: environments.size > 1,
-            path: list.some(
-              (other) =>
-                other.checkouts !== block.checkouts &&
-                (other.environmentId === block.environmentId ||
-                  other.environmentLabel === environmentLabel),
-            ),
-          },
+    paths: block.checkouts.map((checkout) => checkout.workspaceRoot).join("\n"),
   }));
+  const environments = new Set(list.map((block) => block.environmentId));
+  return list.map(({ environmentLabel, paths, ...block }) => {
+    const sameName = list.filter(
+      (other) =>
+        other.checkouts !== block.checkouts &&
+        (other.environmentId === block.environmentId ||
+          other.environmentLabel === environmentLabel),
+    );
+    return {
+      ...block,
+      projectIds: block.checkouts.map((checkout) => checkout.id),
+      title:
+        list.length === 1
+          ? null
+          : {
+              environment: environments.size > 1,
+              path: sameName.length > 0,
+              address: sameName.some(
+                (other) => other.environmentId !== block.environmentId && other.paths === paths,
+              ),
+            },
+    };
+  });
 }

@@ -391,6 +391,9 @@ function ProjectOverviewContent(props: {
         environmentLabel={(environmentId) =>
           props.environments.find((entry) => entry.environmentId === environmentId)?.label
         }
+        environmentAddress={(environmentId) =>
+          props.environments.find((entry) => entry.environmentId === environmentId)?.displayUrl
+        }
       />
 
       <SettingsSection title={PROJECT_OVERVIEW_COPY.checkouts.title}>

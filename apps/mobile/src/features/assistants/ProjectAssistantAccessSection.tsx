@@ -28,6 +28,7 @@ export function ProjectAssistantAccessSection(props: {
   readonly projectIds: ReadonlyArray<ProjectId>;
   readonly title?: {
     readonly environment: string | null;
+    readonly address: string | null;
     readonly paths: ReadonlyArray<string>;
   };
 }) {
@@ -60,6 +61,11 @@ export function ProjectAssistantAccessSection(props: {
           {props.title.environment === null ? null : (
             <Text textRole="footnote" className="font-t3-medium text-foreground">
               {props.title.environment}
+            </Text>
+          )}
+          {props.title.address === null ? null : (
+            <Text textRole="footnote" className="text-foreground-muted" numberOfLines={1}>
+              {props.title.address}
             </Text>
           )}
           {props.title.paths.map((path) => (
@@ -158,11 +164,13 @@ const blockTitle = (
   title: ProjectAccessBlockTitle | null,
   checkouts: ReadonlyArray<{ readonly workspaceRoot: string }>,
   environment: string,
+  address: string,
 ) =>
   title === null
     ? undefined
     : {
         environment: title.environment ? environment : null,
+        address: title.address ? address : null,
         paths: title.path ? checkouts.map((checkout) => checkout.workspaceRoot) : [],
       };
 
@@ -174,6 +182,7 @@ export function ProjectAssistantAccessSections(props: {
     readonly workspaceRoot: string;
   }>;
   readonly environmentLabel: (environmentId: EnvironmentId) => string | undefined;
+  readonly environmentAddress: (environmentId: EnvironmentId) => string | null | undefined;
 }) {
   const { active, teams } = useAssistantEntries();
   const members = props.members.map((member) => ({
@@ -185,6 +194,7 @@ export function ProjectAssistantAccessSections(props: {
       block.title,
       block.checkouts,
       block.checkouts[0]?.environmentLabel ?? "Environment",
+      props.environmentAddress(block.environmentId) ?? block.environmentId,
     );
     return (
       <ProjectAssistantAccessSection
