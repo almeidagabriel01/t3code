@@ -178,17 +178,25 @@ function ProjectOverviewContent(props: {
   );
   const offline = memberTargets.some((target) => target === undefined);
   // Older servers drop pin and archive, so their projects do not offer them.
-  // Offline members are checked when the write runs, so their reason can show.
-  const canOrganize =
-    allMembers.every(
-      (member, index) =>
-        memberTargets[index] === undefined || removableEnvironments.has(member.environmentId),
-    ) &&
-    memberTargets.every(
-      (target) =>
-        target === undefined ||
-        target.serverConfig.environment.capabilities.projectOrganization === true,
-    );
+  const organizeSupported = memberTargets.every(
+    (target) =>
+      target === undefined ||
+      target.serverConfig.environment.capabilities.projectOrganization === true,
+  );
+  const organizeAccess = useEnvironmentsScopeAccess(allMembers, AuthOrchestrationOperateScope);
+  // Offline members are checked when the write runs; "unknown" disables without a reason.
+  const onlineAccesses = allMembers.flatMap((member, index) =>
+    memberTargets[index] === undefined ? [] : [organizeAccess.get(member.environmentId)],
+  );
+  const organizeBlockedReason = onlineAccesses.includes("missing")
+    ? PROJECT_OVERVIEW_COPY.organize.noPermission
+    : offline
+      ? PROJECT_OVERVIEW_COPY.organize.offline
+      : null;
+  const organizeDisabled =
+    isOrganizing ||
+    organizeBlockedReason !== null ||
+    onlineAccesses.some((access) => access !== "granted");
   // One machine at a time, stopping at the first failure, as web does.
   const organize = async (input: { readonly pinned?: boolean; readonly archived?: boolean }) => {
     setIsOrganizing(true);
@@ -362,18 +370,14 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
-      {canOrganize ? (
+      {organizeSupported ? (
         <SettingsSection title={PROJECT_OVERVIEW_COPY.organize.title}>
           <SettingsSwitchRow
             icon="pin"
             label={PROJECT_OVERVIEW_COPY.organize.pin.title}
-            subtitle={
-              offline
-                ? PROJECT_OVERVIEW_COPY.organize.offline
-                : PROJECT_OVERVIEW_COPY.organize.pin.description
-            }
+            subtitle={organizeBlockedReason ?? PROJECT_OVERVIEW_COPY.organize.pin.description}
             value={props.group.pinned}
-            disabled={isOrganizing || offline}
+            disabled={organizeDisabled}
             onValueChange={(pinned) => void organize({ pinned })}
           />
           <SettingsActionRow
@@ -384,13 +388,12 @@ function ProjectOverviewContent(props: {
                 : PROJECT_OVERVIEW_COPY.organize.archive.title
             }
             description={
-              offline
-                ? PROJECT_OVERVIEW_COPY.organize.offline
-                : props.group.archived
-                  ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
-                  : PROJECT_OVERVIEW_COPY.organize.archive.description
+              organizeBlockedReason ??
+              (props.group.archived
+                ? PROJECT_OVERVIEW_COPY.organize.unarchive.description
+                : PROJECT_OVERVIEW_COPY.organize.archive.description)
             }
-            disabled={isOrganizing || offline}
+            disabled={organizeDisabled}
             onPress={() => void organize({ archived: !props.group.archived })}
           />
         </SettingsSection>
