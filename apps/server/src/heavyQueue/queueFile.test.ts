@@ -167,6 +167,25 @@ describe("heavy queue file", () => {
     expect(ids(dir)).toEqual(["a"]);
   });
 
+  // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
+  it.each([0, 1, -2, 1.5, "7", 42])(
+    "reads a stored process group of %j only as a real one",
+    (pgid) => {
+      const dir = tempDir();
+      const remote = { id: "w-1", pgid };
+      NodeFS.writeFileSync(
+        NodePath.join(dir, "queue.json"),
+        JSON.stringify({
+          entries: [{ ...entry("a"), remote }],
+          lostRuns: [{ key: "k", entryId: "a", cwd: "/w", remote }],
+        }),
+      );
+      const real = pgid === 42 ? 42 : null;
+      expect(Queue.read(dir)[0]!.remote).toEqual(real === null ? { id: "w-1" } : remote);
+      expect(Queue.readDoc(dir).lostRuns[0]!.remote).toEqual({ id: "w-1", pgid: real });
+    },
+  );
+
   it("clears a stale lock instead of waiting forever", () => {
     const dir = tempDir();
     const lock = NodePath.join(dir, "lock");

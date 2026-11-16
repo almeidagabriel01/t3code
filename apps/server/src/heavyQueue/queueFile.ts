@@ -235,6 +235,10 @@ const EMPTY_DOC: QueueDoc = {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+/** A stored process group, or null: 0 or 1 is never a run's own, and `kill -- -1` reaches all. */
+const realPgid = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 1 ? value : null;
+
 /** A stored queue setting, or its default when it is missing or out of range. */
 const limitOf = (parsed: Record<string, unknown> | null, key: HeavyQueueLimitKey) => {
   const value = parsed?.[key];
@@ -292,7 +296,14 @@ const loadDoc = (dir: string): QueueDoc => {
     return {
       // Keys this version does not know stay in the file for the versions that do.
       ...(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}),
-      entries: Array.isArray(parsed?.entries) ? (parsed.entries as HeavyQueueEntry[]) : [],
+      entries: Array.isArray(parsed?.entries)
+        ? (parsed.entries as HeavyQueueEntry[]).map((entry) => {
+            if (!isObject(entry.remote) || entry.remote.pgid === undefined) return entry;
+            const { pgid, ...remote } = entry.remote;
+            const real = realPgid(pgid);
+            return { ...entry, remote: real === null ? remote : { ...remote, pgid: real } };
+          })
+        : [],
       enabled: parsed?.enabled !== false,
       paused: parsed?.paused === true,
       rules: Array.isArray(parsed?.rules) ? (parsed.rules as HeavyQueueRule[]) : [],
@@ -340,11 +351,11 @@ const loadDoc = (dir: string): QueueDoc => {
                 isObject(value.remote) &&
                 typeof value.remote.id === "string",
             )
-            .map((lost) =>
-              typeof lost.key === "string"
-                ? lost
-                : { ...lost, key: `${lost.entryId}:${lost.remote.id}` },
-            )
+            .map((lost) => ({
+              ...lost,
+              key: typeof lost.key === "string" ? lost.key : `${lost.entryId}:${lost.remote.id}`,
+              remote: { ...lost.remote, pgid: realPgid(lost.remote.pgid) },
+            }))
         : [],
       events: parseLog(parsed?.events),
       results: Array.isArray(record?.results)

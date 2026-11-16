@@ -316,6 +316,26 @@ describe("t3 heavy", () => {
       expect(Queue.read(dir)).toEqual([]);
     });
 
+    // A heartbeat's own failure is only logged: it never takes the agent's command down with it.
+    it("a stop of a lost run that throws leaves the waiting command running", async () => {
+      const { dir, env } = setup(
+        [
+          `printf '${M} phase=running pgid=4\\n' >&2`,
+          "echo remote-out",
+          `printf '${M} exit=0\\n' >&2`,
+        ].join("\n"),
+      );
+      const path = NodePath.join(dir, "queue.json");
+      const doc = JSON.parse(NodeFS.readFileSync(path, "utf8")) as Record<string, unknown>;
+      // An id the stop script refuses, from another folder so it holds nothing back here.
+      const lost = { key: "k", entryId: "gone", cwd: tempDir(), remote: { id: "bad id", pgid: 7 } };
+      NodeFS.writeFileSync(path, JSON.stringify({ ...doc, lostRuns: [lost] }));
+      const run = heavyHere(dir, ["vp", "test", "run"], env, ["--runner", "linux", "--"]);
+      expect(await run.exited).toBe(0);
+      expect(run.stdout()).toBe("remote-out\n");
+      expect(run.stderr()).toContain("[t3 heavy] Linux check failed: Error: Unsafe run id: bad id");
+    });
+
     it("an agent's own remoto call runs once on Linux, from its cd folder", async () => {
       const { dir, env } = setup(
         [

@@ -773,9 +773,15 @@ const checkLinuxIfStale = (dir: string, environment: NodeJS.ProcessEnv) => {
         await drainLostRuns(dir, machine, environment);
       }
     })
+    .catch(logCheckFailure)
     .finally(() => {
       healthCheckRunning = false;
     });
+};
+
+/** A heartbeat's own failure is only noted: it never ends the command waiting beside it. */
+const logCheckFailure = (error: unknown) => {
+  process.stderr.write(`[t3 heavy] Linux check failed: ${String(error)}\n`);
 };
 
 /**
@@ -787,10 +793,12 @@ const checkLinuxNow = (dir: string, environment: NodeJS.ProcessEnv) => {
   const machine = doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG;
   if (!claimHealthCheck(dir, (machine.runnerHeartbeatSeconds * 1000) / 2)) return;
   healthCheckRunning = true;
-  void checkLinux(linkMachine(machine, doc.sample), environment).then((check) => {
-    healthCheckRunning = false;
-    recordHealth(dir, check);
-  });
+  void checkLinux(linkMachine(machine, doc.sample), environment)
+    .then((check) => recordHealth(dir, check))
+    .catch(logCheckFailure)
+    .finally(() => {
+      healthCheckRunning = false;
+    });
 };
 
 /** Its runs that lost the link so far, this one included. */
