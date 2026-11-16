@@ -294,7 +294,8 @@ These follow the row, none of them a new mechanism:
   nothing waiting on the user, and the owner's run started by the notice that covers that run
   (`TaskEventNotices.told`: that run's notice, or an earlier one it adds nothing to) completed. It
   checks on the task's run end, on the owner's run end and on start, and dismisses once per run
-  (`auto_dismissed_run_id`), so a Restore holds until another run delivers. A dismissed task with
+  (`auto_dismissed_run_id`, a conditional write). A Restore records the task's latest run there too,
+  so it holds until another run delivers, even against a check already in flight. A dismissed task with
   nothing left on its branch then settles (`ThreadSettlementService.finishedWorkSettlement`), and so
   do subagent children whose parent took their result or settled.
 

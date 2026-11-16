@@ -42,9 +42,11 @@ export class AssistantTasks extends Context.Service<
     readonly unlink: (threadId: ThreadId) => Effect.Effect<void>;
     readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<AssistantTask>>;
     /** Dismissing keeps the first time; restoring clears it. None when the thread is no task. */
+    /** A restore records `handledRunId`, so that run's delivery never dismisses the task again. */
     readonly setDismissed: (
       threadId: ThreadId,
       dismissedAt: string | null,
+      handledRunId?: string | null,
     ) => Effect.Effect<Option.Option<AssistantTask>>;
     /**
      * Dismisses a task once its run's result reached its assistant. Once per run, so a Restore
@@ -88,9 +90,17 @@ const make = Effect.gen(function* () {
       yield* sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`;
     }, Effect.orDie),
     forThread,
-    setDismissed: Effect.fn("AssistantTasks.setDismissed")(function* (threadId, dismissedAt) {
+    setDismissed: Effect.fn("AssistantTasks.setDismissed")(function* (
+      threadId,
+      dismissedAt,
+      handledRunId = null,
+    ) {
       yield* dismissedAt === null
-        ? sql`UPDATE assistant_tasks SET dismissed_at = NULL WHERE thread_id = ${threadId}`
+        ? sql`
+            UPDATE assistant_tasks
+            SET dismissed_at = NULL,
+              auto_dismissed_run_id = COALESCE(${handledRunId}, auto_dismissed_run_id)
+            WHERE thread_id = ${threadId}`
         : sql`
             UPDATE assistant_tasks SET dismissed_at = COALESCE(dismissed_at, ${dismissedAt})
             WHERE thread_id = ${threadId}`;

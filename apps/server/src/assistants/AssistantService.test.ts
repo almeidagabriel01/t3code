@@ -66,6 +66,7 @@ interface FakeThread {
   modelSelection: ModelSelection;
   activeRunId?: string | null;
   shell?: Record<string, unknown>;
+  runs?: ReadonlyArray<{ readonly id: string; readonly status: string; readonly ordinal: number }>;
 }
 
 /** The thread side of the world, with the pointer each archive or delete saw recorded. */
@@ -93,7 +94,7 @@ const harness = (options: { readonly failEventStream?: Deferred.Deferred<void> }
             const thread = threads.get(threadId);
             return thread === undefined
               ? Effect.fail(new Error("missing") as never)
-              : Effect.succeed({ thread } as never);
+              : Effect.succeed({ thread, runs: thread.runs ?? [] } as never);
           },
           getThreadShell: (threadId: string) =>
             Effect.succeed(
@@ -1786,8 +1787,15 @@ it.effect(
 
       // Restoring needs no idle thread, and a repeat lands on the same result.
       threads.get("task-1")!.activeRunId = "run-2";
+      threads.get("task-1")!.runs = [
+        { id: "run-1", status: "completed", ordinal: 1 },
+        { id: "run-2", status: "rolled_back", ordinal: 2 },
+      ];
       assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
       assert.isNull((yield* assistants.restoreTask(task)).dismissedAt);
+      // The restore covers the result it saw: that run's delivery never dismisses it again.
+      assert.isFalse(yield* links.autoDismiss(task, "run-1"));
+      assert.isTrue(yield* links.autoDismiss(task, "run-3"));
 
       const missing = yield* assistants.restoreTask(ThreadId.make("nope")).pipe(Effect.flip);
       assert.equal(missing.reason, "not_found");

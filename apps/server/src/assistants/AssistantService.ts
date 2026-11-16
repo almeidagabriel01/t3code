@@ -117,6 +117,17 @@ export interface AssistantTaskList {
 const TASK_LIST_CAP = 50;
 
 /** The task chip the clients show, read from the task thread's shell. */
+/** The run a task's result comes from: its newest one that was not rolled back. */
+export const deliveredRunOf = <Run extends { readonly status: string; readonly ordinal: number }>(
+  runs: ReadonlyArray<Run>,
+): Run | undefined =>
+  runs
+    .filter((run) => run.status !== "rolled_back")
+    .reduce<Run | undefined>(
+      (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+      undefined,
+    );
+
 export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
   const parked =
     backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
@@ -568,7 +579,15 @@ const make = Effect.gen(function* () {
         return yield* invalid("A running task cannot be dismissed. Stop it first.");
       }
     }
-    const stored = yield* tasks.setDismissed(threadId, dismissed ? yield* nowIso : null);
+    if (!dismissed) {
+      // The restore covers the result already delivered; only a newer run dismisses it again.
+      const { runs } = yield* threads
+        .getThreadRecords(threadId, ["runs"])
+        .pipe(Effect.orElseSucceed(() => ({ runs: [] })));
+      const stored = yield* tasks.setDismissed(threadId, null, deliveredRunOf(runs)?.id ?? null);
+      return Option.getOrElse(stored, () => current.value);
+    }
+    const stored = yield* tasks.setDismissed(threadId, yield* nowIso);
     return Option.getOrElse(stored, () => current.value);
   });
 

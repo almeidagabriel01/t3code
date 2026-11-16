@@ -33,7 +33,7 @@ import { waitWakeId, type RequestDecision } from "../autonomy/needsYou.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { taskStatusOf } from "./AssistantService.ts";
+import { deliveredRunOf, taskStatusOf } from "./AssistantService.ts";
 import { AssistantTasks } from "./AssistantTasks.ts";
 import { TaskEventNotices } from "./TaskEventNotices.ts";
 
@@ -129,12 +129,7 @@ const make = Effect.gen(function* () {
       const shell = yield* engine.getThreadShell(threadId);
       if (shell == null || shell.activeRunId !== null || taskStatusOf(shell) !== "done") return;
       const { runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
-      const last = runs
-        .filter((run) => run.status !== "rolled_back")
-        .reduce<(typeof runs)[number] | undefined>(
-          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-          undefined,
-        );
+      const last = deliveredRunOf(runs);
       if (last?.status !== "completed" || (yield* resumesOnItsOwn(last))) return;
       const notice = yield* notices.told({ threadId: owner.value.threadId, run: last });
       if (Option.isNone(notice)) return;

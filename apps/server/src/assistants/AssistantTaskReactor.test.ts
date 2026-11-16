@@ -125,6 +125,8 @@ const harness = (
     readonly shell?: Record<string, unknown>;
     /** What the notices door says the assistant was already told; none when unset. */
     readonly told?: string | undefined;
+    /** Runs while the reactor asks the notices door, between its reads and its write. */
+    readonly whileTold?: () => Effect.Effect<void>;
   } = {},
 ) => {
   /** Wait wakes, sent straight to the conversation. */
@@ -221,7 +223,10 @@ const harness = (
                   notices.push(notice as never);
                   return "sent" as const;
                 }),
-          told: () => Effect.succeed(Option.fromNullishOr(options.told)),
+          told: () =>
+            (options.whileTold?.() ?? Effect.void).pipe(
+              Effect.as(Option.fromNullishOr(options.told)),
+            ),
           foldQueued: (threadId) =>
             Effect.suspend(() => {
               folded.push(threadId);
@@ -728,6 +733,28 @@ it.effect("a restored task stays restored until another run delivers", () => {
     yield* (yield* Tasks.AssistantTasks).setDismissed(taskThread, null);
     yield* reactor.handle(ownerRunEvent("completed"));
     yield* reactor.handle(runEvent(taskThread, "completed"));
+    assert.isNull(yield* dismissedAt);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("a restore between the delivery check and the dismissal is never overwritten", () => {
+  let interleaved: Effect.Effect<void> = Effect.void;
+  const { layer } = harness({
+    runs: [taskRun("completed")],
+    ownerRuns: [ownerRun("completed")],
+    shell: doneShell,
+    told: NOTICE_ID,
+    whileTold: () => interleaved,
+  });
+  return Effect.gen(function* () {
+    yield* setup();
+    yield* noticeRow;
+    const tasks = yield* Tasks.AssistantTasks;
+    // The reactor already read the task as listed; the user dismisses and restores it now.
+    interleaved = tasks
+      .setDismissed(taskThread, "2026-01-03T00:00:00.000Z")
+      .pipe(Effect.andThen(tasks.setDismissed(taskThread, null, "run-completed")), Effect.asVoid);
+    yield* (yield* Reactor.AssistantTaskReactor).handle(ownerRunEvent("completed"));
     assert.isNull(yield* dismissedAt);
   }).pipe(Effect.provide(layer));
 });
