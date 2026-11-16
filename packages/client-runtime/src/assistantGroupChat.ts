@@ -30,6 +30,7 @@ import {
   type ProjectId,
   type ServerProvider,
   type ServerSettings,
+  ThreadId,
 } from "@t3tools/contracts";
 import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
@@ -1297,6 +1298,27 @@ export function assistantGroupWaitingReason(
   task: Pick<AssistantGroupTask, "status" | "reason">,
 ): string | null {
   return task.status === "queued" && task.reason?.startsWith("waiting for ") ? task.reason : null;
+}
+
+const WAITING_THREADS_PREFIX = "threads:";
+
+/** The work threads a waiting member opened and waits on, read from `threads:<id>,<id>`. */
+export function assistantGroupWaitingThreadIds(
+  task: Pick<AssistantGroupTask, "status" | "reason">,
+): ReadonlyArray<ThreadId> | null {
+  if (task.status !== "waiting" || !task.reason?.startsWith(WAITING_THREADS_PREFIX)) return null;
+  const ids = new Set(
+    task.reason
+      .slice(WAITING_THREADS_PREFIX.length)
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => id !== ""),
+  );
+  return ids.size === 0 ? null : [...ids].map((id) => ThreadId.make(id));
+}
+
+export function assistantGroupWaitingThreadsLabel(count: number): string {
+  return `Waiting on ${count} ${count === 1 ? "thread" : "threads"}`;
 }
 
 /**

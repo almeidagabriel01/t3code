@@ -65,6 +65,8 @@ import {
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
   assistantGroupTaskReasonLabel,
+  assistantGroupWaitingThreadIds,
+  assistantGroupWaitingThreadsLabel,
   assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
@@ -290,6 +292,12 @@ describe("group requests", () => {
       status: "done",
     },
     {
+      name: "a task waiting on threads it opened",
+      tasks: [task("a", 1, { status: "waiting", reason: "threads:t-1,t-2" })],
+      extra: [],
+      status: "working",
+    },
+    {
       name: "a paused task",
       tasks: [task("a", 1, { status: "paused" })],
       extra: [],
@@ -462,6 +470,30 @@ describe("group feed", () => {
     const label = assistantGroupTaskReasonLabel({ status, reason });
     if (expected instanceof RegExp) assert.match(label ?? "", expected);
     else assert.strictEqual(label, expected);
+  });
+
+  it.each([
+    ["waiting", "threads:t-1", ["t-1"]],
+    ["waiting", "threads:t-1,t-2", ["t-1", "t-2"]],
+    ["waiting", "threads: t-1 ,, t-2 ,", ["t-1", "t-2"]],
+    ["waiting", "threads:t-1,t-1", ["t-1"]],
+    ["waiting", "threads:", null],
+    ["waiting", "threads: , ", null],
+    ["waiting", "waiting for folder:/w/app (used by Bo)", null],
+    ["waiting", null, null],
+    ["queued", "threads:t-1", null],
+    ["running", "threads:t-1", null],
+  ] as const)(
+    "reads a %s task's reason %j as the threads it waits on",
+    (status, reason, expected) => {
+      const ids: ReadonlyArray<string> | null = assistantGroupWaitingThreadIds({ status, reason });
+      assert.deepStrictEqual(ids, expected);
+    },
+  );
+
+  it("labels the threads a task waits on", () => {
+    assert.strictEqual(assistantGroupWaitingThreadsLabel(1), "Waiting on 1 thread");
+    assert.strictEqual(assistantGroupWaitingThreadsLabel(2), "Waiting on 2 threads");
   });
 });
 
