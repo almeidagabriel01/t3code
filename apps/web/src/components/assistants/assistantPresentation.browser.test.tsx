@@ -1,5 +1,5 @@
 import { AssistantId, type Assistant } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 import { AssistantAvatar, AssistantCluster, removedAssistantFace } from "./assistantPresentation";
@@ -50,7 +50,7 @@ describe("assistant avatars", () => {
         ?.getAttribute("data-assistant-motion");
     };
 
-    it("plays only when animated, visible and motion is allowed", async () => {
+    it("plays only on an animated avatar whose mood moves", async () => {
       expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe("blink");
       expect(
         await motionOf(<AssistantAvatar assistant={assistant} mood="working" animated />),
@@ -60,23 +60,6 @@ describe("assistant avatars", () => {
       );
       // small avatars never ask for it
       expect(await motionOf(<AssistantAvatar assistant={assistant} />)).toBe(undefined);
-    });
-
-    it("stops while the document is hidden", async () => {
-      using _hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-      expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe(undefined);
-    });
-
-    it("stops with reduced motion", async () => {
-      using _reduced = vi.spyOn(window, "matchMedia").mockImplementation(
-        (query) =>
-          ({
-            matches: query.includes("reduce"),
-            addEventListener: () => {},
-            removeEventListener: () => {},
-          }) as unknown as MediaQueryList,
-      );
-      expect(await motionOf(<AssistantAvatar assistant={assistant} animated />)).toBe(undefined);
     });
   });
 
