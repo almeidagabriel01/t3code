@@ -244,6 +244,9 @@ export type OrchestratorFixtureInputStep =
       readonly targetRunIndex: number;
     }
   | {
+      readonly type: "await_no_background_work";
+    }
+  | {
       readonly type: "release_replay_gate_after_waiting";
       readonly label: string;
       readonly targetRunIndex: number;
@@ -872,6 +875,9 @@ export function materializeFixtureInput(input: {
             },
             { advanceClockAfter: false },
           );
+          steps.push({ type: "await_no_background_work", threadId: ids.threadId });
+          break;
+        case "await_no_background_work":
           steps.push({ type: "await_no_background_work", threadId: ids.threadId });
           break;
         case "release_replay_gate_after_waiting":
