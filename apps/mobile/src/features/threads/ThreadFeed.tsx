@@ -229,8 +229,12 @@ import { useThreadMarkdownLinks } from "./useThreadMarkdownLinks";
 import { ASSISTANT_FOLDED_HEIGHT, isAssistantMessageFoldable } from "./assistantMessageFold";
 import { FoldableContent } from "../../components/FoldableContent";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
-import { assistantJoins, messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
-import { assistantContinuedMessageIds, assistantFeedBlocks } from "./assistantFeedBlocks";
+import { messageAssistantId } from "@t3tools/client-runtime/assistantPresence";
+import {
+  assistantFeedBlocks,
+  assistantFeedIndex,
+  type AssistantFeedIndex,
+} from "./assistantFeedBlocks";
 import { AssistantFeedMessage } from "../assistants/AssistantPresence";
 import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
@@ -1397,8 +1401,7 @@ function renderFeedEntry(
     readonly onSendToMainChat?: ((text: string) => void) | undefined;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
-    readonly assistantJoins: ReadonlyMap<string, ReadonlyArray<string>>;
-    readonly assistantContinuedMessageIds: ReadonlySet<string>;
+    readonly assistantFeed: AssistantFeedIndex;
   },
 ) {
   const entry = info.item;
@@ -1668,16 +1671,14 @@ function renderFeedEntry(
       );
     }
     const presenceAssistantId = isUser ? messageAssistantId(message) : null;
-    const teammateParts = isUser ? presentation.teammate : undefined;
-    if (presenceAssistantId !== null || teammateParts !== undefined) {
-      const blocks = assistantFeedBlocks({
-        message,
-        parts: teammateParts,
-        presenceAssistantId,
-        renderedText,
-        joins: props.assistantJoins.get(message.id),
-        continued: props.assistantContinuedMessageIds.has(message.id),
-      });
+    const blocks = assistantFeedBlocks({
+      message,
+      parts: isUser ? presentation.teammate : undefined,
+      presenceAssistantId,
+      renderedText,
+      index: props.assistantFeed,
+    });
+    if (blocks !== null) {
       return (
         <View>
           {blocks.map((block) => (
@@ -2770,16 +2771,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
-  const assistantJoinsByMessage = useMemo(
+  const assistantFeed = useMemo(
     () =>
-      assistantJoins(
-        props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
-      ),
-    [props.feed],
-  );
-  const assistantContinued = useMemo(
-    () =>
-      assistantContinuedMessageIds(
+      assistantFeedIndex(
         props.feed.map((entry) => (entry.type === "message" ? entry.message : null)),
       ),
     [props.feed],
@@ -3057,8 +3051,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             />
           ) : null}
           {renderFeedEntry(info, {
-            assistantJoins: assistantJoinsByMessage,
-            assistantContinuedMessageIds: assistantContinued,
+            assistantFeed,
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,

@@ -1,4 +1,7 @@
-import { continuesAssistantSender } from "@t3tools/client-runtime/assistantPresence";
+import {
+  assistantJoins,
+  continuesAssistantSender,
+} from "@t3tools/client-runtime/assistantPresence";
 import {
   teammateMessageIsLong,
   type TeammateMessagePart,
@@ -21,17 +24,35 @@ export interface AssistantFeedBlock {
   readonly long: boolean;
 }
 
-/** A group's replies arrive as one message: one block per teammate, else one for its sender. */
+export interface AssistantFeedIndex {
+  /** The assistants each message brings into the conversation. */
+  readonly joins: ReadonlyMap<string, ReadonlyArray<string>>;
+  /** Messages that follow one from the same assistant. */
+  readonly continued: ReadonlySet<string>;
+}
+
+/** Who joins where and which messages continue a run, for one feed (null entries break runs). */
+export function assistantFeedIndex(feed: ReadonlyArray<FeedMessage | null>): AssistantFeedIndex {
+  return {
+    joins: assistantJoins(feed.filter((message) => message !== null)),
+    continued: assistantContinuedMessageIds(feed),
+  };
+}
+
+/**
+ * How an assistant's or teammates' message shows: a group's replies arrive as one message, one
+ * block per teammate, else one block for its sender. Null for anyone else's message.
+ */
 export function assistantFeedBlocks(input: {
   readonly message: { readonly id: string; readonly senderThreadId?: string | undefined };
   readonly parts: ReadonlyArray<TeammateMessagePart> | undefined;
   readonly presenceAssistantId: string | null;
   readonly renderedText: string;
-  /** Assistants this message brings into the conversation. */
-  readonly joins: ReadonlyArray<string> | undefined;
-  /** It follows a message from the same assistant. */
-  readonly continued: boolean;
-}): ReadonlyArray<AssistantFeedBlock> {
+  readonly index: AssistantFeedIndex;
+}): ReadonlyArray<AssistantFeedBlock> | null {
+  if (input.parts === undefined && input.presenceAssistantId === null) return null;
+  const joins = input.index.joins.get(input.message.id);
+  const continued = input.index.continued.has(input.message.id);
   const parts = input.parts ?? [null];
   return parts.map((part, index) => {
     const assistantId =
@@ -54,16 +75,16 @@ export function assistantFeedBlocks(input: {
       fallbackName: part?.name,
       status: part?.status,
       text,
-      joined: input.joins?.includes(assistantId) ?? false,
+      joined: joins?.includes(assistantId) ?? false,
       showTimestamp: index === parts.length - 1,
-      continues: parts.length === 1 && input.continued,
+      continues: parts.length === 1 && continued,
       long: teammateMessageIsLong(text),
     };
   });
 }
 
 /** Messages that continue the one right above them from the same assistant; null breaks a run. */
-export function assistantContinuedMessageIds(
+function assistantContinuedMessageIds(
   feed: ReadonlyArray<FeedMessage | null>,
 ): ReadonlySet<string> {
   const continued = new Set<string>();

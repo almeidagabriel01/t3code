@@ -1,3 +1,4 @@
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
@@ -24,7 +25,11 @@ export function resolveThreadQueueRowControls(input: {
   /** A guest's message keeps the guest's words; the owner can cancel it, not rewrite it. */
   readonly isGuestMessage?: boolean;
   readonly text: string;
+  /** The queued message; a teammate's shows their words, as its sent row will. */
+  readonly message?: Parameters<typeof resolveUserMessagePresentation>[0] | undefined;
 }): ThreadQueueRowControls {
+  const presentation = input.message ? resolveUserMessagePresentation(input.message) : null;
+  const shownText = presentation?.teammate ? presentation.text : input.text;
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
 
@@ -37,9 +42,9 @@ export function resolveThreadQueueRowControls(input: {
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
-    displayText: isAttachmentOnlyBootstrapPrompt(input.text)
+    displayText: isAttachmentOnlyBootstrapPrompt(shownText)
       ? ""
-      : assistantCitationsToPlainText(input.text),
+      : assistantCitationsToPlainText(shownText),
     isEditing,
   };
 }

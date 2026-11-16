@@ -48,6 +48,20 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
+  it("shows a teammate's queued message as their words, not the envelope", () => {
+    const text =
+      '<t3_reply from="Ada" handle="ada" threadId="assistant:ada:1" replyTo="m">\nA teammate answered.\n</t3_reply>\nStatus: done\nShipped.';
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: false,
+      canSendNow: true,
+      text,
+      message: { role: "user", createdBy: "agent", senderThreadId: "assistant:ada:1", text },
+    });
+
+    expect(controls.displayText).toBe("Shipped.");
+  });
+
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,

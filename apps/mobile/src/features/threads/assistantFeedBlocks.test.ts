@@ -1,7 +1,7 @@
 import type { TeammateMessagePart } from "@t3tools/client-runtime/teammateMessage";
 import { describe, expect, it } from "vite-plus/test";
 
-import { assistantContinuedMessageIds, assistantFeedBlocks } from "./assistantFeedBlocks";
+import { assistantFeedBlocks, assistantFeedIndex } from "./assistantFeedBlocks";
 
 const part = (overrides: Partial<TeammateMessagePart>): TeammateMessagePart => ({
   kind: "reply",
@@ -23,8 +23,7 @@ describe("assistantFeedBlocks", () => {
       {
         parts: undefined,
         presenceAssistantId: "jarvis",
-        joins: ["jarvis"],
-        continued: true,
+        index: { joins: new Map([["m1", ["jarvis"]]]), continued: new Set(["m1"]) },
       },
       [
         {
@@ -55,8 +54,7 @@ describe("assistantFeedBlocks", () => {
           }),
         ],
         presenceAssistantId: "back",
-        joins: ["front"],
-        continued: true,
+        index: { joins: new Map([["m1", ["front"]]]), continued: new Set(["m1"]) },
       },
       [
         {
@@ -90,8 +88,7 @@ describe("assistantFeedBlocks", () => {
       {
         parts: [part({ threadId: "worker", text: "x".repeat(2_000) })],
         presenceAssistantId: null,
-        joins: undefined,
-        continued: false,
+        index: { joins: new Map(), continued: new Set<string>() },
       },
       [
         {
@@ -108,6 +105,15 @@ describe("assistantFeedBlocks", () => {
         },
       ],
     ],
+    [
+      "anyone else's message as nothing of its own",
+      {
+        parts: undefined,
+        presenceAssistantId: null,
+        index: { joins: new Map(), continued: new Set<string>() },
+      },
+      null,
+    ],
   ])("shows %s", (_name, input, expected) => {
     expect(
       assistantFeedBlocks({
@@ -119,7 +125,7 @@ describe("assistantFeedBlocks", () => {
   });
 });
 
-it("assistantContinuedMessageIds: only back-to-back messages of one assistant continue", () => {
+it("assistantFeedIndex: joins on first messages, continues only back-to-back runs", () => {
   const from = (id: string, assistant: string) => ({
     id,
     role: "user",
@@ -127,7 +133,7 @@ it("assistantContinuedMessageIds: only back-to-back messages of one assistant co
     createdBy: "agent" as const,
     senderThreadId: `assistant:${assistant}:1`,
   });
-  const continued = assistantContinuedMessageIds([
+  const index = assistantFeedIndex([
     from("a1", "ada"),
     from("a2", "ada"),
     null,
@@ -135,5 +141,9 @@ it("assistantContinuedMessageIds: only back-to-back messages of one assistant co
     from("b1", "bo"),
     from("b2", "bo"),
   ]);
-  expect([...continued]).toEqual(["a2", "b2"]);
+  expect([...index.continued]).toEqual(["a2", "b2"]);
+  expect([...index.joins]).toEqual([
+    ["a1", ["ada"]],
+    ["b1", ["bo"]],
+  ]);
 });
