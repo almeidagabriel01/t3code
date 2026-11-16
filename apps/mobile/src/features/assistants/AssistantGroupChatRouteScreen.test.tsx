@@ -328,6 +328,11 @@ vi.mock("../../lib/useUniwindTheme", () => ({
   useUniwindTheme: () => ({ "--color-icon-subtle": "#888888" }),
 }));
 vi.mock("../threads/thread-work-log", () => ({ ThreadDisclosureChevron: () => null }));
+vi.mock("../threads/floating-working-control", () => ({
+  FloatingScrollToEndButton: (props: { onPress: () => void }) => (
+    <button aria-label="Scroll to end" onClick={props.onPress} />
+  ),
+}));
 vi.mock("../threads/ThreadFeed", () => {
   const styles = { user: { nativeTextStyle: {} }, assistant: { nativeTextStyle: {} } };
   return { useMarkdownStyles: () => styles };
@@ -1501,6 +1506,7 @@ describe("read position", () => {
     expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
       [null, "true"],
     );
+    expect(byLabel("Scroll to end")).toBeNull();
     remount();
     mocks.live = lateUserLines();
     render();
@@ -1508,6 +1514,19 @@ describe("read position", () => {
     expect([list().getAttribute("data-initial-index"), list().getAttribute("data-at-end")]).toEqual(
       ["1", "false"],
     );
+    // Opened above the end, the way down is one tap.
+    expect(byLabel("Scroll to end")).not.toBeNull();
+  });
+
+  it("offers Scroll to end only while the feed is above its end", async () => {
+    mocks.teams = [team({ chat: chat(2, 2) })];
+    render();
+    expect(byLabel("Scroll to end")).toBeNull();
+    await click("scroll up");
+    await click("Scroll to end");
+    expect(mocks.scrollToEnd).toHaveBeenCalledOnce();
+    await click("scroll down");
+    expect(byLabel("Scroll to end")).toBeNull();
   });
 
   it("marks the chat read once the newest message has been in view, not while scrolled up", async () => {

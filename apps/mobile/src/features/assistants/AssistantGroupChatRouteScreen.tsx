@@ -70,7 +70,13 @@ import {
 } from "react";
 import { Keyboard, Platform, Pressable, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import Animated, { useReducedMotion, withTiming } from "react-native-reanimated";
+import Animated, {
+  FadeIn,
+  FadeOut,
+  ReduceMotion,
+  useReducedMotion,
+  withTiming,
+} from "react-native-reanimated";
 
 import { FoldableContent } from "../../components/FoldableContent";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -115,6 +121,7 @@ import {
   type MarkdownStyleSet,
 } from "../threads/AssistantMarkdownContent";
 import { ASSISTANT_FOLDED_HEIGHT } from "../threads/assistantMessageFold";
+import { FloatingScrollToEndButton } from "../threads/floating-working-control";
 import { TaskEventActivityRow } from "../threads/TaskEventActivityRow";
 import { useMarkdownStyles } from "../threads/ThreadFeed";
 import {
@@ -164,6 +171,8 @@ const mentionChip = (
 
 const NEW_JUMP_MIN_ROWS = 4;
 const HIGHLIGHT_MS = 1200;
+const SCROLL_TO_END_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
+const SCROLL_TO_END_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 /** One line of a message, for a quote. */
 const groupMessageExcerpt = (text: string) =>
@@ -941,6 +950,7 @@ function GroupFeed({
 }) {
   const { environmentId, team, tab, live, topInset } = props;
   const teamId = team.id;
+  const { themeAppearance } = useAppearancePreferences();
   const { byId, members, groupProjects, projectName } = props.people;
   const selectDetail = useSelectWorkspaceDetail();
   const markdownStyles = useMarkdownStyles();
@@ -1017,11 +1027,12 @@ function GroupFeed({
   );
   const jumpTo =
     newIndex >= 0 && feedEntries.length - newIndex > NEW_JUMP_MIN_ROWS ? newIndex : null;
+  // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
+  const atEnd = scrolled ? atBottom : jumpTo === null;
   useGroupReadMarker({
     latestSeq: chat === null ? null : assistantGroupLatestSeq(chat),
     readSeq,
-    // The list opens at the New line when it jumps, so nothing is at the end until the user scrolls.
-    atBottom: scrolled ? atBottom : jumpTo === null,
+    atBottom: atEnd,
     enabled: team.chat !== undefined && actions.canMarkRead && !isAll,
     markRead: (next) =>
       void actions.markRead(
@@ -1064,10 +1075,8 @@ function GroupFeed({
       HIGHLIGHT_MS,
     );
   };
-  useImperativeHandle(ref, () => ({
-    jump,
-    scrollToEnd: () => list.current?.scrollToEnd({ animated: true }),
-  }));
+  const scrollToEnd = () => list.current?.scrollToEnd({ animated: true });
+  useImperativeHandle(ref, () => ({ jump, scrollToEnd }));
 
   const loadOlder = async () => {
     if (chat === null || !chat.hasMore || loadingOlder) return;
@@ -1257,6 +1266,19 @@ function GroupFeed({
             )
           }
         />
+        {chat === null || atEnd ? null : (
+          <Animated.View
+            pointerEvents="box-none"
+            className="absolute bottom-2 left-0 right-0 items-center"
+            entering={SCROLL_TO_END_ENTERING}
+            exiting={SCROLL_TO_END_EXITING}
+          >
+            <FloatingScrollToEndButton
+              colorScheme={themeAppearance === "dark" ? "dark" : "light"}
+              onPress={scrollToEnd}
+            />
+          </Animated.View>
+        )}
         <VideoPreviewModal source={links.expandedVideo} onRequestClose={links.closeVideoPreview} />
         <FilePreviewModal source={links.expandedFile} onRequestClose={links.closeFilePreview} />
       </View>
