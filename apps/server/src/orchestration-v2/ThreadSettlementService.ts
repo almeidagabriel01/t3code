@@ -569,10 +569,17 @@ export const make = Effect.gen(function* () {
     const allCandidates = yield* projections.getSettlementCandidates(threadId);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (mergedPullRequest !== null) heldChecks.clear();
-    // Finished work settles whatever the inactivity and merge settings say.
-    const settledFinished = yield* settleFinishedWork(allCandidates, nowMs);
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
+    const configured = autoSettlementConfigured(settings);
+    // Finished work settles without the inactivity timer, but only while auto-settle is on;
+    // children still follow a parent the user settled.
+    const settledFinished = yield* settleFinishedWork(
+      configured
+        ? allCandidates
+        : allCandidates.filter((thread) => thread.subagentHandoff?.parentSettled === true),
+      nowMs,
+    );
+    if (!configured) {
       // Nothing reads these marks while settlement is off.
       runEndedThreads.clear();
       shellClosedThreads.clear();

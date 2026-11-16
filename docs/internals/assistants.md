@@ -297,7 +297,8 @@ These follow the row, none of them a new mechanism:
   (`auto_dismissed_run_id`, a conditional write). A Restore records the task's latest run there too,
   so it holds until another run delivers, even against a check already in flight. A dismissed task with
   nothing left on its branch then settles (`ThreadSettlementService.finishedWorkSettlement`), and so
-  do subagent children whose parent took their result or settled.
+  do subagent children whose parent took their result or settled. With auto-settle off only that
+  last cascade runs: a parent the user settled takes its idle children along.
 
 The project check is the existing `projectScopeRefusal` at `t3_thread_launch`; a refused launch never
 reaches the link.

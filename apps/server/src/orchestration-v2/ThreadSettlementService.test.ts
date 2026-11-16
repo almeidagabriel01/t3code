@@ -2007,8 +2007,42 @@ describe("ThreadSettlementServiceV2 finished work", () => {
     sidebarAutoSettleAfterDays: null,
     sidebarAutoSettleOnMerge: false,
   };
+  // Auto-settle on, with no inactivity timer to settle the threads this rule leaves.
+  const settlementOnMerge = {
+    ...DEFAULT_SERVER_SETTINGS,
+    sidebarAutoSettleAfterDays: null,
+    sidebarAutoSettleOnMerge: true,
+  };
 
-  it.effect("settles finished children and dismissed tasks with the inactivity rules off", () =>
+  it.effect("leaves finished work alone while auto-settle is off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            childThread("native-done"),
+            childThread("task-dismissed", {
+              lineage: {
+                rootThreadId: ThreadId.make("task-dismissed"),
+                parentThreadId: null,
+                relationshipToParent: null,
+              },
+              subagentHandoff: null,
+              assistantTaskDismissed: true,
+            }),
+          ]),
+          settings: settlementOff,
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles finished children and dismissed tasks once settling on merge is on", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -2081,7 +2115,7 @@ describe("ThreadSettlementServiceV2 finished work", () => {
         };
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot(threads),
-          settings: settlementOff,
+          settings: settlementOnMerge,
           existingWorktreePaths: [
             ...Object.keys(statuses),
             "/worktrees/parent/",
@@ -2164,7 +2198,7 @@ describe("ThreadSettlementServiceV2 finished work", () => {
         });
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([task]),
-          settings: settlementOff,
+          settings: settlementOnMerge,
           existingWorktreePaths: ["/worktrees/unshipped"],
           gitStatus: (input) =>
             Ref.update(statusCalls, (count) => count + 1).pipe(
