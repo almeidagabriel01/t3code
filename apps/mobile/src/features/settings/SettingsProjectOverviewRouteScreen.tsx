@@ -34,7 +34,7 @@ import {
   useEnvironmentsWithScope,
 } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ProjectAssistantAccessSection } from "../assistants/ProjectAssistantAccessSection";
+import { ProjectAssistantAccessSections } from "../assistants/ProjectAssistantAccessSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -384,19 +384,12 @@ function ProjectOverviewContent(props: {
         </SettingsSection>
       ) : null}
 
-      {props.members.map((member) => (
-        <ProjectAssistantAccessSection
-          key={`${member.environmentId}:${member.id}`}
-          environmentId={member.environmentId}
-          projectId={member.id}
-          environmentLabel={
-            props.members.length > 1
-              ? props.environments.find((entry) => entry.environmentId === member.environmentId)
-                  ?.label
-              : undefined
-          }
-        />
-      ))}
+      <ProjectAssistantAccessSections
+        members={props.members}
+        environmentLabel={(environmentId) =>
+          props.environments.find((entry) => entry.environmentId === environmentId)?.label
+        }
+      />
 
       <SettingsSection title={PROJECT_OVERVIEW_COPY.checkouts.title}>
         {props.members.map((member, index) => {
