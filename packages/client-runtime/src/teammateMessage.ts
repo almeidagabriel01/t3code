@@ -1,4 +1,5 @@
 import {
+  assistantIdFromThreadId,
   assistantTransferPaths,
   splitAssistantTransferText,
   type OrchestrationMessageContext,
@@ -7,6 +8,7 @@ import {
   type TeammateReplyStatus,
   teammateReplyStatus,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /** One teammate's part of a message, ready to show: who, what, and the words without the envelope. */
 export interface TeammateMessagePart {
@@ -64,6 +66,7 @@ function attributesOf(raw: string): Record<string, string> {
   return found;
 }
 
+// The name is the sender's claim; clients name a teammate from the assistant directory instead.
 function legacyEntry(
   kind: TeammateMessageEntry["kind"],
   rawAttributes: string,
@@ -83,7 +86,7 @@ function legacyEntry(
         : teammateReplyStatus(text);
   return {
     kind,
-    name,
+    name: "",
     handle: attributes.handle ?? "",
     threadId: threadId as TeammateMessageEntry["threadId"],
     requestId: attributes.requestId ?? attributes.replyTo ?? "",
@@ -105,30 +108,53 @@ const GROUP_REPLY = new RegExp(
   "y",
 );
 
+/** Messages from here on carry `context.teammate`; an envelope in a newer message stays text. */
+const LEGACY_ENVELOPE_CUTOFF = Date.parse("2026-11-16T00:00:00.000Z");
+
+const replyMessageId = (requestId: string) => `assistant-reply:${requestId}`;
+
 /**
- * Messages stored before `context.teammate` existed: the envelope the server wrote, read back. The
- * server sent it from a thread the envelope names, so tags naming another thread stay text.
+ * Messages stored before `context.teammate` existed: the envelope the server wrote, read back only
+ * where the server's own marks prove it. The server wrapped every send of an assistant in its own
+ * envelope from that assistant's thread, under ids it chose; any other text keeps its tags.
  */
-function parseLegacyEnvelope(
-  text: string,
-  senderThreadId: string | undefined,
-): ReadonlyArray<TeammateMessageEntry> | null {
-  if (senderThreadId === undefined) return null;
+function parseLegacyEnvelope(message: TeammateSource): ReadonlyArray<TeammateMessageEntry> | null {
+  const { text, senderThreadId, id } = message;
+  const createdAt =
+    message.createdAt === undefined
+      ? Number.NaN
+      : typeof message.createdAt === "string"
+        ? Date.parse(message.createdAt)
+        : DateTime.toEpochMillis(message.createdAt);
+  if (!(createdAt < LEGACY_ENVELOPE_CUTOFF)) return null;
+  if (senderThreadId === undefined || assistantIdFromThreadId(senderThreadId) === null) return null;
   const single = SINGLE.exec(text);
   if (single !== null) {
     const kind = single[1] === "t3_request" ? "request" : "reply";
     const { files } = splitAssistantTransferText(single[3]!);
     const entry = legacyEntry(kind, single[2] ?? "", single[4] ?? "", files);
-    return entry === null || entry.threadId !== senderThreadId ? null : [entry];
+    if (entry === null || entry.threadId !== senderThreadId) return null;
+    // A note that expects no reply carries no request id; its sender alone vouches for it.
+    const expectedId =
+      kind === "reply" ? replyMessageId(entry.requestId) : entry.requestId || undefined;
+    return expectedId === undefined || expectedId === id ? [entry] : null;
   }
   const lead = GROUP_LEAD.exec(text);
-  if (lead === null) return null;
+  if (lead === null || id === undefined || !id.startsWith(replyMessageId(""))) return null;
+  const groupId = id.slice(replyMessageId("").length);
   const entries: Array<TeammateMessageEntry> = [];
   GROUP_REPLY.lastIndex = lead[0].length;
   for (let match = GROUP_REPLY.exec(text); match !== null; match = GROUP_REPLY.exec(text)) {
     const { body, files } = splitAssistantTransferText(match[2]!);
     const entry = legacyEntry("reply", match[1] ?? "", body, files);
-    if (entry === null) return null;
+    // Each block answers this group's request to that teammate, as the server numbered them.
+    if (
+      entry === null ||
+      assistantIdFromThreadId(entry.threadId) === null ||
+      entry.requestId !== `${groupId}:to:${encodeURIComponent(entry.threadId)}`
+    ) {
+      return null;
+    }
     entries.push(entry);
     if (GROUP_REPLY.lastIndex >= text.length) break;
   }
@@ -155,10 +181,12 @@ export function resolveTeammateMessage(
 }
 
 interface TeammateSource {
+  readonly id?: string;
   readonly role: string;
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
   readonly senderThreadId?: string | undefined;
+  readonly createdAt?: string | DateTime.DateTime | undefined;
   readonly context?: Pick<OrchestrationMessageContext, "teammate"> | undefined;
 }
 
@@ -169,9 +197,7 @@ function resolveUncached(message: TeammateSource): ReadonlyArray<TeammateMessage
   if (message.role !== "user") return null;
   const entries =
     message.context?.teammate?.entries ??
-    (message.createdBy === "agent"
-      ? parseLegacyEnvelope(message.text, message.senderThreadId)
-      : null);
+    (message.createdBy === "agent" ? parseLegacyEnvelope(message) : null);
   return entries === null || entries.length === 0 ? null : entries.map(toPart);
 }
 
@@ -179,5 +205,5 @@ function resolveUncached(message: TeammateSource): ReadonlyArray<TeammateMessage
 export function teammateMessagePlainText(parts: ReadonlyArray<TeammateMessagePart>): string {
   return parts.length === 1
     ? parts[0]!.text
-    : parts.map((part) => `${part.name}:\n${part.text}`).join("\n\n");
+    : parts.map((part) => `${part.name || "Assistant"}:\n${part.text}`).join("\n\n");
 }

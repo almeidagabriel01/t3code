@@ -13,6 +13,7 @@ import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
+import type * as DateTime from "effect/DateTime";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -71,6 +72,7 @@ export function resolveUserMessagePresentation(message: {
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly senderThreadId?: string | undefined;
+  readonly createdAt?: string | DateTime.DateTime | undefined;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
   readonly context?:
     | {

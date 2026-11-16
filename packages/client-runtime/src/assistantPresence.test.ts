@@ -1,4 +1,4 @@
-import { ASSISTANT_ICON_IDS, type Assistant } from "@t3tools/contracts";
+import { ASSISTANT_ICON_IDS, ThreadId, type Assistant } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
@@ -24,8 +24,20 @@ const sent = (id: string, senderThreadId?: string, text = "hi") => ({
   createdBy: "agent" as const,
   ...(senderThreadId === undefined ? {} : { senderThreadId }),
 });
-const groupReplies =
-  'Teammates answered your request; x\n<t3_reply from="Ada" threadId="assistant:ada:1" replyTo="a" status="answered">\nok\n</t3_reply>\n<t3_reply from="Bo" threadId="assistant:bo:1" replyTo="b" status="answered">\nok\n</t3_reply>';
+const reply = (name: string, threadId: string) => ({
+  kind: "reply" as const,
+  name,
+  handle: name.toLowerCase(),
+  threadId: ThreadId.make(threadId),
+  requestId: `g:to:${name}`,
+  files: [],
+  text: "ok",
+});
+const groupReplies = {
+  context: {
+    teammate: { entries: [reply("Ada", "assistant:ada:1"), reply("Bo", "assistant:bo:1")] },
+  },
+};
 
 describe("assistantSenders", () => {
   it("groups an assistant's messages and skips everyone else's", () => {
@@ -60,7 +72,7 @@ describe("assistantSenders", () => {
   it("counts each teammate of a group's replies, not the one that delivered them", () => {
     const messages = [
       sent("m1", "assistant:ada:1"),
-      sent("m2", "assistant:bo:1", groupReplies),
+      { ...sent("m2", "assistant:bo:1"), ...groupReplies },
       sent("m3", "assistant:bo:1"),
     ];
     expect(assistantSenders(messages, []).map((s) => [s.assistantId, s.count])).toEqual([
@@ -89,10 +101,7 @@ describe("continuesAssistantSender", () => {
     createdBy: "agent" as const,
     senderThreadId: `assistant:${assistant}:1`,
   });
-  const group = from(
-    "ada",
-    'Teammates answered your request; x\n<t3_reply from="Ada" threadId="assistant:ada:1" replyTo="a" status="answered">\nok\n</t3_reply>\n<t3_reply from="Bo" threadId="assistant:bo:1" replyTo="b" status="answered">\nok\n</t3_reply>',
-  );
+  const group = { ...from("ada"), ...groupReplies };
   it.each([
     ["the same assistant again", from("ada"), from("ada"), true],
     ["another assistant", from("ada"), from("bo"), false],

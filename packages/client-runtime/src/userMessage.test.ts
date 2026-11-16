@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerContextId, GuestMessageId, ScheduledTaskId } from "@t3tools/contracts";
+import { ComposerContextId, GuestMessageId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 
 import {
@@ -203,6 +203,19 @@ describe("resolveUserMessagePresentation", () => {
   it("shows a teammate's words, not the envelope the agent reads", () => {
     const text =
       '<t3_reply from="Ada" handle="ada" threadId="assistant:ada:1" replyTo="m">\nA teammate answered.\n</t3_reply>\nStatus: done\nShipped.';
+    const teammate = {
+      entries: [
+        {
+          kind: "reply" as const,
+          name: "Ada",
+          handle: "ada",
+          threadId: ThreadId.make("assistant:ada:1"),
+          requestId: "m",
+          files: [],
+          text: "Status: done\nShipped.",
+        },
+      ],
+    };
     for (const creationSource of ["mcp", "server"] as const) {
       expect(
         resolveUserMessagePresentation({
@@ -211,6 +224,7 @@ describe("resolveUserMessagePresentation", () => {
           creationSource,
           senderThreadId: "assistant:ada:1",
           text,
+          context: { teammate },
         }),
       ).toMatchObject({
         text: "Shipped.",
