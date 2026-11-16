@@ -243,9 +243,21 @@ export function finishedWorkSettlement(
       : "own-pull-request";
   }
   if (thread.assistantTaskDismissed && isListedThreadLineage(thread.lineage)) {
-    return thread.worktreePath === null ? "now" : "own-work";
+    return thread.worktreePath === null && thread.branch === null ? "now" : "own-work";
   }
   return null;
+}
+
+/** When the thread last did anything: a settlement records this, not when the rule noticed. */
+function lastActivityAt(thread: ProjectionStore.ProjectionSettlementCandidate): DateTime.Utc {
+  return DateTime.makeUnsafe(
+    latestMillis([
+      toMillis(thread.latestUserMessageAt),
+      toMillis(thread.latestRunRequestedAt),
+      toMillis(thread.latestRunStartedAt),
+      toMillis(thread.latestRunCompletedAt),
+    ]) ?? DateTime.toEpochMillis(thread.createdAt),
+  );
 }
 
 export function resolveAutoSettlementAt(input: {
@@ -398,13 +410,15 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  /** A branch the thread owns still holds work: an open pull request, or (`own-work`) anything unshipped. */
+  /**
+   * A branch the thread owns still holds work: an open pull request, or (`own-work`) anything
+   * unshipped. A branch no checkout has out counts as shipped only once its pull request ended.
+   */
   const branchHoldsWork = Effect.fnUntraced(function* (
     thread: ProjectionStore.ProjectionSettlementCandidate,
     hold: Exclude<FinishedWorkSettlement, "now">,
+    projectRoot: string | undefined,
   ) {
-    const worktreePath = thread.worktreePath;
-    if (worktreePath === null) return false;
     if (
       settlementPullRequestLinks(thread.pullRequests ?? []).some(
         (link) => link.snapshot?.state === "open",
@@ -412,13 +426,24 @@ export const make = Effect.gen(function* () {
     ) {
       return true;
     }
-    // A removed worktree leaves nothing to finish here.
-    if (!(yield* fileSystem.exists(worktreePath).pipe(Effect.orElseSucceed(() => true)))) {
-      return false;
+    const worktreePath =
+      thread.worktreePath !== null &&
+      (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => true)))
+        ? thread.worktreePath
+        : null;
+    if (hold === "own-pull-request") {
+      // A removed worktree leaves nothing to finish here.
+      if (worktreePath === null) return false;
+      return (yield* git.status({ cwd: worktreePath })).pr?.state === "open";
     }
-    const status = yield* git.status({ cwd: worktreePath });
+    const cwd = worktreePath ?? projectRoot;
+    if (cwd === undefined) return true;
+    const status = yield* git.status({ cwd });
+    if (thread.branch !== null && status.refName !== thread.branch) {
+      const pullRequest = yield* git.branchPullRequest({ cwd, branch: thread.branch });
+      return pullRequest?.state !== "merged" && pullRequest?.state !== "closed";
+    }
     const pullRequestState = status.pr?.state ?? null;
-    if (hold === "own-pull-request") return pullRequestState === "open";
     if (status.hasWorkingTreeChanges) return true;
     return !(
       pullRequestState === "merged" ||
@@ -432,14 +457,27 @@ export const make = Effect.gen(function* () {
     nowMs: number,
   ) {
     const settled = new Set<ThreadId>();
+    const finished = threads.flatMap((thread) => {
+      const settlement = finishedWorkSettlement(thread, nowMs);
+      return settlement === null ? [] : [{ thread, settlement }];
+    });
+    if (finished.length === 0) return settled;
+    const roots = new Map(
+      finished.some(({ settlement }) => settlement === "own-work")
+        ? (yield* projectStore.listShells()).map((project) => [project.id, project.workspaceRoot])
+        : [],
+    );
     yield* Effect.forEach(
-      threads,
-      (thread) =>
+      finished,
+      ({ thread, settlement }) =>
         Effect.gen(function* () {
-          const settlement = finishedWorkSettlement(thread, nowMs);
-          if (settlement === null) return;
-          if (settlement !== "now" && (yield* branchHoldsWork(thread, settlement))) return;
-          yield* dispatchAutoSettle(thread, DateTime.makeUnsafe(nowMs));
+          if (
+            settlement !== "now" &&
+            (yield* branchHoldsWork(thread, settlement, roots.get(thread.projectId)))
+          ) {
+            return;
+          }
+          yield* dispatchAutoSettle(thread, lastActivityAt(thread));
           settled.add(thread.id);
         }).pipe(
           Effect.catchCauseIf(

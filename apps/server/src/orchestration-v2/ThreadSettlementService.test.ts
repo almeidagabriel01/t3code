@@ -1928,6 +1928,20 @@ describe("finishedWorkSettlement", () => {
       "now",
     ],
     [
+      "a dismissed assistant task on its own branch in the project checkout",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("task"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        subagentHandoff: null,
+        assistantTaskDismissed: true,
+        branch: "task-branch",
+      },
+      "own-work",
+    ],
+    [
       "an assistant task still in the list",
       {
         lineage: {
@@ -1993,6 +2007,18 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             assistantTaskDismissed: true,
             worktreePath: "/worktrees/dirty",
           }),
+          childThread("task-branch-merged", {
+            lineage: taskLineage("task-branch-merged"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            branch: "merged-branch",
+          }),
+          childThread("task-branch-unmerged", {
+            lineage: taskLineage("task-branch-unmerged"),
+            subagentHandoff: null,
+            assistantTaskDismissed: true,
+            branch: "unmerged-branch",
+          }),
           childThread("task-shipped", {
             lineage: taskLineage("task-shipped"),
             subagentHandoff: null,
@@ -2006,19 +2032,38 @@ describe("ThreadSettlementServiceV2 finished work", () => {
           "/worktrees/unshipped": vcsStatus({ aheadOfDefault: 1 }),
           "/worktrees/dirty": vcsStatus({ dirty: true, pr: "merged" }),
           "/worktrees/shipped": vcsStatus({ pr: "merged" }),
+          // The project checkout is on another branch than either task's.
+          "/workspace/project": vcsStatus({}),
         };
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot(threads),
           settings: settlementOff,
           existingWorktreePaths: Object.keys(statuses),
           gitStatus: (input) => statuses[input.cwd]!(input),
+          branchPullRequest: (input) =>
+            Effect.succeed(
+              input.branch === "merged-branch" ? makeBranchPullRequest("merged") : null,
+            ),
         });
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(
             new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
-            new Set(["native-done", "own-worktree-merged-pr", "task-shipped"]),
+            new Set([
+              "native-done",
+              "own-worktree-merged-pr",
+              "task-shipped",
+              "task-branch-merged",
+            ]),
+          );
+          // Settled when the work ended, so an old task never jumps to the top of the shelf.
+          const native = (yield* Ref.get(fixture.commands)).find(
+            (command) => command.threadId === "native-done",
+          );
+          assert.strictEqual(
+            native?.settledAt === undefined ? null : DateTime.formatIso(native.settledAt),
+            DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000)),
           );
         }).pipe(Effect.provide(fixture.layer));
       }),
