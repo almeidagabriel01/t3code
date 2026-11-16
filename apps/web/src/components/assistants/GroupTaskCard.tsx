@@ -73,9 +73,11 @@ export function GroupTaskCard(props: {
   // Measured only while clamped: expanded text always fits, which would drop its own Show less.
   const measureClip = (request: HTMLDivElement | null) => {
     if (request === null || expanded) return;
-    return observeResize(request, () =>
-      setClipped([...request.children].some((line) => line.scrollHeight > line.clientHeight + 1)),
-    );
+    const measure = () =>
+      setClipped([...request.children].some((line) => line.scrollHeight > line.clientHeight + 1));
+    // Measured before paint too, so the toggle lands in the first frame, not in an observer pass.
+    measure();
+    return observeResize(request, measure);
   };
   return (
     <div
@@ -129,7 +131,6 @@ export function GroupTaskCard(props: {
           variant="ghost-muted"
           aria-expanded={expanded}
           aria-controls={requestId}
-          data-scroll-anchor-ignore
           onClick={() => setExpanded((value) => !value)}
           className="-ms-2 self-start"
         >
