@@ -11,6 +11,8 @@ import {
   useWorkspacePaneState,
 } from "../../layout/adaptive-workspace-context";
 import { usePaneRole } from "../../../components/ui/Pane";
+import { useAndroidWorkspaceRoot } from "../../layout/workspace/AndroidWorkspaceTabsProvider";
+import { SETTINGS_FILTER_MENU_TITLE } from "../settings-environment-filter.logic";
 import { useDeviceType } from "../../../native/native-layout-metrics";
 import { useCompactWorkspaceTabs } from "../../layout/workspace/useSystemWorkspaceTabBar";
 import { useSettingsPageBack } from "../useSettingsPageBack";
@@ -41,14 +43,16 @@ export function SettingsScreen(
   const { layout } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const paneRole = usePaneRole();
+  const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen === true;
   // The Settings list beside this page already carries the settings filter. On iPad it lives in
   // the primary sidebar, which can be hidden; Android keeps its own list column in a split.
   const listBeside =
     !workspaceRoot &&
     paneRole === "content" &&
-    workspace?.settingsOpen === true &&
     layout.usesSplitView &&
-    (Platform.OS === "android" || panes.primarySidebarVisible);
+    (Platform.OS === "android"
+      ? androidSettingsOpen
+      : workspace?.settingsOpen === true && panes.primarySidebarVisible);
 
   const surfaceClassName = workspaceRoot || cover ? "bg-screen" : "bg-sheet";
 
@@ -60,7 +64,11 @@ export function SettingsScreen(
         refresh={props.refresh}
         search={props.search}
         trailing={props.trailing}
-        menus={listBeside ? undefined : props.menus}
+        menus={
+          listBeside
+            ? props.menus?.filter((menu) => menu.title !== SETTINGS_FILTER_MENU_TITLE)
+            : props.menus
+        }
         onBack={workspaceRoot ? undefined : back}
         guardBack={props.guardBack}
         hideBottomBorder

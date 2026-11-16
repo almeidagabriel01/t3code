@@ -6,7 +6,10 @@ import type { AppBarMenu } from "../../../components/ui/AppBar.types";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { sameNameMachineLabels } from "../../home/home-list-filter-menu";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
-import { settingsProjectsLabel } from "../settings-environment-filter.logic";
+import {
+  SETTINGS_FILTER_MENU_TITLE,
+  settingsProjectsLabel,
+} from "../settings-environment-filter.logic";
 
 /** The settings scope filter, as an `AppBar` menu. */
 export function useSettingsEnvironmentMenu(): AppBarMenu {
@@ -24,7 +27,7 @@ export function useSettingsEnvironmentMenu(): AppBarMenu {
   } = useSettingsEnvironmentFilter();
   const machineOf = sameNameMachineLabels(selectableProjectGroups, availableTargets);
   return {
-    title: "Filter settings environments and projects",
+    title: SETTINGS_FILTER_MENU_TITLE,
     // iOS rebuilds a header button whose icon changes, which closes its open menu after each pick.
     icon:
       Platform.OS === "ios" || (selectedIds === null && selectedProjectKeys === null)
