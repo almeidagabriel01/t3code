@@ -53,6 +53,11 @@ import {
   assistantGroupRequestFeed,
   assistantGroupRequestProject,
   assistantGroupLatestSeq,
+  assistantGroupMemberWork,
+  assistantGroupComposerSession,
+  assistantGroupRequestOwners,
+  assistantGroupTaskTree,
+  ASSISTANT_GROUP_TASK_MOOD,
   assistantGroupNewSeq,
   assistantGroupAllReadSeq,
   assistantGroupReadStep,
@@ -1307,6 +1312,143 @@ describe("read position", () => {
     assert.deepStrictEqual(
       assistantGroupFinished(previous, next, projects).map((notice) => [notice.tab, notice.body]),
       expected as unknown as string[][],
+    );
+  });
+});
+
+describe("assistantGroupMemberWork", () => {
+  it("lists each member once by its newest open task, with the request's project", () => {
+    const at = (minute: number) => `2026-11-01T00:0${minute}:00.000Z`;
+    const state = start({
+      type: "snapshot",
+      messages: [message(1, { requestId: "m1" as never, projectId: "p1" as ProjectId })],
+      tasks: [
+        task("ada-old", 1, { status: "queued", updatedAt: at(1) }),
+        task("ada-new", 1, { status: "running", updatedAt: at(3) }),
+        task("bob", 9, {
+          ownerId: "bob" as AssistantId,
+          status: "usage_limited",
+          updatedAt: at(2),
+          requestId: "m9" as never,
+        }),
+        task("cy", 1, { ownerId: "cy" as AssistantId, status: "completed", updatedAt: at(4) }),
+        task("di", 1, { ownerId: "di" as AssistantId, status: "paused", updatedAt: at(5) }),
+      ],
+      hasMore: true,
+      requests: [message(9, { requestId: "m9" as never })],
+    });
+    assert.deepStrictEqual(
+      assistantGroupMemberWork(state).map((work) => [work.task.id, work.projectId]),
+      [
+        ["ada-new", "p1"],
+        ["bob", null],
+      ],
+    );
+  });
+});
+
+describe("assistantGroupComposerSession", () => {
+  const at = (second: number) => `2026-11-01T00:00:0${second}.000Z`;
+  const state = start({
+    type: "snapshot",
+    messages: [message(1, { requestId: "m1" as never })],
+    tasks: [
+      task("jarvis-1", 1, {
+        ownerId: "jarvis" as AssistantId,
+        status: "completed",
+        updatedAt: at(1),
+      }),
+      task("ada-old", 1, { status: "completed", updatedAt: at(2) }),
+      task("ada-new", 1, { status: "completed", updatedAt: at(3) }),
+      task("beto-paused", 1, {
+        ownerId: "beto" as AssistantId,
+        status: "paused",
+        updatedAt: at(4),
+      }),
+      task("ada-elsewhere", 2, { requestId: "m2" as never, updatedAt: at(5) }),
+    ],
+    hasMore: false,
+  });
+  const quiet = { replyOwner: null, request: null, stopped: [] };
+  it.each([
+    ["a new request opens fresh threads", null, "@ada hi", "jarvis", quiet, null],
+    [
+      "a mention reaches that member's newest task there",
+      "m1",
+      "@ada hi",
+      "jarvis",
+      quiet,
+      "ada-new",
+    ],
+    ["no mention goes to the lead", "m1", "hi", "jarvis", quiet, "jarvis-1"],
+    ["a lead with no task there has no session", "m1", "hi", "cy", quiet, null],
+    ["no lead and no mention has none", "m1", "hi", null, quiet, null],
+    [
+      "a reply that resumes a stopped task reads that task",
+      "m1",
+      "go on",
+      "jarvis",
+      { ...quiet, stopped: [{ taskId: "beto-paused", ownerId: "beto" }] },
+      "beto-paused",
+    ],
+  ] as const)("%s", (_name, requestId, text, leadId, context, expected) => {
+    const session = assistantGroupComposerSession({
+      state,
+      requestId: requestId as never,
+      text,
+      members: [ada, beto, jarvis],
+      leadId: leadId as AssistantId | null,
+      context,
+    });
+    assert.strictEqual<string | null>(session?.id ?? null, expected);
+  });
+});
+
+describe("request owners and task tree", () => {
+  const at = (second: number) => `2026-11-01T00:00:${String(second).padStart(2, "0")}.000Z`;
+  it("names each owner once by its newest task, in the order they joined", () => {
+    const owners = assistantGroupRequestOwners([
+      task("a1", 1, { createdAt: at(1), updatedAt: at(1), status: "completed" }),
+      task("b1", 1, { ownerId: "bo" as AssistantId, createdAt: at(2), updatedAt: at(5) }),
+      task("a2", 1, { createdAt: at(3), updatedAt: at(4), status: "paused" }),
+    ]);
+    assert.deepStrictEqual(
+      owners.map((owner) => [owner.ownerId, owner.id, ASSISTANT_GROUP_TASK_MOOD[owner.status]]),
+      [
+        ["ada", "a2", "needs"],
+        ["bo", "b1", "working"],
+      ],
+    );
+  });
+
+  it("orders tasks depth first under their parents, orphans and cycles as their own roots", () => {
+    const tree = assistantGroupTaskTree([
+      task("reply", 1, { parentId: "child" as never, kind: "reply", createdAt: at(4) }),
+      task("root", 1, { createdAt: at(1) }),
+      task("child", 1, { parentId: "root" as never, kind: "child", createdAt: at(2) }),
+      task("orphan", 1, { parentId: "gone" as never, kind: "child", createdAt: at(3) }),
+      task("second", 1, { createdAt: at(5) }),
+    ]);
+    assert.deepStrictEqual(
+      tree.map((row) => [row.task.id, row.depth]),
+      [
+        ["root", 0],
+        ["child", 1],
+        ["reply", 2],
+        ["orphan", 0],
+        ["second", 0],
+      ],
+    );
+    const cycle = assistantGroupTaskTree([
+      task("x", 1, { parentId: "y" as never }),
+      task("y", 1, { parentId: "x" as never }),
+    ]);
+    assert.deepStrictEqual(
+      cycle.map((row) => [row.task.id, row.depth]),
+      [
+        ["x", 0],
+        ["y", 1],
+      ],
     );
   });
 });

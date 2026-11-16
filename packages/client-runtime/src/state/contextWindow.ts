@@ -317,3 +317,38 @@ export function shouldCompactBeforeSend(input: {
     })
   );
 }
+
+export interface ContextWindowReading {
+  /** Whole percent used, 0–100; null when the window size is unknown. */
+  readonly usedPercent: number | null;
+  readonly maxTokens: number | null;
+  /** Where auto-compaction starts, as a percent of the window; null when unknown or outside it. */
+  readonly compactAtPercent: number | null;
+  readonly tone: "error" | "warning" | null;
+}
+
+/** What every context meter shows for a snapshot, on web and mobile. */
+export function contextWindowReading(usage: ContextWindowSnapshot): ContextWindowReading {
+  const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
+  const usedPercent =
+    maxTokens !== null && usage.usedPercentage !== null
+      ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
+      : null;
+  const threshold = usage.autoCompactThreshold ?? null;
+  return {
+    usedPercent,
+    maxTokens,
+    compactAtPercent:
+      maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
+        ? (threshold / maxTokens) * 100
+        : null,
+    tone:
+      usedPercent === null
+        ? null
+        : usedPercent >= 90
+          ? "error"
+          : usedPercent >= 80
+            ? "warning"
+            : null,
+  };
+}
