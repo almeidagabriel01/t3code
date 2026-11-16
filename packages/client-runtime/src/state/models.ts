@@ -203,7 +203,7 @@ export interface EnvironmentThreadShell {
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
   /** When the oldest of them arrived; null when none waits. */
-  readonly oldestPendingGuestMessageAt?: string | null;
+  readonly oldestPendingGuestMessageAt: string | null;
   /** Messages waiting behind the active run. */
   readonly queuedMessageCount?: number;
   readonly hasActionableProposedPlan: boolean;

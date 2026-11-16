@@ -34,7 +34,8 @@ export interface ZoneShell {
     readonly createdAt: string;
   } | null;
   readonly pendingGuestMessageCount?: number | undefined;
-  readonly oldestPendingGuestMessageAt?: string | null | undefined;
+  /** Required so every caller passes a shell from `presentThreadShell`, which fills it. */
+  readonly oldestPendingGuestMessageAt: string | null;
 }
 
 export type ThreadOwner =
@@ -125,7 +126,8 @@ export type NeedsYouItem<D extends NeedsYouDecision = NeedsYouDecision> = {
   readonly key: string;
   readonly environmentId: string;
   readonly threadId: string;
-  readonly createdAt: string;
+  /** Null for a waiting guest whose time is unknown; it lists last. */
+  readonly createdAt: string | null;
   readonly owner: ThreadOwner;
 } & (
   | {
@@ -165,8 +167,7 @@ export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(i
         kind: "guest",
         environmentId: shell.environmentId,
         threadId: shell.id,
-        // Shells always carry it once a guest waits (see `presentThreadShell`).
-        createdAt: shell.oldestPendingGuestMessageAt ?? "",
+        createdAt: shell.oldestPendingGuestMessageAt,
         owner: input.ownerOf(shell),
       });
     }
@@ -183,7 +184,15 @@ export function needsYouItems<S extends ZoneShell, D extends NeedsYouDecision>(i
       decision,
     });
   }
-  return items.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.key.localeCompare(b.key));
+  return items.sort(
+    (a, b) => compareOldestFirst(a.createdAt, b.createdAt) || a.key.localeCompare(b.key),
+  );
+}
+
+/** Oldest first; an unknown time counts as the newest. */
+function compareOldestFirst(a: string | null, b: string | null): number {
+  if (a === null || b === null) return Number(a === null) - Number(b === null);
+  return a.localeCompare(b);
 }
 
 export interface ZoneTeam {

@@ -90,7 +90,9 @@ function CardShell(props: {
             </span>
           )}
           <span className="ms-auto shrink-0 ps-1 text-muted-foreground tabular-nums">
-            {formatRelativeTimeLabel(props.item.createdAt, nowMs)}
+            {props.item.createdAt === null
+              ? null
+              : formatRelativeTimeLabel(props.item.createdAt, nowMs)}
           </span>
         </div>
         <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">

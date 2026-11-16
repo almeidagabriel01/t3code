@@ -42,7 +42,7 @@ const QUESTION_OPTION_LIMIT = 4;
 interface ItemOrigin {
   readonly environmentId: string;
   readonly threadId: string;
-  readonly createdAt: string;
+  readonly createdAt: string | null;
   /** The assistant whose work this is; null for a project thread. */
   readonly assistant: Assistant | null;
   /** Set when the thread is an assistant's thread in a group. */
@@ -108,7 +108,9 @@ function ItemFrame(
         ) : (
           <View className="flex-1" />
         )}
-        <Text className={cn("text-xs", muted)}>{relativeTime(props.createdAt, nowMs)}</Text>
+        {props.createdAt === null ? null : (
+          <Text className={cn("text-xs", muted)}>{relativeTime(props.createdAt, nowMs)}</Text>
+        )}
       </View>
       <View className="flex-row items-center gap-2">
         <SymbolView name={props.icon} size={13} tintColorClassName={iconTint} type="monochrome" />

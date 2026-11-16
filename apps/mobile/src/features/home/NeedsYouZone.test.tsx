@@ -15,7 +15,7 @@ const { mocks } = vi.hoisted(() => ({
       archivedAt: null;
       pendingRequest: Request | null;
       pendingGuestMessageCount?: number;
-      oldestPendingGuestMessageAt?: string | null;
+      oldestPendingGuestMessageAt: string | null;
     }>,
     decisions: [] as Array<{ environmentId: string; decision: Record<string, unknown> }>,
     detail: {} as Record<string, unknown>,
@@ -149,6 +149,7 @@ const shell = (id: string, pendingRequest: Request | null = null, title = id) =>
   projectId: "p1",
   archivedAt: null,
   pendingRequest,
+  oldestPendingGuestMessageAt: null,
 });
 const question = (id: string, options: Array<{ label: string; value?: string }>) => ({
   id,

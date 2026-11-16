@@ -19,6 +19,7 @@ const shell = (id: string, extra: Partial<ZoneShell> = {}): ZoneShell => ({
   lineage: { parentThreadId: null },
   delegatedFrom: null,
   pendingRequest: null,
+  oldestPendingGuestMessageAt: null,
   ...extra,
 });
 
@@ -88,6 +89,8 @@ describe("needsYouItems", () => {
           oldestPendingGuestMessageAt: "2026-01-01T00:00:00.000Z",
         }),
         shell("resolved", { pendingGuestMessageCount: 0, oldestPendingGuestMessageAt: null }),
+        // A waiting guest with no time neither leads nor vanishes: it lists last, as the newest.
+        shell("untimed", { pendingGuestMessageCount: 1, oldestPendingGuestMessageAt: null }),
         shell("task-child", {
           pendingRequest: { id: "r2", kind: "user_input", createdAt: "2026-01-01T00:00:01.000Z" },
         }),
@@ -119,6 +122,7 @@ describe("needsYouItems", () => {
       ["decision:e:d1", "decision", "project"],
       ["guest:e:plain", "guest", "project"],
       ["request:e:r1", "approval", "project"],
+      ["guest:e:untimed", "guest", "project"],
     ]);
   });
 });
