@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_VOICE_MODEL } from "@t3tools/client-runtime/settings-empty-selection";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -531,7 +532,9 @@ function CleanupModelRow() {
       {...searchableSetting("speech-post-processing-model")}
       control={
         connectedEnvironments.length === 0 ? (
-          <span className="text-sm text-muted-foreground">Connect an environment first.</span>
+          <span className="text-sm text-muted-foreground">
+            {CONNECT_ENVIRONMENT_FOR_VOICE_MODEL}
+          </span>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             {dedicated && (!hasProvider || !instanceEntry) ? (

@@ -1,3 +1,4 @@
+import { CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS } from "@t3tools/client-runtime/settings-empty-selection";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -56,7 +57,7 @@ export function SecretsSettingsPanel() {
       ) : (
         <SettingsSection {...searchableSetting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to manage the secret providers its provider variables read from.
+            {CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS}
           </p>
         </SettingsSection>
       )}
