@@ -27,7 +27,12 @@ import {
 import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SettingsServerEnvironmentNotice,
+} from "./settingsLayout";
 
 const SECRET_PROVIDER_KINDS: Readonly<
   Record<string, { readonly name: string; readonly icon: Icon }>
@@ -55,11 +60,11 @@ export function SecretsSettingsPanel() {
           projectScoped={scope.kind === "project" || scope.kind === "checkout"}
         />
       ) : (
-        <SettingsSection {...searchableSetting("secret-providers")}>
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            {CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS}
-          </p>
-        </SettingsSection>
+        <SettingsServerEnvironmentNotice id={searchableSetting("secret-providers").id}>
+          {environment
+            ? `Reconnect ${environment.label} to manage its secret providers.`
+            : CONNECT_ENVIRONMENT_FOR_SECRET_PROVIDERS}
+        </SettingsServerEnvironmentNotice>
       )}
     </SettingsPageContainer>
   );

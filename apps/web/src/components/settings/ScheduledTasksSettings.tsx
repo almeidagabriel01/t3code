@@ -4,7 +4,6 @@ import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
 import {
   ChevronDownIcon,
-  Clock3Icon,
   CopyIcon,
   InboxIcon,
   MessageSquareIcon,
@@ -124,7 +123,6 @@ import {
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
-import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "../ui/empty";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
 import { MemoryRunAccessLabel } from "./MemoryRunAccessLabel";
@@ -158,6 +156,7 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
+  SettingsServerEnvironmentNotice,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -503,6 +502,15 @@ export function ScheduledTasksSettings(target: {
     permittedEnvironments.find(
       (entry) => entry.environmentId === defaultEnvironment?.environmentId,
     ) ?? permittedEnvironments[0];
+  if (scope.kind !== "unavailable" && environments.length === 0) {
+    return (
+      <SettingsPageContainer>
+        <SettingsServerEnvironmentNotice>
+          {CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS}
+        </SettingsServerEnvironmentNotice>
+      </SettingsPageContainer>
+    );
+  }
   return (
     <SettingsPageContainer>
       <SettingsSection
@@ -528,16 +536,6 @@ export function ScheduledTasksSettings(target: {
           <SettingsSection title="Unavailable selection">
             <SettingsRow title={scope.message} />
           </SettingsSection>
-        ) : environments.length === 0 ? (
-          <Empty>
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <Clock3Icon />
-              </EmptyMedia>
-              <EmptyTitle>No environments available</EmptyTitle>
-              <EmptyDescription>{CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
         ) : environments.length > 1 ? (
           <ScheduledTaskEnvironmentList
             environmentId={linkedEnvironmentId}
