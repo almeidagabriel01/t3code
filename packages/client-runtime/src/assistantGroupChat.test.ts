@@ -31,6 +31,8 @@ import {
   assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
   assistantGroupSendRequestId,
+  assistantGroupSendToRestore,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -1819,6 +1821,43 @@ describe("assistant group tabs", () => {
     const notSent = assistantGroupSendRequestId(unconfirmed, sent, () => "B");
     const again = assistantGroupSendRequestId(notSent, sent, () => "C");
     assert.deepStrictEqual([notSent.requestId, again.requestId], ["A", "A"]);
+  });
+
+  const held = (requestId: string, failed: boolean, routing: object | null = {}) => ({
+    ...out("project:p1", failed),
+    requestId,
+    routing,
+  });
+  it.each([
+    ["comes into view failed: opening the chat or its tab", null, held("A", true), "A", true],
+    ["coming back after another tab", "B", held("A", true), "A", true],
+    ["failed in view", "A", held("A", true), "A", false],
+    ["on its way", null, held("A", false), "A", false],
+    ["landed and kept for its edits", null, held("A", true, null), "A", false],
+    ["nothing shown", "A", null, null, false],
+  ] as const)("routing a failed send takes back: %s", (_name, seen, shown, nextSeen, restores) => {
+    assert.deepStrictEqual(assistantGroupSendToRestore(seen, shown, "project:p1"), {
+      seen: nextSeen,
+      restore: restores ? shown : null,
+    });
+  });
+
+  it("restores nothing in All for another tab's send", () => {
+    const sending = { ...sendingP2, requestId: "A", routing: {} };
+    assert.deepStrictEqual(assistantGroupSendToRestore(null, sending, "all"), {
+      seen: null,
+      restore: null,
+    });
+  });
+
+  const reply = { id: "m1" };
+  it.each([
+    ["the one it sent goes", reply, reply, null],
+    ["one picked since stays", { id: "m2" }, reply, "m2"],
+    ["one picked after a send with none stays", reply, null, "m1"],
+    ["none stays none", null, reply, null],
+  ] as const)("a landed send's reply or pick: %s", (_name, current, sent, expected) => {
+    assert.strictEqual(assistantGroupLandedPick(current, sent)?.id ?? null, expected);
   });
 
   it("keeps each tab's outgoing message until that tab replaces or clears it", () => {

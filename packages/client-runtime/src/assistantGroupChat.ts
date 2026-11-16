@@ -399,7 +399,7 @@ export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
 /**
  * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
  * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
- * brings it back.
+ * brings it back, unless a failed send of that tab does (`assistantGroupSendToRestore`).
  */
 export function assistantGroupTabPick<T>(
   pick: AssistantGroupTabPick<T> | null,
@@ -663,6 +663,40 @@ export function assistantGroupSendRequestId(
 ) {
   const sendKey = JSON.stringify(carries);
   return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
+/** What a group send went with besides its text and files: the open reply and its tab's picks. */
+export interface AssistantGroupSendRouting<Reply> {
+  readonly reply: Reply | null;
+  readonly projectPick: AssistantGroupProjectPick | null;
+  readonly modelPick: AssistantGroupTabPick<ModelSelection> | null;
+}
+
+/**
+ * A reply or pick once its send landed, by the post's reply or by the chat showing the post: it
+ * goes, unless the user changed it since the send.
+ */
+export function assistantGroupLandedPick<T>(current: T | null, sent: T | null): T | null {
+  return current === sent ? null : current;
+}
+
+/**
+ * The failed send whose routing the chat takes back as it comes into view in its own tab:
+ * opening the chat or another tab drops the reply and picks, and a resend without them would go
+ * under a new id. Only on coming into view, so what the user changes while it shows stays theirs.
+ * `seen` is the request id the open tab showed last; keep the one this returns.
+ */
+export function assistantGroupSendToRestore<
+  T extends AssistantGroupOutgoing & { readonly requestId: string; readonly routing: unknown },
+>(
+  seen: string | null,
+  shown: T | null,
+  tab: AssistantGroupTabKey | null,
+): { readonly seen: string | null; readonly restore: T | null } {
+  const own = shown !== null && shown.tab === tab ? shown : null;
+  const next = own?.requestId ?? null;
+  const restore = own?.failed === true && own.routing !== null && next !== seen ? own : null;
+  return { seen: next, restore };
 }
 
 const NO_OUTGOING: ReadonlyArray<never> = [];
