@@ -91,11 +91,20 @@ describe("command kinds and signatures", () => {
     expect(kindOf({ label: "Open iPhone", server: true })).toBe("exclusive");
   });
 
-  it("drops flags and keeps the first path, so one file never shares the suite's runs", () => {
+  it("keeps a test run's target, so one file never shares the suite's runs", () => {
     expect(signatureOf("vp test run src/a.test.ts --watch")).toBe(
       signatureOf("cd /w && vp test run src/a.test.ts"),
     );
     expect(signatureOf("vp test run src/a.test.ts")).toBe("vp test run src/a.test.ts");
+    // Any worktree, folder or redirection: the same file is the same command.
+    expect(
+      signatureOf("cd /w/x-1/apps/server && vp test run /w/x-1/apps/server/src/a.test.ts 2>&1"),
+    ).toBe("vp test run src/a.test.ts");
+    expect(signatureOf('vp test run src/a.test.ts > "$S/out.txt"')).toBe(
+      "vp test run src/a.test.ts",
+    );
+    // Only a test run's target counts: every commit of other files is one command.
+    expect(signatureOf("git commit apps/a.ts apps/b.ts")).toBe(signatureOf("git commit apps/c.ts"));
     expect(signatureOf("vp test run src/a.test.ts")).not.toBe(signatureOf("vp test run"));
     expect(signatureOf("vp test run src/a.test.ts")).not.toBe(
       signatureOf("vp test run src/b/c.test.ts"),

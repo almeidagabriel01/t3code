@@ -148,22 +148,25 @@ export const kindOf = (
   return "heavy";
 };
 
+const REDIRECT = /^\d*[<>]/;
+const TEST_RUN = /^(test|vitest|jest|playwright|pytest)$/;
+
 /**
- * The command's first words plus the first path it names, so `vp test run src/a.test.ts --watch`
- * and `cd x && vp test run src/a.test.ts` share one, while a single file never shares the suite's.
+ * The command's first words, plus the file or folder a test run names (its last two segments, so
+ * any worktree and `cd` share it): one test file never shares the suite's runs. Flags and
+ * redirections never count, and other paths (a commit's files) would only split one command.
  */
 export const signatureOf = (label: string): string => {
-  const words = (heavySegment(label) ?? label)
-    .split(/\s+/)
-    .filter((word) => word !== "" && !word.startsWith("-"));
+  const all = (heavySegment(label) ?? label).split(/\s+/).filter((word) => word !== "");
+  const words = all.filter(
+    (word, at) =>
+      !word.startsWith("-") && !REDIRECT.test(word) && !/^\d*[<>]+&?$/.test(all[at - 1] ?? ""),
+  );
   const isPath = (word: string) => /[\\/]|\.\w{1,5}$/.test(word);
-  const path = words.find(isPath);
-  return [
-    ...words.filter((word) => !isPath(word)).slice(0, 4),
-    ...(path === undefined ? [] : [path]),
-  ]
-    .join(" ")
-    .toLowerCase();
+  const command = words.filter((word) => !isPath(word)).slice(0, 4);
+  const path = command.some((word) => TEST_RUN.test(word)) ? words.find(isPath) : undefined;
+  const target = path?.split(/[\\/]/).filter(Boolean).slice(-2).join("/");
+  return [...command, ...(target === undefined ? [] : [target])].join(" ").toLowerCase();
 };
 
 interface Cost {
