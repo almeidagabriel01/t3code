@@ -2127,6 +2127,20 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             native?.settledAt === undefined ? null : DateTime.formatIso(native.settledAt),
             DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 5 * 60_000)),
           );
+          // A failed lookup counts as a check: the next sweep neither retries it nor settles.
+          const failedLookups = Effect.map(
+            Ref.get(fixture.branchCalls),
+            (calls) => calls.filter((call) => call.cwd === "/worktrees/lookup-failed").length,
+          );
+          assert.strictEqual(yield* failedLookups, 1);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.strictEqual(yield* failedLookups, 1);
+          assert.notInclude(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            "own-worktree-lookup-failed",
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

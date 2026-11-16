@@ -528,7 +528,18 @@ export const make = Effect.gen(function* () {
             ) {
               return;
             }
-            if (yield* branchHoldsWork(thread, settlement, projectRoot)) {
+            // A failed read holds the work (fail closed) and waits out the recheck like any other.
+            const holds = yield* branchHoldsWork(thread, settlement, projectRoot).pipe(
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("held branch check failed", {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  }).pipe(Effect.as(true)),
+              ),
+            );
+            if (holds) {
               if (key !== null) heldChecks.set(thread.id, { key, checkedAtMs: nowMs });
               return;
             }
