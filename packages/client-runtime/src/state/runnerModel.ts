@@ -291,8 +291,9 @@ export function routeActions(
 }
 
 /**
- * A question's answers: both places, even the one it heads for. An answer never reruns a run Linux
- * has not confirmed stopped; it runs there once Linux confirms, and the row's own action forces.
+ * A question's answers: both places, even the one it heads for. Linux takes a run it has not
+ * confirmed stopped only once it confirms; this Mac, which never shares that run's folder, at once.
+ * The row's own action forces Linux.
  */
 export function askAnswers(
   entry: HeavyQueueEntry,

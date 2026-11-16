@@ -1014,19 +1014,21 @@ describe("Runner in the queue file", () => {
     },
   );
 
-  it("an answer to a drop's question waits for Linux to confirm; forcing a rerun clears the hold", () => {
+  // This Mac never shares the lost run's folder: only an answer for Linux waits for the confirmation.
+  it.each([
+    ["linux", "waiting"],
+    ["mac", "started"],
+  ] as const)("a drop's question answered for %s: %s", (runner, status) => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "ask" })), false);
     const ask = { reason: "dropped" as const, deadlineAt: new Date(NOW + 60_000).toISOString() };
     Queue.enqueue(
       dir,
       test("a", { dropped: true, linuxFailedAt: NOW - 1000, unconfirmed: true, ask }),
     );
-    expect(Queue.route(dir, "a", "mac")).toBe("ok");
-    expect(Queue.read(dir)[0]).toMatchObject({ route: "mac", unconfirmed: true });
+    expect(Queue.route(dir, "a", runner)).toBe("ok");
+    expect(Queue.read(dir)[0]).toMatchObject({ route: runner, unconfirmed: true });
     expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
-    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
-    expect(Queue.route(dir, "a", "mac", true)).toBe("ok");
-    expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status });
   });
 
   it("only the owner or a higher-ranked publisher writes the block", () => {

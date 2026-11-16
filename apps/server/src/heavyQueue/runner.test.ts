@@ -1161,10 +1161,22 @@ describe("Linux unavailable, deadline and dropped policies", () => {
     expect(plan.reasons.a).toBe("waiting for Linux to come back");
   });
 
-  it("an unconfirmed drop reruns nowhere until Linux confirms it stopped", () => {
-    const plan = planRoutes(input([job("a", "vp test run", { unconfirmed: true })]));
-    expect(plan.admits).toEqual({});
-    expect(plan.reasons.a).toMatch(/confirming it stopped/);
+  // Its lost run holds back only Linux, through its record: work bound for this Mac runs at once,
+  // so a Runner turned off, which confirms nothing, never strands it.
+  it.each([
+    ["bound for Linux", "linux-wait", "vp test run", {}, {}],
+    ["with the Runner off", "mac-start", "vp test run", { runnerEnabled: false }, {}],
+    ["answered for this Mac", "mac-start", "vp test run", {}, { route: "mac" as const }],
+    ["tied to this Mac", "mac-start", "xcodebuild test", {}, {}],
+  ] as const)("an unconfirmed drop %s: %s", (_, outcome, label, config, extra) => {
+    const plan = planRoutes(
+      input([job("a", label, { unconfirmed: true, ...extra })], {
+        runnerWhere: "linux",
+        ...config,
+      }),
+    );
+    expect(outcomeOf(plan, "a")).toBe(outcome);
+    if (outcome === "linux-wait") expect(plan.reasons.a).toMatch(/confirming it stopped/);
   });
 
   it("before the first heartbeat a Linux job waits instead of asking", () => {

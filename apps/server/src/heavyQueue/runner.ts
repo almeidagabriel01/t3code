@@ -958,9 +958,15 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
     const { config, worktree } = context;
     const { intent, reason: why } = intentOf(entry, context);
     if (entry.unconfirmed === true) {
-      // The PC went away with the run: its policy acts now. After a blip, once the user chose, or
-      // with only this Mac left for it, it just waits to confirm.
-      if (entry.route === undefined && intent !== "mac" && wentAway(health, entry)) {
+      // This Mac never shares the lost run's folder, whose record holds back only Linux: work bound
+      // here runs now, so a Runner turned off, which confirms nothing, never strands it.
+      if (intent === "mac") {
+        toMac(entry, why);
+        continue;
+      }
+      // The PC went away with the run: its policy acts now. After a blip, or once the user chose,
+      // it just waits to confirm.
+      if (entry.route === undefined && wentAway(health, entry)) {
         follow(entry, config);
         continue;
       }

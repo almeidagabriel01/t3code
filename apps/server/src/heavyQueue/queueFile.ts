@@ -1184,7 +1184,7 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
     }
     if (target.unconfirmed === true && !force) {
       if (target.ask === undefined) return { doc, result: "unconfirmed" };
-      // Its question's answer runs once Linux confirms the run stopped; only `force` reruns now.
+      // An answer for Linux runs there once Linux confirms the run stopped; this Mac takes it now.
       return update(({ ask: _ask, forced: _forced, ...entry }) => ({ ...entry, route: runner }));
     }
     const routed = update(
