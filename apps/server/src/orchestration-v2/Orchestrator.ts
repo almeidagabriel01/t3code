@@ -26,6 +26,7 @@ import {
   type ChatAttachment,
   CommandId,
   type GuestMessageId,
+  type OrchestrationV2Actor,
   isCompactionCommandMessage,
   ContextTransferId,
   isOrchestrationV2WorkActive,
@@ -748,6 +749,22 @@ function withoutPreparationResult(
 ) {
   const { output: _output, exitCode: _exitCode, outputIndicatesFailure: _failure, ...rest } = item;
   return rest;
+}
+
+/**
+ * Teammate attribution comes only from the server's own agent sends (clients are stamped "user"),
+ * and an edit replaces the words it describes, so `always` drops it.
+ */
+function withoutTeammateAttribution<
+  C extends {
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+    readonly createdBy?: OrchestrationV2Actor;
+  },
+>(command: C, always = false): C {
+  if (command.context?.teammate === undefined) return command;
+  if (!always && command.createdBy === "agent") return command;
+  const { teammate: _teammate, ...context } = command.context;
+  return { ...command, context };
 }
 
 /** Stop ended this task, so its result is not delivered to the parent agent. */
@@ -10774,12 +10791,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "Automatic completion deliveries cannot be edited.",
       });
     }
-    // The agent text and the shown text of a guest message must stay the guest's words.
-    if (queuedMessage.context?.guest !== undefined) {
+    // A guest's or a teammate's message stays its author's words: an edit would put other words
+    // under their name. Other agents' prompts (scheduled tasks, automations) remain the owner's.
+    const author =
+      queuedMessage.context?.guest !== undefined
+        ? "guest's"
+        : queuedMessage.context?.teammate !== undefined
+          ? "teammate's"
+          : null;
+    if (author !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "A guest's message cannot be edited. Cancel it instead.",
+        cause: `A ${author} message cannot be edited. Cancel it instead.`,
       });
     }
     yield* ensureGoalCommandSupported(
@@ -10802,13 +10826,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
       providerInstanceId: queuedRun.providerInstanceId,
       occurredAt: now,
-      payload: withoutGuestAttribution({
-        ...queuedMessage,
-        text: command.text,
-        ...editedAttachments,
-        ...(command.context ? { context: command.context } : {}),
-        updatedAt: now,
-      }),
+      payload: withoutTeammateAttribution(
+        withoutGuestAttribution({
+          ...queuedMessage,
+          text: command.text,
+          ...editedAttachments,
+          ...(command.context ? { context: command.context } : {}),
+          updatedAt: now,
+        }),
+        true,
+      ),
     });
     if (queuedTurnItem !== undefined && queuedTurnItem.type === "user_message") {
       yield* emitEvent({
@@ -10818,13 +10845,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(queuedRun.rootNodeId === null ? {} : { nodeId: queuedRun.rootNodeId }),
         providerInstanceId: queuedRun.providerInstanceId,
         occurredAt: now,
-        payload: withoutGuestAttribution({
-          ...queuedTurnItem,
-          text: command.text,
-          ...editedAttachments,
-          ...(command.context ? { context: command.context } : {}),
-          updatedAt: now,
-        }),
+        payload: withoutTeammateAttribution(
+          withoutGuestAttribution({
+            ...queuedTurnItem,
+            text: command.text,
+            ...editedAttachments,
+            ...(command.context ? { context: command.context } : {}),
+            updatedAt: now,
+          }),
+          true,
+        ),
       });
     }
   });
@@ -14120,7 +14150,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
         const dispatched =
           guestSend === undefined
-            ? withoutGuestAttribution(command)
+            ? withoutTeammateAttribution(withoutGuestAttribution(command))
             : {
                 ...command,
                 text: guestSend.text,

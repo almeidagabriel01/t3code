@@ -17,6 +17,12 @@ import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import {
+  resolveTeammateMessage,
+  type TeammateMessagePart,
+  teammateMessagePlainText,
+} from "./teammateMessage.ts";
+
 /** The working row while T3 Code's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
   beforeCacheExpires: "Compacting before the cache expires…",
@@ -58,23 +64,62 @@ export function resolveUserMessageFileCards(message: {
   return remaining.trim() === "" ? files : null;
 }
 
+/**
+ * Whether the owner may rewrite a queued message: a guest's or a teammate's keeps its author's
+ * words; any other prompt, a scheduled task's included, is the owner's to change.
+ */
+export function canEditQueuedMessage(
+  message:
+    | (Parameters<typeof resolveTeammateMessage>[0] & {
+        readonly context?:
+          | {
+              readonly guest?: GuestMessageAttribution | undefined;
+              readonly teammate?: OrchestrationMessageContext["teammate"];
+            }
+          | undefined;
+      })
+    | undefined,
+): boolean {
+  return (
+    message === undefined ||
+    (message.context?.guest === undefined && resolveTeammateMessage(message) === null)
+  );
+}
+
 export function resolveUserMessagePresentation(message: {
   readonly id?: string;
   readonly role: string;
   readonly text: string;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
+  readonly senderThreadId?: string | undefined;
   readonly scheduledTaskId?: ScheduledTaskId | undefined;
-  readonly context?: { readonly guest?: GuestMessageAttribution | undefined } | undefined;
+  readonly context?:
+    | {
+        readonly guest?: GuestMessageAttribution | undefined;
+        readonly teammate?: OrchestrationMessageContext["teammate"];
+      }
+    | undefined;
 }): {
   readonly text: string;
   readonly attribution: "automation" | "agent" | "t3code" | "guest" | null;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
   /** Set when `attribution` is "guest". */
   readonly guestName?: string;
+  /** Set when teammates sent it; `text` is then their words without the envelope. */
+  readonly teammate?: ReadonlyArray<TeammateMessagePart>;
 } {
   if (message.role !== "user") {
     return { text: message.text, attribution: null, scheduledTaskId: undefined };
+  }
+  const teammate = resolveTeammateMessage(message);
+  if (teammate !== null) {
+    return {
+      text: teammateMessagePlainText(teammate),
+      attribution: message.creationSource === "server" ? "t3code" : "agent",
+      scheduledTaskId: undefined,
+      teammate,
+    };
   }
   // The stored text names the guest for the agent; people see the guest's own words.
   const guest = message.context?.guest;

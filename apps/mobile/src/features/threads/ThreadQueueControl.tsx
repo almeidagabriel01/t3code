@@ -241,8 +241,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
-          isGuestMessage: context?.guest !== undefined,
           text,
+          message,
         });
         const title = queuedRowTitle({
           message,

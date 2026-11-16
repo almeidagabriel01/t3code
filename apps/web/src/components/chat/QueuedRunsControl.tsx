@@ -12,7 +12,10 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import {
+  canEditQueuedMessage,
+  resolveUserMessagePresentation,
+} from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
@@ -129,7 +132,7 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
+    ...queued.map(({ run, text, attachments, message }, serverIndex) => ({
       key: run.id,
       message,
       runId: run.id,
@@ -137,8 +140,7 @@ export function QueuedRunsControl({
       freshContext: run.freshContext === true,
       serverIndex,
       text,
-      // A guest's message keeps the guest's words; the owner can cancel it, not rewrite it.
-      editable: context?.guest === undefined,
+      editable: canEditQueuedMessage(message),
       attachments,
       thumbnails: attachments
         .filter((attachment) => attachment.type === "image")
@@ -204,7 +206,7 @@ export function QueuedRunsControl({
       const latest = queued.at(-1);
       if (
         !latest ||
-        latest.context?.guest !== undefined ||
+        !canEditQueuedMessage(latest.message) ||
         props.editingRunId !== null ||
         props.editBlockedReason !== null ||
         busyRunId !== null
@@ -250,10 +252,13 @@ export function QueuedRunsControl({
       </span>
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
-          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+          // A teammate's queued message previews their words, as its sent row will.
+          const presentation = item.message ? resolveUserMessagePresentation(item.message) : null;
+          const shownText = presentation?.teammate ? presentation.text : item.text;
+          const previewText = isAttachmentOnlyBootstrapPrompt(shownText)
             ? ""
             : assistantCitationsToPlainText(
-                replaceComposerContextReferences(item.text, (reference) =>
+                replaceComposerContextReferences(shownText, (reference) =>
                   reference.kind === "image" && item.thumbnails.length > 0 ? "" : reference.label,
                 ),
               ).trim();

@@ -113,6 +113,7 @@ it("previews assistant quotes as readable text and preserves the citation when e
 
 it("shows who sent a queued message and folds automation and agent prompts", async () => {
   setup();
+  const teammateText = "<t3_reply>model-facing envelope</t3_reply>\nLooks good.";
   const message = (id: string, fields: Record<string, unknown>) => ({
     id,
     role: "user",
@@ -149,6 +150,33 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
           creationSource: "server",
         },
       ],
+      [
+        "run:teammate",
+        teammateText,
+        {
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: "assistant:ada:1",
+          context: {
+            version: 1,
+            records: [],
+            teammate: {
+              entries: [
+                {
+                  kind: "reply",
+                  name: "Ada",
+                  handle: "ada",
+                  threadId: "assistant:ada:1",
+                  requestId: "message:ask",
+                  files: [],
+                  bodyStart: teammateText.indexOf("Looks good."),
+                  bodyEnd: teammateText.length,
+                },
+              ],
+            },
+          },
+        },
+      ],
     ].map(([runId, text, fields]) => ({
       run: { id: runId, userMessageId: `${runId}:message` },
       text,
@@ -170,8 +198,18 @@ it("shows who sent a queued message and folds automation and agent prompts", asy
   await page.getByRole("button", { name: "Open thread" }).click({ force: true });
   expect(onOpenThread).toHaveBeenCalledExactlyOnceWith("thread:lead");
 
+  await page.getByRole("button", { name: "Show all 4 queued" }).click();
   await expect.element(page.getByText("Sent by T3 Code")).toBeVisible();
   await expect.element(page.getByText("Continue where you left off.")).toBeVisible();
+  // A teammate's words stay theirs: the owner can cancel them, not rewrite them. Any other agent's
+  // prompt, a scheduled task's included, is the owner's to change.
+  const edits = page.getByRole("button", { name: "Edit queued message", exact: true }).elements();
+  expect(edits.map((button) => (button as HTMLButtonElement).disabled)).toEqual([
+    false,
+    false,
+    false,
+    true,
+  ]);
 });
 
 it("stays inside the timeline scroller instead of growing the chat column", async () => {

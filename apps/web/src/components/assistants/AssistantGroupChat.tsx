@@ -670,7 +670,16 @@ function FeedRow(props: {
         className={cn(ROW_CLASS, "flex-col gap-1", fromUser ? "items-end" : "items-start")}
       >
         {fromUser ? null : (
-          <span className="px-1 text-xs font-semibold text-muted-foreground">{label}</span>
+          <span className="flex items-center gap-1.5 px-1 text-xs font-semibold text-muted-foreground">
+            {author === undefined ? null : (
+              <AssistantAvatar
+                assistant={author}
+                environmentId={props.environmentId}
+                className="size-4"
+              />
+            )}
+            {label}
+          </span>
         )}
         {replyLine}
         <div

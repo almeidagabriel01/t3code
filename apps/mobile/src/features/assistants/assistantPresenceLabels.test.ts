@@ -12,6 +12,8 @@ describe("assistant presence presentation", () => {
     expect(presenceBadgeLabel(null, false)).toBe("assistant");
     expect(presenceBadgeLabel("Edits", false)).toBe("assistant · Edits");
     expect(presenceBadgeLabel("Edits", true)).toBe("assistant · Edits · asks first");
+    expect(presenceBadgeLabel("Edits", false, "Tech Lead")).toBe("Tech Lead · Edits");
+    expect(presenceBadgeLabel(null, false, "")).toBe("assistant");
   });
 });
 

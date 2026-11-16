@@ -13,9 +13,9 @@ import { AssistantDirectory } from "./AssistantDirectory.ts";
 import {
   AssistantRequests,
   blockedText,
-  deliveryText,
+  deliveryMessage,
   replyMessageId,
-  replyText,
+  replyMessage,
 } from "./AssistantRequests.ts";
 
 const ENDED_BADLY = new Set(["failed", "cancelled", "interrupted"]);
@@ -64,10 +64,10 @@ const make = Effect.gen(function* () {
       const messageId = replyMessageId(
         outcome.kind === "complete" ? (outcome.delivery.groupId as MessageId) : requestId,
       );
-      const text =
+      const content =
         outcome.kind === "complete"
-          ? yield* deliveryText(directory, outcome.delivery)
-          : replyText(from, requestId, notice);
+          ? yield* deliveryMessage(directory, outcome.delivery)
+          : replyMessage(from, requestId, notice);
       const sent =
         shell === null
           ? undefined
@@ -80,7 +80,7 @@ const make = Effect.gen(function* () {
                   messageId,
                   threadId: asker.value,
                   senderThreadId: run.threadId,
-                  text,
+                  ...content,
                   attachments: [],
                   mode: "queue",
                   createdBy: "agent",

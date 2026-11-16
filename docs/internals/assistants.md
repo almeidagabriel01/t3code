@@ -316,6 +316,18 @@ failure is the sender's own tool error. Without a `clientRequestId` the key foll
 text, so an identical send within one session repeats the same request. Shells carry
 `queuedMessageCount` for the row badge.
 
+The stored `text` is the envelope the model reads (`<t3_request>`/`<t3_reply>` and the system line),
+so clients never parse it: the same send puts `context.teammate` beside it (sender, request id,
+status, files and where the bare body sits in `text`, one entry per reply of a group). It is stored,
+so it holds offsets rather than a second copy of the words; a range the text does not hold shows the
+text whole. The orchestrator keeps it only on `createdBy: "agent"`, and no one may edit a queued message
+that carries it (or a guest's), so a client cannot claim to be a teammate or rewrite one; other
+agents' prompts, such as a scheduled task's, stay editable. Messages from a
+server without it go through one parser in `client-runtime` (`teammateMessage.ts`). No date decides,
+since each environment updates on its own day: it reads an envelope only where the server's own
+marks prove it (an assistant sender the envelope names, the ids the server gave replies and group
+deliveries) and names the teammate from the directory, never from the tags.
+
 A send may name several assistants (`threadIds`). Each gets its own request row (`<group>:to:<thread>`)
 sharing a `group_id`, all opened before the first send so a fast reply never sees a group of one. Replies
 and blocked notices are stored in the rows; `AssistantRequests.settle` claims the group's single

@@ -19,14 +19,27 @@ const mocks = vi.hoisted(() => ({
   task: null as null | { dismissedAt: string | null },
   dismissTask: vi.fn(),
   restoreTask: vi.fn(),
+  openLinked: vi.fn(),
 }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
   View: (props: { children?: ReactNode }) => <div>{props.children}</div>,
-  Pressable: (props: { accessibilityLabel?: string; children?: ReactNode }) => (
-    <button aria-label={props.accessibilityLabel}>{props.children}</button>
+  Pressable: (props: {
+    accessibilityLabel?: string;
+    onPress?: () => void;
+    children?: ReactNode;
+  }) => (
+    <button aria-label={props.accessibilityLabel} onClick={props.onPress}>
+      {props.children}
+    </button>
   ),
 }));
+vi.mock("react-native-reanimated", () => ({
+  default: { View: (props: { children?: ReactNode }) => <div>{props.children}</div> },
+  LinearTransition: { duration: () => ({ reduceMotion: () => ({}) }) },
+  ReduceMotion: { System: "system" },
+}));
+vi.mock("../threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => mocks.openLinked }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: (props: { children?: ReactNode }) => <span>{props.children}</span>,
 }));
@@ -390,4 +403,66 @@ it("a removed assistant's message keeps a face and falls back to Assistant", () 
   );
   expect(view.container.textContent).toContain("av:gone");
   expect(view.container.textContent).toContain("Assistant joined the conversation · today");
+});
+
+it("a teammate's message shows its role, status, thread and folds when long", () => {
+  mocks.assistants = [assistant("lead", "Pessoal Lead", { role: "Tech Lead" })];
+  using view = mount(
+    <AssistantFeedMessage
+      environmentId={"hub" as never}
+      assistantId="lead"
+      joinedAtLabel={null}
+      status="partial"
+      threadId="assistant:lead:1"
+      timestampLabel="6:43 PM"
+      long
+    >
+      body
+    </AssistantFeedMessage>,
+  );
+  const text = () => view.container.textContent ?? "";
+  expect(text()).toContain("Pessoal Lead");
+  expect(text()).toContain("Tech Lead · read-only");
+  expect(text()).toContain("Partial");
+  expect(text()).toContain("6:43 PM");
+  const button = (label: string) =>
+    [...view.container.querySelectorAll("button")].find((each) => each.textContent === label)!;
+  act(() => button("Show more").click());
+  expect(text()).toContain("Show less");
+  act(() => button("Open thread").click());
+  expect(mocks.openLinked).toHaveBeenCalledWith({
+    environmentId: "hub",
+    threadId: "assistant:lead:1",
+  });
+});
+
+it("a message continuing the same teammate shows its face and name once", () => {
+  mocks.assistants = [assistant("lead", "Pessoal Lead")];
+  using view = mount(
+    <AssistantFeedMessage
+      environmentId={"hub" as never}
+      assistantId="lead"
+      joinedAtLabel={null}
+      continues
+    >
+      again
+    </AssistantFeedMessage>,
+  );
+  expect(view.container.textContent).toBe("again");
+});
+
+it("a continuing message still shows its own status", () => {
+  mocks.assistants = [assistant("lead", "Pessoal Lead")];
+  using view = mount(
+    <AssistantFeedMessage
+      environmentId={"hub" as never}
+      assistantId="lead"
+      joinedAtLabel={null}
+      status="blocked"
+      continues
+    >
+      again
+    </AssistantFeedMessage>,
+  );
+  expect(view.container.textContent).toBe("Blockedagain");
 });

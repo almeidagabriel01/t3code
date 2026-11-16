@@ -20,6 +20,7 @@ import type {
 } from "./ProjectionStore.ts";
 import {
   type ChatAttachment,
+  type TeammateMessageAttribution,
   CommandId,
   isListedThreadLineage,
   MessageId,
@@ -161,6 +162,8 @@ export interface ThreadManagementSendInput {
   readonly memoryGrantCeiling?: import("@t3tools/contracts").MemoryTaskGrantCeiling;
   readonly senderThreadId?: ThreadId;
   readonly text: string;
+  /** Who sent it, when `text` is a teammate's envelope; clients show this instead. */
+  readonly teammate?: TeammateMessageAttribution;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
   readonly mode: ThreadManagementSendMode;
@@ -1060,6 +1063,9 @@ const make = Effect.gen(function* () {
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
       text: input.text,
+      ...(input.teammate === undefined
+        ? {}
+        : { context: { version: 1 as const, records: [], teammate: input.teammate } }),
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
       ...(input.freshContext ? { freshContext: true } : {}),

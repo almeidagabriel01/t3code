@@ -1,29 +1,54 @@
-import { ASSISTANT_ICON_IDS, type Assistant } from "@t3tools/contracts";
+import { ASSISTANT_ICON_IDS, ThreadId, type Assistant } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ASSISTANT_ICONS, assistantIconFor } from "./assistantIcons.ts";
 import {
   ASSISTANT_ACCENTS,
   assistantAccent,
+  assistantJoins,
   assistantPresenceSections,
   assistantPresenceStatus,
   assistantSenderLook,
   assistantSenders,
   assistantThreadSenders,
+  continuesAssistantSender,
   messageAssistantId,
 } from "./assistantPresence.ts";
 
 const jarvis = { id: "jarvis", name: "Jarvis" } as Assistant;
 
+const sent = (id: string, senderThreadId?: string, text = "hi") => ({
+  id,
+  role: "user",
+  text,
+  createdBy: "agent" as const,
+  ...(senderThreadId === undefined ? {} : { senderThreadId }),
+});
+const reply = (name: string, threadId: string) => ({
+  kind: "reply" as const,
+  name,
+  handle: name.toLowerCase(),
+  threadId: ThreadId.make(threadId),
+  requestId: `g:to:${name}`,
+  files: [],
+  bodyStart: 0,
+  bodyEnd: 2,
+});
+const groupReplies = {
+  context: {
+    teammate: { entries: [reply("Ada", "assistant:ada:1"), reply("Bo", "assistant:bo:1")] },
+  },
+};
+
 describe("assistantSenders", () => {
   it("groups an assistant's messages and skips everyone else's", () => {
     const senders = assistantSenders(
       [
-        { id: "m1" },
-        { id: "m2", senderThreadId: "assistant:jarvis:1" },
-        { id: "m3", senderThreadId: "worker-thread" },
-        { id: "m4", senderThreadId: "assistant:revisor:2" },
-        { id: "m5", senderThreadId: "assistant:jarvis:3" },
+        sent("m1"),
+        sent("m2", "assistant:jarvis:1"),
+        sent("m3", "worker-thread"),
+        sent("m4", "assistant:revisor:2"),
+        sent("m5", "assistant:jarvis:3"),
       ],
       [jarvis],
     );
@@ -45,12 +70,51 @@ describe("assistantSenders", () => {
     ]);
   });
 
+  it("counts each teammate of a group's replies, not the one that delivered them", () => {
+    const messages = [
+      sent("m1", "assistant:ada:1"),
+      { ...sent("m2", "assistant:bo:1"), ...groupReplies },
+      sent("m3", "assistant:bo:1"),
+    ];
+    // Only a sent message brings someone in; an answer that names a sender thread does not.
+    const answer = { ...sent("m0", "assistant:cy:1"), role: "assistant" };
+    expect(assistantSenders(messages, []).map((s) => [s.assistantId, s.count])).toEqual([
+      ["ada", 2],
+      ["bo", 2],
+    ]);
+    expect([...assistantJoins([answer, ...messages])]).toEqual([
+      ["m1", ["ada"]],
+      ["m2", ["bo"]],
+    ]);
+  });
+
   it.each([
     [{}, null],
     [{ senderThreadId: "plain-thread" }, null],
     [{ senderThreadId: "assistant:jarvis:1" }, "jarvis"],
   ])("reads the sender of %o", (message, expected) => {
     expect(messageAssistantId(message)).toBe(expected);
+  });
+});
+
+describe("continuesAssistantSender", () => {
+  const from = (assistant: string, text = "hi") => ({
+    role: "user",
+    text,
+    createdBy: "agent" as const,
+    senderThreadId: `assistant:${assistant}:1`,
+  });
+  const group = { ...from("ada"), ...groupReplies };
+  it.each([
+    ["the same assistant again", from("ada"), from("ada"), true],
+    ["another assistant", from("ada"), from("bo"), false],
+    ["the first message", from("ada"), undefined, false],
+    ["after an answer", from("ada"), { ...from("ada"), role: "assistant" }, false],
+    ["after a person's message", from("ada"), { role: "user", text: "hi" }, false],
+    ["after a group's replies", from("ada"), group, false],
+    ["a group's replies", group, from("ada"), false],
+  ])("%s", (_name, message, previous, expected) => {
+    expect(continuesAssistantSender(message, previous)).toBe(expected);
   });
 });
 

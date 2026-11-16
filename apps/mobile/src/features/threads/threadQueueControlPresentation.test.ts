@@ -1,5 +1,6 @@
 import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { taskEventHeadline } from "@t3tools/shared/assistantTaskEvents";
+import { GuestMessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { queuedRowTitle, resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
@@ -48,6 +49,42 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
+  const adaText = "<t3_reply>model-facing envelope</t3_reply>\nStatus: done\nShipped.";
+  const ada = {
+    role: "user",
+    createdBy: "agent" as const,
+    senderThreadId: "assistant:ada:1",
+    text: adaText,
+    context: {
+      teammate: {
+        entries: [
+          {
+            kind: "reply" as const,
+            name: "Ada",
+            handle: "ada",
+            threadId: ThreadId.make("assistant:ada:1"),
+            requestId: "m",
+            files: [],
+            bodyStart: adaText.indexOf("Status: done"),
+            bodyEnd: adaText.length,
+          },
+        ],
+      },
+    },
+  };
+
+  it("shows a teammate's queued message as their words, not the envelope", () => {
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: false,
+      canSendNow: true,
+      text: ada.text,
+      message: ada,
+    });
+
+    expect(controls.displayText).toBe("Shipped.");
+  });
+
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,
@@ -63,17 +100,42 @@ describe("threadQueueControlPresentation", () => {
     expect(editing.canDismiss).toBe(true);
   });
 
-  it("lets the owner cancel a guest's queued message but not rewrite it", () => {
-    const guest = resolveThreadQueueRowControls({
+  it.each([
+    [
+      "a guest's",
+      {
+        role: "user",
+        text: "Why?",
+        context: {
+          guest: { guestMessageId: GuestMessageId.make("g1"), name: "Sam", text: "Why?" },
+        },
+      },
+    ],
+    ["a teammate's", ada],
+  ])("lets the owner cancel %s queued message but not rewrite it", (_name, message) => {
+    const controls = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,
       canSendNow: false,
-      isGuestMessage: true,
-      text: "Why?",
+      text: message.text,
+      message,
     });
 
-    expect(guest.canEdit).toBe(false);
-    expect(guest.canDismiss).toBe(true);
+    expect(controls.canEdit).toBe(false);
+    expect(controls.canDismiss).toBe(true);
+  });
+
+  it("lets the owner rewrite a scheduled task's or another agent's queued prompt", () => {
+    const message = { role: "user", text: "Ship it", createdBy: "agent" as const };
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      text: message.text,
+      message,
+    });
+
+    expect(controls.canEdit).toBe(true);
   });
 });
 
