@@ -31,7 +31,8 @@ import {
   assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
   assistantGroupSendRequestId,
-  assistantGroupSendToRestore,
+  assistantGroupFailedSendRouting,
+  createAssistantGroupFileStore,
   assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
@@ -1823,34 +1824,79 @@ describe("assistant group tabs", () => {
     assert.deepStrictEqual([notSent.requestId, again.requestId], ["A", "A"]);
   });
 
-  const held = (requestId: string, failed: boolean, routing: object | null = {}) => ({
-    ...out("project:p1", failed),
-    requestId,
-    routing,
-  });
+  const reply = { id: "m1" };
+  const sentWith = { reply, projectPick: null, modelPick: null };
+  const cancelled = { ...sentWith, reply: null as typeof reply | null };
+  const held = (
+    requestId: string,
+    failed: boolean,
+    routing: typeof sentWith | typeof cancelled | null = sentWith,
+  ) => ({ ...out("project:p1", failed), requestId, routing });
   it.each([
-    ["comes into view failed: opening the chat or its tab", null, held("A", true), "A", true],
-    ["coming back after another tab", "B", held("A", true), "A", true],
-    ["failed in view", "A", held("A", true), "A", false],
-    ["on its way", null, held("A", false), "A", false],
-    ["landed and kept for its edits", null, held("A", true, null), "A", false],
-    ["nothing shown", "A", null, null, false],
-  ] as const)("routing a failed send takes back: %s", (_name, seen, shown, nextSeen, restores) => {
-    assert.deepStrictEqual(assistantGroupSendToRestore(seen, shown, "project:p1"), {
-      seen: nextSeen,
-      restore: restores ? shown : null,
+    [
+      "comes into view: opening the chat or its tab",
+      null,
+      held("A", true),
+      cancelled,
+      sentWith,
+      null,
+    ],
+    ["coming back after another tab", "B", held("A", true), cancelled, sentWith, null],
+    ["failed in view, as it went", "A", held("A", true), { ...sentWith }, null, null],
+    ["failed in view, its reply cancelled", "A", held("A", true), cancelled, null, cancelled],
+    [
+      "coming back after a cancel kept",
+      "B",
+      held("A", true, cancelled),
+      cancelled,
+      cancelled,
+      null,
+    ],
+    ["on its way", null, held("A", false), cancelled, null, null],
+    ["landed and kept for its edits", "A", held("A", true, null), cancelled, null, null],
+  ] as const)("a failed send's routing: %s", (_name, seen, shown, current, restore, keep) => {
+    assert.deepStrictEqual(assistantGroupFailedSendRouting(seen, shown, "project:p1", current), {
+      seen: "A",
+      restore,
+      keep,
     });
   });
 
-  it("restores nothing in All for another tab's send", () => {
-    const sending = { ...sendingP2, requestId: "A", routing: {} };
-    assert.deepStrictEqual(assistantGroupSendToRestore(null, sending, "all"), {
+  it.each([
+    ["nothing shown", null],
+    ["another tab's send, in All", { ...sendingP2, requestId: "A", routing: sentWith }],
+  ] as const)("a failed send's routing: %s", (_name, shown) => {
+    assert.deepStrictEqual(assistantGroupFailedSendRouting("A", shown, "all", cancelled), {
       seen: null,
       restore: null,
+      keep: null,
     });
   });
 
-  const reply = { id: "m1" };
+  it("keeps a group's files a pending send holds when the chat closes, and drops the rest", () => {
+    const store = createAssistantGroupFileStore<{ readonly id: string }>();
+    let calls = 0;
+    const stop = store.subscribe(() => calls++);
+    const [sent, draft, other] = [{ id: "f1" }, { id: "f2" }, { id: "f3" }];
+    store.update("g1", () => [sent, draft]);
+    store.update("g2", () => [other]);
+    const before = store.get("g1");
+    assert.deepStrictEqual(
+      [store.leave("g1", new Set(["f1"])), store.get("g1"), before === store.get("g1")],
+      [[draft], [sent], false],
+    );
+    // Nothing to drop changes nothing, so a remount reads the same array.
+    const kept = store.get("g1");
+    assert.deepStrictEqual(
+      [store.leave("g1", new Set(["f1"])), store.get("g1") === kept],
+      [[], true],
+    );
+    assert.deepStrictEqual([store.leave("g2", new Set()), store.get("g2")], [[other], []]);
+    stop();
+    store.update("g1", () => []);
+    assert.deepStrictEqual([calls, store.get("g1")], [4, []]);
+  });
+
   it.each([
     ["the one it sent goes", reply, reply, null],
     ["one picked since stays", { id: "m2" }, reply, "m2"],

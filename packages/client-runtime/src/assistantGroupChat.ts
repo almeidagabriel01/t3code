@@ -399,7 +399,7 @@ export type AssistantGroupProjectPick = AssistantGroupTabPick<ProjectId | null>;
 /**
  * The pick while its tab is open, else null. Clients keep what this returns, so any other tab,
  * chosen or not (a saved tab loading, a removed one), drops the pick and going back never
- * brings it back, unless a failed send of that tab does (`assistantGroupSendToRestore`).
+ * brings it back, unless a failed send of that tab does (`assistantGroupFailedSendRouting`).
  */
 export function assistantGroupTabPick<T>(
   pick: AssistantGroupTabPick<T> | null,
@@ -680,23 +680,83 @@ export function assistantGroupLandedPick<T>(current: T | null, sent: T | null): 
   return current === sent ? null : current;
 }
 
+const sameRouting = <Reply>(
+  left: AssistantGroupSendRouting<Reply>,
+  right: AssistantGroupSendRouting<Reply>,
+) =>
+  left.reply === right.reply &&
+  left.projectPick === right.projectPick &&
+  left.modelPick === right.modelPick;
+
 /**
- * The failed send whose routing the chat takes back as it comes into view in its own tab:
- * opening the chat or another tab drops the reply and picks, and a resend without them would go
- * under a new id. Only on coming into view, so what the user changes while it shows stays theirs.
- * `seen` is the request id the open tab showed last; keep the one this returns.
+ * As the open tab's failed send comes into view, the chat takes its routing back (`restore`), or
+ * a resend would go under a new id; while it shows, the user's changes become it (`keep`), so a
+ * cancelled reply stays cancelled. `seen`: the request id the tab showed last; keep the result's.
  */
-export function assistantGroupSendToRestore<
-  T extends AssistantGroupOutgoing & { readonly requestId: string; readonly routing: unknown },
+export function assistantGroupFailedSendRouting<
+  Reply,
+  T extends AssistantGroupOutgoing & {
+    readonly requestId: string;
+    readonly routing: AssistantGroupSendRouting<Reply> | null;
+  },
 >(
   seen: string | null,
   shown: T | null,
   tab: AssistantGroupTabKey | null,
-): { readonly seen: string | null; readonly restore: T | null } {
+  current: AssistantGroupSendRouting<Reply>,
+): {
+  readonly seen: string | null;
+  readonly restore: AssistantGroupSendRouting<Reply> | null;
+  readonly keep: AssistantGroupSendRouting<Reply> | null;
+} {
   const own = shown !== null && shown.tab === tab ? shown : null;
   const next = own?.requestId ?? null;
-  const restore = own?.failed === true && own.routing !== null && next !== seen ? own : null;
-  return { seen: next, restore };
+  const held = own?.failed === true ? own.routing : null;
+  if (held === null) return { seen: next, restore: null, keep: null };
+  if (next !== seen) return { seen: next, restore: held, keep: null };
+  return { seen: next, restore: null, keep: sameRouting(held, current) ? null : current };
+}
+
+const NO_FILES: ReadonlyArray<never> = [];
+
+/**
+ * Each group composer's files, outside any one mount, so the files a send took come back with
+ * it when the chat opens again and its resend carries them under the same id. Leaving the chat
+ * keeps only those; the rest were never sent and go.
+ */
+export function createAssistantGroupFileStore<T extends { readonly id: string }>() {
+  const groups = new Map<string, ReadonlyArray<T>>();
+  const listeners = new Set<() => void>();
+  const set = (group: string, files: ReadonlyArray<T>) => {
+    if (files.length === 0) groups.delete(group);
+    else groups.set(group, files);
+    for (const listener of listeners) listener();
+  };
+  const get = (group: string): ReadonlyArray<T> => groups.get(group) ?? NO_FILES;
+  return {
+    /** The same array until the group's files change, as `useSyncExternalStore` needs. */
+    get,
+    update: (group: string, change: (files: ReadonlyArray<T>) => ReadonlyArray<T>) =>
+      set(group, change(get(group))),
+    /** Leaving the chat: drops the files no pending send holds and returns them to release. */
+    leave: (group: string, pending: ReadonlySet<string>): ReadonlyArray<T> => {
+      const files = get(group);
+      const gone = files.filter((file) => !pending.has(file.id));
+      if (gone.length > 0)
+        set(
+          group,
+          files.filter((file) => pending.has(file.id)),
+        );
+      return gone;
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    clear: () => groups.clear(),
+  };
 }
 
 const NO_OUTGOING: ReadonlyArray<never> = [];
