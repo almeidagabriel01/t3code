@@ -76,6 +76,7 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  onPairAgain: (environment: EnvironmentPresentation) => void;
 };
 
 function savedBackendStatus(environment: EnvironmentPresentation): {
@@ -115,6 +116,7 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  onPairAgain,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
@@ -317,7 +319,9 @@ export function SavedBackendListRow({
               attempt={connectionState.attempt}
               expanded={diagnosisOpen}
               onToggle={() => setDiagnosisOpen((open) => !open)}
-              onPairAgain={() => onAddRoute(environment)}
+              onPairAgain={() => onPairAgain(environment)}
+              removing={isRemoving}
+              onRemove={() => onRemove(environment)}
             />
           ) : null}
           {serverUpdateState.status !== "idle" ? (

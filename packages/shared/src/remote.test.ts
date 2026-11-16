@@ -7,7 +7,28 @@ import {
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
   resolveRemotePairingTarget,
+  withRemoteScheme,
 } from "./remote.ts";
+
+describe("withRemoteScheme", () => {
+  it.each([
+    ["localhost:3773", "http://localhost:3773"],
+    ["127.0.0.1:3773", "http://127.0.0.1:3773"],
+    ["::1", "http://[::1]"],
+    ["[::1]:3773", "http://[::1]:3773"],
+    ["10.0.2.2:3773", "http://10.0.2.2:3773"],
+    ["192.168.1.20:3773", "http://192.168.1.20:3773"],
+    ["mybox.local:3773", "http://mybox.local:3773"],
+    ["mybox:3773", "http://mybox:3773"],
+    ["203.0.113.7:3773", "http://203.0.113.7:3773"],
+    ["desktop.tailnet.ts.net", "https://desktop.tailnet.ts.net"],
+    ["myserver.com:3000", "https://myserver.com:3000"],
+    ["https://localhost:3773", "https://localhost:3773"],
+    ["http://remote.example.com", "http://remote.example.com"],
+  ])("%s", (address, expected) => {
+    expect(withRemoteScheme(address)).toBe(expected);
+  });
+});
 
 describe("remote", () => {
   it("derives backend urls and token from a pairing url", () => {

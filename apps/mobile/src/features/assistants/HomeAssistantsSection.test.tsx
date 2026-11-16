@@ -507,7 +507,9 @@ const render = (
         <HomeAssistantsSection
           gutter={4}
           sidebar={sidebar}
-          environmentLabelById={labels}
+          environmentById={
+            new Map([...labels].map(([id, label]) => [id, { label, address: id }] as const))
+          }
           {...(extra.renderThread ? { renderThread: extra.renderThread as never } : {})}
         />
         {extra.drawn === undefined ? null : <JumpProbe drawn={extra.drawn} />}

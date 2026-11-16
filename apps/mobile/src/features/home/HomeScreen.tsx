@@ -63,6 +63,7 @@ import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollR
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import {
   HomeAssistantsSection,
+  teamsEnvironments,
   useAssistantSectionJumpThreads,
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
@@ -793,14 +794,7 @@ export function HomeScreen(props: HomeScreenProps) {
         <HomeAssistantsSection
           gutter={primaryColumn ? 8 : 16}
           renderThread={(item) => renderV2Item({ item })}
-          environmentLabelById={
-            new Map(
-              Object.values(props.savedConnectionsById).map((connection) => [
-                connection.environmentId,
-                connection.environmentLabel,
-              ]),
-            )
-          }
+          environmentById={teamsEnvironments(props.savedConnectionsById)}
         />
       )}
       {hasSearchQuery || v2ScopedProjectGroup === null ? null : (

@@ -107,6 +107,10 @@ const shellFor = (threadId: string) => {
   };
 };
 
+vi.mock("~/connection/catalog", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { environmentCatalog: { catalogValueAtom: Atom.make({ entries: new Map() }) } };
+});
 vi.mock("../../state/assistants", () => ({
   useAssistantEntries: () => ({
     active: state.specs.map((spec) => ({

@@ -191,6 +191,14 @@ export function connectionRouteAddress(route: ConnectionRoute): string | null {
   return routeHttpBaseUrl(route);
 }
 
+/** The address a refused device pairs again over: its first saved direct route. SSH and relay have none. */
+export function pairAgainAddress(entry: ConnectionCatalogEntry): string | null {
+  const route = connectionRoutes(entry).find(
+    (r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget",
+  );
+  return route === undefined ? null : routeHttpBaseUrl(route);
+}
+
 /** Learned routes alone must not make relay environments manually retryable. */
 export const hasSavedBearerRoute = (entry: ConnectionCatalogEntry) =>
   connectionRoutes(entry).some((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");

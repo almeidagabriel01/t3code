@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -9,6 +9,7 @@ import {
   ownProjectsWith,
   projectAccess,
   projectAccessBlocks,
+  teamsEnvironmentLabels,
 } from "./assistantProjectAccess.ts";
 
 const P = (id: string) => id as ProjectId;
@@ -207,5 +208,33 @@ describe("projectAccessBlocks", () => {
         title: block.title,
       })),
     ).toEqual(expected);
+  });
+});
+
+describe("teamsEnvironmentLabels", () => {
+  const environments = new Map([
+    ["mac", { label: "MacBook", address: "10.0.2.2:3773" }],
+    ["dev", { label: "MacBook", address: "127.0.0.1:3773" }],
+    ["pc", { label: "PC", address: "pc.local:3773" }],
+  ]);
+  const row = (environmentId: string, id: string, name: string) => ({
+    environmentId: environmentId as EnvironmentId,
+    assistant: { id, name },
+  });
+  it.each([
+    ["one environment", [row("mac", "a", "Jarvis"), row("mac", "b", "Ana")], [null, null]],
+    [
+      "names that differ across environments",
+      [row("mac", "a", "Jarvis"), row("pc", "b", "Jarvis")],
+      ["MacBook", "PC"],
+    ],
+    [
+      "the same name in two environments named alike",
+      [row("mac", "a", "Jarvis"), row("dev", "a", "Jarvis"), row("dev", "b", "Ana")],
+      ["10.0.2.2:3773", "127.0.0.1:3773", "MacBook"],
+    ],
+  ])("%s", (_name, rows, expected) => {
+    const label = teamsEnvironmentLabels(rows, environments);
+    expect(rows.map((entry) => label(entry.environmentId, entry.assistant.id))).toEqual(expected);
   });
 });

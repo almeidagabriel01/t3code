@@ -1,6 +1,7 @@
 import { useActiveNewTask } from "../../state/active-new-task";
 import {
   HomeAssistantsSection,
+  teamsEnvironments,
   useAssistantSectionJumpThreads,
 } from "../assistants/HomeAssistantsSection";
 import { ProjectAssistantFaces } from "../assistants/ProjectAssistantFaces";
@@ -558,11 +559,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           sidebar
           gutter={4}
           renderThread={(item) => renderListItem({ item })}
-          environmentLabelById={
-            new Map(
-              environments.map((environment) => [environment.environmentId, environment.label]),
-            )
-          }
+          environmentById={teamsEnvironments(savedConnectionsById)}
         />
         {selectedProjectScope === null ? null : (
           <ProjectAssistantFaces

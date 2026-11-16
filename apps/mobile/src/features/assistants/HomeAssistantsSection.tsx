@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { assistantGroupFoldKey, visibleAssistants } from "@t3tools/client-runtime/assistantList";
+import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProjectAccess";
 import { assistantFace, type AssistantFace } from "@t3tools/client-runtime/assistantRobot";
 import { assistantSectionThreadKeys } from "@t3tools/client-runtime/assistantTasks";
 import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
@@ -15,6 +16,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import { RowMenuButton } from "../../components/ui/RowMenuButton";
 import { cn } from "../../lib/cn";
+import type { SavedRemoteConnection } from "../../lib/connection";
 import { useNowMinuteMs } from "../../lib/clock";
 import { useQuietThreadShells } from "../../state/entities";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -614,11 +616,29 @@ const FolderRow = memo(function FolderRow(props: {
   );
 }, sameFolderProps);
 
+/** Teams names each environment, and falls back to its address when two share a name. */
+export function teamsEnvironments(
+  connections: Readonly<Record<string, SavedRemoteConnection>>,
+): ReadonlyMap<string, { readonly label: string; readonly address: string }> {
+  return new Map(
+    Object.values(connections).map((connection) => [
+      connection.environmentId,
+      {
+        label: connection.environmentLabel,
+        address: connection.displayUrl || connection.environmentId,
+      },
+    ]),
+  );
+}
+
 /** The Teams zone: ungrouped assistants first, then one folder per group. */
 export function HomeAssistantsSection(props: {
   readonly gutter: number;
   readonly sidebar?: boolean;
-  readonly environmentLabelById: ReadonlyMap<string, string>;
+  readonly environmentById: ReadonlyMap<
+    string,
+    { readonly label: string; readonly address: string }
+  >;
   /** The host list's thread row, so task rows get its menu, swipes and selection. */
   readonly renderThread?: (item: ThreadListV2ThreadListItem) => ReactNode;
 }) {
@@ -645,20 +665,16 @@ export function HomeAssistantsSection(props: {
   const setSubagentPinned = (thread: EnvironmentThreadShell, pinned: boolean) =>
     void (pinned ? pinThread(thread) : unpinThread(thread));
   const foldable = assistantsShowAll || hiddenInList > 0;
-  const environmentCount = new Set([
-    ...ungrouped.map((item) => item.entry.environmentId),
-    ...folders.flatMap((folder) => folder.members.map((item) => item.entry.environmentId)),
-  ]).size;
+  const environmentLabel = teamsEnvironmentLabels(
+    [...ungrouped, ...folders.flatMap((folder) => folder.members)].map((item) => item.entry),
+    props.environmentById,
+  );
   const block = (member: TeamsMember, nested: boolean) => (
     <AssistantBlock
       key={member.key}
       member={member}
       row={model.rowOf(member.entry)}
-      environmentLabel={
-        environmentCount > 1
-          ? (props.environmentLabelById.get(member.entry.environmentId) ?? null)
-          : null
-      }
+      environmentLabel={environmentLabel(member.entry.environmentId, member.entry.assistant.id)}
       sidebar={sidebar}
       nested={nested}
       onToggleFold={toggleAssistantFolded}

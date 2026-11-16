@@ -4,6 +4,7 @@ import { defineConfig, normalizePath } from "vite-plus";
 import "vite-plus/test/config";
 
 const reactTests = [
+  "src/components/ui/OverlayPortal.test.tsx",
   "src/components/ui/SegmentedControl.test.tsx",
   "src/features/settings/CloudVoiceSection.test.tsx",
   "src/state/keepAwake.test.tsx",

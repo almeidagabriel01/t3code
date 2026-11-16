@@ -4,6 +4,7 @@ export const PROJECT_OVERVIEW_COPY = {
   organize: {
     title: "Organize",
     offline: "Connect every machine with this project to change this.",
+    noPermission: "This connection cannot change this project on every machine.",
     pin: {
       title: "Pin",
       description: "Pinned projects come first in project pickers.",

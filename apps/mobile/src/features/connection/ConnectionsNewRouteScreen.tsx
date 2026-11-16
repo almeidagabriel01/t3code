@@ -10,6 +10,7 @@ import {
   useNavigation,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { pairAgainAddress } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
@@ -28,6 +29,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { autoConnectReport, devAutoConnectAttemptAtom } from "./devAutoConnect";
+import { environmentCatalog } from "../../connection/catalog";
 import { splitEnvironmentSections } from "./environmentSections";
 import { leaveSettingsPage } from "../settings/settings-navigation";
 import { workspaceHasColumns } from "../layout/workspace/workspace-selection-store";
@@ -37,6 +39,8 @@ type ConnectionsNewRouteParams = {
   readonly pairingUrl?: string;
   readonly autoConnect?: string;
   readonly routeFor?: EnvironmentId;
+  /** With `routeFor`, the form starts at that environment's refused address. */
+  readonly pairAgain?: boolean;
 };
 
 export function ConnectionsNewRouteScreen({
@@ -45,11 +49,17 @@ export function ConnectionsNewRouteScreen({
   const params = route.params ?? {};
   // Dev-only prefill prevents production links from supplying an attacker-chosen host and token.
   const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
-  // A new prefill link replaces whatever the form held.
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const pairAgainEntry =
+    params.pairAgain && params.routeFor ? catalog.entries.get(params.routeFor) : undefined;
+  const pairAgainHost =
+    pairAgainEntry === undefined ? null : (pairAgainAddress(pairAgainEntry) ?? "");
+  // A new prefill link or Pair again target replaces whatever the form held.
   return (
     <PairingForm
-      key={routePairingUrl}
+      key={`${routePairingUrl}\n${pairAgainHost === null ? "" : params.routeFor}`}
       routePairingUrl={routePairingUrl}
+      pairAgainHost={pairAgainHost}
       routeFor={params.routeFor}
     />
   );
@@ -57,16 +67,23 @@ export function ConnectionsNewRouteScreen({
 
 function PairingForm({
   routePairingUrl,
+  pairAgainHost,
   routeFor,
 }: {
   readonly routePairingUrl: string;
+  /** Pair again starts at the refused address, not at a draft for another machine. */
+  readonly pairAgainHost: string | null;
   readonly routeFor: EnvironmentId | undefined;
 }) {
   const { connectionPairingUrl, onChangeConnectionPairingUrl, onConnectPress } =
     useRemoteConnections();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [initialPairing] = useState(() => parsePairingUrl(routePairingUrl || connectionPairingUrl));
+  const [initialPairing] = useState(() =>
+    pairAgainHost === null
+      ? parsePairingUrl(routePairingUrl || connectionPairingUrl)
+      : { host: pairAgainHost, code: "" },
+  );
   const [hostInput, setHostInput] = useState(initialPairing.host);
   const [codeInput, setCodeInput] = useState(initialPairing.code);
   const [isSubmitting, setIsSubmitting] = useState(false);

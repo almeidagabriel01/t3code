@@ -214,26 +214,75 @@ export function projectAccessBlocks<
     paths: block.checkouts.map((checkout) => checkout.workspaceRoot).join("\n"),
   }));
   const environments = new Set(list.map((block) => block.environmentId));
-  return list.map(({ environmentLabel, paths, ...block }) => {
-    const sameName = list.filter(
-      (other) =>
-        other.checkouts !== block.checkouts &&
-        (other.environmentId === block.environmentId ||
-          other.environmentLabel === environmentLabel),
-    );
-    return {
-      ...block,
-      projectIds: block.checkouts.map((checkout) => checkout.id),
-      title:
-        list.length === 1
-          ? null
-          : {
-              environment: environments.size > 1,
-              path: sameName.length > 0,
-              address: sameName.some(
-                (other) => other.environmentId !== block.environmentId && other.paths === paths,
-              ),
-            },
-    };
+  const shown = distinguishingKeyCount(
+    list.map((block) => [block.environmentLabel, block.paths, block.environmentId]),
+  );
+  return list.map((block, index) => ({
+    environmentId: block.environmentId,
+    checkouts: block.checkouts,
+    projectIds: block.checkouts.map((checkout) => checkout.id),
+    title:
+      list.length === 1
+        ? null
+        : {
+            environment: environments.size > 1,
+            path: shown[index]! >= 2,
+            address: shown[index]! >= 3,
+          },
+  }));
+}
+
+/**
+ * How many leading keys each row's label needs: the first always, each next one only while
+ * another row still shares every key before it. Rows that tie on all keys show all of them.
+ */
+function distinguishingKeyCount(
+  rows: ReadonlyArray<ReadonlyArray<unknown>>,
+): ReadonlyArray<number> {
+  return rows.map((row, index) => {
+    let count = 1;
+    while (
+      count < row.length &&
+      rows.some(
+        (other, otherIndex) =>
+          otherIndex !== index && row.slice(0, count).every((key, at) => other[at] === key),
+      )
+    ) {
+      count += 1;
+    }
+    return count;
   });
+}
+
+/**
+ * The environment beside each Teams row, by the rule access blocks use: nothing while the list
+ * holds one environment, then its name, then its address when another row shows the same
+ * assistant and environment names. The address replaces the name, which a narrow row cuts.
+ */
+export function teamsEnvironmentLabels(
+  rows: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly assistant: { readonly id: string; readonly name: string };
+  }>,
+  environments: ReadonlyMap<string, { readonly label: string; readonly address: string }>,
+): (environmentId: EnvironmentId, assistantId: string) => string | null {
+  const labels = new Map<string, string>();
+  if (new Set(rows.map((row) => row.environmentId)).size > 1) {
+    const shown = distinguishingKeyCount(
+      rows.map((row) => [
+        row.assistant.name,
+        environments.get(row.environmentId)?.label ?? null,
+        row.environmentId,
+      ]),
+    );
+    rows.forEach((row, index) => {
+      const environment = environments.get(row.environmentId);
+      if (environment === undefined) return;
+      labels.set(
+        `${row.environmentId}\n${row.assistant.id}`,
+        shown[index]! >= 3 ? environment.address : environment.label,
+      );
+    });
+  }
+  return (environmentId, assistantId) => labels.get(`${environmentId}\n${assistantId}`) ?? null;
 }
