@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { GitManagerError, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
@@ -1995,6 +1995,10 @@ describe("ThreadSettlementServiceV2 finished work", () => {
             worktreePath: "/worktrees/merged",
             subagentHandoff: handoff({ sharesParentWorktree: false }),
           }),
+          childThread("own-worktree-lookup-failed", {
+            worktreePath: "/worktrees/lookup-failed",
+            subagentHandoff: handoff({ sharesParentWorktree: false }),
+          }),
           childThread("task-unshipped", {
             lineage: taskLineage("task-unshipped"),
             subagentHandoff: null,
@@ -2029,6 +2033,8 @@ describe("ThreadSettlementServiceV2 finished work", () => {
         const statuses: Record<string, GitManager.GitManager["Service"]["status"]> = {
           "/worktrees/open": vcsStatus({ pr: "open" }),
           "/worktrees/merged": vcsStatus({ pr: "merged", aheadOfDefault: 2 }),
+          // GitManager.status reports a failed pull request lookup as no pull request.
+          "/worktrees/lookup-failed": vcsStatus({}),
           "/worktrees/unshipped": vcsStatus({ aheadOfDefault: 1 }),
           "/worktrees/dirty": vcsStatus({ dirty: true, pr: "merged" }),
           "/worktrees/shipped": vcsStatus({ pr: "merged" }),
@@ -2040,10 +2046,22 @@ describe("ThreadSettlementServiceV2 finished work", () => {
           settings: settlementOff,
           existingWorktreePaths: Object.keys(statuses),
           gitStatus: (input) => statuses[input.cwd]!(input),
-          branchPullRequest: (input) =>
-            Effect.succeed(
+          branchPullRequest: (input) => {
+            if (input.cwd === "/worktrees/lookup-failed") {
+              return Effect.fail(
+                new GitManagerError({ operation: "test", cwd: input.cwd, detail: "offline" }),
+              );
+            }
+            const states: Record<string, "open" | "merged"> = {
+              "/worktrees/open": "open",
+              "/worktrees/merged": "merged",
+            };
+            const state = states[input.cwd];
+            if (state !== undefined) return Effect.succeed(makeBranchPullRequest(state));
+            return Effect.succeed(
               input.branch === "merged-branch" ? makeBranchPullRequest("merged") : null,
-            ),
+            );
+          },
         });
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;

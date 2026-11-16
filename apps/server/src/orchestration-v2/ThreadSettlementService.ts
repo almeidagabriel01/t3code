@@ -434,7 +434,10 @@ export const make = Effect.gen(function* () {
     if (hold === "own-pull-request") {
       // A removed worktree leaves nothing to finish here.
       if (worktreePath === null) return false;
-      return (yield* git.status({ cwd: worktreePath })).pr?.state === "open";
+      const branch = thread.branch ?? (yield* git.status({ cwd: worktreePath })).refName;
+      if (branch === null) return false;
+      // status reads a failed lookup as "no pull request"; this lookup fails, so the child waits.
+      return (yield* git.branchPullRequest({ cwd: worktreePath, branch }))?.state === "open";
     }
     const cwd = worktreePath ?? projectRoot;
     if (cwd === undefined) return true;
