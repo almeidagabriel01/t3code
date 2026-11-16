@@ -100,7 +100,8 @@ place in the whole queue.
 - **Memory pressure.** On macOS, a second job waits while the system reports
   memory pressure or is swapping heavily, whatever the free percentage says;
   memory held by running simulators and emulators counts as used. Only a
-  command whose runs here stayed under 512 MB still starts then. A lone job
+  command whose runs here stayed under 512 MB still starts then, and not even
+  that while the pressure is critical. A lone job
   always starts. Each job's test runners and build tools get as many workers as
   the machine has free cores (`T3_HEAVY_WORKERS`): Vitest, Playwright,
   `node --test`, Gradle, xcodebuild, `swift build`, cargo and `cmake --build`.
