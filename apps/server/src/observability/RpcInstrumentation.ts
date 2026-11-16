@@ -177,6 +177,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.heavyQueueSetMacMemoryFloorPercent]: "heavyQueue",
   [WS_METHODS.heavyQueueSetMacCpuCeilingPercent]: "heavyQueue",
   [WS_METHODS.heavyQueueSetHeavyOverLimitSeconds]: "heavyQueue",
+  [WS_METHODS.heavyQueueSetAdmissionLimits]: "heavyQueue",
   [WS_METHODS.heavyQueueSetPriority]: "heavyQueue",
   [WS_METHODS.heavyQueueSetClaudeHook]: "heavyQueue",
   [WS_METHODS.heavyQueueSetDeviceIdleMinutes]: "heavyQueue",

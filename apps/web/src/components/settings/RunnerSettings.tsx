@@ -234,7 +234,13 @@ function SegmentedRow<K extends ChoiceKey>({
   );
 }
 
-const UNIT_SUFFIX: Partial<Record<string, string>> = { percent: "%", seconds: "s" };
+const UNIT_SUFFIX: Partial<Record<string, string>> = {
+  percent: "%",
+  seconds: "s",
+  minutes: "min",
+  // The row's title already says "Commands", and the word would push the field out of line.
+  commands: "",
+};
 
 /** A whole-number stepper with its unit; commits only a changed integer. Null value reads "Mixed". */
 export function UnitStepper({
@@ -258,7 +264,8 @@ export function UnitStepper({
     <div className="flex items-center gap-2">
       <NumberField
         size="sm"
-        className="w-28"
+        // Thousands ("16,384") need room beside the two buttons.
+        className={max >= 1000 ? "w-36" : "w-28"}
         min={min}
         max={max}
         step={1}

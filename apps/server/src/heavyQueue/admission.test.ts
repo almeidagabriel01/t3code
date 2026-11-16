@@ -1,6 +1,6 @@
 // @effect-diagnostics globalDate:off
 import { describe, expect, it } from "@effect/vitest";
-import type { HeavyQueueEntry } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS, type HeavyQueueEntry } from "@t3tools/contracts";
 
 import {
   estimate,
@@ -53,8 +53,7 @@ const base: Omit<PlanInput, "entries"> = {
   sample: calm,
   lastStartAt: null,
   holding: false,
-  macMemoryFloorPercent: 20,
-  macCpuCeilingPercent: 70,
+  ...HEAVY_QUEUE_DEFAULTS,
   now: NOW,
 };
 const run = (cpu: number, memGb: number, durationMs: number): Run => ({
@@ -115,27 +114,39 @@ describe("command kinds and signatures", () => {
     const history = {
       "vp run build": [run(2, 3, 30_000), run(6, 5, 60_000), run(3, 4, 90_000)],
     };
-    expect(estimate(history, { label: "vp run build" }, 10)).toEqual({
+    expect(estimate(history, { label: "vp run build" }, 10, HEAVY_QUEUE_DEFAULTS)).toEqual({
       cpu: 6,
       memoryBytes: 4 * GIB,
       durationMs: 60_000,
     });
-    expect(estimate({}, { label: "vp run build" }, 10)).toMatchObject({
+    expect(estimate({}, { label: "vp run build" }, 10, HEAVY_QUEUE_DEFAULTS)).toMatchObject({
       cpu: 4,
       memoryBytes: 1.5 * GIB,
       durationMs: null,
     });
-    expect(estimate({}, { label: "vp run typecheck" }, 10)).toMatchObject({
+    expect(estimate({}, { label: "vp run typecheck" }, 10, HEAVY_QUEUE_DEFAULTS)).toMatchObject({
       memoryBytes: 0.5 * GIB,
     });
-    expect(estimate({}, { label: "vp run typecheck" }, 1)).toMatchObject({ cpu: 1 });
+    expect(estimate({}, { label: "vp run typecheck" }, 1, HEAVY_QUEUE_DEFAULTS)).toMatchObject({
+      cpu: 1,
+    });
     // A run whose CPU was never read (absent, or 0 in older files) teaches memory and time only.
     const unread = { memoryBytes: 2 * GIB, durationMs: 40_000 };
     expect(
-      estimate({ "vp run build": [unread, run(0, 1, 20_000)] }, { label: "vp run build" }, 10),
+      estimate(
+        { "vp run build": [unread, run(0, 1, 20_000)] },
+        { label: "vp run build" },
+        10,
+        HEAVY_QUEUE_DEFAULTS,
+      ),
     ).toMatchObject({ cpu: 4, memoryBytes: 2 * GIB });
     expect(
-      estimate({ "vp run build": [unread, run(3, 1, 20_000)] }, { label: "vp run build" }, 10).cpu,
+      estimate(
+        { "vp run build": [unread, run(3, 1, 20_000)] },
+        { label: "vp run build" },
+        10,
+        HEAVY_QUEUE_DEFAULTS,
+      ).cpu,
     ).toBe(3);
   });
 });
@@ -408,6 +419,42 @@ describe("admission plan", () => {
       admit: null,
       hold: "pressure",
       reason: { a: "memory pressure critical" },
+    },
+    {
+      name: "a 256 MB light limit holds a job that usually uses 400 MB under pressure",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run lint")],
+      change: {
+        sample: { ...sixteen, pressureLevel: 2 },
+        history: { "vp run lint": [run(0.5, 400 / 1024, 5_000)] },
+        lightJobMegabytes: 256,
+      },
+      admit: null,
+      hold: "pressure",
+    },
+    {
+      name: "28% free on 16 GB: a 4 GB guess holds a medium job never seen",
+      entries: [entry("r", "vp run build", 60_000), entry("a", "vp run typecheck")],
+      change: { sample: sixteen, unseenMediumMegabytes: 4096 },
+      admit: null,
+      hold: "job-memory",
+    },
+    {
+      name: "30 minutes of patience: a head that waited 10 still lets a small job pass",
+      entries: [
+        entry("r", "vp run build", 60_000),
+        entry("head", "vp run build", null, 10 * 60_000),
+        entry("small", "vp run typecheck"),
+      ],
+      change: {
+        sample: { ...calm, availableMemoryBytes: 9 * GIB },
+        history: {
+          "vp run build": [run(2, 4, 300_000)],
+          "vp run typecheck": [run(0.5, 0.3, 1_000)],
+        },
+        headPatienceMinutes: 30,
+      },
+      admit: "small",
+      hold: "job-memory",
     },
     {
       name: "a busy CPU holds even a light job",

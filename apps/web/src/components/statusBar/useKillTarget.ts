@@ -9,6 +9,7 @@ import {
   type DeviceShutdownInput,
   type EnvironmentId,
   type HeavyCommand,
+  type HeavyQueueSetAdmissionLimitsInput,
   type HeavyRunner,
   type ListeningPort,
   type TerminalCloseInput,
@@ -115,6 +116,9 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       reportFailure: false,
     },
   );
+  const admissionLimitsCommand = useAtomCommand(heavyQueueEnvironment.setAdmissionLimits, {
+    reportFailure: false,
+  });
   const priorityCommand = useAtomCommand(heavyQueueEnvironment.setPriority, {
     reportFailure: false,
   });
@@ -193,6 +197,11 @@ export function useHeavyQueueActions(environmentId: EnvironmentId) {
       report(
         "Could not change how long a limit must hold",
         await heavyOverLimitSecondsCommand({ environmentId, input: { heavyOverLimitSeconds } }),
+      ),
+    setAdmissionLimits: async (input: HeavyQueueSetAdmissionLimitsInput) =>
+      report(
+        "Could not change how jobs are sized",
+        await admissionLimitsCommand({ environmentId, input }),
       ),
     setPriority: async (id: string, priority: "low" | "high") =>
       report(

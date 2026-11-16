@@ -6,6 +6,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import type { HeavyQueueEntry, RunnerProjectConfig } from "@t3tools/contracts";
+import { vi } from "vite-plus/test";
+
+// Counts the queue file's writes; every call goes through to the real rename.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
 
 import * as Queue from "./queueFile.ts";
 import {
@@ -645,19 +652,113 @@ describe("heavy queue file", () => {
       return [macMemoryFloorPercent, macCpuCeilingPercent, heavyOverLimitSeconds];
     };
     expect(limits()).toEqual([20, 70, 20]);
+    const sizing = () => {
+      const { lightJobMegabytes, unseenHeavyMegabytes, unseenMediumMegabytes } = Queue.readDoc(dir);
+      const { historyCommands, headPatienceMinutes } = Queue.readDoc(dir);
+      return [
+        lightJobMegabytes,
+        unseenHeavyMegabytes,
+        unseenMediumMegabytes,
+        historyCommands,
+        headPatienceMinutes,
+      ];
+    };
+    expect(sizing()).toEqual([512, 1536, 512, 1000, 5]);
     NodeFS.writeFileSync(
       file,
       JSON.stringify({
         macMemoryFloorPercent: 90,
         macCpuCeilingPercent: "70",
         heavyOverLimitSeconds: 45,
+        lightJobMegabytes: 1,
+        historyCommands: "50",
       }),
     );
     expect(limits()).toEqual([20, 70, 45]);
+    expect(sizing()).toEqual([512, 1536, 512, 1000, 5]);
     Queue.setLimit(dir, "macMemoryFloorPercent", 2);
     Queue.setLimit(dir, "macCpuCeilingPercent", 85.7);
     Queue.setLimit(dir, "heavyOverLimitSeconds", 9_999);
     expect(limits()).toEqual([5, 85, 300]);
+    Queue.setLimit(dir, "lightJobMegabytes", 256);
+    Queue.setLimit(dir, "headPatienceMinutes", 999);
+    expect(sizing()).toEqual([256, 1536, 512, 1000, 60]);
+    // A medium job never needs more than a heavy one: rejected before writing, read as the heavy guess.
+    expect(() => Queue.setLimits(dir, { unseenMediumMegabytes: 2048 })).toThrow(/heavy job/);
+    expect(() => Queue.setLimits(dir, { unseenHeavyMegabytes: 256 })).toThrow(/heavy job/);
+    Queue.setLimits(dir, { unseenHeavyMegabytes: 4096, unseenMediumMegabytes: 2048 });
+    expect(sizing()).toEqual([256, 4096, 2048, 1000, 60]);
+    const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    NodeFS.writeFileSync(file, JSON.stringify({ ...doc, unseenHeavyMegabytes: 1024 }));
+    expect(sizing()).toEqual([256, 1024, 1024, 1000, 60]);
+  });
+
+  it("knows which files the Linux copy has: not ignored ones, but node_modules a lockfile rebuilds", () => {
+    const repo = NodeFS.realpathSync(tempDir());
+    NodeChildProcess.spawnSync("git", ["init", "-q", repo]);
+    NodeFS.writeFileSync(NodePath.join(repo, ".gitignore"), "dist/\n.venv/\nnode_modules/\n");
+    NodeFS.mkdirSync(NodePath.join(repo, "web"));
+    NodeFS.writeFileSync(NodePath.join(repo, "web", "pnpm-lock.yaml"), "");
+    for (const [path, synced] of [
+      ["src/a.test.ts", true],
+      ["dist/cli.js", false],
+      [".venv/bin/pytest", false],
+      ["web/node_modules/.bin/vitest", true],
+      ["node_modules/.bin/vitest", false],
+      ["tools/node_modules/.bin/x", false],
+    ] as const) {
+      expect([path, Queue.syncedInCopy(NodePath.join(repo, path))]).toEqual([path, synced]);
+    }
+    // An answer is reused only briefly: a changed .gitignore shows within a minute.
+    const script = NodePath.join(repo, "scripts", "go.sh");
+    expect(Queue.syncedInCopy(script, 0)).toBe(true);
+    NodeFS.appendFileSync(NodePath.join(repo, ".gitignore"), "scripts/\n");
+    expect(Queue.syncedInCopy(script, 1_000)).toBe(true);
+    expect(Queue.syncedInCopy(script, 61_000)).toBe(false);
+  });
+
+  it("sets several settings in one write, each clamped, ignoring unknown keys", () => {
+    const dir = tempDir();
+    Queue.setLimit(dir, "macCpuCeilingPercent", 80);
+    const writes = vi.mocked(NodeFS.renameSync).mock.calls.length;
+    Queue.setLimits(dir, {
+      lightJobMegabytes: 256,
+      headPatienceMinutes: 999,
+      ...({ __proto__: 1, maxRunning: 9 } as object),
+    });
+    expect(vi.mocked(NodeFS.renameSync).mock.calls.length - writes).toBe(1);
+    const doc = Queue.readDoc(dir);
+    expect([doc.lightJobMegabytes, doc.headPatienceMinutes, doc.macCpuCeilingPercent]).toEqual([
+      256, 60, 80,
+    ]);
+    expect(doc.maxRunning).toBe(Queue.readDoc(tempDir()).maxRunning);
+  });
+
+  it("forgets the oldest commands beyond the stored history size", () => {
+    const dir = tempDir();
+    const file = NodePath.join(dir, "queue.json");
+    Queue.setLimit(dir, "historyCommands", 50);
+    const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+    doc.history = Object.fromEntries(
+      Array.from({ length: 80 }, (_, n) => [`old ${n}`, [{ memoryBytes: 1, durationMs: 1 }]]),
+    );
+    NodeFS.writeFileSync(file, JSON.stringify(doc));
+    Queue.enqueue(dir, { ...entry("r"), label: "vp run build" });
+    Queue.tryStart(dir, "r");
+    Queue.recordSample(
+      dir,
+      {
+        at: 1_800_000_000_000,
+        busyCores: 0,
+        cpuCount: 4,
+        availableMemoryBytes: 1,
+        totalMemoryBytes: 1,
+      },
+      { r: { cpu: 1, memoryBytes: 10 } },
+    );
+    Queue.remove(dir, "r");
+    const commands = Object.keys(Queue.readDoc(dir).history);
+    expect([commands.length, commands[0], commands.at(-1)]).toEqual([50, "old 31", "vp run build"]);
   });
 
   it("counts the Mac over its limits for routing only once readings stay there for the window", () => {

@@ -1,6 +1,6 @@
 import {
   HEAVY_QUEUE_DEFAULTS,
-  HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitRange,
   type EnvironmentId,
   type HeavyQueueState,
 } from "@t3tools/contracts";
@@ -72,6 +72,7 @@ vi.mock("../../../state/heavyQueue", () => {
       setMacMemoryFloorPercent: command("setMacMemoryFloorPercent"),
       setMacCpuCeilingPercent: command("setMacCpuCeilingPercent"),
       setHeavyOverLimitSeconds: command("setHeavyOverLimitSeconds"),
+      setAdmissionLimits: command("setAdmissionLimits"),
     },
     useHeavyQueueState: () => mocks.state,
   };
@@ -309,18 +310,72 @@ describe("HeavyQueueSection", () => {
     await linux.unmount();
   });
 
+  it("resets a changed Mac limit to its default, like the sizes", async () => {
+    setup({ macCpuCeilingPercent: 85 });
+    const view = await mount();
+    await act(async () => view.button("Use the default (70%)").click());
+    expect(mocks.commands.setMacCpuCeilingPercent).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { macCpuCeilingPercent: 70 },
+    });
+    await view.unmount();
+  });
+
+  it("keeps a medium job's guess at or under a heavy job's while editing either", async () => {
+    setup({ unseenHeavyMegabytes: 1536, unseenMediumMegabytes: 1024 });
+    const view = await mount();
+    expect(view.toggle("Memory guess for a new medium job").max).toBe("1536");
+    expect(view.toggle("Memory guess for a new heavy job").min).toBe("1024");
+    await view.unmount();
+  });
+
+  it("resets a memory guess only as far as the other one allows", async () => {
+    setup({ unseenHeavyMegabytes: 256, unseenMediumMegabytes: 200 });
+    const view = await mount();
+    await act(async () => view.button("Use the default (256 MB)").click());
+    expect(mocks.commands.setAdmissionLimits).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { unseenMediumMegabytes: 256 },
+    });
+    await view.unmount();
+  });
+
+  it("groups job sizing apart and resets a changed size to its default", async () => {
+    setup({ lightJobMegabytes: 256 });
+    const view = await mount();
+    const sizing = view.host.querySelector('section[aria-label="Job sizing"]')!;
+    expect(sizing.querySelectorAll("input")).toHaveLength(5);
+    expect(view.host.textContent).toContain("unless it usually uses under 256 MB.");
+    const resets = [...sizing.querySelectorAll("button")].filter((b) =>
+      b.textContent?.startsWith("Use the default"),
+    );
+    expect(resets.map((b) => b.textContent)).toEqual(["Use the default (512 MB)"]);
+    await act(async () => resets[0]!.click());
+    expect(mocks.commands.setAdmissionLimits).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { lightJobMegabytes: 512 },
+    });
+    await view.unmount();
+  });
+
   it.each([
     ["CPU limit", "macCpuCeilingPercent", "setMacCpuCeilingPercent", 85],
     ["Keep memory free", "macMemoryFloorPercent", "setMacMemoryFloorPercent", 30],
     ["Over the limit for", "heavyOverLimitSeconds", "setHeavyOverLimitSeconds", 45],
+    ["Light job size", "lightJobMegabytes", "setAdmissionLimits", 300],
+    ["Memory guess for a new heavy job", "unseenHeavyMegabytes", "setAdmissionLimits", 2048],
+    ["Memory guess for a new medium job", "unseenMediumMegabytes", "setAdmissionLimits", 1024],
+    ["Commands remembered", "historyCommands", "setAdmissionLimits", 200],
+    ["Let smaller jobs pass for", "headPatienceMinutes", "setAdmissionLimits", 10],
   ] as const)("sets this Mac's %s within its limits", async (label, key, command, next) => {
     setup({ [key]: next - 1 });
     const view = await mount();
     const field = view.toggle(label);
     expect(field).toMatchObject({
       value: String(next - 1),
-      min: String(HEAVY_QUEUE_LIMITS[key].min),
-      max: String(HEAVY_QUEUE_LIMITS[key].max),
+      // The two memory guesses bound each other; the test above pins those numbers.
+      min: String(heavyQueueLimitRange(key, mocks.state).min),
+      max: String(heavyQueueLimitRange(key, mocks.state).max),
       disabled: false,
     });
     await act(async () => {

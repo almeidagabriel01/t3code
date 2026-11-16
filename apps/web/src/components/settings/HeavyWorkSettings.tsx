@@ -1,8 +1,12 @@
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
-import { heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
+import { heavyLimitDescription, heavyLimitIdle } from "@t3tools/client-runtime/state/runnerModel";
 import {
+  HEAVY_QUEUE_ADMISSION_KEYS,
   HEAVY_QUEUE_LIMITS,
+  heavyQueueLimitDefault,
+  heavyQueueLimitRange,
   type EnvironmentId,
+  type HeavyQueueAdmissionKey,
   type HeavyQueueLimitKey,
 } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
@@ -17,7 +21,12 @@ import { HeavyNoticesRow } from "./HeavyNoticesRow";
 import { IdleNote, RunnerGroup, UnitStepper, useHeavyModeLine } from "./RunnerSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsRow, SettingsSection, useSettingsSearchRevealedId } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsRow,
+  SettingsSection,
+  useSettingsSearchRevealedId,
+} from "./settingsLayout";
 import { searchableSetting, settingCopy, type SettingsSearchItemId } from "./settingsSearch";
 import { MAINTENANCE_SETTINGS_COPY } from "./settingsSearchMaintenanceItems";
 import {
@@ -38,7 +47,14 @@ const LIMIT_ROWS: ReadonlyArray<{
   { key: "macCpuCeilingPercent", searchId: "heavy-work-cpu-ceiling" },
   { key: "macMemoryFloorPercent", searchId: "heavy-work-memory-floor" },
   { key: "heavyOverLimitSeconds", searchId: "heavy-work-over-limit" },
+  { key: "lightJobMegabytes", searchId: "heavy-work-light-job" },
+  { key: "unseenHeavyMegabytes", searchId: "heavy-work-unseen-heavy" },
+  { key: "unseenMediumMegabytes", searchId: "heavy-work-unseen-medium" },
+  { key: "historyCommands", searchId: "heavy-work-history" },
+  { key: "headPatienceMinutes", searchId: "heavy-work-head-patience" },
 ];
+const isAdmission = (key: HeavyQueueLimitKey): key is HeavyQueueAdmissionKey =>
+  (HEAVY_QUEUE_ADMISSION_KEYS as ReadonlyArray<HeavyQueueLimitKey>).includes(key);
 
 function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const state = useHeavyQueue(environmentId);
@@ -68,38 +84,61 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
   };
   // The Mac limits also steer Hybrid without the queue, so they follow the shared rule.
   const limits = LIMIT_ROWS.map((row) => {
-    const idle = heavyLimitIdle(row.key, limitChoices);
+    // Letting jobs pass the head is the queue's own; the sizes also steer Hybrid's room on the Mac.
+    const idle =
+      row.key === "headPatienceMinutes"
+        ? state.enabled
+          ? null
+          : QUEUE_OFF_NOTE
+        : heavyLimitIdle(row.key, limitChoices);
     return {
       ...row,
       shown: idle === null || target === searchableSetting(row.searchId).id,
       status: idle === null ? undefined : <IdleNote>{idle}</IdleNote>,
     };
   });
-  const setLimit: Record<HeavyQueueLimitKey, (value: number) => Promise<unknown>> = {
-    macCpuCeilingPercent: actions.setMacCpuCeilingPercent,
-    macMemoryFloorPercent: actions.setMacMemoryFloorPercent,
-    heavyOverLimitSeconds: actions.setHeavyOverLimitSeconds,
-  };
+  const setLimit = (key: HeavyQueueLimitKey, value: number) =>
+    isAdmission(key)
+      ? actions.setAdmissionLimits({ [key]: value })
+      : {
+          macCpuCeilingPercent: actions.setMacCpuCeilingPercent,
+          macMemoryFloorPercent: actions.setMacMemoryFloorPercent,
+          heavyOverLimitSeconds: actions.setHeavyOverLimitSeconds,
+        }[key](value);
   const limitRow = (row: (typeof limits)[number]) =>
     row.shown ? (
       <SettingsRow
         key={row.key}
         {...searchableSetting(row.searchId)}
+        description={heavyLimitDescription(row.key, state.lightJobMegabytes)}
         status={row.status}
+        resetAction={
+          state[row.key] === heavyQueueLimitDefault(row.key, state) ? undefined : (
+            <SettingResetButton
+              label={searchableSetting(row.searchId).title}
+              disabled={readOnly}
+              onClick={() => void setLimit(row.key, heavyQueueLimitDefault(row.key, state))}
+            />
+          )
+        }
         control={
           <UnitStepper
             title={searchableSetting(row.searchId).title}
             {...HEAVY_QUEUE_LIMITS[row.key]}
+            {...heavyQueueLimitRange(row.key, state)}
             value={state[row.key]}
             disabled={readOnly}
-            onCommit={(next) => void setLimit[row.key](next)}
+            onCommit={(next) => void setLimit(row.key, next)}
           />
         }
       />
     ) : null;
   // The over-the-limit time paces both machines, so it sits outside the This Mac group.
-  const macLimits = limits.filter((row) => row.key !== "heavyOverLimitSeconds");
+  const macLimits = limits.filter(
+    (row) => row.key !== "heavyOverLimitSeconds" && !isAdmission(row.key),
+  );
   const sharedLimits = limits.filter((row) => row.key === "heavyOverLimitSeconds");
+  const sizingLimits = limits.filter((row) => isAdmission(row.key));
   const maxTitle = searchableSetting("heavy-work-max").title;
   return (
     <div className="space-y-5">
@@ -168,6 +207,9 @@ function Controls({ environmentId }: { readonly environmentId: EnvironmentId }) 
             />
           ) : null}
         </RunnerGroup>
+      ) : null}
+      {sizingLimits.some((row) => row.shown) ? (
+        <RunnerGroup title="Job sizing">{sizingLimits.map(limitRow)}</RunnerGroup>
       ) : null}
       {sharedLimits.some((row) => row.shown) ? (
         <SettingsGroup>{sharedLimits.map(limitRow)}</SettingsGroup>

@@ -3,6 +3,7 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -11,6 +12,7 @@ import {
   HEAVY_QUEUE_DEFAULTS,
   heavyQueueLimitError,
   HEAVY_QUEUE_LIMITS,
+  HeavyQueueError,
   type HeavyQueueEntry,
   type HeavyQueueLimitKey,
   type HeavyQueueRule,
@@ -151,6 +153,12 @@ interface QueueDoc {
   readonly macMemoryFloorPercent: number;
   readonly macCpuCeilingPercent: number;
   readonly heavyOverLimitSeconds: number;
+  readonly lightJobMegabytes: number;
+  readonly unseenHeavyMegabytes: number;
+  readonly unseenMediumMegabytes: number;
+  /** Commands the file remembers runs of; the one run longest ago goes first. */
+  readonly historyCommands: number;
+  readonly headPatienceMinutes: number;
   /** Runner settings a server published; null reads as the Runner off everywhere. */
   readonly runner: RunnerBlock | null;
   readonly linux: LinuxHealth;
@@ -329,6 +337,15 @@ const loadDoc = (dir: string): QueueDoc => {
       macMemoryFloorPercent: limitOf(record, "macMemoryFloorPercent"),
       macCpuCeilingPercent: limitOf(record, "macCpuCeilingPercent"),
       heavyOverLimitSeconds: limitOf(record, "heavyOverLimitSeconds"),
+      lightJobMegabytes: limitOf(record, "lightJobMegabytes"),
+      unseenHeavyMegabytes: limitOf(record, "unseenHeavyMegabytes"),
+      // A medium job never needs more than a heavy one, whatever an older or edited file says.
+      unseenMediumMegabytes: Math.min(
+        limitOf(record, "unseenMediumMegabytes"),
+        limitOf(record, "unseenHeavyMegabytes"),
+      ),
+      historyCommands: limitOf(record, "historyCommands"),
+      headPatienceMinutes: limitOf(record, "headPatienceMinutes"),
       runner: parseRunner(parsed?.runner),
       linux: isObject(parsed?.linux) ? { ...UNKNOWN_HEALTH, ...parsed.linux } : UNKNOWN_HEALTH,
       copyRemovals: Array.isArray(parsed?.copyRemovals)
@@ -480,6 +497,38 @@ export const gitRootOf = (cwd: string) => {
   return found;
 };
 
+const LOCKFILES = ["pnpm-lock.yaml", "package-lock.json", "bun.lock", "bun.lockb", "yarn.lock"];
+/** How long an answer is reused: plans run every poll, while .gitignore and lockfiles change rarely. */
+const SYNCED_FRESH_MS = 60_000;
+const syncedPaths = new Map<string, { readonly at: number; readonly found: boolean }>();
+
+/**
+ * Whether `remoto`'s copy of `path`'s checkout has it. It leaves out what git ignores, but
+ * reinstalls a `node_modules` from a lockfile between the checkout and it.
+ */
+export const syncedInCopy = (path: string, now = Date.now()): boolean => {
+  const known = syncedPaths.get(path);
+  if (known !== undefined && now - known.at < SYNCED_FRESH_MS) return known.found;
+  let found: boolean;
+  const root = gitRootOf(NodePath.dirname(path));
+  const modules = /^(.*?)[\\/]node_modules([\\/]|$)/.exec(path)?.[1];
+  if (root === null) found = true;
+  else if (modules !== undefined) {
+    found = false;
+    for (let dir = modules; dir.length >= root.length; dir = NodePath.dirname(dir)) {
+      if (LOCKFILES.some((name) => NodeFS.existsSync(NodePath.join(dir, name)))) found = true;
+      if (found || dir === root) break;
+    }
+  } else {
+    // Exit 0 is ignored; an error (1 is "not ignored") counts as there.
+    const check = NodeChildProcess.spawnSync("git", ["-C", root, "check-ignore", "-q", "--", path]);
+    found = check.status !== 0;
+  }
+  if (syncedPaths.size > 1000) syncedPaths.clear();
+  syncedPaths.set(path, { at: now, found });
+  return found;
+};
+
 const contextOf =
   (doc: QueueDoc) =>
   (cwd: string): WorkContext => ({
@@ -487,6 +536,7 @@ const contextOf =
     worktree: cachedCheckout(cwd).root,
     home: NodeOS.homedir(),
     rootOf: gitRootOf,
+    synced: syncedInCopy,
   });
 
 /** Some project uses the Runner, so jobs can wait on either machine. */
@@ -507,6 +557,10 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     holding: doc.holding,
     macMemoryFloorPercent: doc.macMemoryFloorPercent,
     macCpuCeilingPercent: doc.macCpuCeilingPercent,
+    lightJobMegabytes: doc.lightJobMegabytes,
+    unseenHeavyMegabytes: doc.unseenHeavyMegabytes,
+    unseenMediumMegabytes: doc.unseenMediumMegabytes,
+    headPatienceMinutes: doc.headPatienceMinutes,
     now,
     contextOf: contextOf(doc),
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
@@ -748,20 +802,23 @@ const decideCancel = (doc: QueueDoc, id: string): Decided<MoveResult> => {
   return { doc, result: "ok" };
 };
 
-/** Commands the file remembers runs of; the one run longest ago goes first. */
-const HISTORY_COMMANDS = 1000;
-
 /** A history to write into: no prototype, so any signature (`__proto__` too) is a plain key. */
 const writable = <A>(book: Readonly<Record<string, A>>): Record<string, A> =>
   Object.assign(Object.create(null) as Record<string, A>, book);
 
-const remember = <A>(book: Record<string, ReadonlyArray<A>>, signature: string, run: A) => {
+/** Keeps at most `commands` commands; the one run longest ago goes first. */
+const remember = <A>(
+  book: Record<string, ReadonlyArray<A>>,
+  signature: string,
+  run: A,
+  commands: number,
+) => {
   const runs = [...(Object.hasOwn(book, signature) ? book[signature]! : []), run].slice(
     -HISTORY_RUNS,
   );
   delete book[signature];
   book[signature] = runs;
-  for (const old of Object.keys(book).slice(0, -HISTORY_COMMANDS)) delete book[old];
+  for (const old of Object.keys(book).slice(0, -commands)) delete book[old];
 };
 
 /** Each machine learns only from its own runs, so Linux never skews what the Mac admits. */
@@ -777,7 +834,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
     if (gone.runner === "linux") {
       // A run that never got past syncing says nothing about how long the command takes.
       if (gone.phase !== "running") continue;
-      remember(linuxHistory, signature, { durationMs });
+      remember(linuxHistory, signature, { durationMs }, after.historyCommands);
     } else {
       if (gone.peakMemory === undefined) continue;
       const run = {
@@ -785,7 +842,7 @@ const withFinishedRuns = (before: QueueDoc, after: QueueDoc, now: number): Queue
         memoryBytes: gone.peakMemory,
         durationMs,
       };
-      remember(history, signature, run);
+      remember(history, signature, run, after.historyCommands);
     }
     changed = true;
   }
@@ -937,7 +994,7 @@ export const recordSample = (
       .reduce((sum, entry) => {
         const full = Math.max(
           entry.peakCpu ?? 0,
-          estimate(doc.history, entry, reading.cpuCount).cpu,
+          estimate(doc.history, entry, reading.cpuCount, doc).cpu,
         );
         // An unread job counts as using nothing now, so restoring waits rather than flaps.
         return sum + Math.max(0, full - (entry.cpu ?? 0));
@@ -1121,15 +1178,34 @@ export const setPaused = (dir: string, paused: boolean) =>
 export const setEnabled = (dir: string, enabled: boolean) =>
   mutate(dir, (doc) => ({ doc: { ...doc, enabled }, result: undefined }));
 
-/** Stores a queue setting, clamped to its range. */
-export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+/**
+ * Stores the queue settings given in one write, each clamped to its range; other keys are ignored.
+ * Throws, writing nothing, when the result would guess a medium job above a heavy one.
+ */
+export const setLimits = (
+  dir: string,
+  limits: Readonly<Partial<Record<HeavyQueueLimitKey, number>>>,
+) =>
   mutate(dir, (doc) => {
-    const { min, max } = HEAVY_QUEUE_LIMITS[key];
-    return {
-      doc: { ...doc, [key]: Math.max(min, Math.min(max, Math.floor(value))) },
-      result: undefined,
-    };
+    const set: Partial<Record<HeavyQueueLimitKey, number>> = {};
+    for (const key of Object.keys(HEAVY_QUEUE_LIMITS) as ReadonlyArray<HeavyQueueLimitKey>) {
+      const value = limits[key];
+      if (value === undefined) continue;
+      const { min, max } = HEAVY_QUEUE_LIMITS[key];
+      set[key] = Math.max(min, Math.min(max, Math.floor(value)));
+    }
+    const next = { ...doc, ...set };
+    if (next.unseenMediumMegabytes > next.unseenHeavyMegabytes) {
+      throw new HeavyQueueError({
+        reason: "not-allowed",
+        message: `A medium job's memory guess can't be more than a heavy job's (${next.unseenHeavyMegabytes} MB).`,
+      });
+    }
+    return { doc: next, result: undefined };
   });
+
+export const setLimit = (dir: string, key: HeavyQueueLimitKey, value: number) =>
+  setLimits(dir, { [key]: value });
 
 export const setDeviceIdleMinutes = (dir: string, minutes: number) =>
   mutate(dir, (doc) => ({

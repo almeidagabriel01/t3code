@@ -566,6 +566,25 @@ describe("HeavyQueue", () => {
           macCpuCeilingPercent: 90,
           heavyOverLimitSeconds: 60,
         });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 512,
+          headPatienceMinutes: 5,
+        });
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 256, headPatienceMinutes: 30 });
+        expect(yield* queue.state).toMatchObject({
+          lightJobMegabytes: 256,
+          unseenHeavyMegabytes: 1536,
+          headPatienceMinutes: 30,
+        });
+        // Reset sends the default back.
+        yield* queue.setAdmissionLimits({ lightJobMegabytes: 512 });
+        expect((yield* queue.state).lightJobMegabytes).toBe(512);
+        const above = yield* Effect.flip(queue.setAdmissionLimits({ unseenMediumMegabytes: 4096 }));
+        expect([above.reason, above.message]).toEqual([
+          "not-allowed",
+          "A medium job's memory guess can't be more than a heavy job's (1536 MB).",
+        ]);
+        expect((yield* queue.state).unseenMediumMegabytes).toBe(512);
         expect((yield* Effect.flip(queue.move("zzz", null))).reason).toBe("not-found");
         yield* queue.setRule("/proj", null);
         expect((yield* queue.state).rules).toEqual([]);

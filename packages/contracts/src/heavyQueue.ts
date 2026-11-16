@@ -8,6 +8,11 @@ export const HEAVY_QUEUE_LIMITS = {
   macMemoryFloorPercent: { min: 5, max: 80, unit: "percent" },
   macCpuCeilingPercent: { min: 20, max: 100, unit: "percent" },
   heavyOverLimitSeconds: { min: 5, max: 300, unit: "seconds" },
+  lightJobMegabytes: { min: 64, max: 4096, unit: "MB" },
+  unseenHeavyMegabytes: { min: 256, max: 16384, unit: "MB" },
+  unseenMediumMegabytes: { min: 128, max: 8192, unit: "MB" },
+  historyCommands: { min: 50, max: 10000, unit: "commands" },
+  headPatienceMinutes: { min: 1, max: 60, unit: "minutes" },
 } as const;
 export type HeavyQueueLimitKey = keyof typeof HEAVY_QUEUE_LIMITS;
 
@@ -16,7 +21,22 @@ export const HEAVY_QUEUE_DEFAULTS: Record<HeavyQueueLimitKey, number> = {
   macCpuCeilingPercent: 70,
   // Routing moves work only once a machine stays past (or back under) its limits this long.
   heavyOverLimitSeconds: 20,
+  lightJobMegabytes: 512,
+  unseenHeavyMegabytes: 1536,
+  unseenMediumMegabytes: 512,
+  historyCommands: 1000,
+  headPatienceMinutes: 5,
 };
+
+/** How admission sizes jobs and lets them pass the head of the queue; set together in one call. */
+export const HEAVY_QUEUE_ADMISSION_KEYS = [
+  "lightJobMegabytes",
+  "unseenHeavyMegabytes",
+  "unseenMediumMegabytes",
+  "historyCommands",
+  "headPatienceMinutes",
+] as const satisfies ReadonlyArray<HeavyQueueLimitKey>;
+export type HeavyQueueAdmissionKey = (typeof HEAVY_QUEUE_ADMISSION_KEYS)[number];
 
 /** Why `value` is not a valid `key`, for people; null when it is. */
 export const heavyQueueLimitError = (key: HeavyQueueLimitKey, value: number): string | null => {
@@ -24,6 +44,33 @@ export const heavyQueueLimitError = (key: HeavyQueueLimitKey, value: number): st
   if (!Number.isInteger(value)) return `Use a whole number of ${unit}.`;
   if (value < min || value > max) return `Use ${min} to ${max} ${unit}.`;
   return null;
+};
+
+/**
+ * A setting's range given the others, so an editor never offers a value the server refuses: a
+ * medium job's memory guess stays at or under a heavy job's.
+ */
+export const heavyQueueLimitRange = (
+  key: HeavyQueueLimitKey,
+  current: Readonly<Record<"unseenHeavyMegabytes" | "unseenMediumMegabytes", number>>,
+): { readonly min: number; readonly max: number } => {
+  const { min, max } = HEAVY_QUEUE_LIMITS[key];
+  if (key === "unseenMediumMegabytes") {
+    return { min, max: Math.max(min, Math.min(max, current.unseenHeavyMegabytes)) };
+  }
+  if (key === "unseenHeavyMegabytes") {
+    return { min: Math.min(max, Math.max(min, current.unseenMediumMegabytes)), max };
+  }
+  return { min, max };
+};
+
+/** The default a reset sends: as close to the shipped value as the other limits allow. */
+export const heavyQueueLimitDefault = (
+  key: HeavyQueueLimitKey,
+  current: Parameters<typeof heavyQueueLimitRange>[1],
+): number => {
+  const { min, max } = heavyQueueLimitRange(key, current);
+  return Math.min(max, Math.max(min, HEAVY_QUEUE_DEFAULTS[key]));
 };
 
 const limit = (key: HeavyQueueLimitKey) =>
@@ -228,6 +275,21 @@ export const HeavyQueueState = Schema.Struct({
   heavyOverLimitSeconds: Schema.Int.pipe(
     Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.heavyOverLimitSeconds)),
   ),
+  lightJobMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.lightJobMegabytes)),
+  ),
+  unseenHeavyMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.unseenHeavyMegabytes)),
+  ),
+  unseenMediumMegabytes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.unseenMediumMegabytes)),
+  ),
+  historyCommands: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.historyCommands)),
+  ),
+  headPatienceMinutes: Schema.Int.pipe(
+    Schema.withDecodingDefault(Effect.succeed(HEAVY_QUEUE_DEFAULTS.headPatienceMinutes)),
+  ),
   /** Why a waiting entry is not starting, by entry id. */
   reasons: Schema.Record(Schema.String, Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -289,6 +351,16 @@ export const HeavyQueueSetHeavyOverLimitSecondsInput = Schema.Struct({
 });
 export type HeavyQueueSetHeavyOverLimitSecondsInput =
   typeof HeavyQueueSetHeavyOverLimitSecondsInput.Type;
+
+/** Only the keys given change; each must be in its range. */
+export const HeavyQueueSetAdmissionLimitsInput = Schema.Struct({
+  lightJobMegabytes: Schema.optionalKey(limit("lightJobMegabytes")),
+  unseenHeavyMegabytes: Schema.optionalKey(limit("unseenHeavyMegabytes")),
+  unseenMediumMegabytes: Schema.optionalKey(limit("unseenMediumMegabytes")),
+  historyCommands: Schema.optionalKey(limit("historyCommands")),
+  headPatienceMinutes: Schema.optionalKey(limit("headPatienceMinutes")),
+});
+export type HeavyQueueSetAdmissionLimitsInput = typeof HeavyQueueSetAdmissionLimitsInput.Type;
 
 /** A null priority clears the rule. */
 /** "high" starts a waiter now and lifts a running job's processes out of background QoS; "low" puts them back. */

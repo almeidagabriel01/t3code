@@ -15,6 +15,7 @@ import type {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "@t3tools/contracts";
+import { HEAVY_QUEUE_DEFAULTS } from "@t3tools/contracts";
 
 /** Every Runner setting's label and description; web and mobile both read these. */
 export const RUNNER_SETTING_COPY: Record<
@@ -139,6 +140,10 @@ export const RUNNER_PHASE_LABEL: Record<HeavyRunnerPhase, string> = {
   running: "Running",
 };
 
+function memoryFloorDescription(lightJobMegabytes: number): string {
+  return `A new heavy job waits while less than this much of this Mac's memory is free, unless it usually uses under ${lightJobMegabytes} MB.`;
+}
+
 /** The heavy queue's limit rows; web and mobile both read these. */
 export const HEAVY_LIMIT_COPY: Record<
   HeavyQueueLimitKey,
@@ -150,15 +155,45 @@ export const HEAVY_LIMIT_COPY: Record<
   },
   macMemoryFloorPercent: {
     title: "Keep memory free",
-    description:
-      "A new heavy job waits while less than this much of this Mac's memory is free, unless it usually uses under 512 MB.",
+    description: memoryFloorDescription(HEAVY_QUEUE_DEFAULTS.lightJobMegabytes),
   },
   heavyOverLimitSeconds: {
     title: "Over the limit for",
     description:
       "How long this Mac or Linux must stay past a limit, or back under it, before jobs wait or move. A short spike changes nothing.",
   },
+  lightJobMegabytes: {
+    title: "Light job size",
+    description:
+      "A job whose runs on this Mac usually stayed under this may start even while memory is short. A command never run here is never light.",
+  },
+  unseenHeavyMegabytes: {
+    title: "Memory guess for a new heavy job",
+    description:
+      "What a build, an end-to-end run or a whole test suite is expected to use before it has run on this Mac.",
+  },
+  unseenMediumMegabytes: {
+    title: "Memory guess for a new medium job",
+    description:
+      "What a lint, a typecheck or a single test file is expected to use before it has run on this Mac.",
+  },
+  historyCommands: {
+    title: "Commands remembered",
+    description:
+      "How many different commands keep their past runs for these estimates. Past that, the one run longest ago is forgotten.",
+  },
+  headPatienceMinutes: {
+    title: "Let smaller jobs pass for",
+    description:
+      "While the first job in line does not fit, smaller ones behind it may start. Once it has waited this long, nothing passes it.",
+  },
 };
+
+/** A limit's description as drawn; the memory floor's exception follows the light job size. */
+export const heavyLimitDescription = (key: HeavyQueueLimitKey, lightJobMegabytes: number) =>
+  key === "macMemoryFloorPercent"
+    ? memoryFloorDescription(lightJobMegabytes)
+    : HEAVY_LIMIT_COPY[key].description;
 
 export const HEAVY_NOTICES_COPY = {
   title: "Heavy job notices",

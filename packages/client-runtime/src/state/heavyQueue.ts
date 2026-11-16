@@ -79,6 +79,10 @@ export function createHeavyQueueEnvironmentAtoms<R, E>(
       label: "environment-data:heavy-queue:set-heavy-over-limit-seconds",
       tag: WS_METHODS.heavyQueueSetHeavyOverLimitSeconds,
     }),
+    setAdmissionLimits: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:heavy-queue:set-admission-limits",
+      tag: WS_METHODS.heavyQueueSetAdmissionLimits,
+    }),
     setPriority: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:heavy-queue:set-priority",
       tag: WS_METHODS.heavyQueueSetPriority,

@@ -1574,6 +1574,41 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "heavy-work-light-job",
+    title: HEAVY_LIMIT_COPY.lightJobMegabytes.title,
+    description: HEAVY_LIMIT_COPY.lightJobMegabytes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue light small job memory megabytes mb short pressure"],
+  },
+  {
+    id: "heavy-work-unseen-heavy",
+    title: HEAVY_LIMIT_COPY.unseenHeavyMegabytes.title,
+    description: HEAVY_LIMIT_COPY.unseenHeavyMegabytes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue estimate guess unknown build suite e2e memory gb"],
+  },
+  {
+    id: "heavy-work-unseen-medium",
+    title: HEAVY_LIMIT_COPY.unseenMediumMegabytes.title,
+    description: HEAVY_LIMIT_COPY.unseenMediumMegabytes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue estimate guess unknown lint typecheck test file memory mb"],
+  },
+  {
+    id: "heavy-work-history",
+    title: HEAVY_LIMIT_COPY.historyCommands.title,
+    description: HEAVY_LIMIT_COPY.historyCommands.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue history past runs commands learn estimates forget"],
+  },
+  {
+    id: "heavy-work-head-patience",
+    title: HEAVY_LIMIT_COPY.headPatienceMinutes.title,
+    description: HEAVY_LIMIT_COPY.headPatienceMinutes.description,
+    to: "/settings/maintenance",
+    searchTerms: ["heavy work queue head of line patience wait backfill pass skip minutes"],
+  },
+  {
     id: "heavy-work-claude-hook",
     title: "Claude Code hook for the heavy work queue",
     description:
