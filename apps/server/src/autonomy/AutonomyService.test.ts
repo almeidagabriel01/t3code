@@ -2220,12 +2220,12 @@ it.effect(
         h.sent.map((wake) => [wake.threadId, wake.text.split("\n")[0]]),
         [["assistant:ana:1", "[Autonomy] Watch: failures"]],
       );
-      // Off again: the old fan-out returns.
+      // Off again: the old fan-out returns, and Ana's rule and watch tell her of the run once.
       yield* Ref.set(h.detectProblems, false);
       yield* service.handleEvent(run("failed", "r2"));
       assert.sameMembers(
         h.sent.slice(1).map((wake) => wake.threadId),
-        ["assistant:jarvis:1", "assistant:ana:1", "assistant:ana:1"],
+        ["assistant:jarvis:1", "assistant:ana:1"],
       );
     }).pipe(Effect.provide(h.layer));
   },
