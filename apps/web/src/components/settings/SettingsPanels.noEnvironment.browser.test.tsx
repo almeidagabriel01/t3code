@@ -1,5 +1,7 @@
 import {
+  CONNECT_ENVIRONMENT_FOR_KEYBINDINGS,
   CONNECT_ENVIRONMENT_FOR_MAINTENANCE_SETTINGS,
+  CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
   CONNECT_ENVIRONMENT_FOR_THREAD_SETTINGS,
   CONNECT_ENVIRONMENT_FOR_WORKTREE_SETTINGS,
 } from "@t3tools/client-runtime/settings-empty-selection";
@@ -9,6 +11,8 @@ import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
+import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
+import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 import { MaintenanceSettingsPanel, ThreadsSettingsPanel } from "./SettingsPanels";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { WorktreesSettingsPanel } from "./WorktreesSettings";
@@ -102,5 +106,59 @@ it.each(cases)(
     );
     await expect.element(page.getByText(serverRows[0]!, { exact: true })).toBeVisible();
     expect(screen.container.textContent).not.toContain(notice);
+  },
+);
+
+it.each([
+  {
+    name: "Keybindings",
+    Panel: KeybindingsSettingsPanel,
+    notice: CONNECT_ENVIRONMENT_FOR_KEYBINDINGS,
+    hiddenRows: ["Command Palette: Toggle"],
+  },
+  {
+    name: "Scheduled tasks",
+    Panel: ScheduledTasksSettings,
+    notice: CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+    hiddenRows: ["No environments available"],
+  },
+])(
+  "$name shows the shared Server environment notice without an environment",
+  async ({ Panel, notice, hiddenRows }) => {
+    setup();
+    await using screen = await render(
+      <SettingsScopeProvider search={{}} onChange={() => {}}>
+        <Panel />
+      </SettingsScopeProvider>,
+    );
+    await expect.element(page.getByText(notice, { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Server environment", { exact: true })).toBeVisible();
+    expect(screen.container.textContent?.split(notice)).toHaveLength(2);
+    for (const row of hiddenRows) {
+      expect(page.getByText(row, { exact: true }).elements()).toHaveLength(0);
+    }
+  },
+);
+
+it.each([
+  { state: "without an environment", environments: [], rowsVisible: false },
+  { state: "while its environment reconnects", environments: [disconnected], rowsVisible: true },
+])(
+  "Keybindings disables search and Add keybinding $state",
+  async ({ environments, rowsVisible }) => {
+    setup(environments);
+    await using screen = await render(
+      <SettingsScopeProvider search={{}} onChange={() => {}}>
+        <KeybindingsSettingsPanel />
+      </SettingsScopeProvider>,
+    );
+    await expect
+      .element(page.getByRole("searchbox", { name: "Search keybindings" }))
+      .toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Add keybinding" })).toBeDisabled();
+    if (rowsVisible) {
+      await expect.element(page.getByText("Command Palette: Toggle")).toBeVisible();
+      expect(screen.container.textContent).not.toContain(CONNECT_ENVIRONMENT_FOR_KEYBINDINGS);
+    }
   },
 );
