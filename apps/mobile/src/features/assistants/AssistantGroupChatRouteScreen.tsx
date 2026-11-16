@@ -1493,12 +1493,14 @@ export function AssistantGroupChatRouteScreen({
                                 id: `model:${member.id}`,
                                 title: member.name,
                                 subtitle: "No exception",
+                                icon: "person.crop.circle",
                                 disabled,
                                 onPress: () => projectModel.openMemberPicker(member.id),
                               }
                             : {
                                 id: `model:${member.id}`,
                                 title: `${member.name} · ${projectModel.nameOf(exception)}`,
+                                icon: "person.crop.circle",
                                 items: [
                                   {
                                     id: `model:${member.id}:change`,
