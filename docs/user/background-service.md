@@ -194,7 +194,10 @@ work queue, and each section says what the two do together.
     **Everything** to send every heavy command instead, except what has to stay
     on this Mac: git commands that write, installs that change the lockfile,
     **Always on this Mac** matches, simulator, emulator and Xcode tools, dev
-    servers, and commands that touch Mac paths outside the project.
+    servers, commands that touch Mac paths outside the project, Python (the
+    PC gets no Python environment), programs and scripts in files git ignores
+    (a `node_modules` with a lockfile is reinstalled there, so it goes), and
+    work after a `source` in the same line.
 
   With the queue off, work starts here at once and Hybrid or Mac first send it
   to Linux only while this Mac is over its limits. All of these, and the
