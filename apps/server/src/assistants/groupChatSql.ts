@@ -54,7 +54,7 @@ export const afterBoundarySql = (team: string, seq: string) =>
 // Open waits and project questions are few: their partial indexes beat walking the tab's lines.
 export const scopeWaitingRequestSql = (team: string, scope: string) =>
   `(SELECT json_object('requestId', h.message_id,
-      'title', COALESCE(NULLIF(h.title, ''), substr(h.text, 1, 400)),
+      'title', NULLIF(h.title, ''), 'text', substr(h.text, 1, 400),
       'reason', w.reason, 'taskReason', w.task_reason, 'assistantId', w.assistant_id)
     FROM (
       SELECT q.request_id, 'wait' AS reason, NULL AS task_reason, q.assistant_id, q.seq AS at
