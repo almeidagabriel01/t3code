@@ -111,13 +111,14 @@ it.effect("redeems a guest link once and sends each guest message once, with its
       guestMessageId,
       text: "Why not keep the old cache?",
     });
+    // The shell stream sends these: one changed thread reads `getThreadShell`, a batch the snapshot.
+    const submittedAt = (yield* projections.getThreadProjection(threadId)).thread.guestShare
+      ?.messages[0]?.submittedAt;
     const waiting = yield* projections.getThreadShell(threadId);
     assert.equal(waiting?.pendingGuestMessageCount, 1);
-    assert.equal(
-      waiting?.oldestPendingGuestMessageAt,
-      (yield* projections.getThreadProjection(threadId)).thread.guestShare?.messages[0]
-        ?.submittedAt,
-    );
+    assert.equal(waiting?.oldestPendingGuestMessageAt, submittedAt);
+    const [streamed] = (yield* projections.getShellSnapshot({ threadIds: [threadId] })).threads;
+    assert.equal(streamed?.oldestPendingGuestMessageAt, submittedAt);
 
     yield* sendGuestMessage(orchestrator, "send-1");
     const projection = yield* projections.getThreadProjection(threadId);
