@@ -109,7 +109,10 @@ export function ProjectActionsSettings() {
   };
 
   return (
-    <SettingsSection {...searchableSetting("project-actions")}>
+    <SettingsSection
+      id={searchableSetting("project-actions").id}
+      title={settingCopy("project-actions").title}
+    >
       <SettingsRow
         serverScoped
         settingKeys={["defaultProjectScripts"]}

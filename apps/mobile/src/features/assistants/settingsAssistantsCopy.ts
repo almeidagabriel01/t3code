@@ -43,6 +43,11 @@ export const AUTONOMY_COPY = {
     title: "Assistants can notify you",
     description: "The pause switch for all assistants on this server.",
   },
+  limitAlertsWhilePaused: {
+    title: "Limit alerts while paused",
+    description:
+      "Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels in Limit alerts.",
+  },
   notifyWaiting: {
     title: "Notify me when something is waiting for me",
     description:
@@ -102,6 +107,7 @@ export const ASSISTANTS_PAGE_LABELS: readonly string[] = [
   AUTONOMY_COPY.footer,
   ...[
     AUTONOMY_COPY.notifyEnabled,
+    AUTONOMY_COPY.limitAlertsWhilePaused,
     AUTONOMY_COPY.notifyWaiting,
     AUTONOMY_COPY.notifyAfter,
     AUTONOMY_COPY.waitingAfter,

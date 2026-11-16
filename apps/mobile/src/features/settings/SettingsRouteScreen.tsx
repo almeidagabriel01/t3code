@@ -42,6 +42,7 @@ import { useComputerUseHostEnvironmentIds, useMacEnvironmentIds } from "../../st
 import { useHasMemoryEnvironments } from "../../state/memory";
 import { useHasNotesEnvironments } from "../../state/notes";
 import { filterSettingsSections } from "./settings-search";
+import { USAGE_ALERTS_COPY } from "./usageAlertsCopy";
 import { usePaneRole } from "../../components/ui/Pane";
 
 export function SettingsRouteScreen() {
@@ -237,6 +238,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
   const hasIntegrations = useIntegrationsEnvironmentIds().length > 0;
+  const hasUsageAlerts = selectedTargets.some(
+    (target) => target.serverConfig?.environment?.capabilities.usageLimitAlerts === true,
+  );
   const scopedProjectMembers =
     selectedProjectGroups?.length === 1
       ? selectedProjectGroups[0]!.members
@@ -278,6 +282,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
       title: "Agents",
       rows: [
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
+        ...(hasUsageAlerts
+          ? [serverPage("SettingsUsageAlerts", "bell.badge", USAGE_ALERTS_COPY.title)]
+          : []),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         serverPage("SettingsAgentTools", "hammer", "MCP servers & skills"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),

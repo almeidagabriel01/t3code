@@ -104,7 +104,8 @@ vi.mock("../assistants/promptProjectAccess", () => ({
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "project" }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
+  useEnvironmentScopeAccess: (_environmentId: string, scopes: ReadonlyArray<string>) =>
+    scopes.every((scope) => state.scopes.has(scope)) ? "granted" : "missing",
   readEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
 }));
 vi.mock("../../state/entities", () => ({

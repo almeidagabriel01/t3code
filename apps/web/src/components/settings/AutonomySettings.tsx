@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   AUTONOMY_CHANNEL_LABELS,
   AUTONOMY_MINUTES_BOUNDS,
@@ -16,11 +17,12 @@ import { BellRingIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
+import { serverEnvironment } from "../../state/server";
 import { useTelegramEnvironmentIds, useTelegramSettings } from "../../state/telegramChannel";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { settingCopy } from "./settingsSearch";
+import { searchableSetting, settingCopy } from "./settingsSearch";
 
 const ICON = "size-4 text-muted-foreground";
 
@@ -104,6 +106,15 @@ export function AutonomySection(props: {
   const telegramIds = useTelegramEnvironmentIds();
   const write = (next: AutonomySettings) => update({ autonomy: next });
   const paused = !autonomy.enabled;
+  const limitAlertsWhilePaused = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.usageLimitAlerts.ignoreAutonomyPause,
+  );
+  // Older servers have no limit alerts and drop the patch.
+  const hasLimitAlerts = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.usageLimitAlerts === true,
+  );
 
   return (
     <SettingsSection
@@ -120,6 +131,20 @@ export function AutonomySection(props: {
           />
         }
       />
+      {hasLimitAlerts ? (
+        <SettingsRow
+          {...searchableSetting("usage-limit-alerts-while-paused")}
+          control={
+            <Switch
+              checked={limitAlertsWhilePaused}
+              aria-label="Limit alerts while paused"
+              onCheckedChange={(checked) =>
+                update({ usageLimitAlerts: { ignoreAutonomyPause: Boolean(checked) } })
+              }
+            />
+          }
+        />
+      ) : null}
       <SettingsRow
         {...settingCopy("autonomy-detect-problems")}
         control={

@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import {
   CommonActions,
   StackActions,
@@ -85,7 +86,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
+  const { canWriteSourceControl, sourceControlAccess, canChangeThreadBranch } = gitActions;
+  const sourceControlNotice = scopeAccessMessage(
+    sourceControlAccess,
+    "This connection cannot change source control.",
+  );
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -121,7 +126,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     },
     disabledReason:
       !canWriteSourceControl && item.kind !== "open_pr"
-        ? "This connection cannot change source control."
+        ? (sourceControlNotice ?? undefined)
         : getGitActionDisabledReason({
             item,
             gitStatus: gitStatus.data,
@@ -275,9 +280,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             icon="arrow.down.circle"
             label="Pull latest"
             description={
-              canWriteSourceControl
-                ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
-                : "This connection cannot change source control."
+              sourceControlNotice ??
+              `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
             }
             disabled={!canWriteSourceControl || busy || !isRepo}
             onPress={() => void gitActions.onPullSelectedThreadBranch()}

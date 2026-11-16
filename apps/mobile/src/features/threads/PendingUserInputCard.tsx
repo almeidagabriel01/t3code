@@ -42,6 +42,7 @@ export interface PendingUserInputCardProps {
   readonly threadId: ThreadId;
   readonly workspaceRoot: string | null;
   readonly canOperateThread: boolean;
+  readonly lacksOperatePermission?: boolean;
   readonly pendingUserInput: PendingUserInput;
   readonly maxHeight: DerivedValue<number>;
   readonly collapsed: boolean;
@@ -352,7 +353,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           onPress={() => void props.onDismiss()}
         />
       ) : null}
-      {!props.canOperateThread ? (
+      {props.lacksOperatePermission ? (
         <Text className="font-sans text-xs text-foreground-tertiary">
           This connection cannot submit answers.
         </Text>

@@ -15,12 +15,22 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: string) =>
-    atom === "sync" ? mocks.permissions.sync : mocks.permissions.bind,
+    atom === "sync"
+      ? mocks.permissions.sync
+      : atom === "bindAccess"
+        ? mocks.permissions.bind
+          ? "granted"
+          : "missing"
+        : mocks.permissions.bind,
 }));
 vi.mock("../../state/memory", () => ({
   memoryEnvironment: {
     syncStatus: { id: "sync", permissionAtom: () => "sync" },
-    projectBindingGet: { id: "bind", permissionAtom: () => "bind" },
+    projectBindingGet: {
+      id: "bind",
+      permissionAtom: () => "bind",
+      accessAtom: () => "bindAccess",
+    },
   },
 }));
 const getSync = async () => mocks.sync;

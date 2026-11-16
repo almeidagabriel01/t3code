@@ -29,7 +29,12 @@ import { SearchField } from "../../components/ui/SearchField";
 import { memoryEnvironment as memory } from "../../state/memory";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentScope } from "../../state/session";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import {
   useForgetMemory,
   useMemorySpace,
@@ -59,42 +64,50 @@ const SCOPE_MESSAGE: Record<
   },
 };
 
+const MEMORY_READ_SCOPES = [AuthMemoryReadScope];
+
 /** The project's memories: search them, open one in Memory to edit, or forget it. */
 export function ProjectMemoryView(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
 }) {
   const { environmentId } = props;
-  const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
+  const readAccess = useEnvironmentScopeAccess(environmentId, MEMORY_READ_SCOPES);
+  const canRead = !scopeAccessLocked(readAccess);
   const space = useMemorySpace(environmentId, canRead);
   const scope = useProjectMemoryScope(environmentId, props.projectId, space);
   const inputRef = useRef<TextInputInstance | null>(null);
   const [queryInput, setQueryInput] = useState("");
   const query = useDebouncedValue(queryInput.trim(), 250);
-  const body = !canRead ? (
-    <ProjectViewMessage
-      title="Memory read access needed"
-      detail="This connection cannot read memory on this server."
-    />
-  ) : space === null ? (
-    <ProjectViewMessage
-      title="Memory is not ready"
-      detail="Memory is off or still getting ready on this server."
-    />
-  ) : scope === null || scope.status === "loading" ? (
-    <ProjectViewMessage title="Loading project memory…" />
-  ) : scope.status !== "ready" ? (
-    <ProjectViewMessage {...SCOPE_MESSAGE[scope.status]} />
-  ) : (
-    <MemoryPages
-      key={query}
-      environmentId={environmentId}
-      projectId={props.projectId}
-      memorySpaceId={space}
-      scope={scope.scope}
-      query={query}
-    />
-  );
+  const body =
+    readAccess === "unknown" ? (
+      <ProjectViewMessage title="Loading project memory…" />
+    ) : readAccess === "unavailable" ? (
+      <ProjectViewMessage title={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+    ) : scopeAccessShowsBanner(readAccess) ? (
+      <ProjectViewMessage
+        title="Memory read access needed"
+        detail="This connection cannot read memory on this server."
+      />
+    ) : space === null ? (
+      <ProjectViewMessage
+        title="Memory is not ready"
+        detail="Memory is off or still getting ready on this server."
+      />
+    ) : scope === null || scope.status === "loading" ? (
+      <ProjectViewMessage title="Loading project memory…" />
+    ) : scope.status !== "ready" ? (
+      <ProjectViewMessage {...SCOPE_MESSAGE[scope.status]} />
+    ) : (
+      <MemoryPages
+        key={query}
+        environmentId={environmentId}
+        projectId={props.projectId}
+        memorySpaceId={space}
+        scope={scope.scope}
+        query={query}
+      />
+    );
   return (
     <View className="gap-3">
       {scope?.status === "ready" ? (

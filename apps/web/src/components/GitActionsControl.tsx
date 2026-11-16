@@ -92,7 +92,16 @@ import {
   useVcsPullAction,
 } from "../state/sourceControlActions";
 import { useQuietThreadProjection, useQuietThreadShell } from "~/state/entities";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+} from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -170,6 +179,7 @@ function requestVcsStatusRefresh(
   void refresh({ environmentId, input: { cwd } });
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
+const SOURCE_CONTROL_WRITE_SCOPES = [AuthSourceControlWriteScope];
 
 const PUBLISH_PROVIDER_OPTIONS = sourceControlClients.definitions.map((definition) => ({
   value: definition.kind,
@@ -944,10 +954,11 @@ export default function GitActionsControl({
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const successScopeKey = `${activeEnvironmentId ?? ""}\u0000${gitCwd ?? ""}`;
-  const canWriteSourceControl = useEnvironmentScope(
+  const sourceControlAccess = useEnvironmentScopeAccess(
     activeEnvironmentId,
-    AuthSourceControlWriteScope,
+    SOURCE_CONTROL_WRITE_SCOPES,
   );
+  const canWriteSourceControl = !scopeAccessLocked(sourceControlAccess);
   const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
@@ -1117,11 +1128,13 @@ export default function GitActionsControl({
     isDefaultRef,
     hasPrimaryRemote,
   );
-  const quickActionDisabledReason = !canWriteSourceControl
+  const quickActionDisabledReason = scopeAccessShowsBanner(sourceControlAccess)
     ? "This connection cannot change source control."
-    : quickAction.disabled
-      ? (quickAction.hint ?? "This action is currently unavailable.")
-      : null;
+    : sourceControlAccess === "unavailable"
+      ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+      : quickAction.disabled
+        ? (quickAction.hint ?? "This action is currently unavailable.")
+        : null;
   const gitActionProgress = resolveGitActionProgressPresentation(vcsActionState);
   // A fresh draft or a thread with no turns hides commit, push, and diff rows until there is work.
   const quietEmptyDraft =

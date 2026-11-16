@@ -1,7 +1,8 @@
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
-import { useEnvironmentsWithScope } from "../../state/session";
+import { useEnvironmentsScopeAccess, useEnvironmentsWithScope } from "../../state/session";
 import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
@@ -274,6 +275,12 @@ function ProjectDetail({
   const canEditGroup = group.memberProjects.every((member) =>
     editableIds.has(member.environmentId),
   );
+  const editAccess = useEnvironmentsScopeAccess(allMembers, AuthOrchestrationOperateScope);
+  const editAccesses = group.memberProjects.map((member) => editAccess.get(member.environmentId));
+  const accessSettled = !canEditGroup && !editAccesses.includes("unknown");
+  const showsPermissionNote = accessSettled && editAccesses.includes("missing");
+  const showsUnavailableNote =
+    accessSettled && !editAccesses.includes("missing") && editAccesses.includes("unavailable");
   const representative =
     group.memberProjects.find(
       (member) => environmentById.get(member.environmentId)?.serverConfig != null,
@@ -517,11 +524,15 @@ function ProjectDetail({
           </AlertDescription>
         </Alert>
         <SettingsSection {...searchableSetting("project-overview")} hideTitle>
-          {!canEditGroup ? (
+          {showsPermissionNote ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
                 ? "Shared settings require permission to change every checkout in this group."
                 : "This connection cannot change this project."}
+            </p>
+          ) : showsUnavailableNote ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
+              {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
             </p>
           ) : null}
           <SettingsRow

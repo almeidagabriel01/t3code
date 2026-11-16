@@ -33,6 +33,7 @@ import {
   THREADS_PAGE_LABELS,
   WORKTREES_PAGE_LABELS,
 } from "./serverSettingsCopy";
+import { USAGE_ALERTS_PAGE_LABELS } from "./usageAlertsCopy";
 import { VOICE_PAGE_LABELS } from "./voiceCopy";
 
 /** Pages a row of the Settings list opens without one of its own: their text joins the parent's. */
@@ -70,6 +71,7 @@ export const SETTINGS_PAGE_LABELS: Record<
   SettingsMacPermissions: MAC_PERMISSIONS_PAGE_LABELS,
   SettingsDevices: DEVICES_PAGE_LABELS,
   SettingsComputerUse: COMPUTER_USE_PAGE_LABELS,
+  SettingsUsageAlerts: USAGE_ALERTS_PAGE_LABELS,
   SettingsScheduledTasks: SCHEDULED_TASKS_PAGE_LABELS,
   SettingsKanban: KANBAN_PAGE_LABELS,
   SettingsNotes: NOTES_PAGE_LABELS,

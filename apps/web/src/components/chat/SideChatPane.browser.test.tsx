@@ -19,7 +19,10 @@ vi.mock(import("../../state/entities"), () => ({
   waitForThreadShell: (async () => true) as never,
   readThreadShell: (() => ({ runtimeMode: DEFAULT_RUNTIME_MODE })) as never,
 }));
-vi.mock(import("../../state/session"), () => ({ useEnvironmentScope: (() => true) as never }));
+vi.mock(import("../../state/session"), () => ({
+  useEnvironmentScope: (() => true) as never,
+  useEnvironmentScopeAccess: (() => "granted") as never,
+}));
 vi.mock(import("../../state/shell"), () => ({
   useEnvironmentShellHasSnapshot: (() => true) as never,
 }));

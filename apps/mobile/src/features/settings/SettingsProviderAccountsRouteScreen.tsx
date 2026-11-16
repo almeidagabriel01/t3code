@@ -26,7 +26,8 @@ import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { useEnvironmentsWithScope } from "../../state/session";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentsScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListRow } from "../../components/ui/ListRow";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
@@ -41,7 +42,7 @@ import { PROVIDER_ACCOUNTS_COPY, providerName } from "./providerAccountsCopy";
 export function SettingsProviderAccountsRouteScreen() {
   const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
-  const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
+  const accessByEnvironment = useEnvironmentsScopeAccess(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
@@ -55,25 +56,32 @@ export function SettingsProviderAccountsRouteScreen() {
         {selectedTargets.length === 0 ? (
           <Text className="text-foreground-muted">Select a connected environment.</Text>
         ) : (
-          selectedTargets.map((environment) => (
-            <SettingsSection key={environment.environmentId} title={environment.label}>
-              {!permittedEnvironments.has(environment.environmentId) ? (
-                <View className="gap-1 p-4">
-                  <Text className="text-base text-foreground">
-                    {PROVIDER_ACCOUNTS_COPY.limitedPermissions}
+          selectedTargets.map((environment) => {
+            const access = accessByEnvironment.get(environment.environmentId);
+            return (
+              <SettingsSection key={environment.environmentId} title={environment.label}>
+                {access === "unknown" ? null : access === "unavailable" ? (
+                  <Text className="p-4 text-sm text-foreground-muted">
+                    {SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
                   </Text>
-                  <Text className="text-sm text-foreground-muted">
-                    {`This session can view ${environment.label}'s providers but can't change their settings.`}
-                  </Text>
-                </View>
-              ) : (
-                <EnvironmentProviders
-                  environment={environment}
-                  providers={managedProviders(environment, providersByEnvironment)}
-                />
-              )}
-            </SettingsSection>
-          ))
+                ) : access === "missing" ? (
+                  <View className="gap-1 p-4">
+                    <Text className="text-base text-foreground">
+                      {PROVIDER_ACCOUNTS_COPY.limitedPermissions}
+                    </Text>
+                    <Text className="text-sm text-foreground-muted">
+                      {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                    </Text>
+                  </View>
+                ) : (
+                  <EnvironmentProviders
+                    environment={environment}
+                    providers={managedProviders(environment, providersByEnvironment)}
+                  />
+                )}
+              </SettingsSection>
+            );
+          })
         )}
       </ScreenScrollView>
     </SettingsScreen>

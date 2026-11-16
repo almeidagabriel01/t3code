@@ -44,6 +44,7 @@ import { NoteEditor } from "./NoteEditor";
 import { NoteFileDialog } from "./NoteFileDialog";
 import { EditableNoteTitle } from "./NoteTitle";
 import { NoteStartWorkDialog } from "./NoteStartWorkDialog";
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 import { isNoteDirty, noteErrorMessage, NoteSession, type NoteEditState } from "./noteState";
 import { useNoteCommand } from "./useNoteCommand";
 
@@ -134,6 +135,7 @@ function NoteDetail(
   });
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const canWrite = useAtomValue(notesEnvironment.write.permissionAtom(environmentId));
+  const writeAccess = useAtomValue(notesEnvironment.write.accessAtom(environmentId));
   const canMove = useAtomValue(notesEnvironment.move.permissionAtom(environmentId));
   const canDelete = useAtomValue(notesEnvironment.delete.permissionAtom(environmentId));
   const canUpdate = useAtomValue(notesEnvironment.update.permissionAtom(environmentId));
@@ -368,7 +370,7 @@ function NoteDetail(
             This note was removed. Your draft is still visible; copy it before leaving.
           </p>
         )}
-        {!canWrite && (
+        {scopeAccessShowsBanner(writeAccess) && (
           <p className="text-sm text-muted-foreground">This connection has read-only access.</p>
         )}
         {state.refreshError && (

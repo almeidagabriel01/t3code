@@ -15,6 +15,11 @@ import { SidebarInset } from "../ui/sidebar";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Spinner } from "../ui/spinner";
 import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useKanbanReadAccess } from "../../state/kanban";
+import {
   boardScopeKey,
   collectGlobalBoards,
   collectGlobalCards,
@@ -31,7 +36,12 @@ import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanGlobalBoard } from "./KanbanGlobalBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
 import { OptionSelect, PromptDialog } from "./kanbanDialogs";
-import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
+import {
+  useKanbanActions,
+  useKanbanCanEdit,
+  useKanbanEditAccess,
+  useKanbanStates,
+} from "./useKanban";
 import { useEnsureKanbanBoard } from "./useKanbanBoardCommands";
 
 function Message(props: { readonly title: string; readonly description: string }) {
@@ -57,6 +67,7 @@ function ProjectBoard(props: {
 }) {
   const { environmentId, state } = props;
   const canEdit = useKanbanCanEdit(environmentId);
+  const editAccess = useKanbanEditAccess(environmentId);
   const actions = useKanbanActions(environmentId);
   const board = state === null ? undefined : selectKanbanBoardByProject(state, props.projectId);
   const [filters, setFilters] = useState<GlobalFilters>(EMPTY_FILTERS);
@@ -85,11 +96,13 @@ function ProjectBoard(props: {
       </KanbanToolbar>
       <div className="flex min-h-0 flex-1 flex-col">
         {board === undefined ? (
-          state !== null && !canEdit ? (
+          state !== null && scopeAccessShowsBanner(editAccess) ? (
             <Message
               title="No board yet"
               description="This project has no board, and you cannot create one here."
             />
+          ) : state !== null && editAccess === "unavailable" ? (
+            <Message title="No board yet" description={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <Spinner />
@@ -131,6 +144,10 @@ export function KanbanPage() {
   const search = useSearch({ from: "/_chat/kanban" });
   const navigate = useNavigate({ from: "/kanban" });
   const states = useKanbanStates();
+  const readAccess = [...useKanbanReadAccess().values()];
+  // Boards stay hidden until each environment answers; one that cannot answer stops the wait.
+  const readPending = readAccess.includes("unknown");
+  const readUnproven = !readAccess.includes("missing") && readAccess.includes("unavailable");
   const groups = useSidebarProjectGroups();
   const [view, setView] = useState<"board" | "archive">("board");
   const [memberKey, setMemberKey] = useState<string | null>(null);
@@ -212,10 +229,18 @@ export function KanbanPage() {
         </WorkspaceBreadcrumb>
       </WorkspacePageHeader>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {states.length === 0 ? (
+        {states.length === 0 && readPending ? (
+          <div className="flex flex-1 items-center justify-center">
+            <Spinner />
+          </div>
+        ) : states.length === 0 ? (
           <Message
             title="Boards are not available"
-            description="Connect to a T3 Code server that supports boards, with permission to read them."
+            description={
+              readUnproven
+                ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+                : "Connect to a T3 Code server that supports boards, with permission to read them."
+            }
           />
         ) : search.projectKey ? (
           member === undefined ? (

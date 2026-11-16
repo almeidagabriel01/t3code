@@ -16,6 +16,8 @@ import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
   readonly canOperateThread: boolean;
+  /** True only once the session proves the scope is missing; an unresolved session shows no notice. */
+  readonly lacksOperatePermission?: boolean;
   readonly approval: PendingApproval;
   readonly respondingApprovalId: RuntimeRequestId | null;
   readonly onRespond: (
@@ -98,7 +100,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           />
         ))}
       </View>
-      {!props.canOperateThread ? (
+      {props.lacksOperatePermission ? (
         <Text className="font-sans text-xs text-foreground-muted">
           This connection cannot respond to approvals.
         </Text>

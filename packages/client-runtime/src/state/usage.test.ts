@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
 import { refreshUsage, refreshUsageLimits } from "./usage.ts";
+import type { SessionScopeAccess } from "./sessionScope.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -74,6 +75,7 @@ function harness(ids = ["a"], modelFilters: Record<string, UsageModelFilter> = {
       refreshUsageRates: {
         label: "test:rates",
         requiredScopes: () => [],
+        accessAtom: () => Atom.make<SessionScopeAccess>("granted"),
         permissionAtom: () => Atom.make(true),
         run: (
           _registry: AtomRegistry.AtomRegistry,

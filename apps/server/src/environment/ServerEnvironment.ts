@@ -270,6 +270,7 @@ export const make = Effect.gen(function* () {
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,
       providerBudgets: true,
+      usageLimitAlerts: true,
       folderProjects: true,
       modelCatalogRefresh: true,
       usagePriceOverrides: true,

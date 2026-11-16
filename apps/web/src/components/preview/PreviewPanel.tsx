@@ -6,7 +6,8 @@ import {
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
-import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentScopeAccess } from "~/state/session";
+import { scopeAccessLocked, scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
@@ -23,6 +24,8 @@ interface Props {
   ) => void;
 }
 
+const PREVIEW_OPERATE_SCOPES = [AuthPreviewOperateScope];
+
 export function PreviewPanel({
   mode,
   threadRef,
@@ -32,7 +35,8 @@ export function PreviewPanel({
   onSendAnnotation,
 }: Props) {
   const available = usePreviewAvailable(threadRef.environmentId);
-  const canOperatePreview = useEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope);
+  const previewAccess = useEnvironmentScopeAccess(threadRef.environmentId, PREVIEW_OPERATE_SCOPES);
+  const canOperatePreview = !scopeAccessLocked(previewAccess);
   if (!canOperatePreview || !available) {
     return (
       <PreviewPanelShell mode={mode}>
@@ -40,7 +44,12 @@ export function PreviewPanel({
           <p className="max-w-sm text-sm text-muted-foreground">
             {canOperatePreview
               ? "Preview is only available in the T3 Code desktop app."
-              : "Pair this client again with preview access to control browser previews."}
+              : previewAccess === "unknown"
+                ? null
+                : scopeAccessMessage(
+                    previewAccess,
+                    "Pair this client again with preview access to control browser previews.",
+                  )}
           </p>
         </div>
       </PreviewPanelShell>

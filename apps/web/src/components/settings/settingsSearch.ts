@@ -1868,6 +1868,27 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "usage-limit-alerts",
+    title: "Limit alerts",
+    description: "Your assistant messages you once when this much is left.",
+    to: "/settings/providers",
+    searchTerms: [
+      "usage limit alert notify warn low remaining weekly session quota subscription telegram threshold percent",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "usage-limit-alerts-while-paused",
+    title: "Limit alerts while paused",
+    description:
+      "Your assistant still tells you when a subscription limit runs low, for every provider. Set the levels on each provider in Providers.",
+    to: "/settings/assistants",
+    searchTerms: [
+      "usage limit alert autonomy paused off notifications still reach telegram every provider",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

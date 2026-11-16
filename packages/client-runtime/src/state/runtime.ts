@@ -1065,6 +1065,7 @@ export function createEnvironmentRpcCommand<
   return {
     ...command,
     requiredScopes: permissions.requiredScopes,
+    accessAtom: permissions.accessAtom,
     permissionAtom: permissions.permissionAtom,
   };
 }

@@ -123,6 +123,7 @@ const reactTests = [
   "src/features/settings/SettingsScheduledTasksRouteScreen.test.tsx",
   "src/features/settings/SettingsProjectOverviewRouteScreen.test.tsx",
   "src/features/settings/SettingsRouteScreen.test.tsx",
+  "src/features/settings/SettingsUsageAlertsRouteScreen.test.tsx",
   "src/features/settings/scheduled-task-editor.test.tsx",
   "src/features/settings/settings-environment-filter.test.tsx",
   "src/features/assistants/HomeAssistantsSection.test.tsx",

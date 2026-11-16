@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { VOICE_COPY } from "./voiceCopy";
 import type { StaticScreenProps } from "@react-navigation/native";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
@@ -23,6 +24,11 @@ export function SettingsVoiceModelsRouteScreen({
     environments.find((environment) => environment.environmentId === route.params.environmentId)
       ?.label ?? "This environment";
   const voice = useVoiceModels(route.params.environmentId, label);
+  // No header while the session is still answering; it would flash on every open.
+  const accessNotice =
+    voice.access === "unknown"
+      ? null
+      : scopeAccessMessage(voice.access, `This connection can’t change settings on ${label}.`);
   const benchmarks = new Map(
     (
       AsyncResult.getOrElse(
@@ -66,11 +72,9 @@ export function SettingsVoiceModelsRouteScreen({
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            voice.canManage ? undefined : (
-              <Text className="pb-3 text-xs text-foreground-muted">
-                This connection can’t change settings on {label}.
-              </Text>
-            )
+            accessNotice ? (
+              <Text className="pb-3 text-xs text-foreground-muted">{accessNotice}</Text>
+            ) : undefined
           }
           renderItem={({ item, index }) => (
             <View

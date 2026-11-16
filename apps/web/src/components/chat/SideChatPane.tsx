@@ -24,7 +24,8 @@ import { useStartingSideChats, type SideChatParentPanel } from "../../lib/sideCh
 import { readLocalApi } from "../../localApi";
 import { hostRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import { useQuietThreadProjection, useQuietThreadShell } from "../../state/entities";
-import { useEnvironmentScope } from "../../state/session";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
 import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { threadEnvironment } from "../../state/threads";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -36,6 +37,8 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useSideChat } from "./useSideChat";
+
+const ORCHESTRATION_OPERATE_SCOPES = [AuthOrchestrationOperateScope];
 
 const PARENT_TONE_CLASSES = {
   active: { text: "text-info-foreground", dot: "bg-info" },
@@ -67,6 +70,10 @@ export default function SideChatPane(props: {
   const snapshotLoaded = useEnvironmentShellHasSnapshot(parentRef.environmentId);
   const projection = useQuietThreadProjection(shell === null ? null : threadRef)?.projection;
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
+  const operateAccess = useEnvironmentScopeAccess(
+    parentRef.environmentId,
+    ORCHESTRATION_OPERATE_SCOPES,
+  );
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -91,7 +98,7 @@ export default function SideChatPane(props: {
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
-    ? "This connection cannot change threads."
+    ? scopeAccessMessage(operateAccess, "This connection cannot change threads.")
     : threadRuntimeIsActive(parent?.runtime)
       ? "Available when the main thread is idle."
       : mergeRun === null

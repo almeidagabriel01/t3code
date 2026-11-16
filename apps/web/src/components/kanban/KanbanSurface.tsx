@@ -11,6 +11,12 @@ import { useNavigate } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, Maximize2Icon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessMessage,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useKanbanReadAccess } from "../../state/kanban";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { useProject, useProjects } from "../../state/entities";
@@ -22,7 +28,12 @@ import { RightPanelLoading, RightPanelMessage } from "../chat/RightPanelStates";
 import { KanbanCardDetail } from "./KanbanCardDetail";
 import { KanbanPanelSections } from "./KanbanPanelSections";
 import { useKanbanPanelStore } from "./kanbanPanelStore";
-import { useKanbanActions, useKanbanCanEdit, useKanbanStates } from "./useKanban";
+import {
+  useKanbanActions,
+  useKanbanCanEdit,
+  useKanbanEditAccess,
+  useKanbanStates,
+} from "./useKanban";
 import { useEnsureKanbanBoard } from "./useKanbanBoardCommands";
 
 /** Which column a new card goes to: a section's own, or the server's default (`null`). */
@@ -37,6 +48,8 @@ export interface KanbanSurfaceProps {
 export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) {
   const navigate = useNavigate();
   const canEdit = useKanbanCanEdit(environmentId);
+  const editAccess = useKanbanEditAccess(environmentId);
+  const readAccess = useKanbanReadAccess().get(environmentId);
   const actions = useKanbanActions(environmentId);
   const { openScratchProject } = useScratchProject();
   const groups = useSidebarProjectGroups();
@@ -111,6 +124,14 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
 
   const body = (() => {
     if (entry === undefined) {
+      if (readAccess === "unknown") return <RightPanelLoading label="Loading board…" />;
+      if (readAccess === "unavailable")
+        return (
+          <RightPanelMessage
+            title="Boards are not available"
+            detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE}
+          />
+        );
       return (
         <RightPanelMessage
           title="Boards are not available"
@@ -123,13 +144,15 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
     if (state === null) return <RightPanelLoading label="Loading board…" />;
     if (board === undefined) {
       if (createsOnView) {
-        return canEdit ? (
-          <RightPanelLoading label="Setting up the board…" />
-        ) : (
+        return scopeAccessShowsBanner(editAccess) ? (
           <RightPanelMessage
             title="No board yet"
             detail="This project has no board, and you cannot create one here."
           />
+        ) : editAccess === "unavailable" ? (
+          <RightPanelMessage title="No board yet" detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+        ) : (
+          <RightPanelLoading label="Setting up the board…" />
         );
       }
       return (
@@ -138,9 +161,8 @@ export function KanbanSurface({ environmentId, projectId }: KanbanSurfaceProps) 
           <RightPanelMessage
             title="No cards without a project"
             detail={
-              canEdit
-                ? "Cards you add here belong to no project."
-                : "Nobody has added cards without a project yet."
+              scopeAccessMessage(editAccess, "Nobody has added cards without a project yet.") ??
+              "Cards you add here belong to no project."
             }
           />
         </>

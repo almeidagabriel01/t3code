@@ -90,7 +90,9 @@ vi.mock("../../state/query", () => ({
             error: null,
           },
 }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.canRead }));
+vi.mock("../../state/session", () => ({
+  useEnvironmentScopeAccess: () => (mocks.canRead ? "granted" : "missing"),
+}));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ presentation: { connection: { phase: "connected" } } }),
 }));

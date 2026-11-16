@@ -13,6 +13,8 @@ const { mocks, Children } = vi.hoisted(() => ({
     navigate: vi.fn(),
     telegramIds: [] as string[],
     telegram: null as null | { enabled: boolean; tokenConfigured: boolean },
+    limitAlerts: true as boolean | null,
+    writeLimitAlerts: vi.fn(),
   },
 }));
 vi.mock("react-native", () => ({
@@ -74,6 +76,7 @@ vi.mock("../../state/autonomy", () => ({
     detectProblems: mocks.detectProblems,
     writeDetectProblems: mocks.writeDetectProblems,
   }),
+  useLimitAlertsWhilePaused: () => ({ value: mocks.limitAlerts, write: mocks.writeLimitAlerts }),
 }));
 vi.mock("../../state/telegramChannel", () => ({
   useTelegramEnvironmentIds: () => mocks.telegramIds,
@@ -112,6 +115,8 @@ beforeEach(() => {
   mocks.navigate.mockReset();
   mocks.telegramIds = [];
   mocks.telegram = null;
+  mocks.limitAlerts = true;
+  mocks.writeLimitAlerts.mockReset();
 });
 afterEach(() => act(() => root.unmount()));
 
@@ -141,10 +146,24 @@ describe("autonomy settings", () => {
     mocks.autonomy = { ...DEFAULT_AUTONOMY_SETTINGS, enabled };
     render();
     expect(input("Assistants can notify you").hasAttribute("data-disabled")).toBe(false);
+    // Its whole point is to work while paused.
+    expect(input("Limit alerts while paused").hasAttribute("data-disabled")).toBe(false);
     for (const label of ["Run looks stuck", "Notify on Telegram"]) {
       expect(input(label).hasAttribute("data-disabled")).toBe(locked);
     }
     expect(input("Waiting for you after").readOnly).toBe(locked);
+  });
+
+  it("lets limit alerts through the pause, and hides the switch on servers without them", () => {
+    render();
+    expect(input("Limit alerts while paused").checked).toBe(true);
+    toggle("Limit alerts while paused");
+    expect(mocks.writeLimitAlerts).toHaveBeenLastCalledWith(false);
+    act(() => root.unmount());
+    root = createRoot(container);
+    mocks.limitAlerts = null;
+    render();
+    expect(input("Limit alerts while paused")).toBeNull();
   });
 
   it.each([

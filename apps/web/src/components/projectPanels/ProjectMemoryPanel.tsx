@@ -19,9 +19,15 @@ import * as Option from "effect/Option";
 import { PencilIcon, SearchIcon, Settings2Icon, XIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
+import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { memoryEnvironment } from "../../state/memory";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { RightPanelLoading, RightPanelMessage } from "../chat/RightPanelStates";
 import {
   useMemorySpace,
@@ -53,6 +59,10 @@ const SCOPE_MESSAGE: Record<
     title: "Memory write access needed",
     detail: "Finding this project's memories needs memory write permission on this server.",
   },
+  unavailable: {
+    title: "Access unavailable",
+    detail: SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  },
   "no-key": {
     title: "This project has no shared memory",
     detail: "Give it a repository or a shared memory key in Settings, Memory.",
@@ -64,6 +74,8 @@ const SCOPE_MESSAGE: Record<
   },
 };
 
+const MEMORY_READ_SCOPES = [AuthMemoryReadScope];
+
 /** The project's memories: search them, edit one in place, or forget it after a confirmation. */
 export function ProjectMemoryPanel(props: {
   readonly environmentId: EnvironmentId;
@@ -71,17 +83,24 @@ export function ProjectMemoryPanel(props: {
 }) {
   const { environmentId } = props;
   const navigate = useNavigate();
-  const canRead = useEnvironmentScope(environmentId, AuthMemoryReadScope);
+  const readAccess = useEnvironmentScopeAccess(environmentId, MEMORY_READ_SCOPES);
+  const canRead = !scopeAccessLocked(readAccess);
   const space = useMemorySpace(environmentId, canRead);
   const scope = useProjectMemoryScope(environmentId, props.projectId, space);
   const [queryInput, setQueryInput] = useState("");
   const [query] = useDebouncedValue(queryInput.trim(), { wait: 250 });
 
   const body = !canRead ? (
-    <RightPanelMessage
-      title="Memory read access needed"
-      detail="This connection cannot read memory on this server."
-    />
+    scopeAccessShowsBanner(readAccess) ? (
+      <RightPanelMessage
+        title="Memory read access needed"
+        detail="This connection cannot read memory on this server."
+      />
+    ) : readAccess === "unavailable" ? (
+      <RightPanelMessage title="Access unavailable" detail={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />
+    ) : (
+      <RightPanelLoading label={SCOPE_ACCESS_CHECKING_MESSAGE} />
+    )
   ) : space === null ? (
     <RightPanelMessage
       title="Memory is not ready"

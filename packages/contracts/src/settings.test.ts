@@ -310,6 +310,71 @@ describe("ServerSettings provider budgets", () => {
   });
 });
 
+describe("ServerSettings usage limit alerts", () => {
+  it.each([0, 100, -5, 15.5, "015", "", "15", true, {}])(
+    "rejects %j as a written threshold",
+    (bad) => {
+      expect(() =>
+        decodeServerSettingsPatch({
+          usageLimitAlerts: { instances: { a: { windows: { seven_day: bad } } } },
+        }),
+      ).toThrow();
+    },
+  );
+
+  it("accepts 1..99 and off, and null to return a window to its default", () => {
+    const patch = decodeServerSettingsPatch({
+      usageLimitAlerts: {
+        ignoreAutonomyPause: false,
+        instances: { a: { windows: { seven_day: 1, five_hour: 99, x: "off", y: null } } },
+      },
+    });
+    expect(patch.usageLimitAlerts?.ignoreAutonomyPause).toBe(false);
+    expect(Object.values(patch.usageLimitAlerts?.instances ?? {})[0]?.windows).toEqual({
+      seven_day: 1,
+      five_hour: 99,
+      x: "off",
+      y: null,
+    });
+  });
+
+  it("drops only the bad stored entries and keeps every other setting", () => {
+    const settings = decodeServerSettings({
+      hideTaggedThreads: true,
+      usageLimitAlerts: {
+        ignoreAutonomyPause: "yes",
+        instances: {
+          a: { windows: { seven_day: 0, five_hour: 20, x: "015", y: 15.5 }, timeZone: 3 },
+          b: "garbage",
+          c: { windows: "garbage", timeZone: "America/Sao_Paulo", extra: 1 },
+        },
+      },
+    });
+    expect(settings.hideTaggedThreads).toBe(true);
+    expect(settings.usageLimitAlerts).toEqual({
+      ignoreAutonomyPause: true,
+      instances: {
+        a: { windows: { five_hour: 20 } },
+        c: { windows: {}, timeZone: "America/Sao_Paulo" },
+      },
+    });
+    expect(() => encodeServerSettings(settings)).not.toThrow();
+  });
+
+  it.each([undefined, [1], "garbage", { ignoreAutonomyPause: false }])(
+    "keeps the other settings and the defaults when the key reads %j",
+    (raw) => {
+      const settings = decodeServerSettings({ hideTaggedThreads: true, usageLimitAlerts: raw });
+      expect(settings.hideTaggedThreads).toBe(true);
+      expect(settings.usageLimitAlerts).toEqual({
+        // A new install alerts even with Autonomy off; only an explicit false turns that off.
+        ignoreAutonomyPause: !(raw !== null && typeof raw === "object" && !Array.isArray(raw)),
+        instances: {},
+      });
+    },
+  );
+});
+
 describe("ServerSettings secret providers", () => {
   const onePassword = (account: string) => ({
     kind: "one_password",

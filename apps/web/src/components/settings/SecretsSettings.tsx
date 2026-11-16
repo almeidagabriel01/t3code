@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import type { EnvironmentPresentation } from "../../state/environments";
-import { useEnvironmentSessionState } from "../../state/session";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { OnePasswordIcon, type Icon } from "../Icons";
 import {
   AlertDialog,
@@ -21,7 +21,7 @@ import { classifySecretProvider } from "./SecretProviderDialog.logic";
 import { secretProviderUses } from "./SecretsSettings.logic";
 import {
   classifyProviderEnvironmentAccess,
-  resolveRemoteOperateAccess,
+  PROVIDER_SETTINGS_SCOPES,
 } from "./ProviderSettingsPanel.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -72,16 +72,12 @@ function EnvironmentSecretProviders({
   readonly projectScoped: boolean;
 }) {
   const environmentId = environment.environmentId;
-  const sessionState = useEnvironmentSessionState(environmentId);
+  const operateAccess = useEnvironmentScopeAccess(environmentId, PROVIDER_SETTINGS_SCOPES);
   // The server requires the same grant for secret providers as for provider settings.
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
     hasServerConfig: environment.serverConfig !== null,
-    operateAccess: resolveRemoteOperateAccess({
-      session: sessionState.data,
-      isPending: sessionState.isPending,
-      hasError: sessionState.hasError,
-    }),
+    operateAccess,
   });
   const readOnly = access.kind !== "editable" || projectScoped;
   const providers = useEnvironmentSettings(environmentId, (settings) => settings.secretProviders);

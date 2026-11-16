@@ -6,7 +6,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
-import { useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScopeAccess } from "../../state/session";
 import { ScrollView, View } from "react-native";
 import Animated, { useAnimatedStyle, type DerivedValue } from "react-native-reanimated";
 import { AppText } from "../../components/ui/AppText";
@@ -14,8 +18,11 @@ import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 
+const OPERATE_SCOPES = [AuthOrchestrationOperateScope];
+
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
-  const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
+  const operateAccess = useEnvironmentScopeAccess(entry.thread.environmentId, OPERATE_SCOPES);
+  const canRespond = !scopeAccessLocked(operateAccess);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
   const [responding, setResponding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +33,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       </AppText>
       <PendingApprovalCard
         canOperateThread={canRespond}
+        lacksOperatePermission={scopeAccessShowsBanner(operateAccess)}
         approval={entry.approval}
         respondingApprovalId={responding ? entry.approval.requestId : null}
         onRespond={async (requestId, decision) => {

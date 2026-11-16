@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/memory-presentation";
 import { useContext, useEffect, useRef, useState } from "react";
 import { useEnvironments } from "../../state/environments";
+import { scopeAccessShowsBanner } from "@t3tools/client-runtime/state/sessionScope";
 import { readPreparedConnection, usePreparedConnection } from "../../state/session";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -76,6 +77,9 @@ export function MemoryAdministration({
   const canHub = useAtomValue(memoryEnvironment.hubSettingsUpdate.permissionAtom(environmentId));
   const canOwner = useAtomValue(
     memoryEnvironment.ownerSourceReadPolicyUpdate.permissionAtom(environmentId),
+  );
+  const ownerAccess = useAtomValue(
+    memoryEnvironment.ownerSourceReadPolicyUpdate.accessAtom(environmentId),
   );
   const [hub, setHub] = useState<MemoryHubSettingsView | null>(null);
   const [owner, setOwner] = useState<MemoryOwnerSourceReadPolicyView | null>(null);
@@ -143,6 +147,8 @@ export function MemoryAdministration({
     mounted.current && connection !== null && readPreparedConnection(environmentId) === connection;
   const writable = (id: EnvironmentId) =>
     registry.get(memoryEnvironment.hubSettingsUpdate.permissionAtom(id));
+  const writeMissing = (id: EnvironmentId) =>
+    scopeAccessShowsBanner(registry.get(memoryEnvironment.hubSettingsUpdate.accessAtom(id)));
   const candidates = environments.filter(
     (e) =>
       e.environmentId !== environmentId &&
@@ -550,7 +556,7 @@ export function MemoryAdministration({
               const connected = candidates.some((candidate) => candidate.environmentId === id);
               const replaceReason = !connected
                 ? "Connect this device in Settings → Connections to replace its key."
-                : !writable(id)
+                : writeMissing(id)
                   ? "Settings write permission is required to replace this key."
                   : undefined;
               return (
@@ -568,7 +574,7 @@ export function MemoryAdministration({
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={blocked || Boolean(replaceReason)}
+                        disabled={blocked || !connected || !writable(id)}
                         title={replaceReason}
                         onClick={() => {
                           setDevice(id);
@@ -610,7 +616,7 @@ export function MemoryAdministration({
               </div>
             }
           />
-          {device && !writable(device) ? (
+          {device && writeMissing(device) ? (
             <SettingsRow
               // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
               title="Settings write permission required on this device"
@@ -734,7 +740,11 @@ export function MemoryAdministration({
           <SettingsRow
             {...settingCopy("memory-allow-device")}
             // oxlint-disable-next-line t3code/require-searchable-settings-copy -- permission state, not a setting
-            description={!canOwner ? "Settings write permission is required." : undefined}
+            description={
+              scopeAccessShowsBanner(ownerAccess)
+                ? "Settings write permission is required."
+                : undefined
+            }
             control={
               <div className="flex gap-2">
                 {picker(

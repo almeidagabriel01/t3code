@@ -70,7 +70,15 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+} from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
@@ -252,6 +260,8 @@ function UnavailableThreadDraftRedirect(props: { readonly environmentId: Environ
   return <OpeningThreadLoadingScreen />;
 }
 
+const OPERATE_SCOPES = [AuthOrchestrationOperateScope];
+
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   return (
     <ThreadScreenHost>
@@ -403,10 +413,11 @@ function ThreadRouteContent(
     selectedEnvironmentConnection,
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
-  const canOperateThread = useEnvironmentScope(
+  const operateAccess = useEnvironmentScopeAccess(
     selectedThread?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    OPERATE_SCOPES,
   );
+  const canOperateThread = !scopeAccessLocked(operateAccess);
   const canReadTerminal = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthTerminalReadScope,
@@ -1014,6 +1025,7 @@ function ThreadRouteContent(
             )
           }
           canOperateThread={canOperateThread}
+          lacksOperatePermission={scopeAccessShowsBanner(operateAccess)}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}
           contentPresentation={contentPresentation}

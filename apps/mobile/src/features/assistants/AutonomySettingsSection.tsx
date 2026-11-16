@@ -23,7 +23,7 @@ import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListSection } from "../../components/ui/ListSection";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
-import { useAutonomySettings } from "../../state/autonomy";
+import { useAutonomySettings, useLimitAlertsWhilePaused } from "../../state/autonomy";
 import { AUTONOMY_COPY } from "./settingsAssistantsCopy";
 import { useTelegramChannel, useTelegramEnvironmentIds } from "../../state/telegramChannel";
 
@@ -128,6 +128,7 @@ export function AutonomySettingsSection(props: {
   const { environmentId } = props;
   const { autonomy, write, detectProblems, writeDetectProblems } =
     useAutonomySettings(environmentId);
+  const limitAlerts = useLimitAlertsWhilePaused(environmentId);
   const telegramAvailable = useTelegramEnvironmentIds().includes(environmentId);
   const paused = !autonomy.enabled;
   return (
@@ -139,6 +140,15 @@ export function AutonomySettingsSection(props: {
         value={autonomy.enabled}
         onValueChange={(enabled) => void write({ ...autonomy, enabled })}
       />
+      {limitAlerts.value === null ? null : (
+        <ListToggleRow
+          icon="gauge.with.dots.needle.50percent"
+          label={AUTONOMY_COPY.limitAlertsWhilePaused.title}
+          description={AUTONOMY_COPY.limitAlertsWhilePaused.description}
+          value={limitAlerts.value}
+          onValueChange={(value) => void limitAlerts.write(value)}
+        />
+      )}
       <ListToggleRow
         icon="exclamationmark.shield"
         label={DETECT_PROBLEMS_LABEL}

@@ -36,6 +36,12 @@ import {
   MEMORY_FORGET_NOTICE,
 } from "@t3tools/client-runtime/memory-presentation";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  scopeAccessLocked,
+  scopeAccessMessage,
+  scopeAccessShowsBanner,
+  type SessionScopeAccess,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { resolveMemoryModelSelection } from "@t3tools/shared/serverSettings";
 import {
   memoryBrowseInput,
@@ -285,6 +291,18 @@ function MemoryChooser() {
   );
 }
 
+/** Unproven access never claims a missing permission: any unavailable check outranks a pending one. */
+export function memoryAccessNotice(accesses: ReadonlyArray<SessionScopeAccess>): string {
+  const access = accesses.includes("unavailable")
+    ? "unavailable"
+    : accesses.includes("unknown")
+      ? "unknown"
+      : "missing";
+  return (
+    scopeAccessMessage(access, "This connection does not have permission to manage memory.") ?? ""
+  );
+}
+
 function MemoryEnvironment({
   params,
 }: {
@@ -296,9 +314,12 @@ function MemoryEnvironment({
   const [connectionVersion, setConnectionVersion] = useState({ connection: session, version: 0 });
   if (connectionVersion.connection !== session)
     setConnectionVersion({ connection: session, version: connectionVersion.version + 1 });
-  const readAllowed = useAtomValue(memory.syncStatus.permissionAtom(environmentId));
-  const adminAllowed = useAtomValue(memory.hubSettingsGet.permissionAtom(environmentId));
-  const writeAllowed = useAtomValue(memory.upsert.permissionAtom(environmentId));
+  const readAccess = useAtomValue(memory.syncStatus.accessAtom(environmentId));
+  const adminAccess = useAtomValue(memory.hubSettingsGet.accessAtom(environmentId));
+  const writeAccess = useAtomValue(memory.upsert.accessAtom(environmentId));
+  const readAllowed = !scopeAccessLocked(readAccess);
+  const adminAllowed = !scopeAccessLocked(adminAccess);
+  const writeAllowed = !scopeAccessLocked(writeAccess);
   const supported = config !== null && supportsMemoryProtocol(config.environment.capabilities);
   // Remount all projections on connection replacement or loss of access. No late reply survives.
   if (!supported)
@@ -316,7 +337,7 @@ function MemoryEnvironment({
       />
     );
   if (!readAllowed && !adminAllowed && !writeAllowed)
-    return <Copy>This connection does not have permission to manage memory.</Copy>;
+    return <Copy>{memoryAccessNotice([readAccess, adminAccess, writeAccess])}</Copy>;
   return (
     <MemoryConnected
       key={`${connectionVersion.version}:${readAllowed}:${adminAllowed}:${writeAllowed}`}
@@ -1502,7 +1523,8 @@ function MemoryRevertControl({
 }) {
   const registry = useContext(RegistryContext);
   const liveDestination = useMemoryLifetime(environmentId);
-  const allowed = useAtomValue(memory.revertResolution.permissionAtom(environmentId));
+  const revertAccess = useAtomValue(memory.revertResolution.accessAtom(environmentId));
+  const allowed = !scopeAccessLocked(revertAccess);
   const revert = useAtomCommand(memory.revertResolution);
   const { savedConnectionsById } = useSavedRemoteConnections();
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -1667,7 +1689,9 @@ function MemoryRevertControl({
         />
       ) : null}
       {display.notice ? <Copy>{display.notice}</Copy> : null}
-      {!allowed ? <Copy>Memory write permission is required to revert.</Copy> : null}
+      {scopeAccessShowsBanner(revertAccess) ? (
+        <Copy>Memory write permission is required to revert.</Copy>
+      ) : null}
       {error ? <Copy>{error}</Copy> : null}
       {result ? <Copy>{presentMemoryRevertResult(result).label}</Copy> : null}
       {(!result || result.status === "refused") && available ? (

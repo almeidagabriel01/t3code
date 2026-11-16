@@ -93,6 +93,8 @@ vi.mock("../state/queries", async (original) => ({
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
   useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
+  useEnvironmentScopeAccess: (_environmentId: unknown, required: ReadonlyArray<string>) =>
+    required.includes(scopes.denied ?? "") ? "missing" : "granted",
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/decisions", async (original) => ({
