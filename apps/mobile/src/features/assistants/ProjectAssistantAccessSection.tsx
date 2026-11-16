@@ -176,11 +176,15 @@ export function ProjectAssistantAccessSections(props: {
   readonly environmentLabel: (environmentId: EnvironmentId) => string | undefined;
 }) {
   const { active, teams } = useAssistantEntries();
-  return projectAccessBlocks(props.members, active, teams).map((block) => {
+  const members = props.members.map((member) => ({
+    ...member,
+    environmentLabel: props.environmentLabel(member.environmentId) ?? null,
+  }));
+  return projectAccessBlocks(members, active, teams).map((block) => {
     const title = blockTitle(
       block.title,
       block.checkouts,
-      props.environmentLabel(block.environmentId) ?? "Environment",
+      block.checkouts[0]?.environmentLabel ?? "Environment",
     );
     return (
       <ProjectAssistantAccessSection
