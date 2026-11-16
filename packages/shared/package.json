@@ -167,6 +167,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./assistantGroupRouting": {
+      "types": "./src/assistantGroupRouting.ts",
+      "import": "./src/assistantGroupRouting.ts"
+    },
     "./modelSelectionPrecedence": {
       "types": "./src/modelSelectionPrecedence.ts",
       "import": "./src/modelSelectionPrecedence.ts"
@@ -618,6 +622,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./usageLimitAlerts": {
+      "types": "./src/usageLimitAlerts.ts",
+      "import": "./src/usageLimitAlerts.ts"
     }
   },
   "scripts": {

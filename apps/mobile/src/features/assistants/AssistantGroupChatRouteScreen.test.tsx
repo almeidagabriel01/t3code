@@ -649,35 +649,40 @@ vi.mock("../../state/entities", () => ({
 }));
 // The store hands out the same entries until they change.
 let entries: { teams: unknown; environmentIds: unknown; active: unknown; archived: [] } | undefined;
-vi.mock("../../state/assistants", () => ({
-  useAssistantEntries: () => {
-    if (entries?.teams !== mocks.teams || entries.environmentIds !== mocks.environmentIds) {
-      entries = {
-        teams: mocks.teams,
-        environmentIds: mocks.environmentIds,
-        active: members.map((assistant) => ({ environmentId: "hub", assistant })),
-        archived: [],
-      };
-    }
-    return entries;
-  },
-  useAssistantGroupChat: (...args: unknown[]) => {
-    mocks.subscribe(...args);
-    return mocks.live;
-  },
-  useAssistantGroupActions: () => ({
-    canPost: mocks.canPost,
-    canAct: mocks.canAct,
-    canMarkRead: mocks.canMarkRead,
-    markRead: mocks.markRead,
-    post: ({ clientRequestId, ...input }: { readonly clientRequestId?: string }) => {
-      mocks.requestIds.push(clientRequestId);
-      return mocks.post(input);
+vi.mock("../../state/assistants", async () => {
+  const { assistantGroupSendContext } = await import("@t3tools/client-runtime/assistantGroupChat");
+  return {
+    useAssistantGroupSendContext: (_environmentId: unknown, chat: { readonly reply: never }) =>
+      assistantGroupSendContext(mocks.live as never, chat.reply),
+    useAssistantEntries: () => {
+      if (entries?.teams !== mocks.teams || entries.environmentIds !== mocks.environmentIds) {
+        entries = {
+          teams: mocks.teams,
+          environmentIds: mocks.environmentIds,
+          active: members.map((assistant) => ({ environmentId: "hub", assistant })),
+          archived: [],
+        };
+      }
+      return entries;
     },
-    taskAction: mocks.taskAction,
-    olderThan: mocks.olderThan,
-  }),
-}));
+    useAssistantGroupChat: (...args: unknown[]) => {
+      mocks.subscribe(...args);
+      return mocks.live;
+    },
+    useAssistantGroupActions: () => ({
+      canPost: mocks.canPost,
+      canAct: mocks.canAct,
+      canMarkRead: mocks.canMarkRead,
+      markRead: mocks.markRead,
+      post: ({ clientRequestId, ...input }: { readonly clientRequestId?: string }) => {
+        mocks.requestIds.push(clientRequestId);
+        return mocks.post(input);
+      },
+      taskAction: mocks.taskAction,
+      olderThan: mocks.olderThan,
+    }),
+  };
+});
 vi.mock("../../components/ui/useBarInset", () => ({ useBarInset: () => 100 }));
 vi.mock("../../components/ui/GlassSurface", async () => ({
   GlassSurface: (await import("react-native")).View,
@@ -1115,7 +1120,8 @@ describe("group composer", () => {
     expect(input().value).toBe("@ada ");
     expect(byLabel("Mention Ada")).toBeNull();
     await type("@ada do it");
-    expect(recipients()).toBe("To Ada");
+    // Two projects and none picked: the server hands even a mention to the lead to pick one.
+    expect(recipients()).toBe("Jarvis (lead) will pick the project");
     await click("Send");
     expect(mocks.post).toHaveBeenCalledWith({ teamId: "g1", text: "@ada do it" });
     expect(input().value).toBe("");
@@ -1124,14 +1130,19 @@ describe("group composer", () => {
 
   it("previews everyone, the lead's routing and the missing mention", async () => {
     render();
-    await type("@everyone ship");
+    await type("@everyone ship #alpha");
     expect(recipients()).toBe("To everyone");
     await type("hello");
+    expect(recipients()).toBe("Jarvis (lead) will pick the project");
+    await type("hello #alpha");
     expect(recipients()).toBe("Jarvis (lead) will route it");
     mocks.teams = [team({ leadId: null })];
     render();
-    await type("hello again");
+    await type("hello again #alpha");
     expect(recipients()).toBe("Waits for a lead");
+    // Without a lead nobody can pick the project, so the server refuses it.
+    await type("hello again");
+    expect(recipients()).toBe("Pick a project first: the group has no lead to choose one");
   });
 
   it("offers the group's projects after #, filters them and inserts the slug", async () => {
@@ -1732,7 +1743,7 @@ describe("requests", () => {
     );
   });
 
-  const FOLDED_FIX = "Fix build, Finished · Alpha. Open request";
+  const FOLDED_FIX = "Fix build, Finished, Alpha. Open request";
 
   it("draws each request with its title, project and status, the latest one last", () => {
     setup();
@@ -2201,10 +2212,17 @@ describe("requests", () => {
     await setPick(null);
     setup({ defaultModelSelection: { instanceId: "codex", model: "gpt-5.4" } });
     expect(byLabel("Model for Beta: name:gpt-5.4")).not.toBeNull();
+    // Clearing the project's own model goes back to what then applies.
+    const clearLabel = async () => {
+      await click("header:Project's model");
+      return (mocks.navigate.mock.lastCall![1] as { clearLabel?: string }).clearLabel;
+    };
+    expect(await clearLabel()).toBe("Group default");
     // A provider the project turned off is skipped, as the server does when the request starts.
     mocks.codexOffInBeta = true;
     render();
     expect(byLabel("Model for Beta: Members' models")).not.toBeNull();
+    expect(await clearLabel()).toBe("Members' models");
   });
 
   it("sets a member's own model in the picked project from the header menu, and removes it", async () => {
@@ -2221,6 +2239,7 @@ describe("requests", () => {
     await click("header:Project's model");
     expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
       members: [{ environmentId: "hub", projectId: "p1" }],
+      clearLabel: "Members' models",
     });
     await click("header:Beto");
     expect(mocks.navigate).toHaveBeenLastCalledWith("SettingsProjectModel", {
@@ -2250,8 +2269,8 @@ describe("requests", () => {
     await click("Reply to request Review");
     expect(text()).toContain("Replying to Review");
     await type("more");
-    // A reply to the request itself goes where the request routes, not to a member named "Review".
-    expect(recipients()).toBe("Jarvis (lead) will route it");
+    // A reply to the request itself goes to the one member working it, not to one named "Review".
+    expect(recipients()).toBe("To Beto");
     expect(byLabel("Project: Beta")?.disabled).toBe(true);
     expect(byLabel("Project:Alpha")).toBeNull();
     await type("@beto more");

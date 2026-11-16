@@ -27,7 +27,12 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessMessage,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { readEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNowMinuteMs } from "../../lib/clock";
 import {
@@ -237,6 +242,8 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
+const PROVIDERS_MANAGE_SCOPES = [AuthProvidersManageScope];
+
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
@@ -245,7 +252,8 @@ export function ResetCredits(props: {
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
-  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const access = useEnvironmentScopeAccess(environmentId, PROVIDERS_MANAGE_SCOPES);
+  const canManageProviders = !scopeAccessLocked(access);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -308,9 +316,9 @@ export function ResetCredits(props: {
           ) : null}
         </View>
       ))}
-      {!canManageProviders ? (
+      {scopeAccessShowsBanner(access) || access === "unavailable" ? (
         <Text className="text-xs text-foreground-tertiary">
-          This connection cannot manage provider accounts.
+          {scopeAccessMessage(access, "This connection cannot manage provider accounts.")}
         </Text>
       ) : null}
       {status ? <Text className="text-sm text-foreground">{status}</Text> : null}

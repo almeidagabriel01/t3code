@@ -20,6 +20,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
+import { AssistantTasks, layer as assistantTasksLayer } from "../assistants/AssistantTasks.ts";
 import { ChannelLanguage } from "../channels/ChannelLanguage.ts";
 import * as ImessageChannelSettings from "../channels/imessage/ImessageChannelSettings.ts";
 import * as ChannelOutbox from "../channels/ChannelOutbox.ts";
@@ -39,6 +41,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Autonomy from "./AutonomyService.ts";
+import * as NeedsUser from "./NeedsUser.ts";
 import { requestThreadId } from "../assistants/AssistantGroups.ts";
 
 const awake: AssistantAutonomy = {
@@ -54,7 +57,12 @@ type Shell = {
   projectId: string;
   providerInstanceId?: string;
   archivedAt?: string | null;
-  lineage: { relationshipToParent: string | null };
+  lineage: {
+    relationshipToParent: string | null;
+    parentThreadId?: string | null;
+    rootThreadId?: string;
+  };
+  creationSource?: string;
   sideChatOf?: unknown;
   delegatedFrom?: unknown;
   worktreePath?: string;
@@ -73,7 +81,17 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   const shells = new Map<string, Shell | null>();
   const sent: Array<{ threadId: string; text: string; messageId: string }> = [];
   const refusal = { current: false };
+  /** The provider instance past its own budget, whoever runs on it. */
+  const instanceRefused: { current: string | null } = { current: null };
   const sendFails = { current: false };
+  const ignorePause = { current: true };
+  /** What every send fails with while set: a default that can never take it. */
+  const sendError: { current: unknown } = { current: null };
+  /** Every send's command id, in order, whatever came of it. */
+  const attempts: Array<string> = [];
+  const receipts = new Set<string>();
+  /** Runs inside a send, after it is recorded: what happens meanwhile elsewhere. */
+  const onSend: { current: (() => Effect.Effect<unknown>) | null } = { current: null };
   const telegram = Ref.makeUnsafe({
     enabled: true,
     tokenConfigured: true,
@@ -88,8 +106,15 @@ const harness = (language: "en" | "pt-BR" = "en") => {
   });
   const dispatched: Array<Record<string, unknown>> = [];
   let commits = 0;
+  /** Runs still queued on a thread, by message id: what a withdrawn wake cancels. */
+  const queued = new Map<
+    string,
+    { id: string; threadId: string; status: string; userMessageId: string }
+  >();
   const layer = Autonomy.layer.pipe(
     Layer.provideMerge(TaskEventNotices.layer),
+    Layer.provideMerge(NeedsUser.layer),
+    Layer.provideMerge(assistantTasksLayer),
     Layer.provideMerge(ChannelOutbox.layer),
     Layer.provideMerge(DecisionService.layer),
     Layer.provideMerge(
@@ -102,19 +127,60 @@ const harness = (language: "en" | "pt-BR" = "en") => {
         Layer.mock(Orchestrator.OrchestratorV2)({
           streamDomainEvents: Stream.empty,
           getThreadShell: (threadId) => Effect.succeed((shells.get(threadId) ?? null) as never),
+          getThreadRecords: (threadId) =>
+            Effect.succeed({
+              thread: {
+                title: shells.get(threadId)?.title ?? "",
+                creationSource: shells.get(threadId)?.creationSource ?? "server",
+                lineage: { parentThreadId: null, ...shells.get(threadId)?.lineage },
+              },
+              runs: [...queued.values()].filter((run) => run.threadId === threadId),
+            } as never),
+          dispatch: (command) => Effect.sync(() => void dispatched.push(command as never)) as never,
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           sendToThread: (input) =>
-            sendFails.current
-              ? Effect.fail(new Error("nope") as never)
-              : Effect.sync(() => {
-                  sent.push({
-                    threadId: input.threadId,
-                    text: input.text,
-                    messageId: input.messageId,
-                  });
-                  return {} as never;
-                }),
+            Effect.sync(() => void attempts.push(input.commandId)).pipe(
+              Effect.andThen(
+                sendFails.current
+                  ? Effect.fail(new Error("nope") as never)
+                  : sendError.current !== null
+                    ? Effect.fail(sendError.current as never)
+                    : // A replay reads back the run it made: one taken out of the queue has none.
+                      receipts.has(input.commandId) &&
+                        queued.get(input.messageId)?.status === "cancelled"
+                      ? Effect.fail(
+                          new ThreadManagement.ThreadManagementDurableRunProjectionError({
+                            threadId: input.threadId,
+                            messageId: input.messageId,
+                          }),
+                        )
+                      : Effect.suspend(() => {
+                          const hook = onSend.current;
+                          onSend.current = null;
+                          return hook?.() ?? Effect.void;
+                        }).pipe(
+                          Effect.andThen(
+                            Effect.sync(() => {
+                              sent.push({
+                                threadId: input.threadId,
+                                text: input.text,
+                                messageId: input.messageId,
+                              });
+                              receipts.add(input.commandId);
+                              queued.set(input.messageId, {
+                                id: `run:${input.messageId}`,
+                                threadId: input.threadId,
+                                status: "queued",
+                                userMessageId: input.messageId,
+                              });
+                              return {} as never;
+                            }),
+                          ),
+                        ),
+              ),
+            ),
+          hasReceipt: (commandId) => Effect.succeed(receipts.has(commandId)),
           getThreadShell: (threadId) => Effect.succeed((shells.get(threadId) ?? null) as never),
           getThreadRecords: (threadId) =>
             Effect.succeed({
@@ -142,8 +208,23 @@ const harness = (language: "en" | "pt-BR" = "en") => {
           getEnvironmentId: Effect.succeed("env-1" as never),
         }),
         Layer.mock(ServerSettings.ServerSettingsService)({
-          getSettings: Ref.get(settings).pipe(Effect.map((autonomy) => ({ autonomy }) as never)),
+          getSettings: Ref.get(settings).pipe(
+            Effect.map(
+              (autonomy) =>
+                ({
+                  autonomy,
+                  usageLimitAlerts: { ignoreAutonomyPause: ignorePause.current, instances: {} },
+                }) as never,
+            ),
+          ),
         }),
+        Layer.succeed(ProviderBudgetGate, (instanceId) =>
+          Effect.succeed(
+            refusal.current || instanceRefused.current === instanceId
+              ? Option.some({} as never)
+              : Option.none(),
+          ),
+        ),
         Layer.mock(AssistantSpend)({
           budgetRefusal: () =>
             Effect.succeed(refusal.current ? Option.some({} as never) : Option.none()),
@@ -172,12 +253,18 @@ const harness = (language: "en" | "pt-BR" = "en") => {
     shells,
     sent,
     refusal,
+    instanceRefused,
     sendFails,
+    ignorePause,
+    sendError,
+    attempts,
     telegram,
     answers,
     contexts,
     imessage,
     dispatched,
+    queued,
+    onSend,
   };
 };
 
@@ -438,6 +525,22 @@ it.effect("a blocking budget, a failed send and a missing assistant wake nobody"
     h.sendFails.current = false;
     yield* service.sweep;
     assert.lengthOf(h.sent, 2);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("past its provider instance's budget a rule wakes nobody", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* addAssistant();
+    h.shells.set("t1", plain);
+    h.shells.set("assistant:jarvis:1", { ...plain, providerInstanceId: "codex-work" });
+    h.instanceRefused.current = "codex-work";
+    yield* service.handleEvent(run("failed", "r1"));
+    assert.lengthOf(h.sent, 0);
+    h.instanceRefused.current = "codex-personal";
+    yield* service.handleEvent(run("failed", "r1"));
+    assert.lengthOf(h.sent, 1);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1024,10 +1127,17 @@ it.effect(
         h.dispatched.map((command) => [command["requestId"], command["decision"]]),
         [["plain", "accept"]],
       );
-      // None of it is a model wake, so the daily wake limit is untouched.
+      // The cards are no model wake, so the daily wake limit is untouched.
       const sql = yield* SqlClient.SqlClient;
       assert.lengthOf(yield* sql`SELECT 1 FROM autonomy_wakes`, 0);
-      assert.lengthOf(h.sent, 0);
+      // Jarvis hears of every wait but the one in its own conversation.
+      assert.sameDeepMembers(
+        h.sent.map((message) => [message.threadId, message.messageId]),
+        ["plain", "child", "subagent"].map((id) => [
+          "assistant:jarvis:1",
+          `assistant-task-waits:assistant:jarvis:1:request:${id}`,
+        ]),
+      );
     }).pipe(Effect.provide(h.layer));
   },
 );
@@ -1378,6 +1488,328 @@ it.effect("an open decision, Jarvis's own included, is carded once; notices are 
       { label: "Let it lapse", value: "no" },
     ]);
     assert.deepEqual(yield* cards, [{ decision_id: asked.id, delivery_id: rows[0]!.delivery_id }]);
+    // Jarvis asked it in its own conversation: no notice about it there.
+    assert.lengthOf(h.sent, 0);
+  }).pipe(Effect.provide(h.layer));
+});
+
+const JARVIS = "assistant:jarvis:1";
+const toJarvis = (h: ReturnType<typeof harness>) =>
+  h.sent.filter((message) => message.threadId === JARVIS);
+
+/** Ana is a group member; `task` is a thread she launched and `group` her group request thread. */
+const otherOrigins = (h: ReturnType<typeof harness>) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const tasks = yield* AssistantTasks;
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+    yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY, "ana");
+    yield* sql`
+      INSERT INTO assistant_teams (team_id, name, member_ids_json, created_at, updated_at)
+      VALUES ('team-1', 'Ops', '["ana"]', ${T0}, ${T0})`;
+    const group = requestThreadId("ana", "team-1", "msg-1");
+    yield* sql`
+      INSERT INTO assistant_group_request_threads (request_id, assistant_id, team_id, thread_id)
+      VALUES ('msg-1', 'ana', 'team-1', ${group})`;
+    yield* tasks.link({
+      threadId: "t-task" as never,
+      assistantId: "ana" as never,
+      projectId: "p1" as never,
+      title: "Network tests",
+      createdAt: T0,
+    });
+    h.shells.set(JARVIS, { ...plain, title: "Jarvis" });
+    h.shells.set("t-task", { ...plain, title: "Network tests" });
+    h.shells.set(group, { ...plain, title: "Release notes" });
+    return { group, task: "t-task" };
+  });
+
+const askFrom = (threadId: string, title: string) =>
+  Effect.gen(function* () {
+    const decisions = yield* DecisionService.DecisionService;
+    return yield* decisions.request({
+      fromThreadId: threadId as never,
+      projectId: "p1" as never,
+      threadTitle: "Thread",
+      clientRequestId: `ask:${title}`,
+      title,
+      context: "",
+      options: [
+        { id: "now", label: "Run now" },
+        { id: "queue", label: "Queue" },
+      ],
+    });
+  });
+
+it.effect(
+  "a decision from a group or another assistant's task reaches the default once, in its chat and the chat app",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const { group, task } = yield* otherOrigins(h);
+      // Asked right after the server started: after the baseline, so it is told.
+      const fromTask = yield* askFrom(task, "Run the network tests now?");
+      const fromGroup = yield* askFrom(group, "Publish the notes?");
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 0, "not before notifyWaitingAfterMinutes");
+      yield* TestClock.adjust(MIN);
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 0, "not while autonomy is paused");
+      yield* Ref.set(h.settings, ON);
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      const told = toJarvis(h);
+      assert.deepEqual(
+        told.map((message) => message.messageId),
+        [
+          `assistant-task-waits:${JARVIS}:decision:${fromTask.id}`,
+          `assistant-task-waits:${JARVIS}:decision:${fromGroup.id}`,
+        ],
+      );
+      assert.include(
+        told[0]!.text,
+        "Waiting on the user: Run the network tests now?\nFrom ana in [",
+      );
+      assert.include(told[0]!.text, "t3-thread://");
+      assert.include(told[1]!.text, "From ana (Ops) in [");
+      assert.include(told[1]!.text, "They answer it in Activity.");
+      const cardsSent = (yield* outboxRows).map((row) => row.message.text);
+      assert.lengthOf(cardsSent, 2);
+      assert.include(cardsSent[0], "ana is waiting for you");
+      assert.include(cardsSent[1], "ana (Ops) is waiting for you");
+      assert.notInclude(cardsSent.join("\n"), "t3-thread://");
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("a decision answered before it is due is not told; a restart tells nothing twice", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    const { task } = yield* otherOrigins(h);
+    const answered = yield* askFrom(task, "Answered already?");
+    const open = yield* askFrom(task, "Still open?");
+    yield* decisions.answer({ decisionId: answered.id, optionId: "now" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.deepEqual(
+      toJarvis(h).map((message) => message.messageId),
+      [`assistant-task-waits:${JARVIS}:decision:${open.id}`],
+    );
+    // The same database under a new service, as after a restart.
+    yield* Effect.gen(function* () {
+      const restarted = yield* Autonomy.AutonomyService;
+      yield* restarted.notifyWaiting;
+    }).pipe(Effect.provide(Layer.fresh(Autonomy.layer)));
+    assert.lengthOf(toJarvis(h), 1);
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a subagent's pending approval reaches the default once, named for its assistant", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    yield* otherOrigins(h);
+    h.shells.set("sub-1", {
+      ...plain,
+      title: "Worker",
+      creationSource: "provider",
+      lineage: {
+        relationshipToParent: "subagent",
+        parentThreadId: "t-task",
+        rootThreadId: "t-task",
+      },
+    });
+    yield* pendingRequest(h, { id: "r1", threadId: "sub-1" });
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    const told = toJarvis(h);
+    assert.deepEqual(
+      told.map((message) => message.messageId),
+      [`assistant-task-waits:${JARVIS}:request:r1`],
+    );
+    assert.include(told[0]!.text, "Waiting on the user: ana wants to run a command");
+    assert.include(told[0]!.text, "They answer it in that thread.");
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a notice the user took out of the queue is not sent again", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    const asked = yield* askFrom(task, "Taken out of the queue?");
+    // The chat app is on but cannot reach the user yet, so the wait stays untold.
+    yield* Ref.update(h.telegram, (value) => ({ ...value, allowedUserIds: [] }));
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const id = `assistant-task-waits:${JARVIS}:decision:${asked.id}`;
+    h.queued.get(id)!.status = "cancelled";
+    yield* service.notifyWaiting;
+    yield* service.notifyWaiting;
+    assert.deepEqual(h.attempts, [id]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+const ids = { commandId: "c1" as never, threadId: JARVIS as never };
+/** Refusals no retry gets past until the user acts: the wait counts as told, as past a budget. */
+const refusals: ReadonlyArray<readonly [string, unknown]> = [
+  [
+    "thread not found",
+    new ThreadManagement.ThreadManagementThreadNotFoundError({
+      projectId: "p1" as never,
+      threadId: JARVIS as never,
+    }),
+  ],
+  [
+    "provider instance disabled",
+    new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
+      projectId: "p1" as never,
+      instanceId: "codex" as never,
+    }),
+  ],
+  [
+    "thread above the mode limit",
+    new Orchestrator.OrchestratorThreadAboveModeLimitError({
+      ...ids,
+      mode: "runtime",
+      runtimeMode: "full-access" as never,
+      interactionMode: "default" as never,
+    }),
+  ],
+  [
+    "runtime mode above the ceiling",
+    new Orchestrator.OrchestratorRuntimeModeAboveCeilingError({
+      ...ids,
+      refused: "turn",
+      runtimeMode: "full-access" as never,
+      maxRuntimeMode: "approval-required" as never,
+      organization: "acme",
+    }),
+  ],
+  [
+    "send refused by an assistant guard",
+    new Orchestrator.OrchestratorCommandRejectedError({ ...ids, commandType: "message.dispatch" }),
+  ],
+];
+
+it.effect.each(refusals)(
+  "a default that refuses the notice (%s) is not retried each sweep",
+  ([, error]) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const { task } = yield* otherOrigins(h);
+      yield* askFrom(task, "Nowhere to tell?");
+      h.sendError.current = error;
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      assert.lengthOf(h.attempts, 1);
+      assert.lengthOf(yield* outboxRows, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+/** Failures of the moment: I/O, SQL, a projection still loading, a turn still busy. */
+const transient: ReadonlyArray<readonly [string, unknown]> = [
+  ["untagged", new Error("nope")],
+  [
+    "projection load",
+    new ThreadManagement.ThreadManagementProjectionLoadError({
+      projectId: "p1" as never,
+      threadId: JARVIS as never,
+      cause: new Error("disk I/O error"),
+    }),
+  ],
+  [
+    "dispatch",
+    new Orchestrator.OrchestratorDispatchError({ ...ids, commandType: "message.dispatch" }),
+  ],
+  ["projection", new Orchestrator.OrchestratorProjectionError({ threadId: JARVIS as never })],
+  ["provider selection busy", new Orchestrator.OrchestratorProviderSelectionBusyError(ids)],
+];
+
+it.effect.each(transient)(
+  "a default that failed for now (%s) is told on the next sweep",
+  ([, error]) => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      const { task } = yield* otherOrigins(h);
+      yield* askFrom(task, "Try again?");
+      h.sendError.current = error;
+      yield* TestClock.adjust(MIN);
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 0);
+      h.sendError.current = null;
+      yield* service.notifyWaiting;
+      yield* service.notifyWaiting;
+      assert.lengthOf(toJarvis(h), 1);
+      assert.lengthOf(h.attempts, 2);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.effect("past its budget the default gets no notice, and the card still goes", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    yield* askFrom(task, "Over budget?");
+    h.refusal.current = true;
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 0);
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("past its provider instance's budget the default gets no notice", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const { task } = yield* otherOrigins(h);
+    h.shells.set(JARVIS, { ...plain, title: "Jarvis", providerInstanceId: "codex-work" });
+    h.instanceRefused.current = "codex-work";
+    yield* askFrom(task, "Over the instance budget?");
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    assert.lengthOf(toJarvis(h), 0);
+    assert.lengthOf(yield* outboxRows, 1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("a wait answered while its notice was on the way takes the notice back", () => {
+  const h = harness();
+  return Effect.gen(function* () {
+    const service = yield* Autonomy.AutonomyService;
+    const decisions = yield* DecisionService.DecisionService;
+    const { task } = yield* otherOrigins(h);
+    const asked = yield* askFrom(task, "Gone by the time it lands?");
+    // Answered from another device between the sweep's read and its send.
+    h.onSend.current = () =>
+      decisions.answer({ decisionId: asked.id, optionId: "now" }).pipe(Effect.orDie);
+    yield* TestClock.adjust(MIN);
+    yield* service.notifyWaiting;
+    const id = `assistant-task-waits:${JARVIS}:decision:${asked.id}`;
+    assert.deepEqual(
+      h.dispatched.filter((command) => command.type === "queued-run.cancel"),
+      [
+        {
+          type: "queued-run.cancel",
+          commandId: `${id}:cancel`,
+          threadId: JARVIS,
+          runId: `run:${id}`,
+        },
+      ],
+    );
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -1462,6 +1894,34 @@ it.effect("a message whose delivery could not be queued is not counted as sent",
     assert.lengthOf(yield* outboxRows, 1);
   }).pipe(Effect.provide(h.layer));
 });
+
+it.effect(
+  "only a usage limit alert gets past the Autonomy pause, and only while its setting allows",
+  () => {
+    const h = harness();
+    return Effect.gen(function* () {
+      const service = yield* Autonomy.AutonomyService;
+      yield* addAssistant(DEFAULT_ASSISTANT_AUTONOMY);
+      yield* Ref.set(h.settings, { ...ON, enabled: false });
+      const refused = <A>(effect: Effect.Effect<A, AutonomyError>) =>
+        Effect.flip(effect).pipe(Effect.map((error) => error.message));
+      const alert = (key: string) =>
+        service.notifyUsageLimitAlert({ assistantId: "jarvis", key, text: "Claude: 15% left." });
+
+      assert.equal((yield* alert("usage-limit:a")).status, "sent");
+      assert.equal((yield* alert("usage-limit:a")).status, "already_sent");
+      assert.lengthOf(yield* outboxRows, 1);
+      assert.include(
+        yield* refused(service.notifyUser({ assistantId: "jarvis", key: "k", text: "Hi." })),
+        "paused",
+      );
+
+      h.ignorePause.current = false;
+      assert.include(yield* refused(alert("usage-limit:b")), "paused");
+      assert.lengthOf(yield* outboxRows, 1);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
 
 const scheduledRun = (
   status: string,

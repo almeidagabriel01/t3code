@@ -56,6 +56,9 @@ vi.mock("~/state/projects", () => ({
   projectEnvironment: { create: {}, listEntries: (value: unknown) => value },
 }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("~/components/assistants/ProjectAssistantAccessDialog", () => ({
+  offerProjectAssistantAccess: () => false,
+}));
 vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   executeAtomQuery: async (_registry: unknown, query: { input: { directoryPath: string } }) => {

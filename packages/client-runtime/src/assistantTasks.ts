@@ -126,6 +126,26 @@ export const TASK_EVENT_STATUS_LABEL: Record<TaskEventStatus, string> = {
   interrupted: "Stopped",
 };
 
+export interface TaskEventActivitySegment {
+  readonly kind: "title" | "label" | "project";
+  readonly text: string;
+  /** Drawn after a "·": only between two segments that both have text. */
+  readonly separated: boolean;
+}
+
+/** A task line's text in order, empty parts dropped, so no separator dangles at either end. */
+export function taskEventActivitySegments(parts: {
+  readonly title: string;
+  readonly label: string;
+  readonly project?: string | null | undefined;
+}): ReadonlyArray<TaskEventActivitySegment> {
+  const present = (["title", "label", "project"] as const).flatMap((kind) => {
+    const text = parts[kind]?.trim() ?? "";
+    return text === "" ? [] : [{ kind, text }];
+  });
+  return present.map((segment, index) => ({ ...segment, separated: index > 0 }));
+}
+
 /** One compact activity line for a task event: what ended, how, and where to open it. */
 export interface TaskEventActivity {
   readonly threadId: string;

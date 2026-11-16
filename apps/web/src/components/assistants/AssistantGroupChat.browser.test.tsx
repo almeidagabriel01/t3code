@@ -44,6 +44,7 @@ import {
   installFakeEnvironment,
   publishAssistants,
   publishGroupChat,
+  pushFakeServerSettings,
   setFakeServerSettings,
   threadWithHistory,
   type FakeDriver,
@@ -512,7 +513,13 @@ it("says the lead is choosing while a request has no task yet", async () => {
 it("labels a reply with the member it answers and previews it going to that member", async () => {
   publishGroupChat(
     [
-      message(1, { author: "assistant", assistantId: "ada" as AssistantId, text: "done" }),
+      // A member's answer carries its task, which is how the server finds who it answers.
+      message(1, {
+        author: "assistant",
+        assistantId: "ada" as AssistantId,
+        text: "done",
+        taskId: "t-1" as never,
+      }),
       message(2, { text: "why?", replyToMessageId: "m1" as never }),
     ],
     [task("t-1", 2)],
@@ -1090,7 +1097,8 @@ it("folds a finished request to one activity line and shows each answer as the t
   // A finished request folds away to one line; the newest one stays open.
   const line = done.getByRole("button", { name: "Open request Budget review" });
   await expect.element(line).toHaveAttribute("data-task-event-activity", "completed");
-  await expect.element(line).toMatchTextContent("· Finished · render");
+  // The project is its own segment, so it truncates before the title does.
+  await expect.element(line).toMatchTextContent("Budget review· Finished· render");
   await expect.element(main().getByText("Budget answered")).not.toBeInTheDocument();
   const open = blocks().nth(1);
   await expect.element(open.getByTestId("group-request-title")).toHaveTextContent("Ship the app");
@@ -1579,6 +1587,48 @@ it("saves the project's model from the group menu", async () => {
       },
     }),
   );
+});
+
+it("clears the project's model from its dialog, back to the members' models", async () => {
+  fakeSettings.patches = [];
+  fakeSettings.refuse = null;
+  setFakeServerSettings({
+    projectSettingsOverrides: {
+      [PROJECT_ID]: { defaultModelSelection: { instanceId: "codex", model: "gpt-5.5" } },
+    },
+  } as never);
+  appAtomRegistry.reset();
+  await using _screen = await openChat();
+  await userEvent.click(main().getByRole("combobox", { name: "Project" }));
+  await userEvent.click(page.getByRole("option", { name: "render" }));
+  await userEvent.click(main().getByRole("button", { name: "Leadership actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Model in render" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Project's model" }));
+  const dialog = page.getByRole("dialog", { name: "Model in render" });
+  const picker = () => dialog.getByRole("button", { name: /^Model for render/ });
+  await expect.element(picker()).toHaveTextContent("GPT-5.5");
+  await userEvent.click(picker());
+  // A search hides the way back, so it cannot sit over the results and be pressed by mistake.
+  const search = page.getByPlaceholder("Search models...");
+  await userEvent.fill(search, "gpt");
+  await expect
+    .element(page.getByRole("button", { name: "Members' models" }))
+    .not.toBeInTheDocument();
+  await userEvent.clear(search);
+  await userEvent.click(page.getByRole("button", { name: "Members' models" }));
+  await eventually(() =>
+    expect(fakeSettings.patches.at(-1)).toEqual({
+      projectSettingsOverrides: { [PROJECT_ID]: null },
+    }),
+  );
+  pushFakeServerSettings(null);
+  await expect.element(picker()).toHaveTextContent("Members' models");
+  // With no project model there is nothing to clear.
+  await userEvent.click(picker());
+  await expect
+    .element(page.getByRole("button", { name: "Members' models" }))
+    .not.toBeInTheDocument();
+  setFakeServerSettings(null);
 });
 
 it("shows the group's default for a project without its own", async () => {

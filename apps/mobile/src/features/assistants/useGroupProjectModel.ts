@@ -86,6 +86,8 @@ export function useGroupProjectModel(
   };
   // With neither, `global` means each member runs on its own model.
   const fallback = layers.project ?? layers.team ?? selection;
+  const isUsable = (value: ModelSelection) =>
+    resolveProjectProviderInstanceEnabled(settings, projectId, value.instanceId);
   const shown = (messagePick: typeof pick) => {
     // With no default at all, a pick the project cannot use leaves each member on its own.
     const global = fallback ?? assistantGroupTabPick(messagePick, at.tab)?.value;
@@ -95,8 +97,7 @@ export function useGroupProjectModel(
           pick: messagePick,
           tab: at.tab,
           defaults: { ...layers, global },
-          isUsable: (value) =>
-            resolveProjectProviderInstanceEnabled(settings, projectId, value.instanceId),
+          isUsable,
           available: { settings, projectId, providers: config?.providers ?? [] },
         });
   };
@@ -126,7 +127,13 @@ export function useGroupProjectModel(
     exceptions: (target.environment.serverConfig.settings.projectSettingsOverrides[projectId]
       ?.assistantModelSelections ?? {}) as Readonly<Record<string, ModelSelection>>,
     nameOf,
-    openProjectPicker: () => navigation.navigate("SettingsProjectModel", { members }),
+    openProjectPicker: () =>
+      navigation.navigate("SettingsProjectModel", {
+        members,
+        // Without the project's model, the group's default applies where it holds.
+        clearLabel:
+          teamDefault !== null && isUsable(teamDefault) ? "Group default" : "Members' models",
+      }),
     openMemberPicker: (assistantId: AssistantId) =>
       navigation.navigate("SettingsProjectModel", { members, assistantId }),
     removeException: (assistantId: AssistantId) =>

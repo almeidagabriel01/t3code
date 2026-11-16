@@ -55,7 +55,7 @@ import {
   RunnerUnavailablePolicy,
   RunnerWhere,
 } from "./runner.ts";
-import { ProviderBudget } from "./usage.ts";
+import { ProviderBudget, UsageLimitAlerts, UsageLimitAlertsPatch } from "./usage.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
@@ -87,6 +87,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
+  ProviderInstanceMutation,
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
@@ -1922,6 +1923,7 @@ export const ServerSettings = Schema.Struct({
   providerBudgets: Schema.Record(ProviderInstanceId, ProviderBudget).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  usageLimitAlerts: UsageLimitAlerts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   /** Projects opened with Open folder; clients hide them while they have no active thread. */
   folderProjects: Schema.Record(ProjectId, Schema.Literal(true)).pipe(
@@ -2359,6 +2361,8 @@ const ServerSettingsPatchFields = Schema.Struct({
   providerBudgets: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, Schema.NullOr(ProviderBudget)),
   ),
+  // Merged per window; null removes the instance's entry.
+  usageLimitAlerts: Schema.optionalKey(UsageLimitAlertsPatch),
   folderProjects: Schema.optionalKey(Schema.Record(ProjectId, Schema.NullOr(Schema.Literal(true)))),
 
   usagePriceOverrides: Schema.optionalKey(
@@ -2419,6 +2423,23 @@ export function requiredScopesForServerSettingsPatch(
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
   ];
+}
+
+export const ServerSettingsUpdateInput = Schema.Struct({
+  patch: ServerSettingsPatch,
+  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+});
+export type ServerSettingsUpdateInput = typeof ServerSettingsUpdateInput.Type;
+
+export function requiredScopesForServerSettingsUpdate(
+  input: ServerSettingsUpdateInput,
+): ReadonlyArray<AuthEnvironmentScope> {
+  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+  if (input.providerInstanceMutation === undefined) return scopes;
+  // A provider instance change with an empty patch touches nothing settings:write guards.
+  return Object.values(input.patch).every((value) => value === undefined)
+    ? [AuthProvidersManageScope]
+    : [...new Set([...scopes, AuthProvidersManageScope])];
 }
 
 /** Host-executed project scripts require settings-write authority in addition to orchestration:operate. */

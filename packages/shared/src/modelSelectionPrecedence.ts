@@ -2,13 +2,57 @@ import {
   type Assistant,
   type AssistantTeam,
   assistantGroupProjectIds,
+  DEFAULT_MODEL,
+  isProviderAvailable,
   type ModelSelection,
   type ProjectId,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
+  type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
-import type { ProjectSettingSource } from "./projectSettings.ts";
+import {
+  type LegacyProjectSettingsFields,
+  type ProjectSettingSource,
+  resolveProjectSettings,
+} from "./projectSettings.ts";
+
+/** Like a new thread with no configured default: the first usable provider and its default model. */
+export function firstUsableProviderModel(
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const provider = providers.find(
+    (entry) =>
+      entry.enabled &&
+      entry.installed &&
+      entry.auth.status !== "unauthenticated" &&
+      isProviderAvailable(entry),
+  );
+  if (provider === undefined) return null;
+  const model =
+    provider.models.find((entry) => entry.isDefault && !entry.isCustom) ??
+    provider.models.find((entry) => !entry.isCustom) ??
+    provider.models[0];
+  return model === undefined ? null : { instanceId: provider.instanceId, model: model.slug };
+}
+
+/** An assistant's model outside a group's choices: its home project's, else the first usable one. */
+export function assistantHomeModel(
+  settings: ServerSettings,
+  projectId: ProjectId,
+  project: LegacyProjectSettingsFields | null,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  return (
+    resolveProjectSettings(settings, projectId, project).settings.defaultModelSelection ??
+    // ponytail: no usage-limit fallback chain here, the user picks the model on the thread.
+    firstUsableProviderModel(providers) ?? {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: DEFAULT_MODEL,
+    }
+  );
+}
 
 const OPTIONAL_LAYERS = [
   "message",

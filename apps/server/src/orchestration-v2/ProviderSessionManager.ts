@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   isOrchestrationV2WorkActive,
   type MemoryTaskGrantCeiling,
@@ -768,12 +769,23 @@ export const layerWithOptions = (
         }
       });
 
+      // A detach removes its thread before releasing, but that thread's records still need releasing.
+      const releasedThreadIds = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly detachedThreadId?: ThreadId;
+      }) => {
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        readonly detachedThreadId?: ThreadId;
       }) {
         const now = yield* DateTime.now;
         const payload: OrchestrationV2ProviderSession = {
@@ -788,21 +800,11 @@ export const layerWithOptions = (
         };
         yield* writeProviderSessionEvents({
           runtime: input.entry.runtime,
-          threadIds: input.entry.attachedThreadIds,
+          threadIds: releasedThreadIds(input),
           type: "provider-session.updated",
           payload,
         });
       });
-
-      // A detach removes its thread before releasing, but that thread's records still need releasing.
-      const releasedThreadIds = (input: {
-        readonly entry: LiveSessionEntry;
-        readonly detachedThreadId?: ThreadId;
-      }) => {
-        const threadIds = new Set(input.entry.attachedThreadIds);
-        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
-        return threadIds;
-      };
 
       const writeReleasedRuntimeRequestEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedRuntimeRequestEvents",
@@ -921,6 +923,43 @@ export const layerWithOptions = (
         if (events.length > 0) {
           yield* eventSink.write({ events });
         }
+      });
+
+      // The orchestrator decides which of each thread's open work this session ran.
+      const writeReleasedNativeWorkEffects = Effect.fn(
+        "ProviderSessionManager.writeReleasedNativeWorkEffects",
+      )(function* (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
+      }) {
+        // Restart recovery settles a shutdown, and work that outlives its session stays open.
+        if (
+          input.reason === "server_shutdown" ||
+          input.entry.runtime.nativeWorkEndsWithProcess !== true
+        ) {
+          return;
+        }
+        const providerSessionId = input.entry.runtime.providerSessionId;
+        const releasedAt = DateTime.toEpochMillis(input.releasedAt);
+        const commandId = CommandId.make(
+          `command:provider-session.released:${providerSessionId}:${releasedAt}`,
+        );
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [...releasedThreadIds(input)].map((threadId) => ({
+            id: `effect:provider-session.work.settle:${providerSessionId}:${threadId}:${releasedAt}`,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-session.work.settle",
+              providerSessionId,
+              releasedAt: input.releasedAt,
+            },
+          })),
+        });
       });
 
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
@@ -1044,6 +1083,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            Effect.exit(writeReleasedNativeWorkEffects(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));

@@ -96,10 +96,15 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import { appAtomRegistry } from "../../state/atom-registry";
 
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import {
+  scopeAccessLocked,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
+import { readEnvironmentScope, useEnvironmentScopeAccess } from "../../state/session";
 
 // Below this (keyboard up on iPad, phone landscape) the hero cannot fit above the composer,
 // so the project and environment pickers move into the composer controls instead.
+const OPERATE_SCOPES = [AuthOrchestrationOperateScope];
 const SHORT_DRAFT_VIEWPORT_HEIGHT = 380;
 
 function NewTaskWorkspaceIcon(props: {
@@ -193,10 +198,11 @@ export function NewTaskDraftScreen(props: {
     selectedProject?.environmentId ?? null,
   );
   const environmentConnected = connectionState === "connected";
-  const canOperate = useEnvironmentScope(
+  const operateAccess = useEnvironmentScopeAccess(
     selectedProject?.environmentId ?? null,
-    AuthOrchestrationOperateScope,
+    OPERATE_SCOPES,
   );
+  const canOperate = !scopeAccessLocked(operateAccess);
   const projectCloneState = useProjectClone(
     selectedProject
       ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
@@ -973,6 +979,7 @@ export function NewTaskDraftScreen(props: {
           interactionLocked: isComposerInteractionLocked,
         }}
         canOperateThread={canOperate}
+        lacksOperatePermission={scopeAccessShowsBanner(operateAccess)}
         selectedThread={thread}
         selectedThreadDetailRef={null}
         contentPresentation={{ kind: "ready" }}

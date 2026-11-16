@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { firstUsableProviderModel } from "@t3tools/shared/modelSelectionPrecedence";
 import * as ProjectModelSelection from "../orchestration-v2/ProjectModelSelectionService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -908,7 +909,7 @@ it.each([
     "claude:built-in",
   ],
 ] as const)("firstUsableProviderModel: %s", (_name, providers, expected) => {
-  const selection = ProjectModelSelection.firstUsableProviderModel(providers);
+  const selection = firstUsableProviderModel(providers);
   assert.strictEqual(
     selection === null ? null : `${selection.instanceId}:${selection.model}`,
     expected,

@@ -15,6 +15,7 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { ProjectViewMessage } from "../projectViews/ProjectViewMessage";
 import { IconButton } from "../../components/ui/IconButton";
 import { Menu } from "../../components/ui/Menu";
@@ -121,6 +122,12 @@ export function ProjectBoardView(props: {
     }
     if (board === undefined) {
       if (createsOnView) {
+        if (actions.editAccess === "unknown") {
+          return <ProjectViewMessage title="Loading board…" detail="Connecting to the board." />;
+        }
+        if (actions.editAccess === "unavailable") {
+          return <ProjectViewMessage title={SCOPE_ACCESS_UNAVAILABLE_MESSAGE} />;
+        }
         return actions.canEdit ? (
           <ProjectViewMessage title="Setting up the board…" detail="One moment." />
         ) : (

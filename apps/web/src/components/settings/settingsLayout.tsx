@@ -1,7 +1,16 @@
 import { SettingsGroup } from "./SettingsGroup";
+import {
+  SCOPE_ACCESS_CHECKING_MESSAGE,
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { usePrimaryEnvironmentId, usePrimaryEnvironment } from "../../state/environments";
-import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  useEnvironmentsScopeAccess,
+  useEnvironmentsWithScope,
+} from "../../state/session";
 import { useServerConfigs } from "../../state/entities";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import {
@@ -39,6 +48,7 @@ import {
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 const EMPTY_MANAGED_PATHS: readonly string[] = [];
+const SETTINGS_WRITE_SCOPES = [AuthSettingsWriteScope];
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -206,6 +216,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
 
 export function SettingsSection({
   title,
+  description,
   hideTitle = false,
   icon,
   titleAction,
@@ -216,6 +227,8 @@ export function SettingsSection({
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
+  /** One line under the title for what every row in the section shares. */
+  description?: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
   titleAction?: ReactNode;
@@ -249,6 +262,11 @@ export function SettingsSection({
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
       )}
+      {description && !hideTitle ? (
+        <p className="max-w-2xl px-3 text-pretty text-xs leading-normal text-muted-foreground sm:px-4">
+          {description}
+        </p>
+      ) : null}
       <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
         {children}
       </SettingsGroup>
@@ -343,6 +361,19 @@ export function SettingsRow({
     context?.connectedEnvironments ?? [],
     AuthSettingsWriteScope,
   );
+  const primaryAccess = useEnvironmentScopeAccess(primaryEnvironmentId, SETTINGS_WRITE_SCOPES);
+  const writeAccess = useEnvironmentsScopeAccess(
+    context?.connectedEnvironments ?? [],
+    AuthSettingsWriteScope,
+  );
+  const targetAccesses = context
+    ? context.connectedEnvironments.map((target) => writeAccess.get(target.environmentId))
+    : [primaryAccess];
+  const writeAccessNotice = targetAccesses.includes("unknown")
+    ? SCOPE_ACCESS_CHECKING_MESSAGE
+    : !targetAccesses.includes("missing") && targetAccesses.includes("unavailable")
+      ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+      : null;
   const canWriteSettings = context
     ? context.connectedEnvironments.length > 0 &&
       context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
@@ -432,14 +463,15 @@ export function SettingsRow({
         : unavailable && control
           ? inertControl(
               !canWriteSettings
-                ? `This connection lacks permission to change settings on ${
-                    context
-                      ? context.connectedEnvironments
-                          .filter((target) => !writableIds.has(target.environmentId))
-                          .map((target) => target.label)
-                          .join(", ") || "the selected environment"
-                      : (primaryEnvironment?.label ?? "the primary environment")
-                  }.`
+                ? (writeAccessNotice ??
+                    `This connection lacks permission to change settings on ${
+                      context
+                        ? context.connectedEnvironments
+                            .filter((target) => !writableIds.has(target.environmentId))
+                            .map((target) => target.label)
+                            .join(", ") || "the selected environment"
+                        : (primaryEnvironment?.label ?? "the primary environment")
+                    }.`)
                 : context
                   ? "Reconnect the selected environment to change this setting."
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,

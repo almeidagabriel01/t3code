@@ -88,6 +88,7 @@ vi.mock("../../state/shell", () => ({
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
+  useEnvironmentScopeAccess: () => "granted",
 }));
 vi.mock("../../state/entities", () => ({ useThreadShell: () => null }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));

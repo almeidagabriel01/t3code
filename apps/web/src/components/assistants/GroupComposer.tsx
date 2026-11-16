@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupMentionTargets,
@@ -8,6 +10,7 @@ import {
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   type AssistantGroupOutgoing,
@@ -16,10 +19,7 @@ import {
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
 } from "@t3tools/client-runtime/assistantGroupChat";
-import {
-  assistantGroupLandedSend,
-  assistantGroupResendRequestId,
-} from "@t3tools/client-runtime/state/assistants";
+import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
@@ -53,7 +53,9 @@ import { useSoftwareKeyboardOpen } from "~/hooks/useSoftwareKeyboardOpen";
 import { useRenderedAppearance } from "~/hooks/useTheme";
 import { cn, randomUUID } from "~/lib/utils";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
-import { primaryServerKeybindingsAtom } from "~/state/server";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "~/state/assistants";
+import { useProject, useQuietThreadShell } from "~/state/entities";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import {
   ComposerPromptEditorTiptap,
@@ -272,11 +274,55 @@ interface Outgoing extends AssistantGroupOutgoing {
   readonly error: string | null;
   /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
   readonly requestId: string;
+  readonly sendKey: string;
   /** The text it sent, trimmed; `prompt` is what the composer shows now. */
   readonly text: string;
 }
 
 const outgoings = createAssistantGroupOutgoingStore<Outgoing>();
+
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * providers, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
+  const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  // This environment's config only: the all-environment maps change with every other one.
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const leadCanRoute =
+    lead === null || config == null
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings: config.settings,
+          providers: config.providers,
+          project,
+        });
+  return (
+    <p
+      data-testid="group-recipients"
+      className="min-h-4 px-1 text-xs text-muted-foreground"
+      aria-live="polite"
+    >
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
+    </p>
+  );
+}
 
 export function GroupComposer(props: {
   readonly draftKey: string;
@@ -296,6 +342,8 @@ export function GroupComposer(props: {
   /** The model the next message runs on, picked here only for it. */
   readonly messageModel: GroupMessageModel;
   readonly replyingTo: GroupReplyQuote | null;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   readonly onJumpToReply: () => void;
   readonly onClearReply: () => void;
   /** What the user sent before, oldest first, for ArrowUp recall. */
@@ -384,12 +432,6 @@ export function GroupComposer(props: {
         }));
   const menuOpen = items.length > 0;
   const chosen = Math.min(highlight, Math.max(items.length - 1, 0));
-  const preview = assistantGroupRecipientsPreview(
-    prompt.value,
-    props.members,
-    lead,
-    props.replyingTo?.to ?? null,
-  );
   const attached = useGroupAttachments(
     props.environmentId,
     props.disabled,
@@ -489,7 +531,12 @@ export function GroupComposer(props: {
   const send = async (value: string) => {
     if (!canSend || value.trim() === "") return;
     const attachmentIds = attached.items.map((item) => item.id);
-    const requestId = assistantGroupResendRequestId(shown, value, attachmentIds) ?? randomUUID();
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [value.trim(), attachmentIds, props.projectId, props.messageModel.pick, props.replyingTo],
+      randomUUID,
+    );
     const sent: Outgoing = {
       tab: props.tab,
       failed: false,
@@ -506,6 +553,7 @@ export function GroupComposer(props: {
       error: null,
       requestId,
       text: value.trim(),
+      sendKey,
     };
     if (shown === null) setDraft("", 0, 0);
     setOutgoing(sent.tab, sent);
@@ -873,13 +921,15 @@ export function GroupComposer(props: {
         </ComposerSurface.Host>
       </ComposerSurface.Shell>
       {shownError === null ? (
-        <p
-          data-testid="group-recipients"
-          className="min-h-4 px-1 text-xs text-muted-foreground"
-          aria-live="polite"
-        >
-          {preview}
-        </p>
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={prompt.value}
+          members={props.members}
+          lead={lead}
+          projects={projectRefs}
+          projectId={props.projectId}
+          chat={props.chat}
+        />
       ) : (
         <p
           role="alert"

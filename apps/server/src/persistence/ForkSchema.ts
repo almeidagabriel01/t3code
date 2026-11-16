@@ -386,6 +386,33 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       PRIMARY KEY (delivery_id, chunk_index)
     )
   `;
+  // A piece is confirmed once the chat app answered for it; an unconfirmed one is sent again on
+  // retry. Older builds kept the claim of a piece whose send timed out, which was always the last
+  // piece tried of a delivery left ambiguous: only that one is unconfirmed on upgrade.
+  for (const table of ["telegram_sent", "imessage_sent"] as const) {
+    if ((yield* addColumns(table, [["confirmed", "INTEGER NOT NULL DEFAULT 1"]])).length === 0) {
+      continue;
+    }
+    yield* sql.unsafe(`
+      UPDATE ${table} SET confirmed = 0
+      WHERE (delivery_id, chunk_index) IN (
+        SELECT delivery_id, MAX(chunk_index) FROM ${table}
+        WHERE delivery_id IN (SELECT delivery_id FROM channel_outbox WHERE state = 'ambiguous')
+        GROUP BY delivery_id
+      )`);
+  }
+  // A piece sent again owes an echo per send, between its first and its last send.
+  const echoColumns = yield* addColumns("imessage_sent", [
+    ["echoes_due", "INTEGER NOT NULL DEFAULT 1"],
+    ["first_sent_at_ms", "INTEGER"],
+  ]);
+  if (echoColumns.includes("echoes_due")) {
+    yield* sql`UPDATE imessage_sent SET echoes_due = 0 WHERE consumed = 1`;
+  }
+  // Which side of a self chat stored a seen row, to tell a twin from another send's echo.
+  yield* addColumns("imessage_seen", [["from_me", "INTEGER"]]);
+  // Set once the outbox put a delivery that ran out of tries back in line on its own.
+  yield* addColumns("channel_outbox", [["auto_requeued", "INTEGER NOT NULL DEFAULT 0"]]);
   yield* sql`
     CREATE TABLE IF NOT EXISTS channel_cards (
       decision_id TEXT PRIMARY KEY,
@@ -513,6 +540,23 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
       source TEXT NOT NULL,
       label TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )
+  `;
+  // One row per provider instance, account and usage window: whether its low-limit alert is armed,
+  // and the episode it last sent, so a restart or a repeated reading never tells the user twice.
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS usage_limit_alert_state (
+      instance_id TEXT NOT NULL,
+      account_key TEXT NOT NULL,
+      window_id TEXT NOT NULL,
+      resets_at TEXT,
+      armed INTEGER NOT NULL,
+      episode INTEGER NOT NULL,
+      fired_threshold INTEGER,
+      fired_key TEXT,
+      pending INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (instance_id, account_key, window_id)
     )
   `;
   // One row per thing that waited on the user and was told about: a request, a decision or a

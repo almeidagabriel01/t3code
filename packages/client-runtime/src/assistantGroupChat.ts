@@ -6,11 +6,11 @@ import {
   assistantGroupCountsAsUnread,
   assistantGroupFinishedScopes,
   assistantGroupTasksNeedUser,
-  assistantGroupAddress,
   assistantGroupInstructionBody,
   assistantGroupMentions,
   assistantGroupProjectIds,
   assistantGroupProjectMentionRanges,
+  assistantGroupProjectMentions,
   assistantGroupProjectSlugs,
   foldAssistantGroupText,
   type Assistant,
@@ -26,16 +26,22 @@ import {
   type AssistantGroupsEvent,
   type AssistantGroupsHistoryResult,
   type ModelSelection,
+  type AssistantId,
   type ProjectId,
+  type ServerProvider,
+  type ServerSettings,
 } from "@t3tools/contracts";
+import { routeGroupMessage } from "@t3tools/shared/assistantGroupRouting";
 import type { TaskEventStatus } from "@t3tools/shared/assistantTaskEvents";
 import {
+  assistantHomeModel,
   isPickedModelUsable,
   type ModelSelectionLayers,
   type ProviderModelListing,
   resolveModelSelection,
 } from "@t3tools/shared/modelSelectionPrecedence";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
@@ -645,6 +651,19 @@ export function assistantGroupHeldAttachments(
   return new Set(outgoing.flatMap((entry) => (entry === shown ? [] : entry.attachmentIds)));
 }
 
+/**
+ * The `clientRequestId` a send goes under: a failed message's own when it goes again with all it
+ * carries unchanged, so the server never posts it twice; a fresh one once anything changed.
+ */
+export function assistantGroupSendRequestId(
+  failed: { readonly requestId: string; readonly sendKey: string } | null,
+  carries: ReadonlyArray<unknown>,
+  fresh: () => string,
+) {
+  const sendKey = JSON.stringify(carries);
+  return { requestId: failed?.sendKey === sendKey ? failed.requestId : fresh(), sendKey };
+}
+
 const NO_OUTGOING: ReadonlyArray<never> = [];
 
 /**
@@ -716,26 +735,208 @@ function joinNames(names: ReadonlyArray<string>): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
+/** The message a draft answers, as the composer quotes it. */
+export interface AssistantGroupReplyRef {
+  readonly id: AssistantGroupMessageId;
+  /** The member the quote names; null for a reply to a request itself. */
+  readonly to: string | null;
+  readonly projectId: ProjectId | null;
+}
+
+/** What the server reads besides the draft to route it (`AssistantGroups.post`). */
+export interface AssistantGroupSendContext {
+  /**
+   * Whose work the draft answers: the owner of the answered message's task, else the member the
+   * quote names while that message or its task is not loaded. The preview checks membership.
+   */
+  readonly replyOwner: { readonly id: string } | { readonly name: string } | null;
+  /** The request a reply continues; `ownerId` when exactly one member works it. */
+  readonly request: {
+    readonly projectId: ProjectId | null;
+    readonly started: boolean;
+    readonly ownerId: AssistantId | null;
+  } | null;
+  /** Paused or failed root tasks, newest first: of the reply's request, else of the group. */
+  readonly stopped: ReadonlyArray<{ readonly taskId: string; readonly ownerId: string }>;
+}
+
+/** The send context from the loaded chat; tasks of requests not loaded are not seen. */
+export function assistantGroupSendContext(
+  state: AssistantGroupChatState | null,
+  reply: AssistantGroupReplyRef | null,
+): AssistantGroupSendContext {
+  const target = reply === null ? undefined : state?.messages.get(reply.id);
+  if (reply !== null && target === undefined) {
+    // Older than the loaded history. A member's answer lies in a request that has started; what
+    // of it stopped is not known here.
+    return reply.to === null
+      ? { replyOwner: null, request: null, stopped: [] }
+      : {
+          replyOwner: { name: reply.to },
+          request: { projectId: reply.projectId, started: true, ownerId: null },
+          stopped: [],
+        };
+  }
+  const requestId = target?.requestId;
+  const request =
+    requestId === undefined
+      ? undefined
+      : (state?.messages.get(requestId) ?? state?.requests.get(requestId));
+  const tasks = [...(state?.tasks.values() ?? [])];
+  const ofRequest = tasks.filter(
+    // By `request_id` alone, as the server counts them: a task from before requests had ids
+    // neither starts nor stops its request.
+    (task) => requestId !== undefined && task.requestId === requestId,
+  );
+  const roots = ofRequest.filter((task) => task.kind === "root");
+  const owners = [...new Set(roots.map((task) => task.ownerId))];
+  const answersTask = target?.author === "assistant" && target.taskId != null;
+  const replyTask = answersTask ? state?.tasks.get(target.taskId!) : undefined;
+  return {
+    replyOwner:
+      replyTask !== undefined
+        ? { id: replyTask.ownerId }
+        : answersTask && reply?.to != null
+          ? { name: reply.to }
+          : null,
+    request:
+      request === undefined
+        ? null
+        : {
+            projectId: request.projectId ?? null,
+            started: ofRequest.length > 0,
+            ownerId: owners.length === 1 ? owners[0]! : null,
+          },
+    stopped: tasks
+      .filter(
+        (task) =>
+          task.kind === "root" &&
+          (task.status === "paused" || task.status === "failed") &&
+          (requestId === undefined || task.requestId === requestId),
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map((task) => ({ taskId: task.id, ownerId: task.ownerId })),
+  };
+}
+
+const replyOwnerKey = (owner: AssistantGroupSendContext["replyOwner"]) =>
+  owner === null ? null : "id" in owner ? `id:${owner.id}` : `name:${owner.name}`;
+
+/** Equal contexts route a draft alike, so the recipients line keeps the one it has. */
+export function assistantGroupSendContextEqual(
+  left: AssistantGroupSendContext,
+  right: AssistantGroupSendContext,
+): boolean {
+  const [a, b] = [left.request, right.request];
+  return (
+    replyOwnerKey(left.replyOwner) === replyOwnerKey(right.replyOwner) &&
+    (a === null || b === null
+      ? a === b
+      : a.projectId === b.projectId && a.started === b.started && a.ownerId === b.ownerId) &&
+    left.stopped.length === right.stopped.length &&
+    left.stopped.every(
+      (task, index) =>
+        task.taskId === right.stopped[index]!.taskId &&
+        task.ownerId === right.stopped[index]!.ownerId,
+    )
+  );
+}
+
 /**
- * Who a draft will reach, for the line under the composer, in the server's order: leading
- * mentions, the member it replies to, the only member, then the lead. The server still decides.
+ * The line under the composer: who a draft reaches, or why the server would refuse it, worked out
+ * as `AssistantGroups.post` does before routing. The server still decides.
  */
-export function assistantGroupRecipientsPreview(
-  text: string,
-  members: ReadonlyArray<Recipient>,
-  lead: Recipient | null,
-  replyTo: string | null = null,
-): string | null {
+export function assistantGroupRecipientsPreview(input: {
+  readonly text: string;
+  readonly members: ReadonlyArray<Recipient>;
+  readonly lead: Recipient | null;
+  /** From `assistantGroupLeadCanRoute`; only `false` predicts a refusal. */
+  readonly leadCanRoute?: boolean | undefined;
+  /** The group's projects, for `#project` and for whether the lead must pick one. */
+  readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly name: string }>;
+  /** The composer's project for a new request, if any. */
+  readonly projectId: ProjectId | null;
+  readonly context: AssistantGroupSendContext;
+}): string | null {
+  const { text, members, lead, projects, context } = input;
   if (text.trim() === "") return null;
-  const picked = assistantGroupAddress(text, members);
-  if (picked !== null) {
+  const { request, replyOwner } = context;
+  // The server sends a reply to its owner only while they are a member.
+  const owners =
+    replyOwner === null
+      ? []
+      : members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
+  const decision = routeGroupMessage({
+    text,
+    members,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
+    stopped: context.stopped,
+    fromUser: true,
+    requestOwnerId: request?.ownerId ?? null,
+  });
+  // A resumed task's request has started and has its project, so nothing below applies.
+  if (decision?.kind === "resume") {
+    const owner = context.stopped.find((task) => task.taskId === decision.taskId)?.ownerId;
+    const name = members.find((member) => member.id === owner)?.name ?? "the member";
+    return `Resumes ${name}'s work`;
+  }
+  const mentioned = assistantGroupProjectMentions(text, projects);
+  const projectId =
+    request?.projectId ??
+    input.projectId ??
+    (mentioned.length === 1 ? mentioned[0]!.id : null) ??
+    (projects.length === 1 ? projects[0]!.id : null);
+  const started = request?.started === true;
+  const needsProject = !started && projectId === null && projects.length > 1;
+  const unrouted = request !== null && !started;
+  if (decision !== null && !needsProject && !unrouted) {
+    const picked = decision.ids.flatMap((id) => members.filter((member) => member.id === id));
     return picked.length === members.length && members.length > 1
       ? "To everyone"
       : `To ${joinNames(picked.map((member) => member.name))}`;
   }
-  if (replyTo !== null) return `To ${replyTo}`;
-  if (members.length === 1) return `To ${members[0]!.name}`;
-  return lead === null ? "Waits for a lead" : `${lead.name} (lead) will route it`;
+  const cannot = lead === null || input.leadCanRoute === false;
+  if (needsProject && cannot) {
+    return lead === null
+      ? "Pick a project first: the group has no lead to choose one"
+      : `Pick a project first: ${lead.name} (lead) can't choose one`;
+  }
+  if (lead === null) return "Waits for a lead";
+  if (cannot) {
+    return unrouted
+      ? `${lead.name} (lead) can't route this request: switch its model`
+      : `${lead.name} (lead) can't route: mention someone with @`;
+  }
+  return needsProject
+    ? `${lead.name} (lead) will pick the project`
+    : `${lead.name} (lead) will route it`;
+}
+
+/**
+ * Whether the server would let the lead route, on the model it routes on (`AssistantGroups`
+ * `leadSelection`): its conversation's, else its home project's default. Undefined while its
+ * conversation's shell is missing (shells may omit threads, so missing is not gone) or the server
+ * predates the flag.
+ */
+export function assistantGroupLeadCanRoute(input: {
+  readonly lead: Pick<Assistant, "threadId" | "projectId">;
+  /** The lead conversation's model; undefined while its thread is not loaded. */
+  readonly threadModel: ModelSelection | undefined;
+  readonly settings: ServerSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** The lead's home project, for its folder rule. */
+  readonly project: LegacyProjectSettingsFields | null;
+}): boolean | undefined {
+  if (input.lead.threadId !== null && input.threadModel === undefined) return undefined;
+  const selection =
+    input.threadModel ??
+    assistantHomeModel(input.settings, input.lead.projectId, input.project, input.providers);
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  // The server has no instance to route on either.
+  if (provider === undefined) return false;
+  return provider.supportsAssistantGroupRouting;
 }
 
 export type AssistantGroupMentionOption<M extends Recipient> =

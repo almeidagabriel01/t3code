@@ -16,6 +16,8 @@ import {
 import {
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
+  type AssistantGroupReplyRef,
+  type AssistantGroupSendContext,
 } from "@t3tools/client-runtime/assistantGroupChat";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -391,6 +393,21 @@ export function useAssistantGroupChat(
       ),
     ),
   );
+}
+
+/** The chat a group composer reads what routes its draft from: `useAssistantGroupChat`'s. */
+export interface AssistantGroupChatRef {
+  readonly teamId: AssistantTeamId;
+  readonly scope: AssistantGroupScope | null | undefined;
+  readonly reply: AssistantGroupReplyRef | null;
+}
+
+/** What routes a draft besides its text, from the group's chat; changes only when that does. */
+export function useAssistantGroupSendContext(
+  environmentId: EnvironmentId,
+  chat: AssistantGroupChatRef,
+): AssistantGroupSendContext {
+  return useAtomValue(assistantsEnvironment.groupSendContext({ environmentId, ...chat }));
 }
 
 /** The groups of every connected environment, for what must watch them outside a component. */

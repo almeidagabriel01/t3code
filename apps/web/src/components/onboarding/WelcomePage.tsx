@@ -90,8 +90,14 @@ import { serverEnvironment } from "../../state/server";
 import {
   readEnvironmentScope,
   useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  useEnvironmentsScopeAccess,
   useEnvironmentsWithScope,
 } from "../../state/session";
+import {
+  SCOPE_ACCESS_UNAVAILABLE_MESSAGE,
+  scopeAccessShowsBanner,
+} from "@t3tools/client-runtime/state/sessionScope";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
@@ -429,6 +435,8 @@ function AgentsSection({
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const providersAccess = useEnvironmentScopeAccess(environmentId, PROVIDERS_MANAGE_SCOPES);
+  const terminalAccess = useEnvironmentScopeAccess(environmentId, TERMINAL_OPERATE_SCOPES);
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
   const [addingProvider, setAddingProvider] = useState(false);
@@ -603,14 +611,14 @@ function AgentsSection({
   };
 
   const notes = [
-    !canOperateTerminal &&
+    scopeAccessShowsBanner(terminalAccess) &&
     [...found, ...available].some(
       (provider) =>
         needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
     )
       ? "This connection cannot control terminals."
       : null,
-    !canManageProviders &&
+    scopeAccessShowsBanner(providersAccess) &&
     (acpAllowed ||
       [...found, ...available].some(
         (provider) =>
@@ -1219,6 +1227,7 @@ function AgentInstallTerminal({
 }) {
   const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const setupTerminalAccess = useEnvironmentScopeAccess(environmentId, TERMINAL_OPERATE_SCOPES);
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
     false,
@@ -1315,7 +1324,7 @@ function AgentInstallTerminal({
     >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-2xs font-medium text-muted-foreground">
-          {!canOperateTerminal ? (
+          {scopeAccessShowsBanner(setupTerminalAccess) ? (
             "This connection cannot control terminals."
           ) : setupState === "writeFailed" ? (
             <>
@@ -1371,6 +1380,8 @@ function AgentInstallTerminal({
   );
 }
 
+const PROVIDERS_MANAGE_SCOPES = [AuthProvidersManageScope];
+const TERMINAL_OPERATE_SCOPES = [AuthTerminalOperateScope];
 const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
 
 // Creates the selected projects, then imports each one's agent history. Owns retry state so a
@@ -1398,6 +1409,7 @@ function useProjectImport({
   ) => Promise<boolean>;
 }) {
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
+  const importAccess = useEnvironmentsScopeAccess(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const importWarningRef = useRef("");
@@ -1456,7 +1468,14 @@ function useProjectImport({
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
   );
-  const visibleImportError = canWrite && canImport ? "" : IMPORT_PERMISSION_MESSAGE;
+  const visibleImportError =
+    canWrite && canImport
+      ? ""
+      : scans.some((scan) => importAccess.get(scan.environmentId) === "unknown")
+        ? ""
+        : scans.some((scan) => importAccess.get(scan.environmentId) === "missing")
+          ? IMPORT_PERMISSION_MESSAGE
+          : SCOPE_ACCESS_UNAVAILABLE_MESSAGE;
 
   const importedThreadTotal = () =>
     lastImportSelectionRef.current.reduce(

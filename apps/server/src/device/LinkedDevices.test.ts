@@ -60,6 +60,7 @@ const OTHER_LINK_TOKEN = "other-link-token";
 const settingsService = (settings: Ref.Ref<Settings>) =>
   ServerSettings.ServerSettingsService.of({
     updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
+    modifySettings: () => Effect.die("Unexpected settings modification"),
     withSettingsSnapshot: (use) => Effect.flatMap(Ref.get(settings), use),
     start: Effect.void,
     ready: Effect.void,

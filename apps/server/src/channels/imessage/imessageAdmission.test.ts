@@ -80,8 +80,15 @@ const sentFor = (text: string, extra: Partial<ImessageAdmissionMemory["sent"][nu
   id: 7,
   chatGuid: CHAT,
   textHash: fingerprintText(text),
+  firstSentAtMs: NOW_MS,
   sentAtMs: NOW_MS,
   ...extra,
+});
+
+const seenFor = (text: string, dateMs: number) => ({
+  chatGuid: CHAT,
+  textHash: fingerprintText(text),
+  dateMs,
 });
 
 const MESSAGE = "message";
@@ -122,14 +129,26 @@ const cases: ReadonlyArray<Case> = [
   { name: "other account: two chats", row: friendRow({ chat_join_count: 2 }), expect: "chat" },
   { name: "other account: no chat guid", row: friendRow({ chat_guid: null }), expect: "chat" },
   {
-    name: "other account: attachment flag",
-    row: friendRow({ cache_has_attachments: 1 }),
-    expect: "attachment",
+    name: "other account: attachment flag is answered, never dropped",
+    row: friendRow({ cache_has_attachments: 1, text: null }),
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ text: "", attachment: true }),
   },
   {
-    name: "other account: attachment placeholder",
-    row: friendRow({ text: "￼" }),
-    expect: "attachment",
+    name: "other account: attachment placeholder keeps its caption",
+    row: friendRow({ text: "￼ look" }),
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ text: "look", attachment: true }),
+  },
+  {
+    name: "other account: an attachment in a group is still not read",
+    row: friendRow({ cache_has_attachments: 1, chat_join_count: 2 }),
+    expect: "chat",
+  },
+  {
+    name: "an attachment from someone not allowed is still not read",
+    row: friendRow({ cache_has_attachments: 1, sender_handle: "+15559999999" }),
+    expect: "sender",
   },
   {
     name: "other account: tapback",
@@ -175,6 +194,7 @@ const cases: ReadonlyArray<Case> = [
         chatGuid: CHAT,
         textHash: fingerprintText("hello"),
         dateMs: NOW_MS,
+        fromMe: true,
       });
     },
   },
@@ -211,6 +231,39 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ text: "Jarvis:  hi\n" }),
     memory: { sent: [sentFor("Jarvis: hi")], seen: [] },
     expect: "own_reply",
+  },
+  {
+    name: "self chat: the echo of an earlier send of a reply sent again is still skipped",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi", { firstSentAtMs: NOW_MS, sentAtMs: NOW_MS + 20 * 60_000 })],
+      seen: [],
+    },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: the twin of an echo leaves the fingerprint to the next send's echo",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi")],
+      seen: [{ ...seenFor("Jarvis: hi", NOW_MS - 1_000), fromMe: false }],
+    },
+    expect: "mirrored",
+  },
+  {
+    name: "self chat: a second echo moments after the first spends the echo its send is owed",
+    row: selfRow({ text: "Jarvis: hi" }),
+    memory: {
+      sent: [sentFor("Jarvis: hi")],
+      seen: [{ ...seenFor("Jarvis: hi", NOW_MS - 1_000), fromMe: true }],
+    },
+    expect: "own_reply",
+  },
+  {
+    name: "self chat: a seen entry kept before sides were stored still marks a twin",
+    row: selfRow(),
+    memory: { sent: [], seen: [{ ...seenFor("hello", NOW_MS - 1_000), fromMe: null }] },
+    expect: "mirrored",
   },
   {
     name: "self chat: same text long after sending is the user's",
@@ -255,7 +308,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ is_from_me: 0, sender_handle: ME, sender_service: "iMessage" }),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS + 3_000 }],
+      seen: [{ ...seenFor("hello", NOW_MS + 3_000), fromMe: true }],
     },
     expect: "mirrored",
   },
@@ -264,7 +317,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow(),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS - 60_000 }],
+      seen: [{ ...seenFor("hello", NOW_MS - 60_000), fromMe: false }],
     },
     expect: MESSAGE,
   },
@@ -273,7 +326,7 @@ const cases: ReadonlyArray<Case> = [
     row: selfRow({ text: "different" }),
     memory: {
       sent: [],
-      seen: [{ chatGuid: CHAT, textHash: fingerprintText("hello"), dateMs: NOW_MS }],
+      seen: [{ ...seenFor("hello", NOW_MS), fromMe: false }],
     },
     expect: MESSAGE,
   },
@@ -290,7 +343,17 @@ const cases: ReadonlyArray<Case> = [
   {
     name: "self chat: attachment",
     row: selfRow({ cache_has_attachments: 1 }),
-    expect: "attachment",
+    expect: "message",
+    check: (admission) => expect(admission).toMatchObject({ attachment: true }),
+  },
+  {
+    name: "your attachment to a friend is never answered",
+    row: selfRow({
+      cache_has_attachments: 1,
+      chat_guid: `iMessage;-;${FRIEND}`,
+      chat_identifier: FRIEND,
+    }),
+    expect: "other_chat",
   },
   {
     name: "self chat: tapback",
@@ -358,6 +421,15 @@ describe("toImessageInbound", () => {
       },
       text: "hello",
       receivedAt: appleDateToIso(DATE, 10),
+    });
+  });
+
+  it("marks an attachment it cannot pass on, so the bridge answers it", () => {
+    const admission = admitImessageRow(friendRow({ cache_has_attachments: 1 }), config, empty);
+    if (admission.type !== "message") throw new Error("expected a message");
+    expect(toImessageInbound(admission, "imessage")).toMatchObject({
+      text: "hello",
+      attachmentProblem: "unsupported",
     });
   });
 });

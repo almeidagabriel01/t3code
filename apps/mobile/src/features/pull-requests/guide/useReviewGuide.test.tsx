@@ -46,7 +46,7 @@ vi.mock("../../../state/pull-requests", () => ({
   composerPullRequests: {
     reviewGuide: (target: { number: number; environmentId: string }) =>
       target.environmentId === "environment" && target.number === 1 ? 1 : 2,
-    generateReviewGuide: { permissionAtom: () => "permission" },
+    generateReviewGuide: { permissionAtom: () => "permission", accessAtom: () => "access" },
   },
 }));
 vi.mock("../../../state/query", () => ({

@@ -40,6 +40,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     detail: Schema.optional(Schema.String),
     revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),
+  /** Ends the native work a released session ran for this thread. */
+  Schema.Struct({
+    type: Schema.Literal("provider-session.work.settle"),
+    providerSessionId: ProviderSessionId,
+    releasedAt: Schema.DateTimeUtcFromString,
+  }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
     runId: RunId,
@@ -130,6 +136,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
   "provider-session.detach",
+  "provider-session.work.settle",
   "provider-thread.rollback",
   "checkpoint.capture",
   "scheduled-tasks.cleanup",

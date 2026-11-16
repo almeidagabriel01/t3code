@@ -58,8 +58,36 @@ it.effect("upgrades tables an older build created in place, keeping their rows",
         created_at, updated_at)
       VALUES ('gt1', 'g1', 'gt1', 'root', 'm1', 'a', 'do', 'running', 5, 't', 't')`;
 
+    // Sent pieces from before a piece sent again owed an echo per send.
+    yield* sql`
+      CREATE TABLE imessage_sent (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, delivery_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL, chat_guid TEXT NOT NULL, text_hash TEXT NOT NULL,
+        sent_at_ms INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (delivery_id, chunk_index)
+      )`;
+    yield* sql`INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms,
+      consumed) VALUES ('echoed', 0, 'c', 'h', 1, 1), ('waiting', 0, 'c', 'h', 1, 0)`;
+    yield* sql`
+      CREATE TABLE imessage_seen (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, chat_guid TEXT NOT NULL, text_hash TEXT NOT NULL,
+        date_ms INTEGER NOT NULL
+      )`;
+    yield* sql`INSERT INTO imessage_seen (chat_guid, text_hash, date_ms) VALUES ('c', 'h', 1)`;
+
     yield* ensureForkSchema();
     yield* ensureForkSchema();
+
+    assert.deepStrictEqual(
+      yield* sql`SELECT delivery_id, echoes_due, first_sent_at_ms FROM imessage_sent ORDER BY id`,
+      [
+        { delivery_id: "echoed", echoes_due: 0, first_sent_at_ms: null },
+        { delivery_id: "waiting", echoes_due: 1, first_sent_at_ms: null },
+      ],
+    );
+    assert.deepStrictEqual(yield* sql`SELECT text_hash, from_me FROM imessage_seen`, [
+      { text_hash: "h", from_me: null },
+    ]);
 
     assert.deepStrictEqual(
       yield* sql`SELECT task_id, hops, undelivered_hops, expected_result FROM assistant_group_tasks`,
@@ -529,6 +557,31 @@ it.effect("gives an older group chat its requests: every message and task joins 
       );
     }
   }).pipe(Effect.provide(database)),
+);
+
+it.effect.each(["new", "old"] as const)(
+  "keeps usage limit alert state across starts of a %s database",
+  (shape) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* ensureForkSchema();
+      // "old": a database from a build before the table existed.
+      if (shape === "old") yield* sql`DROP TABLE usage_limit_alert_state`;
+      yield* ensureForkSchema();
+      yield* sql`INSERT INTO usage_limit_alert_state
+        (instance_id, account_key, window_id, armed, episode, updated_at)
+        VALUES ('claudeAgent', 'k', 'seven_day', 0, 1, 't')`;
+      yield* ensureForkSchema();
+
+      assert.deepStrictEqual(
+        yield* sql`SELECT instance_id, episode, pending FROM usage_limit_alert_state`,
+        [{ instance_id: "claudeAgent", episode: 1, pending: 0 }],
+      );
+      // One row per instance, account and window.
+      yield* sql`INSERT INTO usage_limit_alert_state
+        (instance_id, account_key, window_id, armed, episode, updated_at)
+        VALUES ('claudeAgent', 'k', 'seven_day', 1, 2, 't')`.pipe(Effect.flip);
+    }).pipe(Effect.provide(database)),
 );
 
 it.effect.each(["new", "old", "half-migrated", "scope-column-present"] as const)(

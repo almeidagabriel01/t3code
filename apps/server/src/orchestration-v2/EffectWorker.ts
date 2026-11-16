@@ -138,6 +138,26 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.work.settle":
+            return threads
+              .dispatch({
+                type: "provider-session.work.settle",
+                commandId: CommandId.make(`${effect.id}:settle`),
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                releasedAt: effect.request.releasedAt,
+              })
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })

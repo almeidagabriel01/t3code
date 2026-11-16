@@ -18,6 +18,7 @@ import {
   canDismissAssistantTask,
   assistantReplyText,
   taskEventActivity,
+  taskEventActivitySegments,
   usageLimitLabel,
 } from "./assistantTasks.ts";
 import { presentThreadShell } from "./state/models.ts";
@@ -58,6 +59,43 @@ const task = (threadId: string, createdAt: string): AssistantTask => ({
   projectId: "p1" as ProjectId,
   title: `Task ${threadId}`,
   createdAt,
+});
+
+describe("taskEventActivitySegments", () => {
+  it.each([
+    [
+      "both present",
+      { title: "Fix login", label: "Finished", project: "Payments" },
+      [
+        { kind: "title", text: "Fix login", separated: false },
+        { kind: "label", text: "Finished", separated: true },
+        { kind: "project", text: "Payments", separated: true },
+      ],
+    ],
+    [
+      "no title",
+      { title: " ", label: "Finished", project: "Payments" },
+      [
+        { kind: "label", text: "Finished", separated: false },
+        { kind: "project", text: "Payments", separated: true },
+      ],
+    ],
+    [
+      "no project",
+      { title: "Fix login", label: "Finished", project: "" },
+      [
+        { kind: "title", text: "Fix login", separated: false },
+        { kind: "label", text: "Finished", separated: true },
+      ],
+    ],
+    [
+      "neither",
+      { title: "", label: "Finished", project: null },
+      [{ kind: "label", text: "Finished", separated: false }],
+    ],
+  ] as const)("%s", (_name, parts, expected) => {
+    expect(taskEventActivitySegments(parts)).toEqual(expected);
+  });
 });
 
 describe("assistantTaskState", () => {

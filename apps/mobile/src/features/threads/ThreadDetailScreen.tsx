@@ -241,6 +241,7 @@ export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
+  readonly lacksOperatePermission?: boolean;
   readonly selectedThread: EnvironmentThreadShell;
   /** Use this for detail reads; it stays null until queued creation reaches the server. */
   readonly selectedThreadDetailRef: ScopedThreadRef | null;
@@ -1838,6 +1839,7 @@ function ThreadDetailBody(
                           >
                             <PendingApprovalCard
                               canOperateThread={props.canOperateThread}
+                              lacksOperatePermission={props.lacksOperatePermission}
                               approval={props.activePendingApproval}
                               respondingApprovalId={props.respondingApprovalId}
                               onRespond={props.onRespondToApproval}
@@ -1850,6 +1852,7 @@ function ThreadDetailBody(
                             threadId={props.selectedThread.id}
                             workspaceRoot={props.threadCwd}
                             canOperateThread={props.canOperateThread}
+                            lacksOperatePermission={props.lacksOperatePermission}
                             pendingUserInput={props.activePendingUserInput}
                             maxHeight={pendingUserInputMaxHeight}
                             collapsed={userInputCollapsed}
@@ -1935,6 +1938,7 @@ function ThreadDetailBody(
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}
+                        lacksOperatePermission={props.lacksOperatePermission}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
                         placeholder={

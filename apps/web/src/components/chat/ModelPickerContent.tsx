@@ -345,6 +345,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onFocusEffort?: () => void;
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
+  /** Hears when a search starts or ends. */
+  onSearchingChange?: (searching: boolean) => void;
 }) {
   const {
     searchInputRef,
@@ -357,7 +359,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onRequestClose,
     onOpenProviderSetup,
   } = props;
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQueryState] = useState("");
+  const setSearchQuery = (next: string) => {
+    if (next.trim().length > 0 !== searchQuery.trim().length > 0) {
+      props.onSearchingChange?.(next.trim().length > 0);
+    }
+    setSearchQueryState(next);
+  };
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers

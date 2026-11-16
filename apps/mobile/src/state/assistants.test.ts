@@ -1,3 +1,4 @@
+import { AssistantError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -122,17 +123,20 @@ describe("group chat hooks", () => {
     });
     post.mockResolvedValueOnce({
       _tag: "Failure",
-      cause: Cause.fail({ message: "needs a mention", reason: "mention_required" }),
+      cause: Cause.fail(
+        new AssistantError({ message: "needs a mention", reason: "mention_required" }),
+      ),
     });
     expect(await actions.post({ teamId: "g1", text: "hi" } as never)).toEqual({
       ok: false,
       message: "needs a mention",
       reason: "mention_required",
     });
+    // Anything but the server's typed answer may follow a post it took: it is unconfirmed.
     post.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail({ message: "boom" }) });
     expect(await actions.post({ teamId: "g1", text: "hi" } as never)).toMatchObject({
       ok: false,
-      reason: null,
+      reason: "unconfirmed",
     });
   });
 

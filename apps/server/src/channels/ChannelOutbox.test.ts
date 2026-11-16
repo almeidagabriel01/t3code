@@ -2,7 +2,9 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -100,7 +102,7 @@ it.effect.each([
 );
 
 const failures = [
-  { name: "unknown outcome", error: { deliveryOutcome: "unknown" as const }, state: "ambiguous" },
+  { name: "unknown outcome", error: { deliveryOutcome: "unknown" as const }, state: "pending" },
   ...(["automation_denied", "messages_not_signed_in", "chat_not_found"] as const).map((code) => ({
     name: code,
     error: { deliveryErrorCode: code },
@@ -176,6 +178,208 @@ it.effect("it gives up after ten attempts, with delays capped at five minutes", 
     assert.lengthOf(sent, 10);
     const [row] = yield* outboxRows;
     assert.deepEqual([row!.state, row!.attempts, row!.last_error_code], ["failed", 10, "unknown"]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a send that may have posted is retried, and after ten tries is left ambiguous", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { sent, transport } = fakeTransport(() =>
+      Effect.fail(deliveryError({ deliveryOutcome: "unknown", deliveryErrorCode: "timeout" })),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("a"));
+    for (let attempt = 0; attempt < 12; attempt++) {
+      yield* outbox.drain;
+      yield* TestClock.adjust("300 seconds");
+    }
+    assert.lengthOf(sent, 10);
+    const [row] = yield* outboxRows;
+    assert.deepEqual(
+      [row!.state, row!.attempts, row!.last_error_code],
+      ["ambiguous", 10, "timeout"],
+    );
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("a network failure followed by success delivers the message once", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { sent, transport } = fakeTransport((_message, call) =>
+      call === 1
+        ? Effect.fail(deliveryError({ deliveryOutcome: "unknown", deliveryErrorCode: "unknown" }))
+        : Effect.succeed("ts"),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("a"));
+    yield* outbox.drain;
+    yield* TestClock.adjust("2 seconds");
+    yield* outbox.drain;
+    yield* TestClock.adjust("1 hour");
+    yield* outbox.drain;
+    assert.lengthOf(sent, 2);
+    const [row] = yield* outboxRows;
+    assert.deepEqual([row!.state, row!.attempts], ["sent", 1]);
+  }).pipe(Effect.provide(layer)),
+);
+
+/** Fails every send of `a` until `down` is false; every other delivery goes through. */
+const outage = () => {
+  const state = { down: true };
+  const { sent, transport } = fakeTransport((m) =>
+    m.deliveryId === "a" && state.down
+      ? Effect.fail(deliveryError({ deliveryOutcome: "unknown", deliveryErrorCode: "unknown" }))
+      : Effect.succeed("ts"),
+  );
+  return { state, sent, transport };
+};
+
+const exhaust = Effect.gen(function* () {
+  const outbox = yield* ChannelOutbox.ChannelOutbox;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    yield* outbox.drain;
+    yield* TestClock.adjust("300 seconds");
+  }
+});
+
+it.effect("once a send to the channel works again, what ran out of tries goes once more", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { state, sent, transport } = outage();
+    yield* registry.register(transport);
+    const counts: number[] = [];
+    yield* outbox.undeliveredCount("imessage").pipe(
+      Stream.runForEach((n) => Effect.sync(() => void counts.push(n))),
+      Effect.forkScoped,
+    );
+    yield* outbox.enqueue(message("a"));
+    yield* exhaust;
+    assert.equal((yield* outboxRows)[0]!.state, "ambiguous");
+    // Another chat is still down, so the next success elsewhere on this connection brings it back.
+    yield* outbox.enqueue({ ...message("b"), destination: { ...dmAddress, connectionId: "c2" } });
+    yield* outbox.drain;
+    assert.equal((yield* outboxRows)[0]!.state, "ambiguous");
+    state.down = false;
+    yield* outbox.enqueue(message("c"));
+    yield* outbox.drain;
+    yield* outbox.drain;
+    const rows = yield* outboxRows;
+    assert.deepEqual(
+      rows.map((row) => [row.delivery_id, row.state]),
+      [
+        ["a", "sent"],
+        ["b", "sent"],
+        ["c", "sent"],
+      ],
+    );
+    assert.equal(sent.filter((m) => m.deliveryId === "a").length, 11);
+    yield* Effect.yieldNow;
+    assert.deepEqual(counts.at(-1), 0);
+    assert.include(counts, 1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("a requeued message that fails again is not requeued a second time", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { sent, transport } = outage();
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("a"));
+    yield* exhaust;
+    yield* outbox.enqueue(message("b"));
+    yield* exhaust;
+    assert.equal(sent.filter((m) => m.deliveryId === "a").length, 20);
+    yield* outbox.enqueue(message("c"));
+    yield* exhaust;
+    assert.equal(sent.filter((m) => m.deliveryId === "a").length, 20);
+    assert.equal((yield* outboxRows)[0]!.state, "ambiguous");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("resend puts every undelivered message of a channel back in line", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    let refuse = true;
+    const { sent, transport } = fakeTransport(() =>
+      refuse
+        ? Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" }))
+        : Effect.succeed("ts"),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("a"));
+    yield* outbox.drain;
+    assert.equal((yield* outboxRows)[0]!.state, "failed");
+    assert.equal(yield* outbox.resend("telegram"), 0);
+    refuse = false;
+    assert.equal(yield* outbox.resend("imessage"), 1);
+    assert.equal(yield* outbox.resend("imessage"), 0);
+    yield* outbox.drain;
+    assert.lengthOf(sent, 2);
+    assert.deepEqual(
+      (yield* outboxRows).map((row) => [row.state, row.attempts]),
+      [["sent", 0]],
+    );
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("resend and the undelivered count keep to the last day", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const { sent, transport } = fakeTransport(() =>
+      Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" })),
+    );
+    const count = Stream.runHead(outbox.undeliveredCount("imessage"));
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("old"));
+    yield* outbox.drain;
+    assert.deepEqual(yield* count, Option.some(1));
+    yield* TestClock.adjust("25 hours");
+    yield* outbox.drain;
+    assert.deepEqual(yield* count, Option.some(0));
+    yield* outbox.enqueue(message("new"));
+    yield* outbox.drain;
+    assert.deepEqual(yield* count, Option.some(1));
+    assert.equal(yield* outbox.resend("imessage"), 1);
+    assert.deepEqual(yield* count, Option.some(0));
+    yield* outbox.drain;
+    assert.deepEqual(
+      sent.map((m) => m.deliveryId),
+      ["old", "new", "new"],
+    );
+    assert.equal(yield* outbox.resend("imessage"), 1);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("old records of sent pieces are kept while their delivery is still undelivered", () =>
+  Effect.gen(function* () {
+    const outbox = yield* ChannelOutbox.ChannelOutbox;
+    const registry = yield* ChannelTransport.ChannelTransportRegistry;
+    const sql = yield* SqlClient.SqlClient;
+    const { transport } = fakeTransport((m) =>
+      m.deliveryId === "stuck"
+        ? Effect.fail(deliveryError({ deliveryErrorCode: "chat_not_found" }))
+        : Effect.succeed("ts"),
+    );
+    yield* registry.register(transport);
+    yield* outbox.enqueue(message("stuck"));
+    yield* outbox.enqueue(message("done"));
+    yield* outbox.drain;
+    for (const id of ["stuck", "done", "gone"]) {
+      yield* sql`INSERT INTO imessage_sent (delivery_id, chunk_index, chat_guid, text_hash, sent_at_ms)
+        VALUES (${id}, 0, 'chat', ${id}, 0)`;
+    }
+    yield* ChannelOutbox.forgetSentPieces(sql, "imessage_sent", 1_000);
+    const left = yield* sql<{ delivery_id: string }>`SELECT delivery_id FROM imessage_sent`;
+    assert.deepEqual(
+      left.map((row) => row.delivery_id),
+      ["stuck"],
+    );
   }).pipe(Effect.provide(layer)),
 );
 

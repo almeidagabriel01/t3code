@@ -33,8 +33,9 @@ interface RunFacts extends NoticeMark {
 }
 
 /**
- * A run is news when it was asked for, changed files or HEAD, or ended in another state. A stopped
- * run is judged before its checkpoint; only news is marked, so the capture's re-send is judged again.
+ * A run is news when it, or a run since the last notice, was asked for or changed files, or when
+ * it moved HEAD or ended in another state. A stopped run is judged before its checkpoint; only news
+ * is marked, so the capture's re-send is judged again.
  */
 function isNews(previous: NoticeMark | undefined, run: RunFacts): boolean {
   if (previous === undefined) return true;
@@ -77,6 +78,12 @@ export class TaskEventNotices extends Context.Service<
     readonly foldQueued: (threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("t3/assistants/TaskEventNotices") {}
+
+/**
+ * Runs between the last notice and this one, newest first. They are runs no one was told about:
+ * held for work that resumes them, quiet, or a send that failed; a few in practice.
+ */
+const WINDOW_RUNS = 50;
 
 interface NoticeRow {
   readonly run_id: string;
@@ -124,6 +131,35 @@ const make = Effect.gen(function* () {
       asked: started?.senderThreadId !== undefined,
       changedFiles: checkpoint?.status === "ready" ? checkpoint.files.length : 0,
     } satisfies RunFacts;
+  });
+
+  /** What the runs after the marked one and before `run` brought; none when unreadable. */
+  const windowSince = Effect.fn("TaskEventNotices.windowSince")(function* (
+    run: TaskEventNotice["run"],
+    markedRunId: string | null,
+  ) {
+    const rows = yield* sql<{ readonly asked: number; readonly changed_files: number }>`
+      SELECT
+        COALESCE(MAX(json_extract(message.payload_json, '$.senderThreadId') IS NOT NULL), 0) AS asked,
+        COALESCE(SUM(CASE WHEN checkpoint.status = 'ready'
+          THEN json_array_length(checkpoint.payload_json, '$.files') END), 0) AS changed_files
+      FROM (
+        SELECT payload_json FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${run.threadId} AND status != 'rolled_back'
+          AND ordinal < (
+            SELECT ordinal FROM orchestration_v2_projection_runs WHERE run_id = ${run.id})
+          AND ordinal > COALESCE((
+            SELECT ordinal FROM orchestration_v2_projection_runs WHERE run_id = ${markedRunId}), -1)
+        ORDER BY ordinal DESC
+        LIMIT ${WINDOW_RUNS}
+      ) AS run
+      LEFT JOIN orchestration_v2_projection_messages AS message
+        ON message.message_id = json_extract(run.payload_json, '$.userMessageId')
+      LEFT JOIN orchestration_v2_projection_checkpoints AS checkpoint
+        ON checkpoint.checkpoint_id = json_extract(run.payload_json, '$.checkpointId')`.pipe(
+      Effect.orElseSucceed(() => []),
+    );
+    return { asked: (rows[0]?.asked ?? 0) > 0, changedFiles: rows[0]?.changed_files ?? 0 };
   });
 
   const isTaskEvent = (message: {
@@ -202,7 +238,13 @@ const make = Effect.gen(function* () {
               previous === undefined
                 ? undefined
                 : { runId: previous.run_id, status: previous.status, headSha: previous.head_sha };
-            if (!isNews(mark, facts)) return "unchanged" as const;
+            const window = yield* windowSince(notice.run, previous?.run_id ?? null);
+            const judged = {
+              ...facts,
+              asked: facts.asked || window.asked,
+              changedFiles: facts.changedFiles + window.changedFiles,
+            };
+            if (!isNews(mark, judged)) return "unchanged" as const;
             // The command id is the message id, so a send repeated after a crash lands once;
             // marking only after it succeeds never records an event nobody was told.
             const sent = yield* threads

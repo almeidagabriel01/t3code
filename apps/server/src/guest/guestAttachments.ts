@@ -91,7 +91,7 @@ export function repliesShowImage<Reply extends { readonly text: string }>(
  * Control characters and separators would break the name in headers and on disk, and direction
  * overrides would let `invoice\u202Efdp.exe` show as a PDF.
  */
-const safeName = (name: string, fallback: string) =>
+export const safeName = (name: string, fallback: string) =>
   name
     .replace(/[\p{Cc}\\/\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu, "_")
     .trim()

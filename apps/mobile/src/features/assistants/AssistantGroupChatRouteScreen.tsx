@@ -715,9 +715,8 @@ function RequestHeader(props: {
         <TaskEventActivityRow
           title={block.title}
           status={activity.status}
-          label={
-            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
-          }
+          label={activity.label}
+          project={props.projectName}
           onOpen={props.onToggle}
           action="Open request"
         />
@@ -1618,6 +1617,7 @@ export function AssistantGroupChatRouteScreen({
         disabled={archived || !actions.canPost}
         disabledReason={archived ? "Restore the group to write here" : null}
         replyingTo={replyTo}
+        chat={{ teamId, scope, reply: replyTo }}
         onJumpToReply={
           replyTo === null || live?.messages.get(replyTo.id) === undefined
             ? null

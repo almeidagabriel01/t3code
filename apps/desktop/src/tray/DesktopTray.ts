@@ -14,10 +14,24 @@ import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { TRAY_ICON_1X, TRAY_ICON_2X } from "./trayIcon.ts";
 import { trayMenuTemplate } from "./trayMenu.ts";
-import { TrayMenuPayload } from "./trayMenuPayload.ts";
+import { TrayMenuPayload, TrayMenuThread } from "./trayMenuPayload.ts";
 import { createTrayMenuGate } from "./trayMenuGate.ts";
 
 const EMPTY_MENU: DesktopTrayMenu = { attention: [], running: [], pinned: [], attentionCount: 0 };
+
+const decodeThread = Schema.decodeUnknownOption(TrayMenuThread);
+
+/** Keeps the rows that read; a dropped row is logged by section, without its content. */
+const readRows = Effect.fnUntraced(function* (section: string, rows: ReadonlyArray<unknown>) {
+  const kept = rows.flatMap((row) => {
+    const thread = decodeThread(row);
+    return thread._tag === "Some" ? [thread.value] : [];
+  });
+  if (kept.length < rows.length) {
+    yield* Effect.logWarning("tray rows dropped", { section, dropped: rows.length - kept.length });
+  }
+  return kept;
+});
 
 const macOSMajor = () => Number.parseInt(process.getSystemVersion().split(".")[0] ?? "0", 10);
 
@@ -131,21 +145,26 @@ export const installDesktopTray = Effect.fn("desktop.tray.install")(function* ()
       channel: SET_TRAY_MENU_CHANNEL,
       payload: TrayMenuPayload,
       result: Schema.Void,
-      handler: (menu, event) =>
-        Effect.sync(() => {
-          if (platform !== "darwin") return;
-          if (menu === null) {
-            hide();
-            return;
-          }
-          show();
-          attentionCount = menu.attentionCount;
-          syncTitle();
-          gate.update(menu);
-          const sender =
-            event === undefined ? undefined : Electron.webContents.fromId(event.sender.id);
-          if (sender !== undefined && !sender.isDestroyed()) listen(sender);
-        }),
+      handler: Effect.fn("desktop.tray.setMenu")(function* (payload, event) {
+        if (platform !== "darwin") return;
+        if (payload === null) {
+          hide();
+          return;
+        }
+        const menu: DesktopTrayMenu = {
+          attention: yield* readRows("attention", payload.attention),
+          running: yield* readRows("running", payload.running),
+          pinned: yield* readRows("pinned", payload.pinned),
+          attentionCount: payload.attentionCount,
+        };
+        show();
+        attentionCount = menu.attentionCount;
+        syncTitle();
+        gate.update(menu);
+        const sender =
+          event === undefined ? undefined : Electron.webContents.fromId(event.sender.id);
+        if (sender !== undefined && !sender.isDestroyed()) listen(sender);
+      }),
     }),
   );
 });

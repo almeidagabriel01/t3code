@@ -738,6 +738,8 @@ export function createNativeMemoryHarness() {
     grant: (values: readonly AuthEnvironmentScope[]) =>
       registry.set(grants(nativeEnv), AsyncResult.success(scopes(values))),
     revoke: () => registry.set(grants(nativeEnv), AsyncResult.success(scopes([]))),
+    grantDevice: (values: readonly AuthEnvironmentScope[]) =>
+      registry.set(grants(nativeDevice), AsyncResult.success(scopes(values))),
     dispose: () => {
       memory.dispose(registry);
       registry.dispose();

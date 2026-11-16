@@ -16,7 +16,7 @@ const { state, updateSettings, checkOtlpEndpoint, checkOtlpEndpointCommand } = v
     _tag: "Success" as const,
     value: { _tag: "Accepted" as const, latencyMs: 12 },
   })),
-  checkOtlpEndpointCommand: { permissionAtom: () => null },
+  checkOtlpEndpointCommand: { permissionAtom: () => null, accessAtom: () => null },
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({

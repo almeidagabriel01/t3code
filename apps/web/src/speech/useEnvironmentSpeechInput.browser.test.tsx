@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
+  useEnvironmentScopeAccess: (id: string) => (mocks.canDictate.has(id) ? "granted" : "missing"),
   usePreparedConnection: (environmentId: string | null) => {
     if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
     let prepared = mocks.prepared.get(environmentId);

@@ -255,16 +255,23 @@ export function applyProviderInstanceMutation(
 ): ServerSettings {
   const providerInstances = { ...settings.providerInstances };
   const providerBudgets = { ...settings.providerBudgets };
+  const alertInstances = { ...settings.usageLimitAlerts.instances };
   if (mutation.operation === "upsert" || mutation.operation === "create") {
     providerInstances[mutation.instanceId] = mutation.instance;
   } else {
-    // Removing a default instance only resets it, so its budget stays.
+    // Removing a default instance only resets it, so its budget and alerts stay.
     if (String(providerInstances[mutation.instanceId]?.driver) !== mutation.instanceId) {
       delete providerBudgets[mutation.instanceId];
+      delete alertInstances[mutation.instanceId];
     }
     delete providerInstances[mutation.instanceId];
   }
-  return { ...settings, providerInstances, providerBudgets };
+  return {
+    ...settings,
+    providerInstances,
+    providerBudgets,
+    usageLimitAlerts: { ...settings.usageLimitAlerts, instances: alertInstances },
+  };
 }
 
 const secretProviderConfigGuards = new Map(
@@ -364,6 +371,14 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * `updateSettings` with the patch worked out, by a pure function, from the settings it lands
+     * on, under the same write lock: no other write lands between that read and the write.
+     */
+    readonly modifySettings: (
+      patchOf: (current: ServerSettings) => ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
@@ -435,6 +450,15 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       updateTestSettings((currentSettings) =>
         Effect.succeed(
           applyServerSettingsPatch(currentSettings, withNormalizedFolderRules(patch, home)),
+        ),
+      ),
+    modifySettings: (patchOf) =>
+      updateTestSettings((currentSettings) =>
+        Effect.succeed(
+          applyServerSettingsPatch(
+            currentSettings,
+            withNormalizedFolderRules(patchOf(currentSettings), home),
+          ),
         ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
@@ -1425,7 +1449,7 @@ const make = Effect.gen(function* () {
   const updateSettingsWhileLocked = <E, R>(
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>,
     transition?: HubTransitionMarker,
-    patch: ServerSettingsPatch = {},
+    patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch) = {},
   ): Effect.Effect<ServerSettings, E | ServerSettingsError, R> =>
     Effect.gen(function* () {
       const { settings: current, parseFailure } = yield* reloadSettings;
@@ -1440,7 +1464,11 @@ const make = Effect.gen(function* () {
       // a removed provider's reference is cleared below rather than restored by persistence.
       const updated = withEchoedSecretReferences(current, yield* update(current));
       // Vet before secrets: a variable the policy hides from clients is not one they removed.
-      const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
+      const vetted = managed.vetWrite(
+        current,
+        yield* normalizeServerSettings(updated),
+        typeof patch === "function" ? patch(current) : patch,
+      );
       if (vetted._tag === "Locked") {
         return yield* new ServerSettingsError({
           settingsPath,
@@ -1510,10 +1538,15 @@ const make = Effect.gen(function* () {
     });
 
   const updateAndPersistSettings = (
-    patch: ServerSettingsPatch,
+    patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(updateSettingsWhileLocked(update, undefined, patch));
+
+  const applyPatchChecked = (patch: ServerSettingsPatch, current: ServerSettings) =>
+    ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+      Effect.as(applyServerSettingsPatch(current, withNormalizedFolderRules(patch, home))),
+    );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(getMaterializedSettings.pipe(Effect.flatMap(use)));
@@ -1642,11 +1675,9 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
-      updateAndPersistSettings(patch, (current) =>
-        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
-          Effect.as(applyServerSettingsPatch(current, withNormalizedFolderRules(patch, home))),
-        ),
-      ),
+      updateAndPersistSettings(patch, (current) => applyPatchChecked(patch, current)),
+    modifySettings: (patchOf) =>
+      updateAndPersistSettings(patchOf, (current) => applyPatchChecked(patchOf(current), current)),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {

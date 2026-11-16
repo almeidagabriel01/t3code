@@ -31,7 +31,7 @@ vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: () => vi.fn(),
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({ setCloudSpeechKey: vi.fn() }));
-vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/session", () => ({ useEnvironmentScopeAccess: () => "granted" }));
 vi.mock("../voice-input/voiceDestination", () => ({
   chooseVoiceDestination: mocks.choose,
   pendingCloudVoiceChoice: (...args: unknown[]) => {

@@ -299,6 +299,14 @@
       "types": "./src/state/keepAwake.ts",
       "default": "./src/state/keepAwake.ts"
     },
+    "./state/channelUndelivered": {
+      "types": "./src/state/channelUndelivered.ts",
+      "default": "./src/state/channelUndelivered.ts"
+    },
+    "./state/queryUpdatedAt": {
+      "types": "./src/state/queryUpdatedAt.ts",
+      "default": "./src/state/queryUpdatedAt.ts"
+    },
     "./state/telegramChannel": {
       "types": "./src/state/telegramChannel.ts",
       "default": "./src/state/telegramChannel.ts"
@@ -494,6 +502,10 @@
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"
+    },
+    "./state/sessionScope": {
+      "types": "./src/state/sessionScope.ts",
+      "default": "./src/state/sessionScope.ts"
     },
     "./state/usage-access": {
       "types": "./src/state/usageAccess.ts",

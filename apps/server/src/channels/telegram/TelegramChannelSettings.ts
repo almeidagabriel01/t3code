@@ -4,6 +4,7 @@
  * server secret store, never in that file and never in a reply. `start` must run once at server start.
  */
 import {
+  type TelegramChannelResendUndeliveredResult,
   TelegramChannelSettingsError,
   type TelegramChannelConfigureInput,
   type TelegramChannelSettings as TelegramChannelSettingsSnapshot,
@@ -25,6 +26,7 @@ import type * as Stream from "effect/Stream";
 
 import * as Secrets from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as ChannelOutbox from "../ChannelOutbox.ts";
 import * as TelegramChannelRuntime from "./TelegramChannelRuntime.ts";
 
 const StoredSettings = Schema.Struct({
@@ -71,6 +73,8 @@ export class TelegramChannelSettings extends Context.Service<
     ) => Effect.Effect<TelegramChannelSettingsSnapshot, TelegramChannelSettingsError>;
     /** The current status first, then each change. */
     readonly streamStatus: Stream.Stream<TelegramChannelStatusEvent>;
+    /** Puts every message the chat app never confirmed back in line. */
+    readonly resendUndelivered: Effect.Effect<TelegramChannelResendUndeliveredResult>;
     /** Brings the saved configuration up; failures are logged and leave Telegram off. */
     readonly start: Effect.Effect<void>;
   }
@@ -83,6 +87,7 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const secrets = yield* Secrets.ServerSecretStore;
   const runtime = yield* TelegramChannelRuntime.TelegramChannelRuntime;
+  const outbox = yield* ChannelOutbox.ChannelOutbox;
   const settingsPath = path.join(config.stateDir, SETTINGS_FILE_NAME);
   const lock = yield* Semaphore.make(1);
 
@@ -154,11 +159,13 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
     token: Option.Option<string>,
   ) {
     const status = yield* runtime.status;
+    const undelivered = yield* ChannelOutbox.undeliveredField(outbox, "telegram");
     return {
       enabled: stored.enabled,
       tokenConfigured: Option.isSome(token),
       allowedUserIds: stored.allowedUserIds,
       ...status,
+      ...undelivered,
     } satisfies TelegramChannelSettingsSnapshot;
   });
 
@@ -204,7 +211,8 @@ export const make = Effect.fn("TelegramChannelSettings.make")(function* () {
       return yield* snapshot(stored, yield* readToken);
     }),
     configure,
-    streamStatus: runtime.streamStatus,
+    streamStatus: ChannelOutbox.withUndeliveredCount(outbox, "telegram", runtime.streamStatus),
+    resendUndelivered: outbox.resend("telegram").pipe(Effect.map((requeued) => ({ requeued }))),
     start: lock.withPermits(1)(
       Effect.gen(function* () {
         yield* apply(yield* readStored, yield* readToken);

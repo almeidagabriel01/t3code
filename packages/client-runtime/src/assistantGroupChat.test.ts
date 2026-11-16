@@ -1,7 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import type {
   AssistantGroupMessage,
+  AssistantGroupMessageId,
   AssistantGroupTask,
   AssistantGroupsEvent,
   AssistantId,
@@ -24,6 +30,7 @@ import {
   assistantGroupShownOutgoing,
   assistantGroupHeldAttachments,
   createAssistantGroupOutgoingStore,
+  assistantGroupSendRequestId,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupComposerModel,
@@ -58,8 +65,11 @@ import {
   assistantGroupMentionTarget,
   assistantGroupMentionTargets,
   assistantGroupTaskReasonLabel,
+  assistantGroupLeadCanRoute,
   assistantGroupRecipientsPreview,
   assistantGroupRunningCount,
+  assistantGroupSendContext,
+  assistantGroupSendContextEqual,
   insertAssistantGroupMention,
   oldestAssistantGroupSeq,
   type AssistantGroupChatState,
@@ -572,31 +582,297 @@ describe("assistantGroupAwaitingRoute", () => {
 });
 
 describe("composer helpers", () => {
-  it.each([
-    ["", jarvis, null],
-    ["hello", jarvis, "Jarvis (lead) will route it"],
-    ["hello", null, "Waits for a lead"],
-    ["thanks @ada", jarvis, "To Ada"],
-    ["@ada do it", jarvis, "To Ada"],
-    ["@ada @betosilva do it", jarvis, "To Ada and Beto Silva"],
-    ["@everyone go", null, "To everyone"],
-    ["@ada @beto @jarvis go", null, "To everyone"],
-    ["@nobody go", null, "Waits for a lead"],
-  ] as const)("previews %j", (text, lead, expected) => {
-    assert.strictEqual(assistantGroupRecipientsPreview(text, [ada, beto, jarvis], lead), expected);
+  const ALPHA = { id: "p1" as ProjectId, name: "Alpha" };
+  const BETA = { id: "p2" as ProjectId, name: "Beta" };
+  const none = { replyOwner: null, request: null, stopped: [] };
+  const started = (ownerId: string | null) => ({
+    ...none,
+    request: { projectId: ALPHA.id, started: true, ownerId: ownerId as AssistantId | null },
+  });
+  // `AssistantGroups.post` matches a request's tasks by `request_id` alone, so a task from before
+  // requests had ids (`requestId` unset) neither starts nor stops its request; with no request,
+  // every stopped root of the group counts.
+  const chat = start(
+    snapshot(
+      [
+        message(1, { requestId: "m1" as AssistantGroupMessageId, projectId: "p1" as ProjectId }),
+        message(2, {
+          author: "assistant",
+          assistantId: "beto" as AssistantId,
+          taskId: "k" as AssistantGroupTask["id"],
+          requestId: "m1" as AssistantGroupMessageId,
+        }),
+        message(3, { requestId: "m3" as AssistantGroupMessageId }),
+        message(4, { requestId: "m4" as AssistantGroupMessageId }),
+        message(5, {
+          author: "assistant",
+          assistantId: "ada" as AssistantId,
+          taskId: "old" as AssistantGroupTask["id"],
+          requestId: "m4" as AssistantGroupMessageId,
+        }),
+      ],
+      [
+        task("k", 1, {
+          requestId: "m1" as AssistantGroupMessageId,
+          ownerId: "beto" as AssistantId,
+          status: "failed",
+          updatedAt: "2026-11-01T00:00:09.000Z",
+        }),
+        task("old", 4, { status: "paused", updatedAt: "2026-11-01T00:00:05.000Z" }),
+      ],
+    ),
+  );
+  type Row = {
+    readonly text: string;
+    readonly lead?: typeof jarvis | null;
+    readonly routes?: boolean;
+    readonly projects?: ReadonlyArray<typeof ALPHA>;
+    readonly picked?: ProjectId;
+    readonly context?: Parameters<typeof assistantGroupRecipientsPreview>[0]["context"];
+    readonly members?: ReadonlyArray<typeof ada>;
+  };
+  it.each<[string, Row, string | null]>([
+    ["an empty draft", { text: " " }, null],
+    ["the lead routes", { text: "hello" }, "Jarvis (lead) will route it"],
+    // mention_required: "Jarvis is the lead, but its model's provider can't route messages. …"
+    [
+      "the lead can't route",
+      { text: "hello", routes: false },
+      "Jarvis (lead) can't route: mention someone with @",
+    ],
+    ["no lead: it waits", { text: "hello", lead: null }, "Waits for a lead"],
+    ["a mention", { text: "@ada do it", routes: false }, "To Ada"],
+    ["two mentions", { text: "@ada @betosilva do it" }, "To Ada and Beto Silva"],
+    ["everyone", { text: "@everyone go", routes: false }, "To everyone"],
+    ["a mention of nobody", { text: "@nobody go", lead: null }, "Waits for a lead"],
+    ["a group of one", { text: "hi", lead: null, members: [ada] }, "To Ada"],
+    // With several projects and none picked, the lead picks one, even for a mention.
+    [
+      "no project: the lead picks it",
+      { text: "@ada do it", projects: [ALPHA, BETA] },
+      "Jarvis (lead) will pick the project",
+    ],
+    // "Pick the project for this request. Jarvis is the lead, but its model's provider can't …"
+    [
+      "no project, and the lead can't route",
+      { text: "@ada do it", projects: [ALPHA, BETA], routes: false },
+      "Pick a project first: Jarvis (lead) can't choose one",
+    ],
+    [
+      "no project, and the lead can't route an unaddressed draft either",
+      { text: "hello", projects: [ALPHA, BETA], routes: false },
+      "Pick a project first: Jarvis (lead) can't choose one",
+    ],
+    // "Pick the project for this request: the group has no lead that can choose it."
+    [
+      "no project, and no lead",
+      { text: "@ada do it", projects: [ALPHA, BETA], lead: null },
+      "Pick a project first: the group has no lead to choose one",
+    ],
+    [
+      "a picked project",
+      { text: "@ada do it", projects: [ALPHA, BETA], picked: BETA.id, routes: false },
+      "To Ada",
+    ],
+    [
+      "a #project in the text",
+      { text: "@ada fix #beta", projects: [ALPHA, BETA], routes: false },
+      "To Ada",
+    ],
+    [
+      "a reply to a member",
+      { text: "why?", routes: false, context: { ...started("beto"), replyOwner: { id: beto.id } } },
+      "To Beto Silva",
+    ],
+    // The answered message is older than the loaded history: the quote names the member.
+    [
+      "a reply to a member whose message is not loaded",
+      {
+        text: "why?",
+        routes: false,
+        context: assistantGroupSendContext(chat, {
+          id: "m9" as AssistantGroupMessageId,
+          to: "Beto Silva",
+          projectId: ALPHA.id,
+        }),
+      },
+      "To Beto Silva",
+    ],
+    [
+      "a mention wins over the reply",
+      { text: "@ada why?", context: { ...started("beto"), replyOwner: { id: beto.id } } },
+      "To Ada",
+    ],
+    [
+      "a reply to a request one member works",
+      { text: "more please", routes: false, context: started("ada") },
+      "To Ada",
+    ],
+    [
+      "a reply to a request the lead has not routed",
+      {
+        text: "use alpha",
+        projects: [ALPHA, BETA],
+        context: { ...none, request: { projectId: null, started: false, ownerId: null } },
+      },
+      "Jarvis (lead) will pick the project",
+    ],
+    // A mention does not help: an answer in a request not started goes through the lead.
+    [
+      "a reply to a request not started, and the lead can't route",
+      {
+        text: "@ada go",
+        routes: false,
+        context: { ...none, request: { projectId: ALPHA.id, started: false, ownerId: null } },
+      },
+      "Jarvis (lead) can't route this request: switch its model",
+    ],
+    [
+      "continue resumes the stopped work",
+      {
+        text: "continue",
+        routes: false,
+        context: { ...none, stopped: [{ taskId: "k", ownerId: ada.id }] },
+      },
+      "Resumes Ada's work",
+    ],
+    [
+      "continue with no stopped work of a member",
+      { text: "continue", context: { ...none, stopped: [{ taskId: "k", ownerId: "gone" }] } },
+      "Jarvis (lead) will route it",
+    ],
+  ])("previews %s", (_name, row, expected) => {
+    assert.strictEqual(
+      assistantGroupRecipientsPreview({
+        text: row.text,
+        members: row.members ?? [ada, beto, jarvis],
+        lead: row.lead === undefined ? jarvis : row.lead,
+        leadCanRoute: row.routes,
+        projects: row.projects ?? [ALPHA],
+        projectId: row.picked ?? null,
+        context: row.context ?? none,
+      }),
+      expected,
+    );
   });
 
-  it("previews a reply to its member and a one-member group to that member", () => {
-    assert.strictEqual(
-      assistantGroupRecipientsPreview("why?", [ada, beto], jarvis, "Beto"),
-      "To Beto",
+  it.each<[string, string | null, unknown]>([
+    [
+      "a member's answer older than the loaded history",
+      "m9",
+      {
+        replyOwner: { name: "Beto Silva" },
+        request: { projectId: "p1", started: true, ownerId: null },
+        stopped: [],
+      },
+    ],
+    [
+      "a member's answer in a started request",
+      "m2",
+      {
+        replyOwner: { id: "beto" },
+        request: { projectId: "p1", started: true, ownerId: "beto" },
+        stopped: [{ taskId: "k", ownerId: "beto" }],
+      },
+    ],
+    [
+      "a request the lead has not routed",
+      "m3",
+      {
+        replyOwner: null,
+        request: { projectId: null, started: false, ownerId: null },
+        stopped: [],
+      },
+    ],
+    [
+      "an answer whose task has no request id",
+      "m5",
+      {
+        replyOwner: { id: "ada" },
+        request: { projectId: null, started: false, ownerId: null },
+        stopped: [],
+      },
+    ],
+    [
+      "no reply: the group's stopped work, newest first",
+      null,
+      {
+        replyOwner: null,
+        request: null,
+        stopped: [
+          { taskId: "k", ownerId: "beto" },
+          { taskId: "old", ownerId: "ada" },
+        ],
+      },
+    ],
+  ])("reads the send context of %s", (_name, replyTo, expected) => {
+    assert.deepEqual<unknown>(
+      assistantGroupSendContext(
+        chat,
+        replyTo === null
+          ? null
+          : { id: replyTo as AssistantGroupMessageId, to: "Beto Silva", projectId: ALPHA.id },
+      ),
+      expected,
     );
-    // A leading mention still wins over the reply.
-    assert.strictEqual(
-      assistantGroupRecipientsPreview("@ada why?", [ada, beto], null, "Beto"),
-      "To Ada",
+  });
+
+  it("keeps the send context equal through events that do not change it", () => {
+    const reply = { id: "m2" as AssistantGroupMessageId, to: "Beto Silva", projectId: ALPHA.id };
+    const before = assistantGroupSendContext(chat, reply);
+    const other = applyAssistantGroupsEvent(chat, { type: "message", message: message(6) })!;
+    assert.isTrue(assistantGroupSendContextEqual(before, assistantGroupSendContext(other, reply)));
+    const resumed = applyAssistantGroupsEvent(chat, {
+      type: "task",
+      task: { ...chat.tasks.get("k" as AssistantGroupTask["id"])!, status: "running" },
+    })!;
+    assert.isFalse(
+      assistantGroupSendContextEqual(before, assistantGroupSendContext(resumed, reply)),
     );
-    assert.strictEqual(assistantGroupRecipientsPreview("hi", [ada], null), "To Ada");
+  });
+
+  const provider = (instanceId: string, routes: boolean | undefined) =>
+    ({
+      instanceId,
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [{ slug: `${instanceId}-model`, isDefault: true, isCustom: false }],
+      ...(routes === undefined ? {} : { supportsAssistantGroupRouting: routes }),
+    }) as unknown as ServerProvider;
+  const settingsWith = (projectModel: string | null): ServerSettings =>
+    ({
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: null,
+      projectSettingsOverrides:
+        projectModel === null
+          ? {}
+          : { home: { defaultModelSelection: { instanceId: projectModel, model: "m" } } },
+    }) as unknown as ServerSettings;
+  const pick = (instanceId: string) => ({ instanceId, model: "m" }) as ModelSelection;
+  it.each([
+    ["its conversation's model routes", "t1", pick("claude"), "replay", true],
+    ["its conversation's model cannot", "t1", pick("replay"), "claude", false],
+    ["its conversation is not loaded", "t1", undefined, "claude", undefined],
+    ["no conversation: its home project's model", null, undefined, "replay", false],
+    ["no conversation, no project model: the first usable provider", null, undefined, null, false],
+    ["an instance the server does not list", "t1", pick("gone"), null, false],
+    ["an older server that does not say", "t1", pick("old"), null, undefined],
+  ] as const)("the lead can route: %s", (_name, threadId, threadModel, projectModel, expected) => {
+    assert.strictEqual(
+      assistantGroupLeadCanRoute({
+        lead: { threadId: threadId as ThreadId | null, projectId: "home" as ProjectId },
+        threadModel,
+        settings: settingsWith(projectModel),
+        providers: [
+          provider("replay", false),
+          provider("claude", true),
+          provider("old", undefined),
+        ],
+        project: null,
+      }),
+      expected,
+    );
   });
 
   it.each([
@@ -1518,6 +1794,22 @@ describe("assistant group tabs", () => {
       [...assistantGroupHeldAttachments([refusedP1, sendingP2], shown)],
       [...held],
     );
+  });
+
+  const sent = ["hi", ["f1"], "p1", { model: "opus" }, null] as const;
+  it.each([
+    ["a first send", null, sent, "fresh"],
+    ["a failed message sent again unchanged", sent, sent, "first"],
+    ["changed text", sent, ["hi!", ["f1"], "p1", { model: "opus" }, null], "fresh"],
+    ["another file", sent, ["hi", ["f1", "f2"], "p1", { model: "opus" }, null], "fresh"],
+    ["another project", sent, ["hi", ["f1"], "p2", { model: "opus" }, null], "fresh"],
+    ["another model", sent, ["hi", ["f1"], "p1", { model: "sonnet" }, null], "fresh"],
+    ["a reply now", sent, ["hi", ["f1"], "p1", { model: "opus" }, { to: "ada" }], "fresh"],
+  ] as const)("a send's request id: %s", (_name, before, now, expected) => {
+    const failed =
+      before === null ? null : assistantGroupSendRequestId(null, before, () => "first");
+    const next = assistantGroupSendRequestId(failed, now, () => "fresh");
+    assert.strictEqual(next.requestId, expected);
   });
 
   it("keeps each tab's outgoing message until that tab replaces or clears it", () => {

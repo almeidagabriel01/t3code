@@ -1,11 +1,14 @@
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ASSISTANT_GROUP_LEAD_DECIDES_LABEL,
+  assistantGroupLeadCanRoute,
   assistantGroupMentionOptions,
   assistantGroupMentionQuery,
   assistantGroupProjectOptions,
   assistantGroupProjectQuery,
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
+  assistantGroupSendRequestId,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
@@ -15,10 +18,7 @@ import {
   type AssistantGroupMentionOption,
   type AssistantGroupMentionQuery,
 } from "@t3tools/client-runtime/assistantGroupChat";
-import {
-  assistantGroupLandedSend,
-  assistantGroupResendRequestId,
-} from "@t3tools/client-runtime/state/assistants";
+import { assistantGroupLandedSend } from "@t3tools/client-runtime/state/assistants";
 import {
   ASSISTANT_GROUP_MESSAGE_MAX_CHARS,
   type Assistant,
@@ -42,7 +42,9 @@ import { composerGroupMentions } from "../../lib/groupMentionChips";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssistantFaceImages } from "../../native/ChipIconImages";
 import { Menu } from "../../components/ui/Menu";
+import { type AssistantGroupChatRef, useAssistantGroupSendContext } from "../../state/assistants";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useEnvironmentServerConfig, useProject, useQuietThreadShell } from "../../state/entities";
 import {
   clearComposerDraftContent,
   composerDraftsAtom,
@@ -76,6 +78,7 @@ const outgoings = createAssistantGroupOutgoingStore<
     readonly error: string | null;
     /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
     readonly requestId: string;
+    readonly sendKey: string;
     /** The text it sent, trimmed; its draft key holds what the composer shows now. */
     readonly text: string;
   }
@@ -313,6 +316,44 @@ function ReplyQuote(props: {
  * The group's message box, built on the thread composer's editor: `@` picks members, `#` names a
  * project, a line says who will get the message, and a new request can name its project.
  */
+type RecipientsLineProps = Omit<
+  Parameters<typeof assistantGroupRecipientsPreview>[0],
+  "lead" | "leadCanRoute" | "context"
+> & {
+  readonly environmentId: EnvironmentId;
+  readonly lead: Assistant | null;
+  readonly chat: AssistantGroupChatRef;
+};
+
+/**
+ * Who a draft reaches, under the composer. Only this line reads the lead's model and the
+ * server config, so a provider update does not re-render the composer.
+ */
+function GroupRecipientsLine({ chat, ...props }: RecipientsLineProps) {
+  const { environmentId, lead } = props;
+  const context = useAssistantGroupSendContext(environmentId, chat);
+  const thread = useQuietThreadShell(
+    lead?.threadId == null ? null : scopeThreadRef(environmentId, lead.threadId),
+  );
+  const project = useProject(lead === null ? null : scopeProjectRef(environmentId, lead.projectId));
+  const config = useEnvironmentServerConfig(environmentId);
+  const leadCanRoute =
+    lead === null || config === null
+      ? undefined
+      : assistantGroupLeadCanRoute({
+          lead,
+          threadModel: thread?.modelSelection,
+          settings: config.settings,
+          providers: config.providers,
+          project,
+        });
+  return (
+    <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
+      {assistantGroupRecipientsPreview({ ...props, context, leadCanRoute })}
+    </Text>
+  );
+}
+
 export function GroupComposer(props: {
   readonly environmentId: EnvironmentId;
   readonly teamId: AssistantTeamId;
@@ -333,6 +374,8 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** The chat the recipients line reads what routes the draft from. */
+  readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
   readonly onJumpToReply: (() => void) | null;
   readonly onClearReply: () => void;
@@ -374,7 +417,9 @@ export function GroupComposer(props: {
     if (caret !== undefined) setSelection({ start: caret, end: caret });
     setError(null);
     // A refused message is the user's to fix in its own tab; emptied, the tab takes the draft again.
-    if (shown !== null) setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
+    if (shown !== null) {
+      setOutgoing(shown.tab, value === "" ? null : { ...shown, error: null });
+    }
   };
 
   const voice = useVoiceInputController({
@@ -404,12 +449,6 @@ export function GroupComposer(props: {
     projectMention === null
       ? []
       : assistantGroupProjectOptions(projectMention.query, props.projects);
-  const preview = assistantGroupRecipientsPreview(
-    text,
-    props.members,
-    lead,
-    props.replyingTo?.to ?? null,
-  );
   const attached = useGroupAttachments(
     props.environmentId,
     assistantGroupHeldAttachments(outgoing, shown),
@@ -501,12 +540,18 @@ export function GroupComposer(props: {
     setError(null);
     const projectId = lockedProject === null ? (chosenProject ?? undefined) : undefined;
     const attachmentIds = attached.items.map((item) => item.id);
-    const requestId = assistantGroupResendRequestId(shown, message, attachmentIds) ?? uuidv4();
+    // A refused or unconfirmed message goes again under its first id, unless anything changed.
+    const { requestId, sendKey } = assistantGroupSendRequestId(
+      shown?.failed === true ? shown : null,
+      [message, attachmentIds, projectId, props.projectModel?.messageModel, props.replyingTo],
+      uuidv4,
+    );
     const sent = {
       tab: props.tab,
       failed: false,
       requestId,
       text: message,
+      sendKey,
       attachmentIds,
       projectId: runProject,
       error: null,
@@ -758,9 +803,15 @@ export function GroupComposer(props: {
         )}
       </ComposerSurface>
       {shownError === null ? (
-        <Text testID="group-recipients" className="min-h-4 px-3 text-xs text-foreground-muted">
-          {preview}
-        </Text>
+        <GroupRecipientsLine
+          environmentId={props.environmentId}
+          text={text}
+          members={props.members}
+          lead={lead}
+          projects={props.projects}
+          projectId={props.projectId}
+          chat={props.chat}
+        />
       ) : (
         <Text accessibilityRole="alert" className="min-h-4 px-3 text-xs text-danger-foreground">
           {shownError}

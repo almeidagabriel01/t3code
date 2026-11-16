@@ -10,7 +10,10 @@ import {
 } from "../../../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../../../lib/providerOptions";
 import { useEnvironmentServerConfig } from "../../../state/entities";
-import { ThreadSettingsPickerScreen } from "../../threads/ThreadSettingsSheet";
+import {
+  type ThreadSettingsPickerClear,
+  ThreadSettingsPickerScreen,
+} from "../../threads/ThreadSettingsSheet";
 
 const sameModel = (option: ModelOption, selection: ModelSelection) =>
   option.selection.instanceId === selection.instanceId &&
@@ -33,6 +36,7 @@ export function SettingsModelPicker(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
   readonly selected: ModelSelection | null;
+  readonly clear?: ThreadSettingsPickerClear;
   readonly onPick: (selection: ModelSelection) => void;
   readonly onClose: () => void;
 }) {
@@ -54,6 +58,7 @@ export function SettingsModelPicker(props: {
   return (
     <ThreadSettingsPickerScreen
       title={props.title}
+      {...(props.clear === undefined ? {} : { clear: props.clear })}
       environmentId={props.environmentId}
       projectId={projectId}
       providerGroups={providerGroups}

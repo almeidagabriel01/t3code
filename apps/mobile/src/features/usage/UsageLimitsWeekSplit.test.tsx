@@ -69,10 +69,14 @@ vi.mock("../../state/presentation", () => ({
   environmentPresentations: { presentationsWithProvidersAtom: {} },
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { consumeResetCredit: {} } }));
-vi.mock("../../state/session", () => ({
-  readEnvironmentScope: () => false,
-  useEnvironmentScope: () => false,
-}));
+vi.mock("../../state/session", () => {
+  const useEnvironmentScope = () => false;
+  return {
+    readEnvironmentScope: useEnvironmentScope,
+    useEnvironmentScope,
+    useEnvironmentScopeAccess: () => (useEnvironmentScope() ? "granted" : "missing"),
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [], useThreadShells: () => [] }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));

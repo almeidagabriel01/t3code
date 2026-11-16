@@ -3,7 +3,7 @@
  * text is never run through here. Decisions stay English in storage (the app shows them as written);
  * `localizeDecision` maps their known phrases when a card is rendered into a chat.
  */
-import type { ChannelLanguage } from "@t3tools/contracts";
+import type { ChannelLanguage, ServerProviderUsageWindow } from "@t3tools/contracts";
 
 export type ResolvedChannelLanguage = Exclude<ChannelLanguage, "auto">;
 
@@ -19,6 +19,8 @@ export interface ChannelStrings {
   readonly couldNotPassOn: (reason: string) => string;
   readonly conversationNotStarted: string;
   readonly rateLimited: string;
+  readonly attachmentUnsupported: string;
+  readonly attachmentDownloadFailed: string;
   readonly replyWithNumber: string;
   readonly truncatedNote: string;
   /** Ends a long reply cut down to its outline so the part that waits on you fits one message. */
@@ -46,6 +48,8 @@ export interface ChannelStrings {
   readonly groupTaskReason: (reason: string | null) => string;
   /** When a provider's usage limit resets; `time` is null when the provider did not say. */
   readonly usageLimitBack: (time: string | null) => string;
+  /** A usage window that dropped to its alert threshold; one or two lines, no links. */
+  readonly usageLimitLow: (notice: UsageLimitLowNotice) => string;
   readonly decision: {
     readonly approve: string;
     readonly deny: string;
@@ -72,6 +76,21 @@ export interface ChannelStrings {
   };
 }
 
+export interface UsageLimitLowNotice {
+  readonly provider: string;
+  /** Shown only when several instances of the provider could be meant. */
+  readonly account: string | null;
+  readonly remaining: number;
+  readonly kind: ServerProviderUsageWindow["kind"];
+  readonly label: string;
+  /** Model a scoped window is for, such as "Opus" in "Weekly · Opus". */
+  readonly scope: string | null;
+  readonly resets: string | null;
+}
+
+const noticeSubject = (notice: UsageLimitLowNotice) =>
+  notice.account === null ? notice.provider : `${notice.provider} (${notice.account})`;
+
 const en: ChannelStrings = {
   noAssistants: "No assistants are set up. Create one in Settings → Assistants.",
   roster: (names, defaultName) =>
@@ -84,6 +103,9 @@ const en: ChannelStrings = {
   couldNotPassOn: (reason) => `I could not pass that on: ${reason}`,
   conversationNotStarted: "its conversation has not started yet",
   rateLimited: "You're sending messages too fast. I'll read new ones again in a minute.",
+  attachmentUnsupported:
+    "I can't read that kind of attachment. Send it as a photo (PNG, JPEG, WebP or GIF up to 10 MB) or as text.",
+  attachmentDownloadFailed: "I couldn't download that attachment. Please send it again.",
   replyWithNumber: "Reply with the number.",
   truncatedNote: "… The rest of this reply was too long to send.",
   summaryNote: "Summary. The full reply is in T3.",
@@ -115,6 +137,21 @@ const en: ChannelStrings = {
           ? "No member could be picked for it. Reassign or cancel it."
           : `Paused${reason === null ? "" : ` (${reason})`}. Resume, reassign or cancel it.`,
   usageLimitBack: (time) => (time === null ? "Back when the limit resets." : `Back at ${time}.`),
+  usageLimitLow: (notice) => {
+    const limit =
+      notice.kind === "session"
+        ? "session limit"
+        : notice.kind === "weekly"
+          ? "weekly limit"
+          : notice.kind === "monthly"
+            ? "monthly limit"
+            : `"${notice.label}" limit`;
+    const scope = notice.scope === null ? "" : ` (${notice.scope})`;
+    const resets = notice.resets === null ? "" : ` Resets ${notice.resets}.`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: the ${limit}${scope} ran out.${resets}`
+      : `${noticeSubject(notice)}: ${notice.remaining}% of the ${limit}${scope} left.${resets}`;
+  },
   decision: {
     approve: "Approve",
     deny: "Deny",
@@ -151,6 +188,9 @@ const ptBR: ChannelStrings = {
   couldNotPassOn: (reason) => `Não consegui repassar isso: ${reason}`,
   conversationNotStarted: "a conversa dele ainda não começou",
   rateLimited: "Você está mandando mensagens rápido demais. Volto a ler as novas em um minuto.",
+  attachmentUnsupported:
+    "Não consigo ler esse tipo de anexo. Mande como foto (PNG, JPEG, WebP ou GIF de até 10 MB) ou como texto.",
+  attachmentDownloadFailed: "Não consegui baixar esse anexo. Mande de novo, por favor.",
   replyWithNumber: "Responda com o número.",
   truncatedNote: "… O resto desta resposta era longo demais para enviar.",
   summaryNote: "Resumo. A resposta completa está no T3.",
@@ -182,6 +222,21 @@ const ptBR: ChannelStrings = {
           ? "Nenhum membro pôde ser escolhido. Reatribua ou cancele."
           : `Pausada${reason === null ? "" : ` (${reason})`}. Retome, reatribua ou cancele.`,
   usageLimitBack: (time) => (time === null ? "Volta quando o limite renovar." : `Volta: ${time}.`),
+  usageLimitLow: (notice) => {
+    const limit =
+      notice.kind === "session"
+        ? "limite da sessão"
+        : notice.kind === "weekly"
+          ? "limite semanal"
+          : notice.kind === "monthly"
+            ? "limite mensal"
+            : `limite "${notice.label}"`;
+    const scope = notice.scope === null ? "" : ` (${notice.scope})`;
+    const resets = notice.resets === null ? "" : ` Renova ${notice.resets}.`;
+    return notice.remaining === 0
+      ? `${noticeSubject(notice)}: o ${limit}${scope} acabou.${resets}`
+      : `${noticeSubject(notice)}: restam ${notice.remaining}% do ${limit}${scope}.${resets}`;
+  },
   decision: {
     approve: "Aprovar",
     deny: "Negar",

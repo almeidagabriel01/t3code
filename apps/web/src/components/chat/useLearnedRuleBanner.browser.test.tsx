@@ -64,7 +64,7 @@ vi.mock("../../state/memory", () => ({
     ...Object.fromEntries(
       ["syncStatus", "projectBindingGet", "upsert", "forget"].map((label) => [
         label,
-        { label, permissionAtom: () => ({ label }) },
+        { label, permissionAtom: () => ({ label }), accessAtom: () => ({ label }) },
       ]),
     ),
     list: () => ({ label: "list" }),

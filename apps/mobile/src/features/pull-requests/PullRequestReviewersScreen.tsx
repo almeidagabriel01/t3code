@@ -15,6 +15,7 @@ import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { SCOPE_ACCESS_UNAVAILABLE_MESSAGE } from "@t3tools/client-runtime/state/sessionScope";
 import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -49,6 +50,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   ).changeRequest;
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
+  );
+  const access = useAtomValue(
+    composerPullRequests.requestReviewers.accessAtom(target.environmentId),
   );
   const connected = usePullRequestConnected(route.params.environmentId);
   const allowed =
@@ -165,9 +169,11 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               <Text className="text-xs text-foreground-muted">
                 Tap someone to request a review. Tap a requested reviewer to remove the request.
               </Text>
-              {!allowed ? (
+              {!allowed && access !== "unknown" ? (
                 <Text className="text-xs text-foreground-muted">
-                  Requesting reviews requires write access and an open {singular}.
+                  {access === "unavailable"
+                    ? SCOPE_ACCESS_UNAVAILABLE_MESSAGE
+                    : `Requesting reviews requires write access and an open ${singular}.`}
                 </Text>
               ) : null}
               {error ? (

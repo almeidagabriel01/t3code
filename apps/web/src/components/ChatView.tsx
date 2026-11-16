@@ -242,7 +242,8 @@ import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
-import { useEnvironmentScope } from "~/state/session";
+import { scopeAccessMessage } from "@t3tools/client-runtime/state/sessionScope";
+import { useEnvironmentScope, useEnvironmentScopeAccess } from "~/state/session";
 import {
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
@@ -392,6 +393,7 @@ import {
   makeThreadErrorSetter,
 } from "./ChatView.logic";
 
+const ORCHESTRATION_OPERATE_SCOPES = [AuthOrchestrationOperateScope];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
@@ -447,6 +449,7 @@ export default function ChatView(props: ChatViewProps) {
   const parentPanel = typeof embeddedProp === "object" ? embeddedProp : undefined;
   const embedded = embeddedProp !== undefined && embeddedProp !== false;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const threadAccess = useEnvironmentScopeAccess(environmentId, ORCHESTRATION_OPERATE_SCOPES);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -3793,7 +3796,10 @@ export default function ChatView(props: ChatViewProps) {
                                     isRevertingCheckpoint={isRevertingCheckpoint}
                                     sendDisabledReason={
                                       !canOperateThread
-                                        ? "This connection cannot change threads."
+                                        ? scopeAccessMessage(
+                                            threadAccess,
+                                            "This connection cannot change threads.",
+                                          )
                                         : isEnvironmentChanging
                                           ? "Preparing machine"
                                           : isRevertingCheckpoint

@@ -24,6 +24,7 @@ import { SelectionPicker } from "../settings/AssistantModelsRow";
 import { SettingsScopeProvider, useSettingsScope } from "../settings/SettingsScopeContext";
 import { useScopedDefaultModel } from "../settings/useScopedModelAvailability";
 import {
+  useClearScopedSettings,
   useScopedSettingSource,
   useScopedSettingsWriteAllowed,
   useUpdateProjectAssistantModel,
@@ -113,6 +114,23 @@ export interface GroupMessageModel {
   readonly onPick: (selection: ModelSelection | null) => void;
 }
 
+function BackRow(props: { readonly onClick: () => void; readonly children: ReactNode }) {
+  return (
+    <PopoverClose
+      render={
+        <button
+          type="button"
+          className="flex w-full cursor-pointer items-center gap-2 border-t border-foreground/12 px-3 py-2 text-left text-sm outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      }
+      onClick={props.onClick}
+    >
+      <RotateCcwIcon className="size-4 text-muted-foreground" />
+      {props.children}
+    </PopoverClose>
+  );
+}
+
 function ProjectModelPicker(props: {
   readonly projectLabel: string;
   readonly teamDefault: ModelSelection | null;
@@ -128,6 +146,7 @@ function ProjectModelPicker(props: {
   const source = useScopedSettingSource(["defaultModelSelection"]);
   const canWrite = useScopedSettingsWriteAllowed();
   const update = useUpdateScopedSettings();
+  const clear = useClearScopedSettings();
   const layers = {
     project: projectModelLayer(source, selection),
     team: props.teamDefault ?? undefined,
@@ -188,22 +207,25 @@ function ProjectModelPicker(props: {
       getModelDisabledReason={modelDisabledReason}
       {...(message !== undefined && layer === "message"
         ? {
-            footer: (
-              <PopoverClose
-                render={
-                  <button
-                    type="button"
-                    className="flex w-full cursor-pointer items-center gap-2 border-t border-foreground/12 px-3 py-2 text-left text-sm outline-none hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  />
-                }
-                onClick={() => message.onPick(null)}
-              >
-                <RotateCcwIcon className="size-4 text-muted-foreground" />
-                Back to {backLabel}
-              </PopoverClose>
-            ),
+            resetRow: <BackRow onClick={() => message.onPick(null)}>Back to {backLabel}</BackRow>,
           }
-        : {})}
+        : message === undefined && (source === "project" || source === "mixed") && canWrite
+          ? {
+              resetRow: (
+                <BackRow
+                  onClick={() => {
+                    props.onError(null);
+                    clear(["defaultModelSelection"], props.onError);
+                  }}
+                >
+                  {/* Without the project's model, the group's default applies where it holds. */}
+                  {layers.team !== undefined && isUsable(layers.team)
+                    ? "Group default"
+                    : "Members' models"}
+                </BackRow>
+              ),
+            }
+          : {})}
       onChange={save}
     />
   );
@@ -213,9 +235,11 @@ function ProjectModelPicker(props: {
       {picker}
       <Tooltip>
         <TooltipTrigger render={<Badge variant="info" size="sm" className="shrink-0" />}>
+          {/* A narrow row shows the dot in place of the label, so the dot carries its name. */}
           <span
             data-composer-control-mark
-            aria-hidden
+            role="img"
+            aria-label="This message"
             className="hidden size-1.5 rounded-full bg-current"
           />
           <span data-composer-control-label>This message</span>

@@ -1,10 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import {
+  sessionScopeAccess,
+  type SessionScopeAccess,
+} from "@t3tools/client-runtime/state/sessionScope";
+import {
   type AuthEnvironmentScope,
   type AuthSessionState,
   type EnvironmentId,
-  sessionGrantsScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -21,8 +24,20 @@ export function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const session = AsyncResult.getOrElse(result, () => null);
-  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
+  return sessionScopeAccess(result, [scope]) === "granted";
+}
+
+/** For permission notices: "unknown" until the session resolves, so nothing flashes meanwhile. */
+export function useEnvironmentScopeAccess(
+  environmentId: EnvironmentId | null,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): SessionScopeAccess {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionScopeAccess(result, scopes),
+  );
 }
 
 export function useEnvironmentScope(
@@ -56,6 +71,27 @@ export function useEnvironmentsWithScope(
     [environments, scope],
   );
   return useAtomValue(permittedEnvironments);
+}
+
+/** Per environment, for permission notices: "unknown" until its session resolves. */
+export function useEnvironmentsScopeAccess(
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+  scope: AuthEnvironmentScope,
+): ReadonlyMap<EnvironmentId, SessionScopeAccess> {
+  const accessAtom = useMemo(
+    () =>
+      Atom.make(
+        (get) =>
+          new Map(
+            environments.map(({ environmentId }) => [
+              environmentId,
+              sessionScopeAccess(get(environmentSession.sessionStateAtom(environmentId)), [scope]),
+            ]),
+          ),
+      ),
+    [environments, scope],
+  );
+  return useAtomValue(accessAtom);
 }
 
 export function readEnvironmentScope(

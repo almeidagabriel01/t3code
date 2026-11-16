@@ -19,7 +19,11 @@ import {
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
 import { chooseAudioDestination, chooseTranscriptCleanup } from "../../speech/voiceConsent";
-import { useEnvironmentScope } from "../../state/session";
+import {
+  useEnvironmentScope,
+  useEnvironmentScopeAccess,
+  useEnvironmentsScopeAccess,
+} from "../../state/session";
 import { toastManager } from "../ui/toast";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SpeechLanguageSelect } from "./SpeechLanguageSelect";
@@ -276,6 +280,23 @@ it("tests the selected model after download and preserves its transcript across 
   });
   const transcript = "Keep this transcript.";
   using _scope = vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  // The access hooks read the same grant, so locks and notices agree with it.
+  using _access = vi
+    .mocked(useEnvironmentScopeAccess)
+    .mockImplementation((id, scopes) =>
+      scopes.every((scope) => useEnvironmentScope(id, scope)) ? "granted" : "missing",
+    );
+  using _accesses = vi
+    .mocked(useEnvironmentsScopeAccess)
+    .mockImplementation(
+      (environments, scope) =>
+        new Map(
+          environments.map(({ environmentId }) => [
+            environmentId,
+            useEnvironmentScope(environmentId, scope) ? "granted" : "missing",
+          ]),
+        ),
+    );
   await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
     () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
     async () => {

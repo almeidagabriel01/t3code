@@ -2487,6 +2487,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("keeps every other setting when usage limit alerts hold hand-edited garbage", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        JSON.stringify({
+          providerInstances: { claude_work: { driver: "claudeAgent", displayName: "Work" } },
+          usageLimitAlerts: {
+            ignoreAutonomyPause: false,
+            instances: { claude_work: { windows: { seven_day: 0, five_hour: 20 } }, broken: "x" },
+          },
+        }),
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.equal(
+        settings.providerInstances[ProviderInstanceId.make("claude_work")]?.displayName,
+        "Work",
+      );
+      assert.isTrue(settings.continueThreadsAfterServerUpdate);
+      assert.deepStrictEqual(settings.usageLimitAlerts, {
+        ignoreAutonomyPause: false,
+        instances: { [ProviderInstanceId.make("claude_work")]: { windows: { five_hour: 20 } } },
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -2532,17 +2561,27 @@ it("drops a removed instance's budget but keeps it when a default instance is re
       [builtin]: { driver: ProviderDriverKind.make("claudeAgent") },
     },
     providerBudgets: { [custom]: budget, [builtin]: budget },
+    usageLimitAlerts: {
+      ignoreAutonomyPause: false,
+      instances: { [custom]: { windows: { seven_day: 20 } }, [builtin]: { windows: {} } },
+    },
   };
   const afterCustom = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: custom,
   });
   assert.deepStrictEqual(Object.keys(afterCustom.providerBudgets), [builtin]);
+  assert.deepStrictEqual(Object.keys(afterCustom.usageLimitAlerts.instances), [builtin]);
+  assert.isFalse(afterCustom.usageLimitAlerts.ignoreAutonomyPause);
   const afterReset = ServerSettingsModule.applyProviderInstanceMutation(base, {
     operation: "remove",
     instanceId: builtin,
   });
   assert.deepStrictEqual(Object.keys(afterReset.providerBudgets).sort(), [builtin, custom].sort());
+  assert.deepStrictEqual(
+    Object.keys(afterReset.usageLimitAlerts.instances).sort(),
+    [builtin, custom].sort(),
+  );
 });
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
   "server settings under a managed policy",
@@ -2713,10 +2752,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           })
           .pipe(Effect.flip);
         assert.equal(projectRejected.managedSetting, "enableAgentDeviceAccess");
+        // A patch worked out from the settings it lands on is vetted the same way.
+        const modifyRejected = yield* service
+          .modifySettings(() => ({
+            projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+          }))
+          .pipe(Effect.flip);
+        assert.equal(modifyRejected.managedSetting, "enableAgentDeviceAccess");
 
         // Unrelated writes, and writes that keep the locked value, go through.
         yield* service.updateSettings({ enableAgentDeviceAccess: false, defaultAutoPull: true });
         assert.isTrue((yield* service.getSettings).defaultAutoPull);
+        yield* service.modifySettings((current) => ({ defaultAutoPull: !current.defaultAutoPull }));
+        assert.isFalse((yield* service.getSettings).defaultAutoPull);
 
         // The user's own value stays on disk, ready for when the policy is removed.
         const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));

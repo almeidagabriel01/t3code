@@ -888,9 +888,8 @@ function RequestBlock(props: {
         <TaskEventActivityRow
           title={block.title}
           status={activity.status}
-          label={
-            props.projectName === null ? activity.label : `${activity.label} · ${props.projectName}`
-          }
+          label={activity.label}
+          project={props.projectName}
           onOpen={props.onToggle}
           action="Open request"
         />
@@ -1642,6 +1641,14 @@ export function AssistantGroupChat(props: {
               setModelPick(selection === null ? null : { tab: tabKey, value: selection }),
           }}
           replyingTo={replyTo?.quote ?? null}
+          chat={{
+            teamId,
+            scope,
+            reply:
+              replyTo === null
+                ? null
+                : { id: replyTo.id, to: replyTo.quote.to, projectId: replyTo.projectId },
+          }}
           onJumpToReply={() => replyTo !== null && feedHandle.current?.jumpTo(replyTo.id)}
           onClearReply={() => setReplyTo(null)}
           history={sentByUser}

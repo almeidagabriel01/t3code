@@ -331,6 +331,12 @@ export function createMobileThemeVariables(
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
+  // Dark borders, and t3-chat's light one, sit within a shade of the cards: lines then derive
+  // from the text so they read on every surface.
+  const linesFromText =
+    appearance === "dark" || themeColorContrastRatio(c.border, groupedCard) < 1.1;
+  const line = (fromText: number, fromBorder: number) =>
+    linesFromText ? withAlpha(c.text, fromText) : withAlpha(c.border, fromBorder);
   const textSurfaces = [
     c.canvas,
     c.surface,
@@ -370,10 +376,10 @@ export function createMobileThemeVariables(
     "--color-foreground-secondary": themeColorWithContrast(c.textMuted, textSurfaces),
     "--color-foreground-muted": themeColorWithContrast(c.mutedForeground, textSurfaces),
     "--color-foreground-tertiary": c.secondaryLabel,
-    "--color-border": c.border,
+    "--color-border": linesFromText ? withAlpha(c.text, 0.16) : c.border,
     "--color-focus": c.focus,
-    "--color-border-subtle": withAlpha(c.border, 0.7),
-    "--color-separator": withAlpha(c.border, 0.55),
+    "--color-border-subtle": line(0.12, 0.7),
+    "--color-separator": line(0.1, 0.55),
     "--color-subtle": c.muted,
     "--color-subtle-strong": c.secondary,
     "--color-inline-skill-background": c.accentSurface,

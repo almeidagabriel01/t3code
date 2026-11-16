@@ -233,6 +233,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
   const hasDevices = useDeviceEnvironmentIds().length > 0;
   const hasComputerUseHost = useComputerUseHostEnvironmentIds().length > 0;
   const hasAssistants = useAssistantsEnvironmentIds().length > 0;
+  const hasUsageAlerts = selectedTargets.some(
+    (target) => target.serverConfig?.environment?.capabilities.usageLimitAlerts === true,
+  );
   const scopedProjectMembers =
     selectedProjectGroups?.length === 1
       ? selectedProjectGroups[0]!.members
@@ -274,6 +277,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
       title: "Agents",
       rows: [
         serverPage("SettingsProviderAccounts", "person.crop.circle", "Providers"),
+        ...(hasUsageAlerts
+          ? [serverPage("SettingsUsageAlerts", "bell.badge", "Limit alerts")]
+          : []),
         serverPage("SettingsThreads", "text.bubble", "Threads"),
         serverPage("SettingsAgentTools", "hammer", "MCP servers & skills"),
         ...(hasAssistants ? [page("SettingsAssistants", "person.2", "Assistants")] : []),

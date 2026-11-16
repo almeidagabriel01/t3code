@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isContinueRequest, routeGroupMessage } from "./AssistantGroupRouting.ts";
+import { isContinueRequest, routeGroupMessage } from "./assistantGroupRouting.ts";
 
 const members = [
   { id: "ada", handle: "ada", name: "Ada" },
