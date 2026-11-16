@@ -1754,6 +1754,7 @@ function handoff(
     deliveryState: null,
     parentSettled: false,
     parentRunActive: false,
+    parentReadResult: true,
     sharesParentWorktree: true,
     ...overrides,
   };
@@ -1814,6 +1815,11 @@ describe("finishedWorkSettlement", () => {
     [
       "a native child whose parent's turn is still reading it",
       { subagentHandoff: handoff({ parentRunActive: true }) },
+      null,
+    ],
+    [
+      "a native child that finished after its parent's last turn ended",
+      { subagentHandoff: handoff({ parentReadResult: false }) },
       null,
     ],
     [

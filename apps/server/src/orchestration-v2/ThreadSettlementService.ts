@@ -235,7 +235,7 @@ export function finishedWorkSettlement(
       (handoff.status !== null &&
         FINISHED_SUBAGENT_STATUSES.has(handoff.status) &&
         (handoff.origin === "provider_native"
-          ? !handoff.parentRunActive
+          ? !handoff.parentRunActive && handoff.parentReadResult
           : handoff.deliveryState === null || RESULT_TAKEN_STATES.has(handoff.deliveryState)));
     if (!handedOff) return null;
     return thread.worktreePath === null || handoff.sharesParentWorktree

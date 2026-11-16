@@ -241,7 +241,10 @@ export interface ProjectionSubagentHandoff {
   readonly deliveryState: OrchestrationV2DelegatedCompletionTaskDeliveryState | null;
   /** The parent is settled, archived or gone, so nobody waits on the child any more. */
   readonly parentSettled: boolean;
+  /** A run of the parent is live or queued. */
   readonly parentRunActive: boolean;
+  /** A run of the parent ended after the child finished, so it held the result. */
+  readonly parentReadResult: boolean;
   readonly sharesParentWorktree: boolean;
 }
 
@@ -1107,6 +1110,7 @@ type SettlementThreadRow = Pick<
   readonly subagent_delivery_state: OrchestrationV2DelegatedCompletionTaskDeliveryState | null;
   readonly parent_settled: number | null;
   readonly parent_run_active: number | null;
+  readonly parent_read_result: number | null;
   readonly parent_worktree_path: string | null;
   readonly assistant_task_dismissed: number;
 };
@@ -6840,8 +6844,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               CASE WHEN p.thread_id IS NOT NULL THEN EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs parent_run
                 WHERE parent_run.thread_id = p.thread_id
-                  AND parent_run.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND parent_run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
               ) END AS parent_run_active,
+              -- A parent turn that ended after the child did is the one that read its result.
+              CASE WHEN s.completed_at IS NOT NULL THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs parent_run
+                WHERE parent_run.thread_id = s.thread_id
+                  AND parent_run.completed_at >= s.completed_at
+              ) END AS parent_read_result,
               json_extract(p.payload_json, '$.worktreePath') AS parent_worktree_path,
               EXISTS (
                 SELECT 1 FROM assistant_tasks task
@@ -6953,6 +6963,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           deliveryState: row.subagent_delivery_state,
                           parentSettled: row.parent_settled === 1,
                           parentRunActive: row.parent_run_active === 1,
+                          parentReadResult: row.parent_read_result === 1,
                           sharesParentWorktree:
                             (thread.worktreePath ?? null) === row.parent_worktree_path,
                         }

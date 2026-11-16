@@ -560,6 +560,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       deliveryState: null,
       parentSettled: false,
       parentRunActive: true,
+      parentReadResult: false,
       sharesParentWorktree: true,
     });
     assert.deepEqual(byId.get(delegated)?.subagentHandoff, {
@@ -568,6 +569,7 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       deliveryState: "delivered",
       parentSettled: false,
       parentRunActive: true,
+      parentReadResult: false,
       sharesParentWorktree: false,
     });
     assert.deepEqual(byId.get(orphan)?.subagentHandoff, {
@@ -576,12 +578,17 @@ it.effect("sql: reads a subagent child's hand-off and a dismissed assistant task
       deliveryState: null,
       parentSettled: true,
       parentRunActive: false,
+      parentReadResult: false,
       // Neither has a worktree: both work in the project checkout.
       sharesParentWorktree: true,
     });
     assert.equal(byId.get(task)?.subagentHandoff, null);
     assert.equal(byId.get(task)?.assistantTaskDismissed, true);
     assert.equal(byId.get(native)?.assistantTaskDismissed, false);
+    // A parent turn that ends once the child finished is the one that read its result.
+    yield* createRun(parent, "completed", 2);
+    const read = (yield* store.getSettlementCandidates(native))[0];
+    assert.equal(read?.subagentHandoff?.parentReadResult, true);
     // A parent's sweep covers its children.
     assert.deepEqual(
       new Set((yield* store.getSettlementCandidates(parent)).map((row) => row.id)),
