@@ -12,6 +12,9 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 
+import { RESOURCE_MANAGER_LABELS } from "../resources/resourceManagerCopy";
+import type { SettingsPageTarget } from "../settings/components/settings-page-targets";
+import { SETTINGS_PAGE_LABELS } from "../settings/settings-search";
 import { parseActiveGroupChatPath, parseActiveThreadPath } from "./hardwareKeyboardCommands";
 
 export interface CommandPaletteItem {
@@ -26,6 +29,29 @@ export interface CommandPaletteItem {
   /** Listed last in its group, as the thread already open. */
   readonly secondary?: boolean;
   readonly run: () => void;
+}
+
+const PAGE_TERMS: Partial<Record<SettingsPageTarget, readonly string[]>> = {
+  ...SETTINGS_PAGE_LABELS,
+  SettingsResourceManager: RESOURCE_MANAGER_LABELS,
+  // Usage has no copy module yet; these name its limits and per-account sections.
+  SettingsUsage: ["limits", "accounts", "quota"],
+};
+
+/** An action that opens a Settings page, found by the text that page draws, as Settings search finds it. */
+export function settingsPageItem(
+  key: string,
+  title: string,
+  target: SettingsPageTarget,
+  open: (target: SettingsPageTarget) => void,
+): CommandPaletteItem {
+  return {
+    key,
+    kind: "action",
+    title,
+    searchTerms: PAGE_TERMS[target] ?? [],
+    run: () => open(target),
+  };
 }
 
 /** The reverse-able pause for assistant notifications; absent when no server runs assistants. */

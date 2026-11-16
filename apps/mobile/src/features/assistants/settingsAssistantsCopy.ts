@@ -123,4 +123,7 @@ export const ASSISTANTS_PAGE_LABELS: readonly string[] = [
   "personas",
   "instructions",
   "tool access",
+  // The web palette finds this page by these; groups were first called teams.
+  "agents",
+  "team",
 ];

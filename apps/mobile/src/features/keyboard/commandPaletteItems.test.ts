@@ -6,6 +6,7 @@ import {
   assistantInfoItems,
   autonomyPauseItems,
   filterCommandPaletteItems,
+  settingsPageItem,
   type CommandPaletteItem,
 } from "./commandPaletteItems";
 
@@ -107,5 +108,32 @@ describe("assistantInfoItems", () => {
     expect(items.map((entry) => entry.title)).toEqual([expected[0]]);
     items[0]!.run();
     expect(opened).toEqual([expected[1]]);
+  });
+});
+
+describe("settingsPageItem", () => {
+  const pages = (
+    [
+      ["SettingsEnvironments", "Manage environments"],
+      ["SettingsScheduledTasks", "Scheduled tasks"],
+      ["SettingsResourceManager", "Resource Manager"],
+      ["SettingsMacPermissions", "Mac permissions"],
+      ["SettingsArchive", "Archived threads"],
+      ["SettingsAssistants", "Assistants"],
+      ["SettingsIntegrations", "Integrations"],
+    ] as const
+  ).map(([target, title]) => settingsPageItem(target, title, target, () => {}));
+
+  it.each([
+    { query: "tailscale", page: "SettingsEnvironments" },
+    { query: "cron", page: "SettingsScheduledTasks" },
+    { query: "processes", page: "SettingsResourceManager" },
+    { query: "privacy", page: "SettingsMacPermissions" },
+    { query: "unarchive", page: "SettingsArchive" },
+    { query: "jarvis", page: "SettingsAssistants" },
+    { query: "team", page: "SettingsAssistants" },
+    { query: "oauth", page: "SettingsIntegrations" },
+  ])("finds $page by the text it draws: $query", ({ query, page }) => {
+    expect(keys(filterCommandPaletteItems(pages, query, []))).toContain(page);
   });
 });

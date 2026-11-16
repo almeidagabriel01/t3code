@@ -84,12 +84,14 @@ import {
   filterCommandPaletteItems,
   nextPaletteIndex,
   assistantInfoItems,
+  settingsPageItem,
   type CommandPaletteItem,
   type CommandPaletteResult,
 } from "./commandPaletteItems";
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import type { SettingsPageTarget } from "../settings/components/settings-page-targets";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
@@ -326,6 +328,7 @@ export function CommandPalette(props: {
       .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
   );
   const items = useMemo(() => {
+    const openPage = (target: SettingsPageTarget) => openSettings(navigation, target);
     const actions: CommandPaletteItem[] = [
       {
         key: "newTask",
@@ -345,139 +348,41 @@ export function CommandPalette(props: {
         key: "settings",
         kind: "action",
         title: "Open settings",
+        // What macOS and most apps call settings.
         searchTerms: ["preferences", "configuration"],
         run: () => selectTab("settings"),
       },
-      {
-        key: "appearance",
-        kind: "action",
-        title: "Appearance",
-        searchTerms: ["theme", "colors", "dark", "light"],
-        run: () => openSettings(navigation, "SettingsAppearance"),
-      },
-      {
-        key: "environments",
-        kind: "action",
-        title: "Manage environments",
-        searchTerms: ["connections", "server", "remote"],
-        run: () => openSettings(navigation, "SettingsEnvironments"),
-      },
-      {
-        key: "scheduledTasks",
-        kind: "action",
-        title: "Scheduled tasks",
-        searchTerms: ["schedule", "automations", "recurring"],
-        run: () => openSettings(navigation, "SettingsScheduledTasks"),
-      },
-      {
-        key: "usage",
-        kind: "action",
-        title: "Usage",
-        searchTerms: ["limits", "accounts", "quota"],
-        run: () => openSettings(navigation, "SettingsUsage"),
-      },
-      {
-        key: "resourceManager",
-        kind: "action",
-        title: "Resource Manager",
-        searchTerms: ["heavy work", "queue", "cpu", "memory", "linux", "processes"],
-        run: () => openSettings(navigation, "SettingsResourceManager"),
-      },
-      ...(hasBoards
-        ? [
-            {
-              key: "kanban",
-              kind: "action" as const,
-              title: "Board",
-              searchTerms: ["kanban", "cards", "tasks"],
-              run: () => openSettings(navigation, "SettingsKanban"),
-            },
-          ]
-        : []),
+      settingsPageItem("appearance", "Appearance", "SettingsAppearance", openPage),
+      settingsPageItem("environments", "Manage environments", "SettingsEnvironments", openPage),
+      settingsPageItem("scheduledTasks", "Scheduled tasks", "SettingsScheduledTasks", openPage),
+      settingsPageItem("usage", "Usage", "SettingsUsage", openPage),
+      settingsPageItem("resourceManager", "Resource Manager", "SettingsResourceManager", openPage),
+      ...(hasBoards ? [settingsPageItem("kanban", "Board", "SettingsKanban", openPage)] : []),
       ...(hasImessage
-        ? [
-            {
-              key: "imessage",
-              kind: "action" as const,
-              title: "iMessage",
-              searchTerms: ["messages", "assistants", "chat", "full disk access"],
-              run: () => openSettings(navigation, "SettingsImessage"),
-            },
-          ]
+        ? [settingsPageItem("imessage", "iMessage", "SettingsImessage", openPage)]
         : []),
       ...(hasTelegram
-        ? [
-            {
-              key: "telegram",
-              kind: "action" as const,
-              title: "Telegram",
-              searchTerms: ["bot", "botfather", "assistants", "chat", "token", "user id"],
-              run: () => openSettings(navigation, "SettingsTelegram"),
-            },
-          ]
+        ? [settingsPageItem("telegram", "Telegram", "SettingsTelegram", openPage)]
         : []),
       ...(hasMac
         ? [
-            {
-              key: "mac-permissions",
-              kind: "action" as const,
-              title: "Mac permissions",
-              searchTerms: ["computer use", "screen recording", "accessibility", "automation"],
-              run: () => openSettings(navigation, "SettingsMacPermissions"),
-            },
+            settingsPageItem(
+              "mac-permissions",
+              "Mac permissions",
+              "SettingsMacPermissions",
+              openPage,
+            ),
           ]
         : []),
       ...(hasDevices
-        ? [
-            {
-              key: "device-access",
-              kind: "action" as const,
-              title: "Device access",
-              searchTerms: ["devices", "simulator", "emulator", "physical device", "take over"],
-              run: () => openSettings(navigation, "SettingsDevices"),
-            },
-          ]
+        ? [settingsPageItem("device-access", "Device access", "SettingsDevices", openPage)]
         : []),
       ...(hasComputerUseHost
-        ? [
-            {
-              key: "computer-use",
-              kind: "action" as const,
-              title: "Computer use",
-              searchTerms: ["windows", "linux", "wayland", "screenshot", "click", "keys"],
-              run: () => openSettings(navigation, "SettingsComputerUse"),
-            },
-          ]
+        ? [settingsPageItem("computer-use", "Computer use", "SettingsComputerUse", openPage)]
         : []),
-      ...(hasMemory
-        ? [
-            {
-              key: "memory",
-              kind: "action" as const,
-              title: "Memory",
-              searchTerms: ["remember", "conversations", "import", "sharing"],
-              run: () => openSettings(navigation, "SettingsMemory"),
-            },
-          ]
-        : []),
-      ...(hasNotes
-        ? [
-            {
-              key: "notes",
-              kind: "action" as const,
-              title: "Notes",
-              searchTerms: ["markdown", "ideas", "capture", "start work"],
-              run: () => openSettings(navigation, "SettingsNotes"),
-            },
-          ]
-        : []),
-      {
-        key: "archive",
-        kind: "action",
-        title: "Archived threads",
-        searchTerms: ["restore", "history"],
-        run: () => openSettings(navigation, "SettingsArchive"),
-      },
+      ...(hasMemory ? [settingsPageItem("memory", "Memory", "SettingsMemory", openPage)] : []),
+      ...(hasNotes ? [settingsPageItem("notes", "Notes", "SettingsNotes", openPage)] : []),
+      settingsPageItem("archive", "Archived threads", "SettingsArchive", openPage),
     ];
     if (canTriage) {
       actions.push({
@@ -554,22 +459,12 @@ export function CommandPalette(props: {
       );
     }
     if (assistants.length > 0 || hasAssistantsEnvironment) {
-      actions.push({
-        key: "assistants",
-        kind: "action",
-        title: "Assistants",
-        searchTerms: ["assistants", "groups", "team", "agents", "page"],
-        run: () => openSettings(navigation, "SettingsAssistants"),
-      });
+      actions.push(settingsPageItem("assistants", "Assistants", "SettingsAssistants", openPage));
     }
     if (hasIntegrations) {
-      actions.push({
-        key: "integrations",
-        kind: "action",
-        title: "Integrations",
-        searchTerms: ["integrations", "connect", "sign in", "mcp", "token"],
-        run: () => openSettings(navigation, "SettingsIntegrations"),
-      });
+      actions.push(
+        settingsPageItem("integrations", "Integrations", "SettingsIntegrations", openPage),
+      );
     }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),

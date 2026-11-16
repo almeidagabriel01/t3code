@@ -19,4 +19,8 @@ export const RESOURCE_SORT_LABEL: Record<ResourceSort, string> = {
 export const RESOURCE_MANAGER_LABELS: readonly string[] = [
   ...Object.values(RESOURCE_MANAGER_COPY).map(({ title }) => title),
   ...Object.values(RESOURCE_SORT_LABEL),
+  // Its rows are processes, and Heavy work lists the heavy queue by machine (Mac or Linux).
+  "processes",
+  "queue",
+  "linux",
 ];
