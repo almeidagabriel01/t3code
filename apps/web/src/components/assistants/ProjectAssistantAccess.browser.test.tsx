@@ -75,7 +75,7 @@ const checkout = (environmentId: string, id: string) => ({
 });
 
 const open = () =>
-  render(<ProjectAssistantAccess environmentId={"env" as never} projectId={"p1" as never} />);
+  render(<ProjectAssistantAccess environmentId={"env" as never} projectIds={["p1" as never]} />);
 
 describe("ProjectAssistantAccess", () => {
   it("one click gives a whole group the project or takes it back", async () => {

@@ -2,6 +2,7 @@ import {
   type Assistant,
   type AssistantTeam,
   assistantEffectiveProjectIds,
+  type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
 
@@ -125,20 +126,89 @@ export function projectAccess<A extends AccessAssistant, T extends AccessTeam>(
 }
 
 /**
- * The assistant's own list with `projectId` added or taken out; null when that change is not
+ * The assistant's own list with `projectIds` added or taken out; null when that change is not
  * allowed: an assistant that works everywhere, or its home project, which holds its conversation.
  */
 export function ownProjectsWith(
   assistant: AccessAssistant,
-  projectId: ProjectId,
+  projectIds: ReadonlyArray<ProjectId>,
   on: boolean,
 ): ReadonlyArray<ProjectId> | null {
   if (assistant.scope !== "project") return null;
   if (on) {
-    return assistant.projectIds.includes(projectId)
-      ? assistant.projectIds
-      : [...assistant.projectIds, projectId];
+    const missing = projectIds.filter((id) => !assistant.projectIds.includes(id));
+    return missing.length === 0 ? assistant.projectIds : [...assistant.projectIds, ...missing];
   }
-  if (projectId === assistant.projectId) return null;
-  return assistant.projectIds.filter((id) => id !== projectId);
+  if (projectIds.includes(assistant.projectId)) return null;
+  return assistant.projectIds.filter((id) => !projectIds.includes(id));
+}
+
+export interface AccessCheckout {
+  readonly environmentId: EnvironmentId;
+  readonly id: ProjectId;
+}
+
+/** What a block's title names; null when the project shows only one block. */
+export interface ProjectAccessBlockTitle {
+  /** The blocks span environments, so each names its own. */
+  readonly environment: boolean;
+  /** Its environment has other blocks, so the checkout paths tell them apart. */
+  readonly path: boolean;
+}
+
+/**
+ * One access block per set of checkouts that grant the same access. Access is stored per project
+ * id, so checkouts of one project group can differ; only those in one environment can match.
+ * Environments without assistants show no block. Blocks keep the order of their first checkout.
+ */
+export function projectAccessBlocks<
+  C extends AccessCheckout,
+  A extends AccessAssistant,
+  T extends AccessTeam,
+>(
+  checkouts: ReadonlyArray<C>,
+  assistants: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly assistant: A }>,
+  teams: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly team: T }>,
+): ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly checkouts: ReadonlyArray<C>;
+  readonly projectIds: ReadonlyArray<ProjectId>;
+  readonly title: ProjectAccessBlockTitle | null;
+}> {
+  const blocks = new Map<string, { environmentId: EnvironmentId; checkouts: Array<C> }>();
+  for (const checkout of checkouts) {
+    const access = projectAccess(
+      checkout.id,
+      assistants.flatMap((entry) =>
+        entry.environmentId === checkout.environmentId ? [entry.assistant] : [],
+      ),
+      teams.flatMap((entry) =>
+        entry.environmentId === checkout.environmentId ? [entry.team] : [],
+      ),
+    );
+    if (access.groups.length === 0 && access.assistants.length === 0) continue;
+    const key = JSON.stringify([
+      checkout.environmentId,
+      access.groups.map((row) => [row.team.id, row.granted]),
+      access.assistants.map((row) => [row.assistant.id, row.kind, row.viaTeams, row.isHome]),
+    ]);
+    const block = blocks.get(key);
+    if (block) block.checkouts.push(checkout);
+    else blocks.set(key, { environmentId: checkout.environmentId, checkouts: [checkout] });
+  }
+  const list = [...blocks.values()];
+  const environments = new Set(list.map((block) => block.environmentId));
+  return list.map((block) => ({
+    ...block,
+    projectIds: block.checkouts.map((checkout) => checkout.id),
+    title:
+      list.length === 1
+        ? null
+        : {
+            environment: environments.size > 1,
+            path: list.some(
+              (other) => other !== block && other.environmentId === block.environmentId,
+            ),
+          },
+  }));
 }
