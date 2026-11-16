@@ -1264,8 +1264,7 @@ function ConnectionsSettingsContent({
 
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
-              id="authorized-clients"
-              title="Authorized clients"
+              {...searchableSetting("authorized-clients")}
               collapsedContent={
                 canReadAccess && newestPairingLink
                   ? renderPairingClientsList([newestPairingLink], [])

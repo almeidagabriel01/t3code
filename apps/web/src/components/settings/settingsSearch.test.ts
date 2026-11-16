@@ -16,6 +16,7 @@ import {
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
+  searchableSetting,
   searchSettings,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SEARCH_ITEMS,
@@ -155,9 +156,11 @@ describe("searchSettings", () => {
 
   it("hides desktop-only settings from browser search", () => {
     expect(SETTINGS_SEARCH_ITEMS.some((item) => item.id === "quit-confirmation")).toBe(true);
-    for (const query of ["hold to quit", "wsl", "update track"]) {
-      expect(searchSettings(query).filter((item) => item.desktopOnly === true)).toEqual([]);
-    }
+    expect(searchSettings("hold to quit").map((item) => item.id)).not.toContain(
+      "quit-confirmation",
+    );
+    expect(searchSettings("wsl").map((item) => item.id)).toEqual([]);
+    expect(searchSettings("update track").map((item) => item.id)).toEqual([]);
   });
 
   it("hides System glass when the desktop bridge has no material API", () => {
@@ -397,6 +400,11 @@ describe("searchSettings", () => {
       (item.description?.length ?? 0) > 200 ? [item.id] : [],
     );
     expect(long).toEqual([]);
+  });
+
+  it("keeps setting ids a closed set", () => {
+    // @ts-expect-error A row cannot read text for an id the index does not hold.
+    expect(() => searchableSetting("not-a-setting")).toThrow();
   });
 
   it("keeps catalog result ids unique", () => {

@@ -357,4 +357,11 @@ export const MAINTENANCE_SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
     searchTerms: [COPY.skillsFolderRescan, "copy path"],
   },
+  {
+    id: "storage-cleanup-last-run",
+    title: "Last run",
+    to: "/settings/maintenance",
+    targetId: "storage-delete-now",
+    scope: "environment-defaults",
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

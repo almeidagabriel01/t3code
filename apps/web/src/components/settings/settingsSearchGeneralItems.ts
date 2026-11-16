@@ -174,4 +174,11 @@ export const GENERAL_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
     targetId: "typography",
   },
+  {
+    id: "monospace-font",
+    title: "Monospace font",
+    description: "Code blocks, diffs, file previews, and the terminal.",
+    to: "/settings/appearance",
+    targetId: "code-font",
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

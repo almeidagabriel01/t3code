@@ -279,4 +279,9 @@ export const CONNECTION_SETTINGS_SEARCH_ITEMS = [
       CONNECTION_SETTINGS_COPY.linkedSourceListed,
     ],
   },
+  {
+    id: "authorized-clients",
+    title: "Authorized clients",
+    to: "/settings/access",
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

@@ -73,7 +73,6 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("interface-font")}
-      description="Everything outside code blocks and the terminal."
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
@@ -104,7 +103,6 @@ function PromptFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("prompt-font")}
-      description="Only the box you write prompts in. Mono works well here."
       defaultFamily={defaults.interfaceFamily}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer}
       value={settings.fontFamilyComposer}
@@ -129,12 +127,10 @@ function PromptFontRow() {
 }
 
 function CodeFontRow({
-  title,
-  description = "Code blocks, diffs, and file previews.",
+  copy = "code-font",
   preview,
 }: {
-  title?: string;
-  description?: string;
+  copy?: "code-font" | "monospace-font";
   preview?: ReactNode;
 }) {
   const settings = useScopedSettings();
@@ -143,8 +139,7 @@ function CodeFontRow({
   return (
     <FontFamilySettingsRow
       {...searchableSetting("code-font")}
-      {...(title !== undefined ? { title } : {})}
-      description={description}
+      {...settingCopy(copy)}
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyCode}
       value={settings.fontFamilyCode}
@@ -176,7 +171,6 @@ function TerminalFontRow() {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("terminal-font")}
-      description="Terminal output, independent from code blocks and diffs."
       defaultFamily={defaults.code}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
@@ -301,8 +295,7 @@ function SimpleFontRows() {
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
       <CodeFontRow
-        title="Monospace font"
-        description="Code blocks, diffs, file previews, and the terminal."
+        copy="monospace-font"
         preview={
           <>
             <CodeFontPreview />
@@ -370,7 +363,7 @@ function FontFamilySettingsRow({
 }: {
   id?: string;
   title: string;
-  description: string;
+  description?: string | undefined;
   defaultFamily: string;
   defaultValue: string;
   preview?: ReactNode;
