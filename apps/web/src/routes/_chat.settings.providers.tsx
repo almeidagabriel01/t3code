@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CONNECT_ENVIRONMENT_FOR_PROVIDERS } from "@t3tools/client-runtime/settings-empty-selection";
+import {
+  CONNECT_ENVIRONMENT_FOR_PROVIDERS,
+  reconnectEnvironmentForProviders,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
@@ -17,7 +20,7 @@ function SettingsProvidersRoute() {
       <SettingsPageContainer>
         <SettingsServerEnvironmentNotice>
           {scope.kind === "environment"
-            ? `Reconnect ${scope.label} to set up its providers.`
+            ? reconnectEnvironmentForProviders(scope.label)
             : CONNECT_ENVIRONMENT_FOR_PROVIDERS}
         </SettingsServerEnvironmentNotice>
       </SettingsPageContainer>

@@ -1,4 +1,7 @@
-import { CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS } from "@t3tools/client-runtime/settings-empty-selection";
+import {
+  CONNECT_ENVIRONMENT_FOR_SCHEDULED_TASKS,
+  reconnectEnvironmentForScheduledTasks,
+} from "@t3tools/client-runtime/settings-empty-selection";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
@@ -762,8 +765,7 @@ function ScheduledTaskEnvironmentSection({
         <SettingsRow
           // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
           title="Environment disconnected"
-          // oxlint-disable-next-line t3code/require-searchable-settings-copy -- disconnected state, not a setting
-          description={`Reconnect ${environment.label} to view its scheduled tasks.`}
+          description={reconnectEnvironmentForScheduledTasks(environment.label)}
         />
       ) : tasksQuery.error ? (
         // oxlint-disable-next-line t3code/require-searchable-settings-copy -- error state, not a setting

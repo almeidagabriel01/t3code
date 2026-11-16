@@ -1,3 +1,4 @@
+import { reconnectEnvironmentForSettings } from "@t3tools/client-runtime/settings-empty-selection";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
@@ -99,7 +100,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {reconnectEnvironmentForSettings(scope.label)}
         </p>
       </SettingsPageContainer>
     );
