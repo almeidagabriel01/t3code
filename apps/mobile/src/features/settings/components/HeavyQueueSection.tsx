@@ -2,12 +2,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { PRIORITY_LABEL, projectForCwd } from "@t3tools/client-runtime/state/heavyQueueModel";
 import {
   HEAVY_LIMIT_COPY,
+  heavyLimitDescription,
   heavyLimitIdle,
   heavyModeLine,
 } from "@t3tools/client-runtime/state/runnerModel";
 import {
   type EnvironmentId,
+  HEAVY_QUEUE_ADMISSION_KEYS,
+  HEAVY_QUEUE_DEFAULTS,
   HEAVY_QUEUE_LIMITS,
+  type HeavyQueueAdmissionKey,
   type HeavyQueueLimitKey,
   type RunnerWhere,
 } from "@t3tools/contracts";
@@ -38,11 +42,21 @@ const LIMIT_ROWS = [
   { key: "macCpuCeilingPercent", icon: "gauge.with.dots.needle.50percent" },
   { key: "macMemoryFloorPercent", icon: "internaldrive" },
   { key: "heavyOverLimitSeconds", icon: "clock" },
+  { key: "lightJobMegabytes", icon: "bolt.circle" },
+  { key: "unseenHeavyMegabytes", icon: "cube" },
+  { key: "unseenMediumMegabytes", icon: "doc.text" },
+  { key: "historyCommands", icon: "archivebox" },
+  { key: "headPatienceMinutes", icon: "timer" },
 ] as const satisfies ReadonlyArray<{ key: HeavyQueueLimitKey; icon: AppSymbolName }>;
 const UNIT: Record<(typeof HEAVY_QUEUE_LIMITS)[HeavyQueueLimitKey]["unit"], string> = {
   percent: "%",
   seconds: "s",
+  MB: " MB",
+  minutes: " min",
+  commands: "",
 };
+const isAdmission = (key: HeavyQueueLimitKey): key is HeavyQueueAdmissionKey =>
+  (HEAVY_QUEUE_ADMISSION_KEYS as ReadonlyArray<HeavyQueueLimitKey>).includes(key);
 
 /** The machine's heavy queue settings; what runs and waits shows in the Resource Manager. */
 export function HeavyQueueSection(props: {
@@ -71,7 +85,11 @@ export function HeavyQueueSection(props: {
   const setMacMemoryFloorPercent = useAtomCommand(heavyQueueEnvironment.setMacMemoryFloorPercent);
   const setMacCpuCeilingPercent = useAtomCommand(heavyQueueEnvironment.setMacCpuCeilingPercent);
   const setHeavyOverLimitSeconds = useAtomCommand(heavyQueueEnvironment.setHeavyOverLimitSeconds);
+  const setAdmissionLimits = useAtomCommand(heavyQueueEnvironment.setAdmissionLimits);
   const setLimit = (key: HeavyQueueLimitKey, value: number) => {
+    if (isAdmission(key)) {
+      return void setAdmissionLimits({ environmentId, input: { [key]: value } });
+    }
     switch (key) {
       case "macMemoryFloorPercent":
         return void setMacMemoryFloorPercent({
@@ -96,38 +114,54 @@ export function HeavyQueueSection(props: {
   const limitRow = (row: (typeof LIMIT_ROWS)[number]) => {
     const { min, max, unit } = HEAVY_QUEUE_LIMITS[row.key];
     const copy = HEAVY_LIMIT_COPY[row.key];
+    const usual = HEAVY_QUEUE_DEFAULTS[row.key];
     return (
-      <ListRowLayout
-        key={row.key}
-        icon={row.icon}
-        label={copy.title}
-        description={copy.description}
-        accessory={
-          <View className="flex-row items-center gap-1">
-            <NumberField
-              label={copy.title}
-              min={min}
-              max={max}
-              value={state[row.key]}
-              formatValue={(value) => `${value}${UNIT[unit]}`}
-              disabled={!canChange}
-              onValueChange={(value) => setLimit(row.key, value)}
-            />
-            <Text className="text-base text-foreground-muted">{UNIT[unit]}</Text>
-          </View>
-        }
-      />
+      <View key={row.key}>
+        <ListRowLayout
+          icon={row.icon}
+          label={copy.title}
+          description={heavyLimitDescription(row.key, state.lightJobMegabytes)}
+          accessory={
+            <View className="flex-row items-center gap-1">
+              <NumberField
+                label={copy.title}
+                min={min}
+                max={max}
+                value={state[row.key]}
+                formatValue={(value) => `${value}${UNIT[unit]}`}
+                disabled={!canChange}
+                onValueChange={(value) => setLimit(row.key, value)}
+              />
+              <Text className="text-base text-foreground-muted">{UNIT[unit]}</Text>
+            </View>
+          }
+        />
+        {isAdmission(row.key) && state[row.key] !== usual ? (
+          <SettingsActionRow
+            icon="arrow.uturn.backward"
+            label={`Use the default (${usual}${UNIT[unit]})`}
+            description={copy.title}
+            disabled={!canChange}
+            onPress={() => setLimit(row.key, usual)}
+          />
+        ) : null}
+      </View>
     );
   };
-  const limits = LIMIT_ROWS.filter(
-    (row) =>
-      heavyLimitIdle(row.key, {
-        queueEnabled: state.enabled,
-        runnerEnabled: runner?.enabled ?? null,
-        runnerWhere: runner?.where ?? null,
-      }) === null,
+  const limits = LIMIT_ROWS.filter((row) =>
+    // Letting jobs pass the head is the queue's own; the sizes also steer Hybrid's room on the Mac.
+    row.key === "headPatienceMinutes"
+      ? state.enabled
+      : heavyLimitIdle(row.key, {
+          queueEnabled: state.enabled,
+          runnerEnabled: runner?.enabled ?? null,
+          runnerWhere: runner?.where ?? null,
+        }) === null,
   );
-  const macLimits = limits.filter((row) => row.key !== "heavyOverLimitSeconds");
+  const macLimits = limits.filter(
+    (row) => row.key !== "heavyOverLimitSeconds" && !isAdmission(row.key),
+  );
+  const sizingLimits = limits.filter((row) => isAdmission(row.key));
   const sharedLimits = limits.filter((row) => row.key === "heavyOverLimitSeconds");
   const named = (title: string) =>
     props.machine === undefined ? title : `${title} · ${props.machine}`;
@@ -258,6 +292,11 @@ export function HeavyQueueSection(props: {
               onValueChange={slowAgentJobs.onChange}
             />
           ) : null}
+        </SettingsSection>
+      ) : null}
+      {sizingLimits.length > 0 ? (
+        <SettingsSection title={named(HEAVY_QUEUE_LABEL.jobSizing)}>
+          {sizingLimits.map(limitRow)}
         </SettingsSection>
       ) : null}
     </>

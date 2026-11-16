@@ -72,6 +72,7 @@ vi.mock("../../../state/heavyQueue", () => {
       setMacMemoryFloorPercent: command("setMacMemoryFloorPercent"),
       setMacCpuCeilingPercent: command("setMacCpuCeilingPercent"),
       setHeavyOverLimitSeconds: command("setHeavyOverLimitSeconds"),
+      setAdmissionLimits: command("setAdmissionLimits"),
     },
     useHeavyQueueState: () => mocks.state,
   };
@@ -309,10 +310,33 @@ describe("HeavyQueueSection", () => {
     await linux.unmount();
   });
 
+  it("groups job sizing apart and resets a changed size to its default", async () => {
+    setup({ lightJobMegabytes: 256 });
+    const view = await mount();
+    const sizing = view.host.querySelector('section[aria-label="Job sizing"]')!;
+    expect(sizing.querySelectorAll("input")).toHaveLength(5);
+    expect(view.host.textContent).toContain("unless it usually uses under 256 MB.");
+    const resets = [...sizing.querySelectorAll("button")].filter((b) =>
+      b.textContent?.startsWith("Use the default"),
+    );
+    expect(resets.map((b) => b.textContent)).toEqual(["Use the default (512 MB)"]);
+    await act(async () => resets[0]!.click());
+    expect(mocks.commands.setAdmissionLimits).toHaveBeenCalledWith({
+      environmentId: "env",
+      input: { lightJobMegabytes: 512 },
+    });
+    await view.unmount();
+  });
+
   it.each([
     ["CPU limit", "macCpuCeilingPercent", "setMacCpuCeilingPercent", 85],
     ["Keep memory free", "macMemoryFloorPercent", "setMacMemoryFloorPercent", 30],
     ["Over the limit for", "heavyOverLimitSeconds", "setHeavyOverLimitSeconds", 45],
+    ["Light job size", "lightJobMegabytes", "setAdmissionLimits", 300],
+    ["Memory guess for a new heavy job", "unseenHeavyMegabytes", "setAdmissionLimits", 2048],
+    ["Memory guess for a new medium job", "unseenMediumMegabytes", "setAdmissionLimits", 1024],
+    ["Commands remembered", "historyCommands", "setAdmissionLimits", 200],
+    ["Let smaller jobs pass for", "headPatienceMinutes", "setAdmissionLimits", 10],
   ] as const)("sets this Mac's %s within its limits", async (label, key, command, next) => {
     setup({ [key]: next - 1 });
     const view = await mount();

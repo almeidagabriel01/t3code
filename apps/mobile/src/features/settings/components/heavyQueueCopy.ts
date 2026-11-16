@@ -11,6 +11,7 @@ export const HEAVY_QUEUE_LABEL = {
   claudeHook: "Claude Code hook",
   idleSimulators: "Power off idle simulators",
   thisMac: "This Mac",
+  jobSizing: "Job sizing",
   allowMore: "Allow one more",
   allowFewer: "Allow one fewer",
   slowAgentJobs: "Slow down agent jobs when the Mac is busy",
