@@ -97,11 +97,16 @@ export interface SettingsSearchSection<Row extends SettingsSearchRow> {
 /**
  * Keeps the rows whose label, section, or page contents match `query`, in list order, and drops
  * sections left empty. Matching is the command palette's, so both searches agree.
+ * `dynamicLabels` adds text a page draws from live state, by row id.
  */
 export function filterSettingsSections<
   Row extends SettingsSearchRow,
   Section extends SettingsSearchSection<Row>,
->(sections: readonly Section[], query: string): Section[] {
+>(
+  sections: readonly Section[],
+  query: string,
+  dynamicLabels: Readonly<Record<string, readonly string[]>> = {},
+): Section[] {
   const normalizedQuery = foldSearchQuery(query);
   const rows = sections.flatMap((section) =>
     section.rows.map((row) => ({ row, section: section.title })),
@@ -111,7 +116,12 @@ export function filterSettingsSections<
         rankSearchItems(rows, ({ row, section }, options) =>
           scoreSearchTerms(
             normalizedQuery,
-            [row.label, ...(section ? [section] : []), ...(termsById.get(row.id) ?? [])],
+            [
+              row.label,
+              ...(section ? [section] : []),
+              ...(termsById.get(row.id) ?? []),
+              ...(dynamicLabels[row.id] ?? []),
+            ],
             options,
           ),
         ).map(({ item }) => item.row),

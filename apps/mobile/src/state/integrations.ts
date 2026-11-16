@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { integrationDirectory } from "@t3tools/client-runtime/integrations";
 import { createIntegrationsEnvironmentAtoms } from "@t3tools/client-runtime/state/integrations";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -11,9 +12,10 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "./atom-registry";
 import { environmentServerConfigsAtom } from "./server";
 import { environmentSession, sessionHasScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
@@ -62,6 +64,31 @@ export function useIntegrationsState(
       ? integrationsFeedAtom(environmentId)
       : NO_STATE_ATOM,
   );
+}
+
+/**
+ * The integration names the Integrations screen draws, from feeds a screen already opened. It peeks
+ * the registry instead of reading the atom, so search never opens a stream to index. The peek is
+ * invisible to the React Compiler, so `query` keys it: it reruns on every search.
+ */
+export function useOpenIntegrationNames(query: string): readonly string[] {
+  const ids = useAtomValue(integrationsEnvironmentIdsAtom);
+  if (query.trim() === "") return [];
+  return ids.flatMap((environmentId) => {
+    const live = integrationsEnvironment.live({ environmentId, input: null });
+    const node: AtomRegistry.Node<Atom.Type<typeof live>> | undefined = appAtomRegistry
+      .getNodes()
+      .get(live);
+    const state = Option.getOrNull(
+      Option.flatMap(node?.valueOption() ?? Option.none(), AsyncResult.value),
+    );
+    if (state === null) return [];
+    const { connected, available, other } = integrationDirectory(state, {
+      query: "",
+      category: null,
+    });
+    return [...connected, ...available, ...other].map((row) => row.title);
+  });
 }
 
 /** `reason` feeds `integrationErrorMessage`; anything that is not an integration refusal reads as Error. */

@@ -124,6 +124,20 @@ describe("filterSettingsSections", () => {
     expect(found.map((row) => row.id)).toContain(page);
   });
 
+  it.each(["linear", "google"])(
+    "finds Integrations by a live name only when it has one: %s",
+    (query) => {
+      const ids = (labels?: Readonly<Record<string, readonly string[]>>) =>
+        filterSettingsSections(everyPage, query, labels)
+          .flatMap((section) => section.rows)
+          .map((row) => row.id);
+      expect(ids()).not.toContain("SettingsIntegrations");
+      expect(ids({ SettingsIntegrations: ["Google Calendar", "Linear"] })).toContain(
+        "SettingsIntegrations",
+      );
+    },
+  );
+
   it("drops sections that start empty", () => {
     expect(filterSettingsSections([{ rows: [] }, ...SECTIONS], "").length).toBe(SECTIONS.length);
   });

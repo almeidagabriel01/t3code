@@ -33,7 +33,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsProjectsLabel } from "./settings-environment-filter.logic";
 import { useAssistantsEnvironmentIds } from "../../state/assistants";
-import { useIntegrationsEnvironmentIds } from "../../state/integrations";
+import { useIntegrationsEnvironmentIds, useOpenIntegrationNames } from "../../state/integrations";
 import { useHasKanbanEnvironments } from "../../state/kanban";
 import { useImessageEnvironmentIds } from "../../state/imessageChannel";
 import { useTelegramEnvironmentIds } from "../../state/telegramChannel";
@@ -179,9 +179,11 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
+  const integrationNames = useOpenIntegrationNames(query);
   const sections = filterSettingsSections(
     [{ rows: overflowRows }, { title: "Connections", rows: props.connections }, ...indexSections],
     query,
+    { SettingsIntegrations: integrationNames },
   );
 
   return (
