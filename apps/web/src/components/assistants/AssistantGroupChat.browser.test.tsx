@@ -630,6 +630,36 @@ it("lets go of a cut-off reply's quote once its post shows, also after an edit",
   }
 });
 
+it("keeps a reply cancelled on a cut-off send cancelled once the chat reopens: it is a new message", async () => {
+  publishGroupChat(
+    [
+      message(1, { text: "@ada hi" }),
+      message(2, { author: "assistant", assistantId: "ada" as AssistantId, text: "hello back" }),
+    ],
+    [],
+  );
+  await using screen = await openChat();
+  await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
+  fakeGroupChat.postCut = true;
+  await userEvent.type(composer(), "thanks{Enter}");
+  await expect
+    .element(page.getByText("Couldn't confirm the send.", { exact: false }))
+    .toBeVisible();
+  await userEvent.click(main().getByRole("button", { name: "Cancel reply" }));
+  await screen.router.navigate({ to: "/assistants" });
+  await expect.element(composer()).not.toBeInTheDocument();
+  await screen.router.navigate({
+    to: "/group/$environmentId/$teamId",
+    params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
+  });
+  await expectComposer("thanks");
+  await expect.element(main().getByTestId("group-reply-chip")).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "Submit message" }));
+  await eventually(() => expect(fakeGroupChat.posts).toHaveLength(2));
+  const [first, again] = fakeGroupChat.postRequestIds;
+  expect([fakeGroupChat.posts[1]?.replyToMessageId, again === first]).toEqual([undefined, false]);
+});
+
 it("shows a task's expected result and resources, and why a queued or limited one waits", async () => {
   const resetAt = "2099-03-04T09:30:00.000Z";
   publishGroupChat(
@@ -1444,8 +1474,15 @@ it("keeps a cut-off reply's quote and id across another tab and the chat reopeni
   });
   const chip = main().getByTestId("group-reply-chip");
   const warning = page.getByText("Couldn't confirm the send.", { exact: false });
+  uploads.discard.mockReset();
+  uploads.upload.mockReset().mockImplementation(async (_environmentId: string, file: File) => ({
+    attachmentId: `pending-${file.name}`,
+    mimeType: file.type,
+  }));
   await userEvent.click(tab("render"));
   await userEvent.click(main().getByRole("button", { name: "Reply to Ada" }));
+  paste(composer().element(), [shot()]);
+  await expect.element(main().getByTestId("group-attachment-chip")).toBeVisible();
   fakeGroupChat.postCut = true;
   await userEvent.type(composer(), "one more{Enter}");
   await expect.element(warning).toBeVisible();
@@ -1460,10 +1497,17 @@ it("keeps a cut-off reply's quote and id across another tab and the chat reopeni
     params: { environmentId: ENVIRONMENT_ID, teamId: "t1" },
   });
   await expect.element(chip).toHaveTextContent("Replying to Ada Budget answered");
+  // Its file came back with it, still uploaded.
+  await expect.element(main().getByTestId("group-attachment-chip")).toBeVisible();
+  expect(uploads.discard).not.toHaveBeenCalled();
   await userEvent.click(page.getByRole("button", { name: "Submit message" }));
   await eventually(() => expect(fakeGroupChat.posts).toHaveLength(2));
   const [first, resent] = fakeGroupChat.postRequestIds;
-  expect([fakeGroupChat.posts[1]?.replyToMessageId, resent]).toEqual(["m2", first]);
+  expect([fakeGroupChat.posts[1], resent]).toEqual([fakeGroupChat.posts[0], first]);
+  expect(fakeGroupChat.posts[1]).toMatchObject({
+    replyToMessageId: "m2",
+    attachments: [{ id: "pending-shot.png" }],
+  });
   // The post had landed: the chat showing it drops the quote with the warning.
   twoRequests(SITE_PROJECT, [
     message(4, {
