@@ -43,6 +43,7 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import type { LegacyProjectSettingsFields } from "@t3tools/shared/projectSettings";
 import { projectNoticePrefix } from "@t3tools/shared/projectNotice";
+import type { AssistantMood } from "./assistantRobot.ts";
 import { TASK_EVENT_STATUS_LABEL } from "./assistantTasks.ts";
 
 export interface AssistantGroupChatState {
@@ -938,6 +939,50 @@ export function assistantGroupSendContextEqual(
 }
 
 /**
+ * The session a draft lands in, for the composer's context meter: the member who answers (a
+ * resumed task's owner, the one routing names, else the lead) and its thread in the replied request.
+ * Null for a new request, which opens fresh threads, and while that member has no task loaded there.
+ */
+export function assistantGroupComposerSession(input: {
+  readonly state: AssistantGroupChatState | null;
+  /** The request a reply continues; null for a new request. */
+  readonly requestId: AssistantGroupMessageId | null;
+  readonly text: string;
+  readonly members: ReadonlyArray<Recipient>;
+  readonly leadId: AssistantId | null;
+  readonly context: AssistantGroupSendContext;
+}): AssistantGroupTask | null {
+  const { state, requestId, context } = input;
+  if (state === null || requestId === null) return null;
+  const { replyOwner } = context;
+  const owners =
+    replyOwner === null
+      ? []
+      : input.members.filter((member) =>
+          "id" in replyOwner ? member.id === replyOwner.id : member.name === replyOwner.name,
+        );
+  const decision = routeGroupMessage({
+    text: input.text,
+    members: input.members,
+    replyOwnerId: owners.length === 1 ? owners[0]!.id : null,
+    stopped: context.stopped,
+    fromUser: true,
+    requestOwnerId: context.request?.ownerId ?? null,
+  });
+  if (decision?.kind === "resume") {
+    return state.tasks.get(decision.taskId as AssistantGroupTaskId) ?? null;
+  }
+  const ownerId = decision?.ids[0] ?? input.leadId;
+  let newest: AssistantGroupTask | null = null;
+  for (const task of state.tasks.values()) {
+    const taskRequest = task.requestId ?? state.messages.get(task.requestMessageId)?.requestId;
+    if (task.ownerId !== ownerId || taskRequest !== requestId) continue;
+    if (newest === null || newest.updatedAt < task.updatedAt) newest = task;
+  }
+  return newest;
+}
+
+/**
  * The line under the composer: who a draft reaches, or why the server would refuse it, worked out
  * as `AssistantGroups.post` does before routing. The server still decides.
  */
@@ -1591,6 +1636,67 @@ export function assistantGroupMemberWork(
         task.requestId ?? state.messages.get(task.requestMessageId)?.requestId,
       ),
     }));
+}
+
+/** The face a member shows for one task: working, held by a limit, stopped on the user, failed or done. */
+export const ASSISTANT_GROUP_TASK_MOOD: Record<AssistantGroupTaskStatus, AssistantMood> = {
+  queued: "working",
+  running: "working",
+  waiting: "working",
+  usage_limited: "limited",
+  paused: "needs",
+  failed: "failed",
+  completed: "idle",
+  cancelled: "idle",
+};
+
+/** The members with a task in a request, each once by its newest task, in the order they joined it. */
+export function assistantGroupRequestOwners(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<AssistantGroupTask> {
+  const newest = new Map<AssistantId, AssistantGroupTask>();
+  for (const task of [...tasks].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const current = newest.get(task.ownerId);
+    if (current === undefined || current.updatedAt <= task.updatedAt)
+      newest.set(task.ownerId, task);
+  }
+  return [...newest.values()];
+}
+
+/**
+ * A request's tasks as a tree, depth first: each root, then what it handed off, then their
+ * replies. A task whose parent is not loaded, or that sits in a parent cycle, starts its own branch.
+ */
+export function assistantGroupTaskTree(
+  tasks: ReadonlyArray<AssistantGroupTask>,
+): ReadonlyArray<{ readonly task: AssistantGroupTask; readonly depth: number }> {
+  const ordered = [...tasks].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const ids = new Set(ordered.map((task) => task.id));
+  const children = new Map<string, AssistantGroupTask[]>();
+  for (const task of ordered) {
+    const parent = task.parentId !== null && ids.has(task.parentId) ? task.parentId : "";
+    children.set(parent, [...(children.get(parent) ?? []), task]);
+  }
+  const rows: Array<{ readonly task: AssistantGroupTask; readonly depth: number }> = [];
+  const seen = new Set<string>();
+  const walk = (parent: string, depth: number) => {
+    for (const task of children.get(parent) ?? []) {
+      if (seen.has(task.id)) continue;
+      seen.add(task.id);
+      rows.push({ task, depth });
+      walk(task.id, depth + 1);
+    }
+  };
+  walk("", 0);
+  for (const task of ordered) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    rows.push({ task, depth: 0 });
+    walk(task.id, 1);
+  }
+  return rows;
 }
 
 /** The divider's wording, for a boundary message's `new` or `compact` text. */
