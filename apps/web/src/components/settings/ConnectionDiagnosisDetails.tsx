@@ -80,12 +80,14 @@ export function ConnectionDiagnosisSummary({
   attempt,
   expanded,
   onToggle,
+  onPairAgain,
 }: {
   readonly diagnosis: ConnectionDiagnosis;
   readonly retryAt: number | null;
   readonly attempt: number;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly onPairAgain: () => void;
 }) {
   return (
     <div className="text-xs">
@@ -111,6 +113,13 @@ export function ConnectionDiagnosisSummary({
           />
         </button>
       </p>
+      {diagnosis.pairAgain ? (
+        <div className="mt-1.5">
+          <Button type="button" size="xs" variant="outline" onClick={onPairAgain}>
+            Pair again
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -222,6 +222,54 @@ describe("ConnectionCatalogDocument", () => {
     expect(relay.remoteDpopTokens).toEqual([REMOTE_TOKEN]);
   });
 
+  it.each([
+    { saved: "https://lan.example.test", paired: "https://remote.example.test", token: "fresh" },
+    { saved: "http://10.0.0.2", paired: "http://10.0.0.9", token: "fresh" },
+    { saved: "https://lan.example.test", paired: "http://10.0.0.9", token: "fresh" },
+    { saved: "http://10.0.0.2", paired: "https://remote.example.test", token: "refused" },
+  ])(
+    "pairing $paired leaves the saved $saved with the $token token",
+    ({ saved, paired, token }) => {
+      const bearer = (url: string, value: string) => {
+        const connectionId = `bearer:${ENVIRONMENT_ID}:${url}`;
+        return new BearerConnectionRegistration({
+          target: new BearerConnectionTarget({
+            environmentId: ENVIRONMENT_ID,
+            label: "Remote",
+            connectionId,
+          }),
+          profile: new BearerConnectionProfile({
+            connectionId,
+            environmentId: ENVIRONMENT_ID,
+            label: "Remote",
+            httpBaseUrl: url,
+            wsBaseUrl: url.replace(/^http/, "ws"),
+          }),
+          credential: new BearerConnectionCredential({ token: value }),
+        });
+      };
+      const savedRoute = bearer(saved, "refused");
+      const pairedRoute = bearer(paired, "fresh");
+      const learned = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Remote",
+        connectionId: `learned:${ENVIRONMENT_ID}:http://192.168.0.9@${savedRoute.target.connectionId}`,
+      });
+      const tokenOf = (document: ConnectionCatalogDocument, connectionId: string) =>
+        document.credentials.find((value) => value.connectionId === connectionId)?.credential;
+
+      const next = registerConnectionInCatalog(
+        registerConnectionInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, savedRoute),
+        pairedRoute,
+        [pairedRoute.target, savedRoute.target, learned],
+      );
+
+      expect(tokenOf(next, pairedRoute.target.connectionId)?.token).toBe("fresh");
+      expect(tokenOf(next, savedRoute.target.connectionId)?.token).toBe(token);
+      expect(tokenOf(next, learned.connectionId)).toBeUndefined();
+    },
+  );
+
   it("removes every catalog record owned by an explicit disconnect", () => {
     const registered = registerConnectionInCatalog(
       {

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  type BearerConnectionRegistration,
   type ConnectionRegistration,
   ConnectionCredential,
   ConnectionProfile,
@@ -135,20 +136,59 @@ export function registerConnectionInCatalog(
     case "RelayConnectionRegistration":
       return next;
     case "BearerConnectionRegistration":
-    case "SshConnectionRegistration":
+    case "SshConnectionRegistration": {
+      const profiles = replaceCatalogValue(
+        next.profiles,
+        (value) => value.connectionId,
+        registration.profile,
+      );
+      const connectionIds = [
+        registration.target.connectionId,
+        ...(registration._tag === "BearerConnectionRegistration"
+          ? sharedBearerConnectionIds(registration, routes, profiles)
+          : []),
+      ];
       return {
         ...next,
-        profiles: replaceCatalogValue(
-          next.profiles,
-          (value) => value.connectionId,
-          registration.profile,
+        profiles,
+        credentials: connectionIds.reduce(
+          (credentials, connectionId) =>
+            replaceCatalogValue(credentials, (value) => value.connectionId, {
+              connectionId,
+              credential: registration.credential,
+            }),
+          next.credentials,
         ),
-        credentials: replaceCatalogValue(next.credentials, (value) => value.connectionId, {
-          connectionId: registration.target.connectionId,
-          credential: registration.credential,
-        }),
       };
+    }
   }
+}
+
+/**
+ * Every paired address of an environment reaches the same server, which accepts its tokens on any
+ * of them (learned routes already borrow one), so a fresh pairing also replaces the token its other
+ * paired addresses would send: one the server refused would otherwise keep being tried. A token
+ * paired over HTTPS is never handed to a plain-HTTP address.
+ */
+function sharedBearerConnectionIds(
+  registration: BearerConnectionRegistration,
+  routes: ReadonlyArray<PersistedConnectionTarget>,
+  profiles: ConnectionCatalogDocument["profiles"],
+): ReadonlyArray<string> {
+  const pairedOverHttps = registration.profile.httpBaseUrl.startsWith("https:");
+  return routes.flatMap((target) => {
+    if (
+      target._tag !== "BearerConnectionTarget" ||
+      !target.connectionId.startsWith("bearer:") ||
+      target.connectionId === registration.target.connectionId
+    ) {
+      return [];
+    }
+    const profile = profiles.find((value) => value.connectionId === target.connectionId);
+    const plainHttp =
+      profile?._tag === "BearerConnectionProfile" && profile.httpBaseUrl.startsWith("http:");
+    return pairedOverHttps && plainHttp ? [] : [target.connectionId];
+  });
 }
 
 export function removeConnectionFromCatalog(

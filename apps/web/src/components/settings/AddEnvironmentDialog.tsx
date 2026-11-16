@@ -253,8 +253,8 @@ export function AddEnvironmentDialog({
       routeTarget
         ? {
             type: "success",
-            title: "Route added",
-            description: `${routeTarget.label} now has another way to connect.`,
+            title: "Route saved",
+            description: `${routeTarget.label} can now connect over this address.`,
           }
         : {
             type: "success",
