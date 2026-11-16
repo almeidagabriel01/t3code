@@ -1,22 +1,35 @@
-import { assistantGroupFinished } from "@t3tools/client-runtime/assistantGroupChat";
-import type { AssistantTeam, AssistantTeamId, EnvironmentId } from "@t3tools/contracts";
+import {
+  assistantGroupFinished,
+  assistantGroupFinishedInView,
+  type AssistantGroupFinishedNotice,
+} from "@t3tools/client-runtime/assistantGroupChat";
+import type { AssistantTeam, AssistantTeamId, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import type { AtomRegistry } from "effect/reactivity";
 
+import { writeLocalStorageValue } from "../hooks/useLocalStorage";
 import { getClientSettings } from "../hooks/useSettings";
 import { assistantTeamEntriesAtom, type AssistantTeamEntry } from "../state/assistants";
+import { openGroupTabsAtom, type OpenGroupTab } from "../state/openGroupTabs";
+import { environmentProjects } from "../state/projects";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
 } from "../threadNotifications";
+import { groupTabStorageKey, SavedGroupTab } from "./assistants/groupTabStorage";
 import { toastManager } from "./ui/toast";
-
-type Notice = { readonly title: string; readonly body: string };
 
 /** Remembers each group between updates and reports the ones whose work just finished. */
 export function createGroupFinishedObserver(
-  report: (environmentId: EnvironmentId, teamId: AssistantTeamId, notice: Notice) => void,
+  report: (
+    environmentId: EnvironmentId,
+    teamId: AssistantTeamId,
+    notice: AssistantGroupFinishedNotice,
+  ) => void,
+  projectsOf: (
+    environmentId: EnvironmentId,
+  ) => ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>,
 ) {
   const previous = new Map<string, AssistantTeam>();
   return (entries: ReadonlyArray<AssistantTeamEntry>) => {
@@ -24,9 +37,9 @@ export function createGroupFinishedObserver(
     for (const { environmentId, team } of entries) {
       const key = `${environmentId}:${team.id}`;
       seen.add(key);
-      const finished = assistantGroupFinished(previous.get(key), team);
+      const finished = assistantGroupFinished(previous.get(key), team, projectsOf(environmentId));
       previous.set(key, team);
-      if (finished !== null) report(environmentId, team.id, finished);
+      for (const notice of finished) report(environmentId, team.id, notice);
     }
     for (const key of previous.keys()) if (!seen.has(key)) previous.delete(key);
   };
@@ -34,14 +47,21 @@ export function createGroupFinishedObserver(
 
 /**
  * Tells the user when a group has finished the work of a request, the way a finished thread
- * does and under the same notification settings, unless they are looking at that chat.
+ * does and under the same notification settings, unless they are looking at it in its chat.
  */
 export function startGroupNotifications(
   registry: AtomRegistry.AtomRegistry,
   router: AnyRouter,
 ): () => void {
-  const observe = createGroupFinishedObserver((environmentId, teamId, notice) =>
-    presentGroupFinished(router, environmentId, teamId, notice),
+  const observe = createGroupFinishedObserver(
+    (environmentId, teamId, notice) =>
+      presentGroupFinished(router, environmentId, teamId, notice, [
+        ...registry.get(openGroupTabsAtom).values(),
+      ]),
+    (environmentId) =>
+      registry
+        .get(environmentProjects.projectsAtom)
+        .filter((project) => project.environmentId === environmentId),
   );
   return registry.subscribe(assistantTeamEntriesAtom, observe, { immediate: true });
 }
@@ -50,7 +70,8 @@ export function presentGroupFinished(
   router: Pick<AnyRouter, "state" | "navigate">,
   environmentId: EnvironmentId,
   teamId: AssistantTeamId,
-  notice: Notice,
+  notice: AssistantGroupFinishedNotice,
+  shown: ReadonlyArray<OpenGroupTab>,
 ) {
   const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
   const active = (router.state.matches.at(-1)?.params ?? {}) as {
@@ -59,12 +80,26 @@ export function presentGroupFinished(
   };
   const focused = document.visibilityState === "visible" && document.hasFocus();
   const chatOpen = active.environmentId === environmentId && active.teamId === teamId;
-  if (chatOpen && focused) return;
-  const open = () =>
+  // Every mount of this chat (the route, a side panel) counts: one showing the tab is enough.
+  const tabs = shown.flatMap((entry) =>
+    entry.environmentId === environmentId && entry.teamId === teamId ? [entry.tab] : [],
+  );
+  const inView = (tabs.length === 0 ? [null] : tabs).some(
+    (tab) => tab !== undefined && assistantGroupFinishedInView(tab, notice.tab),
+  );
+  if (chatOpen && focused && inView) return;
+  const open = () => {
+    writeLocalStorageValue(
+      groupTabStorageKey(environmentId, teamId),
+      notice.tab,
+      null,
+      SavedGroupTab,
+    );
     void router.navigate({
       to: "/group/$environmentId/$teamId",
       params: { environmentId, teamId },
     });
+  };
   if (hasNotificationSound(mode)) {
     void playNotificationSound("completion", () =>
       hasNotificationSound(getClientSettings().notificationMode),
@@ -96,7 +131,8 @@ export function presentGroupFinished(
   try {
     const notification = new Notification(notice.title, {
       body: notice.body,
-      tag: `group:${environmentId}:${teamId}`,
+      // Per tab, so two projects finishing together do not replace each other.
+      tag: `group:${environmentId}:${teamId}:${notice.tab}`,
       silent: true,
     });
     notification.addEventListener("click", () => {

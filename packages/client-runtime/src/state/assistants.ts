@@ -1,4 +1,6 @@
 import {
+  AssistantError,
+  EnvironmentAuthorizationError,
   WS_METHODS,
   type Assistant,
   type AssistantId,
@@ -6,13 +8,24 @@ import {
   type AssistantTask,
   type AssistantTeam,
   type AssistantSandboxStatus,
+  type AssistantGroupScope,
   type AssistantTeamId,
+  type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
-import { applyAssistantGroupsEvent, type AssistantGroupChatState } from "../assistantGroupChat.ts";
+import {
+  applyAssistantGroupsEvent,
+  assistantGroupSendContext,
+  assistantGroupSendContextEqual,
+  type AssistantGroupChatState,
+  type AssistantGroupReplyRef,
+} from "../assistantGroupChat.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe } from "../rpc/client.ts";
 import {
@@ -265,6 +278,34 @@ export function assistantErrorMessage(error: unknown): string {
     : "The assistant request failed. Try again.";
 }
 
+const isAssistantError = Schema.is(AssistantError);
+const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+
+/** What a group post that got no answer says: it may have landed, and a resend never doubles it. */
+export const ASSISTANT_GROUP_POST_UNCONFIRMED =
+  "Couldn't confirm the send. Send it again: it won't post twice.";
+
+/**
+ * A failed group post as the composer tells it. Only a typed error is the server's answer; an
+ * interruption or a lost connection may come after the server took the post, so it is unconfirmed.
+ */
+export function assistantGroupPostFailure(cause: Cause.Cause<unknown>): {
+  readonly message: string;
+  readonly reason: string | null;
+} {
+  const error = Cause.squash(cause);
+  if (isAssistantError(error)) return { message: error.message, reason: error.reason };
+  if (isAuthorizationError(error)) {
+    return { message: assistantErrorMessage(error), reason: null };
+  }
+  return { message: ASSISTANT_GROUP_POST_UNCONFIRMED, reason: "unconfirmed" };
+}
+
+/** A group chat read before its tab is known: nothing yet, and no subscription. */
+export const ASSISTANT_GROUP_CHAT_IDLE = Atom.make(
+  AsyncResult.initial<AssistantGroupChatState, never>(),
+).pipe(Atom.withLabel("environment-data:assistants:group-chat:idle"));
+
 export function createAssistantsEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -307,6 +348,45 @@ export function createAssistantsEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     });
+  const groupChat = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:assistants:group-chat",
+    subscribe: (input: {
+      readonly teamId: AssistantTeamId;
+      readonly scope?: AssistantGroupScope;
+    }) =>
+      subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
+        Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
+        Stream.filter((state): state is AssistantGroupChatState => state !== null),
+      ),
+  });
+  const groupSendContextFamily = Atom.family((key: string) => {
+    const [environmentId, teamId, scope, reply] = JSON.parse(key) as [
+      EnvironmentId,
+      AssistantTeamId,
+      AssistantGroupScope | null | "all",
+      AssistantGroupReplyRef | null,
+    ];
+    return Atom.make((get) =>
+      assistantGroupSendContext(
+        scope === null
+          ? null
+          : Option.getOrNull(
+              AsyncResult.value(
+                get(
+                  groupChat({
+                    environmentId,
+                    input: { teamId, ...(scope === "all" ? {} : { scope }) },
+                  }),
+                ),
+              ),
+            ),
+        reply,
+      ),
+    ).pipe(
+      Atom.withEquality(assistantGroupSendContextEqual),
+      Atom.withLabel(`environment-data:assistants:group-send-context:${key}`),
+    );
+  });
   return {
     live: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:assistants:live",
@@ -323,14 +403,27 @@ export function createAssistantsEnvironmentAtoms<R, E>(
     updateTeam: command(WS_METHODS.assistantTeamsUpdate, "updateTeam"),
     deleteTeam: command(WS_METHODS.assistantTeamsDelete, "deleteTeam"),
     /** One group's chat, live: the newest page first, then each change. */
-    groupChat: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:assistants:group-chat",
-      subscribe: (input: { readonly teamId: AssistantTeamId }) =>
-        subscribe(WS_METHODS.assistantGroupsSubscribe, input).pipe(
-          Stream.scan((): AssistantGroupChatState | null => null, applyAssistantGroupsEvent),
-          Stream.filter((state): state is AssistantGroupChatState => state !== null),
-        ),
-    }),
+    groupChat,
+    /**
+     * What routes a draft besides its text, from the same chat as `groupChat` (scope as there).
+     * It notifies only when the context changes, not on every chat event.
+     */
+    groupSendContext: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly teamId: AssistantTeamId;
+      readonly scope: AssistantGroupScope | null | undefined;
+      readonly reply: AssistantGroupReplyRef | null;
+    }) =>
+      groupSendContextFamily(
+        JSON.stringify([
+          input.environmentId,
+          input.teamId,
+          input.scope === undefined ? "all" : input.scope,
+          input.reply === null
+            ? null
+            : { id: input.reply.id, to: input.reply.to, projectId: input.reply.projectId },
+        ]),
+      ),
     groupHistory: command(WS_METHODS.assistantGroupsHistory, "groupHistory"),
     markGroupRead: command(WS_METHODS.assistantGroupsMarkRead, "markGroupRead"),
     groupConversation: command(WS_METHODS.assistantGroupsConversation, "groupConversation"),

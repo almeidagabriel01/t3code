@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -1061,4 +1062,414 @@ it.effect.each(["missing-session-terminal", "returned-interrupt", "superseded-at
 
 it.effect("Stop holds a provider wake that queues before the stopped turn ends", () =>
   stopEarlierBackgroundWork({ wakeAfterStop: true }),
+);
+
+const releaseSessionWithNativeWork = (input: {
+  readonly reason: ProviderSessionManager.ProviderSessionReleaseReason;
+  readonly via: "release" | "detach";
+  readonly nativeWorkEndsWithProcess: boolean;
+  readonly backgroundTasksEndWithProcess: boolean;
+  readonly endsWork: boolean;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("released-native-work");
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
+      // One app thread per session, as with Claude, so detaching it releases the session.
+      const capabilities = {
+        ...CodexProviderCapabilitiesV2,
+        sessions: {
+          ...CodexProviderCapabilitiesV2.sessions,
+          supportsMultipleProviderThreadsPerSession: false,
+        },
+      };
+      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+        instanceId,
+        driver,
+        getCapabilities: () => Effect.succeed(capabilities),
+        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+        openSession: (session) =>
+          Effect.gen(function* () {
+            const now = yield* DateTime.now;
+            return {
+              instanceId,
+              driver,
+              providerSessionId: session.providerSessionId,
+              providerSession: {
+                id: session.providerSessionId,
+                driver,
+                providerInstanceId: instanceId,
+                status: "ready",
+                cwd,
+                model: modelSelection.model,
+                capabilities,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+              events: Stream.fromQueue(events),
+              ...(input.nativeWorkEndsWithProcess
+                ? { nativeWorkEndsWithProcess: true as const }
+                : {}),
+              ...(input.backgroundTasksEndWithProcess
+                ? { backgroundTasksEndWithProcess: true as const }
+                : {}),
+              ensureThread: ({ threadId }) =>
+                Effect.succeed({
+                  id: ProviderThreadId.make(`provider-thread:native:${threadId}`),
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerSessionId: session.providerSessionId,
+                  appThreadId: threadId,
+                  ownerNodeId: null,
+                  nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
+                  nativeConversationHeadRef: null,
+                  status: "idle",
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  createdAt: now,
+                  updatedAt: now,
+                }),
+              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+              startTurn: (turn) =>
+                Effect.gen(function* () {
+                  started.push(turn);
+                  yield* Queue.offer(events, {
+                    type: "provider_turn.updated",
+                    driver,
+                    providerTurn: {
+                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                      providerThreadId: turn.providerThread.id,
+                      nodeId: turn.rootNodeId,
+                      runAttemptId: turn.attemptId,
+                      nativeTurnRef: null,
+                      ordinal: turn.providerTurnOrdinal,
+                      status: "running",
+                      startedAt: now,
+                      completedAt: null,
+                    },
+                  });
+                }),
+              steerTurn: () => Effect.die("unused"),
+              interruptTurn: () => Effect.void,
+              respondToRuntimeRequest: () => Effect.die("unused"),
+              readThreadSnapshot: () => Effect.die("unused"),
+              rollbackThread: () => Effect.die("unused"),
+              forkThread: () => Effect.die("unused"),
+            };
+          }),
+      };
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread:released-native-work");
+        const childThreadId = ThreadId.make("thread:released-native-child");
+        const create = (id: ThreadId, createdBy: "user" | "agent") =>
+          orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create:${id}`),
+            threadId: id,
+            projectId: ProjectId.make("project:released-native-work"),
+            title: id,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy,
+            creationSource: createdBy === "user" ? "web" : "provider",
+          });
+        yield* create(threadId, "user");
+        const running = orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const turnRunning = yield* running;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start"),
+          threadId,
+          messageId: MessageId.make("message:start"),
+          text: "Fix the client items one by one",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(turnRunning);
+        const turn = started[0]!;
+        const providerTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const runEnded = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === turn.runId &&
+              event.payload.status === "waiting",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...providerTurn, status: "completed", completedAt: now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: providerTurn.providerThreadId,
+          providerTurnId: providerTurn.id,
+          runOrdinal: turn.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(runEnded);
+        yield* worker.drain();
+
+        // The provider's subagent keeps working after the run that started it ended.
+        yield* create(childThreadId, "agent");
+        const subagentId = NodeId.make("node:native-subagent");
+        const rootId = NodeId.make("node:native-child-root");
+        const toolId = NodeId.make("node:native-child-tool");
+        const node = (id: NodeId, kind: "root_turn" | "tool_call") => ({
+          id,
+          threadId: childThreadId,
+          runId: null,
+          parentNodeId: kind === "root_turn" ? null : rootId,
+          rootNodeId: rootId,
+          kind,
+          status: "running" as const,
+          countsForRun: false,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        });
+        const subagent = {
+          threadId,
+          runId: turn.runId,
+          origin: "provider_native",
+          driver,
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId,
+          prompt: "Fix the client items one by one",
+          title: null,
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        } as const;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("native-subagent"),
+              type: "subagent.updated",
+              threadId,
+              runId: turn.runId,
+              occurredAt: now,
+              payload: {
+                ...subagent,
+                id: subagentId,
+                parentNodeId: turn.rootNodeId,
+                createdBy: "agent",
+                nativeTaskRef: { driver, nativeId: "task:native", strength: "strong" },
+                model: null,
+              },
+            },
+            {
+              id: EventId.make("native-subagent-item"),
+              type: "turn-item.updated",
+              threadId,
+              runId: turn.runId,
+              occurredAt: now,
+              payload: {
+                ...subagent,
+                id: TurnItemId.make("turn-item:native-subagent"),
+                nodeId: subagentId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 50,
+                type: "subagent",
+                subagentId,
+              },
+            },
+            {
+              id: EventId.make("native-child-root"),
+              type: "node.updated",
+              threadId: childThreadId,
+              occurredAt: now,
+              payload: node(rootId, "root_turn"),
+            },
+            {
+              id: EventId.make("native-child-tool"),
+              type: "node.updated",
+              threadId: childThreadId,
+              occurredAt: now,
+              payload: node(toolId, "tool_call"),
+            },
+            {
+              id: EventId.make("native-child-command"),
+              type: "turn-item.updated",
+              threadId: childThreadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:native-child-command"),
+                threadId: childThreadId,
+                runId: null,
+                nodeId: toolId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 117,
+                status: "running",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution",
+                input: "vp fmt && vp lint",
+              },
+            },
+            {
+              id: EventId.make("native-pending-command"),
+              type: "turn-item.updated",
+              threadId,
+              runId: turn.runId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("turn-item:native-pending-command"),
+                threadId,
+                runId: turn.runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 51,
+                status: "pending",
+                title: null,
+                startedAt: null,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution",
+                input: "vp test run",
+              },
+            },
+          ],
+        });
+
+        const providerSessionId = turn.providerThread.providerSessionId!;
+        const settle = (id: string, releasedAt: DateTime.Utc) =>
+          orchestrator.dispatch({
+            type: "provider-session.work.settle",
+            commandId: CommandId.make(id),
+            threadId,
+            providerSessionId,
+            releasedAt,
+          });
+        const work = Effect.gen(function* () {
+          const parent = yield* orchestrator.getThreadProjection(threadId);
+          const child = yield* orchestrator.getThreadProjection(childThreadId);
+          return {
+            run: parent.runs[0]?.status,
+            subagent: parent.subagents.find((task) => task.id === subagentId),
+            subagentItem: parent.turnItems.find((item) => item.type === "subagent"),
+            childRoot: child.nodes.find((candidate) => candidate.id === rootId),
+            childTool: child.nodes.find((candidate) => candidate.id === toolId),
+            childCommand: child.turnItems.find((item) => item.type === "command_execution"),
+            pendingCommand: parent.turnItems.find((item) => item.type === "command_execution"),
+          };
+        });
+        const statuses = (records: Effect.Success<typeof work>) => ({
+          run: records.run,
+          subagent: records.subagent?.status,
+          subagentItem: records.subagentItem?.status,
+          childRoot: records.childRoot?.status,
+          childTool: records.childTool?.status,
+          childCommand: records.childCommand?.status,
+          pendingCommand: records.pendingCommand?.status,
+        });
+        const expect = (status: "running" | "interrupted") => ({
+          run: "completed" as const,
+          subagent: status,
+          subagentItem: status,
+          childRoot: status,
+          childTool: status,
+          childCommand: status,
+          pendingCommand: status === "running" ? ("pending" as const) : status,
+        });
+        // A session reopened under the same id owns work it started at or after the release.
+        yield* settle("settle-at-work-start", now);
+        assert.deepEqual(statuses(yield* work), expect("running"));
+
+        yield* TestClock.adjust("1 second");
+
+        // Detaching a session's only thread releases it, as a provider switch does.
+        yield* input.via === "detach"
+          ? sessions.detach({ providerSessionId, threadId })
+          : sessions.release({ providerSessionId, reason: input.reason });
+        yield* worker.drain();
+        const released = yield* work;
+        assert.deepEqual(statuses(released), expect(input.endsWork ? "interrupted" : "running"));
+
+        if (input.endsWork) {
+          yield* settle("settle-again", yield* DateTime.now);
+          assert.deepEqual(yield* work, released);
+        }
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "released-native-work" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }),
+  );
+
+// Claude and Muse declare both flags; Codex, ACP agents, Cursor and Pi only the native one.
+const releasedNativeWorkCases = [
+  { reason: "manual_shutdown", via: "detach", native: true, background: true, endsWork: true },
+  { reason: "manual_shutdown", via: "release", native: true, background: true, endsWork: true },
+  { reason: "runtime_error", via: "release", native: true, background: true, endsWork: true },
+  { reason: "idle_timeout", via: "release", native: true, background: true, endsWork: true },
+  { reason: "manual_shutdown", via: "detach", native: true, background: false, endsWork: true },
+  { reason: "idle_timeout", via: "release", native: true, background: false, endsWork: true },
+  // Restart recovery settles what a shutdown leaves, and can continue it.
+  { reason: "server_shutdown", via: "release", native: true, background: true, endsWork: false },
+  // Only the native flag ends native work; the background one drives Waiting.
+  { reason: "manual_shutdown", via: "release", native: false, background: true, endsWork: false },
+  // The work may outlive this session, as with a shared OpenCode server.
+  { reason: "manual_shutdown", via: "release", native: false, background: false, endsWork: false },
+] as const;
+
+it.effect.each(releasedNativeWorkCases)(
+  "a $reason $via with nativeWorkEndsWithProcess=$native, backgroundTasksEndWithProcess=$background ends native subagent work: $endsWork",
+  ({ native, background, ...input }) =>
+    releaseSessionWithNativeWork({
+      ...input,
+      nativeWorkEndsWithProcess: native,
+      backgroundTasksEndWithProcess: background,
+    }),
 );

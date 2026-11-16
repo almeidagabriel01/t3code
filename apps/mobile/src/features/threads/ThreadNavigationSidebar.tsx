@@ -53,7 +53,10 @@ import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
 import { useHomeListOptions } from "../home/home-list-options";
-import { useArchiveSelectedProject } from "../projects/useProjectOrganize";
+import {
+  useArchiveSelectedProject,
+  useOpenSelectedProjectSettings,
+} from "../projects/useProjectOrganize";
 import { buildHomeListFilterMenuItems } from "../home/home-list-filter-menu";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
@@ -315,11 +318,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           },
         ]
       : threadListV2Items;
-  const archiveSelectedProject = useArchiveSelectedProject({
+  const selectedProjectFilter = {
     environmentId: options.selectedEnvironmentId,
     projectGroupingMode: options.projectGroupingMode,
     selectedKey: selectedProjectKey,
-  });
+  };
+  const archiveSelectedProject = useArchiveSelectedProject(selectedProjectFilter);
+  const openProjectSettings = useOpenSelectedProjectSettings(selectedProjectFilter);
 
   const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
     if (openSwipeableRef.current !== methods) {
@@ -591,6 +596,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           onEnvironmentChange: setSelectedEnvironmentId,
           onProjectChange: setSelectedProjectKey,
           onArchiveProject: archiveSelectedProject,
+          onOpenProjectSettings: openProjectSettings,
         }),
       }}
       sidebar={{

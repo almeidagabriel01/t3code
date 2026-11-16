@@ -1101,6 +1101,47 @@ describe("MessagesTimeline agent messages", () => {
     expect(onOpenThread).toHaveBeenCalledWith(assistantThread);
   });
 
+  it("shows a task event as one activity line that opens the task thread", async () => {
+    setup();
+    const onOpenThread = vi.fn();
+    await using screen = await renderTimeline(
+      [
+        message(
+          "Task [Build the docs](t3://thread/task) finished.\n\nThe docs build passed.",
+          { createdBy: "agent", creationSource: "server", senderThreadId: SENDER_THREAD_ID },
+          "assistant-task:run-1",
+        ),
+      ],
+      { onOpenThread },
+    );
+    expect(screen.container.querySelector("[data-task-event-activity='completed']")).not.toBeNull();
+    expect(screen.text()).toContain("Build the docs");
+    expect(screen.text()).toContain("Finished");
+    expect(screen.text()).not.toContain("The docs build passed.");
+    await click(screen.button(/^Open task/));
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+  });
+
+  it("folds a long assistant message in an assistant conversation only", async () => {
+    setup();
+    const long = Array.from({ length: 40 }, (_, i) => `Line ${i} of the report.`).join("\n\n");
+    const entry = message(long, { role: "assistant" }, "long-reply");
+    {
+      await using screen = await renderTimeline([entry], {
+        routeThreadKey: "environment-local:assistant:jarvis:1",
+      });
+      expect(screen.container.querySelector("[data-user-message-collapsed='true']")).not.toBeNull();
+      await click(screen.button("Show more"));
+      expect(
+        screen.container.querySelector("[data-user-message-collapsed='false']"),
+      ).not.toBeNull();
+      expect(screen.button("Show less")).toBeDefined();
+    }
+    await using plain = await renderTimeline([entry]);
+    expect(plain.container.querySelector("[data-user-message-collapsible]")).toBeNull();
+    expect(plain.buttons("Show more")).toHaveLength(0);
+  });
+
   it("leaves messages sent by T3 Code as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([

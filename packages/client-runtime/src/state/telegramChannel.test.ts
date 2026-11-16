@@ -5,6 +5,7 @@ import { Atom } from "effect/reactivity";
 
 import {
   applyTelegramStatusEvent,
+  telegramUndeliveredLabel,
   compactTelegramUserId,
   createTelegramChannelEnvironmentAtoms,
   telegramDeliveryErrorReason,
@@ -47,6 +48,16 @@ describe("applyTelegramStatusEvent", () => {
     });
     assert.deepStrictEqual(withWaiting.pendingSenders, waiting);
     assert.isUndefined(applyTelegramStatusEvent(withWaiting, { status: "running" }).pendingSenders);
+    const behind = applyTelegramStatusEvent(settings, { status: "running", undeliveredCount: 2 });
+    assert.strictEqual(behind.undeliveredCount, 2);
+    assert.strictEqual(telegramUndeliveredLabel(behind), "2 replies did not reach Telegram.");
+    assert.strictEqual(
+      telegramUndeliveredLabel({ undeliveredCount: 1 }),
+      "1 reply did not reach Telegram.",
+    );
+    const caughtUp = applyTelegramStatusEvent(behind, { status: "running" });
+    assert.isUndefined(caughtUp.undeliveredCount);
+    assert.isNull(telegramUndeliveredLabel(caughtUp));
     const { lastError: _gone, ...withoutError } = settings;
     assert.deepStrictEqual(
       applyTelegramStatusEvent(settings, { status: "running", botUsername: "other_bot" }),
@@ -101,12 +112,19 @@ describe("labels", () => {
 });
 
 describe("createTelegramChannelEnvironmentAtoms", () => {
-  it("builds the settings query, status stream and the guarded configure command", () => {
+  it("builds the settings query, status stream and the guarded commands", () => {
     const atoms = createTelegramChannelEnvironmentAtoms(Atom.runtime(Layer.empty) as never);
-    expect(Object.keys(atoms).sort()).toEqual(["configure", "settings", "status"]);
+    expect(Object.keys(atoms).sort()).toEqual([
+      "configure",
+      "resendUndelivered",
+      "settings",
+      "status",
+      "undeliveredResend",
+    ]);
     expect(atoms.settings({ environmentId: "hub" as never, input: {} })).toBeDefined();
     expect(atoms.status({ environmentId: "hub" as never, input: null })).toBeDefined();
     expect(atoms.configure.permissionAtom("hub" as never)).toBeDefined();
+    expect(atoms.resendUndelivered.permissionAtom("hub" as never)).toBeDefined();
     expect(WS_METHODS.telegramChannelConfigure).toBe("telegramChannel.configure");
   });
 });

@@ -410,15 +410,15 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
     occurredAt: now,
   };
   const events: Array<OrchestrationV2DomainEvent> = [];
-  for (const node of input.projection.nodes) {
-    if (
-      node.kind !== "root_turn" ||
-      node.runId !== null ||
-      !isOrchestrationV2WorkActive(node.status)
-    ) {
-      continue;
-    }
-    if (!endedNodeIds.has(node.id)) {
+  for (const root of input.projection.nodes) {
+    if (root.kind !== "root_turn" || root.runId !== null) continue;
+    // Tool calls hang under the root; an ended root can still leave them open.
+    const tree = input.projection.nodes.filter(
+      (node) => node.runId === null && (node.id === root.id || node.rootNodeId === root.id),
+    );
+    const treeNodeIds = new Set(tree.map((node) => node.id));
+    for (const node of tree) {
+      if (!isOrchestrationV2WorkActive(node.status) || endedNodeIds.has(node.id)) continue;
       events.push({
         ...scope,
         id: yield* input.allocateEventId(),
@@ -429,7 +429,8 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
     }
     for (const item of input.projection.turnItems) {
       if (
-        item.nodeId !== node.id ||
+        item.nodeId === null ||
+        !treeNodeIds.has(item.nodeId) ||
         item.runId !== null ||
         !isOrchestrationV2WorkActive(item.status) ||
         endedItemIds.has(item.id)
@@ -440,7 +441,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
         ...scope,
         id: yield* input.allocateEventId(),
         type: "turn-item.updated",
-        nodeId: node.id,
+        nodeId: item.nodeId,
         payload: {
           ...item,
           status:
@@ -458,7 +459,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
     }
     for (const providerTurn of input.projection.providerTurns) {
       if (
-        providerTurn.nodeId !== node.id ||
+        providerTurn.nodeId !== root.id ||
         providerTurn.runAttemptId !== null ||
         !isOrchestrationV2WorkActive(providerTurn.status) ||
         endedProviderTurnIds.has(providerTurn.id)
@@ -469,7 +470,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
         ...scope,
         id: yield* input.allocateEventId(),
         type: "provider-turn.updated",
-        nodeId: node.id,
+        nodeId: root.id,
         payload: { ...providerTurn, status, completedAt },
       });
     }

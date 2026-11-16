@@ -49,6 +49,7 @@ import {
 } from "../../state/assistants";
 import { useProjects, useQuietThreadShells } from "../../state/entities";
 import { useAssistantStatus } from "../sidebar/useSidebarZones";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -157,13 +158,14 @@ function AssistantInfo(props: { readonly entry: AssistantEntry }) {
   const navigate = useNavigate();
   const shells = useQuietThreadShells();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const work = useAssistantLiveWork();
   const nowMs = useNowMinuteMs();
   const { teams } = useAssistantEntries();
   const projectOf = useProjectLookup();
   const spend = useAssistantSpend(environmentId, assistant.budget === null ? null : assistant.id);
   const archived = assistant.archivedAt !== null;
-  const presence = status.of(environmentId, assistant);
+  const presence = status.of(environmentId, assistant, limitLabel);
   const workingNow = archived ? [] : assistantWorkingNow(work, environmentId, assistant.id);
   const nameOf = (projectId: string) => projectOf(environmentId, projectId)?.title ?? "Project";
   const projects = assistantInfoProjects(assistant, workingNow, nameOf);
@@ -385,6 +387,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
   const navigate = useNavigate();
   const shells = useQuietThreadShells();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const { active, archived: archivedAssistants } = useAssistantEntries();
   const chat = useAssistantGroupChat(environmentId, team.id);
   const projectOf = useProjectLookup();
@@ -482,7 +485,7 @@ function GroupInfo(props: { readonly entry: AssistantTeamEntry }) {
       )}
       <Section title="Members">
         {members.map((member) => {
-          const presence = status.of(environmentId, member.assistant);
+          const presence = status.of(environmentId, member.assistant, limitLabel);
           const face = (
             <AssistantAvatar
               assistant={member.assistant ?? removedAssistantFace(member.id)}

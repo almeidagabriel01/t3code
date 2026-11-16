@@ -41,6 +41,7 @@ import { useOpenAssistantEditor } from "./openAssistantEditor";
 import { useOpenAssistantWork } from "./assistantWorkTarget";
 import { useOpenAssistantTeam } from "./assistantTeamTarget";
 import { useAssistantFlows, useAssistantTeamFlows } from "./useAssistantFlows";
+import { useUsageLimitLabel } from "./useUsageLimitLabel";
 
 function AssistantCard(props: {
   readonly entry: AssistantEntry;
@@ -56,7 +57,8 @@ function AssistantCard(props: {
   const archived = assistant.archivedAt !== null;
   const taskSections = useAssistantTaskSections(props.entry);
   const { attention } = useAssistantAttention(props.entry);
-  const presence = useAssistantStatus().of(environmentId, assistant);
+  const limitLabel = useUsageLimitLabel();
+  const presence = useAssistantStatus().of(environmentId, assistant, limitLabel);
   const budgetState = useAssistantSpend(environmentId, assistant.budget ? assistant.id : null).data
     ?.budget?.state;
   const status = archived ? "Archived" : assistantStatusText(presence, props.nowMs);

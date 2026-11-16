@@ -302,7 +302,8 @@ export const ChatHeader = memo(function ChatHeader({
                   }
                 >
                   <ProjectFavicon project={activeProject} className="size-3.5" />
-                  <WorkspaceBreadcrumbText className="max-w-40">
+                  {/* The icon keeps the crumb (and its label) when the title needs the room. */}
+                  <WorkspaceBreadcrumbText className="max-w-40 @max-md/header:hidden">
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
                 </TooltipTrigger>
@@ -477,7 +478,8 @@ export const ChatHeader = memo(function ChatHeader({
       ) : null}
       {onToggleSideChat ? (
         <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
+          {/* Narrow headers give the title room; side chat stays on /side and its shortcut. */}
+          <TooltipTrigger render={<span className="flex shrink-0 @max-xl/header:hidden" />}>
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={sideChatOpen}

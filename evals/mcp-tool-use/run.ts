@@ -61,6 +61,11 @@ import { GroupToolkit } from "../../apps/server/src/mcp/toolkits/group/tools.ts"
 import { groupTaskPacket } from "../../apps/server/src/assistants/AssistantGroupPacket.ts";
 import { wakeText } from "../../apps/server/src/problems/problemRules.ts";
 import { assistantNoteFor } from "../../apps/server/src/assistants/assistantNote.ts";
+import {
+  taskWakeText,
+  waitWakeText,
+} from "../../apps/server/src/assistants/AssistantTaskReactor.ts";
+import { defaultNoticeText } from "../../apps/server/src/autonomy/needsYou.ts";
 import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { WatchToolkit } from "../../apps/server/src/mcp/toolkits/autonomy/tools.ts";
 import { DecisionToolkit } from "../../apps/server/src/mcp/toolkits/decision/tools.ts";
@@ -391,6 +396,39 @@ export const McpToolUseCase = Schema.Struct({
         ),
       }),
     ),
+    /** A task the assistant launched ended a run: the prompt is T3's task event, built from this. */
+    taskWake: Schema.optional(
+      Schema.Struct({
+        title: Schema.String,
+        threadId: Schema.String,
+        status: Schema.Literals(["completed", "failed", "cancelled", "interrupted"]),
+        lastMessage: Schema.NullOr(Schema.String),
+      }),
+    ),
+    /** A task the assistant launched waits on the user: the prompt is T3's wake, built from this. */
+    waitWake: Schema.optional(
+      Schema.Struct({
+        title: Schema.String,
+        threadId: Schema.String,
+        source: Schema.Literals(["request", "decision"]),
+        prompt: Schema.Struct({
+          title: Schema.String,
+          context: Schema.String,
+          options: Schema.Array(Schema.Struct({ id: Schema.String, label: Schema.String })),
+          answerable: Schema.Boolean,
+        }),
+      }),
+    ),
+    /** The default assistant's notice of a wait elsewhere, worded as T3 sends it; `prompt` stays empty. */
+    waitNotice: Schema.optional(
+      Schema.Struct({
+        title: Schema.String,
+        origin: Schema.String,
+        threadId: Schema.String,
+        threadTitle: Schema.String,
+        source: Schema.Literals(["request", "decision"]),
+      }),
+    ),
     /** A task in an assistant group: `prompt` is its instruction, wrapped as T3 sends it. */
     groupTask: Schema.optional(
       Schema.Struct({
@@ -408,7 +446,8 @@ export const McpToolUseCase = Schema.Struct({
         news: Schema.Array(
           Schema.Struct({ seq: Schema.Number, from: Schema.String, text: Schema.String }),
         ),
-        summary: Schema.optional(Schema.String),
+        /** The request's short title; the case id when absent. */
+        request: Schema.optional(Schema.String),
         quoted: Schema.optional(
           Schema.Array(
             Schema.Struct({ seq: Schema.Number, from: Schema.String, text: Schema.String }),
@@ -1203,30 +1242,48 @@ export const buildMessages = (sample: Sample) => {
     push("user", text(wake(problemWake.evidence ?? "")));
     push("assistant", text(problemWake.answer));
   }
+  const taskWake = testCase.setup.taskWake;
+  const waitNotice = testCase.setup.waitNotice;
+  const waitWake = testCase.setup.waitWake;
   const userText =
     problemWake !== undefined && problemWake.answer === undefined
       ? wake(testCase.prompt)
-      : groupTask !== undefined
-        ? groupTaskPacket({
-            group: groupTask.group,
-            taskId: "task-1",
-            kind: groupTask.kind ?? "root",
-            self: { ...groupTask.self, isLead: false },
-            members: groupTask.members.map((member) => ({
-              ...member,
-              isLead: member.isLead ?? false,
-            })),
-            news: groupTask.news,
-            summary: groupTask.summary ?? null,
-            quoted: groupTask.quoted ?? [],
-            from: groupTask.from,
-            instruction: testCase.prompt,
-            followup: null,
-            ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
-          })
-        : testCase.promptContext === undefined
-          ? testCase.prompt
-          : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+      : taskWake !== undefined
+        ? taskWakeText({ ...taskWake, threadId: ThreadId.make(taskWake.threadId) })
+        : waitWake !== undefined
+          ? waitWakeText({ ...waitWake, threadId: ThreadId.make(waitWake.threadId) })
+          : waitNotice !== undefined
+            ? defaultNoticeText({
+                ...waitNotice,
+                link: formatThreadLink(
+                  { environmentId: null, threadId: ThreadId.make(waitNotice.threadId) },
+                  waitNotice.threadTitle,
+                ),
+              })
+            : groupTask !== undefined
+              ? groupTaskPacket({
+                  group: groupTask.group,
+                  taskId: "task-1",
+                  kind: groupTask.kind ?? "root",
+                  self: { ...groupTask.self, isLead: false },
+                  members: groupTask.members.map((member) => ({
+                    ...member,
+                    isLead: member.isLead ?? false,
+                  })),
+                  news: groupTask.news,
+                  request: groupTask.request ?? testCase.id,
+                  quoted: groupTask.quoted ?? [],
+                  from: groupTask.from,
+                  instruction: testCase.prompt,
+                  followup: null,
+                  ...(groupTask.given === undefined ? {} : { given: groupTask.given }),
+                })
+              : testCase.promptContext === undefined
+                ? testCase.prompt
+                : projectComposerContextForProvider({
+                    text: testCase.prompt,
+                    ...testCase.promptContext,
+                  });
   const assistant = testCase.setup.assistant;
   const note =
     assistant === undefined
@@ -1252,7 +1309,12 @@ export const buildMessages = (sample: Sample) => {
   const prompt =
     sideChatContext === undefined ? notedText : withInlineContext(sideChatContext, notedText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
-  if (testCase.prompt !== "")
+  if (
+    testCase.prompt !== "" ||
+    taskWake !== undefined ||
+    waitWake !== undefined ||
+    waitNotice !== undefined
+  )
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
   // Claude Code gives a subagent its SubagentStart hooks' context as a reminder after the task.
   if (native && base.subagentContext) {

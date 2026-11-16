@@ -37,6 +37,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import { layerProjectModelSelection } from "../mcp/McpToolAccess.testkit.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -80,6 +81,8 @@ const boxProject = ProjectId.make("project:box");
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.4" };
+/** The box project's own default, which a task with no model there runs on. */
+const boxDefault = { instanceId, model: "gpt-5.4-mini" };
 
 type LaunchedWith = Pick<
   ThreadLaunch.ThreadLaunchInput,
@@ -490,7 +493,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     McpHttpServer.layerProjectRegistration,
   ).pipe(
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-    Layer.provide(NodeCrypto.layer),
+    Layer.provide(Layer.merge(NodeCrypto.layer, layerProjectModelSelection)),
     Layer.provide(layerBoxThreads),
     Layer.provide(layerBoxLaunches),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -563,7 +566,11 @@ const boxToolkitLayer = (thread: BoxThread) => {
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      ServerSettings.layerTest({
+        projectSettingsOverrides: { [boxProject]: { defaultModelSelection: boxDefault } },
+      }),
+    ),
     Layer.provide(NodeServices.layer),
   );
 };
@@ -629,6 +636,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(layerProjectModelSelection),
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
@@ -1152,7 +1160,7 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("a task named only by environment inherits the parent's model, within the link", () =>
+it.effect("a task named only by environment runs on that project's model, within the link", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -1171,12 +1179,22 @@ it.effect("a task named only by environment inherits the parent's model, within 
         target: { environmentId: box.environmentId },
       });
       expect(result.isError, JSON.stringify(result.content)).toBe(false);
-      // The parent's model, and the link's modes rather than the parent's.
+      // The project's model there, not the parent's, and the link's modes rather than the parent's.
       expect(yield* Ref.get(thread.launchedWith)).toEqual({
-        modelSelection,
+        modelSelection: boxDefault,
         runtimeMode: "auto-accept-edits",
         interactionMode: "default",
       });
+
+      // Options or a provider without a model have nothing there to apply to.
+      for (const partial of [{ options: { effort: "max" } }, { providerInstanceId: instanceId }]) {
+        const refused = yield* a.call("delegate_task", {
+          task: "Run the suite on the box.",
+          target: { environmentId: box.environmentId, ...partial },
+          clientRequestId: `partial-${Object.keys(partial)[0]}`,
+        });
+        expect(JSON.stringify(refused.content)).toContain("Pass target.model");
+      }
 
       // Asking for more than the link allows is still refused there.
       const broader = yield* a.call("delegate_task", {

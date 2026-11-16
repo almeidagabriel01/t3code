@@ -23,7 +23,12 @@ export function Chip(props: {
   readonly onPress?: () => void;
   readonly accessibilityLabel?: string;
   readonly disabled?: boolean;
+  /** Unread or pending items, drawn after the label when above zero. */
+  readonly count?: number;
+  /** Something waits on the user here. */
+  readonly attention?: boolean;
 }) {
+  const count = props.count ?? 0;
   const small = props.size === "small";
   const layout = cn(
     "flex-row items-center gap-1.5 rounded-2xl px-3",
@@ -47,6 +52,24 @@ export function Chip(props: {
       >
         {props.label}
       </AppText>
+      {count > 0 ? (
+        <AppText
+          textRole={small ? "caption" : "footnote"}
+          className={cn(
+            "font-t3-medium tabular-nums",
+            props.selected ? "text-primary-foreground" : "text-foreground",
+          )}
+        >
+          {count}
+        </AppText>
+      ) : null}
+      {props.attention ? (
+        <View
+          testID="chip-attention"
+          accessibilityLabel="Waiting on you"
+          className="size-1.5 rounded-full bg-warning-foreground"
+        />
+      ) : null}
       {props.trailingIcon ? (
         <SymbolView name={props.trailingIcon} size={11} tintColorClassName={iconColor} />
       ) : null}
@@ -75,7 +98,14 @@ export function Chip(props: {
   return props.onPress ? (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      // A pressable reads as one element, so its label carries the count and the dot.
+      accessibilityLabel={[
+        props.accessibilityLabel ?? props.label,
+        count > 0 ? `${count} unread` : null,
+        props.attention ? "Waiting on you" : null,
+      ]
+        .filter((part) => part !== null)
+        .join(", ")}
       accessibilityState={{ selected: props.selected, disabled: Boolean(props.disabled) }}
       disabled={props.disabled}
       onPress={props.onPress}

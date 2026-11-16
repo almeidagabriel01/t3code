@@ -48,6 +48,7 @@ import {
 import { openAssistantInfo } from "../assistants/assistantInfoState";
 import { useAssistantFlows } from "../assistants/useAssistantFlows";
 import { useAssistantStatus } from "../sidebar/useSidebarZones";
+import { useUsageLimitLabel } from "../assistants/useUsageLimitLabel";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -259,6 +260,7 @@ export function AssistantPresenceStack(props: {
   );
   const { active, archived } = useAssistantEntries();
   const status = useAssistantStatus();
+  const limitLabel = useUsageLimitLabel();
   const owner = useTaskAssistant(environmentId, threadId);
   const taskShell = useThreadShell(owner === null ? null : scopeThreadRef(environmentId, threadId));
   const taskRecord = useAssistantTask(environmentId, threadId);
@@ -286,7 +288,7 @@ export function AssistantPresenceStack(props: {
   const looks = new Map(
     senders.map((sender) => [
       sender.assistantId,
-      assistantSenderLook(sender, status.of(environmentId, sender.assistant)),
+      assistantSenderLook(sender, status.of(environmentId, sender.assistant, limitLabel)),
     ]),
   );
   const taskOf = (sender: AssistantSender) =>

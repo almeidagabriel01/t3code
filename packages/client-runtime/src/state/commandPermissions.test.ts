@@ -18,6 +18,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthTerminalReadScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -31,6 +32,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
@@ -271,6 +273,71 @@ describe("command permissions", () => {
         expect(registry.get(permissions.permissionAtom(other))).toBe(false);
         const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
         expect(denied._tag).toBe("EnvironmentAuthorizationError");
+      }),
+    ),
+  );
+  it.each([
+    [WS_METHODS.heavyQueueCancel, undefined, ["terminal:operate"]],
+    [WS_METHODS.serverUpdateSettings, undefined, ["settings:write"]],
+    [
+      WS_METHODS.serverUpdateSettings,
+      { patch: {}, providerInstanceMutation: { operation: "remove", instanceId: "codex_work" } },
+      ["providers:manage"],
+    ],
+    [
+      WS_METHODS.gitRunStackedAction,
+      { action: "create_pr", threadId: "thread-1" },
+      ["source-control:write", "orchestration:read"],
+    ],
+    // Unguarded: the server alone decides.
+    [WS_METHODS.terminalWrite, undefined, []],
+    [WS_METHODS.deviceList, { retryHostId: "remote-host" }, []],
+  ] as const)(
+    "a %s command checks what the server requires when guarded",
+    (method, input, scopes) => {
+      expect(createCommandPermissions(runtime, method).requiredScopes(input)).toEqual(scopes);
+    },
+  );
+  it.effect("a reader sees a guarded operator command as unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const cancel = createCommandPermissions(runtime, WS_METHODS.heavyQueueCancel);
+        const reader = [AuthOrchestrationReadScope, AuthTerminalReadScope];
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes: reader, permissions: reader }),
+        );
+        expect(registry.get(cancel.permissionAtom(env))).toBe(false);
+        expect((yield* cancel.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+      }),
+    ),
+  );
+  it.effect("an unguarded command neither waits for the session nor reads as unavailable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const write = createCommandPermissions(runtime, WS_METHODS.terminalWrite);
+        expect(registry.get(write.permissionAtom(env))).toBe(true);
+        const fiber = yield* write
+          .authorize(registry, env)
+          .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        expect(Option.isSome(yield* Fiber.join(fiber))).toBe(true);
+      }),
+    ),
+  );
+  it.effect("denies when no grant arrives within six seconds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const fiber = yield* permissions
+          .authorize(registry, env)
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust("6 seconds");
+        expect((yield* Fiber.join(fiber))._tag).toBe("EnvironmentAuthorizationError");
       }),
     ),
   );

@@ -100,6 +100,15 @@ describe("assistant draft", () => {
     expect(
       assistantUpdateInput(editorFor(assistant, { askBeforeActing: true }), ["p1" as ProjectId]),
     ).toEqual({ assistantId: "a1", askBeforeActing: true });
+    // The default model leaves the conversation's alone; null goes back to the user's default.
+    for (const defaultModelSelection of [model, null]) {
+      const editor = editorFor(assistant, { defaultModelSelection });
+      expect(assistantDraftHasChanges(editor)).toBe(true);
+      expect(assistantUpdateInput(editor, ["p1" as ProjectId])).toEqual({
+        assistantId: "a1",
+        defaultModelSelection,
+      });
+    }
   });
 
   it("sends a list of projects when several are picked, and only when the pick changed", () => {

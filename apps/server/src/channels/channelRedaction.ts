@@ -1,4 +1,11 @@
+import type { ProjectId } from "@t3tools/contracts";
+import { projectNoticeTitle } from "@t3tools/shared/projectNotice";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
 import { MEMORY_REDACTION_MARKER, redactMemoryText } from "../memory/MemorySecretScanner.ts";
+import type { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
+import type { ProjectService } from "../project/ProjectService.ts";
 
 const MARK = MEMORY_REDACTION_MARKER;
 // Chat apps are third-party servers: on top of the token formats memory blocks, everything the
@@ -41,3 +48,25 @@ function redactUnescaped(text: string): string {
 }
 
 export const containsSecret = (text: string): boolean => redactChannelText(text) !== text;
+
+/** A project's title as a chat app shows it: one line, no credentials; none when that is empty. */
+export const channelProjectTitle = (title: string | undefined): string | undefined => {
+  const shown = title === undefined ? "" : redactChannelText(projectNoticeTitle(title));
+  return shown === "" ? undefined : shown;
+};
+
+/** The title to show for a project: none for no project, an unknown one or the assistants home. */
+export const channelProjectTitleOf = (
+  services: {
+    readonly projects: ProjectService["Service"];
+    readonly folders: ManagedProjectFolders["Service"];
+  },
+  projectId: ProjectId | null | undefined,
+): Effect.Effect<string | undefined> =>
+  projectId === null || projectId === undefined
+    ? Effect.undefined
+    : Effect.gen(function* () {
+        if (yield* services.folders.isAssistantHomeProject(projectId)) return undefined;
+        const project = yield* services.projects.getById(projectId);
+        return channelProjectTitle(Option.isSome(project) ? project.value.title : undefined);
+      }).pipe(Effect.catchCause(() => Effect.undefined));

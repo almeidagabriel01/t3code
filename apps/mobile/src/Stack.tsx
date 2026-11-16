@@ -139,7 +139,11 @@ import {
   AssistantGroupInfoRouteScreen,
   AssistantInfoRouteScreen,
 } from "./features/assistants/AssistantInfoRouteScreen";
-import { AssistantGroupSettingsRouteScreen } from "./features/assistants/AssistantGroupSettingsRouteScreen";
+import { GroupMessageModelPickerRouteScreen } from "./features/assistants/GroupMessageModelPickerRouteScreen";
+import {
+  AssistantGroupSettingsRouteScreen,
+  GroupDefaultModelPickerRouteScreen,
+} from "./features/assistants/AssistantGroupSettingsRouteScreen";
 import { AssistantTeamEditRouteScreen } from "./features/assistants/AssistantTeamEditRouteScreen";
 import { AssistantWatchRouteScreen } from "./features/assistants/AssistantWatchRouteScreen";
 import { AssistantWorkRouteScreen } from "./features/assistants/AssistantWorkRouteScreen";
@@ -159,6 +163,7 @@ import { SettingsMemoryRouteScreen } from "./features/settings/SettingsMemoryRou
 import { ClaudeChromeRouteScreen } from "./features/settings/ClaudeChromeRouteScreen";
 import { FallbackModelPickerRouteScreen } from "./features/settings/FallbackModelPickerRouteScreen";
 import { FolderModelPickerRouteScreen } from "./features/settings/FolderModelPickerRouteScreen";
+import { ProjectModelPickerRouteScreen } from "./features/settings/ProjectModelPickerRouteScreen";
 import { FolderModelRouteScreen } from "./features/settings/FolderModelRouteScreen";
 import { MemoryModelPickerRouteScreen } from "./features/settings/MemoryModelPickerRouteScreen";
 import { NoteRouteScreen } from "./features/notes/NoteRouteScreen";
@@ -424,6 +429,10 @@ const SETTINGS_SCREENS = {
     screen: AssistantModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
+  SettingsGroupDefaultModel: createNativeStackScreen({
+    screen: GroupDefaultModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
   SettingsMemoryModel: createNativeStackScreen({
     screen: MemoryModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
@@ -438,6 +447,14 @@ const SETTINGS_SCREENS = {
   }),
   SettingsFolderModelPicker: createNativeStackScreen({
     screen: FolderModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
+  SettingsProjectModel: createNativeStackScreen({
+    screen: ProjectModelPickerRouteScreen,
+    options: THREAD_SETTINGS_ROUTE,
+  }),
+  GroupMessageModel: createNativeStackScreen({
+    screen: GroupMessageModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
   SettingsClaudeChrome: createNativeStackScreen({

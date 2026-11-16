@@ -2,14 +2,22 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   ARCHIVE_PROJECT_ACTION_ID,
-  archiveProjectMenuActions,
-  runArchiveProjectAction,
+  PROJECT_SETTINGS_ACTION_ID,
+  runSelectedProjectAction,
+  selectedProjectMenuActions,
 } from "./archiveProjectMenu";
 
-describe("archiveProjectMenuActions", () => {
-  it("offers Archive project only for a selected project that can be archived", () => {
+describe("selectedProjectMenuActions", () => {
+  it("offers each selected-project entry only when it can run from here", () => {
     const archive = vi.fn();
-    expect(archiveProjectMenuActions({ label: "Alpha" }, archive)).toEqual([
+    const openSettings = vi.fn();
+    expect(selectedProjectMenuActions({ label: "Alpha" }, { archive, openSettings })).toEqual([
+      {
+        id: PROJECT_SETTINGS_ACTION_ID,
+        title: "Project settings",
+        subtitle: "Alpha",
+        image: "gearshape",
+      },
       {
         id: ARCHIVE_PROJECT_ACTION_ID,
         title: "Archive project",
@@ -17,18 +25,28 @@ describe("archiveProjectMenuActions", () => {
         image: "archivebox",
       },
     ]);
-    expect(archiveProjectMenuActions(undefined, archive)).toEqual([]);
-    expect(archiveProjectMenuActions({ label: "Alpha" }, undefined)).toEqual([]);
+    expect(selectedProjectMenuActions(undefined, { archive, openSettings })).toEqual([]);
+    expect(selectedProjectMenuActions({ label: "Alpha" }, { archive }).map((a) => a.id)).toEqual([
+      ARCHIVE_PROJECT_ACTION_ID,
+    ]);
+    expect(selectedProjectMenuActions({ label: "Alpha" }, {})).toEqual([]);
   });
 });
 
-describe("runArchiveProjectAction", () => {
-  it("runs the archive entry and leaves other ids alone", () => {
+describe("runSelectedProjectAction", () => {
+  it("runs the selected project's entries and leaves other ids alone", () => {
     const archive = vi.fn();
-    expect(runArchiveProjectAction("environment:all", archive)).toBe(false);
+    const openSettings = vi.fn();
+    expect(runSelectedProjectAction("environment:all", { archive, openSettings })).toBe(false);
     expect(archive).not.toHaveBeenCalled();
-    expect(runArchiveProjectAction(ARCHIVE_PROJECT_ACTION_ID, archive)).toBe(true);
+    expect(runSelectedProjectAction(ARCHIVE_PROJECT_ACTION_ID, { archive, openSettings })).toBe(
+      true,
+    );
     expect(archive).toHaveBeenCalledOnce();
-    expect(runArchiveProjectAction(ARCHIVE_PROJECT_ACTION_ID, undefined)).toBe(true);
+    expect(runSelectedProjectAction(PROJECT_SETTINGS_ACTION_ID, { archive, openSettings })).toBe(
+      true,
+    );
+    expect(openSettings).toHaveBeenCalledOnce();
+    expect(runSelectedProjectAction(ARCHIVE_PROJECT_ACTION_ID, {})).toBe(true);
   });
 });

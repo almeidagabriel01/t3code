@@ -49,17 +49,23 @@ export function useAssistantEditor() {
     editor?.current.modelSelection ??
     thread?.modelSelection ??
     scheduledTaskDefaultModel(config, effectiveProject);
-  const modelLabel =
-    modelSelection === null
-      ? null
-      : modelWithEffortLabel(
-          modelSelection,
-          buildModelOptions(config, modelSelection, undefined, effectiveProject?.id ?? null).find(
-            (option) =>
-              option.selection.instanceId === modelSelection.instanceId &&
-              option.selection.model === modelSelection.model,
-          ),
-        );
+  const labelOf = (selection: ModelSelection) =>
+    modelWithEffortLabel(
+      selection,
+      buildModelOptions(config, selection, undefined, effectiveProject?.id ?? null).find(
+        (option) =>
+          option.selection.instanceId === selection.instanceId &&
+          option.selection.model === selection.model,
+      ),
+    );
+  const modelLabel = modelSelection === null ? null : labelOf(modelSelection);
+  // Undefined on servers older than assistant default models, which then hide the field.
+  const storedDefault = editor?.assistant?.defaultModelSelection;
+  const defaultModelSelection =
+    editor?.current.defaultModelSelection === undefined
+      ? (storedDefault ?? null)
+      : editor.current.defaultModelSelection;
+  const userDefaultModel = scheduledTaskDefaultModel(config, null);
   const globalAutonomy = config?.settings.autonomy ?? DEFAULT_AUTONOMY_SETTINGS;
   return {
     editor,
@@ -70,6 +76,11 @@ export function useAssistantEditor() {
     config,
     modelSelection,
     modelLabel,
+    supportsDefaultModel: storedDefault !== undefined,
+    defaultModelSelection,
+    defaultModelLabel: defaultModelSelection === null ? null : labelOf(defaultModelSelection),
+    userDefaultModel,
+    userDefaultModelLabel: userDefaultModel === null ? null : labelOf(userDefaultModel),
     globalAutonomy,
   };
 }

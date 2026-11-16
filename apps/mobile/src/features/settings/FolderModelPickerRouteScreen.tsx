@@ -1,13 +1,12 @@
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ModelSelection } from "@t3tools/contracts";
 import { upsertFolderModelDefault } from "@t3tools/shared/serverSettings";
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 
-import { buildModelOptions, groupByProvider } from "../../lib/modelOptions";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
+import { SettingsModelPicker } from "./components/SettingsModelPicker";
 
 export type FolderModelPickerParams = {
   readonly environmentId: EnvironmentId;
@@ -24,25 +23,15 @@ export function FolderModelPickerRouteScreen({
   const config = useEnvironmentServerConfig(environmentId);
   const save = useAtomCommand(serverEnvironment.updateSettings, "folder model update");
   const rules = config?.settings.folderModelDefaults ?? [];
-  const models = useMemo(() => buildModelOptions(config, null, undefined, null), [config]);
-  const providerGroups = useMemo(() => groupByProvider(models), [models]);
   return (
-    <ThreadSettingsPickerScreen
+    <SettingsModelPicker
       title="Folder model"
       environmentId={environmentId}
       projectId={null}
-      providerGroups={providerGroups}
-      selectedModel={null}
-      prompt=""
-      onPromptChange={() => {}}
-      onSelectModel={(option) => {
-        picked.current = option.selection;
+      selected={null}
+      onPick={(selection) => {
+        picked.current = selection;
       }}
-      optionDescriptors={[]}
-      onUpdateOptionSelections={() => {}}
-      runtimeMode="full-access"
-      onUpdateRuntimeMode={() => {}}
-      runtimeHidden
       // Save calls onSelectModel, then onClose; a picked model also leaves the folder step.
       onClose={() => {
         const selection = picked.current;

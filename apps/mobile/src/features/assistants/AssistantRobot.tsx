@@ -7,7 +7,7 @@ import {
   type AssistantRobotLook,
   type AssistantRobotSpec,
 } from "@t3tools/client-runtime/assistantRobot";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, type Ref } from "react";
 import Svg, {
   Circle,
   Defs,
@@ -184,11 +184,16 @@ export function AssistantRobot(props: {
   return <RobotDrawing look={props.look} face={face} size={props.size} beat={false} />;
 }
 
-function RobotDrawing(props: {
+/** The still drawing; chip images capture it through `ref`. */
+export function RobotDrawing({
+  ref,
+  ...props
+}: {
   readonly look: AssistantRobotLook;
   readonly face: AssistantFace;
   readonly size: number;
   readonly beat: boolean;
+  readonly ref?: Ref<Svg>;
 }) {
   const { face, beat } = props;
   const spec = assistantRobotSpec(props.look, face);
@@ -202,6 +207,7 @@ function RobotDrawing(props: {
   const id = useId();
   return (
     <Svg
+      ref={ref}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       testID={`assistant-robot-${face}`}

@@ -83,23 +83,23 @@ export interface ImessageAdmissionConfig {
 
 /** What the transport sent recently and what a self chat already showed, to tell echoes from input. */
 export interface ImessageAdmissionMemory {
+  /** A piece sent again awaits one echo per send, from its first send to its last. */
   readonly sent: ReadonlyArray<{
     readonly id: number;
     readonly chatGuid: string;
     readonly textHash: string;
+    readonly firstSentAtMs: number;
     readonly sentAtMs: number;
   }>;
-  readonly seen: ReadonlyArray<{
-    readonly chatGuid: string;
-    readonly textHash: string;
-    readonly dateMs: number;
-  }>;
+  readonly seen: ReadonlyArray<ImessageSeenEntry>;
 }
 
 export interface ImessageSeenEntry {
   readonly chatGuid: string;
   readonly textHash: string;
   readonly dateMs: number;
+  /** Which side of the self chat stored it; null for entries from before this was kept. */
+  readonly fromMe: boolean | null;
 }
 
 interface SelfChatEffects {
@@ -119,6 +119,8 @@ export type ImessageAdmission =
       readonly chatGuid: string;
       readonly senderHandle: string;
       readonly text: string;
+      /** It carried an attachment this channel cannot pass on; the sender is told so. */
+      readonly attachment?: true;
       readonly receivedAt: string;
       readonly via: "other_account" | "self_chat";
     } & Partial<SelfChatEffects>);
@@ -152,11 +154,11 @@ export function admitImessageRow(
     !config.selfHandles.has(sender);
   const fromSelf = fromMe || (sender !== undefined && config.selfHandles.has(sender));
   if (!row.guid || (!fromOther && !fromSelf)) return skip("sender");
-  if (row.cache_has_attachments) return skip("attachment");
   const raw = row.text ?? extractTypedstreamText(row.attributedBody);
-  if (raw?.includes("￼")) return skip("attachment");
-  const text = raw?.trim();
-  if (!text) return skip("text");
+  // Attachments are not read from chat.db; the message is still admitted so it gets an answer.
+  const attachment = Boolean(row.cache_has_attachments) || raw?.includes("￼") === true;
+  const text = raw?.replaceAll("￼", "").trim() ?? "";
+  if (!text && !attachment) return skip("text");
   if (row.chat_join_count === 0) return { type: "pending_join", rowId: row.rowid };
   if (row.chat_join_count !== 1 || row.style !== 45 || !row.chat_guid) return skip("chat");
   const base = {
@@ -165,6 +167,7 @@ export function admitImessageRow(
     guid: row.guid,
     chatGuid: row.chat_guid,
     text,
+    ...(attachment ? { attachment: true as const } : {}),
     receivedAt: appleDateToIso(row.date, row.rowid),
   };
   if (fromOther) {
@@ -177,23 +180,28 @@ export function admitImessageRow(
   if (row.message_service !== "iMessage") return skip("service");
   const dateMs = appleDateToEpochMs(row.date) ?? 0;
   const textHash = fingerprintText(text);
-  const remember = { chatGuid: row.chat_guid, textHash, dateMs };
-  // Your chats with yourself are one conversation: a reply sent to your number echoes in that chat.
-  const own = memory.sent.find(
-    (sent) =>
-      sent.textHash === textHash &&
-      dateMs >= sent.sentAtMs - MIRROR_WINDOW_MS &&
-      dateMs <= sent.sentAtMs + OWN_REPLY_WINDOW_MS,
-  );
-  if (own !== undefined)
-    return { type: "skip", reason: "own_reply", consumeSentId: own.id, remember };
+  const remember = { chatGuid: row.chat_guid, textHash, dateMs, fromMe };
+  // A twin is the same message stored on the other side of the self chat; another send of the
+  // same reply lands on the same side again, so it is never taken for a twin and spends its echo.
   if (
     memory.seen.some(
-      (seen) => seen.textHash === textHash && Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
+      (seen) =>
+        seen.textHash === textHash &&
+        seen.fromMe !== fromMe &&
+        Math.abs(seen.dateMs - dateMs) <= MIRROR_WINDOW_MS,
     )
   ) {
     return skip("mirrored");
   }
+  // Your chats with yourself are one conversation: a reply sent to your number echoes in that chat.
+  const own = memory.sent.find(
+    (sent) =>
+      sent.textHash === textHash &&
+      dateMs >= sent.firstSentAtMs - MIRROR_WINDOW_MS &&
+      dateMs <= sent.sentAtMs + OWN_REPLY_WINDOW_MS,
+  );
+  if (own !== undefined)
+    return { type: "skip", reason: "own_reply", consumeSentId: own.id, remember };
   // Messages sends from the Mac's own login. Answering on your other address makes the reply
   // read as incoming on your phone, and every chat with yourself becomes that one conversation.
   const macHandle =
@@ -226,6 +234,7 @@ export function toImessageInbound(
     actor: { externalActorId: input.senderHandle },
     replyAddress: { kind: "imessage", connectionId, chatGuid: input.chatGuid },
     text: input.text,
+    ...(input.attachment ? { attachmentProblem: "unsupported" as const } : {}),
     receivedAt: input.receivedAt,
   };
 }

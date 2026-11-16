@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   isOrchestrationV2WorkActive,
   type MemoryTaskGrantCeiling,
@@ -56,11 +57,6 @@ import { effectiveMemoryGrant } from "../memory/MemoryAccess.ts";
 import type { MemorySnapshotPolicy } from "../memory/MemorySnapshot.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
-import {
-  endNativeSubagentTree,
-  endProcessBoundTurnItems,
-  processBoundTurnItems,
-} from "./processBoundWork.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -773,12 +769,23 @@ export const layerWithOptions = (
         }
       });
 
+      // A detach removes its thread before releasing, but that thread's records still need releasing.
+      const releasedThreadIds = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly detachedThreadId?: ThreadId;
+      }) => {
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       const writeReleasedSessionEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedSessionEvents",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        readonly detachedThreadId?: ThreadId;
       }) {
         const now = yield* DateTime.now;
         const payload: OrchestrationV2ProviderSession = {
@@ -793,21 +800,11 @@ export const layerWithOptions = (
         };
         yield* writeProviderSessionEvents({
           runtime: input.entry.runtime,
-          threadIds: input.entry.attachedThreadIds,
+          threadIds: releasedThreadIds(input),
           type: "provider-session.updated",
           payload,
         });
       });
-
-      // A detach removes its thread before releasing, but that thread's records still need releasing.
-      const releasedThreadIds = (input: {
-        readonly entry: LiveSessionEntry;
-        readonly detachedThreadId?: ThreadId;
-      }) => {
-        const threadIds = new Set(input.entry.attachedThreadIds);
-        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
-        return threadIds;
-      };
 
       const writeReleasedRuntimeRequestEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedRuntimeRequestEvents",
@@ -928,103 +925,41 @@ export const layerWithOptions = (
         }
       });
 
-      // The closed process ran these, so no provider event can end them. Shutdown leaves them to
-      // restart recovery, which tells the continuation what was cut.
-      const writeReleasedTurnItemEvents = Effect.fn(
-        "ProviderSessionManager.writeReleasedTurnItemEvents",
+      // The orchestrator decides which of each thread's open work this session ran.
+      const writeReleasedNativeWorkEffects = Effect.fn(
+        "ProviderSessionManager.writeReleasedNativeWorkEffects",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly releasedAt: DateTime.Utc;
         readonly detachedThreadId?: ThreadId;
       }) {
+        // Restart recovery settles a shutdown, and work that outlives its session stays open.
         if (
           input.reason === "server_shutdown" ||
-          input.entry.runtime.backgroundTasksEndWithProcess !== true
+          input.entry.runtime.nativeWorkEndsWithProcess !== true
         ) {
           return;
         }
         const providerSessionId = input.entry.runtime.providerSessionId;
-        const status = input.reason === "runtime_error" ? "failed" : "cancelled";
-        const now = yield* DateTime.now;
-        const events: Array<OrchestrationV2DomainEvent> = [];
-        const visitedChildThreadIds = new Set<ThreadId>();
-        for (const threadId of releasedThreadIds(input)) {
-          const allocateEventId = () => idAllocator.allocate.event({ threadId, providerSessionId });
-          const projection = yield* projectionStore.getThreadRecords(
+        const releasedAt = DateTime.toEpochMillis(input.releasedAt);
+        const commandId = CommandId.make(
+          `command:provider-session.released:${providerSessionId}:${releasedAt}`,
+        );
+        yield* eventSink.writeWithEffects({
+          commandId,
+          events: [],
+          effects: [...releasedThreadIds(input)].map((threadId) => ({
+            id: `effect:provider-session.work.settle:${providerSessionId}:${threadId}:${releasedAt}`,
+            commandId,
             threadId,
-            ["providerThreads", "turnItems", "subagents"],
-            {
-              turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
-              turnItemStatuses: ["pending", "running", "waiting"],
+            request: {
+              type: "provider-session.work.settle",
+              providerSessionId,
+              releasedAt: input.releasedAt,
             },
-          );
-          const sessionProviderThreadIds = new Set(
-            projection.providerThreads
-              .filter((providerThread) => providerThread.providerSessionId === providerSessionId)
-              .map((providerThread) => providerThread.id),
-          );
-          // Session ids survive a restart, so only work that predates this release is ours.
-          const ours = projection.turnItems.filter(
-            (item) =>
-              item.providerThreadId != null &&
-              sessionProviderThreadIds.has(item.providerThreadId) &&
-              (item.startedAt === null ||
-                DateTime.isLessThanOrEqualTo(item.startedAt, input.releasedAt)),
-          );
-          const items = processBoundTurnItems(ours);
-          const subagents = ours.flatMap((item) =>
-            item.type === "subagent" && item.origin === "provider_native" ? [item] : [],
-          );
-          if (items.length === 0 && subagents.length === 0) continue;
-          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
-            nodeIds: [
-              ...items.flatMap((item) => item.nodeId ?? []),
-              ...subagents.map((item) => item.subagentId),
-            ],
-          });
-          events.push(
-            ...(yield* endProcessBoundTurnItems({
-              items,
-              nodes,
-              status,
-              now,
-              owner: { driver: input.entry.runtime.driver },
-              allocateEventId,
-            })),
-          );
-          for (const subagent of subagents) {
-            events.push(
-              ...(yield* endNativeSubagentTree({
-                projection: { ...projection, nodes },
-                subagent,
-                status,
-                now,
-                emitted: events,
-                visitedChildThreadIds,
-                readChild: (childThreadId) =>
-                  projectionStore
-                    .getThreadRecords(
-                      childThreadId,
-                      ["nodes", "providerTurns", "subagents", "turnItems"],
-                      {
-                        turnItemRunIds: [null],
-                        turnItemStatuses: ["pending", "running", "waiting"],
-                      },
-                    )
-                    .pipe(
-                      Effect.catchTags({
-                        ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                      }),
-                    ),
-                allocateEventId,
-              })),
-            );
-          }
-        }
-        if (events.length > 0) {
-          yield* eventSink.write({ events });
-        }
+          })),
+        });
       });
 
       // Read tasks as soon as the session leaves the live map, before a replacement reports its own.
@@ -1148,7 +1083,7 @@ export const layerWithOptions = (
               ),
             ),
             Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
-            Effect.exit(writeReleasedTurnItemEvents(input)),
+            Effect.exit(writeReleasedNativeWorkEffects(input)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));

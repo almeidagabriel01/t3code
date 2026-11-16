@@ -9,6 +9,7 @@ const { mocks } = vi.hoisted(() => ({
     stored: null as unknown,
     command: vi.fn(),
     failure: null as unknown,
+    resent: null as unknown,
   },
 }));
 vi.mock("@effect/atom-react", () => ({
@@ -17,7 +18,9 @@ vi.mock("@effect/atom-react", () => ({
       ? mocks.event
         ? AsyncResult.success(mocks.event)
         : AsyncResult.initial()
-      : true,
+      : atom === "resent"
+        ? mocks.resent
+        : atom !== "resendPermission",
 }));
 vi.mock("@t3tools/client-runtime/state/telegramChannel", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -25,6 +28,8 @@ vi.mock("@t3tools/client-runtime/state/telegramChannel", async (importOriginal) 
     settings: () => "settings",
     status: () => "status",
     configure: { permissionAtom: () => "permission" },
+    resendUndelivered: { permissionAtom: () => "resendPermission" },
+    undeliveredResend: () => "resent",
   }),
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -41,7 +46,7 @@ vi.mock("./server", async () => {
 });
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => mocks.command }));
 vi.mock("./query", () => ({
-  useEnvironmentQuery: () => ({ data: mocks.stored, error: null }),
+  useEnvironmentQuery: () => ({ data: mocks.stored, dataUpdatedAt: 1, error: null }),
 }));
 
 import { TelegramChannelSettingsError } from "@t3tools/contracts";
@@ -110,6 +115,7 @@ describe("useTelegramChannel", () => {
   beforeEach(() => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     mocks.event = null;
+    mocks.resent = null;
     mocks.stored = {
       enabled: false,
       tokenConfigured: false,
@@ -154,6 +160,30 @@ describe("useTelegramChannel", () => {
       ok: false,
       message: "The request could not be completed.",
     });
+    act(() => root.unmount());
+  });
+
+  it("resends what never arrived and reports a refusal", async () => {
+    const root = mount();
+    expect(latest().canResend).toBe(false);
+    const saveWithTwoUndelivered = async () => {
+      mocks.command.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { ...(mocks.stored as object), undeliveredCount: 2 },
+      });
+      await act(async () => void (await latest().configure({})));
+    };
+    // With no live status, the resend's answer lowers the settings a change saved, and only those.
+    await saveWithTwoUndelivered();
+    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
+    await act(async () => expect(await latest().resendUndelivered()).toEqual({ ok: true }));
+    expect(mocks.command).toHaveBeenLastCalledWith({ environmentId: "hub", input: {} });
+    expect(latest().settings?.undeliveredCount).toBe(0);
+    await saveWithTwoUndelivered();
+    expect(latest().settings?.undeliveredCount).toBe(2);
+    mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
+    mocks.failure = new Error("Not allowed.");
+    expect(await latest().resendUndelivered()).toEqual({ ok: false, message: "Not allowed." });
     act(() => root.unmount());
   });
 });

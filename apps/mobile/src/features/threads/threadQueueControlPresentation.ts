@@ -1,4 +1,5 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { taskEventActivity } from "@t3tools/client-runtime/assistantTasks";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 
@@ -61,4 +62,18 @@ export function buildCancelQueuedRunCommand(input: {
       threadId: input.threadId,
     },
   };
+}
+
+/** A task event shows as "<title> · <label>"; other messages keep their text. */
+export function queuedRowTitle(input: {
+  readonly message: Parameters<typeof taskEventActivity>[0] | undefined;
+  readonly displayText: string;
+  readonly hasAttachments: boolean;
+}) {
+  const taskEvent = input.message ? taskEventActivity(input.message) : null;
+  return (
+    (taskEvent && `${taskEvent.title} · ${taskEvent.label}`) ||
+    input.displayText ||
+    (input.hasAttachments ? "Attachments" : "Queued message")
+  );
 }

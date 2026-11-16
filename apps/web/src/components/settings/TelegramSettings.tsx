@@ -4,6 +4,7 @@ import {
   telegramSenderLabel,
   telegramStatusLabel,
   telegramSwitchHint,
+  telegramUndeliveredLabel,
 } from "@t3tools/client-runtime/state/telegramChannel";
 import type {
   EnvironmentId,
@@ -40,6 +41,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChannelLanguageRow } from "./ChannelLanguageRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { UndeliveredRepliesRow } from "./UndeliveredRepliesRow";
 
 const SECTION_ICON = "size-4 text-muted-foreground";
 
@@ -378,6 +380,11 @@ function TelegramEnvironment(props: {
               </span>
             ) : undefined
           }
+        />
+        <UndeliveredRepliesRow
+          label={telegramUndeliveredLabel(settings)}
+          canAct={actions.canResend}
+          onResend={actions.resendUndelivered}
         />
         <SettingsRow
           title="Use Telegram"

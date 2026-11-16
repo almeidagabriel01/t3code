@@ -17,7 +17,9 @@ vi.mock("@effect/atom-react", () => ({
       ? mocks.event
         ? AsyncResult.success(mocks.event)
         : AsyncResult.initial()
-      : true,
+      : atom === "resent"
+        ? null
+        : true,
 }));
 vi.mock("@t3tools/client-runtime/state/imessageChannel", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -26,6 +28,8 @@ vi.mock("@t3tools/client-runtime/state/imessageChannel", async (importOriginal) 
     access: () => "access",
     status: () => "status",
     configure: { permissionAtom: () => "permission" },
+    resendUndelivered: { permissionAtom: () => "permission" },
+    undeliveredResend: () => "resent",
   }),
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
@@ -44,7 +48,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: () => mocks.command }));
 vi.mock("./query", () => ({
   useEnvironmentQuery: (atom: string) =>
     atom === "settings"
-      ? { data: mocks.stored, error: null }
+      ? { data: mocks.stored, dataUpdatedAt: 1, error: null }
       : { data: { access: "ok" }, refresh: vi.fn() },
 }));
 
@@ -119,6 +123,31 @@ describe("useImessageChannel", () => {
     mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
     mocks.failure = "boom";
     expect(await latest().configure({})).toEqual({
+      ok: false,
+      message: "The request could not be completed.",
+    });
+    act(() => root.unmount());
+  });
+
+  it("resends what never arrived and reports a refusal", async () => {
+    const root = mount();
+    const saveWithTwoUndelivered = async () => {
+      mocks.command.mockResolvedValueOnce({
+        _tag: "Success",
+        value: { enabled: true, allowedHandles: [], selfHandles: [], undeliveredCount: 2 },
+      });
+      await act(async () => void (await latest().configure({})));
+    };
+    // With no live status, the resend's answer lowers the settings a change saved, and only those.
+    await saveWithTwoUndelivered();
+    mocks.command.mockResolvedValueOnce({ _tag: "Success", value: { requeued: 2 } });
+    await act(async () => expect(await latest().resendUndelivered()).toEqual({ ok: true }));
+    expect(latest().settings?.undeliveredCount).toBe(0);
+    await saveWithTwoUndelivered();
+    expect(latest().settings?.undeliveredCount).toBe(2);
+    mocks.command.mockResolvedValueOnce({ _tag: "Failure" });
+    mocks.failure = "boom";
+    expect(await latest().resendUndelivered()).toEqual({
       ok: false,
       message: "The request could not be completed.",
     });

@@ -3,9 +3,15 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   AssistantGroupMessage,
+  AssistantGroupsEvent,
   AssistantGroupsPostInput,
   assistantGroupAddress,
   assistantGroupMentions,
+  assistantGroupProjectIds,
+  assistantGroupProjectMentionRanges,
+  assistantGroupProjectMentions,
+  assistantGroupProjectSlug,
+  assistantGroupProjectSlugs,
   assistantGroupTaskActions,
   isAssistantGroupThreadId,
   splitAssistantTransferText,
@@ -16,6 +22,8 @@ const beto = { id: "beto", handle: "beto-r", name: "Beto Rocha" };
 const ana = { id: "ana", handle: "ana-p", name: "Ana Paula" };
 const anaMaria = { id: "anam", handle: "anam", name: "Ana Paula Maria" };
 const jose = { id: "jose", handle: "jose", name: "José Álvaro" };
+
+const decodePost = Schema.decodeUnknownSync(AssistantGroupsPostInput);
 
 describe("assistantGroupAddress", () => {
   it.each([
@@ -98,12 +106,53 @@ describe("assistantGroupTaskActions", () => {
     ["queued", ["stop"]],
     ["running", ["stop"]],
     ["waiting", ["stop"]],
+    ["usage_limited", ["stop"]],
     ["paused", ["resume", "reassign", "cancel"]],
     ["failed", ["resume", "reassign", "cancel"]],
     ["completed", []],
     ["cancelled", []],
   ] as const)("%s", (status, expected) => {
     expect(assistantGroupTaskActions({ status })).toEqual(expected);
+  });
+});
+
+const decodeGroupsEvent = Schema.decodeUnknownSync(AssistantGroupsEvent);
+
+describe("group task status on the wire", () => {
+  const task = (status: string, extra: Record<string, unknown> = {}) => ({
+    id: `task-${status}`,
+    teamId: "team-1",
+    rootId: `task-${status}`,
+    parentId: null,
+    kind: "root",
+    requestMessageId: "message-1",
+    ownerId: "ada",
+    instruction: "Do it",
+    status,
+    reason: null,
+    threadId: "assistant:ada:g-0123456789abcdef",
+    createdAt: "2026-11-13T12:00:00.000Z",
+    updatedAt: "2026-11-13T12:00:00.000Z",
+    ...extra,
+  });
+
+  it("keeps the list when a newer server sends a status this client does not know", () => {
+    const event = decodeGroupsEvent({
+      type: "snapshot",
+      messages: [],
+      tasks: [
+        task("running"),
+        task("usage_limited", { resetAt: "2026-11-13T18:00:00.000Z" }),
+        task("added_by_newer_server"),
+      ],
+      hasMore: false,
+    });
+
+    expect(event.type === "snapshot" && event.tasks).toMatchObject([
+      { status: "running" },
+      { status: "usage_limited", resetAt: "2026-11-13T18:00:00.000Z" },
+      { status: "failed" },
+    ]);
   });
 });
 
@@ -169,5 +218,120 @@ describe("group message attachments", () => {
     expect(() =>
       decode({ ...post, attachments: Array.from({ length: 101 }, () => image) }),
     ).toThrow();
+  });
+
+  const long = "x".repeat(257);
+  it.each([
+    ["a model id over the limit", { instanceId: "claudeAgent", model: long }],
+    [
+      "an option value over the limit",
+      { instanceId: "claudeAgent", model: "opus", options: [{ id: "effort", value: long }] },
+    ],
+    [
+      "too many options",
+      {
+        instanceId: "claudeAgent",
+        model: "opus",
+        options: Array.from({ length: 33 }, (_, i) => ({ id: `o${i}`, value: true })),
+      },
+    ],
+  ])("refuses a post's model with %s", (_name, modelSelection) => {
+    const input: unknown = { teamId: "t1", text: "x", modelSelection };
+    expect(() => decodePost(input)).toThrow();
+  });
+
+  it("keeps a post's model for its work", () => {
+    const decode = Schema.decodeUnknownSync(AssistantGroupsPostInput);
+    const modelSelection = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+    expect(decode({ teamId: "t1", text: "@ada look", modelSelection }).modelSelection).toEqual(
+      modelSelection,
+    );
+  });
+});
+
+describe("assistantGroupProjectMentions", () => {
+  const projects = [
+    { id: "p1", name: "Billing API" },
+    { id: "p2", name: "agenda-instagram" },
+    { id: "p3", name: "Café" },
+  ];
+  it.each([
+    ["a one-word name", "deploy #cafe now", ["p3"]],
+    ["a name with spaces, as hyphens", "fix #billing-api.", ["p1"]],
+    ["a hyphenated name", "(#agenda-instagram) post it", ["p2"]],
+    ["case and accents ignored", "#BILLING-API and #Café", ["p1", "p3"]],
+    ["each project once", "#cafe or #cafe", ["p3"]],
+    ["an unknown project", "see #nope and issue #42", []],
+    ["a heading or a word with #", "# Billing api\nsee page#cafe", []],
+    ["code and links", "`#cafe` https://x.dev/#cafe", []],
+  ])("%s", (_name, text, ids) => {
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual(ids);
+  });
+  it("gives each mention's offsets, without trailing punctuation", () => {
+    expect(
+      assistantGroupProjectMentionRanges("fix #billing-api. #cafe", projects).map((found) => [
+        found.start,
+        found.end,
+        found.project.id,
+      ]),
+    ).toEqual([
+      [4, 16, "p1"],
+      [18, 23, "p3"],
+    ]);
+  });
+});
+
+describe("assistantGroupProjectSlugs", () => {
+  const projects = [
+    { id: "p4", name: "My App (v2)" },
+    { id: "p5", name: "C++" },
+    { id: "p6", name: "Foo & Bar" },
+    { id: "p7", name: "api." },
+    { id: "p8", name: "Ação Rápida" },
+    { id: "p9", name: "++" },
+    { id: "p0", name: "Me\u0301dia" },
+    { id: "p3", name: "core" },
+    { id: "p1", name: "Core" },
+    { id: "p2", name: "Core 2" },
+  ];
+  it.each([
+    ["punctuation", "p4", "my-app-v2", "ship #my-app-v2 today"],
+    ["a symbol at the end", "p5", "c", "fix #c."],
+    ["a symbol between words", "p6", "foo-bar", "(#foo-bar)"],
+    ["a trailing dot", "p7", "api", "see #api"],
+    ["accents", "p8", "acao-rapida", "#Ação-Rápida"],
+    ["nothing left", "p9", "project", "in #project"],
+    ["decomposed accents", "p0", "media", "#média"],
+    ["the first id of a collision", "p1", "core", "#core"],
+    ["a later id, past a slug another title makes", "p3", "core-3", "#core-3"],
+    ["a title that makes the suffix itself", "p2", "core-2", "#core-2"],
+  ])("%s", (_name, id, slug, text) => {
+    expect(assistantGroupProjectSlugs(projects).get(id)).toBe(slug);
+    expect(assistantGroupProjectSlugs([...projects].reverse()).get(id)).toBe(slug);
+    expect(assistantGroupProjectMentions(text, projects).map((project) => project.id)).toEqual([
+      id,
+    ]);
+  });
+  it("names one project the same way alone", () => {
+    expect(assistantGroupProjectSlug("My App (v2)")).toBe("my-app-v2");
+  });
+});
+
+describe("assistantGroupProjectIds", () => {
+  it("joins the group's projects, then the members' in member order, once each, home project as a fallback", () => {
+    const members = [
+      { projectId: "home" as never, projectIds: ["p2" as never, "p1" as never] },
+      { projectId: "p3" as never, projectIds: [] },
+      { projectId: "home" as never, projectIds: ["p1" as never] },
+    ];
+    expect(assistantGroupProjectIds(members, [])).toEqual(["p2", "p1", "p3"]);
+    expect(assistantGroupProjectIds(members, ["p4" as never, "p1" as never])).toEqual([
+      "p4",
+      "p1",
+      "p2",
+      "p3",
+    ]);
+    expect(assistantGroupProjectIds([], ["p4" as never])).toEqual(["p4"]);
+    expect(assistantGroupProjectIds([], [])).toEqual([]);
   });
 });

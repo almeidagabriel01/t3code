@@ -258,6 +258,8 @@ export const ScheduledTask = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   /** Posts the prompt in this assistant group's chat instead of a thread. */
   assistantTeamId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  /** The assistant that made the task; its runs stay inside that assistant's projects. */
+  ownerAssistantId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   threadMode: Schema.optional(ScheduledTaskThreadMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,

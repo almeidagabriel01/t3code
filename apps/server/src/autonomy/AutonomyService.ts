@@ -20,6 +20,7 @@ import {
   type OrchestrationV2DomainEvent,
   type ProjectId,
   PROVIDER_DISPLAY_NAMES,
+  type ProviderInstanceId,
   type ThreadId,
   isSideChatThread,
 } from "@t3tools/contracts";
@@ -40,8 +41,12 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 
-import { groupThreadId } from "../assistants/AssistantGroups.ts";
+import { groupThreadId, requestThreadId } from "../assistants/AssistantGroups.ts";
 import { AssistantSpend } from "../assistants/AssistantSpend.ts";
+import { assistantRunReply } from "../assistants/assistantRunReply.ts";
+import type { TurnOrigin } from "../mcp/turnOrigin.ts";
+import { TaskEventNotices } from "../assistants/TaskEventNotices.ts";
+import { ProviderBudgetGate } from "../usage/providerBudget.ts";
 import { type AssistantRow, toAssistant } from "../assistants/AssistantDirectory.ts";
 import { decodeReplyAddress } from "../channels/ChannelBridge.ts";
 import { containsSecret } from "../channels/channelRedaction.ts";
@@ -78,7 +83,7 @@ import {
 } from "./autonomyRules.ts";
 import { detectionEnabled } from "../problems/problemRules.ts";
 import { NeedsUser, type UserWait } from "./NeedsUser.ts";
-import { needsYouText } from "./needsYou.ts";
+import { defaultNoticeText, needsYouText, waitWakeId } from "./needsYou.ts";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -128,6 +133,40 @@ const toWatch = (row: WatchRow): AutonomyWatch => ({
 
 const autonomyError = (reason: AutonomyError["reason"], message: string) =>
   new AutonomyError({ reason, message });
+
+interface UsageLimitNotice {
+  readonly threadId: ThreadId;
+  readonly providerInstanceId: string;
+  readonly resetAt: string | null;
+  readonly failedAt: string;
+}
+
+/**
+ * One window per provider: a reset parsed from a relative cooldown varies by seconds. With no
+ * reset the window is the local day the run failed, so a limit left standing is told once.
+ */
+const usageLimitSubject = (notice: UsageLimitNotice) =>
+  `usage-limit:${notice.providerInstanceId}:${
+    notice.resetAt === null
+      ? DateTime.formatIsoDate(
+          DateTime.setZone(DateTime.makeUnsafe(notice.failedAt), DateTime.zoneMakeLocal()),
+        )
+      : DateTime.formatIso(DateTime.makeUnsafe(notice.resetAt)).slice(0, 16)
+  }`;
+
+/** A window's notice is withdrawn once it resets; one with no reset time waits for the user. */
+const usageLimitOpen = (subject: string, nowMs: number) => {
+  const reset = /:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/.exec(subject)?.[1];
+  return reset === undefined || Date.parse(`${reset}:00Z`) > nowMs ? [true] : [];
+};
+
+const usageLimitTime = (resetAt: string, language: string) =>
+  DateTime.formatLocal(DateTime.makeUnsafe(resetAt), {
+    locale: language,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 export class AutonomyService extends Context.Service<
   AutonomyService,
@@ -188,6 +227,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const spend = yield* AssistantSpend;
+  const notices = yield* TaskEventNotices;
+  const budgetGate = yield* ProviderBudgetGate;
   const decisions = yield* DecisionService.DecisionService;
   const outbox = yield* ChannelOutbox.ChannelOutbox;
   const channelLanguage = yield* ChannelLanguage;
@@ -198,6 +239,16 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment;
   const needsUser = yield* NeedsUser;
   const lock = yield* Semaphore.make(1);
+
+  /** A wake is a model turn: refused past its provider instance's budget or the assistant's own. */
+  const overBudget = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    const refusal =
+      shell === null
+        ? yield* spend.budgetRefusal(threadId)
+        : yield* budgetGate(shell.providerInstanceId, threadId);
+    return Option.isSome(refusal);
+  });
 
   // What the time-based rules need; rebuilt from events after a restart, so a run that was already
   // stuck at shutdown is judged again from its next event.
@@ -349,7 +400,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_id = ${assistant.id} AND source <> 'notify'
         AND created_at > ${iso(nowMs - DAY_MS)}`;
     if ((today[0]?.n ?? 0) >= config.maxWakesPerDay) return;
-    if (Option.isSome(yield* spend.budgetRefusal(assistant.threadId as ThreadId))) return;
+    if (yield* overBudget(assistant.threadId as ThreadId)) return;
 
     const label = sourceLabel(candidate.source);
     yield* sql`
@@ -374,26 +425,42 @@ const make = Effect.gen(function* () {
       diffStat: null,
     });
     const id = `${WAKE_MESSAGE_PREFIX}${wakeKey}`;
-    const sent = yield* threads
-      .sendToThread({
-        projectId: assistant.projectId,
-        commandId: CommandId.make(id),
-        messageId: MessageId.make(id),
+    const giveBack = sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
+    if (signal.run !== undefined) {
+      // A run's end is a task event: told once per change, whichever of a watch or a task reports it.
+      const outcome = yield* notices.send({
         threadId: assistant.threadId as ThreadId,
+        projectId: assistant.projectId,
+        run: signal.run,
+        messageId: id,
         text,
-        attachments: [],
-        mode: "queue",
         createdBy: "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.result);
-    if (sent._tag === "Failure") {
-      // Give the claim back so the next occurrence may try again.
-      yield* sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
-      return yield* Effect.logWarning("autonomy wake could not be sent", {
-        assistantId: assistant.id,
-        cause: sent.failure,
       });
+      // A watch already told about this run is spent; anything else unsent frees its claim,
+      // so a rule's interval and daily cap count only wakes that reached the assistant.
+      if (outcome !== "sent" && !(isWatch && outcome === "unchanged")) return yield* giveBack;
+    } else {
+      const sent = yield* threads
+        .sendToThread({
+          projectId: assistant.projectId,
+          commandId: CommandId.make(id),
+          messageId: MessageId.make(id),
+          threadId: assistant.threadId as ThreadId,
+          text,
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "server",
+        })
+        .pipe(Effect.result);
+      if (sent._tag === "Failure") {
+        // Give the claim back so the next occurrence may try again.
+        yield* giveBack;
+        return yield* Effect.logWarning("autonomy wake could not be sent", {
+          assistantId: assistant.id,
+          cause: sent.failure,
+        });
+      }
     }
     if (isWatch) {
       const watch = candidate.source.watch;
@@ -536,14 +603,6 @@ const make = Effect.gen(function* () {
       Effect.map((environmentId) => hostedThreadLink({ environmentId, threadId })),
     );
 
-  const projectName = (projectId: string | null) =>
-    projectId === null
-      ? Effect.succeed(null)
-      : projects.getById(projectId as ProjectId).pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (project) => project.title })),
-          Effect.orElseSucceed(() => null),
-        );
-
   type FinishedRun = {
     readonly id: string;
     readonly threadId: ThreadId;
@@ -555,13 +614,15 @@ const make = Effect.gen(function* () {
     run: FinishedRun,
     label: string,
     config: AutonomySettings,
+    origin: TurnOrigin,
   ) {
     const assistantRows = yield* sql<AssistantRow>`
       SELECT * FROM assistants WHERE thread_id = ${run.threadId}`;
     if (assistantRows[0] === undefined) return;
     const assistant = toAssistant(assistantRows[0]);
     const render = yield* answerOf(run);
-    const text = render("en");
+    // A wake is an event: a quiet end tells no one, and chat apps get the short version.
+    const text = assistantRunReply(render("en"), origin);
     if (text === undefined) return;
     const channels = resolveChannels(assistant.autonomy, config);
     const chat = yield* ownerChat(channels);
@@ -577,8 +638,9 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-run:${run.id}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
-          text: `${localizeNoticeLabel(label, language)}\n\n${render(language) ?? text}`,
+          text: `${localizeNoticeLabel(label, language)}\n\n${assistantRunReply(render(language), origin) ?? text}`,
           markdown: true,
           language,
         });
@@ -609,7 +671,7 @@ const make = Effect.gen(function* () {
       SELECT label, source FROM autonomy_wakes WHERE wake_key = ${wakeKey}`;
     if (wakes[0] === undefined) return;
     if (wakes[0].source === "problem") return yield* deliverProblem(run, wakeKey, wakes[0].label);
-    yield* deliverResult(run, wakes[0].label, config);
+    yield* deliverResult(run, wakes[0].label, config, "other");
   });
 
   /** A schedule in an assistant's own conversation ended: its answer reaches the user like a wake's. */
@@ -624,7 +686,7 @@ const make = Effect.gen(function* () {
       WHERE assistant_team_id IS NULL AND substr(${fireKey}, 1, length(task_id) + 1) = task_id || ':'
       ORDER BY length(task_id) DESC LIMIT 1`;
     if (tasks[0] === undefined) return;
-    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config);
+    yield* deliverResult(run, `${DECISION_PHRASES.routine} ${tasks[0].title}`, config, "routine");
   });
 
   const handleEvent: AutonomyService["Service"]["handleEvent"] = Effect.fn(
@@ -680,6 +742,7 @@ const make = Effect.gen(function* () {
             projectId: null,
             prNumber: null,
             summary: `A run ${run.status === "completed" ? "finished" : run.status}.`,
+            run,
           });
           return;
         }
@@ -856,6 +919,111 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Who asks, as the user knows them: the assistant following the thread, else the thread's own
+   * agent, with its group when it is a group member's conversation.
+   */
+  const waitOrigin = Effect.fn("AutonomyService.waitOrigin")(function* (
+    threadId: ThreadId,
+    providerInstanceId: string | undefined,
+  ) {
+    const owner = yield* needsUser.owner(threadId).pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(owner)) return owner.value.name;
+    const agent = yield* agentName(threadId, providerInstanceId);
+    const teams = yield* sql<{ readonly name: string }>`
+      SELECT tm.name FROM assistant_teams tm
+      WHERE tm.team_id IN (
+        SELECT team_id FROM assistant_group_threads WHERE thread_id = ${threadId}
+        UNION SELECT team_id FROM assistant_group_request_threads WHERE thread_id = ${threadId})
+      LIMIT 1`;
+    return teams[0] === undefined ? agent : `${agent} (${teams[0].name})`;
+  });
+
+  /** A default that cannot be told for now keeps the wait untold, so the next sweep tries again. */
+  const keepTelling = <E>(self: Effect.Effect<void, E>) =>
+    self.pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("autonomy: the default assistant could not be told", { cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+
+  /**
+   * Tells the default assistant, the user's point of contact, about a wait from anywhere. The id is
+   * the owner wake's when the default follows the thread itself, so it is told once; a wait
+   * answered meanwhile takes the notice back.
+   */
+  const tellDefault = Effect.fn("AutonomyService.tellDefault")(function* (input: {
+    readonly wait: UserWait;
+    readonly title: string;
+    readonly origin: string;
+    readonly threadTitle: string;
+    readonly rootThreadId: ThreadId | undefined;
+  }) {
+    const { wait } = input;
+    const target = yield* needsUser.defaultAssistant;
+    if (Option.isNone(target)) return;
+    const { threadId } = target.value;
+    // Its own conversation, or its own turn's subagents: it is already there.
+    if (wait.threadId === threadId || input.rootThreadId === threadId) return;
+    // A notice is a model turn; past the budget the card in Activity and the chat app still asks.
+    if (yield* overBudget(threadId)) return;
+    const id = waitWakeId(threadId, wait.key);
+    const commandId = CommandId.make(id);
+    // Sent before, then maybe taken out of the queue by the user: told either way.
+    if (yield* threads.hasReceipt(commandId)) return;
+    const giveUp = (error: { readonly _tag: string }) =>
+      Effect.logWarning("autonomy: the default assistant cannot take this notice", {
+        threadId,
+        key: wait.key,
+        error: error._tag,
+      }).pipe(Effect.as(false));
+    const sent = yield* threads
+      .sendToThread({
+        projectId: target.value.projectId,
+        commandId,
+        messageId: MessageId.make(id),
+        threadId,
+        senderThreadId: wait.threadId,
+        text: defaultNoticeText({
+          title: input.title,
+          origin: input.origin,
+          link: formatThreadLink(
+            { environmentId: null, threadId: wait.threadId },
+            input.threadTitle,
+          ),
+          source: wait.source,
+        }),
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(
+        Effect.as(true),
+        // Failures a later try meets again until the user acts, most with no receipt to stop them:
+        // the wait counts as told, as past a budget. I/O and loading failures still retry.
+        Effect.catchTags({
+          ThreadManagementThreadArchivedError: giveUp,
+          ThreadManagementThreadNotFoundError: giveUp,
+          ThreadManagementDurableRunProjectionError: giveUp,
+          ThreadManagementProviderInstanceDisabledError: giveUp,
+          OrchestratorCommandIdConflictError: giveUp,
+          OrchestratorCommandPreviouslyRejectedError: giveUp,
+          OrchestratorCommandRejectedError: giveUp,
+          OrchestratorSubagentThreadReadOnlyError: giveUp,
+          OrchestratorThreadAboveModeLimitError: giveUp,
+          OrchestratorRuntimeModeAboveCeilingError: giveUp,
+        }),
+      );
+    if (!sent) return;
+    if (Option.isNone(yield* needsUser.describe(wait, input.origin))) {
+      yield* needsUser.withdrawWake(threadId, wait);
+    }
+  });
+
   const alreadyTold = (subject: string) =>
     sql`SELECT 1 FROM autonomy_needs_you WHERE subject_key = ${subject}`.pipe(
       Effect.map((rows) => rows.length > 0),
@@ -866,7 +1034,7 @@ const make = Effect.gen(function* () {
       VALUES (${subject}, ${decisionId}, ${iso(nowMs)})`;
   /**
    * A card the chat app failed to show, or may not have shown, is no longer told: dropping its
-   * delivery lets the next cycle enqueue it again. An ambiguous part already claimed stays deduplicated.
+   * delivery lets the next cycle enqueue it again. A part the chat app confirmed is not sent twice.
    */
   const retellUndelivered = Effect.fn("AutonomyService.retellUndelivered")(function* (
     nowMs: number,
@@ -923,7 +1091,6 @@ const make = Effect.gen(function* () {
         agent: input.agent,
         title: shown.title,
         context: input.context?.(language) ?? shown.context,
-        projectName: yield* projectName(input.projectId),
         threadTitle: input.threadTitle,
         link: yield* linkTo(input.threadId),
         answerable: input.answerable,
@@ -933,6 +1100,7 @@ const make = Effect.gen(function* () {
     yield* outbox.enqueue({
       deliveryId,
       destination: chat,
+      projectId: input.projectId as ProjectId | null,
       senderName: "T3 Code",
       text: card.text,
       ...(card.answerable
@@ -958,7 +1126,7 @@ const make = Effect.gen(function* () {
     if (yield* alreadyTold(subject)) return;
     const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
     if (shell === null || shell.archivedAt !== null) return;
-    const agent = yield* agentName(threadId, shell.providerInstanceId);
+    const agent = yield* waitOrigin(threadId, shell.providerInstanceId);
     const described = yield* needsUser.describe(wait, agent);
     if (Option.isNone(described)) return;
     const built = described.value;
@@ -978,8 +1146,15 @@ const make = Effect.gen(function* () {
       ...(built.answerable ? { approvalRequestId: requestId } : {}),
     });
     if (decision.status !== "open") return yield* markTold(subject, decision.id, nowMs);
+    const toldDefault = yield* tellDefault({
+      wait,
+      title: built.title,
+      origin: agent,
+      threadTitle: shell.title,
+      rootThreadId: shell.lineage.rootThreadId,
+    }).pipe(keepTelling);
     if (
-      yield* sendNeedsYou({
+      (yield* sendNeedsYou({
         decision,
         agent,
         threadId,
@@ -987,31 +1162,99 @@ const make = Effect.gen(function* () {
         threadTitle: shell.title,
         answerable: built.answerable,
         config,
-      })
+      })) &&
+      toldDefault
     )
       yield* markTold(subject, decision.id, nowMs);
   });
 
-  const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
-    decision: Decision,
+  const providerName = Effect.fn("AutonomyService.providerName")(function* (instanceId: string) {
+    const instance = yield* settingsService.getSettings.pipe(
+      Effect.map((current) => current.providerInstances?.[instanceId as ProviderInstanceId]),
+      Effect.orElseSucceed(() => undefined),
+    );
+    return (
+      instance?.displayName ??
+      PROVIDER_DISPLAY_NAMES[
+        (instance?.driver ?? instanceId) as keyof typeof PROVIDER_DISPLAY_NAMES
+      ] ??
+      instanceId
+    );
+  });
+
+  /** Once per provider and limit window, on the first task found waiting in it. */
+  const notifyUsageLimit = Effect.fn("AutonomyService.notifyUsageLimit")(function* (
+    notice: UsageLimitNotice,
     config: AutonomySettings,
     nowMs: number,
   ) {
-    const subject = `decision:${decision.id}`;
+    const subject = usageLimitSubject(notice);
+    if (yield* alreadyTold(subject)) return;
+    const clientRequestId = `${DecisionService.NOTICE_REQUEST_PREFIX}${subject}`;
+    // Decisions are idempotent per thread: a retry stays on the thread that opened one.
+    const [opened] = yield* sql<{ readonly from_thread_id: ThreadId }>`
+      SELECT from_thread_id FROM decisions WHERE client_request_id = ${clientRequestId} LIMIT 1`;
+    const threadId = opened?.from_thread_id ?? notice.threadId;
+    const shell = yield* engine.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+    if (shell === null) return;
+    const provider = yield* providerName(notice.providerInstanceId);
+    const back = (language: ResolvedChannelLanguage) =>
+      channelStrings(language).usageLimitBack(
+        notice.resetAt === null ? null : usageLimitTime(notice.resetAt, language),
+      );
+    // Deterministic ids: a repeat lands on the same decision and the same delivery.
+    const decision = yield* decisions.request({
+      fromThreadId: threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      clientRequestId,
+      title: `${provider}: ${DECISION_PHRASES.usageLimit}`.slice(0, 120),
+      context: back("en"),
+      options: [{ id: "ok", label: DECISION_PHRASES.gotIt }],
+    });
+    yield* sendNeedsYou({
+      decision,
+      agent: provider,
+      threadId,
+      projectId: shell.projectId,
+      threadTitle: shell.title,
+      answerable: false,
+      config,
+      context: back,
+    });
+    yield* markTold(subject, decision.id, nowMs);
+  });
+
+  const notifyDecision = Effect.fn("AutonomyService.notifyDecision")(function* (
+    wait: Extract<UserWait, { readonly source: "decision" }>,
+    config: AutonomySettings,
+    nowMs: number,
+  ) {
+    const { decision } = wait;
+    const subject = wait.key;
     if (yield* alreadyTold(subject)) return;
     const shell = yield* engine
       .getThreadShell(decision.fromThreadId)
       .pipe(Effect.orElseSucceed(() => null));
+    const agent = yield* waitOrigin(decision.fromThreadId, shell?.providerInstanceId);
+    const toldDefault = yield* tellDefault({
+      wait,
+      title: decision.title,
+      origin: agent,
+      threadTitle: shell?.title ?? decision.threadTitle,
+      rootThreadId: shell?.lineage.rootThreadId,
+    }).pipe(keepTelling);
     if (
-      yield* sendNeedsYou({
+      (yield* sendNeedsYou({
         decision,
-        agent: yield* agentName(decision.fromThreadId, shell?.providerInstanceId),
+        agent,
         threadId: decision.fromThreadId,
         projectId: shell?.projectId ?? null,
         threadTitle: decision.threadTitle,
         answerable: true,
         config,
-      })
+      })) &&
+      toldDefault
     )
       yield* markTold(subject, decision.id, nowMs);
   });
@@ -1023,6 +1266,7 @@ const make = Effect.gen(function* () {
     readonly instruction: string;
     readonly reason: string | null;
     readonly thread_id: string | null;
+    readonly request_id: string | null;
     readonly updated_at: string;
     readonly team_name: string;
     readonly owner_name: string;
@@ -1037,7 +1281,10 @@ const make = Effect.gen(function* () {
     const subject = `group-task:${task.task_id}@${task.updated_at}`;
     if (yield* alreadyTold(subject)) return;
     const instruction = task.instruction.trim().slice(0, 1_000);
-    const threadId = (task.thread_id ?? groupThreadId(task.owner_id, task.team_id)) as ThreadId;
+    const threadId = (task.thread_id ??
+      (task.request_id === null
+        ? groupThreadId(task.owner_id, task.team_id)
+        : requestThreadId(task.owner_id, task.team_id, task.request_id))) as ThreadId;
     const contextIn = (language: ResolvedChannelLanguage) =>
       [instruction, channelStrings(language).groupTaskReason(task.reason)]
         .filter((part) => part !== "")
@@ -1068,6 +1315,7 @@ const make = Effect.gen(function* () {
 
   /** A notice whose cause settled leaves Activity; answerable mirrors are withdrawn by their reactor. */
   const withdrawSettledNotices = Effect.gen(function* () {
+    const nowMs = yield* Clock.currentTimeMillis;
     const told = yield* sql<{
       readonly subject_key: string;
       readonly decision_id: string;
@@ -1088,7 +1336,9 @@ const make = Effect.gen(function* () {
               SELECT 1 FROM assistant_group_tasks
               WHERE 'group-task:' || task_id || '@' || updated_at = ${row.subject_key}
                 AND status = 'paused'`
-          : [true];
+          : row.subject_key.startsWith("usage-limit:")
+            ? usageLimitOpen(row.subject_key, nowMs)
+            : [true];
       if (still.length > 0) continue;
       yield* decisions
         .withdraw({
@@ -1126,7 +1376,7 @@ const make = Effect.gen(function* () {
               isolate("autonomy: a waiting request could not be told"),
             );
           } else {
-            yield* notifyDecision(wait.decision, config, nowMs).pipe(
+            yield* notifyDecision(wait, config, nowMs).pipe(
               isolate("autonomy: an open decision could not be told"),
             );
           }
@@ -1135,11 +1385,14 @@ const make = Effect.gen(function* () {
         // Stopping a task or archiving its group is the user's own doing; the rest wait on them.
         // A pause stops a whole branch, so only its top task is told: resuming it resumes the rest.
         const tasks = yield* sql<PausedTask>`
-          SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at,
-            gt.thread_id, tm.name AS team_name, a.name AS owner_name, a.project_id
+          SELECT t.task_id, t.team_id, t.owner_id, t.instruction, t.reason, t.updated_at, t.request_id,
+            COALESCE(rt.thread_id, gt.thread_id) AS thread_id, tm.name AS team_name,
+            a.name AS owner_name, a.project_id
           FROM assistant_group_tasks t
           JOIN assistant_teams tm ON tm.team_id = t.team_id
           JOIN assistants a ON a.assistant_id = t.owner_id
+          LEFT JOIN assistant_group_request_threads rt
+            ON rt.request_id = t.request_id AND rt.assistant_id = t.owner_id
           LEFT JOIN assistant_group_threads gt
             ON gt.team_id = t.team_id AND gt.assistant_id = t.owner_id
           WHERE t.status = 'paused' AND t.kind <> 'reply'
@@ -1151,6 +1404,53 @@ const make = Effect.gen(function* () {
           if (!due(task.updated_at)) continue;
           yield* notifyGroupTask(task, config, nowMs).pipe(
             isolate("autonomy: a paused group task could not be told"),
+          );
+        }
+
+        // Threads whose last run hit a usage limit whose window still lies ahead, armed or not.
+        const limited = yield* sql<UsageLimitNotice>`
+          SELECT t.thread_id AS "threadId",
+            COALESCE(r.provider_instance_id, r.provider) AS "providerInstanceId",
+            json_extract(item.payload_json, '$.failure.resetAt') AS "resetAt",
+            COALESCE(r.completed_at, r.requested_at) AS "failedAt"
+          FROM orchestration_v2_projection_threads t
+          JOIN orchestration_v2_projection_runs r
+            ON r.thread_id = t.thread_id AND r.status = 'failed'
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs later
+              WHERE later.thread_id = t.thread_id AND later.ordinal > r.ordinal
+                AND later.status <> 'queued'
+            )
+          JOIN orchestration_v2_projection_turn_items item ON item.turn_item_id = (
+            SELECT error.turn_item_id FROM orchestration_v2_projection_turn_items error
+            WHERE error.thread_id = t.thread_id AND error.run_id = r.run_id
+              AND error.type = 'error' AND error.status = 'failed'
+              AND error.node_id IS json_extract(r.payload_json, '$.rootNodeId')
+            ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
+            LIMIT 1
+          )
+          WHERE t.deleted_at IS NULL
+            -- The sweep runs every few seconds: the partial index of failed errors keeps it to
+            -- threads that ever hit a limit, not every run of every thread.
+            AND t.thread_id IN (
+              SELECT failure.thread_id FROM orchestration_v2_projection_turn_items failure
+              WHERE failure.type = 'error' AND failure.status = 'failed'
+                AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+            )
+            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND (json_extract(item.payload_json, '$.failure.resetAt') IS NULL
+              OR julianday(json_extract(item.payload_json, '$.failure.resetAt'))
+                > julianday(${DateTime.formatIso(DateTime.makeUnsafe(nowMs))}))
+            -- A Stop disarms this run's wait: the user already knows.
+            AND NOT (json_extract(t.payload_json, '$.limitRecovery.runId') IS r.run_id
+              AND json_extract(t.payload_json, '$.limitRecovery.autoResume') IS NOT 1
+              AND json_extract(t.payload_json, '$.limitRecovery.snooze') IS NOT 1)
+          ORDER BY t.thread_id`;
+        for (const notice of limited) {
+          yield* notifyUsageLimit(notice, config, nowMs).pipe(
+            isolate("autonomy: a usage limit could not be told"),
           );
         }
 
@@ -1198,6 +1498,7 @@ const make = Effect.gen(function* () {
         yield* outbox.enqueue({
           deliveryId: `autonomy-notify:${input.key}`,
           destination: chat,
+          projectId: assistant.projectId as ProjectId,
           senderName: assistant.name,
           text: withLink(language),
           markdown: true,
@@ -1206,6 +1507,7 @@ const make = Effect.gen(function* () {
       }
       return chat;
     }).pipe(
+      // A message that never reached the queue must not count as sent, or a retry says already_sent.
       Effect.onError(() =>
         sql`DELETE FROM autonomy_wakes WHERE wake_key = ${wakeKey}`.pipe(Effect.ignore),
       ),

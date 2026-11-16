@@ -4,6 +4,8 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useContext } from "react";
 
+import { queryUpdatedAt } from "@t3tools/client-runtime/state/queryUpdatedAt";
+
 const EMPTY_ASYNC_RESULT_ATOM = Atom.make(AsyncResult.initial<never, never>(false)).pipe(
   Atom.withLabel("web-environment-query:empty"),
 );
@@ -23,14 +25,6 @@ export function formatEnvironmentQueryError(cause: Cause.Cause<unknown>): string
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
     : "The environment request failed.";
-}
-
-function queryUpdatedAt(result: AsyncResult.AsyncResult<unknown, unknown>): number {
-  return result._tag === "Success"
-    ? result.timestamp
-    : result._tag === "Failure"
-      ? (Option.getOrNull(result.previousSuccess)?.timestamp ?? 0)
-      : 0;
 }
 
 export function useEnvironmentQuery<A, E>(

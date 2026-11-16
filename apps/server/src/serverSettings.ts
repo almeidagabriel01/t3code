@@ -1,4 +1,5 @@
 import {
+  AssistantId,
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
   ProjectId,
@@ -11,6 +12,7 @@ import {
   isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ResponseStreamingMode,
   ServerSettings,
@@ -58,6 +60,7 @@ import {
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
@@ -318,6 +321,33 @@ function ensureProviderInstanceMutationAllowed(
   return Effect.void;
 }
 
+/** An instance a write newly points a project or per-assistant model at but cannot run there. */
+function unavailableProjectModelInstance(
+  current: ServerSettings,
+  next: ServerSettings,
+): ProviderInstanceId | null {
+  for (const [key, override] of Object.entries(next.projectSettingsOverrides)) {
+    const projectId = ProjectId.make(key);
+    const previous = current.projectSettingsOverrides[projectId];
+    const pairs = [
+      [override.defaultModelSelection, previous?.defaultModelSelection],
+      ...Object.entries(override.assistantModelSelections ?? {}).map(
+        ([assistantId, selection]) =>
+          [selection, previous?.assistantModelSelections?.[AssistantId.make(assistantId)]] as const,
+      ),
+    ] as const;
+    for (const [selection, before] of pairs) {
+      // An unchanged value stays, so a default whose instance was disabled later blocks no edit.
+      if (selection == null || (before != null && modelSelectionsEqual(selection, before)))
+        continue;
+      if (!resolveProjectProviderInstanceEnabled(next, projectId, selection.instanceId)) {
+        return selection.instanceId;
+      }
+    }
+  }
+  return null;
+}
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -332,6 +362,14 @@ export class ServerSettingsService extends Context.Service<
 
     readonly updateSettings: (
       patch: ServerSettingsPatch,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /**
+     * `updateSettings` with the patch worked out, by a pure function, from the settings it lands
+     * on, under the same write lock: no other write lands between that read and the write.
+     */
+    readonly modifySettings: (
+      patchOf: (current: ServerSettings) => ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
     readonly updateProviderInstance: (
@@ -405,6 +443,15 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       updateTestSettings((currentSettings) =>
         Effect.succeed(
           applyServerSettingsPatch(currentSettings, withNormalizedFolderRules(patch, home)),
+        ),
+      ),
+    modifySettings: (patchOf) =>
+      updateTestSettings((currentSettings) =>
+        Effect.succeed(
+          applyServerSettingsPatch(
+            currentSettings,
+            withNormalizedFolderRules(patchOf(currentSettings), home),
+          ),
         ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
@@ -1395,7 +1442,7 @@ const make = Effect.gen(function* () {
   const updateSettingsWhileLocked = <E, R>(
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, E | ServerSettingsError, R>,
     transition?: HubTransitionMarker,
-    patch: ServerSettingsPatch = {},
+    patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch) = {},
   ): Effect.Effect<ServerSettings, E | ServerSettingsError, R> =>
     Effect.gen(function* () {
       const { settings: current, parseFailure } = yield* reloadSettings;
@@ -1410,7 +1457,11 @@ const make = Effect.gen(function* () {
       // a removed provider's reference is cleared below rather than restored by persistence.
       const updated = withEchoedSecretReferences(current, yield* update(current));
       // Vet before secrets: a variable the policy hides from clients is not one they removed.
-      const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
+      const vetted = managed.vetWrite(
+        current,
+        yield* normalizeServerSettings(updated),
+        typeof patch === "function" ? patch(current) : patch,
+      );
       if (vetted._tag === "Locked") {
         return yield* new ServerSettingsError({
           settingsPath,
@@ -1435,6 +1486,17 @@ const make = Effect.gen(function* () {
           providerInstanceId: vettedProviders.instanceId,
           providerLabel: vettedProviders.label,
           managedBy: managedPolicy?.organization,
+        });
+      }
+      const unavailableInstance = unavailableProjectModelInstance(
+        current,
+        vettedProviders.settings,
+      );
+      if (unavailableInstance !== null) {
+        return yield* new ServerSettingsError({
+          settingsPath,
+          operation: "use-unavailable-provider-instance",
+          providerInstanceId: unavailableInstance,
         });
       }
       // After vetting, which can keep stored variables a policy hides from clients.
@@ -1469,10 +1531,15 @@ const make = Effect.gen(function* () {
     });
 
   const updateAndPersistSettings = (
-    patch: ServerSettingsPatch,
+    patch: ServerSettingsPatch | ((current: ServerSettings) => ServerSettingsPatch),
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(updateSettingsWhileLocked(update, undefined, patch));
+
+  const applyPatchChecked = (patch: ServerSettingsPatch, current: ServerSettings) =>
+    ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
+      Effect.as(applyServerSettingsPatch(current, withNormalizedFolderRules(patch, home))),
+    );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(getMaterializedSettings.pipe(Effect.flatMap(use)));
@@ -1601,11 +1668,9 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
-      updateAndPersistSettings(patch, (current) =>
-        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
-          Effect.as(applyServerSettingsPatch(current, withNormalizedFolderRules(patch, home))),
-        ),
-      ),
+      updateAndPersistSettings(patch, (current) => applyPatchChecked(patch, current)),
+    modifySettings: (patchOf) =>
+      updateAndPersistSettings(patchOf, (current) => applyPatchChecked(patchOf(current), current)),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(patch, (current) =>
         Effect.gen(function* () {

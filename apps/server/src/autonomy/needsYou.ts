@@ -6,6 +6,7 @@ import {
   type DecisionOption,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2TurnItem,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import { redactChannelText } from "../channels/channelRedaction.ts";
@@ -20,6 +21,15 @@ const WANTS: Readonly<Record<string, string>> = {
   "file-change": DECISION_PHRASES.wantsFileChange,
   "file-read": DECISION_PHRASES.wantsFileRead,
 };
+
+/**
+ * The message that tells `targetThreadId` (an assistant's conversation) about a wait. One id per
+ * conversation and wait: a repeat replays its command receipt, so the owner's wake and the default
+ * assistant's notice are one message when both go to the same conversation.
+ */
+export const WAIT_WAKE_PREFIX = "assistant-task-waits:";
+export const waitWakeId = (targetThreadId: ThreadId, key: string) =>
+  `${WAIT_WAKE_PREFIX}${targetThreadId}:${key}`;
 
 export { MACHINE_REQUEST_KINDS } from "@t3tools/shared/needsUser";
 
@@ -139,7 +149,6 @@ export interface NeedsYouCard {
   /** The decision's title, already in the chat's language. */
   readonly title: string;
   readonly context: string;
-  readonly projectName: string | null;
   readonly threadTitle: string | null;
   readonly link: string | null;
   /** Answerable cards end with numbered choices; the rest point to T3. */
@@ -157,12 +166,10 @@ export function needsYouText(
   const t = channelStrings(language);
   const context = cardContext(card.context, language);
   const answerable = card.answerable && !context.cut;
-  const where = [
-    ...(card.projectName === null ? [] : [`${t.projectLabel} ${card.projectName}`]),
-    ...(card.threadTitle === null || card.threadTitle === card.agent
-      ? []
-      : [`${t.threadLabel} ${card.threadTitle}`]),
-  ].join(" · ");
+  const where =
+    card.threadTitle === null || card.threadTitle === card.agent
+      ? ""
+      : `${t.threadLabel} ${card.threadTitle}`;
   const lines = [
     t.waitingForYou(card.agent),
     card.title,
@@ -172,4 +179,23 @@ export function needsYouText(
     card.link === null ? "" : `${t.openInT3} ${card.link}`,
   ];
   return { text: lines.filter((line) => line !== "").join("\n\n"), answerable };
+}
+
+/**
+ * The default assistant's short notice of a wait (title, origin and thread link), so it knows what
+ * waits on the user. The card in Activity and the chat app asks it, so it only keeps it in mind.
+ */
+export function defaultNoticeText(input: {
+  readonly title: string;
+  readonly origin: string;
+  /** The waiting thread as a chat link. */
+  readonly link: string;
+  readonly source: "request" | "decision";
+}): string {
+  const where = input.source === "decision" ? "in Activity" : "in that thread";
+  return [
+    `Waiting on the user: ${input.title}`,
+    `From ${input.origin} in ${input.link}. They answer it ${where}.`,
+    "It is also in Activity: keep it for when they ask what waits on them, never answer it for them, and reply in one line at most.",
+  ].join("\n");
 }

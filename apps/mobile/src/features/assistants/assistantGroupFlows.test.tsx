@@ -13,6 +13,7 @@ const { mocks } = vi.hoisted(() => ({
     startEditor: vi.fn(),
     draftFor: vi.fn(),
     set: vi.fn(),
+    conversation: vi.fn(),
     targets: [{ environmentId: "hub", label: "Hub" }] as Array<{
       environmentId: string;
       label: string;
@@ -33,7 +34,12 @@ vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { set: mocks.set 
 vi.mock("../../state/assistants", () => ({
   useAssistantActions: () => ({ canAct: true }),
   useAssistantTeamActions: () => ({ canAct: true, update: mocks.update }),
-  useAssistantGroupActions: () => ({ canMarkRead: true, markRead: mocks.markRead }),
+  useAssistantGroupActions: () => ({
+    canMarkRead: true,
+    markRead: mocks.markRead,
+    canConverse: true,
+    conversation: mocks.conversation,
+  }),
   setAssistantTaskDismissed: mocks.setDismissed,
 }));
 vi.mock("../settings/scheduled-task-editor", () => ({
@@ -72,8 +78,10 @@ beforeEach(() => {
     mocks.navigate,
     mocks.startEditor,
     mocks.set,
+    mocks.conversation,
   ])
     fn.mockReset();
+  mocks.conversation.mockResolvedValue({ ok: true, value: undefined });
   mocks.update.mockResolvedValue({ ok: true, value: {} });
   mocks.markRead.mockResolvedValue({ ok: true, value: undefined });
   mocks.draftFor.mockReset().mockReturnValue({ title: "", assistantTeamId: null });
@@ -119,6 +127,36 @@ describe("group read flows", () => {
     mocks.markRead.mockResolvedValue({ ok: false, message: "no" });
     await flows.markUnread({ id: "g1" } as never);
     expect(mocks.alert).toHaveBeenCalledWith("Could not update the group", "no");
+  });
+});
+
+describe("group conversation flows", () => {
+  const team = { id: "g1", name: "Crew" } as never;
+
+  it("starts a new conversation or compacts at once, and reports a refusal", async () => {
+    const flows = run(() => useAssistantTeamFlows("hub" as never));
+    expect(flows.canConverse).toBe(true);
+    await flows.converse(team, "new");
+    expect(mocks.conversation).toHaveBeenLastCalledWith("g1", "new");
+    expect(mocks.alert).not.toHaveBeenCalled();
+    mocks.conversation.mockResolvedValue({ ok: false, message: "busy" });
+    await flows.converse(team, "compact");
+    expect(mocks.conversation).toHaveBeenLastCalledWith("g1", "compact");
+    expect(mocks.alert).toHaveBeenCalledWith("Could not change the conversation", "busy");
+  });
+
+  it("clears after confirming, and says so only when it worked", async () => {
+    const flows = run(() => useAssistantTeamFlows("hub" as never));
+    const cleared = vi.fn();
+    flows.clear(team, cleared);
+    await act(async () => undefined);
+    expect(mocks.conversation).toHaveBeenLastCalledWith("g1", "clear");
+    expect(cleared).toHaveBeenCalledOnce();
+    mocks.conversation.mockResolvedValue({ ok: false, message: "no" });
+    flows.clear(team, cleared);
+    await act(async () => undefined);
+    expect(mocks.alert).toHaveBeenCalledWith("Could not clear the history", "no");
+    expect(cleared).toHaveBeenCalledOnce();
   });
 });
 

@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import { AssistantError, EnvironmentAuthorizationError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type {
   Assistant,
   AssistantId,
@@ -10,7 +12,9 @@ import type {
 } from "@t3tools/contracts";
 
 import {
+  ASSISTANT_GROUP_POST_UNCONFIRMED,
   applyAssistantsEvent,
+  assistantGroupPostFailure,
   assistantForTaskThread,
   assistantForThread,
   selectAssistantTasks,
@@ -120,6 +124,7 @@ describe("assistants state", () => {
       memberIds: ["a", "b"] as AssistantId[],
       leadId: null,
       archivedAt: null,
+      projectIds: [],
       createdAt,
       updatedAt: createdAt,
     });
@@ -280,5 +285,27 @@ describe("sandboxCpuChoices", () => {
     );
     assert.strictEqual(sandboxCpuChoices(4).length, 6);
     assert.strictEqual(sandboxCpuLabel(3), "3 cores");
+  });
+});
+
+describe("assistantGroupPostFailure", () => {
+  const refused = new AssistantError({ reason: "archived", message: "This group is archived." });
+  const denied = new EnvironmentAuthorizationError({
+    message: "Not allowed here.",
+    requiredScope: "orchestration:operate",
+  });
+  it.each([
+    ["the server refused it", Cause.fail(refused), "This group is archived.", "archived"],
+    ["the server denied it", Cause.fail(denied), "Not allowed here.", null],
+    ["cut off unanswered", Cause.interrupt(), ASSISTANT_GROUP_POST_UNCONFIRMED, "unconfirmed"],
+    [
+      "lost with its connection",
+      Cause.fail(new Error("socket closed")),
+      ASSISTANT_GROUP_POST_UNCONFIRMED,
+      "unconfirmed",
+    ],
+    ["a defect", Cause.die("boom"), ASSISTANT_GROUP_POST_UNCONFIRMED, "unconfirmed"],
+  ] as const)("a post %s", (_name, cause, message, reason) => {
+    assert.deepStrictEqual(assistantGroupPostFailure(cause), { message, reason });
   });
 });

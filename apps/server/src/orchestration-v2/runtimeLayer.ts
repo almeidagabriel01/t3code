@@ -39,6 +39,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as ProjectModelSelectionService from "./ProjectModelSelectionService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
@@ -314,10 +315,16 @@ const layerThreadHandoffProvided = ThreadHandoffService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerProjectModelSelectionProvided = ProjectModelSelectionService.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+);
+
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,
+      // Tasks scheduled without a model resolve the project's when their thread is made.
+      layerProjectModelSelectionProvided,
       layerThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
@@ -423,6 +430,7 @@ const layerAssistantServiceProvided = AssistantService.layer.pipe(
       layerManagedProjectFoldersProvided,
       layerProjectService,
       layerScheduledTaskProvided,
+      layerProjectModelSelectionProvided,
     ),
   ),
 );
@@ -435,6 +443,9 @@ const layerAssistantGroupsProvided = AssistantGroups.layer.pipe(
       layerThreadLaunchProvided,
       layerAssistantServiceProvided,
       layerScheduledTaskProvided,
+      layerProjectModelSelectionProvided,
+      ProjectionStore.layer,
+      AssistantDirectory.layer,
     ),
   ),
 );
@@ -491,6 +502,7 @@ export const layerProduction = Layer.mergeAll(
   ).pipe(Layer.provide(Layer.merge(layerAssistantConnectorsProvided, AssistantDirectory.layer))),
   layerAssistantServiceProvided,
   layerAssistantGroupsProvided,
+  layerProjectModelSelectionProvided,
   // Fills the gate a group's scheduled tasks post through.
   AssistantGroups.installLayer.pipe(
     Layer.provide(Layer.merge(layerAssistantGroupsProvided, AssistantGroupGate.gateLayer)),

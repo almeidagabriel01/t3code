@@ -1,4 +1,7 @@
-import { useArchiveSelectedProject } from "../projects/useProjectOrganize";
+import {
+  useArchiveSelectedProject,
+  useOpenSelectedProjectSettings,
+} from "../projects/useProjectOrganize";
 import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { use } from "react";
@@ -157,11 +160,13 @@ export function HomeRouteScreen() {
   )
     ? resolvedProjectKey
     : null;
-  const archiveSelectedProject = useArchiveSelectedProject({
+  const selectedProjectScope = {
     environmentId: selectedEnvironmentId,
     projectGroupingMode: listOptions.projectGroupingMode,
     selectedKey: selectedProjectKey,
-  });
+  };
+  const archiveSelectedProject = useArchiveSelectedProject(selectedProjectScope);
+  const openProjectSettings = useOpenSelectedProjectSettings(selectedProjectScope);
 
   if (layout.usesSplitView && !nativePrimaryColumn) {
     return (
@@ -195,6 +200,7 @@ export function HomeRouteScreen() {
               onEnvironmentChange: setSelectedEnvironmentId,
               onProjectChange: setSelectedProjectKey,
               onArchiveProject: archiveSelectedProject,
+              onOpenProjectSettings: openProjectSettings,
             }),
           }}
         />
@@ -218,6 +224,7 @@ export function HomeRouteScreen() {
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onArchiveProject={archiveSelectedProject}
+          onOpenProjectSettings={openProjectSettings}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}

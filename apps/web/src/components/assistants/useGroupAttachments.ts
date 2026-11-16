@@ -39,12 +39,18 @@ function toChatAttachment(file: File, uploaded: { attachmentId: string; mimeType
  * Files the user attaches to one group message. Each uploads on its own as soon as it is added, so
  * one that fails keeps its chip (retry or remove) and never costs the others.
  */
-export function useGroupAttachments(environmentId: EnvironmentId, disabled: boolean) {
-  const [items, setItems] = useState<ReadonlyArray<GroupAttachmentItem>>([]);
-  const latest = useRef(items);
+export function useGroupAttachments(
+  environmentId: EnvironmentId,
+  disabled: boolean,
+  /** Files another message took: this composer neither shows nor sends them. */
+  held: ReadonlySet<string>,
+) {
+  const [all, setItems] = useState<ReadonlyArray<GroupAttachmentItem>>([]);
+  const items = all.filter((item) => !held.has(item.id));
+  const latest = useRef(all);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the unmount cleanup below reads the list as of the last commit
   useEffect(() => {
-    latest.current = items;
+    latest.current = all;
   });
 
   // Leaving the chat drops what was never sent; the object URLs and pending uploads are ours.
@@ -80,7 +86,7 @@ export function useGroupAttachments(environmentId: EnvironmentId, disabled: bool
 
   const add = (files: ReadonlyArray<File>) => {
     if (disabled || files.length === 0) return;
-    const room = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - items.length;
+    const room = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - all.length;
     const added = files.slice(0, Math.max(room, 0)).map((file): GroupAttachmentItem => ({
       id: randomUUID(),
       file,
@@ -109,10 +115,10 @@ export function useGroupAttachments(environmentId: EnvironmentId, disabled: bool
     void run(reset);
   };
 
-  /** After a send the server holds its own copies, so the pending ones can go. */
-  const clear = () => {
-    for (const item of items) release(item, true);
-    setItems([]);
+  /** After a send the server holds its own copies, so the ones it took can go. */
+  const clear = (ids: ReadonlyArray<string>) => {
+    for (const item of all) if (ids.includes(item.id)) release(item, true);
+    setItems((list) => list.filter((item) => !ids.includes(item.id)));
   };
 
   const ready = items.flatMap((item) => (item.attachment === null ? [] : [item.attachment]));
@@ -125,6 +131,6 @@ export function useGroupAttachments(environmentId: EnvironmentId, disabled: bool
     ready,
     /** Something is still uploading or failed: sending now would drop it. */
     unsettled: items.some((item) => item.attachment === null),
-    full: items.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+    full: all.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   };
 }

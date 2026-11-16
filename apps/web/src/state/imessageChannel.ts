@@ -3,7 +3,11 @@ import {
   applyImessageStatusEvent,
   createImessageChannelEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/imessageChannel";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { applyUndeliveredResend } from "@t3tools/client-runtime/state/channelUndelivered";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ImessageChannelConfigureInput } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -37,8 +41,10 @@ export function useImessageSettings(environmentId: EnvironmentId) {
   const event = Option.getOrNull(
     AsyncResult.value(useAtomValue(imessageEnvironment.status({ environmentId, input: null }))),
   );
+  const resent = useAtomValue(imessageEnvironment.undeliveredResend(environmentId));
+  const live = query.data && event ? applyImessageStatusEvent(query.data, event) : query.data;
   return {
-    settings: query.data && event ? applyImessageStatusEvent(query.data, event) : query.data,
+    settings: live && applyUndeliveredResend(live, resent, event, query.dataUpdatedAt),
     error: query.error,
     refresh: query.refresh,
   };
@@ -62,20 +68,27 @@ export type ImessageReply =
 /** Each change settles into a reply, so the form can show the server's refusal where it happened. */
 export function useImessageActions(environmentId: EnvironmentId) {
   const canAct = useAtomValue(imessageEnvironment.configure.permissionAtom(environmentId));
+  const canResend = useAtomValue(
+    imessageEnvironment.resendUndelivered.permissionAtom(environmentId),
+  );
   const configure = useAtomCommand(imessageEnvironment.configure, { reportFailure: false });
+  const resend = useAtomCommand(imessageEnvironment.resendUndelivered, { reportFailure: false });
+  const reply = (result: AtomCommandResult<unknown, unknown>): ImessageReply => {
+    if (result._tag === "Success") return { ok: true };
+    const error = squashAtomCommandFailure(result);
+    return {
+      ok: false,
+      message:
+        error instanceof Error && error.message.trim() !== ""
+          ? error.message
+          : "Something went wrong. Try again.",
+    };
+  };
   return {
     canAct,
-    configure: async (input: ImessageChannelConfigureInput): Promise<ImessageReply> => {
-      const result = await configure({ environmentId, input });
-      if (result._tag === "Success") return { ok: true };
-      const error = squashAtomCommandFailure(result);
-      return {
-        ok: false,
-        message:
-          error instanceof Error && error.message.trim() !== ""
-            ? error.message
-            : "Something went wrong. Try again.",
-      };
-    },
+    canResend,
+    configure: async (input: ImessageChannelConfigureInput) =>
+      reply(await configure({ environmentId, input })),
+    resendUndelivered: async () => reply(await resend({ environmentId, input: {} })),
   };
 }

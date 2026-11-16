@@ -6,6 +6,7 @@ import type {
   AutonomyWatch,
 } from "@t3tools/contracts";
 
+import type { TaskEventNotice } from "../assistants/TaskEventNotices.ts";
 import { DECISION_PHRASES } from "../channels/channelStrings.ts";
 
 /** What the server saw. Pure data, so rules and watches are tested without a running server. */
@@ -28,6 +29,8 @@ export interface AutonomySignal {
   readonly prNumber: number | null;
   /** One line naming what happened, shown to the assistant and the user. */
   readonly summary: string;
+  /** The ended run a run signal is about; its wake goes through `TaskEventNotices`. */
+  readonly run?: TaskEventNotice["run"];
 }
 
 const RULE_OF_EVENT: Partial<Record<AutonomySignal["event"], AutonomyRule>> = {

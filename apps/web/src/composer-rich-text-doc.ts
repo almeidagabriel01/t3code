@@ -49,12 +49,48 @@ import {
   type RichTextMark,
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+import {
+  collectComposerInlineTokens,
+  composerMathRanges,
+} from "@t3tools/shared/composerInlineTokens";
 import { attachmentImageMarkdown } from "@t3tools/shared/attachmentImageRefs";
 
 export type SkillMeta = { label: string; description: string | null };
 
 export type IsKnownModel = (instanceId: string, model: string) => boolean;
+
+/** An assistant group's members and projects, whose `@handle` and `#slug` become their own chips. */
+export interface ComposerGroupMentions {
+  readonly memberHandles: ReadonlyArray<string>;
+  readonly projectSlugs: ReadonlyArray<string>;
+}
+
+export const GROUP_MEMBER_NODE = "composer-member";
+export const GROUP_PROJECT_NODE = "composer-project";
+
+/** In a group only members and projects chip; any other `@word` stays text, never a file. */
+function groupMentionSegments(text: string, group: ComposerGroupMentions) {
+  const segments: Array<
+    | { readonly type: "text"; readonly text: string }
+    | { readonly type: "atom"; readonly atom: AtomJson; readonly source: string }
+  > = [];
+  let at = 0;
+  for (const token of collectComposerInlineTokens(text, group)) {
+    if ((token.type !== "member" && token.type !== "project") || token.start < at) continue;
+    if (token.start > at) segments.push({ type: "text", text: text.slice(at, token.start) });
+    segments.push({
+      type: "atom",
+      atom: {
+        type: token.type === "member" ? GROUP_MEMBER_NODE : GROUP_PROJECT_NODE,
+        attrs: { value: token.value, source: token.source },
+      },
+      source: token.source,
+    });
+    at = token.end;
+  }
+  if (at < text.length) segments.push({ type: "text", text: text.slice(at) });
+  return segments;
+}
 
 interface ChipResolver {
   skill: (name: string) => SkillMeta | null;
@@ -745,6 +781,7 @@ export interface BuildTiptapContentOptions {
   /** Parses attachment image lines into `attachmentImage` nodes. */
   images?: boolean;
   isKnownModel?: IsKnownModel;
+  groupMentions?: ComposerGroupMentions | undefined;
 }
 
 /** Keeps literalLength leading characters unstyled so path queries reach file search unchanged. */
@@ -788,6 +825,17 @@ export function buildTiptapContent(
         return sentinel;
       }
       if (options?.atoms === false) return chunk.text;
+      const group = options?.groupMentions;
+      if (group) {
+        return groupMentionSegments(chunk.text, group)
+          .map((segment) => {
+            if (segment.type === "text") return segment.text;
+            atoms.push(segment.atom);
+            atomSources.push(segment.source);
+            return sentinel;
+          })
+          .join("");
+      }
       return splitPromptIntoComposerSegments(chunk.text)
         .map((segment) => {
           if (segment.type === "text") return segment.text;
@@ -1035,6 +1083,8 @@ function readAtomSource(node: ProseMirrorNode): string {
   const attrs = node.attrs as Record<string, unknown>;
   switch (node.type.name) {
     case "composer-mention":
+    case GROUP_MEMBER_NODE:
+    case GROUP_PROJECT_NODE:
     case "composer-model":
     case "composer-citation":
     case "composer-context-reference":

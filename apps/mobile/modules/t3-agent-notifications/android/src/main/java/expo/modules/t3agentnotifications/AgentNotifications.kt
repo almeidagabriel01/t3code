@@ -97,6 +97,11 @@ object AgentNotifications {
     threadOnScreen = path
   }
 
+  // A screen with no tab (a thread, or a group chat on All) shows every tab of its path.
+  internal fun showsAlertPath(visible: String?, alertPath: String?): Boolean =
+    visible != null && alertPath != null &&
+      (alertPath == visible || ('?' !in visible && alertPath.substringBefore('?') == visible))
+
   @Synchronized
   fun dismiss(context: Context) {
     context.getSharedPreferences(
@@ -148,8 +153,7 @@ object AgentNotifications {
       val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(
         Lifecycle.State.RESUMED
       )
-      val visibleThread = threadOnScreen
-      val onScreen = resumed && visibleThread != null && data["alert_path"] == visibleThread
+      val onScreen = resumed && showsAlertPath(threadOnScreen, data["alert_path"])
       if (!onScreen) {
         postAlert(context, scheme, data, alertId)
       }
