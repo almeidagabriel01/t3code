@@ -13,6 +13,7 @@ import {
   parseHeartbeat,
   type RunnerBlock,
 } from "./runner.ts";
+import { drainLostRuns, type StopResult, type stopRemote } from "./runnerExec.ts";
 
 const dirs: string[] = [];
 const tempDir = () => {
@@ -830,6 +831,51 @@ describe("Runner in the queue file", () => {
     },
   );
 
+  // The job is gone, but its run may still live there: the worktree takes no Linux run meanwhile.
+  it("a run canceled before Linux confirmed it stopped keeps its worktree off Linux until it does", async () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })));
+    const cwd = checkout("w");
+    Queue.enqueue(dir, test("a", { cwd }));
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
+    Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW + 1 });
+    const beat = DEFAULT_MACHINE_CONFIG.runnerHeartbeatSeconds * 1000;
+    for (let i = 1; i <= DEFAULT_MACHINE_CONFIG.runnerOfflineAfterFailures; i += 1) {
+      Queue.recordHealth(dir, { ok: false, error: "down" }, NOW + i * beat);
+    }
+    const away = NOW + 10 * beat;
+    expect(Queue.tryStart(dir, "a", away)).toMatchObject({ status: "canceled" });
+    expect(Queue.read(dir)).toEqual([]);
+
+    const back = away + beat;
+    Queue.recordHealth(dir, { ok: true, reading: parseHeartbeat("") }, back);
+    Queue.enqueue(dir, test("b", { cwd }));
+    expect(Queue.tryStart(dir, "b", back)).toMatchObject({
+      status: "waiting",
+      reason: expect.stringContaining("hasn't confirmed an earlier run of this worktree stopped"),
+    });
+
+    // Each heartbeat that reaches Linux keeps stopping it, one process at a time.
+    const stops: string[] = [];
+    const stop =
+      (answer: StopResult): typeof stopRemote =>
+      async (_machine, _env, id, pgid) => {
+        stops.push(`${id}:${pgid}`);
+        return answer;
+      };
+    const [lost] = Queue.readDoc(dir).lostRuns;
+    expect(Queue.claimLostRun(dir, lost!, Number.MAX_SAFE_INTEGER)).toBe(true);
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("stopped"));
+    expect(stops).toEqual([]);
+    Queue.settleLostRun(dir, lost!, false);
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("alive"));
+    expect(Queue.tryStart(dir, "b", back)).toMatchObject({ status: "waiting" });
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("stopped"));
+    expect(stops).toEqual(["w-1:7", "w-1:7"]);
+    expect(Queue.readDoc(dir).lostRuns).toEqual([]);
+    expect(Queue.tryStart(dir, "b", back)).toMatchObject({ status: "started", runner: "linux" });
+  });
+
   it("logs a Linux-bound job that starts here, and the failure it then exits with", () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerUnavailable: "mac" })), false);
     Queue.enqueue(dir, test("a"));
@@ -903,8 +949,12 @@ describe("Runner in the queue file", () => {
     }
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
     expect(Queue.route(dir, "a", "mac")).toBe("unconfirmed");
-    Queue.confirmStopped(dir, "a");
+    expect(Queue.readDoc(dir).lostRuns).toEqual([
+      { entryId: "a", cwd: again.cwd, remote: { id: "w-1", pgid: 7 } },
+    ]);
+    Queue.settleLostRun(dir, { entryId: "a", remote: { id: "w-1", pgid: 7 } }, true);
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
+    expect(Queue.readDoc(dir).lostRuns).toEqual([]);
     expect(Queue.requeue(dir, "gone", {})).toBe(false);
     expect(Queue.readDoc(dir).events).toEqual([
       expect.objectContaining({ kind: "linux-lost", dropped: true, unconfirmed: true }),

@@ -3,6 +3,7 @@
  * The machine-wide heavy-work queue as one JSON file. Plain Node and synchronous: the `t3 heavy`
  * CLI fast path loads it before the Effect runtime, and every T3 server on the machine shares it.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -56,6 +57,7 @@ import {
   nextHealth,
   planRoutes,
   runnerConfigFor,
+  runnerCopyId,
   startFolder,
   UNKNOWN_HEALTH,
   type HealthCheck,
@@ -156,6 +158,8 @@ interface QueueDoc {
   readonly results: ReadonlyArray<JobResult>;
   /** Linux copies of removed worktrees still to delete, waiting for the host to come back. */
   readonly copyRemovals: ReadonlyArray<CopyRemoval>;
+  /** Linux runs not yet confirmed stopped, kept past their job's end until a heartbeat confirms. */
+  readonly lostRuns: ReadonlyArray<LostRun>;
   /** Recent transitions that may need a notice, newest last. */
   readonly events: ReadonlyArray<HeavyEventRecord>;
   /** Daemons outside any job tree that T3 lowered to background CPU priority, to restore later. */
@@ -175,6 +179,15 @@ export interface CopyRemoval {
   /** The removed worktree; a checkout recreated there syncs to the same copy again. */
   readonly path: string;
   readonly at: number;
+}
+
+/** A run Linux took with it: its job may be gone, but its worktree starts nothing there yet. */
+export interface LostRun {
+  readonly entryId: string;
+  readonly cwd: string;
+  readonly remote: { readonly id: string; readonly pgid: number | null };
+  /** One process stops it at a time: a late stop would also end the next run in that folder. */
+  readonly stoppingUntil?: number;
 }
 
 interface JobResult {
@@ -207,6 +220,7 @@ const EMPTY_DOC: QueueDoc = {
   runner: null,
   linux: UNKNOWN_HEALTH,
   copyRemovals: [],
+  lostRuns: [],
   events: [],
   slowedDaemons: [],
 };
@@ -263,6 +277,7 @@ const loadDoc = (dir: string): QueueDoc => {
       events?: unknown;
       linux?: unknown;
       copyRemovals?: unknown;
+      lostRuns?: unknown;
       slowedDaemons?: unknown;
       results?: unknown;
     } | null;
@@ -306,6 +321,16 @@ const loadDoc = (dir: string): QueueDoc => {
               typeof entry.id === "string" &&
               typeof entry.path === "string" &&
               typeof entry.at === "number",
+          )
+        : [],
+      lostRuns: Array.isArray(record?.lostRuns)
+        ? record.lostRuns.filter(
+            (value: unknown): value is LostRun =>
+              isObject(value) &&
+              typeof value.entryId === "string" &&
+              typeof value.cwd === "string" &&
+              isObject(value.remote) &&
+              typeof value.remote.id === "string",
           )
         : [],
       events: parseLog(parsed?.events),
@@ -463,6 +488,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
+    lostCwds: doc.lostRuns.map((lost) => lost.cwd),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -1161,10 +1187,16 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
       // Its question's answer runs once Linux confirms the run stopped; only `force` reruns now.
       return update(({ ask: _ask, forced: _forced, ...entry }) => ({ ...entry, route: runner }));
     }
-    return update(({ ask: _ask, unconfirmed: _unconfirmed, forced: _forced, ...entry }) => ({
-      ...entry,
-      route: runner,
-    }));
+    const routed = update(
+      ({ ask: _ask, unconfirmed: _unconfirmed, forced: _forced, ...entry }) => ({
+        ...entry,
+        route: runner,
+      }),
+    );
+    // Forced onto Linux, its stop check there would end the rerun; on this Mac it goes on.
+    return runner === "linux" && target.unconfirmed === true
+      ? { ...routed, doc: { ...routed.doc, lostRuns: withoutLost(routed.doc.lostRuns, id) } }
+      : routed;
   });
 
 /**
@@ -1251,29 +1283,98 @@ export const requeue = (
       retrying || kept !== undefined
         ? null
         : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
+    const remote = next.unconfirmed === true ? lostRemoteOf(target) : null;
+    const lost: ReadonlyArray<LostRun> =
+      remote === null ? [] : [{ entryId: id, cwd: target.cwd, remote }];
     return {
       doc: {
         ...doc,
         entries: [...active, again, ...waiters],
         events: withRecord(doc.events, record),
+        lostRuns: [...withoutLost(doc.lostRuns, id), ...lost],
       },
       result: true,
     };
   });
 
-/** The remote run is confirmed stopped: the entry may run again. */
-export const confirmStopped = (dir: string, id: string) =>
-  mutate(dir, (doc) => ({
-    doc: {
-      ...doc,
-      entries: doc.entries.map((entry) => {
-        if (entry.id !== id) return entry;
-        const { unconfirmed: _unconfirmed, ...rest } = entry;
-        return rest;
-      }),
+/**
+ * The run's folder there: as `remoto` reported it, else as `remoto` names it from the checkout,
+ * for a run lost before it reported one.
+ */
+const lostRemoteOf = (entry: HeavyQueueEntry): LostRun["remote"] | null => {
+  if (entry.remote !== undefined) return { id: entry.remote.id, pgid: entry.remote.pgid ?? null };
+  const root = gitRootOf(entry.cwd);
+  if (root === null) return null;
+  const real = NodeFS.realpathSync(root);
+  const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+  return { id: runnerCopyId(real, sha1), pgid: null };
+};
+
+const withoutLost = (lostRuns: ReadonlyArray<LostRun>, entryId: string) =>
+  lostRuns.filter((lost) => lost.entryId !== entryId);
+
+/** Claims stopping one lost run until `until`; false while another process holds it, or it is gone. */
+export const claimLostRun = (dir: string, lost: LostRun, until: number, now = Date.now()) =>
+  mutate(
+    dir,
+    (doc) => {
+      const held = doc.lostRuns.find(
+        (each) => each.entryId === lost.entryId && each.remote.id === lost.remote.id,
+      );
+      if (held === undefined || (held.stoppingUntil ?? 0) > now) return { doc, result: false };
+      return {
+        doc: {
+          ...doc,
+          lostRuns: doc.lostRuns.map((each) =>
+            each === held ? { ...each, stoppingUntil: until } : each,
+          ),
+        },
+        result: true,
+      };
     },
-    result: undefined,
-  }));
+    now,
+  );
+
+/**
+ * Ends a stop of a lost run. Confirmed: its worktree and its entry, if still waiting, may run
+ * again. Not: the next heartbeat tries again.
+ */
+export const settleLostRun = (
+  dir: string,
+  lost: Pick<LostRun, "entryId" | "remote">,
+  stopped: boolean,
+) =>
+  mutate(dir, (doc) => {
+    // A later attempt of the same entry left its own run there: that one stays unconfirmed.
+    const current = (each: LostRun) =>
+      each.entryId === lost.entryId && each.remote.id === lost.remote.id;
+    if (!doc.lostRuns.some(current)) return { doc, result: undefined };
+    if (!stopped) {
+      return {
+        doc: {
+          ...doc,
+          lostRuns: doc.lostRuns.map((each) => {
+            if (!current(each)) return each;
+            const { stoppingUntil: _until, ...free } = each;
+            return free;
+          }),
+        },
+        result: undefined,
+      };
+    }
+    return {
+      doc: {
+        ...doc,
+        lostRuns: doc.lostRuns.filter((each) => !current(each)),
+        entries: doc.entries.map((entry) => {
+          if (entry.id !== lost.entryId || entry.startedAt !== null) return entry;
+          const { unconfirmed: _unconfirmed, ...rest } = entry;
+          return rest;
+        }),
+      },
+      result: undefined,
+    };
+  });
 
 /** Reads the script a word names from `cwd`; null when missing, unreadable or too big to read. */
 export const scriptReader =

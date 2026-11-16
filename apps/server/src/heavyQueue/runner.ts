@@ -718,6 +718,8 @@ export interface RoutePlanInput extends PlanInput {
   readonly health: LinuxHealth;
   /** Some project uses the Runner: Mac rows then say why they stay. */
   readonly runnerOn?: boolean;
+  /** Folders of runs Linux hasn't confirmed stopped: their worktrees start nothing there until it does. */
+  readonly lostCwds?: ReadonlyArray<string>;
 }
 
 interface LinuxBusy {
@@ -811,6 +813,7 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const linuxRunning = running.filter((entry) => entry.runner === "linux");
   const macRunning = running.filter((entry) => entry.runner !== "linux");
   const busyWorktrees = new Set(linuxRunning.map((entry) => input.contextOf(entry.cwd).worktree));
+  const lostWorktrees = new Set((input.lostCwds ?? []).map((cwd) => input.contextOf(cwd).worktree));
   let linuxFree = machine.runnerLinuxSlots - linuxRunning.length;
   let linuxCount = linuxRunning.length;
   let macCount = macRunning.length;
@@ -870,6 +873,13 @@ export const planRoutes = (input: RoutePlanInput): RoutePlan => {
   const linuxBusy = (worktree: string): LinuxBusy | null => {
     if (linuxFree <= 0) {
       return { kind: "slots", why: `all ${machine.runnerLinuxSlots} Linux slots are busy` };
+    }
+    // Its stop check there would end the new run too, in the same folder.
+    if (lostWorktrees.has(worktree)) {
+      return {
+        kind: "worktree",
+        why: "Linux hasn't confirmed an earlier run of this worktree stopped",
+      };
     }
     if (busyWorktrees.has(worktree)) {
       return { kind: "worktree", why: "this worktree is already running on Linux" };

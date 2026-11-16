@@ -12,6 +12,7 @@ import type { RunnerMachineConfig } from "@t3tools/contracts";
 
 import { shellQuote } from "./heavyHook.ts";
 import { parseLine, type Word } from "./shellLine.ts";
+import { claimLostRun, readDoc, settleLostRun } from "./queueFile.ts";
 import {
   foldMarker,
   HEARTBEAT_COMMAND,
@@ -459,6 +460,26 @@ export const stopRemote = async (
 };
 
 export const confirmed = (result: StopResult) => result !== "alive" && result !== "unreachable";
+
+/**
+ * Keeps stopping the runs Linux took with it until it confirms each one ended, whether or not its
+ * job still waits. Each heartbeat that reaches Linux calls it. Stops at the first unreachable answer.
+ */
+export const drainLostRuns = async (
+  dir: string,
+  machine: RunnerMachineConfig,
+  environment: Env,
+  stop: typeof stopRemote = stopRemote,
+) => {
+  // Past the ssh timeout and both stop waits, the claiming process's stop has ended.
+  const holdMs = (machine.runnerSshTimeoutSeconds + 2 * machine.runnerStopWaitSeconds + 5) * 1000;
+  for (const lost of readDoc(dir).lostRuns) {
+    if (!claimLostRun(dir, lost, Date.now() + holdMs)) continue;
+    const result = await stop(machine, environment, lost.remote.id, lost.remote.pgid);
+    settleLostRun(dir, lost, confirmed(result));
+    if (result === "unreachable") return;
+  }
+};
 
 export interface LinuxRunOptions {
   readonly remoto: string;
