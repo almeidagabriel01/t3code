@@ -114,6 +114,7 @@ import {
 } from "./AssistantGroupPacket.ts";
 import { AssistantService } from "./AssistantService.ts";
 import { AssistantDirectory, type AssistantRow, toAssistant } from "./AssistantDirectory.ts";
+import { AssistantTasks, threadStillWorking } from "./AssistantTasks.ts";
 import {
   assistantProjects,
   assistantWorksIn,
@@ -602,6 +603,7 @@ const make = Effect.gen(function* () {
   const assistants = yield* AssistantService;
   const modelSelections = yield* ProjectModelSelection.ProjectModelSelectionService;
   const directory = yield* AssistantDirectory;
+  const assistantTasks = yield* AssistantTasks;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const textGeneration = yield* TextGeneration;
@@ -1363,10 +1365,9 @@ const make = Effect.gen(function* () {
   }, quietly("settings change"));
 
   /**
-   * A request that ended with every task delivered or cancelled settles its members' threads: they
-   * stay in history, and settling closes idle terminals, ends watches and lets the project's
-   * worktree rules run. Paused or failed work, or a request waiting on the user, stays active. A
-   * thread whose run is still ending is refused here and settles when that run ends.
+   * A request with every task delivered or cancelled settles its members' threads (closing idle
+   * terminals and watches). Paused or failed work, or a request waiting on the user, stays active.
+   * Delivered is not finished: a conversation whose subagents or launched threads still run waits.
    */
   const closeRequestIfDone = Effect.fn("AssistantGroups.closeRequestIfDone")(function* (
     requestId: string | null,
@@ -1377,7 +1378,35 @@ const make = Effect.gen(function* () {
       SELECT status FROM assistant_group_tasks
       WHERE request_id = ${requestId} OR (request_id IS NULL AND request_message_id = ${requestId})`;
     if (tasks.length === 0 || tasks.some((task) => !DELIVERED.has(task.status))) return;
-    yield* settleThreads(yield* requestThreads(requestId));
+    const settling: Array<ThreadRow> = [];
+    for (const row of yield* requestThreads(requestId)) {
+      if (!(yield* stillWorking(row.thread_id as ThreadId))) settling.push(row);
+    }
+    yield* settleThreads(settling);
+  });
+
+  const stillWorking = Effect.fn("AssistantGroups.stillWorking")(function* (threadId: ThreadId) {
+    const shellOf = (id: ThreadId) =>
+      engine.getThreadShell(id).pipe(Effect.orElseSucceed(() => null));
+    if (threadStillWorking(yield* shellOf(threadId))) return true;
+    for (const task of yield* assistantTasks.launchedFrom(threadId)) {
+      if (threadStillWorking(yield* shellOf(task.threadId))) return true;
+    }
+    return false;
+  });
+
+  /** A thread launched from a request's conversation ended a run: the conversation may settle now. */
+  const settleLaunchSource = Effect.fn("AssistantGroups.settleLaunchSource")(function* (
+    threadId: ThreadId,
+  ) {
+    const source = Option.getOrNull(yield* assistantTasks.forThread(threadId))?.sourceThreadId;
+    if (source == null || !isAssistantGroupThreadId(source)) return;
+    yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const owner = yield* threadRowOf(source);
+        if (owner !== undefined) yield* closeRequestIfDone(owner.request_id);
+      }),
+    );
   });
 
   const settleThreads = Effect.fn("AssistantGroups.settleThreads")(function* (
@@ -2883,18 +2912,23 @@ const make = Effect.gen(function* () {
     function* (event) {
       if (event.type === "runtime-request.updated") return yield* syncWaitingThread(event.threadId);
       if (event.type !== "run.created" && event.type !== "run.updated") return;
-      if (!isAssistantGroupThreadId(event.payload.threadId)) return;
+      if (!isAssistantGroupThreadId(event.payload.threadId)) {
+        if (ENDED_RUN.has(event.payload.status)) yield* settleLaunchSource(event.payload.threadId);
+        return;
+      }
       if (
         parseTaskMessageId(event.payload.userMessageId) === null &&
         !isLimitContinuation(event.payload)
       ) {
-        // The user's own turn in a request thread: a task may be waiting for it to end.
+        // The user's own turn or a background wake in a request thread: a task may be waiting for
+        // it to end, and work that held the request's settle may have ended with it.
         if (!ENDED_RUN.has(event.payload.status)) return;
         return yield* lock.withPermits(1)(
           Effect.gen(function* () {
             const owner = yield* threadRowOf(event.payload.threadId);
             if (owner?.request_id == null) return;
             yield* applyPendingModel(owner.thread_id);
+            yield* closeRequestIfDone(owner.request_id);
             yield* pump(owner.team_id);
           }),
         );

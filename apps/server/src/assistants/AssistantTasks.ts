@@ -1,4 +1,15 @@
-import type { AssistantId, AssistantTask, ProjectId, ThreadId } from "@t3tools/contracts";
+import type {
+  AssistantId,
+  AssistantTask,
+  OrchestrationV2ThreadShell,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { assistantTaskStatusOf } from "@t3tools/shared/assistantTaskStatus";
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -30,6 +41,29 @@ const toTask = (row: TaskRow): AssistantTask => ({
   sourceThreadId: (row.source_thread_id ?? null) as ThreadId | null,
 });
 
+/** A task thread's state, read from its shell: parked on background work counts as running. */
+export const taskStatusOf = (shell: OrchestrationV2ThreadShell) => {
+  const parked =
+    backgroundWorkHoldsCompletion(shell.pendingBackgroundTasks ?? []) && shell.status !== "failed";
+  const status = parked ? "idle" : (shell.activityRunStatus ?? shell.status);
+  return assistantTaskStatusOf({
+    needsUser: shell.pendingRuntimeRequest !== null || (shell.pendingGuestMessageCount ?? 0) > 0,
+    runtimeStatus: status === "idle" && !parked ? null : status,
+  });
+};
+
+/** Work that still ends in a run: a pull request watch ends silently on merge, so it holds nothing. */
+export const threadStillWorking = (shell: OrchestrationV2ThreadShell | null) => {
+  if (shell === null) return false;
+  const status = taskStatusOf({
+    ...shell,
+    pendingBackgroundTasks: (shell.pendingBackgroundTasks ?? []).filter(
+      (task) => !isPullRequestWatchTask(task),
+    ),
+  });
+  return status === "running" || status === "waiting";
+};
+
 /**
  * The link between an assistant and a thread it launched for real work. A task thread is an
  * ordinary project thread: the row only says whose it is, and its state is the thread's own.
@@ -42,6 +76,10 @@ export class AssistantTasks extends Context.Service<
     /** Undoes a link whose launch then failed. */
     readonly unlink: (threadId: ThreadId) => Effect.Effect<void>;
     readonly forThread: (threadId: ThreadId) => Effect.Effect<Option.Option<AssistantTask>>;
+    /** The tasks a conversation launched and nobody dismissed. */
+    readonly launchedFrom: (
+      sourceThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<AssistantTask>>;
     /** Dismissing keeps the first time; restoring clears it. None when the thread is no task. */
     readonly setDismissed: (
       threadId: ThreadId,
@@ -86,6 +124,12 @@ const make = Effect.gen(function* () {
       yield* sql`DELETE FROM assistant_tasks WHERE thread_id = ${threadId}`;
     }, Effect.orDie),
     forThread,
+    launchedFrom: Effect.fn("AssistantTasks.launchedFrom")(function* (sourceThreadId) {
+      const rows = yield* sql<TaskRow>`
+        SELECT * FROM assistant_tasks
+        WHERE source_thread_id = ${sourceThreadId} AND dismissed_at IS NULL`;
+      return rows.map(toTask);
+    }, Effect.orDie),
     setDismissed: Effect.fn("AssistantTasks.setDismissed")(function* (threadId, dismissedAt) {
       yield* dismissedAt === null
         ? sql`UPDATE assistant_tasks SET dismissed_at = NULL WHERE thread_id = ${threadId}`
