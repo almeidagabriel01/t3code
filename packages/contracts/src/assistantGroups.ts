@@ -185,21 +185,39 @@ export const ASSISTANT_GROUP_WORKING_TASK_STATUSES = [
   "usage_limited",
 ] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
 
-/** A stopped task: its request waits on the user once none of its tasks is still working. */
+/** A stopped task the user can still resume, reassign or cancel. */
 export const ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES = [
   "paused",
   "failed",
 ] as const satisfies ReadonlyArray<AssistantGroupTaskStatus>;
 
+/** Pauses that wait on nobody: the user stopped the task, or archiving the group paused it. */
+export const ASSISTANT_GROUP_SETTLED_PAUSE_REASONS = ["stopped", "group_archived"] as const;
+
 const isOneOf = (list: ReadonlyArray<string>, value: string) => list.includes(value);
+
+/**
+ * One task waits on the user: paused for a reason only they can clear, or a failed root task. A
+ * failed child is reported to its parent, which goes on, and a paused reply holds no request.
+ */
+export function assistantGroupTaskWaitsOnUser(
+  task: Pick<AssistantGroupTask, "status" | "reason" | "kind">,
+): boolean {
+  if (task.status === "failed") return task.kind === "root";
+  return (
+    task.status === "paused" &&
+    task.kind !== "reply" &&
+    !isOneOf(ASSISTANT_GROUP_SETTLED_PAUSE_REASONS, task.reason ?? "")
+  );
+}
 
 /** A request's tasks are the user's to act on. The server's chat counters mirror this rule. */
 export function assistantGroupTasksNeedUser(
-  statuses: ReadonlyArray<AssistantGroupTaskStatus>,
+  tasks: ReadonlyArray<Pick<AssistantGroupTask, "status" | "reason" | "kind">>,
 ): boolean {
   return (
-    !statuses.some((status) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, status)) &&
-    statuses.some((status) => isOneOf(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES, status))
+    !tasks.some((task) => isOneOf(ASSISTANT_GROUP_WORKING_TASK_STATUSES, task.status)) &&
+    tasks.some(assistantGroupTaskWaitsOnUser)
   );
 }
 

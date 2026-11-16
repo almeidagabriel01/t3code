@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { AssistantTeamChatScope, ProjectId } from "@t3tools/contracts";
 
 import {
   assistantIndicator,
@@ -7,6 +8,7 @@ import {
   countWaits,
   folderAttention,
   folderIndicator,
+  folderIndicatorTooltip,
   needsYouCards,
   needsYouDue,
   needsYouItems,
@@ -267,6 +269,66 @@ describe("indicators", () => {
     expect(
       folderIndicator({ needsYou, members: moods.map((mood) => ({ mood })), chat: folderChat }),
     ).toEqual(expected);
+  });
+
+  const scope = (
+    projectId: string | null,
+    unreadCount: number,
+    waiting: boolean,
+    title?: string,
+  ): AssistantTeamChatScope => ({
+    projectId: projectId as ProjectId | null,
+    unreadCount,
+    waiting,
+    readSeq: 0,
+    ...(title === undefined ? {} : { title }),
+  });
+  it.each([
+    [
+      "unread names its tabs",
+      { kind: "unread", count: 3 },
+      [scope("p1", 2, false, "t3code"), scope(null, 1, false)],
+      "3 unread in t3code, General",
+    ],
+    [
+      "unread skips read tabs",
+      { kind: "unread", count: 2 },
+      [scope("p1", 0, true, "t3code"), scope("p2", 2, false, "site")],
+      "2 unread in site",
+    ],
+    [
+      "a gone project",
+      { kind: "unread", count: 1 },
+      [scope("p9", 1, false)],
+      "1 unread in Removed project",
+    ],
+    [
+      "needs names the waiting tabs",
+      { kind: "needs", count: 1 },
+      [scope(null, 0, true), scope("p1", 4, false, "t3code")],
+      "Needs you in General",
+    ],
+    [
+      "needs from a member thread only",
+      { kind: "needs", count: 1 },
+      [scope("p1", 4, false, "t3code")],
+      "Needs you",
+    ],
+    [
+      "other kinds keep their words",
+      { kind: "paused", count: 2 },
+      [scope("p1", 1, true, "t3code")],
+      "2 paused",
+    ],
+    ["an older server without tabs", { kind: "unread", count: 1 }, undefined, "1 unread"],
+  ] as const)("the group tooltip: %s", (_name, indicator, scopes, expected) => {
+    const chat = {
+      ...(scopes === undefined ? {} : { scopes: [...scopes] }),
+      pausedTasks: 0,
+      failedTasks: 0,
+      unreadCount: 0,
+    };
+    expect(folderIndicatorTooltip(indicator, chat)).toBe(expected);
   });
 
   it.each([

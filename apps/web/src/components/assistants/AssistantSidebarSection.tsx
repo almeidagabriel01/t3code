@@ -3,7 +3,11 @@ import { teamsEnvironmentLabels } from "@t3tools/client-runtime/assistantProject
 import type { AssistantMood } from "@t3tools/client-runtime/assistantRobot";
 import { connectionCatalogDisplayUrl } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { zoneIndicatorLabel, type ZoneIndicator } from "@t3tools/client-runtime/sidebarZones";
+import {
+  folderIndicatorTooltip,
+  zoneIndicatorLabel,
+  type ZoneIndicator,
+} from "@t3tools/client-runtime/sidebarZones";
 import type { EnvironmentId, AssistantTeamId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArchiveIcon,
@@ -459,21 +463,31 @@ function GroupMark(props: {
   );
 }
 
-/** A group's one status: icon and words, or the icon alone with its words in a tooltip when narrow. */
-function FolderIndicator(props: { readonly kind: IndicatorKind; readonly count: number }) {
+/**
+ * A group's one status: icon and words, or the icon alone when narrow. The tooltip names the tabs
+ * it comes from, and a click opens the chat on what waits.
+ */
+function FolderIndicator(props: {
+  readonly kind: IndicatorKind;
+  readonly count: number;
+  readonly tooltip: string;
+  readonly onOpen: () => void;
+}) {
   const label = indicatorLabel(props.kind, props.count, "group");
   const Icon = INDICATOR_ICON[props.kind];
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <span
-            role="img"
-            aria-label={label}
+          <button
+            type="button"
+            aria-label={props.tooltip}
             data-testid="zone-indicator"
             data-kind={props.kind}
+            onClick={props.onOpen}
             className={cn(
-              "flex min-w-0 shrink-0 items-center gap-1 text-xs font-normal tabular-nums",
+              "flex min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-md px-0.5 text-xs font-normal tabular-nums hover:bg-foreground/8",
+              FOCUS_RING,
               INDICATOR_TONE[props.kind],
             )}
           />
@@ -484,7 +498,7 @@ function FolderIndicator(props: { readonly kind: IndicatorKind; readonly count: 
           {label}
         </span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{label}</TooltipPopup>
+      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -571,7 +585,15 @@ const FolderRow = memo(function FolderRow(props: {
           <TooltipPopup side="top">{team.name}</TooltipPopup>
         </Tooltip>
         {props.indicatorKind === null ? null : (
-          <FolderIndicator kind={props.indicatorKind} count={props.indicatorCount} />
+          <FolderIndicator
+            kind={props.indicatorKind}
+            count={props.indicatorCount}
+            tooltip={folderIndicatorTooltip(
+              { kind: props.indicatorKind, count: props.indicatorCount } as ZoneIndicator,
+              team.chat ?? null,
+            )}
+            onOpen={open}
+          />
         )}
         <Menu>
           <MenuTrigger

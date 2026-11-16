@@ -1,5 +1,5 @@
 import {
-  ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+  ASSISTANT_GROUP_SETTLED_PAUSE_REASONS,
   ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR,
   ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS,
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
@@ -18,10 +18,16 @@ export const countsAsUnreadSql = (m: string) =>
       WHERE u.request_id = ${m}.request_id AND u.seq > ${m}.seq AND u.team_id = ${m}.team_id
         AND u.author = '${ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR}'))`;
 
+/** Task `k` waits on the user: `assistantGroupTaskWaitsOnUser`. */
+export const taskWaitsOnUserSql = (k: string) =>
+  `((${k}.status = 'failed' AND ${k}.kind = 'root')
+    OR (${k}.status = 'paused' AND ${k}.kind <> 'reply'
+      AND COALESCE(${k}.reason, '') NOT IN (${list(ASSISTANT_GROUP_SETTLED_PAUSE_REASONS)})))`;
+
 /** The tasks of request `requestId` (an expression) need the user: `assistantGroupTasksNeedUser`. */
 export const tasksNeedUserSql = (requestId: string) =>
   `(EXISTS (SELECT 1 FROM assistant_group_tasks n WHERE n.request_id = ${requestId}
-      AND n.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)}))
+      AND ${taskWaitsOnUserSql("n")})
     AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks w WHERE w.request_id = ${requestId}
       AND w.status IN (${list(ASSISTANT_GROUP_WORKING_TASK_STATUSES)})))`;
 
@@ -36,7 +42,7 @@ export const scopeNeedsUserSql = (team: string, scope: string) =>
         AND COALESCE(q.request_project_id, '') = ${scope})
     OR EXISTS (SELECT 1 FROM assistant_group_tasks k
       JOIN assistant_group_messages h ON h.message_id = k.request_id
-      WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
+      WHERE k.team_id = ${team} AND ${taskWaitsOnUserSql("k")}
         AND h.request_project_id IS NULLIF(${scope}, '') AND ${tasksNeedUserSql("k.request_id")})
     OR (${scope} = '' AND EXISTS (SELECT 1 FROM assistant_group_messages a
       WHERE a.team_id = ${team} AND a.request_project_id IS NULL AND a.asks_project = 1
@@ -63,7 +69,7 @@ export const taskCountsByScopeSql = (team: string) =>
 export const needsUserTaskScopesSql = (team: string) =>
   `SELECT COALESCE(h.request_project_id, '') FROM assistant_group_tasks k
     JOIN assistant_group_messages h ON h.message_id = k.request_id
-    WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})`;
+    WHERE k.team_id = ${team} AND ${taskWaitsOnUserSql("k")}`;
 
 /**
  * Tab position `r` changes no count if it moves to `readSeq`: no line of its tab that counts as

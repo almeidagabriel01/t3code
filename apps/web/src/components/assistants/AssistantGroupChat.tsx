@@ -5,6 +5,7 @@ import {
   assistantGroupAnswerRoot,
   assistantGroupAuthorName,
   assistantGroupAwaitingRoute,
+  assistantGroupRequestWaitsOnUser,
   assistantGroupMarkdownMentions,
   assistantGroupBoundaryLabel,
   assistantGroupInScope,
@@ -1218,11 +1219,16 @@ function GroupFeed(props: {
         );
       }
     }
-    // Open on the first unread message when it is above the fold, else stay at the end.
-    const divider = element.querySelector("[data-testid=group-new-divider]");
-    if (divider !== null && !scrolledToNew.current) {
+    // Open on the first request waiting on the user, else the first unread message, when it is
+    // above the fold; else stay at the end.
+    const pending = requestBlocks.find((block) => assistantGroupRequestWaitsOnUser(block.status));
+    const opening =
+      pending === undefined
+        ? element.querySelector("[data-testid=group-new-divider]")
+        : element.querySelector(`[data-request-id="${CSS.escape(pending.requestId)}"]`);
+    if (opening !== null && !scrolledToNew.current) {
       scrolledToNew.current = true;
-      const gap = divider.getBoundingClientRect().top - element.getBoundingClientRect().top;
+      const gap = opening.getBoundingClientRect().top - element.getBoundingClientRect().top;
       if (gap < 0) {
         element.scrollTop += gap - 12;
         stickToBottom.current = false;

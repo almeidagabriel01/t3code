@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import {
   AssistantGroupAuthor,
   AssistantGroupMessageKind,
+  ASSISTANT_GROUP_SETTLED_PAUSE_REASONS,
+  AssistantGroupTaskKind,
   AssistantGroupTaskStatus,
   assistantGroupCountsAsUnread,
   assistantGroupTasksNeedUser,
@@ -51,20 +53,42 @@ it.effect("the server's chat rules answer exactly as the contract's, for every v
         }
       }
     }
-    // Every request of up to two tasks, in every pair of statuses.
+    // Every task alone, in every status, kind and pause reason, then every pair of statuses.
+    const tasks = AssistantGroupTaskStatus.literals.flatMap((status) =>
+      AssistantGroupTaskKind.literals.flatMap((kind) =>
+        [null, ...ASSISTANT_GROUP_SETTLED_PAUSE_REASONS, "handoff_limit"].map((reason) => ({
+          status,
+          kind,
+          reason,
+        })),
+      ),
+    );
+    const root = (status: AssistantGroupTaskStatus) => ({
+      status,
+      kind: "root" as const,
+      reason: null,
+    });
     const statuses = AssistantGroupTaskStatus.literals;
-    const requests = [[], ...statuses.flatMap((a) => [[a], ...statuses.map((b) => [a, b])])];
+    const requests = [
+      [],
+      ...tasks.map((task) => [task]),
+      ...statuses.flatMap((a) => statuses.map((b) => [root(a), root(b)])),
+    ];
     for (const [index, request] of requests.entries()) {
-      for (const [offset, status] of request.entries()) {
+      for (const [offset, task] of request.entries()) {
         yield* sql`INSERT INTO assistant_group_tasks
           (task_id, team_id, root_id, kind, request_message_id, owner_id, instruction, status,
-            request_id, created_at, updated_at)
-          VALUES (${`t${index}-${offset}`}, 'g', 'r', 'root', 'x', 'ada', 'do', ${status},
-            ${`r${index}`}, 't', 't')`;
+            reason, request_id, created_at, updated_at)
+          VALUES (${`t${index}-${offset}`}, 'g', 'r', ${task.kind}, 'x', 'ada', 'do', ${task.status},
+            ${task.reason}, ${`r${index}`}, 't', 't')`;
       }
       const [row] = yield* sql<{ readonly needs: number }>`
         SELECT ${sql.literal(tasksNeedUserSql(`'r${index}'`))} AS needs`;
-      assert.equal(Boolean(row!.needs), assistantGroupTasksNeedUser(request), request.join(","));
+      assert.equal(
+        Boolean(row!.needs),
+        assistantGroupTasksNeedUser(request),
+        JSON.stringify(request),
+      );
     }
   }).pipe(Effect.provide(database)),
 );
