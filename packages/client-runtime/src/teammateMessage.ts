@@ -29,8 +29,9 @@ export const TEAMMATE_STATUS_LABEL = {
 } satisfies Record<TeammateReplyStatus, string>;
 
 // One leading class, not `\s*[>*_-]*\s*`: adjacent optional runs backtrack quadratically on blank text.
+// A note in parentheses after the status (`partial (em andamento)`) belongs to the status line.
 const LEADING_STATUS =
-  /^[\s>*_-]*status[\s*_]*:[\s*_]*(?:done|partial|blocked)\b[\s*_]*[.:;,–—-]?[ \t]*\r?\n?/i;
+  /^[\s>*_-]*status[\s*_]*:[\s*_]*(?:done|partial|blocked)\b(?:[ \t]*\([^)\n]*\))?[\s*_]*[.:;,–—-]?[ \t]*\r?\n?/i;
 
 function toPart(entry: TeammateMessageEntry): TeammateMessagePart {
   const status =

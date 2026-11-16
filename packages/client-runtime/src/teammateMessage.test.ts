@@ -99,6 +99,29 @@ describe("resolveTeammateMessage", () => {
       ],
     ],
     [
+      "a reply whose status line carries a note in parentheses",
+      agent(
+        reply.replace(
+          "Status: partial. O item está em execução.",
+          "Status: partial (em andamento)",
+        ),
+        "assistant:qa:1",
+      ),
+      [
+        {
+          kind: "reply",
+          name: 'Ana "QA" <3 & co',
+          handle: "qa",
+          threadId: "assistant:qa:1",
+          requestId: "message:ask",
+          expectsReply: undefined,
+          status: "partial",
+          files: [],
+          text: "Result: falta o print.",
+        },
+      ],
+    ],
+    [
       "a reply, unescaping its sender and dropping the status line the chip shows",
       agent(reply, "assistant:qa:1"),
       [
