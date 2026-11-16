@@ -28,6 +28,19 @@ const holder: HeavyQueueEntry = {
   startedAt: null,
 };
 
+const GIB = 1024 ** 3;
+/** After any real clock this suite runs on, so `holder`'s real start is long settled. */
+const LATER = Date.parse("2030-01-01T00:00:00.000Z");
+const ago = (ms: number) => new Date(LATER - ms).toISOString();
+/** The live Mac when the queue ran one at a time: 28% of 16 GB free, CPU quiet. */
+const MAC_28 = {
+  busyCores: 1,
+  cpuCount: 10,
+  availableMemoryBytes: 0.28 * 16 * GIB,
+  totalMemoryBytes: 16 * GIB,
+  pressureLevel: 1,
+};
+
 /** A queue directory with `holder` already running; removed when the test ends. */
 const withQueue = <A, E>(
   body: (dir: string, queue: HeavyQueue.HeavyQueue["Service"]) => Effect.Effect<A, E>,
@@ -418,6 +431,110 @@ describe("HeavyQueue", () => {
         });
       }),
     ),
+  );
+
+  it.effect("starts jobs side by side on a roomy 16 GB Mac, and one at a time under pressure", () =>
+    withQueue((dir, queue) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(LATER);
+        Queue.remove(dir, holder.id);
+        for (const id of ["a", "b", "c", "d"]) {
+          Queue.enqueue(dir, {
+            ...holder,
+            id,
+            label: "vp test run src/a.test.ts",
+            createdAt: ago(1000),
+          });
+        }
+        // Headroom has held for eight seconds of unbroken readings: 28% of 16 GB free, CPU quiet.
+        Queue.recordSample(dir, { ...MAC_28, at: LATER - 8_000 }, {});
+        const started = () => Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
+        const step = (at: number, sample: Partial<typeof MAC_28> = {}) => {
+          // Readings come every few seconds; a longer gap would restart the headroom window.
+          Queue.recordSample(dir, { ...MAC_28, ...sample, at: at - 8_000 }, {});
+          Queue.recordSample(dir, { ...MAC_28, ...sample, at }, {});
+          for (const id of ["a", "b", "c", "d"]) Queue.tryStart(dir, id, at);
+        };
+        step(LATER);
+        expect(started()).toEqual(["a"]);
+        // One start per settle window, each judged on a fresh reading.
+        step(LATER + 16_000);
+        step(LATER + 32_000);
+        expect(started()).toEqual(["a", "b", "c"]);
+        yield* TestClock.setTime(LATER + 32_000);
+        expect((yield* queue.state).reasons).toEqual({ d: "all 3 slots busy" });
+
+        Queue.remove(dir, "b");
+        Queue.remove(dir, "c");
+        step(LATER + 48_000, { pressureLevel: 2 });
+        expect(started()).toEqual(["a"]);
+        yield* TestClock.setTime(LATER + 48_000);
+        expect((yield* queue.state).reasons).toEqual({ d: "memory pressure high" });
+        Queue.remove(dir, "a");
+        step(LATER + 49_000, { pressureLevel: 2 });
+        expect(started()).toEqual(["d"]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "a head that does not fit lets a small job pass, then gets its turn after its patience",
+    () =>
+      withQueue((dir, queue) =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(LATER);
+          const job = (id: string, label: string): HeavyQueueEntry => ({
+            ...holder,
+            id,
+            label,
+            createdAt: ago(1000),
+          });
+          Queue.enqueue(dir, job("big", "vp run build"));
+          Queue.enqueue(dir, job("small", "vp run typecheck"));
+          Queue.enqueue(dir, job("small2", "vp run lint"));
+          // The holder has run for a minute, so its usage is in the reading.
+          const file = NodePath.join(dir, "queue.json");
+          const doc = JSON.parse(NodeFS.readFileSync(file, "utf8"));
+          NodeFS.writeFileSync(
+            file,
+            JSON.stringify({
+              ...doc,
+              lastStartAt: LATER - 60_000,
+              entries: doc.entries.map((e: HeavyQueueEntry) =>
+                e.id === holder.id ? { ...e, startedAt: ago(60_000) } : e,
+              ),
+            }),
+          );
+          // 4.6 of 16 GB free: a never-seen build (1.5 GB) cuts into what is kept spare, a typecheck (0.5 GB) does not.
+          const tight = { ...MAC_28, availableMemoryBytes: 4.6 * GIB };
+          Queue.recordSample(dir, { ...tight, at: LATER - 8_000 }, {});
+          Queue.recordSample(dir, { ...tight, at: LATER }, {});
+          const started = () =>
+            Queue.read(dir).flatMap((e) => (e.startedAt === null ? [] : [e.id]));
+          for (const id of ["big", "small", "small2"]) Queue.tryStart(dir, id, LATER);
+          expect(started()).toEqual(["holder", "small"]);
+          // Once the start settles, the head says what it needs.
+          Queue.recordSample(dir, { ...tight, at: LATER + 8_000 }, {});
+          Queue.recordSample(dir, { ...tight, at: LATER + 16_000 }, {});
+          yield* TestClock.setTime(LATER + 16_000);
+          expect((yield* queue.state).reasons["big"]).toBe(
+            // Held once, it keeps five points more spare until it starts.
+            "needs ~1.5 GB; 4.6 GB free, 4.0 GB kept spare",
+          );
+
+          // Past its patience the head lets nothing by, and starts once the Mac frees up.
+          const patient = LATER + 5 * 60_000;
+          yield* TestClock.setTime(patient);
+          Queue.remove(dir, "small");
+          Queue.recordSample(dir, { ...tight, at: patient - 8_000 }, {});
+          Queue.recordSample(dir, { ...tight, at: patient }, {});
+          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          expect(started()).toEqual(["holder"]);
+          Queue.remove(dir, holder.id);
+          for (const id of ["big", "small2"]) Queue.tryStart(dir, id, patient);
+          expect(started()).toEqual(["big"]);
+        }),
+      ),
   );
 
   it.effect("moves, pauses and sets priority rules through the shared file", () =>
