@@ -15,6 +15,7 @@ import {
   assistantGroupAllReadSeq,
   assistantGroupRunningCount,
   assistantGroupTabAfterSend,
+  assistantGroupLandedPick,
   assistantGroupComposerProjects,
   assistantGroupComposerProject,
   assistantGroupTabPick,
@@ -125,8 +126,10 @@ import { GroupMessageAttachments } from "./GroupAttachments";
 import {
   GroupComposer,
   type GroupComposerProject,
-  type GroupReplyTarget,
+  type GroupLandedSend,
+  type GroupReply,
   type GroupSendResult,
+  type GroupSendRouting,
 } from "./GroupComposer";
 import { GroupProjectTabs } from "./GroupProjectTabs";
 import { groupMessageModelAtom } from "./GroupMessageModelPickerRouteScreen";
@@ -908,8 +911,6 @@ type GroupFeedHandle = {
   readonly scrollToEnd: () => void;
 };
 
-type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessage["id"] };
-
 /**
  * One tab's messages: its own pages, folds, New line and read marker. The screen keys it by tab,
  * so none of that leaks between tabs; the composer stays outside so a draft survives a switch.
@@ -1336,10 +1337,34 @@ export function AssistantGroupChatRouteScreen({
   const [modelPick, setModelPick] = useAtom(groupMessageModelAtom(teamId));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen and cannot be set while rendering
   useEffect(() => {
-    if (assistantGroupTabPick(modelPick, tabKey) !== modelPick) setModelPick(null);
+    // From the atom as it is now: a failed send coming into view may have just restored its pick.
+    if (assistantGroupTabPick(modelPick, tabKey) !== modelPick) {
+      setModelPick((current) => assistantGroupTabPick(current, tabKey));
+    }
   }, [modelPick, tabKey, setModelPick]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the pick's atom outlives the screen; leaving the group drops it
   useEffect(() => () => setModelPick(null), [setModelPick]);
+
+  // One way a send lands, by its reply or by the chat showing its post.
+  const landed = (sent: GroupLandedSend) => {
+    // What the user changed while the post was on its way stays: a new reply, pick or tab.
+    setReplyTo((current) => assistantGroupLandedPick(current, sent.routing?.reply ?? null));
+    setProjectPick((current) =>
+      assistantGroupLandedPick(current, sent.routing?.projectPick ?? null),
+    );
+    setModelPick((current) => assistantGroupLandedPick(current, sent.routing?.modelPick ?? null));
+    feed.current?.scrollToEnd();
+    // A request that lands in another project's tab would vanish from this one: follow it.
+    if (tabs !== null && sent.tab !== null) {
+      const from = sent.tab;
+      savedTab.save((saved) => assistantGroupTabAfterSend(tabs, from, saved, sent.projectId));
+    }
+  };
+  const restore = (routing: GroupSendRouting) => {
+    setReplyTo(routing.reply);
+    setProjectPick(routing.projectPick);
+    setModelPick(routing.modelPick);
+  };
 
   const selectTab = (next: AssistantGroupTab) => {
     if (next.key === tab?.key) return;
@@ -1364,19 +1389,7 @@ export function AssistantGroupChatRouteScreen({
         ? {}
         : { modelSelection: projectModel.messageModel }),
     });
-    if (reply.ok) {
-      // What the user changed while the post was on its way stays: a new reply, pick or tab.
-      setReplyTo((current) => (current === replyTo ? null : current));
-      setProjectPick((current) => (current === projectPick ? null : current));
-      setModelPick((current) => (current === modelPick ? null : current));
-      feed.current?.scrollToEnd();
-      // A request that lands in another project's tab would vanish from this one: follow it.
-      const landed = replyTo?.projectId ?? projectId ?? null;
-      if (tabs !== null && tab !== null) {
-        savedTab.save((saved) => assistantGroupTabAfterSend(tabs, tab.key, saved, landed));
-      }
-      return { ok: true };
-    }
+    if (reply.ok) return { ok: true };
     return {
       ok: false,
       message:
@@ -1624,6 +1637,9 @@ export function AssistantGroupChatRouteScreen({
             : () => feed.current?.jump(replyTo.id)
         }
         onClearReply={() => setReplyTo(null)}
+        routing={{ reply: replyTo, projectPick, modelPick }}
+        onLanded={landed}
+        onRestore={restore}
         messages={live?.messages}
         onSend={send}
       />

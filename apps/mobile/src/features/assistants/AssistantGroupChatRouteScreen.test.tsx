@@ -1291,6 +1291,12 @@ describe("group composer", () => {
     expect(text()).toContain("unconfirmed");
     await landed(mocks.requestIds.at(-1));
     expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
+    // A landed reply lets go of its quote too, as one whose post answered does.
+    await click("Reply to Ada");
+    await type("thanks");
+    await click("Send");
+    await landed(mocks.requestIds.at(-1));
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
   });
 
   it("replies to a member's message from the row button or its menu, then clears or sends", async () => {
@@ -1902,6 +1908,31 @@ describe("requests", () => {
     await click(TAB.alpha);
     expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
     expect(input().value).toBe("still here");
+    // An unconfirmed reply takes its quote back after another tab or leaving the chat, so its
+    // resend keeps its id; the chat then showing its post drops the quote with the warning.
+    await click(TAB.beta);
+    await click("Reply to request Review");
+    mocks.post.mockResolvedValue({ ok: false, message: "unconfirmed", reason: "unconfirmed" });
+    await click("Send");
+    await click(TAB.alpha);
+    await click(TAB.beta);
+    expect(text()).toContain("Replying to Review");
+    remount();
+    render();
+    expect(text()).toContain("Replying to Review");
+    await click("Send");
+    const [first, resent] = mocks.requestIds;
+    expect([mocks.post.mock.lastCall?.[0], resent]).toEqual([
+      expect.objectContaining({ replyToMessageId: "r3" }),
+      first,
+    ]);
+    mocks.live = snapshot(
+      [...REQUESTS, message("m9", 9, { ...user, text: "still here", clientRequestId: first })],
+      TASKS,
+    );
+    render();
+    expect(container.querySelector('[data-testid="group-reply-chip"]')).toBeNull();
+    expect([text().includes("unconfirmed"), input().value]).toEqual([false, ""]);
   });
 
   it("says how many tasks run in the whole group, even in a tab whose stream holds none", () => {

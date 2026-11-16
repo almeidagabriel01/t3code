@@ -9,10 +9,12 @@ import {
   assistantGroupRecipientsPreview,
   assistantGroupHeldAttachments,
   assistantGroupSendRequestId,
+  assistantGroupSendToRestore,
   assistantGroupShownOutgoing,
   createAssistantGroupOutgoingStore,
   insertAssistantGroupMention,
   type AssistantGroupOutgoing,
+  type AssistantGroupSendRouting,
   type AssistantGroupTabKey,
   insertAssistantGroupProject,
   type AssistantGroupMentionOption,
@@ -73,15 +75,15 @@ import type { GroupProjectModel } from "./useGroupProjectModel";
 const LEAD_DECIDES = "lead-decides";
 /** Its text waits in the draft store under its tab's `:outgoing:` key. */
 const outgoings = createAssistantGroupOutgoingStore<
-  AssistantGroupOutgoing & {
-    readonly projectId: ProjectId | null;
-    readonly error: string | null;
-    /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
-    readonly requestId: string;
-    readonly sendKey: string;
-    /** The text it sent, trimmed; its draft key holds what the composer shows now. */
-    readonly text: string;
-  }
+  AssistantGroupOutgoing &
+    GroupLandedSend & {
+      readonly error: string | null;
+      /** Its post's `clientRequestId`, so a resend of the same message never posts twice. */
+      readonly requestId: string;
+      readonly sendKey: string;
+      /** The text it sent, trimmed; its draft key holds what the composer shows now. */
+      readonly text: string;
+    }
 >();
 const EVERYONE = "everyone";
 const EDITOR_INSET = 8;
@@ -109,6 +111,20 @@ export type GroupReplyTarget = {
   readonly projectId: ProjectId | null;
   readonly excerpt: string;
 };
+
+/** A reply being written, with the message it answers. */
+export type GroupReply = GroupReplyTarget & { readonly id: AssistantGroupMessageId };
+
+export type GroupSendRouting = AssistantGroupSendRouting<GroupReply>;
+
+/** A send the server took: from its reply, or from the chat showing a post whose reply was lost. */
+export interface GroupLandedSend {
+  readonly tab: AssistantGroupTabKey | null;
+  /** The project it runs in; null lets the lead decide. */
+  readonly projectId: ProjectId | null;
+  /** What it went with; null once a landing let go of it. */
+  readonly routing: GroupSendRouting | null;
+}
 
 /** A labelled menu trigger in the composer's toolbar row. */
 function ToolbarChip(props: {
@@ -374,6 +390,11 @@ export function GroupComposer(props: {
   readonly disabledReason: string | null;
   /** The message being answered: with a project, the message stays in it. */
   readonly replyingTo: GroupReplyTarget | null;
+  /** The reply and picks the next send goes with, so a failed one keeps them for its resend. */
+  readonly routing: GroupSendRouting;
+  readonly onLanded: (sent: GroupLandedSend) => void;
+  /** A failed send came back into view: the chat takes back what it went with. */
+  readonly onRestore: (routing: GroupSendRouting) => void;
   /** The chat the recipients line reads what routes the draft from. */
   readonly chat: AssistantGroupChatRef;
   /** Shows the quoted message in the list; null when it is not loaded. */
@@ -514,15 +535,24 @@ export function GroupComposer(props: {
     clearComposerDraftContent(outgoingKey(sent.tab));
     setOutgoing(sent.tab, null);
     attached.clear(sent.attachmentIds);
+    props.onLanded(sent);
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost; the outgoing store is outside React
+  const seenSend = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the chat stream confirms a failed send whose reply was lost, and a failed send coming into view takes its routing back; the outgoing store is outside React
   useLayoutEffect(() => {
+    const { seen, restore } = assistantGroupSendToRestore(seenSend.current, shown, props.tab);
+    seenSend.current = seen;
+    if (restore?.routing != null) props.onRestore(restore.routing);
     if (props.messages === undefined) return;
     for (const entry of outgoing) {
       const live = getComposerDraftSnapshot(outgoingKey(entry.tab)).text;
       const landed = assistantGroupLandedSend(entry, live, props.messages.values());
       if (landed === "settle") settle(entry);
-      else if (landed === "clear-warning") setOutgoing(entry.tab, { ...entry, error: null });
+      else if (landed === "clear-warning") {
+        // The post landed: what it went with goes, and the user's edit is a new message.
+        setOutgoing(entry.tab, { ...entry, error: null, routing: null });
+        props.onLanded(entry);
+      }
     }
   });
 
@@ -554,6 +584,7 @@ export function GroupComposer(props: {
       sendKey,
       attachmentIds,
       projectId: runProject,
+      routing: props.routing,
       error: null,
     };
     const sentKey = outgoingKey(sent.tab);
