@@ -1,3 +1,4 @@
+import { pairAgainAddress } from "@t3tools/client-runtime/connection";
 import { CONNECT_ENVIRONMENT_FOR_CONNECTION_SETTINGS } from "@t3tools/client-runtime/settings-empty-selection";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
@@ -338,6 +339,8 @@ function ConnectionsSettingsContent({
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
+  // A new key per programmatic open seeds the dialog's host; Pair again starts at the refused address.
+  const [routeDialog, setRouteDialog] = useState({ key: 0, host: "" });
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const handleAddBackendDialogOpenChange = (open: boolean) => {
     setAddBackendDialogOpen(open);
@@ -346,6 +349,12 @@ function ConnectionsSettingsContent({
     } else {
       setSavedBackendError(null);
     }
+  };
+  const openRouteDialog = (target: EnvironmentPresentation, host: string) => {
+    setRouteTarget(target);
+    setRouteDialog((current) => ({ key: current.key + 1, host }));
+    setSavedBackendError(null);
+    setAddBackendDialogOpen(true);
   };
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
@@ -1607,6 +1616,8 @@ function ConnectionsSettingsContent({
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
             <AddEnvironmentDialog
+              key={routeDialog.key}
+              initialHost={routeDialog.host}
               open={addBackendDialogOpen}
               routeTarget={routeTarget}
               error={savedBackendError}
@@ -1624,11 +1635,8 @@ function ConnectionsSettingsContent({
             removingEnvironmentId={removingSavedEnvironmentId}
             onSetEnabled={handleSetSavedBackendEnabled}
             onRemove={handleRemoveSavedBackend}
-            onAddRoute={(target) => {
-              setRouteTarget(target);
-              setSavedBackendError(null);
-              setAddBackendDialogOpen(true);
-            }}
+            onAddRoute={(target) => openRouteDialog(target, "")}
+            onPairAgain={(target) => openRouteDialog(target, pairAgainAddress(target.entry) ?? "")}
           />
         ))}
         <CloudRemoteEnvironmentRows

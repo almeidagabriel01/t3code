@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,6 +10,9 @@ const { Children, harness } = vi.hoisted(() => ({
     // The app-wide error slot other features (composer sends, branch refreshes) write to.
     pendingConnectionError: null as string | null,
     connectPress: vi.fn(),
+    draftPairingUrl: "",
+    catalogAtom: {},
+    catalog: null as { readonly entries: ReadonlyMap<string, unknown> } | null,
   },
 }));
 
@@ -32,7 +36,15 @@ vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({ canGoBack: () => true, goBack: vi.fn(), dispatch: vi.fn() }),
   useRoute: () => ({ name: "ConnectionsNew" }),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (atom: unknown) => (atom === harness.catalogAtom ? harness.catalog : null),
+}));
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { catalogValueAtom: harness.catalogAtom },
+}));
+vi.mock("@t3tools/client-runtime/connection", () => ({
+  pairAgainAddress: () => "http://10.0.2.2:3773/",
+}));
 vi.mock("@clerk/expo", () => ({ useAuth: () => ({ isLoaded: false, isSignedIn: false }) }));
 vi.mock("expo-camera", () => ({
   CameraView: () => null,
@@ -47,7 +59,7 @@ vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
-  AppTextInput: () => null,
+  AppTextInput: (props: { value?: string }) => <input readOnly value={props.value ?? ""} />,
 }));
 vi.mock("../../components/ui/FrostedCutout", () => ({ FrostedCutout: () => null }));
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
@@ -77,7 +89,7 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
     harness.pendingConnectionError = message;
   },
   useRemoteConnections: () => ({
-    connectionPairingUrl: "",
+    connectionPairingUrl: harness.draftPairingUrl,
     connectedEnvironments: [],
     pairingConnectionError: harness.pendingConnectionError,
     onChangeConnectionPairingUrl: vi.fn(),
@@ -103,4 +115,26 @@ it("does not show another feature's error as a pairing failure", () => {
   act(() => root.unmount());
   // Leaving the form must not wipe an error that belongs to another screen.
   expect(harness.pendingConnectionError).toBe("Could not send the message.");
+});
+
+it("starts Pair again at the refused address, not at another machine's draft", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal("__DEV__", false);
+  harness.draftPairingUrl = "https://other.example.com/#token=old-code";
+  harness.catalog = { entries: new Map([["environment-1", {}]]) };
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  act(() =>
+    root.render(
+      <ConnectionsNewRouteScreen
+        route={{ params: { routeFor: EnvironmentId.make("environment-1"), pairAgain: true } }}
+      />,
+    ),
+  );
+
+  expect([...container.querySelectorAll("input")].map((input) => input.value)).toEqual([
+    "http://10.0.2.2:3773/",
+    "",
+  ]);
+  act(() => root.unmount());
 });

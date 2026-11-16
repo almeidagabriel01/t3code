@@ -131,7 +131,10 @@ function EnvironmentPickerRow(props: {
               label="Pair again"
               icon="qrcode.viewfinder"
               onPress={() =>
-                navigation.navigate("ConnectionsNew", { routeFor: props.environmentId })
+                navigation.navigate("ConnectionsNew", {
+                  routeFor: props.environmentId,
+                  pairAgain: true,
+                })
               }
             />
           ) : connection?.phase !== "connected" ? (
