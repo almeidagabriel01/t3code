@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,9 +12,15 @@ import {
   DEFAULT_MACHINE_CONFIG,
   DEFAULT_PROJECT_CONFIG,
   parseHeartbeat,
+  runnerCopyId,
   type RunnerBlock,
 } from "./runner.ts";
-import { drainLostRuns, type StopResult, type stopRemote } from "./runnerExec.ts";
+import {
+  drainLostRuns,
+  type readRemotePgid,
+  type StopResult,
+  type stopRemote,
+} from "./runnerExec.ts";
 
 const dirs: string[] = [];
 const tempDir = () => {
@@ -831,6 +838,22 @@ describe("Runner in the queue file", () => {
     },
   );
 
+  /** Linux's answers to a drain, and each stop it was asked for: `id:pgid`, `:group` when by pgid only. */
+  const fakeLinux = () => {
+    const stops: string[] = [];
+    const linux = (
+      answer: StopResult,
+      pgidFile: Awaited<ReturnType<typeof readRemotePgid>> = null,
+    ): { stop: typeof stopRemote; readPgid: typeof readRemotePgid } => ({
+      stop: async (_machine, _env, id, pgid, pgidOnly) => {
+        stops.push(`${id}:${pgid}${pgidOnly === true ? ":group" : ""}`);
+        return answer;
+      },
+      readPgid: async () => pgidFile,
+    });
+    return { stops, linux };
+  };
+
   // The job is gone, but its run may still live there: the worktree takes no Linux run meanwhile.
   it("a run canceled before Linux confirmed it stopped keeps its worktree off Linux until it does", async () => {
     const dir = queueWith(block(config({ runnerWhere: "linux", runnerDropped: "agent" })));
@@ -856,21 +879,15 @@ describe("Runner in the queue file", () => {
     });
 
     // Each heartbeat that reaches Linux keeps stopping it, one process at a time.
-    const stops: string[] = [];
-    const stop =
-      (answer: StopResult): typeof stopRemote =>
-      async (_machine, _env, id, pgid) => {
-        stops.push(`${id}:${pgid}`);
-        return answer;
-      };
+    const { stops, linux } = fakeLinux();
     const [lost] = Queue.readDoc(dir).lostRuns;
     expect(Queue.claimLostRun(dir, lost!, Number.MAX_SAFE_INTEGER)).toBe(true);
-    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("stopped"));
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, linux("stopped"));
     expect(stops).toEqual([]);
-    Queue.settleLostRun(dir, lost!, false);
-    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("alive"));
+    Queue.settleLostRun(dir, lost!, false, Number.MAX_SAFE_INTEGER);
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, linux("alive"));
     expect(Queue.tryStart(dir, "b", back)).toMatchObject({ status: "waiting" });
-    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, stop("stopped"));
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, linux("stopped"));
     expect(stops).toEqual(["w-1:7", "w-1:7"]);
     expect(Queue.readDoc(dir).lostRuns).toEqual([]);
     expect(Queue.tryStart(dir, "b", back)).toMatchObject({ status: "started", runner: "linux" });
@@ -950,9 +967,9 @@ describe("Runner in the queue file", () => {
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "waiting" });
     expect(Queue.route(dir, "a", "mac")).toBe("unconfirmed");
     expect(Queue.readDoc(dir).lostRuns).toEqual([
-      { entryId: "a", cwd: again.cwd, remote: { id: "w-1", pgid: 7 } },
+      { key: expect.any(String), entryId: "a", cwd: again.cwd, remote: { id: "w-1", pgid: 7 } },
     ]);
-    Queue.settleLostRun(dir, { entryId: "a", remote: { id: "w-1", pgid: 7 } }, true);
+    Queue.settleLostRun(dir, Queue.readDoc(dir).lostRuns[0]!, true);
     expect(Queue.read(dir)[0]).not.toHaveProperty("unconfirmed");
     expect(Queue.readDoc(dir).lostRuns).toEqual([]);
     expect(Queue.requeue(dir, "gone", {})).toBe(false);
@@ -1029,6 +1046,91 @@ describe("Runner in the queue file", () => {
     expect(Queue.read(dir)[0]).toMatchObject({ route: runner, unconfirmed: true });
     expect(Queue.read(dir)[0]).not.toHaveProperty("ask");
     expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status });
+  });
+
+  // A rerun forced onto Linux takes the lost run's folder: the record stays, to stop that run by
+  // its own process group only. Without one, the folder waits until Linux names it.
+  it.each([
+    [
+      "reported its process group",
+      { phase: "running" as const, remote: { id: "w-1", pgid: 7 } },
+      7,
+      "started",
+      null,
+      ["w-1:7:group"],
+    ],
+    [
+      "never reported one, found in its pgid file",
+      { phase: "syncing" as const },
+      null,
+      "waiting",
+      42,
+      ["?:42:group"],
+    ],
+    [
+      "never reported one, with no pgid file",
+      { phase: "syncing" as const },
+      null,
+      "waiting",
+      null,
+      [],
+    ],
+  ] as const)("a rerun forced onto Linux of a run that %s keeps its record", async (...row) => {
+    const [, progress, pgid, status, pgidFile, stopped] = row;
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    const cwd = checkout("w");
+    Queue.enqueue(dir, test("a", { cwd }));
+    Queue.tryStart(dir, "a", NOW);
+    Queue.setProgress(dir, "a", progress);
+    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW - 1 });
+    expect(Queue.route(dir, "a", "linux", true)).toBe("ok");
+    expect(Queue.readDoc(dir).lostRuns).toEqual([
+      expect.objectContaining({
+        entryId: "a",
+        pgidOnly: true,
+        remote: expect.objectContaining({ pgid }),
+      }),
+    ]);
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status });
+    // Read while the record still holds the folder; with no pgid file the rerun goes ahead, as warned.
+    const { stops, linux } = fakeLinux();
+    const id = Queue.readDoc(dir).lostRuns[0]!.remote.id;
+    await drainLostRuns(dir, DEFAULT_MACHINE_CONFIG, {}, linux("stopped", pgidFile));
+    expect(stops).toEqual(stopped.map((stop) => stop.replace("?", id)));
+    expect(Queue.readDoc(dir).lostRuns).toEqual([]);
+    expect(Queue.tryStart(dir, "a", NOW)).toMatchObject({ status: "started", runner: "linux" });
+  });
+
+  // `remoto` names a folder outside a git checkout after its real path, as `pwd -P` gives it.
+  it("a run lost outside a git checkout is recorded under remoto's name for its folder", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    const cwd = tempDir();
+    Queue.enqueue(dir, test("a", { cwd, where: "linux" }));
+    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW - 1 });
+    const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
+    expect(Queue.readDoc(dir).lostRuns).toEqual([
+      expect.objectContaining({
+        entryId: "a",
+        remote: { id: runnerCopyId(NodeFS.realpathSync(cwd), sha1), pgid: null },
+      }),
+    ]);
+  });
+
+  // A stop that outlived its claim must not free the claim another process took since.
+  it("a stop that ends unconfirmed frees only its own claim", () => {
+    const dir = queueWith(block(config({ runnerWhere: "linux" })));
+    Queue.enqueue(dir, test("a"));
+    Queue.tryStart(dir, "a", NOW);
+    Queue.setProgress(dir, "a", { phase: "running", remote: { id: "w-1", pgid: 7 } });
+    Queue.requeue(dir, "a", { dropped: true, unconfirmed: true, linuxFailedAt: NOW - 1 });
+    const [lost] = Queue.readDoc(dir).lostRuns;
+    expect(Queue.claimLostRun(dir, lost!, NOW + 10, NOW)).toBe(true);
+    expect(Queue.claimLostRun(dir, lost!, NOW + 50, NOW + 5)).toBe(false);
+    expect(Queue.claimLostRun(dir, lost!, NOW + 50, NOW + 20)).toBe(true);
+    Queue.settleLostRun(dir, lost!, false, NOW + 10);
+    expect(Queue.readDoc(dir).lostRuns[0]!.stoppingUntil).toBe(NOW + 50);
+    Queue.settleLostRun(dir, lost!, false, NOW + 50);
+    expect(Queue.readDoc(dir).lostRuns[0]).not.toHaveProperty("stoppingUntil");
   });
 
   it("only the owner or a higher-ranked publisher writes the block", () => {

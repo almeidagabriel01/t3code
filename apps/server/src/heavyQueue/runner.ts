@@ -1137,6 +1137,8 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
   const phase = fields.phase;
   const int = (value: string | undefined) =>
     value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
+  // A group of 0 or 1 is never a run's own: `kill -- -1` would reach every process there.
+  const group = int(fields.pgid);
   return {
     syncing: progress.syncing || phase === "syncing",
     running: progress.running || phase === "running",
@@ -1146,7 +1148,7 @@ export const foldMarker = (progress: RemoteProgress, line: string): RemoteProgre
       typeof fields.id === "string" && /^[A-Za-z0-9._-]+$/.test(fields.id)
         ? fields.id
         : progress.id,
-    pgid: int(fields.pgid) ?? progress.pgid,
+    pgid: group !== null && group > 1 ? group : progress.pgid,
     exit: int(fields.exit) ?? progress.exit,
     missing:
       typeof fields.missing === "string" && fields.missing !== ""
@@ -1225,20 +1227,38 @@ export const HEARTBEAT_COMMAND = "cat /proc/loadavg; nproc; free -b";
  * folder. TERM, up to `waitSeconds` for it to go, then KILL. Prints `gone` when nothing ran,
  * `stopped` or `killed` when it is gone now, and `alive` (exit 1) when it survived.
  */
-export const remoteStopScript = (id: string, pgid: number | null, waitSeconds: number) => {
+export const remoteStopScript = (
+  id: string,
+  pgid: number | null,
+  waitSeconds: number,
+  pgidOnly = false,
+) => {
   if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`Unsafe run id: ${id}`);
-  // `[r]uns/…` keeps the pattern from matching the shell running this very script.
+  if (pgid !== null && !(Number.isSafeInteger(pgid) && pgid > 1)) {
+    throw new Error(`Unsafe process group: ${pgid}`);
+  }
+  if (pgidOnly && pgid === null) throw new Error("A stop by process group needs one");
+  // `[r]uns/…` keeps the pattern from matching the shell running this very script. A rerun owns the
+  // folder under `pgidOnly`: neither the pattern nor the pgid file it rewrites names the lost run.
   const pattern = `[r]uns/${id}( |/|$)`;
+  const byFolder = (command: string) => (pgidOnly ? "" : ` ${command};`);
   return [
-    `p=${pgid ?? ""}; [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`,
-    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null || pgrep -f '${pattern}' >/dev/null; }`,
+    `p=${pgid ?? ""};${pgidOnly ? "" : ` [ -n "$p" ] || p=$(cat "runs/${id}.pgid" 2>/dev/null)`}`,
+    `case "$p" in *[!0-9]*|0|1) p= ;; esac`,
+    `alive() { { [ -n "$p" ] && kill -0 -- "-$p"; } 2>/dev/null${pgidOnly ? "" : ` || pgrep -f '${pattern}' >/dev/null`}; }`,
     `alive || { echo gone; exit 0; }`,
-    `{ [ -n "$p" ] && kill -TERM -- "-$p"; pkill -TERM -f '${pattern}'; } 2>/dev/null`,
+    `{ [ -n "$p" ] && kill -TERM -- "-$p";${byFolder(`pkill -TERM -f '${pattern}'`)} } 2>/dev/null`,
     `i=0; while alive && [ "$i" -lt ${Math.max(1, Math.floor(waitSeconds))} ]; do sleep 1; i=$((i+1)); done`,
     `alive || { echo stopped; exit 0; }`,
-    `{ [ -n "$p" ] && kill -KILL -- "-$p"; pkill -KILL -f '${pattern}'; } 2>/dev/null; sleep 1`,
+    `{ [ -n "$p" ] && kill -KILL -- "-$p";${byFolder(`pkill -KILL -f '${pattern}'`)} } 2>/dev/null; sleep 1`,
     `if alive; then echo alive; exit 1; else echo killed; fi`,
   ].join("\n");
+};
+
+/** Prints `pgid <n>` from run `id`'s pgid file there, or `none` when it has none. */
+export const remotePgidScript = (id: string) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`Unsafe run id: ${id}`);
+  return `p=$(cat "runs/${id}.pgid" 2>/dev/null); case "$p" in ''|*[!0-9]*|0|1) echo none ;; *) echo "pgid $p" ;; esac`;
 };
 
 export const INSTALL_FAILED = "Dependency install on Linux failed";

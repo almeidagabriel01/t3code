@@ -183,9 +183,16 @@ export interface CopyRemoval {
 
 /** A run Linux took with it: its job may be gone, but its worktree starts nothing there yet. */
 export interface LostRun {
+  /** One attempt's record: an entry rerun beside it may leave another for the same folder. */
+  readonly key: string;
   readonly entryId: string;
   readonly cwd: string;
   readonly remote: { readonly id: string; readonly pgid: number | null };
+  /**
+   * A rerun forced onto Linux took its folder: stopped by its own process group only, never by the
+   * folder name or the pgid file the rerun rewrites. Until that group is known, the folder waits.
+   */
+  readonly pgidOnly?: true;
   /** One process stops it at a time: a late stop would also end the next run in that folder. */
   readonly stoppingUntil?: number;
 }
@@ -324,14 +331,20 @@ const loadDoc = (dir: string): QueueDoc => {
           )
         : [],
       lostRuns: Array.isArray(record?.lostRuns)
-        ? record.lostRuns.filter(
-            (value: unknown): value is LostRun =>
-              isObject(value) &&
-              typeof value.entryId === "string" &&
-              typeof value.cwd === "string" &&
-              isObject(value.remote) &&
-              typeof value.remote.id === "string",
-          )
+        ? record.lostRuns
+            .filter(
+              (value: unknown): value is LostRun =>
+                isObject(value) &&
+                typeof value.entryId === "string" &&
+                typeof value.cwd === "string" &&
+                isObject(value.remote) &&
+                typeof value.remote.id === "string",
+            )
+            .map((lost) =>
+              typeof lost.key === "string"
+                ? lost
+                : { ...lost, key: `${lost.entryId}:${lost.remote.id}` },
+            )
         : [],
       events: parseLog(parsed?.events),
       results: Array.isArray(record?.results)
@@ -488,7 +501,7 @@ const planOf = (doc: QueueDoc, now: number): RoutePlan =>
     machine: doc.runner?.machine ?? DEFAULT_MACHINE_CONFIG,
     health: doc.linux,
     runnerOn: runnerOn(doc),
-    lostCwds: doc.lostRuns.map((lost) => lost.cwd),
+    lostCwds: doc.lostRuns.filter(holdsFolder).map((lost) => lost.cwd),
   });
 
 /** Fields that describe one attempt; a requeued entry drops them. */
@@ -1193,10 +1206,17 @@ export const route = (dir: string, id: string, runner: HeavyRunner, force = fals
         route: runner,
       }),
     );
-    // Forced onto Linux, its stop check there would end the rerun; on this Mac it goes on.
-    return runner === "linux" && target.unconfirmed === true
-      ? { ...routed, doc: { ...routed.doc, lostRuns: withoutLost(routed.doc.lostRuns, id) } }
-      : routed;
+    if (runner === "mac" || target.unconfirmed !== true) return routed;
+    // Forced onto Linux, the rerun takes the folder: only its process group may still be stopped.
+    return {
+      ...routed,
+      doc: {
+        ...routed.doc,
+        lostRuns: routed.doc.lostRuns.map((lost) =>
+          lost.entryId === id ? { ...lost, pgidOnly: true as const } : lost,
+        ),
+      },
+    };
   });
 
 /**
@@ -1285,89 +1305,100 @@ export const requeue = (
         : requeueRecord(target, next, configFor(doc, target.cwd), Date.now());
     const remote = next.unconfirmed === true ? lostRemoteOf(target) : null;
     const lost: ReadonlyArray<LostRun> =
-      remote === null ? [] : [{ entryId: id, cwd: target.cwd, remote }];
+      remote === null
+        ? []
+        : [{ key: NodeCrypto.randomUUID(), entryId: id, cwd: target.cwd, remote }];
     return {
       doc: {
         ...doc,
         entries: [...active, again, ...waiters],
         events: withRecord(doc.events, record),
-        lostRuns: [...withoutLost(doc.lostRuns, id), ...lost],
+        lostRuns: [...doc.lostRuns, ...lost],
       },
       result: true,
     };
   });
 
 /**
- * The run's folder there: as `remoto` reported it, else as `remoto` names it from the checkout,
- * for a run lost before it reported one.
+ * The run's folder there: as `remoto` reported it, else as `remoto` names it from its real
+ * checkout root, or its real folder outside one (`pwd -P`), for a run lost before it reported one.
  */
-const lostRemoteOf = (entry: HeavyQueueEntry): LostRun["remote"] | null => {
+const lostRemoteOf = (entry: HeavyQueueEntry): LostRun["remote"] => {
   if (entry.remote !== undefined) return { id: entry.remote.id, pgid: entry.remote.pgid ?? null };
-  const root = gitRootOf(entry.cwd);
-  if (root === null) return null;
-  const real = NodeFS.realpathSync(root);
+  const folder = gitRootOf(entry.cwd) ?? entry.cwd;
+  let real = folder;
+  try {
+    real = NodeFS.realpathSync(folder);
+  } catch {
+    // Gone since: its own path is the best guess at what `remoto` saw.
+  }
   const sha1 = (text: string) => NodeCrypto.createHash("sha1").update(text).digest("hex");
   return { id: runnerCopyId(real, sha1), pgid: null };
 };
 
-const withoutLost = (lostRuns: ReadonlyArray<LostRun>, entryId: string) =>
-  lostRuns.filter((lost) => lost.entryId !== entryId);
+/** Keeps its worktree off Linux: all but a forced rerun's record whose process group is known. */
+const holdsFolder = (lost: LostRun) => lost.pgidOnly !== true || lost.remote.pgid === null;
+
+const withLost = (doc: QueueDoc, key: string, change: (lost: LostRun) => LostRun | null) => ({
+  ...doc,
+  lostRuns: doc.lostRuns.flatMap((lost) => {
+    if (lost.key !== key) return [lost];
+    const next = change(lost);
+    return next === null ? [] : [next];
+  }),
+});
 
 /** Claims stopping one lost run until `until`; false while another process holds it, or it is gone. */
 export const claimLostRun = (dir: string, lost: LostRun, until: number, now = Date.now()) =>
   mutate(
     dir,
     (doc) => {
-      const held = doc.lostRuns.find(
-        (each) => each.entryId === lost.entryId && each.remote.id === lost.remote.id,
-      );
+      const held = doc.lostRuns.find((each) => each.key === lost.key);
       if (held === undefined || (held.stoppingUntil ?? 0) > now) return { doc, result: false };
       return {
-        doc: {
-          ...doc,
-          lostRuns: doc.lostRuns.map((each) =>
-            each === held ? { ...each, stoppingUntil: until } : each,
-          ),
-        },
+        doc: withLost(doc, lost.key, (each) => ({ ...each, stoppingUntil: until })),
         result: true,
       };
     },
     now,
   );
 
+/** The process group a forced rerun's lost run had, read before anything new ran in its folder. */
+export const resolveLostPgid = (dir: string, lost: LostRun, pgid: number) =>
+  mutate(dir, (doc) => ({
+    doc: withLost(doc, lost.key, (each) => ({ ...each, remote: { ...each.remote, pgid } })),
+    result: undefined,
+  }));
+
 /**
- * Ends a stop of a lost run. Confirmed: its worktree and its entry, if still waiting, may run
- * again. Not: the next heartbeat tries again.
+ * Ends a stop of a lost run. Confirmed (or nothing left to stop by): the record goes, and its
+ * entry, once no other run of it is lost, may run again. Not: the claim made at `claim` is freed,
+ * so the next heartbeat tries again; a newer claim stays.
  */
 export const settleLostRun = (
   dir: string,
-  lost: Pick<LostRun, "entryId" | "remote">,
+  lost: Pick<LostRun, "key" | "entryId">,
   stopped: boolean,
+  claim?: number,
 ) =>
   mutate(dir, (doc) => {
-    // A later attempt of the same entry left its own run there: that one stays unconfirmed.
-    const current = (each: LostRun) =>
-      each.entryId === lost.entryId && each.remote.id === lost.remote.id;
-    if (!doc.lostRuns.some(current)) return { doc, result: undefined };
     if (!stopped) {
       return {
-        doc: {
-          ...doc,
-          lostRuns: doc.lostRuns.map((each) => {
-            if (!current(each)) return each;
-            const { stoppingUntil: _until, ...free } = each;
-            return free;
-          }),
-        },
+        doc: withLost(doc, lost.key, (each) => {
+          if (each.stoppingUntil !== claim) return each;
+          const { stoppingUntil: _until, ...free } = each;
+          return free;
+        }),
         result: undefined,
       };
     }
+    const settled = withLost(doc, lost.key, () => null);
+    const stillLost = settled.lostRuns.some((each) => each.entryId === lost.entryId);
     return {
       doc: {
-        ...doc,
-        lostRuns: doc.lostRuns.filter((each) => !current(each)),
-        entries: doc.entries.map((entry) => {
-          if (entry.id !== lost.entryId || entry.startedAt !== null) return entry;
+        ...settled,
+        entries: settled.entries.map((entry) => {
+          if (stillLost || entry.id !== lost.entryId || entry.startedAt !== null) return entry;
           const { unconfirmed: _unconfirmed, ...rest } = entry;
           return rest;
         }),

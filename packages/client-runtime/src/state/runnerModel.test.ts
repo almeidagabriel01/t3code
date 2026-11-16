@@ -185,11 +185,16 @@ describe("a row's runner", () => {
     expect(routeActions(entry(), offline).map((a) => a.runner)).toEqual(["mac", "linux"]);
   });
 
-  it("an unconfirmed drop reruns only with a warning and force; its question's answer waits instead", () => {
-    const [mac] = routeActions(entry({ unconfirmed: true }), state);
+  it("an unconfirmed drop reruns only with a warning and force; its question's answer never forces", () => {
+    const [mac, linux] = routeActions(entry({ unconfirmed: true }), state);
     expect(mac).toMatchObject({ force: true, confirm: expect.stringContaining("run it twice") });
+    // On Linux the rerun waits for the earlier run's process group to end, or runs beside it.
+    expect(linux).toMatchObject({
+      force: true,
+      confirm: expect.stringContaining("by its process group before this run goes ahead"),
+    });
     const ask = { reason: "dropped" as const, deadlineAt: "2026-01-01T00:00:00.000Z" };
-    // Pinned or not, the question offers both places, and neither reruns before Linux confirms.
+    // Pinned or not, the question offers both places; Linux takes it once it confirms.
     for (const route of [undefined, "linux" as const]) {
       expect(
         askAnswers(entry({ unconfirmed: true, ask, ...(route ? { route } : {}) }), state),

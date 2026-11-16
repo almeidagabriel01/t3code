@@ -264,6 +264,13 @@ function mayRunOn(
 }
 
 /** "Run on this Mac" / "Run on Linux" for a row, with the confirmation a running job needs. */
+/** What forcing a rerun does while Linux has not confirmed the earlier run stopped. */
+const RUNNER_UNCONFIRMED_RERUN: Record<HeavyRunner, string> = {
+  mac: "Linux has not confirmed the earlier run stopped. Running it again now may run it twice. Run it anyway?",
+  linux:
+    "Linux has not confirmed the earlier run stopped. T3 ends it by its process group before this run goes ahead there; if Linux never recorded one, both may run at once. Run it anyway?",
+};
+
 export function routeActions(
   entry: HeavyQueueEntry,
   state: Pick<HeavyQueueState, "linux" | "routes" | "macOnly">,
@@ -283,7 +290,7 @@ export function routeActions(
     const confirm = running
       ? `Stop this job and run it again on ${RUNNER_NAME[runner]}? Work it has done so far is lost.`
       : entry.unconfirmed === true
-        ? "Linux has not confirmed the earlier run stopped. Running it again now may run it twice. Run it anyway?"
+        ? RUNNER_UNCONFIRMED_RERUN[runner]
         : null;
     actions.push({ runner, label, confirm, force: !running && entry.unconfirmed === true });
   }

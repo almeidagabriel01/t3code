@@ -23,6 +23,7 @@ import {
   planRoutes,
   platformFailures,
   remoteOutcome,
+  remotePgidScript,
   remoteStopScript,
   removeCopyScript,
   runnerCopyId,
@@ -1713,6 +1714,18 @@ describe("remoto markers", () => {
     expect(script).toContain("p=42;");
     expect(script).toContain("[r]uns/app-1a2b3c4d");
     expect(script).toContain("-lt 5 ]");
+    // A rerun owns the folder: only the lost run's own group is named, never the folder or pgid file.
+    const group = remoteStopScript("app-1a2b3c4d", 42, 5, true);
+    expect(group).toContain('kill -TERM -- "-$p"');
+    expect(group).not.toMatch(/pkill|pgrep|\.pgid/);
+    expect(() => remoteStopScript("app-1a2b3c4d", null, 5, true)).toThrow(/needs one/);
+    // `kill -- -1` would reach every process there.
+    for (const pgid of [0, 1, -3, 1.5]) {
+      expect(() => remoteStopScript("app-1a2b3c4d", pgid, 5)).toThrow(/Unsafe process group/);
+    }
+    expect(fold("phase=running pgid=1").pgid).toBeNull();
+    expect(() => remotePgidScript("a'; rm -rf ~; '")).toThrow(/Unsafe/);
+    expect(remotePgidScript("app-1a2b3c4d")).toContain('"runs/app-1a2b3c4d.pgid"');
   });
 });
 
