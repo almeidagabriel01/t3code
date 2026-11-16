@@ -5,9 +5,11 @@ import {
   forgetDeletedProjects,
 } from "../assistants/AssistantTeamProjects.ts";
 import {
+  afterBoundarySql,
   countsAsUnreadSql,
   needsUserTaskScopesSql,
-  scopeNeedsUserSql,
+  pausedTaskNeedsUserSql,
+  scopeWaitingRequestSql,
   taskCountsByScopeSql,
   workingTaskStatusesSql,
 } from "../assistants/groupChatSql.ts";
@@ -924,20 +926,15 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
         (SELECT m.request_project_id FROM assistant_group_messages m
           WHERE m.team_id = t.team_id AND m.author = 'assistant' AND m.kind = 'message'
           ORDER BY m.seq DESC LIMIT 1) AS preview_project_id,
-        -- Paused requests and failed root tasks count only after the newest boundary, as the chat
-        -- offers their actions there. A failed child is reported to its parent, which goes on; a
-        -- task the user stopped, or one an archive paused, waits on nobody.
         (SELECT COUNT(DISTINCT k.root_id) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
-          WHERE k.team_id = t.team_id AND k.kind <> 'reply' AND k.status = 'paused'
-            AND COALESCE(k.reason, '') NOT IN ('stopped', 'group_archived')
-            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
-              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS paused_tasks,
+          WHERE k.team_id = t.team_id AND k.status = 'paused'
+            AND ${sql.literal(pausedTaskNeedsUserSql("k"))}
+            AND ${sql.literal(afterBoundarySql("t.team_id", "m.seq"))}) AS paused_tasks,
         (SELECT COUNT(*) FROM assistant_group_tasks k
           JOIN assistant_group_messages m ON m.message_id = k.request_message_id
           WHERE k.team_id = t.team_id AND k.kind = 'root' AND k.status = 'failed'
-            AND m.seq > COALESCE((SELECT MAX(b.seq) FROM assistant_group_messages b
-              WHERE b.team_id = t.team_id AND b.kind = 'boundary'), 0)) AS failed_tasks,
+            AND ${sql.literal(afterBoundarySql("t.team_id", "m.seq"))}) AS failed_tasks,
         (SELECT json_group_array(g.thread_id) FROM (
             SELECT thread_id FROM assistant_group_threads WHERE team_id = t.team_id
             UNION ALL SELECT thread_id FROM assistant_group_request_threads
@@ -954,7 +951,8 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
               WHERE p.project_id = r.id AND p.deleted_at IS NULL)
             ORDER BY r.id) g) AS removed_project_ids_json,
         (SELECT json_group_array(json_object('projectId', NULLIF(x.scope, ''),
-            'unreadCount', x.unread, 'waiting', x.waiting, 'readSeq', x.read_seq,
+            'unreadCount', x.unread, 'waiting', x.waiting_request IS NOT NULL,
+            'waitingRequest', json(x.waiting_request), 'readSeq', x.read_seq,
             'openTasks', x.open_tasks, 'doneTasks', x.done_tasks, 'general', x.general,
             'title', (SELECT p.title FROM projection_projects p WHERE p.project_id = x.scope)))
           FROM (
@@ -963,7 +961,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
                 WHERE m.team_id = t.team_id AND m.request_project_id IS NULLIF(c.scope, '')
                   AND m.seq > COALESCE(r.read_seq, t.read_seq) AND ${sql.literal(countsAsUnreadSql("m"))})
                 AS unread,
-              ${sql.literal(scopeNeedsUserSql("t.team_id", "c.scope"))} AS waiting,
+              ${sql.literal(scopeWaitingRequestSql("t.team_id", "c.scope"))} AS waiting_request,
               c.working AS open_tasks,
               c.stopped AS done_tasks,
               (c.scope = '' AND EXISTS (SELECT 1 FROM assistant_group_messages m
@@ -988,7 +986,7 @@ const ensure = Effect.fn("ForkSchema.ensureTables")(function* () {
             -- A stable order, so a client's "Removed project 2" stays the same project.
             ORDER BY c.scope
           ) x
-          WHERE x.unread > 0 OR x.waiting OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
+          WHERE x.unread > 0 OR x.waiting_request IS NOT NULL OR x.own IS NOT NULL OR x.general OR x.open_tasks > 0
             OR x.done_tasks > 0)
           AS scopes_json
       FROM assistant_teams t

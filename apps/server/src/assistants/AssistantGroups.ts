@@ -123,6 +123,7 @@ import {
   type AssistantTeamRow,
   decodeModelSelectionJson,
   encodeModelSelectionJson,
+  requestTitleFromText,
   toAssistantTeam,
 } from "./AssistantTeams.ts";
 import { copyTransfer, transferText } from "./AssistantTransfers.ts";
@@ -247,17 +248,6 @@ export const requestThreadId = (assistantId: string, teamId: string, requestId: 
     `assistant:${assistantId}:g-${sha256(`${teamId}\nrequest:${requestId}`).slice(0, 16)}`,
   );
 
-const TITLE_CHARS = 80;
-/** A request's title until the lead names it: its first line, without the @mentions it opens with. */
-const titleFromText = (text: string) => {
-  const line =
-    text
-      .split("\n")
-      .find((candidate) => candidate.trim() !== "")
-      ?.trim() ?? "";
-  return clip(line.replace(/^(?:@\S+[\s,]+)+/u, "") || line, TITLE_CHARS);
-};
-
 export const taskMessageId = (taskId: string, revision: number) =>
   `group-task:${taskId}:${revision}`;
 
@@ -372,7 +362,7 @@ const toMessage = (row: MessageRow): AssistantGroupMessage => ({
     ? {}
     : {
         ...(row.project_id === null ? {} : { projectId: row.project_id as ProjectId }),
-        title: row.title ?? titleFromText(row.text),
+        title: row.title ?? requestTitleFromText(row.text),
       }),
   ...(row.wait_thread_id === null
     ? {}
@@ -1103,7 +1093,7 @@ const make = Effect.gen(function* () {
           ),
           threadId,
           projectId,
-          title: `${member.name} · ${team.name} · ${clip(request.title ?? titleFromText(request.text), 60)}`,
+          title: `${member.name} · ${team.name} · ${clip(request.title ?? requestTitleFromText(request.text), 60)}`,
           generateTitle: false,
           modelSelection,
           runtimeMode: runtimeModeForToolAccess(toAssistant(member).toolAccess),
@@ -1581,7 +1571,7 @@ const make = Effect.gen(function* () {
       self: member(owner),
       members: members.map(member),
       news: chat.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
-      request: request.title ?? titleFromText(request.text),
+      request: request.title ?? requestTitleFromText(request.text),
       quoted: quoted.map((row) => ({ seq: row.seq, from: labelOf(row, names), text: row.text })),
       from,
       instruction: task.instruction,
@@ -2545,7 +2535,7 @@ const make = Effect.gen(function* () {
               attachments: claimed.attachments,
               requestId: request?.message_id ?? "new",
               projectId: request === undefined ? projectId : null,
-              title: request === undefined ? titleFromText(input.text) : null,
+              title: request === undefined ? requestTitleFromText(input.text) : null,
               modelSelection: input.modelSelection,
             }).pipe(
               Effect.onError(() =>
@@ -3542,7 +3532,7 @@ const make = Effect.gen(function* () {
         : yield* sql<MessageRow>`
             SELECT * FROM assistant_group_messages
             WHERE message_id IN ${sql.in([...new Set(open.map((row) => row.request_id!))])}`
-      ).map((row) => [row.message_id, row.title ?? titleFromText(row.text)]),
+      ).map((row) => [row.message_id, row.title ?? requestTitleFromText(row.text)]),
     );
     for (const row of rows) {
       const name = names.get(row.assistant_id);

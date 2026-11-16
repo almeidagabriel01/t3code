@@ -324,6 +324,27 @@ describe("group requests", () => {
       status: "needs-you",
     },
     {
+      name: "a task the user stopped",
+      tasks: [task("a", 1, { status: "paused", reason: "stopped" })],
+      extra: [],
+      status: "stopped",
+    },
+    {
+      name: "a task an archive paused",
+      tasks: [task("a", 1, { status: "paused", reason: "group_archived" })],
+      extra: [],
+      status: "stopped",
+    },
+    {
+      name: "a failed child under a finished root",
+      tasks: [
+        task("a", 1, { status: "completed" }),
+        task("b", 1, { status: "failed", kind: "child", parentId: "a" as never }),
+      ],
+      extra: [],
+      status: "done",
+    },
+    {
       name: "a task held by a usage limit",
       tasks: [task("a", 1, { status: "usage_limited" })],
       extra: [],
@@ -411,6 +432,7 @@ describe("group requests", () => {
     assert.isFalse(assistantGroupRequestExpanded(block!, 2, false));
     assert.isTrue(assistantGroupRequestExpanded(block!, 2, true));
     assert.isTrue(assistantGroupRequestExpanded({ ...block!, status: "needs-you" }, 2, false));
+    assert.isFalse(assistantGroupRequestExpanded({ ...block!, status: "stopped" }, 2, false));
   });
 });
 
@@ -515,6 +537,7 @@ it.each([
   ["waiting", null, "Waiting"],
   ["done", "completed", "Finished"],
   ["needs-you", "interrupted", "Needs you"],
+  ["stopped", "interrupted", "Stopped"],
   ["working", null, "Working"],
   ["routing", null, "Routing"],
   ["needs-project", null, "Needs project"],

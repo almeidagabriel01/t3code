@@ -1,5 +1,6 @@
 import {
   ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES,
+  ASSISTANT_GROUP_SELF_PAUSE_REASONS,
   ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR,
   ASSISTANT_GROUP_UNREAD_EXCLUDED_KINDS,
   ASSISTANT_GROUP_WORKING_TASK_STATUSES,
@@ -18,29 +19,65 @@ export const countsAsUnreadSql = (m: string) =>
       WHERE u.request_id = ${m}.request_id AND u.seq > ${m}.seq AND u.team_id = ${m}.team_id
         AND u.author = '${ASSISTANT_GROUP_UNREAD_EXCLUDED_AUTHOR}'))`;
 
+/** Paused task `k` waits on the user: `assistantGroupTaskNeedsUser` for a pause. */
+export const pausedTaskNeedsUserSql = (k: string) =>
+  `(${k}.status = 'paused' AND ${k}.kind <> 'reply'
+    AND COALESCE(${k}.reason, '') NOT IN (${list(ASSISTANT_GROUP_SELF_PAUSE_REASONS)})
+    AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks parent
+      WHERE parent.task_id = ${k}.parent_id AND parent.status = 'paused'))`;
+
+/** Task `k` waits on the user: `assistantGroupTaskNeedsUser`. */
+const taskNeedsUserSql = (k: string) =>
+  `(${pausedTaskNeedsUserSql(k)} OR (${k}.status = 'failed' AND ${k}.kind = 'root'))`;
+
 /** The tasks of request `requestId` (an expression) need the user: `assistantGroupTasksNeedUser`. */
 export const tasksNeedUserSql = (requestId: string) =>
   `(EXISTS (SELECT 1 FROM assistant_group_tasks n WHERE n.request_id = ${requestId}
-      AND n.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)}))
+      AND n.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)}) AND ${taskNeedsUserSql("n")})
     AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks w WHERE w.request_id = ${requestId}
       AND w.status IN (${list(ASSISTANT_GROUP_WORKING_TASK_STATUSES)})))`;
 
 /**
- * Some request of `team`'s tab `scope` ('' for General) waits on the user: an open wait, tasks
- * that need the user, or, in General, the lead's question about the project before work starts.
+ * Message seq `seq` of `team` lies after its newest boundary: stopped tasks count only there, as
+ * the chat offers their actions there. Walks back from the newest line to the first boundary.
+ */
+export const afterBoundarySql = (team: string, seq: string) =>
+  `${seq} > COALESCE((SELECT b.seq FROM assistant_group_messages b
+    WHERE b.team_id = ${team} AND b.kind = 'boundary' ORDER BY b.seq DESC LIMIT 1), 0)`;
+
+/**
+ * The oldest request of `team`'s tab `scope` ('' for General) that waits on the user, as JSON, or
+ * NULL: an open wait, tasks that need the user (after the newest boundary), or, in General, the
+ * lead's question about the project before work starts. Waits and project questions stay open
+ * until answered, whatever boundary follows them.
  */
 // Open waits and project questions are few: their partial indexes beat walking the tab's lines.
-export const scopeNeedsUserSql = (team: string, scope: string) =>
-  `(EXISTS (SELECT 1 FROM assistant_group_messages q
-      WHERE q.team_id = ${team} AND q.wait_key IS NOT NULL AND q.wait_resolved_at IS NULL
-        AND COALESCE(q.request_project_id, '') = ${scope})
-    OR EXISTS (SELECT 1 FROM assistant_group_tasks k
-      JOIN assistant_group_messages h ON h.message_id = k.request_id
-      WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
-        AND h.request_project_id IS NULLIF(${scope}, '') AND ${tasksNeedUserSql("k.request_id")})
-    OR (${scope} = '' AND EXISTS (SELECT 1 FROM assistant_group_messages a
-      WHERE a.team_id = ${team} AND a.request_project_id IS NULL AND a.asks_project = 1
-        AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks z WHERE z.request_id = a.request_id))))`;
+export const scopeWaitingRequestSql = (team: string, scope: string) =>
+  `(SELECT json_object('requestId', h.message_id,
+      'title', COALESCE(NULLIF(h.title, ''), substr(h.text, 1, 400)),
+      'reason', w.reason, 'taskReason', w.task_reason, 'assistantId', w.assistant_id)
+    FROM (
+      SELECT q.request_id, 'wait' AS reason, NULL AS task_reason, q.assistant_id, q.seq AS at
+        FROM assistant_group_messages q
+        WHERE q.team_id = ${team} AND q.wait_key IS NOT NULL AND q.wait_resolved_at IS NULL
+          AND COALESCE(q.request_project_id, '') = ${scope}
+      UNION ALL
+      SELECT k.request_id, CASE k.status WHEN 'failed' THEN 'failed' ELSE 'paused' END,
+          k.reason, k.owner_id, m.seq
+        FROM assistant_group_tasks k
+        JOIN assistant_group_messages m ON m.message_id = k.request_message_id
+        JOIN assistant_group_messages r ON r.message_id = k.request_id
+        WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
+          AND r.request_project_id IS NULLIF(${scope}, '') AND ${taskNeedsUserSql("k")}
+          AND ${afterBoundarySql(team, "m.seq")} AND ${tasksNeedUserSql("k.request_id")}
+      UNION ALL
+      SELECT a.request_id, 'project', NULL, NULL, a.seq FROM assistant_group_messages a
+        WHERE ${scope} = '' AND a.team_id = ${team} AND a.request_project_id IS NULL
+          AND a.asks_project = 1
+          AND NOT EXISTS (SELECT 1 FROM assistant_group_tasks z WHERE z.request_id = a.request_id)
+    ) w
+    JOIN assistant_group_messages h ON h.message_id = w.request_id
+    ORDER BY h.seq, w.at LIMIT 1)`;
 
 /** A task counts toward the group's `working`: queued, running or waiting. */
 export const workingTaskStatusesSql = list(ASSISTANT_GROUP_WORKING_TASK_STATUSES);
@@ -63,7 +100,8 @@ export const taskCountsByScopeSql = (team: string) =>
 export const needsUserTaskScopesSql = (team: string) =>
   `SELECT COALESCE(h.request_project_id, '') FROM assistant_group_tasks k
     JOIN assistant_group_messages h ON h.message_id = k.request_id
-    WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})`;
+    WHERE k.team_id = ${team} AND k.status IN (${list(ASSISTANT_GROUP_NEEDS_USER_TASK_STATUSES)})
+      AND ${taskNeedsUserSql("k")}`;
 
 /**
  * Tab position `r` changes no count if it moves to `readSeq`: no line of its tab that counts as
