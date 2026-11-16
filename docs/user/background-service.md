@@ -110,7 +110,7 @@ place in the whole queue.
 - **Limits.** Settings → Maintenance → **Heavy work** → **This Mac** sets how
   much memory this Mac keeps free (default 20%) and its CPU limit (default 70%). A job waits
   while the CPU limit is crossed; below the memory floor only a command that
-  stayed under 512 MB starts. After a job waited for memory, memory must recover 5 points past the floor
+  stayed under 512 MB starts. After memory pressure or swapping held the queue, memory must recover 5 points past the floor
   before the next one starts. A job's usage includes the build daemons it uses,
   such as Gradle's, so the queue learns what a build really costs.
 - **Slow down agent jobs when the Mac is busy.** On macOS, once this Mac stays
